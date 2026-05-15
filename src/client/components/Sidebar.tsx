@@ -1,15 +1,18 @@
 import { useState } from 'react'
-import WorkspaceList from './WorkspaceList'
+import { useWorkspaceStore } from '../stores/workspace-store'
+import SessionList from './SessionList'
 import FileExplorer from './FileExplorer'
 
 interface SidebarProps {
   onFileClick: (path: string, name: string) => void
+  onFileDoubleClick?: (path: string, name: string) => void
 }
 
-type SidebarTab = 'workspaces' | 'files'
+type SidebarTab = 'sessions' | 'files'
 
-export default function Sidebar({ onFileClick }: SidebarProps) {
-  const [activeTab, setActiveTab] = useState<SidebarTab>('workspaces')
+export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps) {
+  const [activeTab, setActiveTab] = useState<SidebarTab>('sessions')
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
 
   return (
     <aside className="w-72 bg-surface border-r border-border flex flex-col h-full flex-shrink-0">
@@ -17,13 +20,13 @@ export default function Sidebar({ onFileClick }: SidebarProps) {
       <div className="flex border-b border-border/50">
         <button
           className={`flex-1 py-3 text-xs font-medium text-center transition-all ${
-            activeTab === 'workspaces'
+            activeTab === 'sessions'
               ? 'text-text-primary border-b-2 border-accent'
               : 'text-text-secondary hover:text-text-primary'
           }`}
-          onClick={() => setActiveTab('workspaces')}
+          onClick={() => setActiveTab('sessions')}
         >
-          Workspaces
+          Sessions
         </button>
         <button
           className={`flex-1 py-3 text-xs font-medium text-center transition-all ${
@@ -39,8 +42,22 @@ export default function Sidebar({ onFileClick }: SidebarProps) {
 
       {/* Tab Content */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        {activeTab === 'workspaces' && <WorkspaceList />}
-        {activeTab === 'files' && <FileExplorer onFileClick={onFileClick} />}
+        {activeTab === 'sessions' && activeWorkspaceId && (
+          <SessionList workspaceId={activeWorkspaceId} />
+        )}
+        {activeTab === 'sessions' && !activeWorkspaceId && (
+          <div className="flex-1 flex items-center justify-center p-4">
+            <p className="text-xs text-text-tertiary text-center">
+              Open a workspace to view sessions
+            </p>
+          </div>
+        )}
+        {activeTab === 'files' && (
+          <FileExplorer
+            onFileClick={onFileClick}
+            onFileDoubleClick={onFileDoubleClick}
+          />
+        )}
       </div>
 
       {/* Footer */}

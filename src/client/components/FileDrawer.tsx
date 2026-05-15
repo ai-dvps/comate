@@ -1,0 +1,113 @@
+import { X, Copy, Pin } from 'lucide-react'
+
+export interface ViewedFile {
+  path: string
+  name: string
+  content: string
+}
+
+interface FileDrawerProps {
+  file: ViewedFile | null
+  onClose: () => void
+  onPin: () => void
+  onCopy: () => void
+}
+
+export default function FileDrawer({ file, onClose, onPin, onCopy }: FileDrawerProps) {
+  const isOpen = !!file
+
+  return (
+    <>
+      {/* Overlay */}
+      <div
+        className={`fixed right-0 top-12 bottom-0 bg-black/40 z-40 transition-opacity ${
+          isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+        style={{ left: '18rem' }}
+        onClick={onClose}
+      />
+
+      {/* Drawer */}
+      <aside
+        className={`fixed top-12 h-[calc(100%-3rem)] bg-surface border-r border-border z-50 flex flex-col shadow-2xl drawer transition-transform duration-250 ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+        style={{
+          left: '18rem',
+          width: 'calc(50vw - 9rem)',
+          minWidth: '320px',
+          transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+        }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <svg
+              className="w-4 h-4 text-text-tertiary flex-shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+            </svg>
+            <span className="text-sm text-text-primary font-mono truncate">
+              {file?.name}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={onCopy}
+              className="px-2 py-1.5 rounded-md text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+              title="Copy content"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onPin}
+              className="px-2 py-1.5 rounded-md text-xs text-accent hover:text-accent-hover hover:bg-surface-hover transition-colors"
+              title="Pin side-by-side"
+            >
+              <Pin className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-auto p-4">
+          {file && <FileContent content={file.content} />}
+        </div>
+      </aside>
+    </>
+  )
+}
+
+function FileContent({ content }: { content: string }) {
+  const lines = content.split('\n')
+
+  return (
+    <div className="flex">
+      <div className="text-right pr-4 text-[11px] text-text-tertiary select-none font-mono" style={{ minWidth: '2rem' }}>
+        {lines.map((_, i) => (
+          <div key={i}>{i + 1}</div>
+        ))}
+      </div>
+      <div className="flex-1 overflow-x-auto">
+        <pre className="text-[13px] font-mono leading-relaxed text-text-primary whitespace-pre-wrap">
+          {content}
+        </pre>
+      </div>
+    </div>
+  )
+}

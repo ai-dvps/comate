@@ -27,10 +27,11 @@ interface TreeNodeProps {
   path: string
   workspaceId: string
   onFileClick: (path: string, name: string) => void
+  onFileDoubleClick?: (path: string, name: string) => void
   level: number
 }
 
-function TreeNode({ node, path, workspaceId, onFileClick, level }: TreeNodeProps) {
+function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, level }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
@@ -89,6 +90,7 @@ function TreeNode({ node, path, workspaceId, onFileClick, level }: TreeNodeProps
                   path={nodePath}
                   workspaceId={workspaceId}
                   onFileClick={onFileClick}
+                  onFileDoubleClick={onFileDoubleClick}
                   level={level + 1}
                 />
               ))
@@ -103,6 +105,7 @@ function TreeNode({ node, path, workspaceId, onFileClick, level }: TreeNodeProps
     <div
       className="flex items-center gap-1.5 py-1 px-2 hover:bg-surface-hover rounded-lg cursor-pointer text-xs"
       onClick={() => onFileClick(nodePath, node.name)}
+      onDoubleClick={() => onFileDoubleClick?.(nodePath, node.name)}
       style={{ paddingLeft: `${level * 12 + 8}px` }}
     >
       <span className="w-3 flex-shrink-0" />
@@ -114,9 +117,10 @@ function TreeNode({ node, path, workspaceId, onFileClick, level }: TreeNodeProps
 
 interface FileExplorerProps {
   onFileClick: (path: string, name: string) => void
+  onFileDoubleClick?: (path: string, name: string) => void
 }
 
-export default function FileExplorer({ onFileClick }: FileExplorerProps) {
+export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExplorerProps) {
   const { activeWorkspaceId } = useWorkspaceStore()
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
@@ -175,6 +179,7 @@ export default function FileExplorer({ onFileClick }: FileExplorerProps) {
           path=""
           workspaceId={activeWorkspaceId}
           onFileClick={onFileClick}
+          onFileDoubleClick={onFileDoubleClick}
           level={0}
         />
       ))}

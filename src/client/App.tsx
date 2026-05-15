@@ -3,10 +3,12 @@ import Sidebar from './components/Sidebar'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
+import FileDrawer from './components/FileDrawer'
+import FilePanel from './components/FilePanel'
 import { useWorkspaceStore } from './stores/workspace-store'
-import { X, Copy, Settings } from 'lucide-react'
+import { Settings } from 'lucide-react'
 
-interface ViewedFile {
+export interface ViewedFile {
   path: string
   name: string
   content: string
@@ -14,29 +16,45 @@ interface ViewedFile {
 
 function App() {
   const { workspaces, activeWorkspaceId } = useWorkspaceStore()
-  const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
-  const [viewedFile, setViewedFile] = useState<ViewedFile | null>(null)
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
+  const [drawerFile, setDrawerFile] = useState<ViewedFile | null>(null)
+  const [pinnedFile, setPinnedFile] = useState<ViewedFile | null>(null)
   const [showSettings, setShowSettings] = useState(false)
 
   const handleFileClick = async (path: string, name: string) => {
     if (!activeWorkspaceId) return
     try {
-      const res = await fetch(`/api/workspaces/${activeWorkspaceId}/files/content?path=${encodeURIComponent(path)}`)
+      const res = await fetch(
+        `/api/workspaces/${activeWorkspaceId}/files/content?path=${encodeURIComponent(path)}`
+      )
       if (!res.ok) throw new Error('Failed to load file')
       const data = await res.json()
-      if (data.isBinary) {
-        setViewedFile({ path, name, content: '[Binary file]' })
-      } else {
-        setViewedFile({ path, name, content: data.content })
+      const file: ViewedFile = {
+        path,
+        name,
+        content: data.isBinary ? '[Binary file]' : data.content,
       }
+      setDrawerFile(file)
     } catch (err) {
       console.error('Failed to load file:', err)
     }
   }
 
-  const copyFileContent = () => {
-    if (viewedFile?.content) {
-      navigator.clipboard.writeText(viewedFile.content)
+  const handleFileDoubleClick = (_path: string, name: string) => {
+    // Placeholder for attach behavior (deferred per plan)
+    console.log(`Double-clicked file: ${name} — attach to chat context (deferred)`)
+  }
+
+  const copyFileContent = (file: ViewedFile | null) => {
+    if (file?.content) {
+      navigator.clipboard.writeText(file.content)
+    }
+  }
+
+  const handlePinDrawer = () => {
+    if (drawerFile) {
+      setPinnedFile(drawerFile)
+      setDrawerFile(null)
     }
   }
 
@@ -66,42 +84,21 @@ function App() {
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar onFileClick={handleFileClick} />
+        <Sidebar
+          onFileClick={handleFileClick}
+          onFileDoubleClick={handleFileDoubleClick}
+        />
 
-        {/* Main Area */}
+        {/* Optional pinned file panel */}
+        <FilePanel
+          file={pinnedFile}
+          onClose={() => setPinnedFile(null)}
+          onCopy={() => copyFileContent(pinnedFile)}
+        />
+
+        {/* Main Area — always ChatPanel */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {viewedFile ? (
-            <div className="flex flex-col h-full">
-              {/* File Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 flex-shrink-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm text-text-primary font-mono truncate">{viewedFile.name}</span>
-                </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <button
-                    onClick={copyFileContent}
-                    className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-                    title="Copy content"
-                  >
-                    <Copy className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setViewedFile(null)}
-                    className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-                    title="Close"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-              {/* File Content */}
-              <div className="flex-1 overflow-auto p-4">
-                <pre className="text-[13px] font-mono leading-relaxed text-text-primary whitespace-pre-wrap">
-                  {viewedFile.content}
-                </pre>
-              </div>
-            </div>
-          ) : activeWorkspace ? (
+          {activeWorkspace ? (
             <ChatPanel workspaceId={activeWorkspace.id} />
           ) : (
             <div className="flex items-center justify-center h-full">
@@ -110,6 +107,15 @@ function App() {
           )}
         </main>
       </div>
+
+      {/* File Drawer (overlay) */}
+      <FileDrawer
+        file={drawerFile}
+        onClose={() => setDrawerFile(null)}
+        onPin={handlePinDrawer}
+        onCopy={() => copyFileContent(drawerFile)}
+      />
+
       {showSettings && activeWorkspaceId && (
         <SettingsPanel
           workspaceId={activeWorkspaceId}

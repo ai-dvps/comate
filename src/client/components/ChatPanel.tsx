@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useChatStore } from '../stores/chat-store'
-import SessionSelector from './SessionSelector'
+import { useWorkspaceStore } from '../stores/workspace-store'
 import MessageList from './MessageList'
 import { Send } from 'lucide-react'
 
@@ -18,6 +18,12 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const fetchSessions = useChatStore((s) => s.fetchSessions)
   const createSession = useChatStore((s) => s.createSession)
   const sendMessage = useChatStore((s) => s.sendMessage)
+
+  const workspace = useWorkspaceStore((s) =>
+    s.workspaces.find((w) => w.id === workspaceId)
+  )
+  const activeSession = sessions.find((s) => s.id === activeSessionId)
+  const modelName = (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
 
   // Auto-fetch sessions when workspace changes
   useEffect(() => {
@@ -48,10 +54,13 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   return (
     <div className="flex flex-col h-full bg-bg">
       {/* Chat Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50 flex-shrink-0">
-        <SessionSelector workspaceId={workspaceId} />
-        <div className="text-xs text-text-tertiary">
-          {sessions.length} session{sessions.length !== 1 ? 's' : ''}
+      <div className="flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-text-primary">
+            {activeSession?.name || 'No session'}
+          </span>
+          <span className="text-text-tertiary">/</span>
+          <span className="text-xs text-text-tertiary">{modelName}</span>
         </div>
       </div>
 
@@ -67,30 +76,36 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       </div>
 
       {/* Input Area */}
-      <div className="px-4 py-3 border-t border-border/50 flex-shrink-0">
-        <div className="flex items-end gap-2 bg-surface rounded-xl border border-border/50 focus-within:border-accent/50 transition-colors">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask Claude anything..."
-            rows={1}
-            disabled={isStreaming || !activeSessionId}
-            className="flex-1 bg-transparent px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none max-h-32"
-            style={{ minHeight: '44px' }}
-          />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isStreaming || !activeSessionId}
-            className="mb-2 mr-2 p-2 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
-          >
-            <Send className="w-4 h-4" />
-          </button>
+      <div className="flex-shrink-0 border-t border-border/30 bg-bg">
+        <div className="max-w-3xl mx-auto px-4 py-4">
+          <div className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask Claude anything about your code..."
+              rows={1}
+              disabled={isStreaming || !activeSessionId}
+              className="w-full bg-transparent border-0 rounded-xl px-4 py-3.5 pr-12 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 max-h-32"
+              style={{ minHeight: '44px' }}
+            />
+            <div className="absolute right-2 bottom-2 flex items-center gap-1">
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || isStreaming || !activeSessionId}
+                className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center justify-between mt-1.5 px-1">
+            <span className="text-[11px] text-text-tertiary">
+              Enter to send, Shift+Enter for new line
+            </span>
+          </div>
         </div>
-        <p className="text-[10px] text-text-tertiary mt-1.5 px-1">
-          Press Enter to send, Shift+Enter for new line
-        </p>
       </div>
     </div>
   )

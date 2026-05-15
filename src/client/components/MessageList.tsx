@@ -10,7 +10,8 @@ export default function MessageList({ sessionId }: MessageListProps) {
   const isStreaming = useChatStore((s) => s.isStreaming[sessionId])
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div className="flex-1 overflow-y-auto">
+      <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
       {messages.length === 0 && (
         <div className="flex items-center justify-center h-full">
           <div className="text-center">
@@ -73,6 +74,7 @@ export default function MessageList({ sessionId }: MessageListProps) {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
