@@ -2,6 +2,7 @@ import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
 import { store } from '../storage/json-store.js';
+import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { SdkClient } from './sdk-client.js';
 
 export interface MessageStream {
@@ -43,7 +44,7 @@ export class ChatService {
       throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
     }
 
-    const workspace = await store.get(session.workspaceId);
+    const workspace = await workspaceStore.get(session.workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
     }

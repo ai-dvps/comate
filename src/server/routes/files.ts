@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { readdir, readFile, stat } from 'fs/promises';
 import path from 'path';
-import { store } from '../storage/json-store.js';
+import { store } from '../storage/sqlite-store.js';
 
 const router = Router({ mergeParams: true });
 

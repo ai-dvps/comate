@@ -5,8 +5,9 @@ import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import FileDrawer from './components/FileDrawer'
 import FilePanel from './components/FilePanel'
+import HeaderToolbar from './components/HeaderToolbar'
+import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import { useWorkspaceStore } from './stores/workspace-store'
-import { Settings } from 'lucide-react'
 
 export interface ViewedFile {
   path: string
@@ -20,6 +21,7 @@ function App() {
   const [drawerFile, setDrawerFile] = useState<ViewedFile | null>(null)
   const [pinnedFile, setPinnedFile] = useState<ViewedFile | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   const handleFileClick = async (path: string, name: string) => {
     if (!activeWorkspaceId) return
@@ -71,15 +73,11 @@ function App() {
           </div>
           <WorkspaceTabs />
         </div>
-        {activeWorkspace && (
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-            title="Workspace settings"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-        )}
+        <HeaderToolbar
+          onCreateWorkspace={() => setShowCreateModal(true)}
+          onOpenSettings={() => setShowSettings(true)}
+          canOpenSettings={!!activeWorkspace}
+        />
       </header>
 
       {/* Main Content */}
@@ -120,6 +118,12 @@ function App() {
         <SettingsPanel
           workspaceId={activeWorkspaceId}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {showCreateModal && (
+        <CreateWorkspaceModal
+          onClose={() => setShowCreateModal(false)}
         />
       )}
     </div>

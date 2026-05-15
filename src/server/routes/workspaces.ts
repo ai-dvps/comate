@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { store } from '../storage/json-store.js';
+import { store } from '../storage/sqlite-store.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
 const router = Router();
