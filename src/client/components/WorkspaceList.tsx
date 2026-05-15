@@ -3,7 +3,7 @@ import { useWorkspaceStore } from '../stores/workspace-store';
 import { Folder, Plus, X } from 'lucide-react';
 
 export default function WorkspaceList() {
-  const { workspaces, activeWorkspaceId, isLoading, error, fetchWorkspaces, createWorkspace, setActiveWorkspace, clearError } = useWorkspaceStore();
+  const { workspaces, activeWorkspaceId, isLoading, error, fetchWorkspaces, createWorkspace, openWorkspace, clearError } = useWorkspaceStore();
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPath, setNewPath] = useState('');
@@ -25,7 +25,7 @@ export default function WorkspaceList() {
       setNewPath('');
       setNewDesc('');
       setIsCreating(false);
-      setActiveWorkspace(ws.id);
+      openWorkspace(ws.id);
     }
   };
 
@@ -101,7 +101,7 @@ export default function WorkspaceList() {
           workspaces.map((ws) => (
             <button
               key={ws.id}
-              onClick={() => setActiveWorkspace(ws.id)}
+              onClick={() => openWorkspace(ws.id)}
               className={`w-full flex items-center gap-2 px-4 py-2.5 text-left transition-colors ${
                 activeWorkspaceId === ws.id
                   ? 'bg-surface-active text-text-primary'

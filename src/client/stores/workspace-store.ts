@@ -16,12 +16,15 @@ export interface Workspace {
 interface WorkspaceState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
+  openWorkspaceIds: string[];
   isLoading: boolean;
   error: string | null;
 
   fetchWorkspaces: () => Promise<void>;
   createWorkspace: (input: { name: string; folderPath: string; description?: string }) => Promise<Workspace | null>;
   setActiveWorkspace: (id: string | null) => void;
+  openWorkspace: (id: string) => void;
+  closeWorkspace: (id: string) => void;
   clearError: () => void;
 }
 
@@ -30,6 +33,7 @@ const API_BASE = '/api';
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   activeWorkspaceId: null,
+  openWorkspaceIds: [],
   isLoading: false,
   error: null,
 
@@ -69,6 +73,37 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setActiveWorkspace: (id) => {
     set({ activeWorkspaceId: id });
+  },
+
+  openWorkspace: (id) => {
+    const { openWorkspaceIds, activeWorkspaceId } = get();
+    if (openWorkspaceIds.includes(id)) {
+      // Already open, just focus it
+      if (activeWorkspaceId !== id) {
+        set({ activeWorkspaceId: id });
+      }
+      return;
+    }
+    set({
+      openWorkspaceIds: [...openWorkspaceIds, id],
+      activeWorkspaceId: id,
+    });
+  },
+
+  closeWorkspace: (id) => {
+    const { openWorkspaceIds, activeWorkspaceId } = get();
+    const newOpenIds = openWorkspaceIds.filter(wsId => wsId !== id);
+
+    let newActiveId = activeWorkspaceId;
+    if (activeWorkspaceId === id) {
+      // If closing the active workspace, focus another open one
+      newActiveId = newOpenIds.length > 0 ? newOpenIds[newOpenIds.length - 1] : null;
+    }
+
+    set({
+      openWorkspaceIds: newOpenIds,
+      activeWorkspaceId: newActiveId,
+    });
   },
 
   clearError: () => {
