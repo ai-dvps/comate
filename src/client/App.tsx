@@ -1,10 +1,41 @@
-import WorkspaceList from './components/WorkspaceList'
+import { useState } from 'react'
+import Sidebar from './components/Sidebar'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import { useWorkspaceStore } from './stores/workspace-store'
+import { X, Copy } from 'lucide-react'
+
+interface ViewedFile {
+  path: string
+  name: string
+  content: string
+}
 
 function App() {
   const { workspaces, activeWorkspaceId } = useWorkspaceStore()
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
+  const [viewedFile, setViewedFile] = useState<ViewedFile | null>(null)
+
+  const handleFileClick = async (path: string, name: string) => {
+    if (!activeWorkspaceId) return
+    try {
+      const res = await fetch(`/api/workspaces/${activeWorkspaceId}/files/content?path=${encodeURIComponent(path)}`)
+      if (!res.ok) throw new Error('Failed to load file')
+      const data = await res.json()
+      if (data.isBinary) {
+        setViewedFile({ path, name, content: '[Binary file]' })
+      } else {
+        setViewedFile({ path, name, content: data.content })
+      }
+    } catch (err) {
+      console.error('Failed to load file:', err)
+    }
+  }
+
+  const copyFileContent = () => {
+    if (viewedFile?.content) {
+      navigator.clipboard.writeText(viewedFile.content)
+    }
+  }
 
   return (
     <div className="h-screen flex flex-col bg-bg text-text-primary text-sm">
@@ -23,20 +54,53 @@ function App() {
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        <WorkspaceList />
+        <Sidebar onFileClick={handleFileClick} />
 
         {/* Main Area */}
-        <main className="flex-1 flex items-center justify-center">
-          {activeWorkspace ? (
-            <div className="text-center">
-              <h2 className="text-lg font-medium text-text-primary mb-2">{activeWorkspace.name}</h2>
-              <p className="text-sm text-text-secondary">{activeWorkspace.folderPath}</p>
-              {activeWorkspace.description && (
-                <p className="text-xs text-text-tertiary mt-2">{activeWorkspace.description}</p>
-              )}
+        <main className="flex-1 flex flex-col overflow-hidden">
+          {viewedFile ? (
+            <div className="flex flex-col h-full">
+              {/* File Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 flex-shrink-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm text-text-primary font-mono truncate">{viewedFile.name}</span>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button
+                    onClick={copyFileContent}
+                    className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+                    title="Copy content"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setViewedFile(null)}
+                    className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+                    title="Close"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              {/* File Content */}
+              <div className="flex-1 overflow-auto p-4">
+                <pre className="text-[13px] font-mono leading-relaxed text-text-primary whitespace-pre-wrap">
+                  {viewedFile.content}
+                </pre>
+              </div>
+            </div>
+          ) : activeWorkspace ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <h2 className="text-lg font-medium text-text-primary mb-2">{activeWorkspace.name}</h2>
+                <p className="text-sm text-text-secondary">{activeWorkspace.folderPath}</p>
+                {activeWorkspace.description && (
+                  <p className="text-xs text-text-tertiary mt-2">{activeWorkspace.description}</p>
+                )}
+              </div>
             </div>
           ) : (
-            <div className="text-center">
+            <div className="flex items-center justify-center h-full">
               <p className="text-text-secondary">Select or create a workspace to get started</p>
             </div>
           )}

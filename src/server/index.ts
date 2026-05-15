@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import workspaceRoutes from './routes/workspaces.js';
+import fileRoutes from './routes/files.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,7 +16,7 @@ app.use(express.json());
 
 // API routes
 app.use('/api/workspaces', workspaceRoutes);
-// app.use('/api/files', fileRoutes);
+app.use('/api/workspaces/:id/files', fileRoutes);
 // app.use('/api/chat', chatRoutes);
 
 // Health check
