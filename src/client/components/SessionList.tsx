@@ -17,6 +17,17 @@ function formatRelativeDate(dateStr: string): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function getSessionDisplayName(session: import('../stores/chat-store').ChatSession): string {
+  return session.customTitle || session.summary || session.name
+}
+
+function getSessionTimestamp(session: import('../stores/chat-store').ChatSession): string {
+  if (session.lastModified) {
+    return formatRelativeDate(new Date(session.lastModified).toISOString())
+  }
+  return formatRelativeDate(session.updatedAt)
+}
+
 interface SessionListProps {
   workspaceId: string
 }
@@ -133,20 +144,27 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                   }`}
                 />
                 <div className="flex-1 min-w-0">
-                  <p
-                    className={`text-xs truncate ${
-                      session.id === activeSessionId
-                        ? 'text-text-primary font-medium'
-                        : 'text-text-secondary'
-                    }`}
-                  >
-                    {session.name}
-                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <p
+                      className={`text-xs truncate ${
+                        session.id === activeSessionId
+                          ? 'text-text-primary font-medium'
+                          : 'text-text-secondary'
+                      }`}
+                    >
+                      {getSessionDisplayName(session)}
+                    </p>
+                    {session.isDraft && (
+                      <span className="px-1 py-0.5 text-[9px] bg-yellow-500/20 text-yellow-500 rounded">
+                        Draft
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[11px] text-text-tertiary truncate mt-0.5">
                     {getPreview(session.id)}
                   </p>
                   <p className="text-[10px] text-text-tertiary/60 mt-1">
-                    {formatRelativeDate(session.updatedAt)}
+                    {getSessionTimestamp(session)}
                   </p>
                 </div>
                 {session.id === activeSessionId ? (

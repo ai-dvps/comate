@@ -4,9 +4,14 @@ export interface ChatSession {
   id: string
   workspaceId: string
   name: string
-  sdkSessionId?: string
+  isDraft?: boolean
   createdAt: string
   updatedAt: string
+  summary?: string
+  lastModified?: number
+  firstPrompt?: string
+  gitBranch?: string
+  customTitle?: string
 }
 
 export interface ChatMessage {
@@ -23,11 +28,13 @@ interface ChatState {
   activeSessionIds: Record<string, string>
   isStreaming: Record<string, boolean>
   isLoadingSessions: boolean
+  isLoadingMessages: boolean
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
   deleteSession: (sessionId: string, workspaceId: string) => Promise<void>
   setActiveSession: (workspaceId: string, sessionId: string) => void
+  loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
   sendMessage: (workspaceId: string, sessionId: string, content: string) => void
   clearMessages: (sessionId: string) => void
 }
@@ -86,6 +93,7 @@ export const useChatStore = create<ChatState>((set) => ({
   activeSessionIds: {},
   isStreaming: {},
   isLoadingSessions: false,
+  isLoadingMessages: false,
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -153,6 +161,47 @@ export const useChatStore = create<ChatState>((set) => ({
     set((state) => ({
       activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
     }))
+  },
+
+  loadMessages: async (workspaceId: string, sessionId: string) => {
+    try {
+      set({ isLoadingMessages: true })
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
+      if (!res.ok) throw new Error('Failed to load messages')
+      const data = await res.json()
+      const sdkMessages = data.messages || []
+
+      // Map SDK SessionMessage to app's ChatMessage format
+      const mappedMessages: ChatMessage[] = sdkMessages.map((msg: Record<string, unknown>, index: number) => {
+        const rawMsg = msg.message as Record<string, unknown> | undefined
+        let content = ''
+        if (rawMsg && Array.isArray(rawMsg.content)) {
+          for (const block of rawMsg.content) {
+            const b = block as { type?: string; text?: string }
+            if (b.type === 'text' && b.text) {
+              content += b.text
+            }
+          }
+        } else if (rawMsg && typeof rawMsg.content === 'string') {
+          content = rawMsg.content
+        }
+
+        return {
+          id: `${msg.uuid || index}`,
+          role: msg.type === 'user' ? 'user' : 'assistant',
+          content,
+          timestamp: Date.now() - (sdkMessages.length - index) * 1000, // Approximate ordering
+        }
+      })
+
+      set((state) => ({
+        messages: { ...state.messages, [sessionId]: mappedMessages },
+        isLoadingMessages: false,
+      }))
+    } catch (err) {
+      console.error('Failed to load messages:', err)
+      set({ isLoadingMessages: false })
+    }
   },
 
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {

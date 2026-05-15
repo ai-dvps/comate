@@ -1,0 +1,95 @@
+import { useEffect, useRef, useState } from 'react'
+import { Check, LayoutGrid } from 'lucide-react'
+import { useWorkspaceStore } from '../stores/workspace-store'
+
+export default function WorkspaceSwitcher() {
+  const [isOpen, setIsOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsOpen(false)
+    }
+
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen])
+
+  const handleSelect = (id: string) => {
+    openWorkspace(id)
+    setIsOpen(false)
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        title="Switch workspace"
+        aria-expanded={isOpen}
+      >
+        <LayoutGrid className="w-4 h-4" />
+      </button>
+
+      {isOpen && (
+        <div
+          className="absolute top-full left-0 mt-1 z-40 w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden"
+        >
+          <div className="px-3 py-2 border-b border-border/50">
+            <span className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">
+              Workspaces
+            </span>
+          </div>
+          <div className="max-h-72 overflow-y-auto py-1">
+            {workspaces.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-text-tertiary text-center">
+                No workspaces yet
+              </div>
+            ) : (
+              workspaces.map((ws) => {
+                const isOpenTab = openWorkspaceIds.includes(ws.id)
+                const isActive = activeWorkspaceId === ws.id
+                return (
+                  <button
+                    key={ws.id}
+                    onClick={() => handleSelect(ws.id)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-left transition-colors ${
+                      isActive
+                        ? 'bg-surface-active text-text-primary'
+                        : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                    }`}
+                  >
+                    <span className="truncate flex-1">{ws.name}</span>
+                    {isOpenTab && (
+                      <Check
+                        className={`w-3.5 h-3.5 flex-shrink-0 ${
+                          isActive ? 'text-accent' : 'text-text-tertiary'
+                        }`}
+                      />
+                    )}
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

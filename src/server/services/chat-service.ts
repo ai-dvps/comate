@@ -1,14 +1,14 @@
-import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
-import { store } from '../storage/json-store.js';
+import { store as draftStore } from '../storage/json-store.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { SdkClient } from './sdk-client.js';
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
-  sessionIdPromise: Promise<string | undefined>;
   rawQuery: Query;
+  wasDraft: boolean;
 }
 
 export class ChatService {
@@ -16,62 +16,156 @@ export class ChatService {
 
   // Session management
 
-  async createSession(input: CreateSessionInput): Promise<ChatSession> {
-    return store.createSession(input);
-  }
-
   async listSessions(workspaceId: string): Promise<ChatSession[]> {
-    return store.listSessions(workspaceId);
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+    }
+
+    // Discover SDK sessions for this workspace directory
+    let sdkSessions: ChatSession[] = [];
+    try {
+      const sessions = await this.sdkClient.listSessions({ dir: workspace.folderPath });
+      sdkSessions = sessions.map((s) => this.mapSdkSessionInfo(s, workspaceId));
+    } catch (err) {
+      console.error('Failed to list SDK sessions:', err);
+      // Continue with drafts even if SDK listing fails
+    }
+
+    // Merge with local draft sessions
+    const drafts = await draftStore.listDrafts(workspaceId);
+    // Filter out drafts that have already been promoted to SDK sessions
+    const draftIds = new Set(sdkSessions.map((s) => s.id));
+    const activeDrafts = drafts.filter((d) => !draftIds.has(d.id));
+
+    return [...activeDrafts, ...sdkSessions];
   }
 
-  async getSession(id: string): Promise<ChatSession | null> {
-    return store.getSession(id);
+  async createSession(input: CreateSessionInput): Promise<ChatSession> {
+    return draftStore.createDraft(input);
   }
 
-  async updateSession(id: string, input: UpdateSessionInput): Promise<ChatSession | null> {
-    return store.updateSession(id, input);
+  async getSession(id: string, workspaceId: string): Promise<ChatSession | null> {
+    // Try SDK first
+    const workspace = await workspaceStore.get(workspaceId);
+    if (workspace) {
+      try {
+        const sdkSession = await this.sdkClient.getSessionInfo(id, { dir: workspace.folderPath });
+        if (sdkSession) {
+          return this.mapSdkSessionInfo(sdkSession, workspaceId);
+        }
+      } catch {
+        // Ignore SDK errors, fall back to draft lookup
+      }
+    }
+
+    // Fall back to draft
+    return draftStore.getDraft(id);
   }
 
-  async deleteSession(id: string): Promise<boolean> {
-    return store.deleteSession(id);
+  async updateSession(id: string, input: UpdateSessionInput, workspaceId: string): Promise<ChatSession | null> {
+    // Check if it's a draft
+    const draft = await draftStore.getDraft(id);
+    if (draft) {
+      const updated = await draftStore.updateDraft(id, input);
+      return updated;
+    }
+
+    // Otherwise rename the SDK session
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+    }
+
+    if (input.name) {
+      await this.sdkClient.renameSession(id, input.name, { dir: workspace.folderPath });
+    }
+
+    // Return updated session info
+    const sdkSession = await this.sdkClient.getSessionInfo(id, { dir: workspace.folderPath });
+    if (sdkSession) {
+      return this.mapSdkSessionInfo(sdkSession, workspaceId);
+    }
+    return null;
+  }
+
+  async deleteSession(id: string, workspaceId: string): Promise<boolean> {
+    // Try draft first
+    const draftDeleted = await draftStore.deleteDraft(id);
+    if (draftDeleted) return true;
+
+    // Otherwise delete SDK session
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+    }
+
+    try {
+      await this.sdkClient.deleteSession(id, { dir: workspace.folderPath });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async clearDraftFlag(id: string): Promise<boolean> {
+    return draftStore.clearDraftFlag(id);
+  }
+
+  // Message history loading
+
+  async loadMessages(sessionId: string, workspaceId: string): Promise<SessionMessage[]> {
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+    }
+
+    return this.sdkClient.getSessionMessages(sessionId, { dir: workspace.folderPath });
   }
 
   // Message streaming
 
   async sendMessage(sessionId: string, message: string): Promise<MessageStream> {
-    const session = await store.getSession(sessionId);
+    const workspace = await this.findWorkspaceForSession(sessionId);
+    if (!workspace) {
+      throw new ChatError('Workspace not found for session', 'WORKSPACE_NOT_FOUND', 404);
+    }
+
+    const session = await this.getSession(sessionId, workspace.id);
     if (!session) {
       throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
     }
 
-    const workspace = await workspaceStore.get(session.workspaceId);
-    if (!workspace) {
-      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
-    }
-
-    const options = this.buildSdkOptions(workspace, session.sdkSessionId);
+    const options = this.buildSdkOptions(workspace, session);
     const { query, messages: rawMessages } = this.sdkClient.createQuery(message, options);
 
-    let resolveSessionId: (value: string | undefined) => void;
-    const sessionIdPromise = new Promise<string | undefined>((resolve) => {
-      resolveSessionId = resolve;
-    });
+    const messages = this.wrapStream(rawMessages);
 
-    const messages = this.wrapStream(rawMessages, resolveSessionId!);
-
-    // Auto-persist SDK session ID when captured
-    sessionIdPromise.then((sdkSessionId) => {
-      if (sdkSessionId && sdkSessionId !== session.sdkSessionId) {
-        store.updateSession(sessionId, { sdkSessionId }).catch((err) => {
-          console.error('Failed to persist SDK session ID:', err);
-        });
-      }
-    });
-
-    return { messages, sessionIdPromise, rawQuery: query };
+    return { messages, rawQuery: query, wasDraft: !!session.isDraft };
   }
 
-  private buildSdkOptions(workspace: Workspace, sdkSessionId?: string): import('@anthropic-ai/claude-agent-sdk').Options {
+  private async findWorkspaceForSession(sessionId: string): Promise<Workspace | null> {
+    // Check drafts first
+    const draft = await draftStore.getDraft(sessionId);
+    if (draft) {
+      return workspaceStore.get(draft.workspaceId);
+    }
+
+    // Search all workspaces for SDK session
+    const workspaces = await workspaceStore.list();
+    for (const ws of workspaces) {
+      try {
+        const info = await this.sdkClient.getSessionInfo(sessionId, { dir: ws.folderPath });
+        if (info) return ws;
+      } catch {
+        // Continue searching
+      }
+    }
+
+    return null;
+  }
+
+  private buildSdkOptions(workspace: Workspace, session: ChatSession): import('@anthropic-ai/claude-agent-sdk').Options {
     const env: Record<string, string | undefined> = { ...process.env };
     if (workspace.settings.apiKey) {
       env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
@@ -93,8 +187,13 @@ export class ChatService {
       model: workspace.settings.model || undefined,
     };
 
-    if (sdkSessionId) {
-      options.resume = sdkSessionId;
+    if (session.isDraft) {
+      // First message to a draft session — create a new SDK session with our ID
+      options.sessionId = session.id;
+      options.title = session.name;
+    } else {
+      // Resume existing SDK session
+      options.resume = session.id;
     }
 
     return options;
@@ -102,22 +201,26 @@ export class ChatService {
 
   private async *wrapStream(
     stream: AsyncGenerator<SDKMessage>,
-    resolveSessionId: (value: string | undefined) => void,
   ): AsyncGenerator<SDKMessage> {
-    let captured = false;
-    try {
-      for await (const msg of stream) {
-        if (!captured && msg.session_id) {
-          captured = true;
-          resolveSessionId(msg.session_id);
-        }
-        yield msg;
-      }
-    } finally {
-      if (!captured) {
-        resolveSessionId(undefined);
-      }
+    for await (const msg of stream) {
+      yield msg;
     }
+  }
+
+  private mapSdkSessionInfo(sdkSession: SDKSessionInfo, workspaceId: string): ChatSession {
+    return {
+      id: sdkSession.sessionId,
+      workspaceId,
+      name: sdkSession.customTitle || sdkSession.summary || 'Untitled Session',
+      isDraft: false,
+      createdAt: sdkSession.createdAt ? new Date(sdkSession.createdAt).toISOString() : new Date().toISOString(),
+      updatedAt: sdkSession.lastModified ? new Date(sdkSession.lastModified).toISOString() : new Date().toISOString(),
+      summary: sdkSession.summary,
+      lastModified: sdkSession.lastModified,
+      firstPrompt: sdkSession.firstPrompt,
+      gitBranch: sdkSession.gitBranch,
+      customTitle: sdkSession.customTitle,
+    };
   }
 }
 

@@ -12,6 +12,10 @@ router.get('/sessions', async (req, res) => {
     res.json({ sessions });
   } catch (error) {
     console.error('Failed to list sessions:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
     res.status(500).json({ error: 'Failed to list sessions' });
   }
 });
@@ -38,7 +42,8 @@ router.post('/sessions', async (req, res) => {
 // DELETE /api/workspaces/:id/sessions/:sessionId
 router.delete('/sessions/:sessionId', async (req, res) => {
   try {
-    const deleted = await chatService.deleteSession(req.params.sessionId);
+    const workspaceId = (req.params as unknown as { id: string }).id;
+    const deleted = await chatService.deleteSession(req.params.sessionId, workspaceId);
     if (!deleted) {
       res.status(404).json({ error: 'Session not found' });
       return;
@@ -46,7 +51,28 @@ router.delete('/sessions/:sessionId', async (req, res) => {
     res.status(204).send();
   } catch (error) {
     console.error('Failed to delete session:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
     res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
+// GET /api/workspaces/:id/sessions/:sessionId/messages
+router.get('/sessions/:sessionId/messages', async (req, res) => {
+  try {
+    const workspaceId = (req.params as unknown as { id: string }).id;
+    const sessionId = req.params.sessionId;
+    const messages = await chatService.loadMessages(sessionId, workspaceId);
+    res.json({ messages });
+  } catch (error) {
+    console.error('Failed to load messages:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to load messages' });
   }
 });
 
@@ -71,7 +97,7 @@ function formatMessage(msg: SDKMessage): ClientMessage | null {
       return { type: 'assistant', data: { text, uuid: msg.uuid } };
     }
     case 'stream_event': {
-      const event = msg.event as Record<string, unknown>;
+      const event = (msg.event as unknown) as Record<string, unknown>;
       if (event.type === 'content_block_delta') {
         const delta = event.delta as Record<string, unknown>;
         if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
@@ -158,6 +184,13 @@ router.post('/sessions/:sessionId/chat', async (req, res) => {
     }
 
     res.end();
+
+    // After stream completes, clear draft flag if this was a draft session
+    if (stream.wasDraft) {
+      chatService.clearDraftFlag(sessionId).catch((err) => {
+        console.error('Failed to clear draft flag:', err);
+      });
+    }
   } catch (error) {
     if (error instanceof ChatError) {
       res.status(error.statusCode).json({ error: error.message, code: error.code });

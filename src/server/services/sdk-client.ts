@@ -1,5 +1,22 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query, Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  listSessions,
+  getSessionInfo,
+  getSessionMessages,
+  renameSession,
+  deleteSession,
+} from '@anthropic-ai/claude-agent-sdk';
+import type {
+  Query,
+  Options,
+  SDKMessage,
+  ListSessionsOptions,
+  GetSessionInfoOptions,
+  GetSessionMessagesOptions,
+  SessionMutationOptions,
+  SDKSessionInfo,
+  SessionMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 
 export interface QueryResult {
   query: Query;
@@ -18,4 +35,46 @@ export class SdkClient {
 
     return { query: q, messages: messageGenerator() };
   }
+
+  async listSessions(options?: ListSessionsOptions): Promise<SDKSessionInfo[]> {
+    return listSessions(options);
+  }
+
+  async getSessionInfo(
+    sessionId: string,
+    options?: GetSessionInfoOptions,
+  ): Promise<SDKSessionInfo | undefined> {
+    return getSessionInfo(sessionId, options);
+  }
+
+  async getSessionMessages(
+    sessionId: string,
+    options?: GetSessionMessagesOptions,
+  ): Promise<SessionMessage[]> {
+    return getSessionMessages(sessionId, options);
+  }
+
+  async renameSession(
+    sessionId: string,
+    title: string,
+    options?: SessionMutationOptions,
+  ): Promise<void> {
+    return renameSession(sessionId, title, options);
+  }
+
+  async deleteSession(sessionId: string, options?: SessionMutationOptions): Promise<void> {
+    return deleteSession(sessionId, options);
+  }
 }
+
+export {
+  type Query,
+  type Options,
+  type SDKMessage,
+  type SDKSessionInfo,
+  type SessionMessage,
+  type ListSessionsOptions,
+  type GetSessionInfoOptions,
+  type GetSessionMessagesOptions,
+  type SessionMutationOptions,
+};

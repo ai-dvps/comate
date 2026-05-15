@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import WorkspaceTabs from './components/WorkspaceTabs'
+import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import FileDrawer from './components/FileDrawer'
@@ -16,12 +17,18 @@ export interface ViewedFile {
 }
 
 function App() {
-  const { workspaces, activeWorkspaceId } = useWorkspaceStore()
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces)
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const [drawerFile, setDrawerFile] = useState<ViewedFile | null>(null)
   const [pinnedFile, setPinnedFile] = useState<ViewedFile | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
+
+  useEffect(() => {
+    fetchWorkspaces()
+  }, [fetchWorkspaces])
 
   const handleFileClick = async (path: string, name: string) => {
     if (!activeWorkspaceId) return
@@ -71,6 +78,7 @@ function App() {
             </div>
             <span className="font-medium text-text-primary hidden sm:block">Claude Code</span>
           </div>
+          <WorkspaceSwitcher />
           <WorkspaceTabs />
         </div>
         <HeaderToolbar

@@ -15,9 +15,10 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
+  const isLoadingMessages = useChatStore((s) => s.isLoadingMessages)
   const fetchSessions = useChatStore((s) => s.fetchSessions)
-  const createSession = useChatStore((s) => s.createSession)
   const sendMessage = useChatStore((s) => s.sendMessage)
+  const loadMessages = useChatStore((s) => s.loadMessages)
 
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === workspaceId)
@@ -25,17 +26,15 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const modelName = (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
 
-  // Auto-fetch sessions when workspace changes
   useEffect(() => {
     fetchSessions(workspaceId)
   }, [workspaceId, fetchSessions])
 
-  // Auto-create first session if none exist
   useEffect(() => {
-    if (sessions.length === 0) {
-      createSession(workspaceId, 'Default Session')
+    if (activeSessionId && activeSession && !activeSession.isDraft) {
+      loadMessages(workspaceId, activeSessionId)
     }
-  }, [workspaceId, sessions.length, createSession])
+  }, [workspaceId, activeSessionId, activeSession, loadMessages])
 
   const handleSend = () => {
     if (!input.trim() || !activeSessionId || isStreaming) return
@@ -66,11 +65,19 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
 
       {/* Messages */}
       <div className="flex-1 overflow-hidden">
-        {activeSessionId ? (
+        {isLoadingMessages ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="flex gap-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+          </div>
+        ) : activeSessionId ? (
           <MessageList sessionId={activeSessionId} />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-text-secondary">Create a session to start chatting</p>
+            <p className="text-sm text-text-secondary">Select or create a session to start chatting</p>
           </div>
         )}
       </div>

@@ -2,9 +2,15 @@ export interface ChatSession {
   id: string;
   workspaceId: string;
   name: string;
-  sdkSessionId?: string;
+  isDraft?: boolean;
   createdAt: string;
   updatedAt: string;
+  // SDK-derived fields (populated when discovered via listSessions)
+  summary?: string;
+  lastModified?: number;
+  firstPrompt?: string;
+  gitBranch?: string;
+  customTitle?: string;
 }
 
 export interface CreateSessionInput {
@@ -14,5 +20,4 @@ export interface CreateSessionInput {
 
 export interface UpdateSessionInput {
   name?: string;
-  sdkSessionId?: string;
 }

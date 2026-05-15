@@ -5,9 +5,9 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 
 const STORAGE_DIR = join(homedir(), '.claude-code-gui');
-const SESSIONS_FILE = join(STORAGE_DIR, 'sessions.json');
+const DRAFTS_FILE = join(STORAGE_DIR, 'draft-sessions.json');
 
-interface SessionsData {
+interface DraftsData {
   sessions: ChatSession[];
 }
 
@@ -19,57 +19,56 @@ async function ensureStorage(): Promise<void> {
   }
 }
 
-async function readSessions(): Promise<SessionsData> {
+async function readDrafts(): Promise<DraftsData> {
   try {
-    const data = await readFile(SESSIONS_FILE, 'utf-8');
-    const parsed = JSON.parse(data) as SessionsData;
+    const data = await readFile(DRAFTS_FILE, 'utf-8');
+    const parsed = JSON.parse(data) as DraftsData;
     return { sessions: parsed.sessions || [] };
   } catch {
     return { sessions: [] };
   }
 }
 
-async function writeSessions(data: SessionsData): Promise<void> {
+async function writeDrafts(data: DraftsData): Promise<void> {
   await ensureStorage();
-  const tempFile = `${SESSIONS_FILE}.tmp`;
+  const tempFile = `${DRAFTS_FILE}.tmp`;
   await writeFile(tempFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-  await writeFile(SESSIONS_FILE, await readFile(tempFile, 'utf-8'), 'utf-8');
+  await writeFile(DRAFTS_FILE, await readFile(tempFile, 'utf-8'), 'utf-8');
 }
 
-export class JsonStore {
-  // Session methods only — workspaces have moved to SQLite
-
-  async listSessions(workspaceId?: string): Promise<ChatSession[]> {
-    const data = await readSessions();
+export class DraftSessionStore {
+  async listDrafts(workspaceId?: string): Promise<ChatSession[]> {
+    const data = await readDrafts();
     if (workspaceId) {
       return data.sessions.filter(s => s.workspaceId === workspaceId);
     }
     return data.sessions;
   }
 
-  async getSession(id: string): Promise<ChatSession | null> {
-    const data = await readSessions();
+  async getDraft(id: string): Promise<ChatSession | null> {
+    const data = await readDrafts();
     return data.sessions.find(s => s.id === id) || null;
   }
 
-  async createSession(input: CreateSessionInput): Promise<ChatSession> {
+  async createDraft(input: CreateSessionInput): Promise<ChatSession> {
     const now = new Date().toISOString();
     const session: ChatSession = {
       id: uuidv4(),
       workspaceId: input.workspaceId,
       name: input.name,
+      isDraft: true,
       createdAt: now,
       updatedAt: now,
     };
 
-    const data = await readSessions();
+    const data = await readDrafts();
     data.sessions.push(session);
-    await writeSessions(data);
+    await writeDrafts(data);
     return session;
   }
 
-  async updateSession(id: string, input: UpdateSessionInput): Promise<ChatSession | null> {
-    const data = await readSessions();
+  async updateDraft(id: string, input: UpdateSessionInput): Promise<ChatSession | null> {
+    const data = await readDrafts();
     const index = data.sessions.findIndex(s => s.id === id);
     if (index === -1) return null;
 
@@ -77,23 +76,37 @@ export class JsonStore {
     data.sessions[index] = {
       ...session,
       ...(input.name !== undefined && { name: input.name }),
-      ...(input.sdkSessionId !== undefined && { sdkSessionId: input.sdkSessionId }),
       updatedAt: new Date().toISOString(),
     };
 
-    await writeSessions(data);
+    await writeDrafts(data);
     return data.sessions[index];
   }
 
-  async deleteSession(id: string): Promise<boolean> {
-    const data = await readSessions();
+  async deleteDraft(id: string): Promise<boolean> {
+    const data = await readDrafts();
     const index = data.sessions.findIndex(s => s.id === id);
     if (index === -1) return false;
 
     data.sessions.splice(index, 1);
-    await writeSessions(data);
+    await writeDrafts(data);
+    return true;
+  }
+
+  async clearDraftFlag(id: string): Promise<boolean> {
+    const data = await readDrafts();
+    const index = data.sessions.findIndex(s => s.id === id);
+    if (index === -1) return false;
+
+    data.sessions[index] = {
+      ...data.sessions[index],
+      isDraft: false,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeDrafts(data);
     return true;
   }
 }
 
-export const store = new JsonStore();
+// Legacy export name for backward compatibility during transition
+export const store = new DraftSessionStore();

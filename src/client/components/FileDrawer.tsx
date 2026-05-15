@@ -14,29 +14,24 @@ interface FileDrawerProps {
 }
 
 export default function FileDrawer({ file, onClose, onPin, onCopy }: FileDrawerProps) {
-  const isOpen = !!file
+  if (!file) return null
 
   return (
     <>
       {/* Overlay */}
       <div
-        className={`fixed right-0 top-12 bottom-0 bg-black/40 z-40 transition-opacity ${
-          isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
+        className="fixed right-0 top-12 bottom-0 bg-black/40 z-40"
         style={{ left: '18rem' }}
         onClick={onClose}
       />
 
       {/* Drawer */}
       <aside
-        className={`fixed top-12 h-[calc(100%-3rem)] bg-surface border-r border-border z-50 flex flex-col shadow-2xl drawer transition-transform duration-250 ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        className="fixed top-12 h-[calc(100%-3rem)] bg-surface border-r border-border z-50 flex flex-col shadow-2xl drawer"
         style={{
           left: '18rem',
           width: 'calc(50vw - 9rem)',
           minWidth: '320px',
-          transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
         }}
       >
         {/* Header */}
@@ -56,7 +51,7 @@ export default function FileDrawer({ file, onClose, onPin, onCopy }: FileDrawerP
               />
             </svg>
             <span className="text-sm text-text-primary font-mono truncate">
-              {file?.name}
+              {file.name}
             </span>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
@@ -86,7 +81,7 @@ export default function FileDrawer({ file, onClose, onPin, onCopy }: FileDrawerP
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-4">
-          {file && <FileContent content={file.content} />}
+          <FileContent content={file.content} />
         </div>
       </aside>
     </>
