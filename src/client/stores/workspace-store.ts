@@ -25,6 +25,7 @@ interface WorkspaceState {
   setActiveWorkspace: (id: string | null) => void;
   openWorkspace: (id: string) => void;
   closeWorkspace: (id: string) => void;
+  updateWorkspace: (id: string, input: Partial<Omit<Workspace, 'id' | 'createdAt' | 'updatedAt'>>) => Promise<void>;
   clearError: () => void;
 }
 
@@ -104,6 +105,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       openWorkspaceIds: newOpenIds,
       activeWorkspaceId: newActiveId,
     });
+  },
+
+  updateWorkspace: async (id, input) => {
+    set({ isLoading: true, error: null });
+    try {
+      const res = await fetch(`${API_BASE}/workspaces/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update workspace');
+      }
+      const data = await res.json();
+      const updated = data.workspace as Workspace;
+      set({
+        workspaces: get().workspaces.map((w) => (w.id === id ? updated : w)),
+        isLoading: false,
+      });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'Unknown error', isLoading: false });
+    }
   },
 
   clearError: () => {

@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code GUI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg: '#0d0d0d',
+            surface: '#141414',
+            'surface-hover': '#1a1a1a',
+            'surface-active': '#1f1f1f',
+            border: '#262626',
+            'border-hover': '#333333',
+            accent: '#e57035',
+            'accent-hover': '#f08045',
+            'text-primary': '#f5f5f5',
+            'text-secondary': '#a3a3a3',
+            'text-tertiary': '#737373',
+            'msg-user': '#1a1a1a',
+            'msg-assistant': '#0d0d0d',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { scrollbar-width: thin; scrollbar-color: #333 transparent; }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #444; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .msg-enter { animation: fadeIn 0.25s ease-out; }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .streaming-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+    .code-block { position: relative; }
+    .code-block .copy-btn {
+      position: absolute; top: 6px; right: 6px;
+      opacity: 0; transition: opacity 0.15s;
+    }
+    .code-block:hover .copy-btn { opacity: 1; }
+
+    .chat-container {
+      max-width: 768px;
+      margin: 0 auto;
+    }
+
+    .input-ring:focus-within {
+      border-color: #404040;
+      box-shadow: 0 0 0 1px #404040;
+    }
+
+    .file-chip {
+      transition: all 0.15s ease;
+    }
+    .file-chip:hover {
+      background: #262626;
+    }
+
+    .tab-pill {
+      transition: all 0.15s ease;
+    }
+    .tab-pill.active {
+      background: #262626;
+      color: #f5f5f5;
+    }
+
+    .session-item {
+      transition: all 0.12s ease;
+    }
+    .session-item:hover {
+      background: #1a1a1a;
+    }
+    .session-item.active {
+      background: #1f1f1f;
+    }
+
+    .drawer {
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .drawer.closed { transform: translateX(-100%); }
+
+    .overlay {
+      transition: opacity 0.2s ease;
+    }
+    .overlay.hidden { opacity: 0; pointer-events: none; }
+
+    .action-bar {
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .msg-group:hover .action-bar { opacity: 1; }
+
+    .btn-ghost {
+      @apply p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors;
+    }
+
+    .sidebar-tab {
+      transition: all 0.15s ease;
+    }
+    .sidebar-tab.active {
+      color: #f5f5f5;
+      border-bottom: 2px solid #e57035;
+    }
+
+    .file-panel {
+      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+    }
+    .file-panel.closed {
+      width: 0;
+      opacity: 0;
+      overflow: hidden;
+    }
+
+    .session-sidebar {
+      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+    }
+    .session-sidebar.collapsed {
+      width: 0;
+      opacity: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body class="bg-bg text-text-primary h-screen overflow-hidden text-sm antialiased">
+
+  <div class="flex h-full flex-col">
+
+    <!-- Top Bar -->
+    <header class="flex items-center justify-between px-4 h-12 flex-shrink-0 border-b border-border/50">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 mr-4">
+          <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-[10px] font-bold text-white">C</div>
+          <span class="font-medium text-text-primary hidden sm:block">Claude Code</span>
+        </div>
+        <div class="flex items-center gap-1" id="tab-bar"></div>
+      </div>
+      <div class="flex items-center gap-1">
+        <button id="toggle-sidebar-btn" class="btn-ghost lg:hidden" title="Toggle Sidebar">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+        <button class="btn-ghost" title="Settings">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main: Sidebar + File Panel (optional) + Chat -->
+    <div class="flex flex-1 overflow-hidden">
+
+      <!-- Left Sidebar (tabbed: Sessions | Files) -->
+      <aside id="session-sidebar" class="session-sidebar w-64 bg-surface border-r border-border flex flex-col flex-shrink-0">
+        <!-- Tab Switcher -->
+        <div class="flex border-b border-border/50">
+          <button id="tab-sessions" class="sidebar-tab flex-1 py-3 text-xs font-medium text-text-secondary hover:text-text-primary text-center" onclick="switchLeftTab('sessions')">
+            Sessions
+          </button>
+          <button id="tab-files" class="sidebar-tab flex-1 py-3 text-xs font-medium text-text-secondary hover:text-text-primary text-center" onclick="switchLeftTab('files')">
+            Files
+          </button>
+        </div>
+
+        <!-- Sessions Tab Content -->
+        <div id="sidebar-sessions" class="flex flex-col flex-1 overflow-hidden">
+          <div class="p-3">
+            <button onclick="newSession()" class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-bg border border-border hover:border-border-hover rounded-lg text-xs text-text-secondary hover:text-text-primary transition-colors">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v16m8-8H4"/>
+              </svg>
+              New Session
+            </button>
+          </div>
+          <div class="flex-1 overflow-y-auto py-1" id="session-list"></div>
+        </div>
+
+        <!-- Files Tab Content -->
+        <div id="sidebar-files" class="hidden flex flex-col flex-1 overflow-hidden">
+          <div class="flex-1 overflow-y-auto p-2" id="file-tree"></div>
+          <div class="p-3 border-t border-border/50">
+            <p class="text-[11px] text-text-tertiary">Click to preview, double-click to attach</p>
+          </div>
+        </div>
+
+        <!-- Sidebar Footer -->
+        <div class="p-3 border-t border-border/50">
+          <div class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-surface-hover cursor-pointer transition-colors">
+            <div class="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">D</div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs text-text-secondary truncate">Developer</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- File Panel (side-by-side, between sidebar and chat) -->
+      <aside id="file-panel" class="file-panel closed w-96 bg-surface border-r border-border flex flex-col flex-shrink-0">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-border/50 flex-shrink-0">
+          <div class="flex items-center gap-2 min-w-0">
+            <svg class="w-4 h-4 text-text-tertiary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            <span class="text-sm text-text-primary font-mono truncate" id="panel-filename"></span>
+          </div>
+          <div class="flex items-center gap-1 flex-shrink-0">
+            <button class="btn-ghost text-xs" id="panel-copy-btn">Copy</button>
+            <button class="btn-ghost text-xs" id="panel-attach-btn">Attach</button>
+            <button class="btn-ghost" onclick="unpinFile()" title="Close side-by-side">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="flex-1 overflow-auto p-4" id="panel-content"></div>
+      </aside>
+
+      <!-- Chat Area (Right) -->
+      <main class="flex-1 flex flex-col overflow-hidden relative min-w-0">
+        <div class="flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-text-primary" id="chat-session-title">Refactoring auth middleware</span>
+            <span class="text-text-tertiary">/</span>
+            <span class="text-xs text-text-tertiary">claude-sonnet-4-6</span>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto" id="messages-scroll">
+          <div class="chat-container px-4 py-6" id="messages"></div>
+        </div>
+
+        <div class="flex-shrink-0 border-t border-border/30 bg-bg">
+          <div class="chat-container px-4 py-4">
+            <div id="attached-context" class="flex flex-wrap gap-2 mb-2 hidden"></div>
+            <div class="input-ring relative bg-surface border border-border rounded-xl transition-all">
+              <textarea
+                id="chat-input"
+                class="w-full bg-transparent border-0 rounded-xl px-4 py-3.5 pr-12 text-text-primary placeholder-text-tertiary resize-none focus:outline-none focus:ring-0"
+                rows="1"
+                placeholder="Ask Claude anything about your code..."
+              ></textarea>
+              <div class="absolute right-2 bottom-2 flex items-center gap-1">
+                <button id="attach-file-btn" class="btn-ghost" title="Attach file context">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                  </svg>
+                </button>
+                <button id="send-btn" class="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between mt-1.5 px-1">
+              <div class="flex items-center gap-3">
+                <span class="text-[11px] text-text-tertiary">Cmd + Enter to send</span>
+                <button class="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors" onclick="showShortcuts()">Shortcuts</button>
+              </div>
+              <div class="flex items-center gap-2">
+                <button class="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors" onclick="newSession()">New session</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- File Drawer (slides from right edge of sidebar, over main panel) -->
+  <div id="drawer-overlay" class="overlay hidden fixed right-0 top-12 bottom-0 bg-black/40 z-40" onclick="closeFileDrawer()"></div>
+  <aside id="file-drawer" class="drawer closed fixed top-12 h-[calc(100%-3rem)] bg-surface border-r border-border z-50 flex flex-col shadow-2xl">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-border/50 flex-shrink-0">
+      <div class="flex items-center gap-2 min-w-0">
+        <svg class="w-4 h-4 text-text-tertiary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <span class="text-sm text-text-primary font-mono truncate" id="drawer-filename"></span>
+      </div>
+      <div class="flex items-center gap-1 flex-shrink-0">
+        <button class="btn-ghost text-xs" id="drawer-copy-btn">Copy</button>
+        <button class="btn-ghost text-xs" id="drawer-attach-btn">Attach</button>
+        <button class="btn-ghost text-xs text-accent hover:text-accent-hover" onclick="pinFileFromDrawer()" title="Side-by-side view">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+          </svg>
+        </button>
+        <button class="btn-ghost" onclick="closeFileDrawer()">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-auto p-4" id="drawer-content"></div>
+  </aside>
+
+  <!-- Keyboard Shortcuts Modal -->
+  <div id="shortcuts-modal" class="overlay hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onclick="closeShortcuts()">
+    <div class="bg-surface border border-border rounded-xl max-w-md w-full shadow-2xl" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+        <h3 class="text-sm font-medium">Keyboard Shortcuts</h3>
+        <button class="btn-ghost" onclick="closeShortcuts()">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="p-5 space-y-3">
+        <div class="flex justify-between items-center">
+          <span class="text-text-secondary">Send message</span>
+          <kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">Cmd + Enter</kbd>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-text-secondary">New line</span>
+          <kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">Shift + Enter</kbd>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-text-secondary">Toggle sidebar</span>
+          <kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">Cmd + [</kbd>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-text-secondary">Switch sidebar tab</span>
+          <kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">Cmd + Shift + T</kbd>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-text-secondary">New session</span>
+          <kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">Cmd + Shift + N</kbd>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-text-secondary">Focus input</span>
+          <kbd class="px-2 py-1 bg-bg border border-border rounded text-xs font-mono">/</kbd>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== STATE =====
+    const workspaces = [
+      { id: 'ws1', name: 'api-service', path: '/Users/dev/projects/api-service', active: true },
+      { id: 'ws2', name: 'web-dashboard', path: '/Users/dev/projects/web-dashboard', active: false },
+      { id: 'ws3', name: 'mobile-app', path: '/Users/dev/projects/mobile-app', active: false },
+    ];
+
+    const sessions = [
+      { id: 's1', title: 'Refactoring auth middleware', date: '2 min ago', active: true, preview: 'Refactor the auth middleware to use JWT instead of session cookies.' },
+      { id: 's2', title: 'Debug failing tests', date: '1 hour ago', active: false, preview: 'The auth tests are failing after the JWT change.' },
+      { id: 's3', title: 'API rate limiting', date: '3 hours ago', active: false, preview: 'Add rate limiting to the auth endpoints.' },
+      { id: 's4', title: 'Docker setup', date: 'Yesterday', active: false, preview: 'Create a Dockerfile for the api-service.' },
+      { id: 's5', title: 'Database migration', date: '2 days ago', active: false, preview: 'Migrate from SQLite to PostgreSQL.' },
+    ];
+
+    let leftTab = 'sessions';
+    let sidebarCollapsed = false;
+    let fileDrawerOpen = false;
+    let drawerFile = null;
+    let sideBySideFile = null;
+    let attachedFiles = [];
+
+    const files = {
+      'ws1': [
+        { name: 'src', type: 'folder', children: [
+          { name: 'index.ts', type: 'file' },
+          { name: 'routes', type: 'folder', children: [
+            { name: 'auth.ts', type: 'file' },
+            { name: 'users.ts', type: 'file' },
+            { name: 'health.ts', type: 'file' },
+          ]},
+          { name: 'middleware', type: 'folder', children: [
+            { name: 'auth.ts', type: 'file' },
+            { name: 'error.ts', type: 'file' },
+          ]},
+          { name: 'models', type: 'folder', children: [
+            { name: 'user.ts', type: 'file' },
+            { name: 'session.ts', type: 'file' },
+          ]},
+        ]},
+        { name: 'tests', type: 'folder', children: [
+          { name: 'auth.test.ts', type: 'file' },
+          { name: 'users.test.ts', type: 'file' },
+        ]},
+        { name: 'package.json', type: 'file' },
+        { name: 'tsconfig.json', type: 'file' },
+        { name: 'README.md', type: 'file' },
+      ]
+    };
+
+    const fileContents = {
+      'src/middleware/auth.ts': `import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+
+interface AuthenticatedRequest extends Request {
+  user?: { id: string; email: string };
+}
+
+export function authMiddleware(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing or invalid token' });
+  }
+
+  const token = authHeader.slice(7);
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as {
+      userId: string;
+      email: string;
+    };
+    req.user = { id: decoded.userId, email: decoded.email };
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}`,
+      'package.json': `{
+  "name": "api-service",
+  "version": "1.0.0",
+  "description": "REST API service",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "test": "jest"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17",
+    "@types/jsonwebtoken": "^9.0.0",
+    "typescript": "^5.0.0"
+  }
+}`,
+    };
+
+    const messages = [
+      {
+        role: 'user',
+        content: 'Refactor the auth middleware to use JWT instead of session cookies.',
+      },
+      {
+        role: 'assistant',
+        content: "I'll refactor the auth middleware to use JWT. Let me first read the current implementation.",
+        tools: [{ name: 'Read', target: 'src/middleware/auth.ts' }]
+      },
+      {
+        role: 'assistant',
+        content: `Here's the refactored implementation with JWT tokens:
+
+\`\`\`typescript
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+
+interface AuthenticatedRequest extends Request {
+  user?: { id: string; email: string };
+}
+
+export function authMiddleware(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing or invalid token' });
+  }
+
+  const token = authHeader.slice(7);
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as {
+      userId: string;
+      email: string;
+    };
+    req.user = { id: decoded.userId, email: decoded.email };
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}
+\`\`\`
+
+Key changes:
+1. Replaced session-based auth with JWT verification
+2. Added proper TypeScript interfaces
+3. Standardized on Bearer token format
+4. Added proper error handling
+
+Would you like me to update the login route too?`,
+        complete: true
+      },
+      {
+        role: 'user',
+        content: 'Yes, update the login route too. And add a token refresh endpoint.',
+      },
+      {
+        role: 'assistant',
+        content: 'Working on it...',
+        streaming: true
+      }
+    ];
+
+    // ===== RENDER FUNCTIONS =====
+
+    function renderTabs() {
+      const container = document.getElementById('tab-bar');
+      container.innerHTML = workspaces.map((ws, i) => `
+        <div class="tab-pill flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer text-xs ${ws.active ? 'active' : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover'}"
+             onclick="switchTab(${i})"
+             role="tab"
+             aria-selected="${ws.active}"
+             tabindex="0">
+          <svg class="w-3 h-3 flex-shrink-0 ${ws.active ? 'text-accent' : 'text-text-tertiary'}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+          </svg>
+          <span class="truncate max-w-[100px]">${ws.name}</span>
+          ${workspaces.length > 1 ? `
+            <button class="opacity-0 hover:text-red-400 ml-0.5 p-0.5 rounded hover:bg-surface transition-all ${ws.active ? 'opacity-100' : 'group-hover:opacity-100'}"
+                    onclick="event.stopPropagation(); closeTab(${i})"
+                    aria-label="Close ${ws.name} workspace">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          ` : ''}
+        </div>
+      `).join('') + `
+        <button class="p-1.5 text-text-tertiary hover:text-text-secondary hover:bg-surface-hover rounded-lg transition-colors text-xs" title="New Workspace">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v16m8-8H4"/>
+          </svg>
+        </button>
+      `;
+    }
+
+    function renderSidebarTabs() {
+      document.getElementById('tab-sessions').classList.toggle('active', leftTab === 'sessions');
+      document.getElementById('tab-files').classList.toggle('active', leftTab === 'files');
+      document.getElementById('sidebar-sessions').classList.toggle('hidden', leftTab !== 'sessions');
+      document.getElementById('sidebar-files').classList.toggle('hidden', leftTab !== 'files');
+    }
+
+    function renderSessionList() {
+      const container = document.getElementById('session-list');
+      container.innerHTML = sessions.map((s, i) => `
+        <div class="session-item mx-2 px-3 py-2.5 rounded-lg cursor-pointer group ${s.active ? 'active' : ''}"
+             onclick="switchSession(${i})"
+             role="button"
+             tabindex="0"
+             aria-label="Switch to ${s.title}">
+          <div class="flex items-start gap-2">
+            <svg class="w-3.5 h-3.5 text-text-tertiary flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+            </svg>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs text-text-secondary truncate ${s.active ? 'text-text-primary font-medium' : ''}">${s.title}</p>
+              <p class="text-[11px] text-text-tertiary truncate mt-0.5">${s.preview}</p>
+              <p class="text-[10px] text-text-tertiary/60 mt-1">${s.date}</p>
+            </div>
+            ${s.active ? `
+              <div class="w-1 h-1 rounded-full bg-accent flex-shrink-0 mt-2"></div>
+            ` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderFileTree(nodes, path = '') {
+      return nodes.map(node => {
+        const nodePath = path ? `${path}/${node.name}` : node.name;
+        if (node.type === 'folder') {
+          return `
+            <div class="select-none">
+              <div class="flex items-center gap-1.5 py-1 px-2 hover:bg-surface-hover rounded-lg cursor-pointer group text-xs"
+                   onclick="toggleFolder(this)">
+                <svg class="w-3 h-3 text-text-tertiary flex-shrink-0 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5l7 7-7 7"/>
+                </svg>
+                <svg class="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
+                </svg>
+                <span class="truncate text-text-secondary">${node.name}</span>
+              </div>
+              <div class="ml-3 pl-2 border-l border-border tree-line" style="display: none;">
+                ${renderFileTree(node.children, nodePath)}
+              </div>
+            </div>
+          `;
+        } else {
+          const ext = node.name.split('.').pop();
+          const iconColor = ext === 'ts' ? 'text-blue-400' : ext === 'json' ? 'text-yellow-400' : ext === 'md' ? 'text-text-secondary' : 'text-text-tertiary';
+          return `
+            <div class="flex items-center gap-1.5 py-1 px-2 hover:bg-surface-hover rounded-lg cursor-pointer text-xs pl-7"
+                 ondblclick="attachFile('${nodePath}', '${node.name}')"
+                 onclick="openFileDrawer('${nodePath}', '${node.name}')"
+                 role="button"
+                 tabindex="0"
+                 aria-label="Open ${node.name}">
+              <svg class="w-3.5 h-3.5 ${iconColor} flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+              <span class="truncate text-text-secondary">${node.name}</span>
+            </div>
+          `;
+        }
+      }).join('');
+    }
+
+    function renderFileContent(containerId, filenameId, filePath, fileName) {
+      const content = fileContents[filePath] || '// File content not available in prototype';
+      const lines = content.split('\n');
+
+      document.getElementById(filenameId).textContent = fileName;
+      document.getElementById(containerId).innerHTML = `
+        <div class="flex">
+          <div class="text-right pr-4 text-[11px] text-text-tertiary select-none font-mono" style="min-width: 2rem;">
+            ${lines.map((_, i) => `<div>${i + 1}</div>`).join('')}
+          </div>
+          <div class="flex-1 overflow-x-auto">
+            <pre class="text-[13px] font-mono leading-relaxed"><code id="${containerId}-code" class="language-${fileName.endsWith('.ts') ? 'typescript' : 'json'}">${escapeHtml(content)}</code></pre>
+          </div>
+        </div>
+      `;
+
+      const codeBlock = document.getElementById(`${containerId}-code`);
+      if (codeBlock) hljs.highlightElement(codeBlock);
+    }
+
+    function renderMessages() {
+      const container = document.getElementById('messages');
+      container.innerHTML = messages.map((msg, i) => {
+        if (msg.role === 'user') {
+          return `
+            <div class="msg-group msg-enter mb-6 flex justify-end">
+              <div class="max-w-[85%]">
+                <div class="bg-msg-user border border-border/50 rounded-2xl rounded-tr-md px-4 py-3 text-text-primary">
+                  <p class="leading-relaxed text-sm">${escapeHtml(msg.content)}</p>
+                </div>
+                <div class="action-bar flex justify-end gap-1 mt-1 px-1">
+                  <button class="btn-ghost" title="Copy" onclick="copyMessage(this)">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                    </svg>
+                  </button>
+                  <button class="btn-ghost" title="Edit" onclick="editMessage(${i})">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          `;
+        } else {
+          const toolsHtml = msg.tools ? msg.tools.map(t => `
+            <div class="flex items-center gap-2 text-[11px] text-text-tertiary mt-3 mb-1">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+              </svg>
+              <span class="font-mono">${t.name} <span class="text-text-tertiary/60">${t.target}</span></span>
+            </div>
+          `).join('') : '';
+
+          const streamingIndicator = msg.streaming ? `
+            <div class="flex items-center gap-2 mt-3">
+              <span class="w-1.5 h-1.5 bg-accent rounded-full streaming-dot"></span>
+              <span class="text-[11px] text-text-tertiary">Claude is thinking...</span>
+            </div>
+          ` : '';
+
+          const content = msg.streaming
+            ? '<p class="text-text-tertiary italic text-sm">Working on it...</p>'
+            : renderMarkdown(msg.content);
+
+          return `
+            <div class="msg-group msg-enter mb-6">
+              <div class="flex items-start gap-3 max-w-[95%]">
+                <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 mt-0.5">C</div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="text-xs font-medium text-text-secondary">Claude</span>
+                    <span class="text-[11px] text-text-tertiary">Sonnet 4.6</span>
+                  </div>
+                  <div class="text-sm leading-relaxed text-text-primary space-y-2">
+                    ${content}
+                  </div>
+                  ${toolsHtml}
+                  ${streamingIndicator}
+                  ${!msg.streaming ? `
+                    <div class="action-bar flex gap-1 mt-2">
+                      <button class="btn-ghost" title="Copy" onclick="copyMessage(this)">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                        </svg>
+                      </button>
+                      <button class="btn-ghost" title="Regenerate" onclick="regenerate(${i})">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                      </button>
+                      <button class="btn-ghost" title="Good response">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"/>
+                        </svg>
+                      </button>
+                      <button class="btn-ghost" title="Bad response">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.095c.5 0 .905-.405.905-.905 0-.714.211-1.412.608-2.006L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5"/>
+                        </svg>
+                      </button>
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+            </div>
+          `;
+        }
+      }).join('');
+
+      container.querySelectorAll('pre code').forEach(block => {
+        hljs.highlightElement(block);
+      });
+
+      const scrollContainer = document.getElementById('messages-scroll');
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
+
+    function renderMarkdown(text) {
+      let html = escapeHtml(text)
+        .replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
+          const language = lang || 'text';
+          return `
+            <div class="code-block my-3 rounded-lg overflow-hidden bg-[#0d1117] border border-border shadow-sm">
+              <div class="flex items-center justify-between px-3 py-1.5 bg-bg border-b border-border">
+                <span class="text-[11px] text-text-tertiary font-mono">${language}</span>
+                <button class="copy-btn text-[11px] text-text-tertiary hover:text-text-secondary px-2 py-0.5 rounded hover:bg-surface-hover transition-colors"
+                        onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre class="p-3 overflow-x-auto"><code class="language-${language}">${code.trim()}</code></pre>
+            </div>
+          `;
+        })
+        .replace(/`([^`]+)`/g, '<code class="bg-surface-hover px-1.5 py-0.5 rounded text-[11px] font-mono text-orange-300">$1</code>')
+        .replace(/^\s*-\s+(.+)$/gm, '<li class="ml-4 text-text-secondary">$1</li>')
+        .replace(/\n\n/g, '</p><p class="mt-2 text-text-secondary">')
+        .replace(/^(.+)$/gm, '<p class="text-text-secondary">$1</p>');
+
+      return html;
+    }
+
+    function renderAttachedFiles() {
+      const container = document.getElementById('attached-context');
+      if (attachedFiles.length === 0) {
+        container.classList.add('hidden');
+        return;
+      }
+      container.classList.remove('hidden');
+      container.innerHTML = attachedFiles.map((f, i) => `
+        <div class="file-chip flex items-center gap-1.5 px-2.5 py-1.5 bg-surface border border-border rounded-lg text-xs cursor-pointer group">
+          <svg class="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <span class="text-text-secondary truncate max-w-[150px]">${f.name}</span>
+          <button class="text-text-tertiary hover:text-red-400 ml-1" onclick="removeAttachedFile(${i})">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      `).join('');
+    }
+
+    function renderFilePanel() {
+      const panel = document.getElementById('file-panel');
+      if (!sideBySideFile) {
+        panel.classList.add('closed');
+        return;
+      }
+      panel.classList.remove('closed');
+      renderFileContent('panel-content', 'panel-filename', sideBySideFile.path, sideBySideFile.name);
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    // ===== INTERACTIONS =====
+
+    function switchLeftTab(tab) {
+      leftTab = tab;
+      renderSidebarTabs();
+    }
+
+    function toggleSidebar() {
+      sidebarCollapsed = !sidebarCollapsed;
+      const sidebar = document.getElementById('session-sidebar');
+      if (sidebarCollapsed) {
+        sidebar.classList.add('collapsed');
+      } else {
+        sidebar.classList.remove('collapsed');
+      }
+    }
+
+    function openFileDrawer(path, name) {
+      drawerFile = { path, name };
+      fileDrawerOpen = true;
+      renderFileContent('drawer-content', 'drawer-filename', path, name);
+
+      const drawer = document.getElementById('file-drawer');
+      const overlay = document.getElementById('drawer-overlay');
+      const sidebar = document.getElementById('session-sidebar');
+      const sidebarRect = sidebar.getBoundingClientRect();
+      const mainWidth = window.innerWidth - sidebarRect.width;
+      const drawerWidth = Math.max(mainWidth / 2, 320);
+
+      drawer.style.left = `${sidebarRect.right}px`;
+      drawer.style.width = `${drawerWidth}px`;
+      overlay.style.left = `${sidebarRect.right}px`;
+
+      drawer.classList.remove('closed');
+      overlay.classList.remove('hidden');
+    }
+
+    function closeFileDrawer() {
+      fileDrawerOpen = false;
+      drawerFile = null;
+      const drawer = document.getElementById('file-drawer');
+      const overlay = document.getElementById('drawer-overlay');
+      drawer.classList.add('closed');
+      overlay.classList.add('hidden');
+    }
+
+    function pinFileFromDrawer() {
+      if (!drawerFile) return;
+      sideBySideFile = { ...drawerFile };
+      closeFileDrawer();
+      renderFilePanel();
+      showToast(`Pinned ${drawerFile.name} side-by-side`);
+    }
+
+    function unpinFile() {
+      if (!sideBySideFile) return;
+      showToast(`Unpinned ${sideBySideFile.name}`);
+      sideBySideFile = null;
+      renderFilePanel();
+    }
+
+    function toggleFolder(el) {
+      const children = el.nextElementSibling;
+      const arrow = el.querySelector('svg:first-child');
+      if (children) {
+        const isHidden = children.style.display === 'none';
+        children.style.display = isHidden ? '' : 'none';
+        arrow.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+      }
+    }
+
+    function switchSession(index) {
+      sessions.forEach((s, i) => s.active = i === index);
+      renderSessionList();
+      document.getElementById('chat-session-title').textContent = sessions[index].title;
+      showToast(`Switched to: ${sessions[index].title}`);
+    }
+
+    function attachFile(path, name) {
+      if (!attachedFiles.some(f => f.path === path)) {
+        attachedFiles.push({ path, name });
+        renderAttachedFiles();
+      }
+      showToast(`Attached ${name}`);
+      document.getElementById('chat-input').focus();
+    }
+
+    function removeAttachedFile(index) {
+      attachedFiles.splice(index, 1);
+      renderAttachedFiles();
+    }
+
+    function copyCode(btn) {
+      const code = btn.closest('.code-block').querySelector('code').textContent;
+      navigator.clipboard.writeText(code).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 2000);
+      });
+    }
+
+    function copyMessage(btn) {
+      const msgGroup = btn.closest('.msg-group');
+      const text = msgGroup.querySelector('p')?.textContent || '';
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied to clipboard');
+      });
+    }
+
+    function regenerate(index) {
+      showToast('Regenerating...');
+    }
+
+    function editMessage(index) {
+      const msg = messages[index];
+      if (msg.role === 'user') {
+        document.getElementById('chat-input').value = msg.content;
+        document.getElementById('chat-input').focus();
+      }
+    }
+
+    function showToast(message) {
+      const toast = document.createElement('div');
+      toast.className = 'fixed bottom-20 left-1/2 -translate-x-1/2 bg-surface text-text-secondary px-4 py-2 rounded-lg shadow-xl text-xs z-50 border border-border';
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2000);
+    }
+
+    function switchTab(index) {
+      workspaces.forEach((w, i) => w.active = i === index);
+      attachedFiles = [];
+      renderAttachedFiles();
+      renderTabs();
+      document.getElementById('file-tree').innerHTML = renderFileTree(files[workspaces[index].id] || files['ws1']);
+    }
+
+    function closeTab(index) {
+      if (workspaces.length <= 1) return;
+      workspaces.splice(index, 1);
+      if (!workspaces.some(w => w.active)) {
+        workspaces[Math.min(index, workspaces.length - 1)].active = true;
+      }
+      renderTabs();
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text && attachedFiles.length === 0) return;
+
+      messages.push({ role: 'user', content: text || 'Please review the attached files.' });
+      input.value = '';
+      attachedFiles = [];
+      renderAttachedFiles();
+      renderMessages();
+
+      setTimeout(() => {
+        messages.push({ role: 'assistant', content: 'Working on it...', streaming: true });
+        renderMessages();
+
+        setTimeout(() => {
+          messages[messages.length - 1] = {
+            role: 'assistant',
+            content: `I'll analyze the codebase for you.
+
+\`\`\`typescript
+const analysis = await analyzeCodebase('./src');
+console.log(analysis.summary);
+\`\`\`
+
+The analysis shows good code structure overall. A few suggestions:
+- Consider adding input validation middleware
+- The error handling could be more granular
+- Add rate limiting to auth endpoints
+
+Would you like me to implement any of these improvements?`,
+            complete: true
+          };
+          renderMessages();
+        }, 2500);
+      }, 600);
+    }
+
+    function newSession() {
+      const newId = `s${sessions.length + 1}`;
+      sessions.forEach(s => s.active = false);
+      sessions.unshift({
+        id: newId,
+        title: 'New Session',
+        date: 'Just now',
+        active: true,
+        preview: 'Start a new conversation...'
+      });
+      renderSessionList();
+      document.getElementById('chat-session-title').textContent = 'New Session';
+      showToast('New session created');
+    }
+
+    function showShortcuts() {
+      document.getElementById('shortcuts-modal').classList.remove('hidden');
+    }
+
+    function closeShortcuts() {
+      document.getElementById('shortcuts-modal').classList.add('hidden');
+    }
+
+    // ===== EVENT LISTENERS =====
+
+    document.getElementById('toggle-sidebar-btn').addEventListener('click', toggleSidebar);
+    document.getElementById('send-btn').addEventListener('click', sendMessage);
+
+    document.getElementById('attach-file-btn').addEventListener('click', () => {
+      switchLeftTab('files');
+      if (sidebarCollapsed) toggleSidebar();
+    });
+
+    document.getElementById('chat-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    document.getElementById('chat-input').addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+    });
+
+    document.getElementById('drawer-copy-btn').addEventListener('click', () => {
+      if (!drawerFile) return;
+      const content = fileContents[drawerFile.path] || '';
+      navigator.clipboard.writeText(content).then(() => showToast('File content copied'));
+    });
+
+    document.getElementById('drawer-attach-btn').addEventListener('click', () => {
+      if (!drawerFile) return;
+      attachFile(drawerFile.path, drawerFile.name);
+      closeFileDrawer();
+    });
+
+    document.getElementById('panel-copy-btn').addEventListener('click', () => {
+      if (!sideBySideFile) return;
+      const content = fileContents[sideBySideFile.path] || '';
+      navigator.clipboard.writeText(content).then(() => showToast('File content copied'));
+    });
+
+    document.getElementById('panel-attach-btn').addEventListener('click', () => {
+      if (!sideBySideFile) return;
+      attachFile(sideBySideFile.path, sideBySideFile.name);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === '[') {
+        e.preventDefault();
+        toggleSidebar();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'T') {
+        e.preventDefault();
+        switchLeftTab(leftTab === 'sessions' ? 'files' : 'sessions');
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'n') {
+        e.preventDefault();
+        newSession();
+      }
+      if (e.key === '/' && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'INPUT') {
+        e.preventDefault();
+        document.getElementById('chat-input').focus();
+      }
+      if (e.key === 'Escape') {
+        closeFileDrawer();
+        closeShortcuts();
+      }
+    });
+
+    // ===== INIT =====
+    renderTabs();
+    renderSidebarTabs();
+    renderSessionList();
+    document.getElementById('file-tree').innerHTML = renderFileTree(files['ws1']);
+    renderMessages();
+  </script>
+</body>
+</html>

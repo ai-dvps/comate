@@ -3,12 +3,14 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
+import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 
 const STORAGE_DIR = join(homedir(), '.claude-code-gui');
 const STORAGE_FILE = join(STORAGE_DIR, 'workspaces.json');
 
 interface StorageData {
   workspaces: Workspace[];
+  sessions: ChatSession[];
 }
 
 async function ensureStorage(): Promise<void> {
@@ -22,9 +24,10 @@ async function ensureStorage(): Promise<void> {
 async function readStorage(): Promise<StorageData> {
   try {
     const data = await readFile(STORAGE_FILE, 'utf-8');
-    return JSON.parse(data) as StorageData;
+    const parsed = JSON.parse(data) as StorageData;
+    return { ...parsed, sessions: parsed.sessions || [] };
   } catch {
-    return { workspaces: [] };
+    return { workspaces: [], sessions: [] };
   }
 }
 
@@ -95,6 +98,66 @@ export class JsonStore {
     if (index === -1) return false;
 
     data.workspaces.splice(index, 1);
+    // Cascade delete associated sessions
+    data.sessions = data.sessions.filter(s => s.workspaceId !== id);
+    await writeStorage(data);
+    return true;
+  }
+
+  // Session methods
+
+  async listSessions(workspaceId?: string): Promise<ChatSession[]> {
+    const data = await readStorage();
+    if (workspaceId) {
+      return data.sessions.filter(s => s.workspaceId === workspaceId);
+    }
+    return data.sessions;
+  }
+
+  async getSession(id: string): Promise<ChatSession | null> {
+    const data = await readStorage();
+    return data.sessions.find(s => s.id === id) || null;
+  }
+
+  async createSession(input: CreateSessionInput): Promise<ChatSession> {
+    const now = new Date().toISOString();
+    const session: ChatSession = {
+      id: uuidv4(),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const data = await readStorage();
+    data.sessions.push(session);
+    await writeStorage(data);
+    return session;
+  }
+
+  async updateSession(id: string, input: UpdateSessionInput): Promise<ChatSession | null> {
+    const data = await readStorage();
+    const index = data.sessions.findIndex(s => s.id === id);
+    if (index === -1) return null;
+
+    const session = data.sessions[index];
+    data.sessions[index] = {
+      ...session,
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.sdkSessionId !== undefined && { sdkSessionId: input.sdkSessionId }),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await writeStorage(data);
+    return data.sessions[index];
+  }
+
+  async deleteSession(id: string): Promise<boolean> {
+    const data = await readStorage();
+    const index = data.sessions.findIndex(s => s.id === id);
+    if (index === -1) return false;
+
+    data.sessions.splice(index, 1);
     await writeStorage(data);
     return true;
   }

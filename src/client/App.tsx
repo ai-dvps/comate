@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import Sidebar from './components/Sidebar'
 import WorkspaceTabs from './components/WorkspaceTabs'
+import ChatPanel from './components/ChatPanel'
+import SettingsPanel from './components/SettingsPanel'
 import { useWorkspaceStore } from './stores/workspace-store'
-import { X, Copy } from 'lucide-react'
+import { X, Copy, Settings } from 'lucide-react'
 
 interface ViewedFile {
   path: string
@@ -14,6 +16,7 @@ function App() {
   const { workspaces, activeWorkspaceId } = useWorkspaceStore()
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
   const [viewedFile, setViewedFile] = useState<ViewedFile | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
 
   const handleFileClick = async (path: string, name: string) => {
     if (!activeWorkspaceId) return
@@ -50,6 +53,15 @@ function App() {
           </div>
           <WorkspaceTabs />
         </div>
+        {activeWorkspace && (
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+            title="Workspace settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        )}
       </header>
 
       {/* Main Content */}
@@ -90,15 +102,7 @@ function App() {
               </div>
             </div>
           ) : activeWorkspace ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <h2 className="text-lg font-medium text-text-primary mb-2">{activeWorkspace.name}</h2>
-                <p className="text-sm text-text-secondary">{activeWorkspace.folderPath}</p>
-                {activeWorkspace.description && (
-                  <p className="text-xs text-text-tertiary mt-2">{activeWorkspace.description}</p>
-                )}
-              </div>
-            </div>
+            <ChatPanel workspaceId={activeWorkspace.id} />
           ) : (
             <div className="flex items-center justify-center h-full">
               <p className="text-text-secondary">Select or create a workspace to get started</p>
@@ -106,6 +110,12 @@ function App() {
           )}
         </main>
       </div>
+      {showSettings && activeWorkspaceId && (
+        <SettingsPanel
+          workspaceId={activeWorkspaceId}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   )
 }

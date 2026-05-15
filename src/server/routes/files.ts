@@ -26,7 +26,7 @@ async function validatePath(workspacePath: string, requestedPath: string): Promi
 // GET /api/workspaces/:id/files?path=
 router.get('/', async (req, res) => {
   try {
-    const workspace = await store.get(req.params.id);
+    const workspace = await store.get((req.params as { id: string }).id);
     if (!workspace) {
       res.status(404).json({ error: 'Workspace not found' });
       return;
@@ -62,7 +62,7 @@ router.get('/', async (req, res) => {
 // GET /api/workspaces/:id/files/content?path=
 router.get('/content', async (req, res) => {
   try {
-    const workspace = await store.get(req.params.id);
+    const workspace = await store.get((req.params as { id: string }).id);
     if (!workspace) {
       res.status(404).json({ error: 'Workspace not found' });
       return;
