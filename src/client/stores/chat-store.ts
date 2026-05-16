@@ -5,6 +5,9 @@ import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 
 export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
 
+const sessionSubscriptions = new Map<string, { close: () => void }>()
+const lastEventId = new Map<string, string>()
+
 export interface ChatSession {
   id: string
   workspaceId: string
@@ -46,8 +49,6 @@ interface ChatState {
   isLoadingMessages: boolean
   approvalQueue: Record<string, PendingItem[]>
   serverNonce: Record<string, string>
-  sessionSubscriptions: Record<string, { close: () => void }>
-  lastEventId: Record<string, string>
   draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
 
   fetchSessions: (workspaceId: string) => Promise<void>
@@ -472,17 +473,15 @@ function handleSseEvent(
 
 function subscribeToSession(
   set: SseSetter,
-  get: () => ChatState,
   workspaceId: string,
   sessionId: string,
 ): void {
-  const state = get()
-  const existing = state.sessionSubscriptions[sessionId]
+  const existing = sessionSubscriptions.get(sessionId)
   if (existing) {
     existing.close()
   }
 
-  const lastId = state.lastEventId[sessionId]
+  const lastId = lastEventId.get(sessionId)
   const headers: Record<string, string> = {}
   if (lastId) {
     headers['Last-Event-ID'] = lastId
@@ -503,10 +502,7 @@ function subscribeToSession(
 
       for await (const event of parseSSEStream(res.body)) {
         if (event.id) {
-          const id = event.id
-          set((state) => ({
-            lastEventId: { ...state.lastEventId, [sessionId]: id },
-          }))
+          lastEventId.set(sessionId, event.id)
         }
         try {
           handleSseEvent(set, sessionId, event.event, event.data)
@@ -537,14 +533,9 @@ function subscribeToSession(
       }))
     })
 
-  set((state) => ({
-    sessionSubscriptions: {
-      ...state.sessionSubscriptions,
-      [sessionId]: {
-        close: () => abortController.abort(),
-      },
-    },
-  }))
+  sessionSubscriptions.set(sessionId, {
+    close: () => abortController.abort(),
+  })
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -556,8 +547,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoadingMessages: false,
   approvalQueue: {},
   serverNonce: {},
-  sessionSubscriptions: {},
-  lastEventId: {},
   draftQueue: {},
 
   fetchSessions: async (workspaceId: string) => {
@@ -600,10 +589,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   deleteSession: async (sessionId: string, workspaceId: string) => {
     try {
       // Close subscription first
-      const sub = get().sessionSubscriptions[sessionId]
+      const sub = sessionSubscriptions.get(sessionId)
       if (sub) {
         sub.close()
       }
+      sessionSubscriptions.delete(sessionId)
+      lastEventId.delete(sessionId)
 
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
         method: 'DELETE',
@@ -619,10 +610,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newMessages[sessionId]
         const newApprovalQueue = { ...state.approvalQueue }
         delete newApprovalQueue[sessionId]
-        const newSubscriptions = { ...state.sessionSubscriptions }
-        delete newSubscriptions[sessionId]
-        const newLastEventId = { ...state.lastEventId }
-        delete newLastEventId[sessionId]
         const newDraftQueue = { ...state.draftQueue }
         delete newDraftQueue[sessionId]
         const newIsStreaming = { ...state.isStreaming }
@@ -632,8 +619,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
           messages: newMessages,
           approvalQueue: newApprovalQueue,
-          sessionSubscriptions: newSubscriptions,
-          lastEventId: newLastEventId,
           draftQueue: newDraftQueue,
           isStreaming: newIsStreaming,
         }
@@ -649,7 +634,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
     // Auto-subscribe when switching to a session
     if (sessionId) {
-      subscribeToSession(set, get, workspaceId, sessionId)
+      subscribeToSession(set, workspaceId, sessionId)
     }
   },
 
@@ -673,9 +658,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {
     // Ensure subscription is open
-    const state = get()
-    if (!state.sessionSubscriptions[sessionId]) {
-      subscribeToSession(set, get, workspaceId, sessionId)
+    if (!sessionSubscriptions.has(sessionId)) {
+      subscribeToSession(set, workspaceId, sessionId)
     }
 
     const userMessageId = generateId()
