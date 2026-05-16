@@ -28,12 +28,20 @@ interface BlockState {
  *   - `seenStreamPartIndexes`: which block indices were emitted during the
  *     streaming pass — used to dedup against the whole-turn `assistant`
  *     finalizer (which always re-delivers the full content[] array).
+ *   - `finalizedMessageIds`: Anthropic messageIds for which `assistant_done`
+ *     has already fired. The SDK splits a single Anthropic API message
+ *     across multiple whole-turn `assistant` SDKMessage frames (one per
+ *     thinking/text/tool_use phase, all sharing the same `message.id`);
+ *     this set prevents `assistant_done` and `assistant_start` from
+ *     double-firing across those phases.
  *
- * Thinking-emission behavior: if the SDK does NOT surface a thinking block
- * via `stream_event`, the whole-turn `assistant` event recovers it through
- * `emitDedupRecovery`, which fires the `*_start` / `*_delta` / `*_done`
- * triple in one synchronous burst (no shimmer phase, acceptable
- * degradation per plan 2026-05-16-006 U4).
+ * Thinking-emission behavior (verified in U7 with claude-sonnet-4-6 against
+ * a non-tool prompt): the SDK surfaces thinking blocks via `stream_event`
+ * (`content_block_start` → `content_block_delta` × N), but does NOT emit
+ * `content_block_stop` for thinking blocks. The close-out `thinking_done`
+ * is synthesized in `handleAssistant` when the whole-turn `assistant`
+ * frame arrives, by inspecting `blockStates` for already-streamed thinking
+ * blocks that never saw a stop event.
  */
 export class SseEmitter {
   private res: Response;
@@ -41,6 +49,7 @@ export class SseEmitter {
   private assistantStartEmitted = false;
   private blockStates = new Map<number, BlockState>();
   private seenStreamPartIndexes = new Set<number>();
+  private finalizedMessageIds = new Set<string>();
 
   constructor(res: Response) {
     this.res = res;
@@ -77,6 +86,16 @@ export class SseEmitter {
         return;
 
       case 'result':
+        if (
+          this.currentMessageId &&
+          !this.finalizedMessageIds.has(this.currentMessageId)
+        ) {
+          this.finalizedMessageIds.add(this.currentMessageId);
+          this.send({
+            type: 'assistant_done',
+            messageId: this.currentMessageId,
+          });
+        }
         this.send({
           type: 'result',
           subtype: msg.subtype,
@@ -229,8 +248,21 @@ export class SseEmitter {
       return;
     }
 
-    // message_delta / message_stop / etc → ignored; assistant_done is
-    // finalized on the whole-turn `assistant` SDKMessage.
+    if (eventType === 'message_stop') {
+      if (
+        this.currentMessageId &&
+        !this.finalizedMessageIds.has(this.currentMessageId)
+      ) {
+        this.finalizedMessageIds.add(this.currentMessageId);
+        this.send({
+          type: 'assistant_done',
+          messageId: this.currentMessageId,
+        });
+      }
+      return;
+    }
+
+    // message_delta and other internal stream_event frames are ignored.
   }
 
   private handleAssistant(msg: SDKMessage & { type: 'assistant' }): void {
@@ -246,18 +278,21 @@ export class SseEmitter {
 
     if (Array.isArray(content)) {
       content.forEach((block, index) => {
-        if (this.seenStreamPartIndexes.has(index)) return;
+        if (this.seenStreamPartIndexes.has(index)) {
+          this.closeStreamedBlock(block, index);
+          return;
+        }
         this.emitDedupRecovery(block, index);
       });
     }
 
-    if (this.currentMessageId) {
-      this.send({
-        type: 'assistant_done',
-        messageId: this.currentMessageId,
-      });
-    }
-    this.resetTurn();
+    // assistant_done is NOT fired here. The SDK splits an Anthropic API
+    // message across multiple whole-turn `assistant` SDKMessage frames
+    // (one per phase: thinking, then text, etc.), all sharing the same
+    // `message.id`. Finalizing on each frame would mark the message done
+    // before later phases arrive. Instead, assistant_done fires on
+    // `message_stop` (stream_event) or, as a safety net, on the `result`
+    // SDKMessage at end of turn.
   }
 
   private emitDedupRecovery(block: unknown, index: number): void {
@@ -310,6 +345,37 @@ export class SseEmitter {
     }
   }
 
+  private closeStreamedBlock(block: unknown, index: number): void {
+    if (!block || typeof block !== 'object' || !this.currentMessageId) return;
+    const state = this.blockStates.get(index);
+    if (!state) return;
+
+    const b = block as Record<string, unknown>;
+    const blockType = b.type;
+
+    if (blockType === 'thinking' && state.type === 'thinking') {
+      this.send({
+        type: 'thinking_done',
+        messageId: this.currentMessageId,
+        partIndex: index,
+      });
+      this.blockStates.delete(index);
+    } else if (
+      blockType === 'tool_use' &&
+      state.type === 'tool_use' &&
+      state.toolUseId
+    ) {
+      const input = b.input ?? this.parseToolInput(state.inputBuffer ?? '');
+      this.send({
+        type: 'tool_use_done',
+        toolUseId: state.toolUseId,
+        input,
+      });
+      this.blockStates.delete(index);
+    }
+    // text blocks need no synthesized done event in our protocol.
+  }
+
   private handleUser(msg: SDKMessage & { type: 'user' }): void {
     const content = (msg.message as { content?: unknown }).content;
     if (!Array.isArray(content)) return;
@@ -333,12 +399,6 @@ export class SseEmitter {
       type: 'assistant_start',
       messageId: this.currentMessageId,
     });
-  }
-
-  private resetTurn(): void {
-    this.blockStates.clear();
-    this.seenStreamPartIndexes.clear();
-    this.assistantStartEmitted = false;
   }
 
   private parseToolInput(buffer: string): unknown {
