@@ -1,7 +1,7 @@
 ---
 title: 'feat: Render Claude Code CLI meta messages as muted system-notes'
 type: feat
-status: active
+status: completed
 date: 2026-05-16
 origin: docs/brainstorms/2026-05-16-cli-meta-message-rendering-requirements.md
 ---
