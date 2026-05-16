@@ -1,7 +1,8 @@
 import type { Response } from 'express';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { SseEvent } from '../types/message.js';
+import type { SseEvent, QuestionPayload } from '../types/message.js';
+import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 
 /**
  * Tracks the in-flight type for each SDK content-block index inside the
@@ -35,24 +36,32 @@ interface BlockState {
  *     this set prevents `assistant_done` and `assistant_start` from
  *     double-firing across those phases.
  *
- * Thinking-emission behavior (verified in U7 with claude-sonnet-4-6 against
- * a non-tool prompt): the SDK surfaces thinking blocks via `stream_event`
- * (`content_block_start` → `content_block_delta` × N), but does NOT emit
- * `content_block_stop` for thinking blocks. The close-out `thinking_done`
- * is synthesized in `handleAssistant` when the whole-turn `assistant`
- * frame arrives, by inspecting `blockStates` for already-streamed thinking
- * blocks that never saw a stop event.
+ * After U2, the emitter supports a swappable Response (for reconnection)
+ * and emits `id:` lines on every frame (for ring-buffer replay).
  */
 export class SseEmitter {
-  private res: Response;
+  private res: Response | null = null;
   private currentMessageId: string | null = null;
   private assistantStartEmitted = false;
   private blockStates = new Map<number, BlockState>();
   private seenStreamPartIndexes = new Set<number>();
   private finalizedMessageIds = new Set<string>();
+  private eventIndex = 0;
 
-  constructor(res: Response) {
+  constructor(res: Response | null = null) {
     this.res = res;
+  }
+
+  setResponse(res: Response | null): void {
+    this.res = res;
+  }
+
+  reset(): void {
+    this.currentMessageId = null;
+    this.assistantStartEmitted = false;
+    this.blockStates.clear();
+    this.seenStreamPartIndexes.clear();
+    this.finalizedMessageIds.clear();
   }
 
   handle(msg: SDKMessage): void {
@@ -120,9 +129,66 @@ export class SseEmitter {
     this.send({ type: 'error', message });
   }
 
+  emitSubscriptionAck(serverNonce: string, sessionId: string): void {
+    this.send({ type: 'subscription_ack', serverNonce, sessionId });
+  }
+
+  emitPendingApproval(
+    requestId: string,
+    toolName: string,
+    toolUseId: string,
+    input: unknown,
+    title?: string,
+    description?: string,
+    suggestions?: PermissionUpdate[],
+  ): void {
+    const inputSummary = this.summarizeInput(input);
+    this.send({
+      type: 'pending_approval',
+      requestId,
+      toolName,
+      toolUseId,
+      input,
+      inputSummary,
+      title,
+      description,
+      suggestions,
+    });
+  }
+
+  emitPendingQuestion(requestId: string, questions: QuestionPayload[]): void {
+    this.send({ type: 'pending_question', requestId, questions });
+  }
+
+  emitApprovalResolved(requestId: string): void {
+    this.send({ type: 'approval_resolved', requestId });
+  }
+
+  emitInterrupted(messageId: string | null): void {
+    this.send({ type: 'interrupted', messageId });
+  }
+
+  emitErrorNote(text: string): void {
+    this.send({ type: 'error_note', text });
+  }
+
+  emitServerRestarted(serverNonce: string): void {
+    this.send({ type: 'server_restarted', serverNonce });
+  }
+
   private send(event: SseEvent): void {
-    this.res.write(`event: ${event.type}\n`);
-    this.res.write(`data: ${JSON.stringify(event)}\n\n`);
+    const id = this.eventIndex++;
+    const payload = `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+    if (this.res) {
+      this.res.write(payload);
+    }
+  }
+
+  private summarizeInput(input: unknown): string {
+    if (input === null || input === undefined) return '';
+    const str = typeof input === 'string' ? input : JSON.stringify(input);
+    if (str.length <= 200) return str;
+    return str.slice(0, 200) + '…';
   }
 
   private handleStreamEvent(event: unknown): void {

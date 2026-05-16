@@ -10,6 +10,8 @@
  * `diff src/client/types/message.ts src/server/types/message.ts`.
  */
 
+import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
+
 export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type MessagePart =
@@ -60,6 +62,13 @@ export type ToolPart = {
   errorText?: string
 }
 
+export interface QuestionPayload {
+  question: string
+  header?: string
+  options: { label: string; description?: string; preview?: string }[]
+  multiSelect: boolean
+}
+
 /**
  * Discriminated union of every SSE event emitted by the chat stream route.
  * The server emits these via `event: <type>` + `data: <JSON>` SSE frames.
@@ -96,3 +105,20 @@ export type SseEvent =
     }
   | { type: 'error'; message: string }
   | { type: 'done' }
+  | { type: 'subscription_ack'; serverNonce: string; sessionId: string }
+  | {
+      type: 'pending_approval'
+      requestId: string
+      toolName: string
+      toolUseId: string
+      input: unknown
+      inputSummary: string
+      title?: string
+      description?: string
+      suggestions?: PermissionUpdate[]
+    }
+  | { type: 'pending_question'; requestId: string; questions: QuestionPayload[] }
+  | { type: 'approval_resolved'; requestId: string }
+  | { type: 'interrupted'; messageId: string | null }
+  | { type: 'error_note'; text: string }
+  | { type: 'server_restarted'; serverNonce: string }
