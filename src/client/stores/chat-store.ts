@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
-import type { ChatMessage, MessagePart } from '../types/message'
+import type { ChatMessage, MessagePart, QuestionPayload } from '../types/message'
+import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 
 export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
 
@@ -18,6 +19,24 @@ export interface ChatSession {
   customTitle?: string
 }
 
+interface PendingApproval {
+  requestId: string
+  toolName: string
+  toolUseId: string
+  input: unknown
+  inputSummary: string
+  title?: string
+  description?: string
+  suggestions?: PermissionUpdate[]
+}
+
+interface PendingQuestion {
+  requestId: string
+  questions: QuestionPayload[]
+}
+
+type PendingItem = PendingApproval | PendingQuestion
+
 interface ChatState {
   sessions: Record<string, ChatSession[]>
   messages: Record<string, ChatMessage[]>
@@ -25,6 +44,11 @@ interface ChatState {
   isStreaming: Record<string, boolean>
   isLoadingSessions: boolean
   isLoadingMessages: boolean
+  approvalQueue: Record<string, PendingItem[]>
+  serverNonce: Record<string, string>
+  sessionSubscriptions: Record<string, { close: () => void }>
+  lastEventId: Record<string, string>
+  draftQueue: Record<string, string | undefined>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -33,18 +57,28 @@ interface ChatState {
   loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
   sendMessage: (workspaceId: string, sessionId: string, content: string) => void
   clearMessages: (sessionId: string) => void
+  resolveApproval: (
+    workspaceId: string,
+    sessionId: string,
+    requestId: string,
+    result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionUpdate[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
+  ) => Promise<void>
+  interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
 }
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-async function* parseSSEStream(stream: ReadableStream<Uint8Array>): AsyncGenerator<{ event: string; data: unknown }> {
+async function* parseSSEStream(
+  stream: ReadableStream<Uint8Array>,
+): AsyncGenerator<{ event: string; data: unknown; id?: string }> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let currentEvent = 'message'
   let currentData = ''
+  let currentId: string | undefined
 
   while (true) {
     const { done, value } = await reader.read()
@@ -57,21 +91,25 @@ async function* parseSSEStream(stream: ReadableStream<Uint8Array>): AsyncGenerat
     for (const line of lines) {
       if (line.startsWith('event: ')) {
         if (currentData) {
-          yield { event: currentEvent, data: parseData(currentData) }
+          yield { event: currentEvent, data: parseData(currentData), id: currentId }
           currentData = ''
+          currentId = undefined
         }
         currentEvent = line.slice(7)
       } else if (line.startsWith('data: ')) {
         currentData = line.slice(6)
+      } else if (line.startsWith('id: ')) {
+        currentId = line.slice(4)
       } else if (line === '' && currentData) {
-        yield { event: currentEvent, data: parseData(currentData) }
+        yield { event: currentEvent, data: parseData(currentData), id: currentId }
         currentData = ''
+        currentId = undefined
       }
     }
   }
 
   if (currentData) {
-    yield { event: currentEvent, data: parseData(currentData) }
+    yield { event: currentEvent, data: parseData(currentData), id: currentId }
   }
 }
 
@@ -129,13 +167,35 @@ function mutateToolUsePart(
   return {}
 }
 
+function addSystemMessage(
+  state: ChatState,
+  sessionId: string,
+  text: string,
+): Partial<ChatState> {
+  return {
+    messages: {
+      ...state.messages,
+      [sessionId]: [
+        ...(state.messages[sessionId] || []),
+        {
+          id: generateId(),
+          role: 'system',
+          parts: [{ type: 'text', text }],
+          timestamp: Date.now(),
+        },
+      ],
+    },
+  }
+}
+
 function handleSseEvent(
   set: SseSetter,
   sessionId: string,
   event: string,
   raw: unknown,
 ): void {
-  const data = (raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {})
+  const data =
+    raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
 
   switch (event) {
     case 'assistant_start': {
@@ -283,6 +343,120 @@ function handleSseEvent(
       const message = typeof data.message === 'string' ? data.message : 'Stream error'
       throw new Error(message)
     }
+    case 'subscription_ack': {
+      const serverNonce = typeof data.serverNonce === 'string' ? data.serverNonce : ''
+      set((state) => {
+        const prevNonce = state.serverNonce[sessionId] || ''
+        const updates: Partial<ChatState> = {
+          serverNonce: { ...state.serverNonce, [sessionId]: serverNonce },
+        }
+        if (prevNonce && prevNonce !== serverNonce) {
+          updates.messages = {
+            ...state.messages,
+            [sessionId]: [
+              ...(state.messages[sessionId] || []),
+              {
+                id: generateId(),
+                role: 'system',
+                parts: [
+                  {
+                    type: 'text',
+                    text: 'Server was restarted. Background work may have been lost.',
+                  },
+                ],
+                timestamp: Date.now(),
+              },
+            ],
+          }
+        }
+        return updates
+      })
+      return
+    }
+    case 'pending_approval': {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      const toolName = typeof data.toolName === 'string' ? data.toolName : ''
+      const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
+      if (!requestId) return
+      set((state) => ({
+        approvalQueue: {
+          ...state.approvalQueue,
+          [sessionId]: [
+            ...(state.approvalQueue[sessionId] || []),
+            {
+              requestId,
+              toolName,
+              toolUseId,
+              input: data.input,
+              inputSummary: typeof data.inputSummary === 'string' ? data.inputSummary : '',
+              title: typeof data.title === 'string' ? data.title : undefined,
+              description: typeof data.description === 'string' ? data.description : undefined,
+              suggestions: Array.isArray(data.suggestions) ? data.suggestions : undefined,
+            },
+          ],
+        },
+      }))
+      return
+    }
+    case 'pending_question': {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      const questions = Array.isArray(data.questions) ? data.questions : []
+      if (!requestId) return
+      set((state) => ({
+        approvalQueue: {
+          ...state.approvalQueue,
+          [sessionId]: [
+            ...(state.approvalQueue[sessionId] || []),
+            { requestId, questions },
+          ],
+        },
+      }))
+      return
+    }
+    case 'approval_resolved': {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      if (!requestId) return
+      set((state) => {
+        const queue = state.approvalQueue[sessionId] || []
+        const nextQueue = queue.filter((item) => item.requestId !== requestId)
+        const updates: Partial<ChatState> = {
+          approvalQueue: { ...state.approvalQueue, [sessionId]: nextQueue },
+        }
+        // If queue is now empty and there's a draft message, send it
+        if (nextQueue.length === 0 && state.draftQueue[sessionId]) {
+          const content = state.draftQueue[sessionId]
+          updates.draftQueue = { ...state.draftQueue }
+          delete updates.draftQueue[sessionId]
+          // Send the queued message asynchronously
+          setTimeout(() => {
+            postMessage(sessionId, content)
+          }, 0)
+        }
+        return updates
+      })
+      return
+    }
+    case 'interrupted': {
+      set((state) => ({
+        isStreaming: { ...state.isStreaming, [sessionId]: false },
+      }))
+      return
+    }
+    case 'error_note': {
+      const text = typeof data.text === 'string' ? data.text : 'Error'
+      set((state) => addSystemMessage(state, sessionId, text))
+      return
+    }
+    case 'server_restarted': {
+      set((state) =>
+        addSystemMessage(
+          state,
+          sessionId,
+          'Server was restarted. Background work may have been lost.',
+        ),
+      )
+      return
+    }
     case 'system_init':
     case 'result':
     case 'done':
@@ -291,13 +465,95 @@ function handleSseEvent(
   }
 }
 
-export const useChatStore = create<ChatState>((set) => ({
+function subscribeToSession(
+  set: SseSetter,
+  get: () => ChatState,
+  workspaceId: string,
+  sessionId: string,
+): void {
+  const state = get()
+  const existing = state.sessionSubscriptions[sessionId]
+  if (existing) {
+    existing.close()
+  }
+
+  const lastId = state.lastEventId[sessionId]
+  const headers: Record<string, string> = {}
+  if (lastId) {
+    headers['Last-Event-ID'] = lastId
+  }
+
+  const abortController = new AbortController()
+
+  fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/stream`, {
+    headers,
+    signal: abortController.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: 'Subscription failed' }))
+        throw new Error(error.error || 'Subscription failed')
+      }
+      if (!res.body) throw new Error('No response body')
+
+      for await (const event of parseSSEStream(res.body)) {
+        if (event.id) {
+          const id = event.id
+          set((state) => ({
+            lastEventId: { ...state.lastEventId, [sessionId]: id },
+          }))
+        }
+        try {
+          handleSseEvent(set, sessionId, event.event, event.data)
+        } catch (err) {
+          console.error('SSE event handler error:', err)
+          set((state) =>
+            addSystemMessage(
+              state,
+              sessionId,
+              `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+            ),
+          )
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name === 'AbortError') return
+      console.error('Subscription error:', err)
+      set((state) =>
+        addSystemMessage(
+          state,
+          sessionId,
+          `Connection error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        ),
+      )
+      set((state) => ({
+        isStreaming: { ...state.isStreaming, [sessionId]: false },
+      }))
+    })
+
+  set((state) => ({
+    sessionSubscriptions: {
+      ...state.sessionSubscriptions,
+      [sessionId]: {
+        close: () => abortController.abort(),
+      },
+    },
+  }))
+}
+
+export const useChatStore = create<ChatState>((set, get) => ({
   sessions: {},
   messages: {},
   activeSessionIds: {},
   isStreaming: {},
   isLoadingSessions: false,
   isLoadingMessages: false,
+  approvalQueue: {},
+  serverNonce: {},
+  sessionSubscriptions: {},
+  lastEventId: {},
+  draftQueue: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -338,6 +594,12 @@ export const useChatStore = create<ChatState>((set) => ({
 
   deleteSession: async (sessionId: string, workspaceId: string) => {
     try {
+      // Close subscription first
+      const sub = get().sessionSubscriptions[sessionId]
+      if (sub) {
+        sub.close()
+      }
+
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
         method: 'DELETE',
       })
@@ -350,10 +612,25 @@ export const useChatStore = create<ChatState>((set) => ({
             : state.activeSessionIds[workspaceId]
         const newMessages = { ...state.messages }
         delete newMessages[sessionId]
+        const newApprovalQueue = { ...state.approvalQueue }
+        delete newApprovalQueue[sessionId]
+        const newSubscriptions = { ...state.sessionSubscriptions }
+        delete newSubscriptions[sessionId]
+        const newLastEventId = { ...state.lastEventId }
+        delete newLastEventId[sessionId]
+        const newDraftQueue = { ...state.draftQueue }
+        delete newDraftQueue[sessionId]
+        const newIsStreaming = { ...state.isStreaming }
+        delete newIsStreaming[sessionId]
         return {
           sessions: { ...state.sessions, [workspaceId]: updated },
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
           messages: newMessages,
+          approvalQueue: newApprovalQueue,
+          sessionSubscriptions: newSubscriptions,
+          lastEventId: newLastEventId,
+          draftQueue: newDraftQueue,
+          isStreaming: newIsStreaming,
         }
       })
     } catch (err) {
@@ -365,6 +642,10 @@ export const useChatStore = create<ChatState>((set) => ({
     set((state) => ({
       activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
     }))
+    // Auto-subscribe when switching to a session
+    if (sessionId) {
+      subscribeToSession(set, get, workspaceId, sessionId)
+    }
   },
 
   loadMessages: async (workspaceId: string, sessionId: string) => {
@@ -386,8 +667,15 @@ export const useChatStore = create<ChatState>((set) => ({
   },
 
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {
+    // Ensure subscription is open
+    const state = get()
+    if (!state.sessionSubscriptions[sessionId]) {
+      subscribeToSession(set, get, workspaceId, sessionId)
+    }
+
     const userMessageId = generateId()
 
+    // Optimistically add user message
     set((state) => ({
       messages: {
         ...state.messages,
@@ -404,49 +692,30 @@ export const useChatStore = create<ChatState>((set) => ({
       isStreaming: { ...state.isStreaming, [sessionId]: true },
     }))
 
-    fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/chat`, {
+    // If approval is pending, queue the message
+    const queue = get().approvalQueue[sessionId] || []
+    if (queue.length > 0) {
+      set((state) => ({
+        draftQueue: { ...state.draftQueue, [sessionId]: content },
+      }))
+      return
+    }
+
+    // POST to server
+    fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: content }),
+    }).catch((err) => {
+      console.error('Failed to send message:', err)
+      set((state) =>
+        addSystemMessage(
+          state,
+          sessionId,
+          `Failed to send: ${err instanceof Error ? err.message : 'Network error'}`,
+        ),
+      )
     })
-      .then(async (res) => {
-        if (!res.ok) {
-          const error = await res.json().catch(() => ({ error: 'Request failed' }))
-          throw new Error(error.error || 'Request failed')
-        }
-        if (!res.body) throw new Error('No response body')
-
-        for await (const event of parseSSEStream(res.body)) {
-          handleSseEvent(set, sessionId, event.event, event.data)
-        }
-      })
-      .catch((err) => {
-        console.error('Chat error:', err)
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [sessionId]: [
-              ...(state.messages[sessionId] || []),
-              {
-                id: generateId(),
-                role: 'system',
-                parts: [
-                  {
-                    type: 'text',
-                    text: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
-                  },
-                ],
-                timestamp: Date.now(),
-              },
-            ],
-          },
-        }))
-      })
-      .finally(() => {
-        set((state) => ({
-          isStreaming: { ...state.isStreaming, [sessionId]: false },
-        }))
-      })
   },
 
   clearMessages: (sessionId: string) => {
@@ -455,5 +724,78 @@ export const useChatStore = create<ChatState>((set) => ({
       delete newMessages[sessionId]
       return { messages: newMessages }
     })
+  },
+
+  resolveApproval: async (
+    workspaceId: string,
+    sessionId: string,
+    requestId: string,
+    result: {
+      behavior: 'allow' | 'deny'
+      updatedPermissions?: PermissionUpdate[]
+      answers?: Record<string, string>
+      questions?: QuestionPayload[]
+      message?: string
+    },
+  ) => {
+    try {
+      const body: Record<string, unknown> = { behavior: result.behavior }
+      if (result.updatedPermissions) {
+        body.updatedPermissions = result.updatedPermissions
+      }
+      if (result.answers) {
+        body.answers = result.answers
+        body.questions = result.questions
+      }
+      if (result.message) {
+        body.message = result.message
+      }
+
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}/approvals/${requestId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      )
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: 'Request failed' }))
+        throw new Error(error.error || 'Request failed')
+      }
+    } catch (err) {
+      console.error('Failed to resolve approval:', err)
+      set((state) =>
+        addSystemMessage(
+          state,
+          sessionId,
+          `Approval error: ${err instanceof Error ? err.message : 'Network error'}`,
+        ),
+      )
+    }
+  },
+
+  interruptSession: async (workspaceId: string, sessionId: string) => {
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}/interrupt`,
+        {
+          method: 'POST',
+        },
+      )
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: 'Request failed' }))
+        throw new Error(error.error || 'Request failed')
+      }
+    } catch (err) {
+      console.error('Failed to interrupt:', err)
+      set((state) =>
+        addSystemMessage(
+          state,
+          sessionId,
+          `Interrupt error: ${err instanceof Error ? err.message : 'Network error'}`,
+        ),
+      )
+    }
   },
 }))
