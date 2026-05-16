@@ -1,7 +1,7 @@
 ---
 title: 'feat: Streaming Input Mode, rich PromptInput, and approval banner'
 type: feat
-status: active
+status: completed
 date: 2026-05-16
 origin: docs/brainstorms/2026-05-16-prompt-input-and-streaming-input-mode-requirements.md
 ---
