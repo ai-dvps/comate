@@ -2,8 +2,8 @@
  * Adapted from Vercel AI Elements (Apache 2.0).
  * Original source: github.com/vercel/ai-elements (packages/elements/src/tool.tsx)
  * Modifications:
- *  - Replaced `ToolUIPart | DynamicToolUIPart` from the `ai` package with a local
- *    `ToolPart` shape so we do not pull in the Vercel AI SDK.
+ *  - Replaced `ToolUIPart | DynamicToolUIPart` from the `ai` package with the
+ *    shared local `ToolPart` shape so we do not pull in the Vercel AI SDK.
  *  - Trimmed the `approval-*` and `output-denied` states (not used by this app).
  *  - Token names remapped to this repo's Tailwind palette; the upstream destructive
  *    background/text utility is rendered with literal red palette tokens since the
@@ -22,6 +22,7 @@ import {
 import type { ComponentProps, ReactNode } from 'react'
 import { isValidElement } from 'react'
 
+import type { ToolPart, ToolState } from '../../types/message'
 import { Badge } from '../ui/badge'
 import {
   Collapsible,
@@ -32,6 +33,8 @@ import { cn } from '../ui/utils'
 
 import { CodeBlock } from './code-block'
 
+export type { ToolPart, ToolState }
+
 export type ToolProps = ComponentProps<typeof Collapsible>
 
 export const Tool = ({ className, ...props }: ToolProps) => (
@@ -40,20 +43,6 @@ export const Tool = ({ className, ...props }: ToolProps) => (
     {...props}
   />
 )
-
-export type ToolState =
-  | 'input-streaming'
-  | 'input-available'
-  | 'output-available'
-  | 'output-error'
-
-export type ToolPart = {
-  type: string
-  state: ToolState
-  input?: unknown
-  output?: unknown
-  errorText?: string
-}
 
 export type ToolHeaderProps = {
   title?: string

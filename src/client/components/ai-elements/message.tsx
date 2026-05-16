@@ -4,7 +4,7 @@
  * Modifications:
  *  - Dropped the `MessageBranch*` family (requires shadcn `ButtonGroup` we don't vendor).
  *  - Dropped `MessageAction` (requires a shadcn `Tooltip` primitive we don't vendor).
- *  - Replaced `UIMessage["role"]` import with a local string-union role type.
+ *  - Replaced `UIMessage["role"]` import with the local `MessageRole` shared type.
  *  - Stripped Streamdown plugin imports (`@streamdown/cjk`, `code`, `math`, `mermaid`).
  *  - Token names remapped to this repo's Tailwind palette.
  */
@@ -14,9 +14,10 @@ import type { ComponentProps, HTMLAttributes } from 'react'
 import { memo } from 'react'
 import { Streamdown } from 'streamdown'
 
+import type { MessageRole } from '../../types/message'
 import { cn } from '../ui/utils'
 
-export type MessageRole = 'user' | 'assistant' | 'system'
+export type { MessageRole }
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: MessageRole

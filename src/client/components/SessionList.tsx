@@ -61,8 +61,10 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     const sessionMessages = messages[sessionId] || []
     if (sessionMessages.length === 0) return 'Start a new conversation...'
     const lastMsg = sessionMessages[sessionMessages.length - 1]
-    const preview = lastMsg.content.slice(0, 80)
-    return preview.length < lastMsg.content.length ? preview + '...' : preview
+    const firstPart = lastMsg.parts[0]
+    const text = firstPart?.type === 'text' ? firstPart.text : ''
+    const preview = text.slice(0, 80)
+    return preview.length < text.length ? preview + '...' : preview
   }
 
   return (

@@ -1,5 +1,5 @@
 import { useChatStore } from '../stores/chat-store'
-import { User, Bot, Wrench, AlertCircle } from 'lucide-react'
+import { User, Bot, AlertCircle } from 'lucide-react'
 
 interface MessageListProps {
   sessionId: string
@@ -33,16 +33,11 @@ export default function MessageList({ sessionId }: MessageListProps) {
         >
           <div
             className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
-              msg.role === 'user'
-                ? 'bg-accent'
-                : msg.role === 'tool'
-                ? 'bg-yellow-600/30'
-                : 'bg-surface-hover'
+              msg.role === 'user' ? 'bg-accent' : 'bg-surface-hover'
             }`}
           >
             {msg.role === 'user' && <User className="w-3.5 h-3.5 text-white" />}
             {msg.role === 'assistant' && <Bot className="w-3.5 h-3.5 text-accent" />}
-            {msg.role === 'tool' && <Wrench className="w-3.5 h-3.5 text-yellow-500" />}
             {msg.role === 'system' && <AlertCircle className="w-3.5 h-3.5 text-red-400" />}
           </div>
 
@@ -55,7 +50,7 @@ export default function MessageList({ sessionId }: MessageListProps) {
                 : 'bg-surface-hover text-text-primary'
             }`}
           >
-            {msg.content}
+            {msg.parts[0]?.type === 'text' ? msg.parts[0].text : ''}
           </div>
         </div>
       ))}

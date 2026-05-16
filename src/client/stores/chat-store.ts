@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 
+import type { ChatMessage } from '../types/message'
+
+export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
+
 export interface ChatSession {
   id: string
   workspaceId: string
@@ -12,14 +16,6 @@ export interface ChatSession {
   firstPrompt?: string
   gitBranch?: string
   customTitle?: string
-}
-
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant' | 'system' | 'tool'
-  content: string
-  type?: string
-  timestamp: number
 }
 
 interface ChatState {
@@ -171,25 +167,28 @@ export const useChatStore = create<ChatState>((set) => ({
       const data = await res.json()
       const sdkMessages = data.messages || []
 
-      // Map SDK SessionMessage to app's ChatMessage format
+      // Map SDK SessionMessage to app's ChatMessage format.
+      // Bridge-only text extraction; U3 owns the full server-side normalizer
+      // that produces the proper MessagePart union (tool_use, tool_result,
+      // thinking blocks). Until then we flatten everything to a single text part.
       const mappedMessages: ChatMessage[] = sdkMessages.map((msg: Record<string, unknown>, index: number) => {
         const rawMsg = msg.message as Record<string, unknown> | undefined
-        let content = ''
+        let text = ''
         if (rawMsg && Array.isArray(rawMsg.content)) {
           for (const block of rawMsg.content) {
             const b = block as { type?: string; text?: string }
             if (b.type === 'text' && b.text) {
-              content += b.text
+              text += b.text
             }
           }
         } else if (rawMsg && typeof rawMsg.content === 'string') {
-          content = rawMsg.content
+          text = rawMsg.content
         }
 
         return {
           id: `${msg.uuid || index}`,
           role: msg.type === 'user' ? 'user' : 'assistant',
-          content,
+          parts: [{ type: 'text', text }],
           timestamp: Date.now() - (sdkMessages.length - index) * 1000, // Approximate ordering
         }
       })
@@ -212,7 +211,12 @@ export const useChatStore = create<ChatState>((set) => ({
         ...state.messages,
         [sessionId]: [
           ...(state.messages[sessionId] || []),
-          { id: messageId, role: 'user', content, timestamp: Date.now() },
+          {
+            id: messageId,
+            role: 'user',
+            parts: [{ type: 'text', text: content }],
+            timestamp: Date.now(),
+          },
         ],
       },
       isStreaming: { ...state.isStreaming, [sessionId]: true },
@@ -247,7 +251,10 @@ export const useChatStore = create<ChatState>((set) => ({
                       ...state.messages,
                       [sessionId]: [
                         ...msgs.slice(0, -1),
-                        { ...lastMsg, content: assistantContent },
+                        {
+                          ...lastMsg,
+                          parts: [{ type: 'text', text: assistantContent }],
+                        },
                       ],
                     },
                   }
@@ -260,7 +267,7 @@ export const useChatStore = create<ChatState>((set) => ({
                       {
                         id: assistantMessageId,
                         role: 'assistant',
-                        content: assistantContent,
+                        parts: [{ type: 'text', text: assistantContent }],
                         timestamp: Date.now(),
                       },
                     ],
@@ -281,7 +288,10 @@ export const useChatStore = create<ChatState>((set) => ({
                       ...state.messages,
                       [sessionId]: [
                         ...msgs.slice(0, -1),
-                        { ...lastMsg, content: assistantContent },
+                        {
+                          ...lastMsg,
+                          parts: [{ type: 'text', text: assistantContent }],
+                        },
                       ],
                     },
                   }
@@ -294,7 +304,7 @@ export const useChatStore = create<ChatState>((set) => ({
                       {
                         id: assistantMessageId,
                         role: 'assistant',
-                        content: assistantContent,
+                        parts: [{ type: 'text', text: assistantContent }],
                         timestamp: Date.now(),
                       },
                     ],
@@ -303,22 +313,10 @@ export const useChatStore = create<ChatState>((set) => ({
               })
             }
           } else if (event.event === 'tool_progress') {
-            const data = event.data as { toolName?: string; elapsedTime?: number }
-            set((state) => ({
-              messages: {
-                ...state.messages,
-                [sessionId]: [
-                  ...(state.messages[sessionId] || []),
-                  {
-                    id: generateId(),
-                    role: 'tool',
-                    content: `Using ${data.toolName || 'tool'}...`,
-                    type: 'tool_progress',
-                    timestamp: Date.now(),
-                  },
-                ],
-              },
-            }))
+            // Bridge-state: tool_progress SSE no longer maps to a synthetic
+            // 'tool' chat message — `MessageRole` is now strictly
+            // user|assistant|system. U4 replaces this with proper
+            // tool_use_start/tool_use_done events writing tool_use MessageParts.
           } else if (event.event === 'error') {
             const data = event.data as { message?: string }
             throw new Error(data.message || 'Stream error')
@@ -335,8 +333,12 @@ export const useChatStore = create<ChatState>((set) => ({
               {
                 id: generateId(),
                 role: 'system',
-                content: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
-                type: 'error',
+                parts: [
+                  {
+                    type: 'text',
+                    text: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                  },
+                ],
                 timestamp: Date.now(),
               },
             ],
