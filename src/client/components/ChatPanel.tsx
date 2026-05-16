@@ -64,7 +64,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden flex flex-col">
         {isLoadingMessages ? (
           <div className="flex items-center justify-center h-full">
             <div className="flex gap-1">
