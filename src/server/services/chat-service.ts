@@ -199,6 +199,7 @@ export class ChatService {
       env,
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: workspace.settings.model || undefined,
+      includePartialMessages: true,
     };
 
     if (session.isDraft) {

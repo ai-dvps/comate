@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { chatService, ChatError } from '../services/chat-service.js';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { SseEmitter } from '../services/sse-emitter.js';
 
 const router = Router({ mergeParams: true });
 
@@ -76,77 +76,6 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
   }
 });
 
-interface ClientMessage {
-  type: string;
-  data?: unknown;
-}
-
-function formatMessage(msg: SDKMessage): ClientMessage | null {
-  switch (msg.type) {
-    case 'assistant': {
-      const content = msg.message.content;
-      let text = '';
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          const b = block as { type?: string; text?: string };
-          if (b.type === 'text' && b.text) {
-            text += b.text;
-          }
-        }
-      }
-      return { type: 'assistant', data: { text, uuid: msg.uuid } };
-    }
-    case 'stream_event': {
-      const event = (msg.event as unknown) as Record<string, unknown>;
-      if (event.type === 'content_block_delta') {
-        const delta = event.delta as Record<string, unknown>;
-        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-          return { type: 'text_delta', data: { text: delta.text } };
-        }
-      }
-      return null;
-    }
-    case 'tool_progress':
-      return {
-        type: 'tool_progress',
-        data: {
-          toolName: msg.tool_name,
-          elapsedTime: msg.elapsed_time_seconds,
-        },
-      };
-    case 'result':
-      return {
-        type: 'result',
-        data: {
-          subtype: msg.subtype,
-          isError: msg.is_error,
-          result: msg.subtype === 'success' ? msg.result : undefined,
-          errors: 'errors' in msg ? msg.errors : undefined,
-        },
-      };
-    case 'system': {
-      if (msg.subtype === 'init') {
-        return {
-          type: 'system_init',
-          data: {
-            model: msg.model,
-            tools: msg.tools,
-            sessionId: msg.session_id,
-          },
-        };
-      }
-      return null;
-    }
-    default:
-      return null;
-  }
-}
-
-function sendSSE(res: import('express').Response, event: string, data: unknown): void {
-  res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-
 // POST /api/workspaces/:id/sessions/:sessionId/chat
 router.post('/sessions/:sessionId/chat', async (req, res) => {
   const sessionId = req.params.sessionId;
@@ -170,17 +99,15 @@ router.post('/sessions/:sessionId/chat', async (req, res) => {
       stream.rawQuery.interrupt().catch(() => {});
     });
 
+    const emitter = new SseEmitter(res);
+
     for await (const msg of stream.messages) {
       if (clientClosed) break;
-
-      const formatted = formatMessage(msg);
-      if (formatted) {
-        sendSSE(res, formatted.type, formatted.data);
-      }
+      emitter.handle(msg);
     }
 
     if (!clientClosed) {
-      sendSSE(res, 'done', {});
+      emitter.done();
     }
 
     res.end();
@@ -201,7 +128,8 @@ router.post('/sessions/:sessionId/chat', async (req, res) => {
 
     // If headers already sent, send error as SSE event
     if (res.headersSent) {
-      sendSSE(res, 'error', { message: 'Stream failed' });
+      const emitter = new SseEmitter(res);
+      emitter.error('Stream failed');
       res.end();
     } else {
       res.status(500).json({ error: 'Chat stream failed' });
