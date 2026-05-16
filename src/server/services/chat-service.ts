@@ -3,6 +3,8 @@ import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../mod
 import type { Workspace } from '../models/workspace.js';
 import { store as draftStore } from '../storage/json-store.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import type { ChatMessage } from '../types/message.js';
+import { normalizeSessionMessage } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
 
 export interface MessageStream {
@@ -114,13 +116,25 @@ export class ChatService {
 
   // Message history loading
 
-  async loadMessages(sessionId: string, workspaceId: string): Promise<SessionMessage[]> {
+  async loadMessages(sessionId: string, workspaceId: string): Promise<ChatMessage[]> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
     }
 
-    return this.sdkClient.getSessionMessages(sessionId, { dir: workspace.folderPath });
+    const sdkMessages = await this.sdkClient.getSessionMessages(sessionId, { dir: workspace.folderPath });
+    const normalized: ChatMessage[] = [];
+    sdkMessages.forEach((msg: SessionMessage, index: number) => {
+      const chatMessage = normalizeSessionMessage(msg);
+      if (chatMessage) {
+        // Approximate ordering by index — SDK does not surface a per-message
+        // timestamp on the historical read path. U7 verifies ordering matches
+        // the JSONL transcript order.
+        chatMessage.timestamp = Date.now() - (sdkMessages.length - index) * 1000;
+        normalized.push(chatMessage);
+      }
+    });
+    return normalized;
   }
 
   // Message streaming

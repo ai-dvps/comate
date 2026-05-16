@@ -164,34 +164,8 @@ export const useChatStore = create<ChatState>((set) => ({
       set({ isLoadingMessages: true })
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
       if (!res.ok) throw new Error('Failed to load messages')
-      const data = await res.json()
-      const sdkMessages = data.messages || []
-
-      // Map SDK SessionMessage to app's ChatMessage format.
-      // Bridge-only text extraction; U3 owns the full server-side normalizer
-      // that produces the proper MessagePart union (tool_use, tool_result,
-      // thinking blocks). Until then we flatten everything to a single text part.
-      const mappedMessages: ChatMessage[] = sdkMessages.map((msg: Record<string, unknown>, index: number) => {
-        const rawMsg = msg.message as Record<string, unknown> | undefined
-        let text = ''
-        if (rawMsg && Array.isArray(rawMsg.content)) {
-          for (const block of rawMsg.content) {
-            const b = block as { type?: string; text?: string }
-            if (b.type === 'text' && b.text) {
-              text += b.text
-            }
-          }
-        } else if (rawMsg && typeof rawMsg.content === 'string') {
-          text = rawMsg.content
-        }
-
-        return {
-          id: `${msg.uuid || index}`,
-          role: msg.type === 'user' ? 'user' : 'assistant',
-          parts: [{ type: 'text', text }],
-          timestamp: Date.now() - (sdkMessages.length - index) * 1000, // Approximate ordering
-        }
-      })
+      const data = (await res.json()) as { messages?: ChatMessage[] }
+      const mappedMessages = data.messages ?? []
 
       set((state) => ({
         messages: { ...state.messages, [sessionId]: mappedMessages },
