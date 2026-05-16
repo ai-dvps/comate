@@ -47,9 +47,11 @@ export class SseEmitter {
   private seenStreamPartIndexes = new Set<number>();
   private finalizedMessageIds = new Set<string>();
   private eventIndex = 0;
+  private onEvent?: (id: number, event: SseEvent) => void;
 
-  constructor(res: Response | null = null) {
+  constructor(res: Response | null = null, onEvent?: (id: number, event: SseEvent) => void) {
     this.res = res;
+    this.onEvent = onEvent;
   }
 
   setResponse(res: Response | null): void {
@@ -182,6 +184,7 @@ export class SseEmitter {
     if (this.res) {
       this.res.write(payload);
     }
+    this.onEvent?.(id, event);
   }
 
   private summarizeInput(input: unknown): string {
