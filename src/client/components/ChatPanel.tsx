@@ -1,30 +1,33 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import MessageList from './MessageList'
-import { Send } from 'lucide-react'
+import PromptInput from './PromptInput'
+import ApprovalBanner from './ApprovalBanner'
 
 interface ChatPanelProps {
   workspaceId: string
 }
 
 export default function ChatPanel({ workspaceId }: ChatPanelProps) {
-  const [input, setInput] = useState('')
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-
   const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
   const isLoadingMessages = useChatStore((s) => s.isLoadingMessages)
+  const approvalQueue = useChatStore((s) => s.approvalQueue[activeSessionId || ''] || [])
   const fetchSessions = useChatStore((s) => s.fetchSessions)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const loadMessages = useChatStore((s) => s.loadMessages)
+  const resolveApproval = useChatStore((s) => s.resolveApproval)
+  const interruptSession = useChatStore((s) => s.interruptSession)
 
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === workspaceId)
   )
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const modelName = (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
+
+  const [isInterrupting, setIsInterrupting] = useState(false)
 
   useEffect(() => {
     fetchSessions(workspaceId)
@@ -36,18 +39,58 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     }
   }, [workspaceId, activeSessionId, activeSession, loadMessages])
 
-  const handleSend = () => {
-    if (!input.trim() || !activeSessionId || isStreaming) return
-    sendMessage(workspaceId, activeSessionId, input.trim())
-    setInput('')
-    inputRef.current?.focus()
+  const currentApproval = approvalQueue[0] || null
+  const approvalQueueLength = approvalQueue.length
+
+  const handleSend = (content: string) => {
+    if (!activeSessionId) return
+    sendMessage(workspaceId, activeSessionId, content)
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
+  const handleStop = async () => {
+    if (!activeSessionId) return
+    setIsInterrupting(true)
+    try {
+      await interruptSession(workspaceId, activeSessionId)
+    } finally {
+      setIsInterrupting(false)
     }
+  }
+
+  const handleAllow = () => {
+    if (!activeSessionId || !currentApproval) return
+    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
+      behavior: 'allow',
+    })
+  }
+
+  const handleAllowAlways = () => {
+    if (!activeSessionId || !currentApproval) return
+    const suggestions =
+      'suggestions' in currentApproval ? currentApproval.suggestions : undefined
+    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
+      behavior: 'allow',
+      updatedPermissions: suggestions,
+    })
+  }
+
+  const handleDeny = (message: string) => {
+    if (!activeSessionId || !currentApproval) return
+    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
+      behavior: 'deny',
+      message,
+    })
+  }
+
+  const handleAnswerQuestion = (answers: Record<string, string>) => {
+    if (!activeSessionId || !currentApproval) return
+    const questions =
+      'questions' in currentApproval ? currentApproval.questions : undefined
+    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
+      behavior: 'allow',
+      answers,
+      questions,
+    })
   }
 
   return (
@@ -82,37 +125,28 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
         )}
       </div>
 
-      {/* Input Area */}
+      {/* Approval Banner */}
+      {activeSessionId && currentApproval && (
+        <ApprovalBanner
+          pendingItem={currentApproval}
+          queueDepth={approvalQueueLength - 1}
+          onAllow={handleAllow}
+          onAllowAlways={handleAllowAlways}
+          onDeny={handleDeny}
+          onAnswerQuestion={handleAnswerQuestion}
+        />
+      )}
+
+      {/* Prompt Input */}
       <div className="flex-shrink-0 border-t border-border/30 bg-bg">
-        <div className="max-w-3xl mx-auto px-4 py-4">
-          <div className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask Claude anything about your code..."
-              rows={1}
-              disabled={isStreaming || !activeSessionId}
-              className="w-full bg-transparent border-0 rounded-xl px-4 py-3.5 pr-12 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 max-h-32"
-              style={{ minHeight: '44px' }}
-            />
-            <div className="absolute right-2 bottom-2 flex items-center gap-1">
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || isStreaming || !activeSessionId}
-                className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-1.5 px-1">
-            <span className="text-[11px] text-text-tertiary">
-              Enter to send, Shift+Enter for new line
-            </span>
-          </div>
-        </div>
+        <PromptInput
+          onSend={handleSend}
+          onStop={handleStop}
+          disabled={!activeSessionId}
+          isStreaming={isStreaming}
+          isInterrupting={isInterrupting}
+          hasSession={!!activeSessionId}
+        />
       </div>
     </div>
   )
