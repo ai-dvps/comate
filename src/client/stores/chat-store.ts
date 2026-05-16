@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { ChatMessage } from '../types/message'
+import type { ChatMessage, MessagePart } from '../types/message'
 
 export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
 
@@ -80,6 +80,214 @@ function parseData(data: string): unknown {
     return JSON.parse(data)
   } catch {
     return data
+  }
+}
+
+type SseSetter = (
+  updater: (state: ChatState) => ChatState | Partial<ChatState>,
+) => void
+
+function updateAssistantPart(
+  state: ChatState,
+  sessionId: string,
+  messageId: string,
+  partIndex: number,
+  produce: (existing: MessagePart | undefined) => MessagePart,
+): Partial<ChatState> {
+  const msgs = state.messages[sessionId] || []
+  const idx = msgs.findIndex((m) => m.id === messageId)
+  if (idx < 0) return {}
+  const target = msgs[idx]
+  const parts = [...target.parts]
+  parts[partIndex] = produce(parts[partIndex])
+  const updated: ChatMessage = { ...target, parts }
+  const nextMsgs = [...msgs.slice(0, idx), updated, ...msgs.slice(idx + 1)]
+  return { messages: { ...state.messages, [sessionId]: nextMsgs } }
+}
+
+function mutateToolUsePart(
+  state: ChatState,
+  sessionId: string,
+  toolUseId: string,
+  produce: (part: Extract<MessagePart, { type: 'tool_use' }>) => MessagePart,
+): Partial<ChatState> {
+  const msgs = state.messages[sessionId] || []
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]
+    const partIdx = m.parts.findIndex(
+      (p) => p.type === 'tool_use' && p.toolUseId === toolUseId,
+    )
+    if (partIdx >= 0) {
+      const part = m.parts[partIdx] as Extract<MessagePart, { type: 'tool_use' }>
+      const parts = [...m.parts]
+      parts[partIdx] = produce(part)
+      const updated: ChatMessage = { ...m, parts }
+      const nextMsgs = [...msgs.slice(0, i), updated, ...msgs.slice(i + 1)]
+      return { messages: { ...state.messages, [sessionId]: nextMsgs } }
+    }
+  }
+  return {}
+}
+
+function handleSseEvent(
+  set: SseSetter,
+  sessionId: string,
+  event: string,
+  raw: unknown,
+): void {
+  const data = (raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {})
+
+  switch (event) {
+    case 'assistant_start': {
+      const messageId = typeof data.messageId === 'string' ? data.messageId : ''
+      if (!messageId) return
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [sessionId]: [
+            ...(state.messages[sessionId] || []),
+            {
+              id: messageId,
+              role: 'assistant',
+              parts: [],
+              timestamp: Date.now(),
+              isStreaming: true,
+            },
+          ],
+        },
+      }))
+      return
+    }
+    case 'text_delta': {
+      const messageId = typeof data.messageId === 'string' ? data.messageId : ''
+      const partIndex = typeof data.partIndex === 'number' ? data.partIndex : -1
+      const text = typeof data.text === 'string' ? data.text : ''
+      if (!messageId || partIndex < 0 || !text) return
+      set((state) =>
+        updateAssistantPart(state, sessionId, messageId, partIndex, (existing) => {
+          if (existing && existing.type === 'text') {
+            return { ...existing, text: existing.text + text }
+          }
+          return { type: 'text', text }
+        }),
+      )
+      return
+    }
+    case 'tool_use_start': {
+      const messageId = typeof data.messageId === 'string' ? data.messageId : ''
+      const partIndex = typeof data.partIndex === 'number' ? data.partIndex : -1
+      const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
+      const toolName = typeof data.toolName === 'string' ? data.toolName : ''
+      if (!messageId || partIndex < 0 || !toolUseId) return
+      set((state) =>
+        updateAssistantPart(state, sessionId, messageId, partIndex, () => ({
+          type: 'tool_use',
+          toolUseId,
+          toolName,
+          input: {},
+          state: 'streaming',
+        })),
+      )
+      return
+    }
+    case 'tool_use_done': {
+      const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
+      const input = 'input' in data ? data.input : {}
+      if (!toolUseId) return
+      set((state) =>
+        mutateToolUsePart(state, sessionId, toolUseId, (part) => ({
+          ...part,
+          input,
+          state: 'complete',
+        })),
+      )
+      return
+    }
+    case 'tool_result': {
+      const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
+      const output = typeof data.output === 'string' ? data.output : ''
+      const isError = data.isError === true
+      if (!toolUseId) return
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [sessionId]: [
+            ...(state.messages[sessionId] || []),
+            {
+              id: generateId(),
+              role: 'user',
+              parts: [{ type: 'tool_result', toolUseId, output, isError }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+      }))
+      return
+    }
+    case 'thinking_start': {
+      const messageId = typeof data.messageId === 'string' ? data.messageId : ''
+      const partIndex = typeof data.partIndex === 'number' ? data.partIndex : -1
+      if (!messageId || partIndex < 0) return
+      set((state) =>
+        updateAssistantPart(state, sessionId, messageId, partIndex, () => ({
+          type: 'thinking',
+          text: '',
+          state: 'streaming',
+        })),
+      )
+      return
+    }
+    case 'thinking_delta': {
+      const messageId = typeof data.messageId === 'string' ? data.messageId : ''
+      const partIndex = typeof data.partIndex === 'number' ? data.partIndex : -1
+      const text = typeof data.text === 'string' ? data.text : ''
+      if (!messageId || partIndex < 0 || !text) return
+      set((state) =>
+        updateAssistantPart(state, sessionId, messageId, partIndex, (existing) => {
+          if (existing && existing.type === 'thinking') {
+            return { ...existing, text: existing.text + text }
+          }
+          return { type: 'thinking', text, state: 'streaming' }
+        }),
+      )
+      return
+    }
+    case 'thinking_done': {
+      const messageId = typeof data.messageId === 'string' ? data.messageId : ''
+      const partIndex = typeof data.partIndex === 'number' ? data.partIndex : -1
+      if (!messageId || partIndex < 0) return
+      set((state) =>
+        updateAssistantPart(state, sessionId, messageId, partIndex, (existing) => {
+          if (existing && existing.type === 'thinking') {
+            return { ...existing, state: 'complete' }
+          }
+          return existing ?? { type: 'thinking', text: '', state: 'complete' }
+        }),
+      )
+      return
+    }
+    case 'assistant_done': {
+      const messageId = typeof data.messageId === 'string' ? data.messageId : ''
+      if (!messageId) return
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [sessionId]: (state.messages[sessionId] || []).map((m) =>
+            m.id === messageId ? { ...m, isStreaming: false } : m,
+          ),
+        },
+      }))
+      return
+    }
+    case 'error': {
+      const message = typeof data.message === 'string' ? data.message : 'Stream error'
+      throw new Error(message)
+    }
+    case 'system_init':
+    case 'result':
+    case 'done':
+    default:
+      return
   }
 }
 
@@ -178,7 +386,7 @@ export const useChatStore = create<ChatState>((set) => ({
   },
 
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {
-    const messageId = generateId()
+    const userMessageId = generateId()
 
     set((state) => ({
       messages: {
@@ -186,7 +394,7 @@ export const useChatStore = create<ChatState>((set) => ({
         [sessionId]: [
           ...(state.messages[sessionId] || []),
           {
-            id: messageId,
+            id: userMessageId,
             role: 'user',
             parts: [{ type: 'text', text: content }],
             timestamp: Date.now(),
@@ -195,9 +403,6 @@ export const useChatStore = create<ChatState>((set) => ({
       },
       isStreaming: { ...state.isStreaming, [sessionId]: true },
     }))
-
-    const assistantMessageId = generateId()
-    let assistantContent = ''
 
     fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/chat`, {
       method: 'POST',
@@ -212,89 +417,7 @@ export const useChatStore = create<ChatState>((set) => ({
         if (!res.body) throw new Error('No response body')
 
         for await (const event of parseSSEStream(res.body)) {
-          if (event.event === 'text_delta') {
-            const data = event.data as { text?: string }
-            if (data.text) {
-              assistantContent += data.text
-              set((state) => {
-                const msgs = state.messages[sessionId] || []
-                const lastMsg = msgs[msgs.length - 1]
-                if (lastMsg?.id === assistantMessageId) {
-                  return {
-                    messages: {
-                      ...state.messages,
-                      [sessionId]: [
-                        ...msgs.slice(0, -1),
-                        {
-                          ...lastMsg,
-                          parts: [{ type: 'text', text: assistantContent }],
-                        },
-                      ],
-                    },
-                  }
-                }
-                return {
-                  messages: {
-                    ...state.messages,
-                    [sessionId]: [
-                      ...msgs,
-                      {
-                        id: assistantMessageId,
-                        role: 'assistant',
-                        parts: [{ type: 'text', text: assistantContent }],
-                        timestamp: Date.now(),
-                      },
-                    ],
-                  },
-                }
-              })
-            }
-          } else if (event.event === 'assistant') {
-            const data = event.data as { text?: string; uuid?: string }
-            if (data.text) {
-              assistantContent = data.text
-              set((state) => {
-                const msgs = state.messages[sessionId] || []
-                const lastMsg = msgs[msgs.length - 1]
-                if (lastMsg?.id === assistantMessageId) {
-                  return {
-                    messages: {
-                      ...state.messages,
-                      [sessionId]: [
-                        ...msgs.slice(0, -1),
-                        {
-                          ...lastMsg,
-                          parts: [{ type: 'text', text: assistantContent }],
-                        },
-                      ],
-                    },
-                  }
-                }
-                return {
-                  messages: {
-                    ...state.messages,
-                    [sessionId]: [
-                      ...msgs,
-                      {
-                        id: assistantMessageId,
-                        role: 'assistant',
-                        parts: [{ type: 'text', text: assistantContent }],
-                        timestamp: Date.now(),
-                      },
-                    ],
-                  },
-                }
-              })
-            }
-          } else if (event.event === 'tool_progress') {
-            // Bridge-state: tool_progress SSE no longer maps to a synthetic
-            // 'tool' chat message — `MessageRole` is now strictly
-            // user|assistant|system. U4 replaces this with proper
-            // tool_use_start/tool_use_done events writing tool_use MessageParts.
-          } else if (event.event === 'error') {
-            const data = event.data as { message?: string }
-            throw new Error(data.message || 'Stream error')
-          }
+          handleSseEvent(set, sessionId, event.event, event.data)
         }
       })
       .catch((err) => {

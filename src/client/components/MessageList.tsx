@@ -1,75 +1,158 @@
+import { useMemo } from 'react'
+import { AlertCircle, Bot } from 'lucide-react'
+
 import { useChatStore } from '../stores/chat-store'
-import { User, Bot, AlertCircle } from 'lucide-react'
+import type { ChatMessage, MessagePart } from '../types/message'
+
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from './ai-elements/conversation'
+import { Message, MessageContent } from './ai-elements/message'
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from './ai-elements/reasoning'
+import { Response } from './ai-elements/response'
+import {
+  Tool,
+  ToolContent,
+  ToolHeader,
+  ToolInput,
+  ToolOutput,
+  type ToolState,
+} from './ai-elements/tool'
 
 interface MessageListProps {
   sessionId: string
 }
 
+type ToolUsePart = Extract<MessagePart, { type: 'tool_use' }>
+type ToolResultPart = Extract<MessagePart, { type: 'tool_result' }>
+
+function isToolResultOnly(msg: ChatMessage): boolean {
+  return (
+    msg.role === 'user' &&
+    msg.parts.length > 0 &&
+    msg.parts.every((p) => p.type === 'tool_result')
+  )
+}
+
+function buildResultMap(messages: ChatMessage[]): Map<string, ToolResultPart> {
+  const map = new Map<string, ToolResultPart>()
+  for (const m of messages) {
+    for (const p of m.parts) {
+      if (p.type === 'tool_result') {
+        map.set(p.toolUseId, p)
+      }
+    }
+  }
+  return map
+}
+
+function toToolState(toolUse: ToolUsePart, result?: ToolResultPart): ToolState {
+  if (toolUse.state === 'streaming') return 'input-streaming'
+  if (!result) return 'input-available'
+  return result.isError ? 'output-error' : 'output-available'
+}
+
 export default function MessageList({ sessionId }: MessageListProps) {
   const messages = useChatStore((s) => s.messages[sessionId] || [])
-  const isStreaming = useChatStore((s) => s.isStreaming[sessionId])
+  const resultMap = useMemo(() => buildResultMap(messages), [messages])
+  const visibleMessages = useMemo(
+    () => messages.filter((m) => !isToolResultOnly(m)),
+    [messages],
+  )
+
+  if (messages.length === 0) {
+    return (
+      <Conversation>
+        <ConversationContent>
+          <ConversationEmptyState
+            icon={<Bot className="w-8 h-8" />}
+            title="Start a conversation"
+            description="Send a message to begin chatting with Claude"
+          />
+        </ConversationContent>
+      </Conversation>
+    )
+  }
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
-      {messages.length === 0 && (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center">
-            <Bot className="w-8 h-8 text-text-tertiary mx-auto mb-3" />
-            <p className="text-sm text-text-secondary">Start a conversation</p>
-            <p className="text-xs text-text-tertiary mt-1">
-              Send a message to begin chatting with Claude
-            </p>
-          </div>
-        </div>
-      )}
+    <Conversation>
+      <ConversationContent className="max-w-3xl mx-auto w-full">
+        {visibleMessages.map((msg) => {
+          if (msg.role === 'system') {
+            const text = msg.parts.find((p) => p.type === 'text')?.text ?? ''
+            return (
+              <div
+                key={msg.id}
+                className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-[13px] text-red-300"
+              >
+                <AlertCircle className="mt-0.5 size-4 flex-shrink-0" />
+                <span>{text}</span>
+              </div>
+            )
+          }
 
-      {messages.map((msg) => (
-        <div
-          key={msg.id}
-          className={`flex gap-3 ${
-            msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
-          }`}
-        >
-          <div
-            className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
-              msg.role === 'user' ? 'bg-accent' : 'bg-surface-hover'
-            }`}
-          >
-            {msg.role === 'user' && <User className="w-3.5 h-3.5 text-white" />}
-            {msg.role === 'assistant' && <Bot className="w-3.5 h-3.5 text-accent" />}
-            {msg.role === 'system' && <AlertCircle className="w-3.5 h-3.5 text-red-400" />}
-          </div>
-
-          <div
-            className={`max-w-[80%] rounded-xl px-4 py-2.5 text-[13px] leading-relaxed ${
-              msg.role === 'user'
-                ? 'bg-msg-user text-text-primary'
-                : msg.role === 'system'
-                ? 'bg-red-500/10 text-red-300 border border-red-500/20'
-                : 'bg-surface-hover text-text-primary'
-            }`}
-          >
-            {msg.parts[0]?.type === 'text' ? msg.parts[0].text : ''}
-          </div>
-        </div>
-      ))}
-
-      {isStreaming && (
-        <div className="flex gap-3">
-          <div className="w-6 h-6 rounded-full bg-surface-hover flex items-center justify-center flex-shrink-0">
-            <Bot className="w-3.5 h-3.5 text-accent" />
-          </div>
-          <div className="bg-surface-hover rounded-xl px-4 py-2.5">
-            <div className="flex gap-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
-            </div>
-          </div>
-        </div>
-      )}
-      </div>
-    </div>
+          return (
+            <Message from={msg.role} key={msg.id}>
+              <MessageContent>
+                {msg.parts.map((part, idx) => {
+                  const partKey = `${msg.id}-${idx}`
+                  if (part.type === 'text') {
+                    if (msg.role === 'user') {
+                      return (
+                        <p key={partKey} className="whitespace-pre-wrap">
+                          {part.text}
+                        </p>
+                      )
+                    }
+                    return <Response key={partKey}>{part.text}</Response>
+                  }
+                  if (part.type === 'thinking') {
+                    return (
+                      <Reasoning
+                        isStreaming={part.state === 'streaming'}
+                        key={partKey}
+                      >
+                        <ReasoningTrigger />
+                        <ReasoningContent>{part.text}</ReasoningContent>
+                      </Reasoning>
+                    )
+                  }
+                  if (part.type === 'tool_use') {
+                    const result = resultMap.get(part.toolUseId)
+                    const state = toToolState(part, result)
+                    return (
+                      <Tool key={partKey}>
+                        <ToolHeader
+                          state={state}
+                          type={`tool-${part.toolName}`}
+                        />
+                        <ToolContent>
+                          <ToolInput input={part.input} />
+                          {result && (
+                            <ToolOutput
+                              errorText={result.isError ? result.output : undefined}
+                              output={result.isError ? undefined : result.output}
+                            />
+                          )}
+                        </ToolContent>
+                      </Tool>
+                    )
+                  }
+                  return null
+                })}
+              </MessageContent>
+            </Message>
+          )
+        })}
+      </ConversationContent>
+      <ConversationScrollButton />
+    </Conversation>
   )
 }
