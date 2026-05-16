@@ -6,6 +6,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import type { ChatMessage } from '../types/message.js';
 import { normalizeSessionMessage } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
+import { SessionRuntime } from './session-runtime.js';
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
@@ -15,6 +16,8 @@ export interface MessageStream {
 
 export class ChatService {
   private sdkClient = new SdkClient();
+  private runtimes = new Map<string, SessionRuntime>();
+  readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   // Session management
 
@@ -92,6 +95,9 @@ export class ChatService {
   }
 
   async deleteSession(id: string, workspaceId: string): Promise<boolean> {
+    // Close runtime if active
+    await this.closeRuntime(id);
+
     // Try draft first
     const draftDeleted = await draftStore.deleteDraft(id);
     if (draftDeleted) return true;
@@ -137,7 +143,43 @@ export class ChatService {
     return normalized;
   }
 
-  // Message streaming
+  // Session runtime management
+
+  async getOrCreateRuntime(sessionId: string, workspaceId: string): Promise<SessionRuntime> {
+    const existing = this.runtimes.get(sessionId);
+    if (existing) return existing;
+
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+    }
+
+    const session = await this.getSession(sessionId, workspaceId);
+    if (!session) {
+      throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
+    }
+
+    const options = this.buildSdkOptions(workspace, session);
+    const runtime = SessionRuntime.open(sessionId, this.serverNonce, options, this.sdkClient);
+    this.runtimes.set(sessionId, runtime);
+
+    if (session.isDraft) {
+      this.clearDraftFlag(sessionId).catch((err) => {
+        console.error('Failed to clear draft flag:', err);
+      });
+    }
+
+    return runtime;
+  }
+
+  async closeRuntime(sessionId: string): Promise<void> {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime) return;
+    this.runtimes.delete(sessionId);
+    await runtime.close();
+  }
+
+  // Legacy message streaming (preserved during migration; removed after U5)
 
   async sendMessage(sessionId: string, message: string): Promise<MessageStream> {
     const workspace = await this.findWorkspaceForSession(sessionId);

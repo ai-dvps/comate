@@ -1,6 +1,6 @@
 import { Router } from 'express';
+import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { chatService, ChatError } from '../services/chat-service.js';
-import { SseEmitter } from '../services/sse-emitter.js';
 
 const router = Router({ mergeParams: true });
 
@@ -76,9 +76,41 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
   }
 });
 
-// POST /api/workspaces/:id/sessions/:sessionId/chat
-router.post('/sessions/:sessionId/chat', async (req, res) => {
+// GET /api/workspaces/:id/sessions/:sessionId/stream
+// Long-lived SSE subscription for streaming output
+router.get('/sessions/:sessionId/stream', async (req, res) => {
   const sessionId = req.params.sessionId;
+  const workspaceId = (req.params as unknown as { id: string }).id;
+
+  try {
+    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const lastEventId = req.headers['last-event-id'] as string | undefined;
+
+    runtime.subscribe(res, lastEventId);
+
+    req.on('close', () => {
+      runtime.unsubscribe();
+    });
+  } catch (error) {
+    console.error('Failed to subscribe to stream:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to subscribe to stream' });
+  }
+});
+
+// POST /api/workspaces/:id/sessions/:sessionId/messages
+// Push a user message into the session's input channel
+router.post('/sessions/:sessionId/messages', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const workspaceId = (req.params as unknown as { id: string }).id;
   const { message } = req.body;
 
   if (!message || typeof message !== 'string') {
@@ -87,53 +119,82 @@ router.post('/sessions/:sessionId/chat', async (req, res) => {
   }
 
   try {
-    const stream = await chatService.sendMessage(sessionId, message);
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-
-    let clientClosed = false;
-    req.on('close', () => {
-      clientClosed = true;
-      stream.rawQuery.interrupt().catch(() => {});
-    });
-
-    const emitter = new SseEmitter(res);
-
-    for await (const msg of stream.messages) {
-      if (clientClosed) break;
-      emitter.handle(msg);
-    }
-
-    if (!clientClosed) {
-      emitter.done();
-    }
-
-    res.end();
-
-    // After stream completes, clear draft flag if this was a draft session
-    if (stream.wasDraft) {
-      chatService.clearDraftFlag(sessionId).catch((err) => {
-        console.error('Failed to clear draft flag:', err);
-      });
-    }
+    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
+    runtime.pushMessage(message);
+    res.json({ ok: true });
   } catch (error) {
+    console.error('Failed to push message:', error);
     if (error instanceof ChatError) {
       res.status(error.statusCode).json({ error: error.message, code: error.code });
       return;
     }
+    res.status(500).json({ error: 'Failed to push message' });
+  }
+});
 
-    console.error('Chat stream error:', error);
+// POST /api/workspaces/:id/sessions/:sessionId/approvals/:requestId
+// Resolve a pending approval or question
+router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const requestId = req.params.requestId;
+  const workspaceId = (req.params as unknown as { id: string }).id;
+  const { behavior, updatedPermissions, answers } = req.body;
 
-    // If headers already sent, send error as SSE event
-    if (res.headersSent) {
-      const emitter = new SseEmitter(res);
-      emitter.error('Stream failed');
-      res.end();
+  if (!behavior || (behavior !== 'allow' && behavior !== 'deny')) {
+    res.status(400).json({ error: "behavior must be 'allow' or 'deny'" });
+    return;
+  }
+
+  try {
+    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
+
+    let result: PermissionResult;
+    if (behavior === 'allow') {
+      if (answers) {
+        // AskUserQuestion response
+        result = {
+          behavior: 'allow',
+          updatedInput: { questions: req.body.questions, answers },
+        };
+      } else {
+        result = { behavior: 'allow', updatedPermissions };
+      }
     } else {
-      res.status(500).json({ error: 'Chat stream failed' });
+      result = {
+        behavior: 'deny',
+        message: req.body.message || 'User denied this tool call.',
+      };
     }
+
+    runtime.resolveApproval(requestId, result);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Failed to resolve approval:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to resolve approval' });
+  }
+});
+
+// POST /api/workspaces/:id/sessions/:sessionId/interrupt
+// Interrupt the current turn
+router.post('/sessions/:sessionId/interrupt', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const workspaceId = (req.params as unknown as { id: string }).id;
+
+  try {
+    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
+    await runtime.interrupt();
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Failed to interrupt:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to interrupt' });
   }
 });
 
