@@ -66,6 +66,7 @@ const statusIcons: Record<ToolState, ReactNode> = {
   'output-error': <XCircleIcon className="size-4 text-red-600" />,
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- vendored helper alongside components
 export const getStatusBadge = (status: ToolState) => (
   <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
     {statusIcons[status]}

@@ -172,6 +172,7 @@ const createRawTokens = (code: string): TokenizedCode => ({
   ),
 })
 
+// eslint-disable-next-line react-refresh/only-export-components -- vendored helper alongside components
 export const highlightCode = (
   code: string,
   language: BundledLanguage,

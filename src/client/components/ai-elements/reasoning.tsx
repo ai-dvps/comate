@@ -41,6 +41,7 @@ interface ReasoningContextValue {
 
 const ReasoningContext = createContext<ReasoningContextValue | null>(null)
 
+// eslint-disable-next-line react-refresh/only-export-components -- vendored helper alongside components
 export const useReasoning = () => {
   const context = useContext(ReasoningContext)
   if (!context) {
