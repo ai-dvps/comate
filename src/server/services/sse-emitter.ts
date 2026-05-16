@@ -64,6 +64,7 @@ export class SseEmitter {
     this.blockStates.clear();
     this.seenStreamPartIndexes.clear();
     this.finalizedMessageIds.clear();
+    this.eventIndex = 0;
   }
 
   handle(msg: SDKMessage): void {
@@ -178,9 +179,13 @@ export class SseEmitter {
     this.send({ type: 'server_restarted', serverNonce });
   }
 
+  static formatSsePayload(id: string | number, event: SseEvent): string {
+    return `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+  }
+
   private send(event: SseEvent): void {
     const id = this.eventIndex++;
-    const payload = `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+    const payload = SseEmitter.formatSsePayload(id, event);
     if (this.res) {
       this.res.write(payload);
     }

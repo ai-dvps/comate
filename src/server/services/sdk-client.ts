@@ -25,17 +25,18 @@ export interface QueryResult {
   messages: AsyncGenerator<SDKMessage>;
 }
 
+function wrapQuery(q: Query): AsyncGenerator<SDKMessage> {
+  return (async function* (): AsyncGenerator<SDKMessage> {
+    for await (const msg of q) {
+      yield msg;
+    }
+  })();
+}
+
 export class SdkClient {
   createQuery(prompt: string, options: Options): QueryResult {
     const q = query({ prompt, options });
-
-    async function* messageGenerator(): AsyncGenerator<SDKMessage> {
-      for await (const msg of q) {
-        yield msg;
-      }
-    }
-
-    return { query: q, messages: messageGenerator() };
+    return { query: q, messages: wrapQuery(q) };
   }
 
   createStreamingQuery(
@@ -53,13 +54,7 @@ export class SdkClient {
       },
     });
 
-    async function* messageGenerator(): AsyncGenerator<SDKMessage> {
-      for await (const msg of q) {
-        yield msg;
-      }
-    }
-
-    return { query: q, messages: messageGenerator() };
+    return { query: q, messages: wrapQuery(q) };
   }
 
   async listSessions(options?: ListSessionsOptions): Promise<SDKSessionInfo[]> {

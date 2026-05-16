@@ -56,7 +56,9 @@
       "Bash(xargs -I {} sh -c 'grep -m 2 \"<local-command-stdout>\" \"{}\"')",
       "Bash(grep -iE '^\\(strategy|agents|claude\\)\\\\.md$')",
       "Bash(python3 -c \"import sys,json; data=sys.stdin.read\\(\\); print\\(data[:200]\\)\")",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(git diff *)",
+      "Read(//tmp/**)"
     ]
   }
 }

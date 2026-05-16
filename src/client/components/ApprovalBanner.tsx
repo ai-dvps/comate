@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { Loader2 } from 'lucide-react'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import type { QuestionPayload } from '../types/message'
+import { Button } from './ui/button'
 
 interface PendingApproval {
   requestId: string
@@ -126,11 +127,7 @@ function ApprovalView({
       </div>
 
       <div className="flex items-center gap-2">
-        <button
-          onClick={onAllow}
-          disabled={isResolving}
-          className="px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/90 rounded-md transition-colors disabled:opacity-50"
-        >
+        <Button onClick={onAllow} disabled={isResolving} size="sm">
           {isResolving ? (
             <span className="flex items-center gap-1">
               <Loader2 className="w-3 h-3 animate-spin" />
@@ -139,23 +136,20 @@ function ApprovalView({
           ) : (
             'Allow'
           )}
-        </button>
+        </Button>
         {hasSuggestions && (
-          <button
-            onClick={onAllowAlways}
-            disabled={isResolving}
-            className="px-3 py-1.5 text-xs font-medium text-text-primary bg-surface-hover hover:bg-border rounded-md transition-colors disabled:opacity-50"
-          >
+          <Button onClick={onAllowAlways} disabled={isResolving} variant="secondary" size="sm">
             Allow always
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           onClick={() => onDeny('User denied this tool call.')}
           disabled={isResolving}
-          className="px-3 py-1.5 text-xs font-medium text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors disabled:opacity-50"
+          variant="destructive"
+          size="sm"
         >
           Deny
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -289,10 +283,10 @@ function QuestionView({
         ))}
       </div>
 
-      <button
+      <Button
         onClick={handleConfirm}
         disabled={isResolving || !allAnswered}
-        className="px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/90 rounded-md transition-colors disabled:opacity-50"
+        size="sm"
       >
         {isResolving ? (
           <span className="flex items-center gap-1">
@@ -302,7 +296,7 @@ function QuestionView({
         ) : (
           'Confirm'
         )}
-      </button>
+      </Button>
     </div>
   )
 }

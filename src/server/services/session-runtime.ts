@@ -11,6 +11,7 @@ import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
 
+
 const RING_BUFFER_CAP = 500;
 
 export class SessionRuntime {
@@ -220,9 +221,7 @@ export class SessionRuntime {
     );
     if (startIndex < 0) {
       for (const item of this.ringBuffer) {
-        res.write(
-          `id: ${item.id}\nevent: ${item.event.type}\ndata: ${JSON.stringify(item.event)}\n\n`,
-        );
+        res.write(SseEmitter.formatSsePayload(item.id, item.event));
       }
       this.emitter.emitErrorNote(
         'Some output may have been missed due to reconnect.',
@@ -231,9 +230,7 @@ export class SessionRuntime {
     }
     for (let i = startIndex + 1; i < this.ringBuffer.length; i++) {
       const item = this.ringBuffer[i];
-      res.write(
-        `id: ${item.id}\nevent: ${item.event.type}\ndata: ${JSON.stringify(item.event)}\n\n`,
-      );
+      res.write(SseEmitter.formatSsePayload(item.id, item.event));
     }
   }
 

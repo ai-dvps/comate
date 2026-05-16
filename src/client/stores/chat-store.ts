@@ -48,7 +48,7 @@ interface ChatState {
   serverNonce: Record<string, string>
   sessionSubscriptions: Record<string, { close: () => void }>
   lastEventId: Record<string, string>
-  draftQueue: Record<string, string | undefined>
+  draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -423,14 +423,19 @@ function handleSseEvent(
           approvalQueue: { ...state.approvalQueue, [sessionId]: nextQueue },
         }
         // If queue is now empty and there's a draft message, send it
-        if (nextQueue.length === 0 && state.draftQueue[sessionId]) {
-          const content = state.draftQueue[sessionId]
+        const draft = state.draftQueue[sessionId]
+        if (nextQueue.length === 0 && draft) {
+          const { workspaceId, content } = draft
           updates.draftQueue = { ...state.draftQueue }
           delete updates.draftQueue[sessionId]
           // Send the queued message asynchronously
-          setTimeout(() => {
-            postMessage(sessionId, content)
-          }, 0)
+          fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: content }),
+          }).catch((err) => {
+            console.error('Failed to send queued message:', err)
+          })
         }
         return updates
       })
@@ -696,7 +701,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const queue = get().approvalQueue[sessionId] || []
     if (queue.length > 0) {
       set((state) => ({
-        draftQueue: { ...state.draftQueue, [sessionId]: content },
+        draftQueue: { ...state.draftQueue, [sessionId]: { workspaceId, content } },
       }))
       return
     }
