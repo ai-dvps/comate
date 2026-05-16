@@ -10,6 +10,8 @@ import type {
   Query,
   Options,
   SDKMessage,
+  SDKUserMessage,
+  PermissionResult,
   ListSessionsOptions,
   GetSessionInfoOptions,
   GetSessionMessagesOptions,
@@ -26,6 +28,30 @@ export interface QueryResult {
 export class SdkClient {
   createQuery(prompt: string, options: Options): QueryResult {
     const q = query({ prompt, options });
+
+    async function* messageGenerator(): AsyncGenerator<SDKMessage> {
+      for await (const msg of q) {
+        yield msg;
+      }
+    }
+
+    return { query: q, messages: messageGenerator() };
+  }
+
+  createStreamingQuery(
+    input: AsyncIterable<SDKUserMessage>,
+    options: Options,
+  ): QueryResult {
+    const q = query({
+      prompt: input,
+      options: {
+        ...options,
+        includePartialMessages: true,
+        toolConfig: {
+          askUserQuestion: { previewFormat: 'markdown' },
+        },
+      },
+    });
 
     async function* messageGenerator(): AsyncGenerator<SDKMessage> {
       for await (const msg of q) {
@@ -71,6 +97,8 @@ export {
   type Query,
   type Options,
   type SDKMessage,
+  type SDKUserMessage,
+  type PermissionResult,
   type SDKSessionInfo,
   type SessionMessage,
   type ListSessionsOptions,
