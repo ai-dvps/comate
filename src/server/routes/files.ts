@@ -11,6 +11,11 @@ interface FileNode {
   children?: FileNode[];
 }
 
+interface FlatFileNode {
+  path: string;
+  type: 'file' | 'folder';
+}
+
 async function validatePath(workspacePath: string, requestedPath: string): Promise<string | null> {
   const resolvedBase = path.resolve(workspacePath);
   const resolvedRequested = path.resolve(resolvedBase, requestedPath);
@@ -23,7 +28,24 @@ async function validatePath(workspacePath: string, requestedPath: string): Promi
   return resolvedRequested;
 }
 
-// GET /api/workspaces/:id/files?path=
+async function walkRecursive(
+  dirPath: string,
+  basePath: string,
+  result: FlatFileNode[],
+): Promise<void> {
+  const entries = await readdir(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const relativePath = basePath ? `${basePath}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      result.push({ path: relativePath, type: 'folder' });
+      await walkRecursive(path.join(dirPath, entry.name), relativePath, result);
+    } else {
+      result.push({ path: relativePath, type: 'file' });
+    }
+  }
+}
+
+// GET /api/workspaces/:id/files?path=&recursive=
 router.get('/', async (req, res) => {
   try {
     const workspace = await store.get((req.params as { id: string }).id);
@@ -37,6 +59,16 @@ router.get('/', async (req, res) => {
 
     if (!targetPath) {
       res.status(403).json({ error: 'Path outside workspace' });
+      return;
+    }
+
+    const isRecursive = req.query.recursive === 'true';
+
+    if (isRecursive) {
+      const result: FlatFileNode[] = [];
+      await walkRecursive(targetPath, relativePath, result);
+      result.sort((a, b) => a.path.localeCompare(b.path));
+      res.json({ path: relativePath, nodes: result });
       return;
     }
 
