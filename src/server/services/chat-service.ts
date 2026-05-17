@@ -17,6 +17,7 @@ export interface MessageStream {
 export class ChatService {
   private sdkClient = new SdkClient();
   private runtimes = new Map<string, SessionRuntime>();
+  private creatingRuntimes = new Map<string, Promise<SessionRuntime>>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   // Session management
@@ -149,27 +150,39 @@ export class ChatService {
     const existing = this.runtimes.get(sessionId);
     if (existing) return existing;
 
-    const workspace = await workspaceStore.get(workspaceId);
-    if (!workspace) {
-      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+    const pending = this.creatingRuntimes.get(sessionId);
+    if (pending) return pending;
+
+    const promise = (async () => {
+      const workspace = await workspaceStore.get(workspaceId);
+      if (!workspace) {
+        throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+      }
+
+      const session = await this.getSession(sessionId, workspaceId);
+      if (!session) {
+        throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
+      }
+
+      const options = this.buildSdkOptions(workspace, session);
+      const runtime = SessionRuntime.open(sessionId, this.serverNonce, options, this.sdkClient);
+      this.runtimes.set(sessionId, runtime);
+
+      if (session.isDraft) {
+        this.clearDraftFlag(sessionId).catch((err) => {
+          console.error('Failed to clear draft flag:', err);
+        });
+      }
+
+      return runtime;
+    })();
+
+    this.creatingRuntimes.set(sessionId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.creatingRuntimes.delete(sessionId);
     }
-
-    const session = await this.getSession(sessionId, workspaceId);
-    if (!session) {
-      throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
-    }
-
-    const options = this.buildSdkOptions(workspace, session);
-    const runtime = SessionRuntime.open(sessionId, this.serverNonce, options, this.sdkClient);
-    this.runtimes.set(sessionId, runtime);
-
-    if (session.isDraft) {
-      this.clearDraftFlag(sessionId).catch((err) => {
-        console.error('Failed to clear draft flag:', err);
-      });
-    }
-
-    return runtime;
   }
 
   async closeRuntime(sessionId: string): Promise<void> {
