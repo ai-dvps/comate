@@ -1,7 +1,7 @@
 ---
 title: 'feat: Approval & AskUserQuestion Surface Swap'
 type: feat
-status: active
+status: completed
 date: 2026-05-17
 origin: docs/brainstorms/2026-05-17-approval-and-question-surface-swap-requirements.md
 ---
