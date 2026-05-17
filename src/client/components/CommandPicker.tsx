@@ -240,7 +240,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
                     ) : null}
                   </div>
                   {cmd.description && (
-                    <div className="text-[11px] text-text-tertiary truncate mt-0.5">
+                    <div className="text-[11px] text-text-tertiary break-words mt-0.5">
                       {cmd.description}
                     </div>
                   )}
