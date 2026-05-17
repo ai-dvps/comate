@@ -53,7 +53,7 @@ export class SdkClient {
         ...options,
         includePartialMessages: true,
         toolConfig: {
-          askUserQuestion: { previewFormat: 'markdown' },
+          askUserQuestion: { previewFormat: 'html' },
         },
       },
     });
