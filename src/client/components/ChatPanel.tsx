@@ -157,6 +157,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       <div className="flex-shrink-0 border-t border-border/30 bg-bg">
         <PromptInput
           workspaceId={workspaceId}
+          sessionId={activeSessionId || ''}
           onSend={handleSend}
           onStop={handleStop}
           disabled={!activeSessionId}

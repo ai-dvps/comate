@@ -4,9 +4,11 @@ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import type { SlashCommandDto } from '../stores/commands-store'
+import { useChatStore } from '../stores/chat-store'
 
 interface PromptInputProps {
   workspaceId: string
+  sessionId: string
   onSend: (content: string) => void
   onStop: () => void
   disabled?: boolean
@@ -17,6 +19,7 @@ interface PromptInputProps {
 
 export default function PromptInput({
   workspaceId,
+  sessionId,
   onSend,
   onStop,
   disabled = false,
@@ -24,7 +27,10 @@ export default function PromptInput({
   isInterrupting = false,
   hasSession = false,
 }: PromptInputProps) {
-  const [input, setInput] = useState('')
+  const input = useChatStore((s) =>
+    sessionId ? s.drafts[sessionId] ?? '' : '',
+  )
+  const setDraft = useChatStore((s) => s.setDraft)
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerSource, setPickerSource] = useState<'slash' | 'button'>('slash')
@@ -57,10 +63,22 @@ export default function PromptInput({
     adjustHeight()
   }, [input, adjustHeight])
 
+  useEffect(() => {
+    prevInputRef.current = input
+  }, [input])
+
+  useEffect(() => {
+    setPickerOpen(false)
+    setFilePickerOpen(false)
+    setFileTriggerStart(null)
+    setArgumentHint(null)
+    setLastInsertedCommand(null)
+  }, [sessionId])
+
   const handleInputChange = (value: string, cursorPos: number) => {
     const prev = prevInputRef.current
     prevInputRef.current = value
-    setInput(value)
+    setDraft(sessionId, value)
 
     if (lastInsertedCommand && value !== lastInsertedCommand) {
       setArgumentHint(null)
@@ -138,7 +156,7 @@ export default function PromptInput({
   }
 
   const resetInput = () => {
-    setInput('')
+    setDraft(sessionId, '')
     prevInputRef.current = ''
     setArgumentHint(null)
     setLastInsertedCommand(null)
@@ -226,7 +244,7 @@ export default function PromptInput({
 
   const handleCommandSelect = (command: SlashCommandDto) => {
     const inserted = `/${command.name} `
-    setInput(inserted)
+    setDraft(sessionId, inserted)
     prevInputRef.current = inserted
     setLastInsertedCommand(inserted)
     setArgumentHint(command.argumentHint ?? null)
@@ -247,7 +265,7 @@ export default function PromptInput({
     const after = input.slice(cursorPos)
     const inserted = `@${selectedPath} `
     const next = before + inserted + after
-    setInput(next)
+    setDraft(sessionId, next)
     prevInputRef.current = next
     setFilePickerOpen(false)
     setFileTriggerStart(null)

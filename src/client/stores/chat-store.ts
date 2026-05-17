@@ -74,6 +74,7 @@ interface ChatState {
   serverNonce: Record<string, string>
   draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
   pendingSend: Record<string, { workspaceId: string; content: string } | undefined>
+  drafts: Record<string, string>
   subagents: Record<string, SubagentState[]>
 
   fetchSessions: (workspaceId: string) => Promise<void>
@@ -82,6 +83,7 @@ interface ChatState {
   setActiveSession: (workspaceId: string, sessionId: string) => void
   loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
   sendMessage: (workspaceId: string, sessionId: string, content: string) => void
+  setDraft: (sessionId: string, content: string) => void
   clearMessages: (sessionId: string) => void
   resolveApproval: (
     workspaceId: string,
@@ -815,6 +817,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   serverNonce: {},
   draftQueue: {},
   pendingSend: {},
+  drafts: {},
   subagents: {},
 
   fetchSessions: async (workspaceId: string) => {
@@ -882,6 +885,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newDraftQueue[sessionId]
         const newPendingSend = { ...state.pendingSend }
         delete newPendingSend[sessionId]
+        const newDrafts = { ...state.drafts }
+        delete newDrafts[sessionId]
         const newIsStreaming = { ...state.isStreaming }
         delete newIsStreaming[sessionId]
         const newSubagents = { ...state.subagents }
@@ -893,6 +898,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           approvalQueue: newApprovalQueue,
           draftQueue: newDraftQueue,
           pendingSend: newPendingSend,
+          drafts: newDrafts,
           isStreaming: newIsStreaming,
           subagents: newSubagents,
         }
@@ -938,22 +944,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const userMessageId = generateId()
 
-    // Optimistically add user message
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [sessionId]: [
-          ...(state.messages[sessionId] || []),
-          {
-            id: userMessageId,
-            role: 'user',
-            parts: [{ type: 'text', text: content }],
-            timestamp: Date.now(),
-          },
-        ],
-      },
-      isStreaming: { ...state.isStreaming, [sessionId]: true },
-    }))
+    // Optimistically add user message and clear the input draft
+    set((state) => {
+      const nextDrafts = { ...state.drafts }
+      delete nextDrafts[sessionId]
+      return {
+        messages: {
+          ...state.messages,
+          [sessionId]: [
+            ...(state.messages[sessionId] || []),
+            {
+              id: userMessageId,
+              role: 'user',
+              parts: [{ type: 'text', text: content }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        drafts: nextDrafts,
+        isStreaming: { ...state.isStreaming, [sessionId]: true },
+      }
+    })
 
     // If approval is pending, queue the message
     const queue = get().approvalQueue[sessionId] || []
@@ -998,6 +1009,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const newSubagents = { ...state.subagents }
       delete newSubagents[sessionId]
       return { messages: newMessages, subagents: newSubagents }
+    })
+  },
+
+  setDraft: (sessionId: string, content: string) => {
+    if (!sessionId) return
+    set((state) => {
+      if (content === '') {
+        if (state.drafts[sessionId] === undefined) return {}
+        const nextDrafts = { ...state.drafts }
+        delete nextDrafts[sessionId]
+        return { drafts: nextDrafts }
+      }
+      if (state.drafts[sessionId] === content) return {}
+      return { drafts: { ...state.drafts, [sessionId]: content } }
     })
   },
 
