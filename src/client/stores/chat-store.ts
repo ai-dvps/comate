@@ -40,6 +40,29 @@ interface PendingQuestion {
 
 type PendingItem = PendingApproval | PendingQuestion
 
+export type SubagentPart =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'tool_use'; toolUseId: string; toolName: string; input: unknown }
+  | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }
+
+export interface SubagentMessage {
+  id: string
+  role: 'assistant' | 'user'
+  parts: SubagentPart[]
+}
+
+export interface SubagentState {
+  parentToolUseId: string
+  description: string
+  state: 'running' | 'completed' | 'error'
+  startTime: number
+  endTime?: number
+  toolCount: number
+  progressHint: string
+  messages: SubagentMessage[]
+}
+
 interface ChatState {
   sessions: Record<string, ChatSession[]>
   messages: Record<string, ChatMessage[]>
@@ -51,6 +74,7 @@ interface ChatState {
   serverNonce: Record<string, string>
   draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
   pendingSend: Record<string, { workspaceId: string; content: string } | undefined>
+  subagents: Record<string, SubagentState[]>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -188,6 +212,90 @@ function addSystemMessage(
       ],
     },
   }
+}
+
+function findSubagent(
+  state: ChatState,
+  sessionId: string,
+  parentToolUseId: string,
+): SubagentState | undefined {
+  const list = state.subagents[sessionId] || []
+  return list.find((s) => s.parentToolUseId === parentToolUseId)
+}
+
+function updateSubagent(
+  state: ChatState,
+  sessionId: string,
+  parentToolUseId: string,
+  produce: (subagent: SubagentState) => SubagentState,
+): Partial<ChatState> {
+  const list = state.subagents[sessionId] || []
+  const idx = list.findIndex((s) => s.parentToolUseId === parentToolUseId)
+  if (idx < 0) return {}
+  const updated = produce(list[idx])
+  const nextList = [...list.slice(0, idx), updated, ...list.slice(idx + 1)]
+  return { subagents: { ...state.subagents, [sessionId]: nextList } }
+}
+
+function updateSubagentMessage(
+  state: ChatState,
+  sessionId: string,
+  parentToolUseId: string,
+  delta: SubagentPart,
+): Partial<ChatState> {
+  const subagent = findSubagent(state, sessionId, parentToolUseId)
+  if (!subagent) return {}
+
+  const messages = [...subagent.messages]
+  const lastMessage = messages[messages.length - 1]
+
+  const appendToLast = (
+    role: SubagentMessage['role'],
+    part: SubagentPart,
+  ) => {
+    if (lastMessage && lastMessage.role === role) {
+      const existing = lastMessage.parts.find(
+        (p) => p.type === part.type && p.type !== 'tool_use' && p.type !== 'tool_result',
+      )
+      if (
+        existing &&
+        (existing.type === 'text' || existing.type === 'thinking') &&
+        (part.type === 'text' || part.type === 'thinking')
+      ) {
+        const updatedParts = lastMessage.parts.map((p) =>
+          p === existing
+            ? { ...p, text: p.text + part.text }
+            : p,
+        )
+        messages[messages.length - 1] = {
+          ...lastMessage,
+          parts: updatedParts,
+        }
+        return
+      }
+      messages[messages.length - 1] = {
+        ...lastMessage,
+        parts: [...lastMessage.parts, part],
+      }
+      return
+    }
+    messages.push({ id: generateId(), role, parts: [part] })
+  }
+
+  if (delta.type === 'text') {
+    appendToLast('assistant', delta)
+  } else if (delta.type === 'thinking') {
+    appendToLast('assistant', delta)
+  } else if (delta.type === 'tool_use') {
+    appendToLast('assistant', delta)
+  } else if (delta.type === 'tool_result') {
+    messages.push({ id: generateId(), role: 'user', parts: [delta] })
+  }
+
+  return updateSubagent(state, sessionId, parentToolUseId, (s) => ({
+    ...s,
+    messages,
+  }))
 }
 
 function handleSseEvent(
@@ -490,6 +598,129 @@ function handleSseEvent(
       }))
       return
     }
+    case 'subagent_start': {
+      const parentToolUseId =
+        typeof data.parentToolUseId === 'string' ? data.parentToolUseId : ''
+      const description =
+        typeof data.description === 'string' ? data.description : 'Agent'
+      if (!parentToolUseId) return
+      set((state) => {
+        const existing = findSubagent(state, sessionId, parentToolUseId)
+        if (existing) return {}
+        const list = state.subagents[sessionId] || []
+        return {
+          subagents: {
+            ...state.subagents,
+            [sessionId]: [
+              ...list,
+              {
+                parentToolUseId,
+                description,
+                state: 'running',
+                startTime: Date.now(),
+                toolCount: 0,
+                progressHint: '',
+                messages: [],
+              },
+            ],
+          },
+        }
+      })
+      return
+    }
+    case 'subagent_delta': {
+      const parentToolUseId =
+        typeof data.parentToolUseId === 'string' ? data.parentToolUseId : ''
+      const delta = data.delta as Record<string, unknown> | undefined
+      if (!parentToolUseId || !delta) return
+
+      const kind = delta.kind
+      const deltaText =
+        typeof delta.text === 'string' ? delta.text : undefined
+      if (kind === 'text' && deltaText !== undefined) {
+        set((state) =>
+          updateSubagentMessage(state, sessionId, parentToolUseId, {
+            type: 'text',
+            text: deltaText,
+          }),
+        )
+      } else if (kind === 'thinking' && deltaText !== undefined) {
+        set((state) =>
+          updateSubagentMessage(state, sessionId, parentToolUseId, {
+            type: 'thinking',
+            text: deltaText,
+          }),
+        )
+      } else if (kind === 'tool_use') {
+        const toolUseId =
+          typeof delta.toolUseId === 'string' ? delta.toolUseId : ''
+        const toolName =
+          typeof delta.toolName === 'string' ? delta.toolName : ''
+        const input = 'input' in delta ? delta.input : {}
+        const inputStr = JSON.stringify(input)
+        const progressHint =
+          inputStr.length > 60
+            ? `${toolName}: ${inputStr.slice(0, 60)}…`
+            : `${toolName}: ${inputStr}`
+        set((state) => {
+          const msgUpdate = updateSubagentMessage(
+            state,
+            sessionId,
+            parentToolUseId,
+            { type: 'tool_use', toolUseId, toolName, input },
+          )
+          if (Object.keys(msgUpdate).length === 0) return {}
+          return {
+            ...msgUpdate,
+            subagents: {
+              ...state.subagents,
+              [sessionId]: (state.subagents[sessionId] || []).map((s) =>
+                s.parentToolUseId === parentToolUseId
+                  ? {
+                      ...s,
+                      toolCount: s.toolCount + 1,
+                      progressHint,
+                      messages:
+                        (msgUpdate.subagents?.[sessionId] || []).find(
+                          (x) => x.parentToolUseId === parentToolUseId,
+                        )?.messages ?? s.messages,
+                    }
+                  : s,
+              ),
+            },
+          }
+        })
+      } else if (kind === 'tool_result') {
+        const toolUseId =
+          typeof delta.toolUseId === 'string' ? delta.toolUseId : ''
+        const output = typeof delta.output === 'string' ? delta.output : ''
+        const isError = delta.isError === true
+        set((state) =>
+          updateSubagentMessage(state, sessionId, parentToolUseId, {
+            type: 'tool_result',
+            toolUseId,
+            output,
+            isError,
+          }),
+        )
+      }
+      return
+    }
+    case 'subagent_done': {
+      const parentToolUseId =
+        typeof data.parentToolUseId === 'string' ? data.parentToolUseId : ''
+      const doneState =
+        data.state === 'error' ? 'error' : ('completed' as const)
+      if (!parentToolUseId) return
+      set((state) =>
+        updateSubagent(state, sessionId, parentToolUseId, (s) => ({
+          ...s,
+          state: doneState,
+          endTime: Date.now(),
+        })),
+      )
+      return
+    }
     case 'system_init':
     case 'done':
     default:
@@ -575,6 +806,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   serverNonce: {},
   draftQueue: {},
   pendingSend: {},
+  subagents: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -643,6 +875,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newPendingSend[sessionId]
         const newIsStreaming = { ...state.isStreaming }
         delete newIsStreaming[sessionId]
+        const newSubagents = { ...state.subagents }
+        delete newSubagents[sessionId]
         return {
           sessions: { ...state.sessions, [workspaceId]: updated },
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
@@ -651,6 +885,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           draftQueue: newDraftQueue,
           pendingSend: newPendingSend,
           isStreaming: newIsStreaming,
+          subagents: newSubagents,
         }
       })
     } catch (err) {
