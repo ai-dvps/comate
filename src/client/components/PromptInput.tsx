@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Send, X, Square, Loader2, SlashSquare } from 'lucide-react'
+import { Send, X, Square, Loader2, SlashSquare, Paperclip } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
+import FilePicker, { type FilePickerHandle } from './FilePicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 
 interface PromptInputProps {
@@ -32,8 +33,15 @@ export default function PromptInput({
   const [lastInsertedCommand, setLastInsertedCommand] = useState<string | null>(
     null,
   )
+  const [filePickerOpen, setFilePickerOpen] = useState(false)
+  const [filePickerSource, setFilePickerSource] = useState<'at' | 'button'>(
+    'at',
+  )
+  const [filePickerFilter, setFilePickerFilter] = useState('')
+  const [fileTriggerStart, setFileTriggerStart] = useState<number | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
+  const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const prevInputRef = useRef('')
 
   const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
@@ -49,7 +57,7 @@ export default function PromptInput({
     adjustHeight()
   }, [input, adjustHeight])
 
-  const handleInputChange = (value: string) => {
+  const handleInputChange = (value: string, cursorPos: number) => {
     const prev = prevInputRef.current
     prevInputRef.current = value
     setInput(value)
@@ -57,6 +65,27 @@ export default function PromptInput({
     if (lastInsertedCommand && value !== lastInsertedCommand) {
       setArgumentHint(null)
       setLastInsertedCommand(null)
+    }
+
+    if (filePickerOpen) {
+      if (fileTriggerStart !== null) {
+        // Cursor moved before @ or @ was deleted
+        if (
+          cursorPos <= fileTriggerStart ||
+          value[fileTriggerStart] !== '@'
+        ) {
+          setFilePickerOpen(false)
+          setFileTriggerStart(null)
+          return
+        }
+        const filterText = value.slice(fileTriggerStart + 1, cursorPos)
+        if (/\s/.test(filterText)) {
+          setFilePickerOpen(false)
+          setFileTriggerStart(null)
+          return
+        }
+        setFilePickerFilter(filterText)
+      }
     }
 
     if (pickerOpen && pickerSource === 'slash') {
@@ -67,7 +96,37 @@ export default function PromptInput({
       } else {
         setPickerOpen(false)
       }
-    } else if (
+    }
+
+    // Detect @ trigger only when no workspace picker is open
+    if (!filePickerOpen && (!pickerOpen || pickerSource !== 'slash')) {
+      // @ as first character of empty input
+      if (value === '@' && prev === '') {
+        setFileTriggerStart(0)
+        setFilePickerSource('at')
+        setFilePickerFilter('')
+        setFilePickerOpen(true)
+        setPickerOpen(false)
+        return
+      }
+
+      // @ preceded by whitespace mid-text
+      if (
+        cursorPos > 0 &&
+        value[cursorPos - 1] === '@' &&
+        (cursorPos === 1 || /\s/.test(value[cursorPos - 2]))
+      ) {
+        setFileTriggerStart(cursorPos - 1)
+        setFilePickerSource('at')
+        setFilePickerFilter('')
+        setFilePickerOpen(true)
+        setPickerOpen(false)
+      }
+    }
+
+    if (
+      !filePickerOpen &&
+      !pickerOpen &&
       prev === '' &&
       value.startsWith('/') &&
       !/\s/.test(value)
@@ -96,10 +155,41 @@ export default function PromptInput({
   const handleClear = () => {
     resetInput()
     if (pickerOpen) setPickerOpen(false)
+    if (filePickerOpen) setFilePickerOpen(false)
     textareaRef.current?.focus()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (filePickerOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        filePickerHandleRef.current?.moveDown()
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        filePickerHandleRef.current?.moveUp()
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        filePickerHandleRef.current?.commitActive()
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setFilePickerOpen(false)
+        setFileTriggerStart(null)
+        return
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        setFilePickerOpen(false)
+        setFileTriggerStart(null)
+        return
+      }
+    }
+
     if (pickerOpen && pickerSource === 'slash') {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -127,6 +217,7 @@ export default function PromptInput({
         return
       }
     }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -148,14 +239,48 @@ export default function PromptInput({
     })
   }
 
+  const handleFileSelect = (selectedPath: string) => {
+    const ta = textareaRef.current
+    if (!ta || fileTriggerStart === null) return
+    const cursorPos = ta.selectionStart
+    const before = input.slice(0, fileTriggerStart)
+    const after = input.slice(cursorPos)
+    const inserted = `@${selectedPath} `
+    const next = before + inserted + after
+    setInput(next)
+    prevInputRef.current = next
+    setFilePickerOpen(false)
+    setFileTriggerStart(null)
+    requestAnimationFrame(() => {
+      const pos = fileTriggerStart + inserted.length
+      ta.focus()
+      ta.setSelectionRange(pos, pos)
+    })
+  }
+
   const handleCommandsClick = () => {
     if (pickerOpen) {
       setPickerOpen(false)
       return
     }
+    setFilePickerOpen(false)
+    setFileTriggerStart(null)
     setPickerSource('button')
     setPickerFilter('')
     setPickerOpen(true)
+  }
+
+  const handleFilesClick = () => {
+    if (filePickerOpen) {
+      setFilePickerOpen(false)
+      setFileTriggerStart(null)
+      return
+    }
+    setPickerOpen(false)
+    setFilePickerSource('button')
+    setFilePickerFilter('')
+    setFileTriggerStart(null)
+    setFilePickerOpen(true)
   }
 
   const canSend =
@@ -163,11 +288,12 @@ export default function PromptInput({
   const showClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
   const commandsDisabled = disabled || isStreaming
+  const filesDisabled = disabled || isStreaming || !workspaceId
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-4">
       <div className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
-        <div className="flex items-center px-2 pt-2">
+        <div className="flex items-center px-2 pt-2 gap-1">
           <CommandPicker
             ref={pickerHandleRef}
             workspaceId={workspaceId}
@@ -192,12 +318,41 @@ export default function PromptInput({
               </button>
             }
           />
+          <FilePicker
+            ref={filePickerHandleRef}
+            workspaceId={workspaceId}
+            open={filePickerOpen}
+            onOpenChange={(open) => {
+              setFilePickerOpen(open)
+              if (!open) setFileTriggerStart(null)
+            }}
+            onSelect={handleFileSelect}
+            side="top"
+            align="start"
+            initialFilter={filePickerFilter}
+            hideFilterInput={filePickerSource === 'at'}
+            refetchOnOpen
+            anchor={
+              <button
+                type="button"
+                onClick={handleFilesClick}
+                disabled={filesDisabled}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Files"
+              >
+                <Paperclip className="w-3 h-3" />
+                <span>Files</span>
+              </button>
+            }
+          />
         </div>
         <div className="relative">
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => handleInputChange(e.target.value)}
+            onChange={(e) =>
+              handleInputChange(e.target.value, e.target.selectionStart)
+            }
             onKeyDown={handleKeyDown}
             placeholder="Ask Claude anything about your code..."
             disabled={disabled || isStreaming}
