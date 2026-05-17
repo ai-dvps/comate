@@ -26,6 +26,75 @@
   }
 }
 
+@layer components {
+  .preview-content {
+    @apply text-sm text-text-secondary leading-relaxed;
+  }
+  .preview-content > * + * {
+    @apply mt-2;
+  }
+  .preview-content p {
+    @apply text-text-secondary;
+  }
+  .preview-content h1,
+  .preview-content h2,
+  .preview-content h3,
+  .preview-content h4,
+  .preview-content h5,
+  .preview-content h6 {
+    @apply text-text-primary font-semibold;
+  }
+  .preview-content h1 { @apply text-base mt-3; }
+  .preview-content h2 { @apply text-sm mt-3; }
+  .preview-content h3,
+  .preview-content h4,
+  .preview-content h5,
+  .preview-content h6 { @apply text-sm mt-2; }
+  .preview-content strong { @apply text-text-primary font-semibold; }
+  .preview-content em { @apply italic; }
+  .preview-content mark {
+    @apply bg-accent/20 text-text-primary px-0.5 rounded;
+  }
+  .preview-content code {
+    @apply font-mono text-[12px] bg-surface px-1 py-0.5 rounded text-text-primary;
+  }
+  .preview-content kbd {
+    @apply font-mono text-[11px] bg-surface border border-border px-1 py-0.5 rounded text-text-primary;
+  }
+  .preview-content pre {
+    @apply font-mono text-[12px] bg-surface border border-border rounded px-2 py-1.5 overflow-x-auto;
+  }
+  .preview-content pre code {
+    @apply bg-transparent px-0 py-0 text-text-secondary;
+  }
+  .preview-content ul,
+  .preview-content ol {
+    @apply pl-5;
+  }
+  .preview-content ul { @apply list-disc; }
+  .preview-content ol { @apply list-decimal; }
+  .preview-content li + li { @apply mt-0.5; }
+  .preview-content a {
+    @apply text-accent underline underline-offset-2 hover:text-accent/80;
+  }
+  .preview-content blockquote {
+    @apply border-l-2 border-border pl-3 text-text-tertiary italic;
+  }
+  .preview-content hr {
+    @apply my-3 border-t border-border;
+  }
+  .preview-content table {
+    @apply w-full border-collapse text-xs;
+  }
+  .preview-content th,
+  .preview-content td {
+    @apply border border-border px-2 py-1 text-left align-top;
+  }
+  .preview-content th {
+    @apply bg-surface text-text-primary font-semibold;
+  }
+}
+
 @layer utilities {
   /* Shimmer effect for AI Elements `Shimmer` component (CSS replacement for motion/react). */
   .ai-shimmer {
