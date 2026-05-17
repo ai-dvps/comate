@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Bot,
   CheckCircleIcon,
@@ -20,14 +20,16 @@ interface SubagentBriefStatusProps {
 
 function useElapsed(startTime: number, isRunning: boolean): string {
   const [elapsed, setElapsed] = useState(() => Date.now() - startTime)
+  const startRef = useRef(startTime)
 
   useEffect(() => {
+    startRef.current = startTime
     if (!isRunning) {
-      setElapsed(Date.now() - startTime)
+      setElapsed(Date.now() - startRef.current)
       return
     }
     const id = setInterval(() => {
-      setElapsed(Date.now() - startTime)
+      setElapsed(Date.now() - startRef.current)
     }, 1000)
     return () => clearInterval(id)
   }, [startTime, isRunning])
@@ -60,6 +62,27 @@ export default function SubagentBriefStatus({
   return <StatusCard subagent={subagent} onClick={() => onOpenDrawer(parentToolUseId)} />
 }
 
+const statusConfig = {
+  running: {
+    icon: <ClockIcon className="size-3.5 animate-pulse text-amber-500" />,
+    label: 'Running',
+    badgeClass: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+    borderClass: 'border-l-2 border-l-amber-500',
+  },
+  completed: {
+    icon: <CheckCircleIcon className="size-3.5 text-green-600" />,
+    label: 'Completed',
+    badgeClass: 'bg-green-500/10 text-green-600 border-green-500/20',
+    borderClass: 'border-l-2 border-l-green-500',
+  },
+  error: {
+    icon: <XCircleIcon className="size-3.5 text-red-600" />,
+    label: 'Error',
+    badgeClass: 'bg-red-500/10 text-red-600 border-red-500/20',
+    borderClass: 'border-l-2 border-l-red-500',
+  },
+}
+
 function StatusCard({
   subagent,
   onClick,
@@ -72,27 +95,6 @@ function StatusCard({
     subagent.startTime,
     isRunning,
   )
-
-  const statusConfig = {
-    running: {
-      icon: <ClockIcon className="size-3.5 animate-pulse text-amber-500" />,
-      label: 'Running',
-      badgeClass: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
-      borderClass: 'border-l-2 border-l-amber-500',
-    },
-    completed: {
-      icon: <CheckCircleIcon className="size-3.5 text-green-600" />,
-      label: 'Completed',
-      badgeClass: 'bg-green-500/10 text-green-600 border-green-500/20',
-      borderClass: 'border-l-2 border-l-green-500',
-    },
-    error: {
-      icon: <XCircleIcon className="size-3.5 text-red-600" />,
-      label: 'Error',
-      badgeClass: 'bg-red-500/10 text-red-600 border-red-500/20',
-      borderClass: 'border-l-2 border-l-red-500',
-    },
-  }
 
   const config = statusConfig[subagent.state]
 

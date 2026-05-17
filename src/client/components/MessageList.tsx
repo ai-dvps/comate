@@ -115,7 +115,7 @@ export default function MessageList({ sessionId, onOpenDrawer }: MessageListProp
   return (
     <Conversation>
       <ConversationContent className="max-w-3xl mx-auto w-full">
-        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer))}
+        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId))}
       </ConversationContent>
       <ConversationScrollButton />
     </Conversation>
@@ -126,6 +126,7 @@ function renderViewItem(
   item: ViewItem,
   resultMap: Map<string, ToolResultPart>,
   onOpenDrawer: (parentToolUseId: string) => void,
+  sessionId: string,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     return (
@@ -146,13 +147,14 @@ function renderViewItem(
       />
     )
   }
-  return renderMessage(item.message, resultMap, onOpenDrawer)
+  return renderMessage(item.message, resultMap, onOpenDrawer, sessionId)
 }
 
 function renderMessage(
   msg: ChatMessage,
   resultMap: Map<string, ToolResultPart>,
   onOpenDrawer: (parentToolUseId: string) => void,
+  sessionId: string,
 ): React.ReactNode {
   if (msg.role === 'system') {
     const text = msg.parts.find((p) => p.type === 'text')?.text ?? ''
@@ -199,7 +201,7 @@ function renderMessage(
                 <SubagentBriefStatus
                   key={partKey}
                   parentToolUseId={part.toolUseId}
-                  sessionId={msg.id}
+                  sessionId={sessionId}
                   onOpenDrawer={onOpenDrawer}
                 />
               )

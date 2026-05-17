@@ -14,9 +14,27 @@ import { cn } from './ui/utils'
 import SubagentConversation from './SubagentConversation'
 
 interface SubagentDrawerProps {
-  parentToolUseId: string | null
+  parentToolUseId: string
   sessionId: string
   onClose: () => void
+}
+
+const statusConfig = {
+  running: {
+    icon: <ClockIcon className="size-4 animate-pulse text-amber-500" />,
+    label: 'Running',
+    badgeClass: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+  },
+  completed: {
+    icon: <CheckCircleIcon className="size-4 text-green-600" />,
+    label: 'Completed',
+    badgeClass: 'bg-green-500/10 text-green-600 border-green-500/20',
+  },
+  error: {
+    icon: <XCircleIcon className="size-4 text-red-600" />,
+    label: 'Error',
+    badgeClass: 'bg-red-500/10 text-red-600 border-red-500/20',
+  },
 }
 
 export default function SubagentDrawer({
@@ -25,11 +43,9 @@ export default function SubagentDrawer({
   onClose,
 }: SubagentDrawerProps) {
   const subagent = useChatStore((s) =>
-    parentToolUseId
-      ? (s.subagents[sessionId] || []).find(
-          (sa) => sa.parentToolUseId === parentToolUseId,
-        )
-      : undefined,
+    (s.subagents[sessionId] || []).find(
+      (sa) => sa.parentToolUseId === parentToolUseId,
+    ),
   )
 
   useEffect(() => {
@@ -42,25 +58,7 @@ export default function SubagentDrawer({
     return () => window.removeEventListener('keydown', onKey)
   }, [parentToolUseId, onClose])
 
-  if (!parentToolUseId || !subagent) return null
-
-  const statusConfig = {
-    running: {
-      icon: <ClockIcon className="size-4 animate-pulse text-amber-500" />,
-      label: 'Running',
-      badgeClass: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
-    },
-    completed: {
-      icon: <CheckCircleIcon className="size-4 text-green-600" />,
-      label: 'Completed',
-      badgeClass: 'bg-green-500/10 text-green-600 border-green-500/20',
-    },
-    error: {
-      icon: <XCircleIcon className="size-4 text-red-600" />,
-      label: 'Error',
-      badgeClass: 'bg-red-500/10 text-red-600 border-red-500/20',
-    },
-  }
+  if (!subagent) return null
 
   const config = statusConfig[subagent.state]
   const duration = formatDuration(
@@ -131,4 +129,3 @@ export default function SubagentDrawer({
     </>
   )
 }
-

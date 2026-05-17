@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import MessageList from './MessageList'
@@ -102,6 +102,10 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     })
   }
 
+  const handleCloseDrawer = useCallback(() => {
+    setOpenDrawerToolUseId(null)
+  }, [])
+
   return (
     <div className="flex flex-col h-full bg-bg">
       {/* Chat Header */}
@@ -167,7 +171,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
         <SubagentDrawer
           parentToolUseId={openDrawerToolUseId}
           sessionId={activeSessionId}
-          onClose={() => setOpenDrawerToolUseId(null)}
+          onClose={handleCloseDrawer}
         />
       )}
     </div>

@@ -316,18 +316,12 @@ function updateSubagentToolUse(
 
   const messages = appendSubagentPart([...subagent.messages], delta)
 
-  const list = state.subagents[sessionId] || []
-  const idx = list.findIndex((s) => s.parentToolUseId === parentToolUseId)
-  if (idx < 0) return {}
-
-  const updated = {
-    ...list[idx],
-    toolCount: list[idx].toolCount + 1,
+  return updateSubagent(state, sessionId, parentToolUseId, (s) => ({
+    ...s,
+    toolCount: s.toolCount + 1,
     progressHint,
     messages,
-  }
-  const nextList = [...list.slice(0, idx), updated, ...list.slice(idx + 1)]
-  return { subagents: { ...state.subagents, [sessionId]: nextList } }
+  }))
 }
 
 function handleSseEvent(
@@ -716,6 +710,8 @@ function handleSseEvent(
             isError,
           }),
         )
+      } else {
+        console.warn('Unknown subagent_delta kind:', kind)
       }
       return
     }
@@ -999,7 +995,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const newMessages = { ...state.messages }
       delete newMessages[sessionId]
-      return { messages: newMessages }
+      const newSubagents = { ...state.subagents }
+      delete newSubagents[sessionId]
+      return { messages: newMessages, subagents: newSubagents }
     })
   },
 

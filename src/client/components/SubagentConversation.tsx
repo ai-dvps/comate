@@ -19,10 +19,7 @@ export default function SubagentConversation({
     if (!isRunning) return
     const el = scrollRef.current
     if (!el) return
-    const id = requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight
-    })
-    return () => cancelAnimationFrame(id)
+    el.scrollTop = el.scrollHeight
   }, [messages, isRunning])
 
   if (messages.length === 0) {
