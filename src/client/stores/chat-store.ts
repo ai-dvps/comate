@@ -237,6 +237,56 @@ function updateSubagent(
   return { subagents: { ...state.subagents, [sessionId]: nextList } }
 }
 
+function appendSubagentPart(
+  messages: SubagentMessage[],
+  delta: SubagentPart,
+): SubagentMessage[] {
+  const lastMessage = messages[messages.length - 1]
+
+  if (delta.type === 'text' || delta.type === 'thinking') {
+    if (lastMessage && lastMessage.role === 'assistant') {
+      const existingIdx = lastMessage.parts.findIndex(
+        (p) => p.type === delta.type,
+      )
+      if (existingIdx >= 0) {
+        const existing = lastMessage.parts[existingIdx]
+        if (existing.type === 'text' || existing.type === 'thinking') {
+          const updatedParts = [...lastMessage.parts]
+          updatedParts[existingIdx] = {
+            ...existing,
+            text: existing.text + delta.text,
+          }
+          return [
+            ...messages.slice(0, -1),
+            { ...lastMessage, parts: updatedParts },
+          ]
+        }
+      }
+      return [
+        ...messages.slice(0, -1),
+        { ...lastMessage, parts: [...lastMessage.parts, delta] },
+      ]
+    }
+    return [...messages, { id: generateId(), role: 'assistant', parts: [delta] }]
+  }
+
+  if (delta.type === 'tool_use') {
+    if (lastMessage && lastMessage.role === 'assistant') {
+      return [
+        ...messages.slice(0, -1),
+        { ...lastMessage, parts: [...lastMessage.parts, delta] },
+      ]
+    }
+    return [...messages, { id: generateId(), role: 'assistant', parts: [delta] }]
+  }
+
+  if (delta.type === 'tool_result') {
+    return [...messages, { id: generateId(), role: 'user', parts: [delta] }]
+  }
+
+  return messages
+}
+
 function updateSubagentMessage(
   state: ChatState,
   sessionId: string,
@@ -246,56 +296,38 @@ function updateSubagentMessage(
   const subagent = findSubagent(state, sessionId, parentToolUseId)
   if (!subagent) return {}
 
-  const messages = [...subagent.messages]
-  const lastMessage = messages[messages.length - 1]
-
-  const appendToLast = (
-    role: SubagentMessage['role'],
-    part: SubagentPart,
-  ) => {
-    if (lastMessage && lastMessage.role === role) {
-      const existing = lastMessage.parts.find(
-        (p) => p.type === part.type && p.type !== 'tool_use' && p.type !== 'tool_result',
-      )
-      if (
-        existing &&
-        (existing.type === 'text' || existing.type === 'thinking') &&
-        (part.type === 'text' || part.type === 'thinking')
-      ) {
-        const updatedParts = lastMessage.parts.map((p) =>
-          p === existing
-            ? { ...p, text: p.text + part.text }
-            : p,
-        )
-        messages[messages.length - 1] = {
-          ...lastMessage,
-          parts: updatedParts,
-        }
-        return
-      }
-      messages[messages.length - 1] = {
-        ...lastMessage,
-        parts: [...lastMessage.parts, part],
-      }
-      return
-    }
-    messages.push({ id: generateId(), role, parts: [part] })
-  }
-
-  if (delta.type === 'text') {
-    appendToLast('assistant', delta)
-  } else if (delta.type === 'thinking') {
-    appendToLast('assistant', delta)
-  } else if (delta.type === 'tool_use') {
-    appendToLast('assistant', delta)
-  } else if (delta.type === 'tool_result') {
-    messages.push({ id: generateId(), role: 'user', parts: [delta] })
-  }
+  const messages = appendSubagentPart([...subagent.messages], delta)
 
   return updateSubagent(state, sessionId, parentToolUseId, (s) => ({
     ...s,
     messages,
   }))
+}
+
+function updateSubagentToolUse(
+  state: ChatState,
+  sessionId: string,
+  parentToolUseId: string,
+  delta: Extract<SubagentPart, { type: 'tool_use' }>,
+  progressHint: string,
+): Partial<ChatState> {
+  const subagent = findSubagent(state, sessionId, parentToolUseId)
+  if (!subagent) return {}
+
+  const messages = appendSubagentPart([...subagent.messages], delta)
+
+  const list = state.subagents[sessionId] || []
+  const idx = list.findIndex((s) => s.parentToolUseId === parentToolUseId)
+  if (idx < 0) return {}
+
+  const updated = {
+    ...list[idx],
+    toolCount: list[idx].toolCount + 1,
+    progressHint,
+    messages,
+  }
+  const nextList = [...list.slice(0, idx), updated, ...list.slice(idx + 1)]
+  return { subagents: { ...state.subagents, [sessionId]: nextList } }
 }
 
 function handleSseEvent(
@@ -662,34 +694,15 @@ function handleSseEvent(
           inputStr.length > 60
             ? `${toolName}: ${inputStr.slice(0, 60)}…`
             : `${toolName}: ${inputStr}`
-        set((state) => {
-          const msgUpdate = updateSubagentMessage(
+        set((state) =>
+          updateSubagentToolUse(
             state,
             sessionId,
             parentToolUseId,
             { type: 'tool_use', toolUseId, toolName, input },
-          )
-          if (Object.keys(msgUpdate).length === 0) return {}
-          return {
-            ...msgUpdate,
-            subagents: {
-              ...state.subagents,
-              [sessionId]: (state.subagents[sessionId] || []).map((s) =>
-                s.parentToolUseId === parentToolUseId
-                  ? {
-                      ...s,
-                      toolCount: s.toolCount + 1,
-                      progressHint,
-                      messages:
-                        (msgUpdate.subagents?.[sessionId] || []).find(
-                          (x) => x.parentToolUseId === parentToolUseId,
-                        )?.messages ?? s.messages,
-                    }
-                  : s,
-              ),
-            },
-          }
-        })
+            progressHint,
+          ),
+        )
       } else if (kind === 'tool_result') {
         const toolUseId =
           typeof delta.toolUseId === 'string' ? delta.toolUseId : ''

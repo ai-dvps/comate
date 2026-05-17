@@ -9,20 +9,13 @@ import {
 
 import { useChatStore } from '../stores/chat-store'
 import type { SubagentState } from '../stores/chat-store'
+import { formatDuration } from '../lib/time'
 import { cn } from './ui/utils'
 
 interface SubagentBriefStatusProps {
   parentToolUseId: string
   sessionId: string
   onOpenDrawer: (parentToolUseId: string) => void
-}
-
-function formatDuration(ms: number): string {
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remSeconds = seconds % 60
-  return `${minutes}m ${remSeconds}s`
 }
 
 function useElapsed(startTime: number, isRunning: boolean): string {

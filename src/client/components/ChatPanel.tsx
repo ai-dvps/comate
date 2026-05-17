@@ -163,7 +163,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       </div>
 
       {/* Subagent Drawer */}
-      {activeSessionId && (
+      {activeSessionId && openDrawerToolUseId && (
         <SubagentDrawer
           parentToolUseId={openDrawerToolUseId}
           sessionId={activeSessionId}

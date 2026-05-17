@@ -65,6 +65,7 @@ export class SseEmitter {
     this.seenStreamPartIndexes.clear();
     this.finalizedMessageIds.clear();
     this.eventIndex = 0;
+    this.activeSubagents.clear();
   }
 
   private activeSubagents = new Map<string, SubagentEmitter>();
