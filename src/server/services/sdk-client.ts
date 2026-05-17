@@ -19,6 +19,10 @@ import type {
   SDKSessionInfo,
   SessionMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  InitializationResponse,
+  SlashCommandDto,
+} from '../types/initialization.js';
 
 export interface QueryResult {
   query: Query;
@@ -86,6 +90,34 @@ export class SdkClient {
   async deleteSession(sessionId: string, options?: SessionMutationOptions): Promise<void> {
     return deleteSession(sessionId, options);
   }
+
+  async fetchInitialization(options: Options): Promise<InitializationResponse> {
+    const empty: AsyncIterable<SDKUserMessage> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => new Promise<IteratorResult<SDKUserMessage>>(() => {}),
+        };
+      },
+    };
+
+    const q = query({ prompt: empty, options });
+    try {
+      const init = await q.initializationResult();
+      const commands: SlashCommandDto[] = (init.commands ?? []).map((c) => ({
+        name: c.name,
+        description: c.description,
+        argumentHint: c.argumentHint || undefined,
+        aliases: c.aliases,
+      }));
+      return { commands };
+    } finally {
+      try {
+        q.close();
+      } catch {
+        // Ignore teardown errors
+      }
+    }
+  }
 }
 
 export {
@@ -100,4 +132,6 @@ export {
   type GetSessionInfoOptions,
   type GetSessionMessagesOptions,
   type SessionMutationOptions,
+  type InitializationResponse,
+  type SlashCommandDto,
 };
