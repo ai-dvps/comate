@@ -3,7 +3,7 @@ import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
-import ApprovalBanner from './ApprovalBanner'
+import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
 import SubagentDrawer from './SubagentDrawer'
 
 interface ChatPanelProps {
@@ -102,6 +102,21 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     })
   }
 
+  const handleChatAbout = () => {
+    if (!activeSessionId || !currentApproval) return
+    const questions =
+      'questions' in currentApproval ? currentApproval.questions : []
+    const answers: Record<string, string> = {}
+    for (const q of questions) {
+      answers[q.question] = CHAT_ABOUT_THIS_MESSAGE
+    }
+    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
+      behavior: 'allow',
+      answers,
+      questions,
+    })
+  }
+
   const handleCloseDrawer = useCallback(() => {
     setOpenDrawerToolUseId(null)
   }, [])
@@ -141,30 +156,32 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
         )}
       </div>
 
-      {/* Approval Banner */}
-      {activeSessionId && currentApproval && (
-        <ApprovalBanner
-          pendingItem={currentApproval}
-          queueDepth={approvalQueueLength - 1}
-          onAllow={handleAllow}
-          onAllowAlways={handleAllowAlways}
-          onDeny={handleDeny}
-          onAnswerQuestion={handleAnswerQuestion}
-        />
-      )}
-
-      {/* Prompt Input */}
+      {/* Approval Surface or Prompt Input */}
       <div className="flex-shrink-0 border-t border-border/30 bg-bg">
-        <PromptInput
-          workspaceId={workspaceId}
-          sessionId={activeSessionId || ''}
-          onSend={handleSend}
-          onStop={handleStop}
-          disabled={!activeSessionId}
-          isStreaming={isStreaming}
-          isInterrupting={isInterrupting}
-          hasSession={!!activeSessionId}
-        />
+        {activeSessionId && currentApproval ? (
+          <ApprovalSurface
+            workspaceId={workspaceId}
+            pendingItem={currentApproval}
+            queueDepth={approvalQueueLength - 1}
+            onAllow={handleAllow}
+            onAllowAlways={handleAllowAlways}
+            onDeny={handleDeny}
+            onAnswerQuestion={handleAnswerQuestion}
+            onChatAbout={handleChatAbout}
+            onStop={handleStop}
+          />
+        ) : (
+          <PromptInput
+            workspaceId={workspaceId}
+            sessionId={activeSessionId || ''}
+            onSend={handleSend}
+            onStop={handleStop}
+            disabled={!activeSessionId}
+            isStreaming={isStreaming}
+            isInterrupting={isInterrupting}
+            hasSession={!!activeSessionId}
+          />
+        )}
       </div>
 
       {/* Subagent Drawer */}
