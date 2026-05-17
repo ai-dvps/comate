@@ -94,7 +94,10 @@ export default function PromptInput({
                   {isInterrupting ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <Square className="w-4 h-4 fill-current" />
+                    <span className="relative w-4 h-4 flex items-center justify-center">
+                      <Loader2 className="absolute inset-0 w-4 h-4 animate-spin opacity-60" />
+                      <Square className="w-2 h-2 fill-current" />
+                    </span>
                   )}
                 </button>
               </PopoverTrigger>

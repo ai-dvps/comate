@@ -463,8 +463,13 @@ function handleSseEvent(
       )
       return
     }
+    case 'result': {
+      set((state) => ({
+        isStreaming: { ...state.isStreaming, [sessionId]: false },
+      }))
+      return
+    }
     case 'system_init':
-    case 'result':
     case 'done':
     default:
       return
