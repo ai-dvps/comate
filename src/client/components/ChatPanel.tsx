@@ -4,6 +4,7 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalBanner from './ApprovalBanner'
+import SubagentDrawer from './SubagentDrawer'
 
 interface ChatPanelProps {
   workspaceId: string
@@ -28,10 +29,18 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const modelName = (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
 
   const [isInterrupting, setIsInterrupting] = useState(false)
+  const [openDrawerToolUseId, setOpenDrawerToolUseId] = useState<
+    string | null
+  >(null)
 
   useEffect(() => {
     fetchSessions(workspaceId)
   }, [workspaceId, fetchSessions])
+
+  useEffect(() => {
+    // Close drawer when switching sessions
+    setOpenDrawerToolUseId(null)
+  }, [activeSessionId])
 
   useEffect(() => {
     if (activeSessionId && activeSession && !activeSession.isDraft) {
@@ -117,7 +126,10 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             </div>
           </div>
         ) : activeSessionId ? (
-          <MessageList sessionId={activeSessionId} />
+          <MessageList
+            sessionId={activeSessionId}
+            onOpenDrawer={setOpenDrawerToolUseId}
+          />
         ) : (
           <div className="flex items-center justify-center h-full">
             <p className="text-sm text-text-secondary">Select or create a session to start chatting</p>
@@ -149,6 +161,15 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           hasSession={!!activeSessionId}
         />
       </div>
+
+      {/* Subagent Drawer */}
+      {activeSessionId && (
+        <SubagentDrawer
+          parentToolUseId={openDrawerToolUseId}
+          sessionId={activeSessionId}
+          onClose={() => setOpenDrawerToolUseId(null)}
+        />
+      )}
     </div>
   )
 }

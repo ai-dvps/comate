@@ -32,9 +32,11 @@ import {
   ToolOutput,
   type ToolState,
 } from './ai-elements/tool'
+import SubagentBriefStatus from './SubagentBriefStatus'
 
 interface MessageListProps {
   sessionId: string
+  onOpenDrawer: (parentToolUseId: string) => void
 }
 
 type ToolUsePart = Extract<MessagePart, { type: 'tool_use' }>
@@ -68,7 +70,7 @@ function toToolState(toolUse: ToolUsePart, result?: ToolResultPart): ToolState {
   return result.isError ? 'output-error' : 'output-available'
 }
 
-export default function MessageList({ sessionId }: MessageListProps) {
+export default function MessageList({ sessionId, onOpenDrawer }: MessageListProps) {
   const messages = useChatStore((s) => s.messages[sessionId] || [])
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
   const visibleMessages = useMemo(
@@ -113,7 +115,7 @@ export default function MessageList({ sessionId }: MessageListProps) {
   return (
     <Conversation>
       <ConversationContent className="max-w-3xl mx-auto w-full">
-        {viewItems.map((item) => renderViewItem(item, resultMap))}
+        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer))}
       </ConversationContent>
       <ConversationScrollButton />
     </Conversation>
@@ -123,6 +125,7 @@ export default function MessageList({ sessionId }: MessageListProps) {
 function renderViewItem(
   item: ViewItem,
   resultMap: Map<string, ToolResultPart>,
+  onOpenDrawer: (parentToolUseId: string) => void,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     return (
@@ -143,12 +146,13 @@ function renderViewItem(
       />
     )
   }
-  return renderMessage(item.message, resultMap)
+  return renderMessage(item.message, resultMap, onOpenDrawer)
 }
 
 function renderMessage(
   msg: ChatMessage,
   resultMap: Map<string, ToolResultPart>,
+  onOpenDrawer: (parentToolUseId: string) => void,
 ): React.ReactNode {
   if (msg.role === 'system') {
     const text = msg.parts.find((p) => p.type === 'text')?.text ?? ''
@@ -190,6 +194,16 @@ function renderMessage(
             )
           }
           if (part.type === 'tool_use') {
+            if (part.toolName === 'Agent') {
+              return (
+                <SubagentBriefStatus
+                  key={partKey}
+                  parentToolUseId={part.toolUseId}
+                  sessionId={msg.id}
+                  onOpenDrawer={onOpenDrawer}
+                />
+              )
+            }
             const result = resultMap.get(part.toolUseId)
             const state = toToolState(part, result)
             return (
