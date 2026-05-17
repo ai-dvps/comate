@@ -50,6 +50,7 @@ interface ChatState {
   approvalQueue: Record<string, PendingItem[]>
   serverNonce: Record<string, string>
   draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
+  pendingSend: Record<string, { workspaceId: string; content: string } | undefined>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -370,6 +371,26 @@ function handleSseEvent(
             ],
           }
         }
+        const pending = state.pendingSend[sessionId]
+        if (pending) {
+          const { workspaceId, content } = pending
+          updates.pendingSend = { ...state.pendingSend }
+          delete updates.pendingSend[sessionId]
+          fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: content }),
+          }).catch((err) => {
+            console.error('Failed to send queued message:', err)
+            set((s) =>
+              addSystemMessage(
+                s,
+                sessionId,
+                `Failed to send: ${err instanceof Error ? err.message : 'Network error'}`,
+              ),
+            )
+          })
+        }
         return updates
       })
       return
@@ -553,6 +574,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   approvalQueue: {},
   serverNonce: {},
   draftQueue: {},
+  pendingSend: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -617,6 +639,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newApprovalQueue[sessionId]
         const newDraftQueue = { ...state.draftQueue }
         delete newDraftQueue[sessionId]
+        const newPendingSend = { ...state.pendingSend }
+        delete newPendingSend[sessionId]
         const newIsStreaming = { ...state.isStreaming }
         delete newIsStreaming[sessionId]
         return {
@@ -625,6 +649,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           messages: newMessages,
           approvalQueue: newApprovalQueue,
           draftQueue: newDraftQueue,
+          pendingSend: newPendingSend,
           isStreaming: newIsStreaming,
         }
       })
@@ -691,6 +716,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (queue.length > 0) {
       set((state) => ({
         draftQueue: { ...state.draftQueue, [sessionId]: { workspaceId, content } },
+      }))
+      return
+    }
+
+    // Gate the POST on subscription_ack — without an ack, the server has not
+    // yet wired this client's response into the emitter, so events would emit
+    // only into the ring buffer. The ack handler drains pendingSend.
+    if (!get().serverNonce[sessionId]) {
+      set((state) => ({
+        pendingSend: { ...state.pendingSend, [sessionId]: { workspaceId, content } },
       }))
       return
     }
