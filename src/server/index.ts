@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
+import workspaceCommandsRoutes from './routes/workspace-commands.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,7 @@ app.use(express.json());
 // API routes
 app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/workspaces/:id/files', fileRoutes);
+app.use('/api/workspaces/:id/commands', workspaceCommandsRoutes);
 app.use('/api/workspaces/:id', chatRoutes);
 
 // Health check
