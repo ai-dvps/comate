@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 type: feat
 created: 2026-05-17
 origin: docs/brainstorms/2026-05-17-slash-command-discovery-requirements.md
