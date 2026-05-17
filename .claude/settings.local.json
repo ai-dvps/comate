@@ -58,7 +58,8 @@
       "Bash(python3 -c \"import sys,json; data=sys.stdin.read\\(\\); print\\(data[:200]\\)\")",
       "Bash(python3 *)",
       "Bash(git diff *)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(gh pr *)"
     ]
   }
 }
