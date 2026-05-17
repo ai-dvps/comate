@@ -67,9 +67,18 @@ export class SseEmitter {
     this.eventIndex = 0;
   }
 
+  private activeSubagents = new Map<string, SubagentEmitter>();
+
   handle(msg: SDKMessage): void {
-    // Drop subagent activity for v1; only main-turn messages render.
-    if ((msg as { parent_tool_use_id?: string | null }).parent_tool_use_id) {
+    const parentToolUseId = (msg as { parent_tool_use_id?: string | null }).parent_tool_use_id;
+
+    if (parentToolUseId) {
+      let emitter = this.activeSubagents.get(parentToolUseId);
+      if (!emitter) {
+        emitter = new SubagentEmitter(parentToolUseId, this);
+        this.activeSubagents.set(parentToolUseId, emitter);
+      }
+      emitter.handle(msg);
       return;
     }
 
@@ -179,6 +188,27 @@ export class SseEmitter {
     this.send({ type: 'server_restarted', serverNonce });
   }
 
+  /** Public wrapper so nested SubagentEmitter can emit events. */
+  emitEvent(event: SseEvent): void {
+    this.send(event);
+  }
+
+  startSubagent(parentToolUseId: string, description?: string): void {
+    if (this.activeSubagents.has(parentToolUseId)) return;
+    this.activeSubagents.set(
+      parentToolUseId,
+      new SubagentEmitter(parentToolUseId, this),
+    );
+    this.send({ type: 'subagent_start', parentToolUseId, description });
+  }
+
+  finalizeSubagent(parentToolUseId: string, state: 'completed' | 'error'): void {
+    const emitter = this.activeSubagents.get(parentToolUseId);
+    if (!emitter) return;
+    emitter.done(state);
+    this.activeSubagents.delete(parentToolUseId);
+  }
+
   static formatSsePayload(id: string | number, event: SseEvent): string {
     return `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
   }
@@ -245,6 +275,9 @@ export class SseEmitter {
             toolUseId,
             toolName,
           });
+        }
+        if (toolName === 'Agent' && toolUseId) {
+          this.startSubagent(toolUseId);
         }
       } else if (blockType === 'thinking') {
         this.blockStates.set(index, { type: 'thinking' });
@@ -396,6 +429,9 @@ export class SseEmitter {
         toolName,
       });
       this.send({ type: 'tool_use_done', toolUseId, input });
+      if (toolName === 'Agent' && toolUseId) {
+        this.startSubagent(toolUseId);
+      }
     } else if (blockType === 'thinking') {
       const text = typeof b.thinking === 'string' ? b.thinking : '';
       this.send({
@@ -462,6 +498,9 @@ export class SseEmitter {
         const output = stringifyToolResult(b.content);
         const isError = b.is_error === true;
         this.send({ type: 'tool_result', toolUseId, output, isError });
+        if (this.activeSubagents.has(toolUseId)) {
+          this.finalizeSubagent(toolUseId, isError ? 'error' : 'completed');
+        }
       }
     }
   }
@@ -472,6 +511,219 @@ export class SseEmitter {
     this.send({
       type: 'assistant_start',
       messageId: this.currentMessageId,
+    });
+  }
+
+  private parseToolInput(buffer: string): unknown {
+    if (buffer.length === 0) return {};
+    try {
+      return JSON.parse(buffer);
+    } catch {
+      return { _raw: buffer };
+    }
+  }
+}
+
+/**
+ * Per-subagent SSE emitter nested inside SseEmitter.
+ *
+ * Processes SDK messages that carry a matching `parent_tool_use_id` and
+ * emits `subagent_delta` / `subagent_done` events via the parent emitter.
+ * State is scoped to a single subagent invocation.
+ */
+class SubagentEmitter {
+  private parentToolUseId: string;
+  private emitter: SseEmitter;
+  private blockStates = new Map<number, BlockState>();
+
+  constructor(parentToolUseId: string, emitter: SseEmitter) {
+    this.parentToolUseId = parentToolUseId;
+    this.emitter = emitter;
+  }
+
+  handle(msg: SDKMessage): void {
+    switch (msg.type) {
+      case 'stream_event':
+        this.handleStreamEvent(msg.event as unknown);
+        return;
+      case 'assistant':
+        this.handleAssistant(msg);
+        return;
+      case 'user':
+        this.handleUser(msg);
+        return;
+      case 'result':
+        this.done(msg.is_error ? 'error' : 'completed');
+        return;
+      default:
+        return;
+    }
+  }
+
+  done(state: 'completed' | 'error'): void {
+    this.emitter.emitEvent({
+      type: 'subagent_done',
+      parentToolUseId: this.parentToolUseId,
+      state,
+    });
+  }
+
+  private handleStreamEvent(event: unknown): void {
+    if (!event || typeof event !== 'object') return;
+    const e = event as Record<string, unknown>;
+    const eventType = e.type;
+
+    if (eventType === 'message_start') {
+      this.blockStates.clear();
+      return;
+    }
+
+    if (eventType === 'content_block_start') {
+      const index = typeof e.index === 'number' ? e.index : -1;
+      const block = e.content_block as Record<string, unknown> | undefined;
+      if (index < 0 || !block) return;
+
+      const blockType = block.type;
+      if (blockType === 'tool_use') {
+        const toolUseId = typeof block.id === 'string' ? block.id : '';
+        const toolName = typeof block.name === 'string' ? block.name : '';
+        this.blockStates.set(index, {
+          type: 'tool_use',
+          toolUseId,
+          toolName,
+          inputBuffer: '',
+        });
+        this.emitDelta({
+          kind: 'tool_use',
+          toolUseId,
+          toolName,
+        });
+      } else if (blockType === 'text') {
+        this.blockStates.set(index, { type: 'text' });
+      } else if (blockType === 'thinking') {
+        this.blockStates.set(index, { type: 'thinking' });
+      } else {
+        this.blockStates.set(index, { type: 'unknown' });
+      }
+      return;
+    }
+
+    if (eventType === 'content_block_delta') {
+      const index = typeof e.index === 'number' ? e.index : -1;
+      const delta = e.delta as Record<string, unknown> | undefined;
+      if (index < 0 || !delta) return;
+
+      const state = this.blockStates.get(index);
+      if (!state) return;
+
+      const deltaType = delta.type;
+      if (deltaType === 'text_delta' && typeof delta.text === 'string') {
+        this.emitDelta({ kind: 'text', text: delta.text });
+      } else if (
+        deltaType === 'input_json_delta' &&
+        typeof delta.partial_json === 'string'
+      ) {
+        if (state.type === 'tool_use') {
+          state.inputBuffer = (state.inputBuffer ?? '') + delta.partial_json;
+        }
+      } else if (
+        deltaType === 'thinking_delta' &&
+        typeof delta.thinking === 'string'
+      ) {
+        this.emitDelta({ kind: 'thinking', text: delta.thinking });
+      }
+      return;
+    }
+
+    if (eventType === 'content_block_stop') {
+      const index = typeof e.index === 'number' ? e.index : -1;
+      if (index < 0) return;
+      const state = this.blockStates.get(index);
+      if (!state) return;
+
+      if (state.type === 'tool_use' && state.toolUseId) {
+        const input = this.parseToolInput(state.inputBuffer ?? '');
+        this.emitDelta({
+          kind: 'tool_use',
+          toolUseId: state.toolUseId,
+          toolName: state.toolName ?? '',
+          input,
+        });
+      }
+      this.blockStates.delete(index);
+      return;
+    }
+
+    if (eventType === 'message_stop') {
+      this.blockStates.clear();
+      return;
+    }
+  }
+
+  private handleAssistant(msg: SDKMessage & { type: 'assistant' }): void {
+    const content = (msg.message as { content?: unknown }).content;
+    if (!Array.isArray(content)) return;
+
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const b = block as Record<string, unknown>;
+      const blockType = b.type;
+
+      if (blockType === 'text') {
+        const text = typeof b.text === 'string' ? b.text : '';
+        if (text.length > 0) {
+          this.emitDelta({ kind: 'text', text });
+        }
+      } else if (blockType === 'thinking') {
+        const text = typeof b.thinking === 'string' ? b.thinking : '';
+        if (text.length > 0) {
+          this.emitDelta({ kind: 'thinking', text });
+        }
+      } else if (blockType === 'tool_use') {
+        const toolUseId = typeof b.id === 'string' ? b.id : '';
+        const toolName = typeof b.name === 'string' ? b.name : '';
+        const input = b.input ?? {};
+        this.emitDelta({
+          kind: 'tool_use',
+          toolUseId,
+          toolName,
+          input,
+        });
+      }
+    }
+  }
+
+  private handleUser(msg: SDKMessage & { type: 'user' }): void {
+    const content = (msg.message as { content?: unknown }).content;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === 'tool_result') {
+        const toolUseId =
+          typeof b.tool_use_id === 'string' ? b.tool_use_id : '';
+        const output = stringifyToolResult(b.content);
+        const isError = b.is_error === true;
+        this.emitDelta({
+          kind: 'tool_result',
+          toolUseId,
+          output,
+          isError,
+        });
+      }
+    }
+  }
+
+  private emitDelta(
+    delta: Extract<
+      SseEvent,
+      { type: 'subagent_delta' }
+    >['delta'],
+  ): void {
+    this.emitter.emitEvent({
+      type: 'subagent_delta',
+      parentToolUseId: this.parentToolUseId,
+      delta,
     });
   }
 

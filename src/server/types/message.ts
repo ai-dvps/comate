@@ -122,3 +122,32 @@ export type SseEvent =
   | { type: 'interrupted'; messageId: string | null }
   | { type: 'error_note'; text: string }
   | { type: 'server_restarted'; serverNonce: string }
+  | {
+      type: 'subagent_start'
+      parentToolUseId: string
+      description?: string
+    }
+  | {
+      type: 'subagent_delta'
+      parentToolUseId: string
+      delta:
+        | { kind: 'text'; text: string }
+        | { kind: 'thinking'; text: string }
+        | {
+            kind: 'tool_use'
+            toolUseId: string
+            toolName: string
+            input?: unknown
+          }
+        | {
+            kind: 'tool_result'
+            toolUseId: string
+            output: string
+            isError: boolean
+          }
+    }
+  | {
+      type: 'subagent_done'
+      parentToolUseId: string
+      state: 'completed' | 'error'
+    }
