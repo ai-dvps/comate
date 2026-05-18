@@ -643,7 +643,12 @@ function QuestionView({
 
   return (
     <div>
-      {currentHasPreviews ? (
+      {isResolving ? (
+        <div className="flex items-center gap-2 mb-3 text-sm text-text-tertiary">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Submitted
+        </div>
+      ) : currentHasPreviews ? (
         <div className="flex gap-3 mb-3 max-h-[60vh]">
           <div className="flex-1 min-w-0 overflow-y-auto pr-1">
             {questionContent}
