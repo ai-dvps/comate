@@ -361,7 +361,8 @@ function QuestionView({
     setOtherText({})
     setFocused(findInitialFocus())
     setLastInteractionMode('keyboard')
-  }, [item.requestId, findInitialFocus])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- findInitialFocus excluded to avoid clearing answers on step navigation
+  }, [item.requestId])
 
   // Re-scope focus on step change
   useEffect(() => {
