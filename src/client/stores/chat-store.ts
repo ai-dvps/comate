@@ -756,6 +756,7 @@ function subscribeToSession(
   }
 
   const abortController = new AbortController()
+  const thisClose = () => abortController.abort()
 
   fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/stream`, {
     headers,
@@ -768,25 +769,36 @@ function subscribeToSession(
       }
       if (!res.body) throw new Error('No response body')
 
-      for await (const event of parseSSEStream(res.body)) {
-        if (event.id) {
-          lastEventId.set(sessionId, event.id)
+      try {
+        for await (const event of parseSSEStream(res.body)) {
+          if (event.id) {
+            lastEventId.set(sessionId, event.id)
+          }
+          try {
+            handleSseEvent(set, sessionId, event.event, event.data)
+          } catch (err) {
+            console.error('SSE event handler error:', err)
+            set((state) =>
+              addSystemMessage(
+                state,
+                sessionId,
+                `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+              ),
+            )
+          }
         }
-        try {
-          handleSseEvent(set, sessionId, event.event, event.data)
-        } catch (err) {
-          console.error('SSE event handler error:', err)
-          set((state) =>
-            addSystemMessage(
-              state,
-              sessionId,
-              `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
-            ),
-          )
+      } finally {
+        const current = sessionSubscriptions.get(sessionId)
+        if (current?.close === thisClose) {
+          sessionSubscriptions.delete(sessionId)
         }
       }
     })
     .catch((err) => {
+      const current = sessionSubscriptions.get(sessionId)
+      if (current?.close === thisClose) {
+        sessionSubscriptions.delete(sessionId)
+      }
       if (err.name === 'AbortError') return
       console.error('Subscription error:', err)
       set((state) =>
@@ -802,7 +814,7 @@ function subscribeToSession(
     })
 
   sessionSubscriptions.set(sessionId, {
-    close: () => abortController.abort(),
+    close: thisClose,
   })
 }
 
