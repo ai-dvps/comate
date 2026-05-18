@@ -973,7 +973,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         sub.close()
       }
       sessionSubscriptions.delete(prevSessionId)
-      lastEventId.delete(prevSessionId)
     }
 
     set((state) => ({
