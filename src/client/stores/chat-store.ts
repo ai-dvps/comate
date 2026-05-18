@@ -7,6 +7,45 @@ export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
 
 const sessionSubscriptions = new Map<string, { close: () => void }>()
 const lastEventId = new Map<string, string>()
+const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
+
+function startBackgroundPolling(
+  set: SseSetter,
+  workspaceId: string,
+): void {
+  const existing = workspacePollIntervals.get(workspaceId)
+  if (existing) {
+    clearInterval(existing)
+  }
+
+  const interval = setInterval(() => {
+    fetch(`/api/workspaces/${workspaceId}/sessions/status`)
+      .then(async (res) => {
+        if (!res.ok) return
+        const data = (await res.json()) as {
+          statuses?: Record<string, { pendingCount: number }>
+        }
+        const statuses = data.statuses ?? {}
+        set((state) => {
+          const next = { ...state.sessionStatus }
+          for (const [sid, st] of Object.entries(statuses)) {
+            if (st.pendingCount === 0) {
+              delete next[sid]
+            } else {
+              next[sid] = st
+            }
+          }
+          return { sessionStatus: next }
+        })
+      })
+      .catch((err) => {
+        console.error('Background poll error:', err)
+      })
+  }, 5000)
+
+  workspacePollIntervals.set(workspaceId, interval)
+}
+
 
 export interface ChatSession {
   id: string
@@ -76,6 +115,7 @@ interface ChatState {
   pendingSend: Record<string, { workspaceId: string; content: string } | undefined>
   drafts: Record<string, string>
   subagents: Record<string, SubagentState[]>
+  sessionStatus: Record<string, { pendingCount: number }>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -831,6 +871,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingSend: {},
   drafts: {},
   subagents: {},
+  sessionStatus: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -842,6 +883,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         sessions: { ...state.sessions, [workspaceId]: data.sessions || [] },
         isLoadingSessions: false,
       }))
+      startBackgroundPolling(set, workspaceId)
     } catch (err) {
       console.error('Failed to fetch sessions:', err)
       set({ isLoadingSessions: false })
@@ -903,6 +945,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newIsStreaming[sessionId]
         const newSubagents = { ...state.subagents }
         delete newSubagents[sessionId]
+        const newSessionStatus = { ...state.sessionStatus }
+        delete newSessionStatus[sessionId]
         return {
           sessions: { ...state.sessions, [workspaceId]: updated },
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
@@ -913,6 +957,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           drafts: newDrafts,
           isStreaming: newIsStreaming,
           subagents: newSubagents,
+          sessionStatus: newSessionStatus,
         }
       })
     } catch (err) {
@@ -921,6 +966,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setActiveSession: (workspaceId: string, sessionId: string) => {
+    const prevSessionId = get().activeSessionIds[workspaceId]
+    if (prevSessionId && prevSessionId !== sessionId) {
+      const sub = sessionSubscriptions.get(prevSessionId)
+      if (sub) {
+        sub.close()
+      }
+      sessionSubscriptions.delete(prevSessionId)
+      lastEventId.delete(prevSessionId)
+    }
+
     set((state) => ({
       activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
     }))
