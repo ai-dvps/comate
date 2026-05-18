@@ -33,6 +33,7 @@ export class SessionRuntime {
   >();
   private closed = false;
   private messageLoopPromise: Promise<void> = Promise.resolve();
+  private currentMessageStartId?: string;
 
   static open(
     sessionId: string,
@@ -69,6 +70,11 @@ export class SessionRuntime {
     this.options = options;
     this.sdkClient = sdkClient;
     this.emitter = new SseEmitter(null, (id, event) => {
+      if (event.type === 'assistant_start') {
+        this.currentMessageStartId = String(id);
+      } else if (event.type === 'assistant_done' || event.type === 'interrupted') {
+        this.currentMessageStartId = undefined;
+      }
       this.ringBuffer.push({ id: String(id), event });
       if (this.ringBuffer.length > RING_BUFFER_CAP) {
         this.ringBuffer.shift();
@@ -186,6 +192,8 @@ export class SessionRuntime {
     this.emitter.emitSubscriptionAck(this.serverNonce, this.sessionId);
     if (lastEventId !== undefined) {
       this.replayFrom(lastEventId, res);
+    } else if (this.currentMessageStartId !== undefined) {
+      this.replayFrom(this.currentMessageStartId, res);
     }
   }
 
