@@ -992,10 +992,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const data = (await res.json()) as { messages?: ChatMessage[] }
       const mappedMessages = data.messages ?? []
 
-      set((state) => ({
-        messages: { ...state.messages, [sessionId]: mappedMessages },
-        isLoadingMessages: false,
-      }))
+      set((state) => {
+        const existing = state.messages[sessionId] || []
+        const hasStreaming = existing.some((m) => m.isStreaming)
+        if (hasStreaming) {
+          return { isLoadingMessages: false }
+        }
+        return {
+          messages: { ...state.messages, [sessionId]: mappedMessages },
+          isLoadingMessages: false,
+        }
+      })
     } catch (err) {
       console.error('Failed to load messages:', err)
       set({ isLoadingMessages: false })
