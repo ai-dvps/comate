@@ -206,7 +206,7 @@ User sends subsequent messages
 
 ### U3. Refactor Session CRUD to Use SDK APIs
 
-**Goal:** Replace JSON-store-backed session create/update/delete with SDK-native operations.
+**Goal:** Replace JSON-store-backed /session create/update/delete with SDK-native operations.
 
 **Requirements:** R3, R4, R5
 

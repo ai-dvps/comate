@@ -40,6 +40,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const messages = useChatStore((s) => s.messages)
+  const sessionStatus = useChatStore((s) => s.sessionStatus)
   const isLoading = useChatStore((s) => s.isLoadingSessions)
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const createSession = useChatStore((s) => s.createSession)
@@ -160,6 +161,12 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                       <span className="px-1 py-0.5 text-[9px] bg-yellow-500/20 text-yellow-500 rounded">
                         Draft
                       </span>
+                    )}
+                    {sessionStatus[session.id]?.pendingCount > 0 && (
+                      <span
+                        className="w-1.5 h-1.5 rounded-full bg-orange-500 flex-shrink-0"
+                        title="Needs approval"
+                      />
                     )}
                   </div>
                   <p className="text-[11px] text-text-tertiary truncate mt-0.5">
