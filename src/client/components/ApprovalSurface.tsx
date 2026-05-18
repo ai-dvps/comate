@@ -79,6 +79,21 @@ export default function ApprovalSurface({
     : pendingItem.description
   const queueLabel = queueDepth > 0 ? `1 of ${queueDepth + 1}` : null
 
+  const [stepIndex, setStepIndex] = useState(0)
+  const questions = isQuestion
+    ? (pendingItem as PendingQuestion).questions
+    : []
+  const isStepper = questions.length >= 2
+
+  // Reset step on new pending item
+  useEffect(() => {
+    setStepIndex(0)
+  }, [pendingItem.requestId])
+
+  const stepLabel =
+    isStepper ? `${stepIndex + 1} of ${questions.length}` : null
+  const positionLabel = isStepper ? stepLabel : queueLabel
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-3">
       <div
@@ -103,8 +118,10 @@ export default function ApprovalSurface({
             )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {queueLabel && (
-              <span className="text-xs text-text-tertiary">{queueLabel}</span>
+            {positionLabel && (
+              <span className="text-xs text-text-tertiary">
+                {positionLabel}
+              </span>
             )}
             <StopButton onStop={onStop} isResolving={isResolving} />
           </div>
@@ -115,6 +132,8 @@ export default function ApprovalSurface({
             workspaceId={workspaceId}
             item={pendingItem as PendingQuestion}
             isResolving={isResolving}
+            stepIndex={stepIndex}
+            onStepChange={setStepIndex}
             onAnswerQuestion={onAnswerQuestion}
             onChatAbout={onChatAbout}
           />
@@ -276,12 +295,16 @@ function QuestionView({
   workspaceId,
   item,
   isResolving,
+  stepIndex,
+  onStepChange,
   onAnswerQuestion,
   onChatAbout,
 }: {
   workspaceId: string
   item: PendingQuestion
   isResolving: boolean
+  stepIndex: number
+  onStepChange: (index: number) => void
   onAnswerQuestion: (answers: Record<string, string>) => void
   onChatAbout: () => void
 }) {
@@ -291,12 +314,30 @@ function QuestionView({
   )
   const [otherText, setOtherText] = useState<Record<string, string>>({})
 
+  const isStepper = item.questions.length >= 2
+  const currentQuestion = isStepper
+    ? item.questions[stepIndex]
+    : item.questions[0]
+
   const hasPreviews = useMemo(
     () => item.questions.some((q) => q.options.some((o) => !!o.preview)),
     [item.questions],
   )
 
+  const currentHasPreviews = useMemo(
+    () => currentQuestion?.options.some((o) => !!o.preview) ?? false,
+    [currentQuestion],
+  )
+
   const findInitialFocus = useCallback((): FocusedOption => {
+    if (isStepper) {
+      const q = item.questions[stepIndex]
+      if (!q) return null
+      for (let oi = 0; oi < q.options.length; oi++) {
+        if (q.options[oi].preview) return { qIdx: stepIndex, oIdx: oi }
+      }
+      return q.options[0] ? { qIdx: stepIndex, oIdx: 0 } : null
+    }
     for (let qi = 0; qi < item.questions.length; qi++) {
       const opts = item.questions[qi].options
       for (let oi = 0; oi < opts.length; oi++) {
@@ -306,14 +347,14 @@ function QuestionView({
     return item.questions[0]?.options[0]
       ? { qIdx: 0, oIdx: 0 }
       : null
-  }, [item.questions])
+  }, [item.questions, isStepper, stepIndex])
 
   const [focused, setFocused] = useState<FocusedOption>(findInitialFocus)
   const [lastInteractionMode, setLastInteractionMode] = useState<
     'mouse' | 'keyboard'
   >('keyboard')
 
-  // Reset state on requestId change
+  // Reset state on requestId change (DO NOT add stepIndex here)
   useEffect(() => {
     setSelections({})
     setOtherSelected({})
@@ -321,6 +362,22 @@ function QuestionView({
     setFocused(findInitialFocus())
     setLastInteractionMode('keyboard')
   }, [item.requestId, findInitialFocus])
+
+  // Re-scope focus on step change
+  useEffect(() => {
+    if (!isStepper) return
+    const initial = findInitialFocus()
+    setFocused(initial)
+    setLastInteractionMode('keyboard')
+    if (initial) {
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLElement>(
+          `[data-option-key="${initial.qIdx}:${initial.oIdx}"]`,
+        )
+        el?.focus()
+      })
+    }
+  }, [stepIndex, isStepper, findInitialFocus])
 
   const toggleOption = useCallback(
     (questionText: string, optionLabel: string, multiSelect: boolean) => {
@@ -374,7 +431,19 @@ function QuestionView({
     return selected.length > 0
   })
 
+  const currentAnswered = (() => {
+    if (!currentQuestion) return false
+    const selected = selections[currentQuestion.question] || []
+    const hasOther = otherSelected[currentQuestion.question]
+    if (hasOther) {
+      const text = (otherText[currentQuestion.question] || '').trim()
+      return !!text
+    }
+    return selected.length > 0
+  })()
+
   const canConfirm = allAnswered && !isResolving
+  const canNext = currentAnswered
 
   const handleConfirm = () => {
     if (!canConfirm) return
@@ -395,12 +464,12 @@ function QuestionView({
 
   const focusedPreview = useMemo(() => {
     if (!focused) return null
-    const q = item.questions[focused.qIdx]
+    const effectiveQIdx = isStepper ? stepIndex : focused.qIdx
+    const q = item.questions[effectiveQIdx]
     if (!q) return null
-    // Other entry has no preview
     if (focused.oIdx >= q.options.length) return null
     return q.options[focused.oIdx]?.preview ?? null
-  }, [focused, item.questions])
+  }, [focused, item.questions, isStepper, stepIndex])
 
   const handleOptionFocus = (qIdx: number, oIdx: number) => {
     if (lastInteractionMode === 'mouse') return
@@ -500,85 +569,115 @@ function QuestionView({
     )
   }
 
-  const questionList = (
-    <div className="space-y-3">
-      {item.questions.map((q, qIdx) => {
-        const selectedSet = selections[q.question] || []
-        const otherIsOn = !!otherSelected[q.question]
-        return (
-          <div key={`${qIdx}:${q.question}`}>
-            {q.header && (
-              <p className="text-xs font-semibold text-text-primary mb-1">
-                {q.header}
-              </p>
-            )}
-            <p className="text-sm text-text-secondary mb-2">{q.question}</p>
-            <div
-              role={q.multiSelect ? 'group' : 'radiogroup'}
-              aria-label={q.question}
-              className="space-y-1"
-            >
-              {q.options.map((opt, oIdx) =>
-                renderOption(
-                  q,
-                  qIdx,
-                  oIdx,
-                  opt.label,
-                  opt.description,
-                  selectedSet.includes(opt.label),
-                  () => toggleOption(q.question, opt.label, q.multiSelect),
-                ),
-              )}
-              {renderOption(
-                q,
-                qIdx,
-                q.options.length,
-                OTHER_LABEL,
-                undefined,
-                otherIsOn,
-                () => toggleOther(q.question),
-              )}
-            </div>
-            {otherIsOn && (
-              <OtherInput
-                workspaceId={workspaceId}
-                value={otherText[q.question] || ''}
-                disabled={isResolving}
-                onChange={(v) => setOtherTextFor(q.question, v)}
-              />
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
+  const renderQuestion = (q: QuestionPayload, qIdx: number) => {
+    const selectedSet = selections[q.question] || []
+    const otherIsOn = !!otherSelected[q.question]
+    return (
+      <div
+        key={`${qIdx}:${q.question}`}
+        {...(isStepper
+          ? {
+              'aria-roledescription': 'step',
+              'aria-label': `Question ${stepIndex + 1} of ${item.questions.length}`,
+            }
+          : {})}
+      >
+        {q.header && (
+          <p className="text-xs font-semibold text-text-primary mb-1">
+            {q.header}
+          </p>
+        )}
+        <p className="text-sm text-text-secondary mb-2">{q.question}</p>
+        <div
+          role={q.multiSelect ? 'group' : 'radiogroup'}
+          aria-label={q.question}
+          className="space-y-1"
+        >
+          {q.options.map((opt, oIdx) =>
+            renderOption(
+              q,
+              qIdx,
+              oIdx,
+              opt.label,
+              opt.description,
+              selectedSet.includes(opt.label),
+              () => toggleOption(q.question, opt.label, q.multiSelect),
+            ),
+          )}
+          {renderOption(
+            q,
+            qIdx,
+            q.options.length,
+            OTHER_LABEL,
+            undefined,
+            otherIsOn,
+            () => toggleOther(q.question),
+          )}
+        </div>
+        {otherIsOn && (
+          <OtherInput
+            workspaceId={workspaceId}
+            value={otherText[q.question] || ''}
+            disabled={isResolving}
+            onChange={(v) => setOtherTextFor(q.question, v)}
+          />
+        )}
+      </div>
+    )
+  }
+
+  const isLastStep = stepIndex === item.questions.length - 1
+
+  const questionContent = isStepper
+    ? renderQuestion(currentQuestion, stepIndex)
+    : item.questions.map((q, qIdx) => renderQuestion(q, qIdx))
 
   return (
     <div>
-      {hasPreviews ? (
+      {currentHasPreviews ? (
         <div className="flex gap-3 mb-3 max-h-[60vh]">
           <div className="flex-1 min-w-0 overflow-y-auto pr-1">
-            {questionList}
+            {questionContent}
           </div>
           <div className="flex-1 min-w-0 bg-bg/50 border border-border/30 rounded-md overflow-hidden">
             <PreviewPane html={focusedPreview} />
           </div>
         </div>
       ) : (
-        <div className="mb-3">{questionList}</div>
+        <div className="mb-3">{questionContent}</div>
       )}
 
       <div className="flex items-center gap-2">
-        <Button onClick={handleConfirm} disabled={!canConfirm} size="sm">
-          {isResolving ? (
-            <span className="flex items-center gap-1">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              …
-            </span>
-          ) : (
-            'Confirm'
-          )}
-        </Button>
+        {isStepper && stepIndex > 0 && (
+          <Button
+            onClick={() => onStepChange(stepIndex - 1)}
+            variant="secondary"
+            size="sm"
+          >
+            Back
+          </Button>
+        )}
+        {isStepper && !isLastStep && (
+          <Button
+            onClick={() => onStepChange(stepIndex + 1)}
+            disabled={!canNext}
+            size="sm"
+          >
+            Next
+          </Button>
+        )}
+        {(!isStepper || isLastStep) && (
+          <Button onClick={handleConfirm} disabled={!canConfirm} size="sm">
+            {isResolving ? (
+              <span className="flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                …
+              </span>
+            ) : (
+              'Confirm'
+            )}
+          </Button>
+        )}
         {hasPreviews && (
           <Button
             onClick={onChatAbout}
