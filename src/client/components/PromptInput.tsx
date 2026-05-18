@@ -404,14 +404,14 @@ export default function PromptInput({
               <PopoverTrigger asChild>
                 <button
                   disabled={isInterrupting}
-                  className="p-1.5 rounded-md text-accent hover:text-accent/80 transition-colors flex items-center gap-1"
+                  className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors flex items-center gap-1.5 border border-red-500/20"
                 >
                   {isInterrupting ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-5 h-5 animate-spin" />
                   ) : (
-                    <span className="relative w-4 h-4 flex items-center justify-center">
-                      <Loader2 className="absolute inset-0 w-4 h-4 animate-spin opacity-60" />
-                      <Square className="w-2 h-2 fill-current" />
+                    <span className="relative w-5 h-5 flex items-center justify-center">
+                      <Loader2 className="absolute inset-0 w-5 h-5 animate-spin opacity-60" />
+                      <Square className="w-2.5 h-2.5 fill-current" />
                     </span>
                   )}
                 </button>
