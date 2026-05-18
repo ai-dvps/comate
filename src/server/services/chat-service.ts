@@ -165,7 +165,7 @@ export class ChatService {
       }
 
       const options = this.buildSdkOptions(workspace, session);
-      const runtime = SessionRuntime.open(sessionId, this.serverNonce, options, this.sdkClient);
+      const runtime = SessionRuntime.open(sessionId, workspaceId, this.serverNonce, options, this.sdkClient);
       this.runtimes.set(sessionId, runtime);
 
       if (session.isDraft) {
@@ -190,6 +190,17 @@ export class ChatService {
     if (!runtime) return;
     this.runtimes.delete(sessionId);
     await runtime.close();
+  }
+
+  getSessionsStatus(workspaceId: string): Record<string, { pendingCount: number }> {
+    const statuses: Record<string, { pendingCount: number }> = {};
+    for (const [sessionId, runtime] of this.runtimes) {
+      const status = runtime.getStatus();
+      if (status.workspaceId === workspaceId) {
+        statuses[sessionId] = { pendingCount: status.pendingCount };
+      }
+    }
+    return statuses;
   }
 
   // Legacy message streaming (preserved during migration; removed after U5)

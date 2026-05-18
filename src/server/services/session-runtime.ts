@@ -16,6 +16,7 @@ const RING_BUFFER_CAP = 500;
 
 export class SessionRuntime {
   private sessionId: string;
+  private workspaceId: string;
   private serverNonce: string;
   private options: Options;
   private sdkClient: SdkClient;
@@ -35,6 +36,7 @@ export class SessionRuntime {
 
   static open(
     sessionId: string,
+    workspaceId: string,
     serverNonce: string,
     options: Options,
     sdkClient: SdkClient,
@@ -42,6 +44,7 @@ export class SessionRuntime {
     const input = new PushableIterator<SDKUserMessage>();
     const runtime = new SessionRuntime(
       sessionId,
+      workspaceId,
       serverNonce,
       input,
       options,
@@ -53,12 +56,14 @@ export class SessionRuntime {
 
   private constructor(
     sessionId: string,
+    workspaceId: string,
     serverNonce: string,
     input: PushableIterator<SDKUserMessage>,
     options: Options,
     sdkClient: SdkClient,
   ) {
     this.sessionId = sessionId;
+    this.workspaceId = workspaceId;
     this.serverNonce = serverNonce;
     this.input = input;
     this.options = options;
@@ -186,6 +191,13 @@ export class SessionRuntime {
 
   unsubscribe(): void {
     this.emitter.setResponse(null);
+  }
+
+  getStatus(): { pendingCount: number; workspaceId: string } {
+    return {
+      pendingCount: this.pendingApprovals.size,
+      workspaceId: this.workspaceId,
+    };
   }
 
   pushMessage(content: string): void {
