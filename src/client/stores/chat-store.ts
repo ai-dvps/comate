@@ -116,6 +116,7 @@ interface ChatState {
   drafts: Record<string, string>
   subagents: Record<string, SubagentState[]>
   sessionStatus: Record<string, { pendingCount: number }>
+  unreadCompletions: Record<string, boolean>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -233,6 +234,13 @@ function mutateToolUsePart(
     }
   }
   return {}
+}
+
+function isSessionActive(state: ChatState, sessionId: string): boolean {
+  for (const activeId of Object.values(state.activeSessionIds)) {
+    if (activeId === sessionId) return true
+  }
+  return false
 }
 
 function addSystemMessage(
@@ -661,9 +669,18 @@ function handleSseEvent(
       return
     }
     case 'result': {
-      set((state) => ({
-        isStreaming: { ...state.isStreaming, [sessionId]: false },
-      }))
+      set((state) => {
+        const next: Partial<ChatState> = {
+          isStreaming: { ...state.isStreaming, [sessionId]: false },
+        }
+        if (!isSessionActive(state, sessionId)) {
+          next.unreadCompletions = {
+            ...state.unreadCompletions,
+            [sessionId]: true,
+          }
+        }
+        return next
+      })
       return
     }
     case 'subagent_start': {
@@ -872,6 +889,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   drafts: {},
   subagents: {},
   sessionStatus: {},
+  unreadCompletions: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -947,6 +965,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newSubagents[sessionId]
         const newSessionStatus = { ...state.sessionStatus }
         delete newSessionStatus[sessionId]
+        const newUnreadCompletions = { ...state.unreadCompletions }
+        delete newUnreadCompletions[sessionId]
         return {
           sessions: { ...state.sessions, [workspaceId]: updated },
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
@@ -958,6 +978,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           isStreaming: newIsStreaming,
           subagents: newSubagents,
           sessionStatus: newSessionStatus,
+          unreadCompletions: newUnreadCompletions,
         }
       })
     } catch (err) {
@@ -975,9 +996,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionSubscriptions.delete(prevSessionId)
     }
 
-    set((state) => ({
-      activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
-    }))
+    set((state) => {
+      const nextUnread = { ...state.unreadCompletions }
+      if (sessionId) delete nextUnread[sessionId]
+      return {
+        activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
+        unreadCompletions: nextUnread,
+      }
+    })
     // Auto-subscribe when switching to a session
     if (sessionId) {
       subscribeToSession(set, workspaceId, sessionId)
@@ -1021,6 +1047,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const nextDrafts = { ...state.drafts }
       delete nextDrafts[sessionId]
+      const nextUnread = { ...state.unreadCompletions }
+      delete nextUnread[sessionId]
       return {
         messages: {
           ...state.messages,
@@ -1036,6 +1064,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
         drafts: nextDrafts,
         isStreaming: { ...state.isStreaming, [sessionId]: true },
+        unreadCompletions: nextUnread,
       }
     })
 
