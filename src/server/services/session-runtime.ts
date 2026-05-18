@@ -25,7 +25,10 @@ export class SessionRuntime {
   private ringBuffer: Array<{ id: string; event: SseEvent }> = [];
   private pendingApprovals = new Map<
     string,
-    { resolve: (result: PermissionResult) => void }
+    {
+      resolve: (result: PermissionResult) => void;
+      input: Record<string, unknown>;
+    }
   >();
   private closed = false;
   private messageLoopPromise: Promise<void> = Promise.resolve();
@@ -127,7 +130,7 @@ export class SessionRuntime {
       }
 
       return new Promise<PermissionResult>((resolve) => {
-        this.pendingApprovals.set(requestId, { resolve });
+        this.pendingApprovals.set(requestId, { resolve, input });
 
         if (options.signal) {
           const onAbort = () => {
@@ -199,7 +202,17 @@ export class SessionRuntime {
     if (!pending) return;
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
-    pending.resolve(result);
+
+    // The SDK's Zod schema requires `updatedInput: Record<string, unknown>` on
+    // every allow result, even though the TS type marks it optional. Callers
+    // (HTTP route, abort handler) shouldn't have to know this — fill from the
+    // cached tool input when missing.
+    const finalResult: PermissionResult =
+      result.behavior === 'allow' && result.updatedInput === undefined
+        ? { ...result, updatedInput: pending.input }
+        : result;
+
+    pending.resolve(finalResult);
   }
 
   async interrupt(): Promise<void> {
