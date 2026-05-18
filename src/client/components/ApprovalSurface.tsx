@@ -391,6 +391,10 @@ function QuestionView({
           return { ...prev, [questionText]: next }
         }
         const next = current.includes(optionLabel) ? [] : [optionLabel]
+        // Single-select: selecting an option clears Other
+        if (next.length > 0) {
+          setOtherSelected((p) => ({ ...p, [questionText]: false }))
+        }
         return { ...prev, [questionText]: next }
       })
     },
@@ -398,9 +402,13 @@ function QuestionView({
   )
 
   const toggleOther = useCallback(
-    (questionText: string) => {
+    (questionText: string, multiSelect: boolean) => {
       setOtherSelected((prev) => {
         const next = !prev[questionText]
+        if (next && !multiSelect) {
+          // Single-select: deselecting Other clears regular options
+          setSelections((sp) => ({ ...sp, [questionText]: [] }))
+        }
         return { ...prev, [questionText]: next }
       })
       // When deselecting Other, discard its typed value
@@ -612,7 +620,7 @@ function QuestionView({
             OTHER_LABEL,
             undefined,
             otherIsOn,
-            () => toggleOther(q.question),
+            () => toggleOther(q.question, q.multiSelect),
           )}
         </div>
         {otherIsOn && (
