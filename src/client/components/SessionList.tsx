@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useChatStore } from '../stores/chat-store'
 import { MessageSquare, Plus, Trash2 } from 'lucide-react'
+import StatusIndicator from './StatusIndicator'
+import { deriveSessionState } from '../lib/session-status'
 
 function formatRelativeDate(dateStr: string): string {
   const date = new Date(dateStr)
@@ -41,6 +43,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const messages = useChatStore((s) => s.messages)
   const sessionStatus = useChatStore((s) => s.sessionStatus)
+  const isStreaming = useChatStore((s) => s.isStreaming)
+  const unreadCompletions = useChatStore((s) => s.unreadCompletions)
   const isLoading = useChatStore((s) => s.isLoadingSessions)
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const createSession = useChatStore((s) => s.createSession)
@@ -128,7 +132,14 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             Create one to start chatting.
           </div>
         ) : (
-          sessions.map((session) => (
+          sessions.map((session) => {
+            const rowState = deriveSessionState({
+              isStreaming: !!isStreaming[session.id],
+              pendingCount: sessionStatus[session.id]?.pendingCount ?? 0,
+              unread: !!unreadCompletions[session.id],
+              isActive: session.id === activeSessionId,
+            })
+            return (
             <div
               key={session.id}
               onClick={() => setActiveSession(workspaceId, session.id)}
@@ -162,12 +173,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                         Draft
                       </span>
                     )}
-                    {sessionStatus[session.id]?.pendingCount > 0 && (
-                      <span
-                        className="w-1.5 h-1.5 rounded-full bg-orange-500 flex-shrink-0"
-                        title="Needs approval"
-                      />
-                    )}
+                    {rowState !== 'idle' && <StatusIndicator state={rowState} />}
                   </div>
                   <p className="text-[11px] text-text-tertiary truncate mt-0.5">
                     {getPreview(session.id)}
@@ -191,7 +197,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 )}
               </div>
             </div>
-          ))
+          )})
         )}
       </div>
     </div>
