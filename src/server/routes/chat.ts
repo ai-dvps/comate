@@ -59,6 +59,23 @@ router.delete('/sessions/:sessionId', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/sessions/status
+// Lightweight status check for background session discovery
+router.get('/sessions/status', async (req, res) => {
+  try {
+    const workspaceId = (req.params as { id: string }).id;
+    const statuses = chatService.getSessionsStatus(workspaceId);
+    res.json({ statuses });
+  } catch (error) {
+    console.error('Failed to get sessions status:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to get sessions status' });
+  }
+});
+
 // GET /api/workspaces/:id/sessions/:sessionId/messages
 router.get('/sessions/:sessionId/messages', async (req, res) => {
   try {
