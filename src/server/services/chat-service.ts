@@ -7,6 +7,8 @@ import type { ChatMessage } from '../types/message.js';
 import { normalizeSessionMessage } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
 import { SessionRuntime } from './session-runtime.js';
+import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
+import { sidecarLog } from '../utils/sidecar-logger.js';
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
@@ -260,12 +262,15 @@ export class ChatService {
       };
     }
 
+    const claudePath = resolveSdkBinary();
+    sidecarLog(`[ChatService.buildSdkOptions] pathToClaudeCodeExecutable=${claudePath}`);
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
       cwd: workspace.folderPath,
       env,
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: workspace.settings.model || undefined,
       includePartialMessages: true,
+      pathToClaudeCodeExecutable: claudePath,
     };
 
     if (session.isDraft) {

@@ -53,6 +53,14 @@ pub fn run() {
                     }
                 };
 
+                let resource_dir = match app_handle.path().resource_dir() {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        log::error!("Failed to get resource dir: {}", e);
+                        return;
+                    }
+                };
+
                 if let Err(e) = std::fs::create_dir_all(&data_dir) {
                     log::error!("Failed to create data dir: {}", e);
                     return;
@@ -60,6 +68,7 @@ pub fn run() {
 
                 let sidecar_command = sidecar_command
                     .env("CLAUDE_CODE_GUI_DATA_DIR", &data_dir)
+                    .env("TAURI_RESOURCE_DIR", &resource_dir)
                     .env("PORT", "0")
                     .env("CLAUDE_CODE_GUI_SIDECAR", "1");
 
