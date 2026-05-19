@@ -1,10 +1,10 @@
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
+import { getStorageDir } from './data-dir.js';
 
-const STORAGE_DIR = join(homedir(), '.claude-code-gui');
+const STORAGE_DIR = getStorageDir();
 const DRAFTS_FILE = join(STORAGE_DIR, 'draft-sessions.json');
 
 interface DraftsData {

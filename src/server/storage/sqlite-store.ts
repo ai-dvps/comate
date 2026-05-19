@@ -1,12 +1,13 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
+import { getStorageDir } from './data-dir.js';
+import { getNativeBindingPath } from './native-binding.js';
 
-const STORAGE_DIR = join(homedir(), '.claude-code-gui');
+const STORAGE_DIR = getStorageDir();
 const DB_FILE = join(STORAGE_DIR, 'data.db');
 const LEGACY_FILE = join(STORAGE_DIR, 'workspaces.json');
 const SESSIONS_FILE = join(STORAGE_DIR, 'sessions.json');
@@ -17,12 +18,21 @@ interface LegacyStorageData {
   sessions: ChatSession[];
 }
 
+function getDatabaseOptions(): Database.Options | undefined {
+  const nativeBinding = getNativeBindingPath();
+  if (nativeBinding) {
+    return { nativeBinding };
+  }
+  return undefined;
+}
+
 export class SqliteStore {
   private db: Database.Database;
 
   constructor() {
     ensureDirSync();
-    this.db = new Database(DB_FILE);
+    const options = getDatabaseOptions();
+    this.db = new Database(DB_FILE, options);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workspaces (
         id TEXT PRIMARY KEY,

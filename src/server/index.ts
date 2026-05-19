@@ -2,13 +2,22 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+function getDirname(): string {
+  try {
+    const filename = fileURLToPath(import.meta.url);
+    return path.dirname(filename);
+  } catch {
+    return '';
+  }
+}
+
+const __dirname = getDirname();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,9 +31,25 @@ app.use('/api/workspaces/:id/files', fileRoutes);
 app.use('/api/workspaces/:id/commands', workspaceCommandsRoutes);
 app.use('/api/workspaces/:id', chatRoutes);
 
-// Health check
+// Health checks
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/api/health/claude', (_req, res) => {
+  try {
+    execSync('claude --version', { stdio: 'pipe', timeout: 5000 });
+    res.json({ ok: true });
+  } catch (err) {
+    const isWindows = process.platform === 'win32';
+    res.status(503).json({
+      ok: false,
+      error: 'Claude CLI not found or not authenticated',
+      message: isWindows
+        ? 'Claude CLI must be installed and authenticated. Run "claude login" in your terminal.'
+        : 'Claude CLI must be installed and authenticated. Run "claude login" in your terminal.',
+    });
+  }
 });
 
 // Serve static files in production
@@ -37,6 +62,13 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const server = app.listen(PORT, () => {
+  const address = server.address();
+  const actualPort = typeof address === 'object' && address ? address.port : PORT;
+  console.log(`Server running on http://localhost:${actualPort}`);
+
+  // Emit ready message for Tauri sidecar discovery when PORT=0
+  if (process.env.CLAUDE_CODE_GUI_SIDECAR === '1') {
+    console.log(JSON.stringify({ type: 'ready', port: actualPort }));
+  }
 });

@@ -10,3 +10,9 @@ dist
 *.swo
 *~
 .claude/worktrees/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+src-tauri/resources/*
+!src-tauri/resources/.gitkeep
