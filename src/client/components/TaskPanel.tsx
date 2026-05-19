@@ -1,0 +1,148 @@
+import { useState, useEffect, useCallback } from 'react'
+import {
+  Circle,
+  Loader2,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  ListTodo,
+} from 'lucide-react'
+
+import { useChatStore, type TaskItem } from '../stores/chat-store'
+import { cn } from './ui/utils'
+
+interface TaskPanelProps {
+  sessionId: string
+}
+
+const statusConfig = {
+  pending: {
+    icon: Circle,
+    iconClass: 'text-text-tertiary',
+    label: 'Pending',
+  },
+  in_progress: {
+    icon: Loader2,
+    iconClass: 'text-amber-500 animate-spin',
+    label: 'In progress',
+  },
+  completed: {
+    icon: CheckCircle2,
+    iconClass: 'text-green-600',
+    label: 'Completed',
+  },
+}
+
+function TaskRow({ task }: { task: TaskItem }) {
+  const config = statusConfig[task.status]
+  const Icon = config.icon
+
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-2.5 py-2 px-3 rounded-md',
+        task.status === 'completed' && 'opacity-50',
+      )}
+    >
+      <Icon className={cn('size-4 mt-0.5 shrink-0', config.iconClass)} />
+      <div className="min-w-0 flex-1">
+        <span
+          className={cn(
+            'text-sm',
+            task.status === 'completed'
+              ? 'text-text-tertiary line-through'
+              : 'text-text-primary',
+          )}
+        >
+          {task.subject}
+        </span>
+        {task.status === 'in_progress' && task.activeForm && (
+          <p className="text-xs text-text-tertiary mt-0.5">{task.activeForm}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default function TaskPanel({ sessionId }: TaskPanelProps) {
+  const tasks = useChatStore((s) => s.tasks[sessionId] || [])
+  const [expanded, setExpanded] = useState(false)
+
+  const completedCount = tasks.filter((t) => t.status === 'completed').length
+  const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length
+  const total = tasks.length
+
+  const toggle = useCallback(() => setExpanded((e) => !e), [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded(false)
+    }
+    if (expanded) {
+      window.addEventListener('keydown', onKey)
+    }
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
+
+  // Auto-collapse when switching sessions (sessionId changes)
+  useEffect(() => {
+    setExpanded(false)
+  }, [sessionId])
+
+  if (total === 0) return null
+
+  const progressPercent = total > 0 ? (completedCount / total) * 100 : 0
+
+  return (
+    <div className="flex-shrink-0 border-b border-border/30 bg-bg">
+      {/* Collapsed bar */}
+      <button
+        onClick={toggle}
+        className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-hover/50 transition-colors"
+      >
+        <ListTodo className="size-4 text-text-tertiary shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1.5 bg-surface rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent rounded-full transition-all duration-300"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+            <span className="text-xs text-text-secondary shrink-0">
+              {completedCount}/{total}
+            </span>
+          </div>
+        </div>
+        {inProgressCount > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-500 shrink-0">
+            <Loader2 className="size-3 animate-spin" />
+            {inProgressCount}
+          </span>
+        )}
+        {expanded ? (
+          <ChevronUp className="size-3.5 text-text-tertiary shrink-0" />
+        ) : (
+          <ChevronDown className="size-3.5 text-text-tertiary shrink-0" />
+        )}
+      </button>
+
+      {/* Expanded panel */}
+      {expanded && (
+        <div className="border-t border-border/20 bg-surface/30">
+          {tasks.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-text-tertiary">
+              No tasks yet.
+            </div>
+          ) : (
+            <div className="py-1">
+              {tasks.map((task) => (
+                <TaskRow key={task.id} task={task} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
