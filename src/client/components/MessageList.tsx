@@ -33,6 +33,7 @@ import {
   type ToolState,
 } from './ai-elements/tool'
 import SubagentBriefStatus from './SubagentBriefStatus'
+import StreamingToolInputPreview from './StreamingToolInputPreview'
 
 interface MessageListProps {
   sessionId: string
@@ -208,14 +209,20 @@ function renderMessage(
             }
             const result = resultMap.get(part.toolUseId)
             const state = toToolState(part, result)
+            const isStreaming = state === 'input-streaming'
+            const streamingJson = part.inputJsonStream ?? ''
             return (
-              <Tool key={partKey}>
+              <Tool key={partKey} defaultOpen={isStreaming}>
                 <ToolHeader
                   state={state}
                   type={`tool-${part.toolName}`}
                 />
                 <ToolContent>
-                  <ToolInput input={part.input} />
+                  {isStreaming && streamingJson.length > 0 ? (
+                    <StreamingToolInputPreview partialJson={streamingJson} />
+                  ) : (
+                    <ToolInput input={part.input} />
+                  )}
                   {result && (
                     <ToolOutput
                       errorText={result.isError ? result.output : undefined}
