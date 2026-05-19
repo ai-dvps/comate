@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import { X, Plus } from 'lucide-react'
+import { open } from '@tauri-apps/plugin-dialog'
+import { isTauri } from '@tauri-apps/api/core'
+import { X, Plus, FolderOpen } from 'lucide-react'
 
 interface CreateWorkspaceModalProps {
   onClose: () => void
@@ -43,6 +45,21 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
       setIsCreating(false)
     }
   }, [name, folderPath, description, isValid, isCreating, createWorkspace, openWorkspace, onClose])
+
+  const handleBrowse = useCallback(async () => {
+    if (!isTauri()) return
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+      })
+      if (selected && typeof selected === 'string') {
+        setFolderPath(selected)
+      }
+    } catch {
+      // Dialog cancelled or failed — leave input unchanged
+    }
+  }, [])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -96,12 +113,22 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
             <label className="block text-xs font-medium text-text-secondary mb-1.5">
               Folder Path <span className="text-red-400">*</span>
             </label>
-            <input
-              value={folderPath}
-              onChange={(e) => setFolderPath(e.target.value)}
-              placeholder="/path/to/project"
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
+            <div className="flex gap-2">
+              <input
+                value={folderPath}
+                onChange={(e) => setFolderPath(e.target.value)}
+                placeholder="/path/to/project"
+                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+              />
+              <button
+                onClick={handleBrowse}
+                type="button"
+                className="px-3 py-2 text-sm font-medium bg-surface-hover hover:bg-surface-active text-text-secondary rounded-lg border border-border transition-colors flex items-center gap-1.5"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                Browse
+              </button>
+            </div>
           </div>
 
           <div>
