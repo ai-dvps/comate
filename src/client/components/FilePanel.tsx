@@ -1,5 +1,44 @@
 import { X, Copy } from 'lucide-react'
+import type { BundledLanguage } from 'shiki'
 import type { ViewedFile } from './FileDrawer'
+import { CodeBlockContent } from './ai-elements/code-block'
+
+const EXT_TO_LANGUAGE: Record<string, BundledLanguage> = {
+  py: 'python',
+  rs: 'rust',
+  rb: 'ruby',
+  sh: 'bash',
+  bash: 'bash',
+  zsh: 'zsh',
+  ps1: 'powershell',
+  pl: 'perl',
+  kt: 'kotlin',
+  kts: 'kotlin',
+  cpp: 'cpp',
+  cc: 'cpp',
+  cxx: 'cpp',
+  hpp: 'cpp',
+  fs: 'fsharp',
+  fsx: 'fsharp',
+  ex: 'elixir',
+  exs: 'elixir',
+  erl: 'erlang',
+  hs: 'haskell',
+  ml: 'ocaml',
+  vim: 'viml',
+  dockerfile: 'dockerfile',
+  tf: 'hcl',
+  hcl: 'hcl',
+  yml: 'yaml',
+  m: 'objc',
+  mm: 'objc',
+}
+
+export function getLanguageFromFilename(name: string): BundledLanguage {
+  const ext = name.split('.').pop()?.toLowerCase()
+  if (!ext) return 'text' as BundledLanguage
+  return EXT_TO_LANGUAGE[ext] ?? (ext as BundledLanguage)
+}
 
 interface FilePanelProps {
   file: ViewedFile | null
@@ -9,8 +48,6 @@ interface FilePanelProps {
 
 export default function FilePanel({ file, onClose, onCopy }: FilePanelProps) {
   if (!file) return null
-
-  const lines = file.content.split('\n')
 
   return (
     <aside className="w-96 bg-surface border-r border-border flex flex-col flex-shrink-0"
@@ -58,24 +95,13 @@ export default function FilePanel({ file, onClose, onCopy }: FilePanelProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-4"
-      >
-        <div className="flex"
-        >
-          <div className="text-right pr-4 text-[11px] text-text-tertiary select-none font-mono" style={{ minWidth: '2rem' }}
-          >
-            {lines.map((_, i) => (
-              <div key={i}>{i + 1}</div>
-            ))}
-          </div>
-          <div className="flex-1 overflow-x-auto"
-          >
-            <pre className="text-[13px] font-mono leading-relaxed text-text-primary whitespace-pre-wrap"
-            >
-              {file.content}
-            </pre>
-          </div>
-        </div>
+      <div className="flex-1 overflow-auto">
+        <CodeBlockContent
+          code={file.content}
+          language={getLanguageFromFilename(file.name)}
+          showLineNumbers={true}
+          className="!p-0"
+        />
       </div>
     </aside>
   )

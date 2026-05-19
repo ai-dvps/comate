@@ -1,4 +1,6 @@
 import { X, Copy, Pin } from 'lucide-react'
+import { CodeBlockContent } from './ai-elements/code-block'
+import { getLanguageFromFilename } from './FilePanel'
 
 export interface ViewedFile {
   path: string
@@ -80,29 +82,15 @@ export default function FileDrawer({ file, onClose, onPin, onCopy }: FileDrawerP
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-4">
-          <FileContent content={file.content} />
+        <div className="flex-1 overflow-auto">
+          <CodeBlockContent
+            code={file.content}
+            language={getLanguageFromFilename(file.name)}
+            showLineNumbers={true}
+            className="!p-0"
+          />
         </div>
       </aside>
     </>
-  )
-}
-
-function FileContent({ content }: { content: string }) {
-  const lines = content.split('\n')
-
-  return (
-    <div className="flex">
-      <div className="text-right pr-4 text-[11px] text-text-tertiary select-none font-mono" style={{ minWidth: '2rem' }}>
-        {lines.map((_, i) => (
-          <div key={i}>{i + 1}</div>
-        ))}
-      </div>
-      <div className="flex-1 overflow-x-auto">
-        <pre className="text-[13px] font-mono leading-relaxed text-text-primary whitespace-pre-wrap">
-          {content}
-        </pre>
-      </div>
-    </div>
   )
 }

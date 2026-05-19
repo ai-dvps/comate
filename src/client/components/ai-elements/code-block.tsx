@@ -194,11 +194,8 @@ export const highlightCode = (
 
   getHighlighter(language)
     .then((highlighter) => {
-      const availableLangs = highlighter.getLoadedLanguages()
-      const langToUse = availableLangs.includes(language) ? language : 'text'
-
       const result = highlighter.codeToTokens(code, {
-        lang: langToUse,
+        lang: language,
         themes: {
           dark: 'github-dark',
           light: 'github-light',
@@ -359,10 +356,12 @@ export const CodeBlockContent = ({
   code,
   language,
   showLineNumbers = false,
+  className,
 }: {
   code: string
   language: BundledLanguage
   showLineNumbers?: boolean
+  className?: string
 }) => {
   const rawTokens = useMemo(() => createRawTokens(code), [code])
 
@@ -400,7 +399,11 @@ export const CodeBlockContent = ({
 
   return (
     <div className="relative overflow-auto">
-      <CodeBlockBody showLineNumbers={showLineNumbers} tokenized={tokenized} />
+      <CodeBlockBody
+        showLineNumbers={showLineNumbers}
+        tokenized={tokenized}
+        className={className}
+      />
     </div>
   )
 }
