@@ -5,7 +5,7 @@ import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 
 export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
 
-const sessionSubscriptions = new Map<string, { close: () => void }>()
+const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout> }>()
 const lastEventId = new Map<string, string>()
 const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
 
@@ -383,6 +383,10 @@ function addSystemMessage(
       ],
     },
   }
+}
+
+function hasPendingItem(state: ChatState, sessionId: string, requestId: string): boolean {
+  return (state.approvalQueue[sessionId] || []).some((item) => item.requestId === requestId)
 }
 
 function findSubagent(
@@ -811,39 +815,45 @@ function handleSseEvent(
       const toolName = typeof data.toolName === 'string' ? data.toolName : ''
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       if (!requestId) return
-      set((state) => ({
-        approvalQueue: {
-          ...state.approvalQueue,
-          [sessionId]: [
-            ...(state.approvalQueue[sessionId] || []),
-            {
-              requestId,
-              toolName,
-              toolUseId,
-              input: data.input,
-              inputSummary: typeof data.inputSummary === 'string' ? data.inputSummary : '',
-              title: typeof data.title === 'string' ? data.title : undefined,
-              description: typeof data.description === 'string' ? data.description : undefined,
-              suggestions: Array.isArray(data.suggestions) ? data.suggestions : undefined,
-            },
-          ],
-        },
-      }))
+      set((state) => {
+        if (hasPendingItem(state, sessionId, requestId)) return {}
+        return {
+          approvalQueue: {
+            ...state.approvalQueue,
+            [sessionId]: [
+              ...(state.approvalQueue[sessionId] || []),
+              {
+                requestId,
+                toolName,
+                toolUseId,
+                input: data.input,
+                inputSummary: typeof data.inputSummary === 'string' ? data.inputSummary : '',
+                title: typeof data.title === 'string' ? data.title : undefined,
+                description: typeof data.description === 'string' ? data.description : undefined,
+                suggestions: Array.isArray(data.suggestions) ? data.suggestions : undefined,
+              },
+            ],
+          },
+        }
+      })
       return
     }
     case 'pending_question': {
       const requestId = typeof data.requestId === 'string' ? data.requestId : ''
       const questions = Array.isArray(data.questions) ? data.questions : []
       if (!requestId) return
-      set((state) => ({
-        approvalQueue: {
-          ...state.approvalQueue,
-          [sessionId]: [
-            ...(state.approvalQueue[sessionId] || []),
-            { requestId, questions },
-          ],
-        },
-      }))
+      set((state) => {
+        if (hasPendingItem(state, sessionId, requestId)) return {}
+        return {
+          approvalQueue: {
+            ...state.approvalQueue,
+            [sessionId]: [
+              ...(state.approvalQueue[sessionId] || []),
+              { requestId, questions },
+            ],
+          },
+        }
+      })
       return
     }
     case 'approval_resolved': {
@@ -1089,73 +1099,120 @@ function subscribeToSession(
     existing.close()
   }
 
-  const lastId = lastEventId.get(sessionId)
-  const headers: Record<string, string> = {}
-  if (lastId) {
-    headers['Last-Event-ID'] = lastId
-  }
+  let attempt = 0
+  const baseDelay = 2000
+  const maxDelay = 30000
+  const maxAttempts = 5
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
 
-  const abortController = new AbortController()
-  const thisClose = () => abortController.abort()
+  const connect = () => {
+    const lastId = lastEventId.get(sessionId)
+    const headers: Record<string, string> = {}
+    if (lastId) {
+      headers['Last-Event-ID'] = lastId
+    }
 
-  fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/stream`, {
-    headers,
-    signal: abortController.signal,
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const error = await res.json().catch(() => ({ error: 'Subscription failed' }))
-        throw new Error(error.error || 'Subscription failed')
+    const abortController = new AbortController()
+    const thisClose = () => {
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+        retryTimer = undefined
       }
-      if (!res.body) throw new Error('No response body')
+      abortController.abort()
+    }
 
-      try {
-        for await (const event of parseSSEStream(res.body)) {
-          if (event.id) {
-            lastEventId.set(sessionId, event.id)
+    fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/stream`, {
+      headers,
+      signal: abortController.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({ error: 'Subscription failed' }))
+          const err = new Error(error.error || 'Subscription failed')
+          ;(err as Error & { status?: number }).status = res.status
+          throw err
+        }
+        if (!res.body) throw new Error('No response body')
+
+        try {
+          for await (const event of parseSSEStream(res.body)) {
+            if (event.id) {
+              lastEventId.set(sessionId, event.id)
+            }
+            // Connection is healthy — reset retry counter
+            attempt = 0
+            try {
+              handleSseEvent(set, sessionId, event.event, event.data)
+            } catch (err) {
+              console.error('SSE event handler error:', err)
+              set((state) =>
+                addSystemMessage(
+                  state,
+                  sessionId,
+                  `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                ),
+              )
+            }
           }
-          try {
-            handleSseEvent(set, sessionId, event.event, event.data)
-          } catch (err) {
-            console.error('SSE event handler error:', err)
-            set((state) =>
-              addSystemMessage(
-                state,
-                sessionId,
-                `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
-              ),
-            )
+        } finally {
+          const current = sessionSubscriptions.get(sessionId)
+          if (current?.close === thisClose) {
+            sessionSubscriptions.delete(sessionId)
           }
         }
-      } finally {
+      })
+      .catch((err) => {
         const current = sessionSubscriptions.get(sessionId)
         if (current?.close === thisClose) {
           sessionSubscriptions.delete(sessionId)
         }
-      }
-    })
-    .catch((err) => {
-      const current = sessionSubscriptions.get(sessionId)
-      if (current?.close === thisClose) {
-        sessionSubscriptions.delete(sessionId)
-      }
-      if (err.name === 'AbortError') return
-      console.error('Subscription error:', err)
-      set((state) =>
-        addSystemMessage(
-          state,
-          sessionId,
-          `Connection error: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        ),
-      )
-      set((state) => ({
-        isStreaming: { ...state.isStreaming, [sessionId]: false },
-      }))
-    })
+        if (err.name === 'AbortError') return
 
-  sessionSubscriptions.set(sessionId, {
-    close: thisClose,
-  })
+        const status = (err as Error & { status?: number }).status
+        if (status && status >= 400 && status < 500) {
+          console.error('Subscription fatal error:', err)
+          set((state) =>
+            addSystemMessage(
+              state,
+              sessionId,
+              `Connection error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+            ),
+          )
+          set((state) => ({
+            isStreaming: { ...state.isStreaming, [sessionId]: false },
+          }))
+          return
+        }
+
+        if (attempt >= maxAttempts) {
+          console.error('Subscription max retries exceeded:', err)
+          set((state) =>
+            addSystemMessage(
+              state,
+              sessionId,
+              'Connection lost. Please reselect the session to reconnect.',
+            ),
+          )
+          set((state) => ({
+            isStreaming: { ...state.isStreaming, [sessionId]: false },
+          }))
+          return
+        }
+
+        const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay)
+        attempt++
+        console.log(
+          `Retrying SSE connection in ${delay}ms (attempt ${attempt}/${maxAttempts})`,
+        )
+        retryTimer = setTimeout(connect, delay)
+      })
+
+    sessionSubscriptions.set(sessionId, {
+      close: thisClose,
+    })
+  }
+
+  connect()
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
