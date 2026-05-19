@@ -55,11 +55,15 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
       })
       if (selected && typeof selected === 'string') {
         setFolderPath(selected)
+        if (!name.trim()) {
+          const basename = selected.split(/[\\/]/).pop() || ''
+          setName(basename)
+        }
       }
     } catch {
       // Dialog cancelled or failed — leave input unchanged
     }
-  }, [])
+  }, [name])
 
   // Keyboard shortcuts
   useEffect(() => {
