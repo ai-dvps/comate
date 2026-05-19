@@ -99,7 +99,28 @@ async function build() {
   copyFileSync(sourceBinary, destBinary);
   console.log(`Copied to ${destBinary}`);
 
-  // 6. Copy better_sqlite3.node to src-tauri/resources/
+  // 6. Copy Claude Code CLI binary to src-tauri/resources/
+  console.log('\n--- Copying Claude Code binary ---');
+  const platform = process.platform;
+  const arch = process.arch;
+  const sdkBinaryName = platform === 'win32'
+    ? 'claude.exe'
+    : 'claude';
+  const sdkBinarySource = join(
+    rootDir,
+    'node_modules',
+    `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`,
+    sdkBinaryName,
+  );
+  if (existsSync(sdkBinarySource)) {
+    const sdkBinaryDest = join(resourcesDir, sdkBinaryName);
+    copyFileSync(sdkBinarySource, sdkBinaryDest);
+    console.log(`Copied to ${sdkBinaryDest}`);
+  } else {
+    console.warn(`Warning: SDK binary not found at ${sdkBinarySource}`);
+  }
+
+  // 7. Copy better_sqlite3.node to src-tauri/resources/
   console.log('\n--- Copying native module ---');
   const nativeModuleSource = join(
     rootDir,

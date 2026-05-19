@@ -12,6 +12,8 @@ import {
 } from './command-fs-parser.js';
 import { SdkClient } from './sdk-client.js';
 import type { Options } from './sdk-client.js';
+import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
+import { sidecarLog } from '../utils/sidecar-logger.js';
 
 interface FsCommandEntry {
   filePath: string;
@@ -224,11 +226,14 @@ export class CommandsService {
       };
     }
 
+    const claudePath = resolveSdkBinary();
+    sidecarLog(`[CommandsService.buildSdkOptions] pathToClaudeCodeExecutable=${claudePath}`);
     return {
       cwd: workspace.folderPath,
       env,
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: workspace.settings.model || undefined,
+      pathToClaudeCodeExecutable: claudePath,
     };
   }
 }
