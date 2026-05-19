@@ -5,6 +5,7 @@ import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
 import SubagentDrawer from './SubagentDrawer'
+import TaskPanel from './TaskPanel'
 
 interface ChatPanelProps {
   workspaceId: string
@@ -133,6 +134,9 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           <span className="text-xs text-text-tertiary">{modelName}</span>
         </div>
       </div>
+
+      {/* Task Panel */}
+      {activeSessionId && <TaskPanel sessionId={activeSessionId} />}
 
       {/* Messages */}
       <div className="flex-1 overflow-hidden flex flex-col">

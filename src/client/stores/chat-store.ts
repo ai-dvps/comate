@@ -102,6 +102,20 @@ export interface SubagentState {
   messages: SubagentMessage[]
 }
 
+export interface TaskItem {
+  id: string
+  subject: string
+  description?: string
+  status: 'pending' | 'in_progress' | 'completed'
+  activeForm?: string
+}
+
+interface PendingTaskCreate {
+  subject: string
+  description?: string
+  activeForm?: string
+}
+
 interface ChatState {
   sessions: Record<string, ChatSession[]>
   messages: Record<string, ChatMessage[]>
@@ -117,6 +131,8 @@ interface ChatState {
   subagents: Record<string, SubagentState[]>
   sessionStatus: Record<string, { pendingCount: number }>
   unreadCompletions: Record<string, boolean>
+  tasks: Record<string, TaskItem[]>
+  pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -234,6 +250,117 @@ function mutateToolUsePart(
     }
   }
   return {}
+}
+
+function findToolName(
+  state: ChatState,
+  sessionId: string,
+  toolUseId: string,
+): string | undefined {
+  const msgs = state.messages[sessionId] || []
+  for (const m of msgs) {
+    const part = m.parts.find(
+      (p): p is Extract<MessagePart, { type: 'tool_use' }> =>
+        p.type === 'tool_use' && p.toolUseId === toolUseId,
+    )
+    if (part) return part.toolName
+  }
+  return undefined
+}
+
+function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
+  const tasks: TaskItem[] = []
+  const taskMap = new Map<string, TaskItem>()
+  const pendingCreates = new Map<string, PendingTaskCreate>()
+
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === 'tool_use') {
+        if (part.toolName === 'TodoWrite') {
+          const input = part.input as
+            | {
+                todos?: Array<{
+                  content: string
+                  status: string
+                  activeForm?: string
+                }>
+              }
+            | undefined
+          if (input?.todos) {
+            tasks.length = 0
+            taskMap.clear()
+            input.todos.forEach((todo, index) => {
+              const item: TaskItem = {
+                id: `todowrite-${index}`,
+                subject: todo.content,
+                status: todo.status as TaskItem['status'],
+                activeForm: todo.activeForm,
+              }
+              tasks.push(item)
+            })
+          }
+        } else if (part.toolName === 'TaskCreate') {
+          const input = part.input as
+            | { subject: string; description?: string; activeForm?: string }
+            | undefined
+          if (input?.subject) {
+            pendingCreates.set(part.toolUseId, {
+              subject: input.subject,
+              description: input.description,
+              activeForm: input.activeForm,
+            })
+          }
+        } else if (part.toolName === 'TaskUpdate') {
+          const input = part.input as
+            | {
+                taskId: string
+                status?: string
+                subject?: string
+                description?: string
+                activeForm?: string
+              }
+            | undefined
+          if (input?.taskId) {
+            const existing = taskMap.get(input.taskId)
+            if (existing) {
+              if (input.status)
+                existing.status = input.status as TaskItem['status']
+              if (input.subject) existing.subject = input.subject
+              if (input.description !== undefined)
+                existing.description = input.description
+              if (input.activeForm !== undefined)
+                existing.activeForm = input.activeForm
+            }
+          }
+        }
+      } else if (part.type === 'tool_result') {
+        const pending = pendingCreates.get(part.toolUseId)
+        if (pending) {
+          try {
+            const parsed = JSON.parse(part.output) as
+              | { task?: { id: string; subject: string } }
+              | undefined
+            if (parsed?.task?.id) {
+              const item: TaskItem = {
+                id: parsed.task.id,
+                subject: parsed.task.subject || pending.subject,
+                description: pending.description,
+                status: 'pending',
+                activeForm: pending.activeForm,
+              }
+              taskMap.set(item.id, item)
+              tasks.push(item)
+            }
+          } catch {
+            // Ignore parse errors
+          }
+          pendingCreates.delete(part.toolUseId)
+        }
+      }
+    }
+  }
+
+  return tasks
 }
 
 function isSessionActive(state: ChatState, sessionId: string): boolean {
@@ -440,14 +567,72 @@ function handleSseEvent(
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       const input = 'input' in data ? data.input : {}
       if (!toolUseId) return
-      set((state) =>
-        mutateToolUsePart(state, sessionId, toolUseId, (part) => ({
+      set((state) => {
+        const updates = mutateToolUsePart(state, sessionId, toolUseId, (part) => ({
           ...part,
           input,
           inputJsonStream: undefined,
           state: 'complete',
-        })),
-      )
+        }))
+        const toolName = findToolName(state, sessionId, toolUseId)
+        if (toolName === 'TodoWrite') {
+          const todoInput = input as
+            | { todos?: Array<{ content: string; status: string; activeForm?: string }> }
+            | undefined
+          if (todoInput?.todos) {
+            const newTasks = todoInput.todos.map((todo, index) => ({
+              id: `todowrite-${index}`,
+              subject: todo.content,
+              status: todo.status as TaskItem['status'],
+              activeForm: todo.activeForm,
+            }))
+            updates.tasks = { ...state.tasks, [sessionId]: newTasks }
+          }
+        } else if (toolName === 'TaskCreate') {
+          const createInput = input as
+            | { subject: string; description?: string; activeForm?: string }
+            | undefined
+          if (createInput?.subject) {
+            const pending = state.pendingTaskCreates[sessionId] || {}
+            updates.pendingTaskCreates = {
+              ...state.pendingTaskCreates,
+              [sessionId]: {
+                ...pending,
+                [toolUseId]: {
+                  subject: createInput.subject,
+                  description: createInput.description,
+                  activeForm: createInput.activeForm,
+                },
+              },
+            }
+          }
+        } else if (toolName === 'TaskUpdate') {
+          const updateInput = input as
+            | {
+                taskId: string
+                status?: string
+                subject?: string
+                description?: string
+                activeForm?: string
+              }
+            | undefined
+          if (updateInput?.taskId) {
+            const existingTasks = state.tasks[sessionId] || []
+            const updatedTasks = existingTasks.map((task) => {
+              if (task.id !== updateInput.taskId) return task
+              return {
+                ...task,
+                ...(updateInput.status && { status: updateInput.status as TaskItem['status'] }),
+                ...(updateInput.subject && { subject: updateInput.subject }),
+                ...(updateInput.description !== undefined && { description: updateInput.description }),
+                ...(updateInput.activeForm !== undefined && { activeForm: updateInput.activeForm }),
+              }
+            })
+            updates.tasks = { ...state.tasks, [sessionId]: updatedTasks }
+          }
+        }
+        return updates
+      })
       return
     }
     case 'tool_input_delta': {
@@ -468,20 +653,54 @@ function handleSseEvent(
       const output = typeof data.output === 'string' ? data.output : ''
       const isError = data.isError === true
       if (!toolUseId) return
-      set((state) => ({
-        messages: {
-          ...state.messages,
-          [sessionId]: [
-            ...(state.messages[sessionId] || []),
-            {
-              id: generateId(),
-              role: 'user',
-              parts: [{ type: 'tool_result', toolUseId, output, isError }],
-              timestamp: Date.now(),
-            },
-          ],
-        },
-      }))
+      set((state) => {
+        const updates: Partial<ChatState> = {
+          messages: {
+            ...state.messages,
+            [sessionId]: [
+              ...(state.messages[sessionId] || []),
+              {
+                id: generateId(),
+                role: 'user',
+                parts: [{ type: 'tool_result', toolUseId, output, isError }],
+                timestamp: Date.now(),
+              },
+            ],
+          },
+        }
+        const pendingCreates = state.pendingTaskCreates[sessionId]
+        if (pendingCreates && pendingCreates[toolUseId]) {
+          const pending = pendingCreates[toolUseId]
+          try {
+            const parsed = JSON.parse(output) as
+              | { task?: { id: string; subject: string } }
+              | undefined
+            if (parsed?.task?.id) {
+              const newTask: TaskItem = {
+                id: parsed.task.id,
+                subject: parsed.task.subject || pending.subject,
+                description: pending.description,
+                status: 'pending',
+                activeForm: pending.activeForm,
+              }
+              const existingTasks = state.tasks[sessionId] || []
+              updates.tasks = {
+                ...state.tasks,
+                [sessionId]: [...existingTasks, newTask],
+              }
+            }
+          } catch {
+            // Ignore parse errors
+          }
+          const newPending = { ...pendingCreates }
+          delete newPending[toolUseId]
+          updates.pendingTaskCreates = {
+            ...state.pendingTaskCreates,
+            [sessionId]: newPending,
+          }
+        }
+        return updates
+      })
       return
     }
     case 'thinking_start': {
@@ -904,6 +1123,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   subagents: {},
   sessionStatus: {},
   unreadCompletions: {},
+  tasks: {},
+  pendingTaskCreates: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -981,6 +1202,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newSessionStatus[sessionId]
         const newUnreadCompletions = { ...state.unreadCompletions }
         delete newUnreadCompletions[sessionId]
+        const newTasks = { ...state.tasks }
+        delete newTasks[sessionId]
+        const newPendingTaskCreates = { ...state.pendingTaskCreates }
+        delete newPendingTaskCreates[sessionId]
         return {
           sessions: { ...state.sessions, [workspaceId]: updated },
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
@@ -993,6 +1218,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           subagents: newSubagents,
           sessionStatus: newSessionStatus,
           unreadCompletions: newUnreadCompletions,
+          tasks: newTasks,
+          pendingTaskCreates: newPendingTaskCreates,
         }
       })
     } catch (err) {
@@ -1038,9 +1265,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (hasStreaming) {
           return { isLoadingMessages: false }
         }
+        const tasks = scanMessagesForTasks(mappedMessages)
         return {
           messages: { ...state.messages, [sessionId]: mappedMessages },
           isLoadingMessages: false,
+          tasks: { ...state.tasks, [sessionId]: tasks },
         }
       })
     } catch (err) {
@@ -1124,7 +1353,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newMessages[sessionId]
       const newSubagents = { ...state.subagents }
       delete newSubagents[sessionId]
-      return { messages: newMessages, subagents: newSubagents }
+      const newTasks = { ...state.tasks }
+      delete newTasks[sessionId]
+      const newPendingTaskCreates = { ...state.pendingTaskCreates }
+      delete newPendingTaskCreates[sessionId]
+      return {
+        messages: newMessages,
+        subagents: newSubagents,
+        tasks: newTasks,
+        pendingTaskCreates: newPendingTaskCreates,
+      }
     })
   },
 
