@@ -25,9 +25,28 @@ function App() {
   const [pinnedFile, setPinnedFile] = useState<ViewedFile | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [claudeCheck, setClaudeCheck] = useState<{ ok: boolean; checking: boolean; error?: string }>({
+    ok: true,
+    checking: true,
+  })
+
+  const checkClaudeCli = async () => {
+    try {
+      const res = await fetch('/api/health/claude')
+      if (!res.ok) {
+        const data = await res.json()
+        setClaudeCheck({ ok: false, checking: false, error: data.message || 'Claude CLI not available' })
+        return
+      }
+      setClaudeCheck({ ok: true, checking: false })
+    } catch {
+      setClaudeCheck({ ok: false, checking: false, error: 'Claude CLI not available' })
+    }
+  }
 
   useEffect(() => {
     fetchWorkspaces()
+    checkClaudeCli()
   }, [fetchWorkspaces])
 
   const handleFileClick = async (path: string, name: string) => {
@@ -65,6 +84,43 @@ function App() {
       setPinnedFile(drawerFile)
       setDrawerFile(null)
     }
+  }
+
+  if (claudeCheck.checking) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-bg text-text-primary">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-sm font-bold text-white">
+            C
+          </div>
+          <p className="text-text-secondary">Checking Claude CLI...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!claudeCheck.ok) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-bg text-text-primary p-8">
+        <div className="max-w-md w-full bg-surface rounded-xl border border-border p-8 flex flex-col items-center gap-6 text-center">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-lg font-bold text-white">
+            C
+          </div>
+          <div className="flex flex-col gap-2">
+            <h1 className="text-lg font-semibold">Claude CLI Required</h1>
+            <p className="text-text-secondary text-sm">
+              {claudeCheck.error || 'Claude CLI must be installed and authenticated.'}
+            </p>
+          </div>
+          <button
+            onClick={checkClaudeCli}
+            className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent/90 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
