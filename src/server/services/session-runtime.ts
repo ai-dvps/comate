@@ -4,6 +4,7 @@ import type {
   SDKMessage,
   SDKUserMessage,
   PermissionResult,
+  PermissionUpdate,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent, QuestionPayload } from '../types/message.js';
@@ -29,6 +30,13 @@ export class SessionRuntime {
     {
       resolve: (result: PermissionResult) => void;
       input: Record<string, unknown>;
+      type: 'approval' | 'question';
+      toolName?: string;
+      toolUseId?: string;
+      title?: string;
+      description?: string;
+      suggestions?: PermissionUpdate[];
+      questions?: QuestionPayload[];
     }
   >();
   private closed = false;
@@ -128,20 +136,49 @@ export class SessionRuntime {
       if (toolName === 'AskUserQuestion') {
         const questions = this.parseAskUserQuestion(input);
         this.emitter.emitPendingQuestion(requestId, questions);
-      } else {
-        this.emitter.emitPendingApproval(
-          requestId,
-          toolName,
-          options.toolUseID,
-          input,
-          options.title,
-          options.description,
-          options.suggestions,
-        );
+        return new Promise<PermissionResult>((resolve) => {
+          this.pendingApprovals.set(requestId, {
+            resolve,
+            input,
+            type: 'question',
+            questions,
+          });
+
+          if (options.signal) {
+            const onAbort = () => {
+              this.pendingApprovals.delete(requestId);
+              this.emitter.emitApprovalResolved(requestId);
+              resolve({
+                behavior: 'deny',
+                message: `Tool approval aborted by SDK: ${requestId}`,
+              });
+            };
+            options.signal.addEventListener('abort', onAbort, { once: true });
+          }
+        });
       }
 
+      this.emitter.emitPendingApproval(
+        requestId,
+        toolName,
+        options.toolUseID,
+        input,
+        options.title,
+        options.description,
+        options.suggestions,
+      );
+
       return new Promise<PermissionResult>((resolve) => {
-        this.pendingApprovals.set(requestId, { resolve, input });
+        this.pendingApprovals.set(requestId, {
+          resolve,
+          input,
+          type: 'approval',
+          toolName,
+          toolUseId: options.toolUseID,
+          title: options.title,
+          description: options.description,
+          suggestions: options.suggestions,
+        });
 
         if (options.signal) {
           const onAbort = () => {
@@ -194,6 +231,23 @@ export class SessionRuntime {
       this.replayFrom(lastEventId, res);
     } else if (this.currentMessageStartId !== undefined) {
       this.replayFrom(this.currentMessageStartId, res);
+    }
+    // Re-emit any currently pending approvals so reconnecting clients
+    // always see the current state even if they missed the original event.
+    for (const [requestId, pending] of this.pendingApprovals) {
+      if (pending.type === 'question') {
+        this.emitter.emitPendingQuestion(requestId, pending.questions ?? []);
+      } else {
+        this.emitter.emitPendingApproval(
+          requestId,
+          pending.toolName ?? '',
+          pending.toolUseId ?? '',
+          pending.input,
+          pending.title,
+          pending.description,
+          pending.suggestions,
+        );
+      }
     }
   }
 
