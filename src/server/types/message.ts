@@ -21,6 +21,7 @@ export type MessagePart =
       toolUseId: string
       toolName: string
       input: unknown
+      inputJsonStream?: string
       state: 'streaming' | 'complete'
     }
   | {
@@ -86,6 +87,13 @@ export type SseEvent =
       toolName: string
     }
   | { type: 'tool_use_done'; toolUseId: string; input: unknown }
+  | {
+      type: 'tool_input_delta'
+      messageId: string
+      partIndex: number
+      toolUseId: string
+      partialJson: string
+    }
   | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }
   | { type: 'thinking_start'; messageId: string; partIndex: number }
   | {
