@@ -318,6 +318,15 @@ export class SseEmitter {
       ) {
         if (state.type === 'tool_use') {
           state.inputBuffer = (state.inputBuffer ?? '') + delta.partial_json;
+          if (state.toolUseId) {
+            this.send({
+              type: 'tool_input_delta',
+              messageId: this.currentMessageId,
+              partIndex: index,
+              toolUseId: state.toolUseId,
+              partialJson: delta.partial_json,
+            });
+          }
         }
       } else if (
         deltaType === 'thinking_delta' &&

@@ -436,7 +436,21 @@ function handleSseEvent(
         mutateToolUsePart(state, sessionId, toolUseId, (part) => ({
           ...part,
           input,
+          inputJsonStream: undefined,
           state: 'complete',
+        })),
+      )
+      return
+    }
+    case 'tool_input_delta': {
+      const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
+      const partialJson =
+        typeof data.partialJson === 'string' ? data.partialJson : ''
+      if (!toolUseId || !partialJson) return
+      set((state) =>
+        mutateToolUsePart(state, sessionId, toolUseId, (part) => ({
+          ...part,
+          inputJsonStream: (part.inputJsonStream ?? '') + partialJson,
         })),
       )
       return
