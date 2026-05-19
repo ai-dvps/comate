@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
+    "dialog:default",
     {
       "identifier": "shell:allow-spawn",
       "allow": [{ "name": "binaries/sidecar-node", "sidecar": true }]

@@ -22,6 +22,7 @@ pub fn run() {
             sidecar_child: Mutex::new(None),
         })
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![get_api_port])
         .setup(|app| {
             if cfg!(debug_assertions) {
