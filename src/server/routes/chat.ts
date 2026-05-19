@@ -81,8 +81,8 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const messages = await chatService.loadMessages(sessionId, workspaceId);
-    res.json({ messages });
+    const { messages, tasks } = await chatService.loadMessages(sessionId, workspaceId);
+    res.json({ messages, tasks });
   } catch (error) {
     console.error('Failed to load messages:', error);
     if (error instanceof ChatError) {

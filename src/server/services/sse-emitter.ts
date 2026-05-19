@@ -84,7 +84,7 @@ export class SseEmitter {
     }
 
     switch (msg.type) {
-      case 'system':
+      case 'system': {
         if (msg.subtype === 'init') {
           this.send({
             type: 'system_init',
@@ -92,8 +92,64 @@ export class SseEmitter {
             tools: msg.tools,
             sessionId: msg.session_id,
           });
+          return;
         }
+
+        const taskMsg = msg as Record<string, unknown>;
+        if (msg.subtype === 'task_started') {
+          const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
+          const description = typeof taskMsg.description === 'string' ? taskMsg.description : '';
+          if (taskId) {
+            this.send({ type: 'task_started', taskId, description });
+          }
+          return;
+        }
+
+        if (msg.subtype === 'task_updated') {
+          const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
+          const patch = taskMsg.patch as Record<string, unknown> | undefined;
+          if (taskId) {
+            this.send({
+              type: 'task_updated',
+              taskId,
+              patch: {
+                status: typeof patch?.status === 'string' ? patch.status : undefined,
+                description: typeof patch?.description === 'string' ? patch.description : undefined,
+                error: typeof patch?.error === 'string' ? patch.error : undefined,
+              },
+            });
+          }
+          return;
+        }
+
+        if (msg.subtype === 'task_progress') {
+          const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
+          const description = typeof taskMsg.description === 'string' ? taskMsg.description : '';
+          if (taskId) {
+            this.send({
+              type: 'task_updated',
+              taskId,
+              patch: { description },
+            });
+          }
+          return;
+        }
+
+        if (msg.subtype === 'task_notification') {
+          const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
+          const status = typeof taskMsg.status === 'string' ? taskMsg.status : '';
+          if (taskId) {
+            this.send({
+              type: 'task_updated',
+              taskId,
+              patch: { status },
+            });
+          }
+          return;
+        }
+
         return;
+      }
 
       case 'stream_event':
         this.handleStreamEvent(msg.event as unknown);

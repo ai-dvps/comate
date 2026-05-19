@@ -3,6 +3,9 @@ import {
   Circle,
   Loader2,
   CheckCircle2,
+  XCircle,
+  PauseCircle,
+  Ban,
   ChevronDown,
   ChevronUp,
   ListTodo,
@@ -31,17 +34,34 @@ const statusConfig = {
     iconClass: 'text-green-600',
     label: 'Completed',
   },
+  failed: {
+    icon: XCircle,
+    iconClass: 'text-red-500',
+    label: 'Failed',
+  },
+  killed: {
+    icon: Ban,
+    iconClass: 'text-text-tertiary',
+    label: 'Killed',
+  },
+  paused: {
+    icon: PauseCircle,
+    iconClass: 'text-amber-500',
+    label: 'Paused',
+  },
 }
 
 function TaskRow({ task }: { task: TaskItem }) {
   const config = statusConfig[task.status]
   const Icon = config.icon
+  const isDone = task.status === 'completed' || task.status === 'killed'
+  const isActive = task.status === 'in_progress' || task.status === 'paused'
 
   return (
     <div
       className={cn(
         'flex items-start gap-2.5 py-2 px-3 rounded-md',
-        task.status === 'completed' && 'opacity-50',
+        isDone && 'opacity-50',
       )}
     >
       <Icon className={cn('size-4 mt-0.5 shrink-0', config.iconClass)} />
@@ -49,14 +69,16 @@ function TaskRow({ task }: { task: TaskItem }) {
         <span
           className={cn(
             'text-sm',
-            task.status === 'completed'
+            isDone
               ? 'text-text-tertiary line-through'
-              : 'text-text-primary',
+              : task.status === 'failed'
+                ? 'text-red-500'
+                : 'text-text-primary',
           )}
         >
           {task.subject}
         </span>
-        {task.status === 'in_progress' && task.activeForm && (
+        {isActive && task.activeForm && (
           <p className="text-xs text-text-tertiary mt-0.5">{task.activeForm}</p>
         )}
       </div>

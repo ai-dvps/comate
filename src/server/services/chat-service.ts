@@ -3,8 +3,8 @@ import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../mod
 import type { Workspace } from '../models/workspace.js';
 import { store as draftStore } from '../storage/json-store.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import type { ChatMessage } from '../types/message.js';
-import { normalizeSessionMessage } from './message-normalizer.js';
+import type { ChatMessage, TaskItem } from '../types/message.js';
+import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
 import { SessionRuntime } from './session-runtime.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
@@ -125,7 +125,7 @@ export class ChatService {
 
   // Message history loading
 
-  async loadMessages(sessionId: string, workspaceId: string): Promise<ChatMessage[]> {
+  async loadMessages(sessionId: string, workspaceId: string): Promise<{ messages: ChatMessage[]; tasks: TaskItem[] }> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -143,7 +143,8 @@ export class ChatService {
         normalized.push(chatMessage);
       }
     });
-    return normalized;
+    const tasks = scanSdkMessagesForTasks(sdkMessages);
+    return { messages: normalized, tasks };
   }
 
   // Session runtime management

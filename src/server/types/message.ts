@@ -70,6 +70,14 @@ export interface QuestionPayload {
   multiSelect: boolean
 }
 
+export interface TaskItem {
+  id: string
+  subject: string
+  description?: string
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'killed' | 'paused'
+  activeForm?: string
+}
+
 /**
  * Discriminated union of every SSE event emitted by the chat stream route.
  * The server emits these via `event: <type>` + `data: <JSON>` SSE frames.
@@ -158,4 +166,10 @@ export type SseEvent =
       type: 'subagent_done'
       parentToolUseId: string
       state: 'completed' | 'error'
+    }
+  | { type: 'task_started'; taskId: string; description: string }
+  | {
+      type: 'task_updated'
+      taskId: string
+      patch: { status?: string; description?: string; error?: string }
     }
