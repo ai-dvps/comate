@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { ChatMessage, MessagePart, QuestionPayload } from '../types/message'
+import type { ChatMessage, MessagePart, QuestionPayload, TaskItem } from '../types/message'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 
 export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
@@ -102,13 +102,7 @@ export interface SubagentState {
   messages: SubagentMessage[]
 }
 
-export interface TaskItem {
-  id: string
-  subject: string
-  description?: string
-  status: 'pending' | 'in_progress' | 'completed'
-  activeForm?: string
-}
+export type { TaskItem }
 
 interface PendingTaskCreate {
   subject: string
@@ -1022,10 +1016,66 @@ function handleSseEvent(
       )
       return
     }
+    case 'task_started': {
+      const taskId = typeof data.taskId === 'string' ? data.taskId : ''
+      const description = typeof data.description === 'string' ? data.description : ''
+      if (!taskId) return
+      set((state) => {
+        const existing = state.tasks[sessionId] || []
+        if (existing.find((t) => t.id === taskId)) return {}
+        return {
+          tasks: {
+            ...state.tasks,
+            [sessionId]: [...existing, { id: taskId, subject: description, status: 'pending' as const }],
+          },
+        }
+      })
+      return
+    }
+    case 'task_updated': {
+      const taskId = typeof data.taskId === 'string' ? data.taskId : ''
+      const patch = data.patch as Record<string, unknown> | undefined
+      if (!taskId || !patch) return
+      set((state) => {
+        const existing = state.tasks[sessionId] || []
+        const updated = existing.map((task) => {
+          if (task.id !== taskId) return task
+          const next: TaskItem = { ...task }
+          if (typeof patch.status === 'string') {
+            next.status = normalizeSdkStatus(patch.status)
+          }
+          if (typeof patch.description === 'string') {
+            next.subject = patch.description
+          }
+          return next
+        })
+        return { tasks: { ...state.tasks, [sessionId]: updated } }
+      })
+      return
+    }
     case 'system_init':
     case 'done':
     default:
       return
+  }
+}
+
+function normalizeSdkStatus(status: string): TaskItem['status'] {
+  switch (status) {
+    case 'pending':
+      return 'pending'
+    case 'running':
+      return 'in_progress'
+    case 'completed':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    case 'killed':
+      return 'killed'
+    case 'paused':
+      return 'paused'
+    default:
+      return 'pending'
   }
 }
 
@@ -1256,8 +1306,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ isLoadingMessages: true })
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
       if (!res.ok) throw new Error('Failed to load messages')
-      const data = (await res.json()) as { messages?: ChatMessage[] }
+      const data = (await res.json()) as { messages?: ChatMessage[]; tasks?: TaskItem[] }
       const mappedMessages = data.messages ?? []
+      const serverTasks = data.tasks ?? []
 
       set((state) => {
         const existing = state.messages[sessionId] || []
@@ -1265,11 +1316,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (hasStreaming) {
           return { isLoadingMessages: false }
         }
-        const tasks = scanMessagesForTasks(mappedMessages)
+        const scannedTasks = scanMessagesForTasks(mappedMessages)
+        const taskMap = new Map<string, TaskItem>()
+        for (const task of serverTasks) taskMap.set(task.id, task)
+        for (const task of scannedTasks) {
+          if (!taskMap.has(task.id)) taskMap.set(task.id, task)
+        }
         return {
           messages: { ...state.messages, [sessionId]: mappedMessages },
           isLoadingMessages: false,
-          tasks: { ...state.tasks, [sessionId]: tasks },
+          tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
         }
       })
     } catch (err) {

@@ -1,6 +1,6 @@
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { ChatMessage, MessagePart, MessageRole } from '../types/message.js';
+import type { ChatMessage, MessagePart, MessageRole, TaskItem } from '../types/message.js';
 
 /**
  * Track unknown SDK block types we've already warned about, to avoid log
@@ -178,4 +178,70 @@ function roleFromType(type: SessionMessage['type']): MessageRole | null {
   // SDK system messages are subprocess control frames (init, etc.) — not
   // transcript content. Drop from the visible message list.
   return null;
+}
+
+function normalizeSdkStatus(status: string): TaskItem['status'] {
+  switch (status) {
+    case 'pending': return 'pending';
+    case 'running': return 'in_progress';
+    case 'completed': return 'completed';
+    case 'failed': return 'failed';
+    case 'killed': return 'killed';
+    case 'paused': return 'paused';
+    default: return 'pending';
+  }
+}
+
+/**
+ * Scan raw SDK session messages for task lifecycle system messages and
+ * rebuild the session's task list. This mirrors the client-side
+ * scanMessagesForTasks but operates on raw SDK shapes before normalization.
+ */
+export function scanSdkMessagesForTasks(sdkMessages: SessionMessage[]): TaskItem[] {
+  const taskMap = new Map<string, TaskItem>();
+
+  for (const msg of sdkMessages) {
+    if (msg.type !== 'system') continue;
+    const m = msg.message as Record<string, unknown> | undefined;
+    if (!m) continue;
+    const subtype = typeof m.subtype === 'string' ? m.subtype : '';
+
+    if (subtype === 'task_started') {
+      const taskId = typeof m.task_id === 'string' ? m.task_id : '';
+      const description = typeof m.description === 'string' ? m.description : '';
+      if (taskId) {
+        taskMap.set(taskId, {
+          id: taskId,
+          subject: description,
+          status: 'pending',
+        });
+      }
+    } else if (subtype === 'task_updated') {
+      const taskId = typeof m.task_id === 'string' ? m.task_id : '';
+      const patch = m.patch as Record<string, unknown> | undefined;
+      if (taskId && taskMap.has(taskId) && patch) {
+        const task = taskMap.get(taskId)!;
+        if (typeof patch.status === 'string') {
+          task.status = normalizeSdkStatus(patch.status);
+        }
+        if (typeof patch.description === 'string') {
+          task.subject = patch.description;
+        }
+      }
+    } else if (subtype === 'task_progress') {
+      const taskId = typeof m.task_id === 'string' ? m.task_id : '';
+      const description = typeof m.description === 'string' ? m.description : '';
+      if (taskId && taskMap.has(taskId) && description) {
+        taskMap.get(taskId)!.subject = description;
+      }
+    } else if (subtype === 'task_notification') {
+      const taskId = typeof m.task_id === 'string' ? m.task_id : '';
+      const status = typeof m.status === 'string' ? m.status : '';
+      if (taskId && taskMap.has(taskId) && status) {
+        taskMap.get(taskId)!.status = normalizeSdkStatus(status);
+      }
+    }
+  }
+
+  return Array.from(taskMap.values());
 }
