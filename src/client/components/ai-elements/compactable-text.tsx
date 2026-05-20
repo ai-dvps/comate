@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 
 import { Response } from './response'
@@ -14,22 +14,33 @@ export default function CompactableText({ children }: CompactableTextProps) {
   const [overflows, setOverflows] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const el = contentRef.current
     if (!el) return
-    setOverflows(el.scrollHeight > COLLAPSED_MAX_HEIGHT_PX)
-  }, [children])
+
+    const measure = () => {
+      setOverflows(el.scrollHeight > COLLAPSED_MAX_HEIGHT_PX)
+    }
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
 
   return (
     <div className="space-y-2">
       <div
-        ref={contentRef}
         className="overflow-hidden"
         style={{
           maxHeight: expanded ? 'none' : `${COLLAPSED_MAX_HEIGHT_PX}px`,
         }}
       >
-        <Response>{children}</Response>
+        <div ref={contentRef}>
+          <Response>{children}</Response>
+        </div>
       </div>
       {overflows && (
         <button
