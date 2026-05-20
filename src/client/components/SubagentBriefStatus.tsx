@@ -94,8 +94,14 @@ export default function SubagentBriefStatus({
         )}
         {result && (
           <CompactableContainer className="mt-2">
-            <div className="text-xs text-text-secondary whitespace-pre-wrap">
-              {result.output}
+            <div>
+              <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
+                {result.isError ? 'Error' : 'Result'}
+              </h4>
+              {prompt && <hr className="border-border/50 my-1" />}
+              <div className={cn('text-xs whitespace-pre-wrap', result.isError ? 'text-red-400' : 'text-text-secondary')}>
+                {result.output}
+              </div>
             </div>
           </CompactableContainer>
         )}
@@ -207,10 +213,11 @@ function StatusCard({
       {/* Line 4: Result */}
       {result && (
         <CompactableContainer className="mt-2">
-          <div className="space-y-1">
+          <div>
             <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
               {result.isError ? 'Error' : 'Result'}
             </h4>
+            {prompt && <hr className="border-border/50 my-1" />}
             <div
               className={cn(
                 'text-xs whitespace-pre-wrap',
