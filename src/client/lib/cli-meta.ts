@@ -11,8 +11,12 @@ export type LocalStdoutEvent = Extract<CliMetaEvent, { kind: 'local-stdout' }>
 export type LocalStderrEvent = Extract<CliMetaEvent, { kind: 'local-stderr' }>
 export type SystemReminderEvent = Extract<CliMetaEvent, { kind: 'system-reminder' }>
 
-const SLASH_TRIPLET_RE =
+// Newer format: message → name → args
+const SLASH_TRIPLET_RE_V2 =
   /^<command-message>([\s\S]*?)<\/command-message>\s*<command-name>([\s\S]*?)<\/command-name>\s*<command-args>([\s\S]*?)<\/command-args>$/
+// Older format: name → message → args
+const SLASH_TRIPLET_RE_V1 =
+  /^<command-name>([\s\S]*?)<\/command-name>\s*<command-message>([\s\S]*?)<\/command-message>\s*<command-args>([\s\S]*?)<\/command-args>$/
 const LOCAL_STDOUT_RE = /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/
 const LOCAL_STDERR_RE = /^<local-command-stderr>([\s\S]*)<\/local-command-stderr>$/
 const SYSTEM_REMINDER_RE = /^<system-reminder>([\s\S]*)<\/system-reminder>$/
@@ -20,11 +24,22 @@ const SYSTEM_REMINDER_RE = /^<system-reminder>([\s\S]*)<\/system-reminder>$/
 export function detectCliMeta(text: string): CliMetaEvent | null {
   const trimmed = text.trim()
 
-  const slash = SLASH_TRIPLET_RE.exec(trimmed)
-  if (slash) {
-    const rawMessage = slash[1].trim()
-    const name = slash[2].trim()
-    const args = slash[3].trim()
+  // Try newer format first (message → name → args)
+  const slashV2 = SLASH_TRIPLET_RE_V2.exec(trimmed)
+  if (slashV2) {
+    const rawMessage = slashV2[1].trim()
+    const name = slashV2[2].trim()
+    const args = slashV2[3].trim()
+    const message = rawMessage === name.replace(/^\//, '') ? '' : rawMessage
+    return { kind: 'slash-command', name, message, args }
+  }
+
+  // Fall back to older format (name → message → args)
+  const slashV1 = SLASH_TRIPLET_RE_V1.exec(trimmed)
+  if (slashV1) {
+    const name = slashV1[1].trim()
+    const rawMessage = slashV1[2].trim()
+    const args = slashV1[3].trim()
     const message = rawMessage === name.replace(/^\//, '') ? '' : rawMessage
     return { kind: 'slash-command', name, message, args }
   }
