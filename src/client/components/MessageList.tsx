@@ -34,10 +34,13 @@ import {
 } from './ai-elements/tool'
 import BashToolInput from './ai-elements/bash-tool'
 import EditToolInput from './ai-elements/edit-tool'
+import GrepToolInput from './ai-elements/grep-tool'
 import ReadToolInput from './ai-elements/read-tool'
+import SkillToolInput from './ai-elements/skill-tool'
 import SubagentBriefStatus from './SubagentBriefStatus'
 import StreamingToolInputPreview from './StreamingToolInputPreview'
 import WriteToolInput from './ai-elements/write-tool'
+import SlashCommandMessage from './ai-elements/slash-command-message'
 
 interface MessageListProps {
   sessionId: string
@@ -202,6 +205,15 @@ function renderViewItem(
   sessionId: string,
 ): React.ReactNode {
   if (item.kind === 'meta') {
+    if (item.event.kind === 'slash-command') {
+      return (
+        <SlashCommandMessage
+          key={item.messageId}
+          event={item.event}
+          messageId={item.messageId}
+        />
+      )
+    }
     return (
       <MutedSystemNote
         key={item.messageId}
@@ -212,11 +224,10 @@ function renderViewItem(
   }
   if (item.kind === 'meta-paired') {
     return (
-      <MutedSystemNote
+      <SlashCommandMessage
         key={item.messageIds[0]}
-        kind="paired"
-        slash={item.slash}
-        output={item.output}
+        event={item.slash}
+        messageId={item.messageIds[0]}
       />
     )
   }
@@ -302,8 +313,12 @@ function renderMessage(
                     <BashToolInput input={part.input} />
                   ) : part.toolName === 'Read' ? (
                     <ReadToolInput input={part.input} />
+                  ) : part.toolName === 'Skill' ? (
+                    <SkillToolInput input={part.input} />
                   ) : part.toolName === 'Edit' ? (
                     <EditToolInput input={part.input} />
+                  ) : part.toolName === 'Grep' ? (
+                    <GrepToolInput input={part.input} />
                   ) : part.toolName === 'Write' ? (
                     <WriteToolInput input={part.input} />
                   ) : (
