@@ -12,7 +12,7 @@ export type LocalStderrEvent = Extract<CliMetaEvent, { kind: 'local-stderr' }>
 export type SystemReminderEvent = Extract<CliMetaEvent, { kind: 'system-reminder' }>
 
 const SLASH_TRIPLET_RE =
-  /^<command-name>([\s\S]*?)<\/command-name>\s*<command-message>([\s\S]*?)<\/command-message>\s*<command-args>([\s\S]*?)<\/command-args>$/
+  /^<command-message>([\s\S]*?)<\/command-message>\s*<command-name>([\s\S]*?)<\/command-name>\s*<command-args>([\s\S]*?)<\/command-args>$/
 const LOCAL_STDOUT_RE = /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/
 const LOCAL_STDERR_RE = /^<local-command-stderr>([\s\S]*)<\/local-command-stderr>$/
 const SYSTEM_REMINDER_RE = /^<system-reminder>([\s\S]*)<\/system-reminder>$/
@@ -22,8 +22,8 @@ export function detectCliMeta(text: string): CliMetaEvent | null {
 
   const slash = SLASH_TRIPLET_RE.exec(trimmed)
   if (slash) {
-    const name = slash[1].trim()
-    const rawMessage = slash[2].trim()
+    const rawMessage = slash[1].trim()
+    const name = slash[2].trim()
     const args = slash[3].trim()
     const message = rawMessage === name.replace(/^\//, '') ? '' : rawMessage
     return { kind: 'slash-command', name, message, args }
