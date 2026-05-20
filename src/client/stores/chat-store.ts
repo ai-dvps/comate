@@ -330,24 +330,56 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
       } else if (part.type === 'tool_result') {
         const pending = pendingCreates.get(part.toolUseId)
         if (pending) {
-          try {
-            const parsed = JSON.parse(part.output) as
-              | { task?: { id: string; subject: string } }
-              | undefined
-            if (parsed?.task?.id) {
+          let taskCreated = false
+
+          // Prefer structured toolUseResult over parsing text output
+          if (
+            part.toolUseResult &&
+            typeof part.toolUseResult === 'object' &&
+            part.toolUseResult !== null
+          ) {
+            const tr = part.toolUseResult as {
+              task?: { id?: unknown; subject?: unknown }
+            }
+            if (typeof tr.task?.id === 'string') {
               const item: TaskItem = {
-                id: parsed.task.id,
-                subject: parsed.task.subject || pending.subject,
+                id: tr.task.id,
+                subject:
+                  typeof tr.task.subject === 'string'
+                    ? tr.task.subject
+                    : pending.subject,
                 description: pending.description,
                 status: 'pending',
                 activeForm: pending.activeForm,
               }
               taskMap.set(item.id, item)
               tasks.push(item)
+              taskCreated = true
             }
-          } catch {
-            // Ignore parse errors
           }
+
+          // Fallback: parse JSON from output text
+          if (!taskCreated) {
+            try {
+              const parsed = JSON.parse(part.output) as
+                | { task?: { id: string; subject: string } }
+                | undefined
+              if (parsed?.task?.id) {
+                const item: TaskItem = {
+                  id: parsed.task.id,
+                  subject: parsed.task.subject || pending.subject,
+                  description: pending.description,
+                  status: 'pending',
+                  activeForm: pending.activeForm,
+                }
+                taskMap.set(item.id, item)
+                tasks.push(item)
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
+
           pendingCreates.delete(part.toolUseId)
         }
       }
@@ -650,6 +682,7 @@ function handleSseEvent(
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       const output = typeof data.output === 'string' ? data.output : ''
       const isError = data.isError === true
+      const toolUseResult = (data as Record<string, unknown>).toolUseResult
       if (!toolUseId) return
       set((state) => {
         const updates: Partial<ChatState> = {
@@ -660,7 +693,15 @@ function handleSseEvent(
               {
                 id: generateId(),
                 role: 'user',
-                parts: [{ type: 'tool_result', toolUseId, output, isError }],
+                parts: [
+                  {
+                    type: 'tool_result',
+                    toolUseId,
+                    output,
+                    isError,
+                    ...(toolUseResult !== undefined && { toolUseResult }),
+                  },
+                ],
                 timestamp: Date.now(),
               },
             ],
@@ -669,14 +710,22 @@ function handleSseEvent(
         const pendingCreates = state.pendingTaskCreates[sessionId]
         if (pendingCreates && pendingCreates[toolUseId]) {
           const pending = pendingCreates[toolUseId]
-          try {
-            const parsed = JSON.parse(output) as
-              | { task?: { id: string; subject: string } }
-              | undefined
-            if (parsed?.task?.id) {
+          let taskCreated = false
+
+          // Prefer structured toolUseResult over parsing text output
+          if (
+            toolUseResult &&
+            typeof toolUseResult === 'object' &&
+            toolUseResult !== null
+          ) {
+            const tr = toolUseResult as { task?: { id?: unknown; subject?: unknown } }
+            if (typeof tr.task?.id === 'string') {
               const newTask: TaskItem = {
-                id: parsed.task.id,
-                subject: parsed.task.subject || pending.subject,
+                id: tr.task.id,
+                subject:
+                  typeof tr.task.subject === 'string'
+                    ? tr.task.subject
+                    : pending.subject,
                 description: pending.description,
                 status: 'pending',
                 activeForm: pending.activeForm,
@@ -686,10 +735,35 @@ function handleSseEvent(
                 ...state.tasks,
                 [sessionId]: [...existingTasks, newTask],
               }
+              taskCreated = true
             }
-          } catch {
-            // Ignore parse errors
           }
+
+          // Fallback: parse JSON from output text
+          if (!taskCreated) {
+            try {
+              const parsed = JSON.parse(output) as
+                | { task?: { id: string; subject: string } }
+                | undefined
+              if (parsed?.task?.id) {
+                const newTask: TaskItem = {
+                  id: parsed.task.id,
+                  subject: parsed.task.subject || pending.subject,
+                  description: pending.description,
+                  status: 'pending',
+                  activeForm: pending.activeForm,
+                }
+                const existingTasks = state.tasks[sessionId] || []
+                updates.tasks = {
+                  ...state.tasks,
+                  [sessionId]: [...existingTasks, newTask],
+                }
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
+
           const newPending = { ...pendingCreates }
           delete newPending[toolUseId]
           updates.pendingTaskCreates = {

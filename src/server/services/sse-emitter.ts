@@ -555,6 +555,7 @@ export class SseEmitter {
   private handleUser(msg: SDKMessage & { type: 'user' }): void {
     const content = (msg.message as { content?: unknown }).content;
     if (!Array.isArray(content)) return;
+    const toolUseResult = (msg as Record<string, unknown>).toolUseResult;
     for (const block of content) {
       if (!block || typeof block !== 'object') continue;
       const b = block as Record<string, unknown>;
@@ -563,7 +564,13 @@ export class SseEmitter {
           typeof b.tool_use_id === 'string' ? b.tool_use_id : '';
         const output = stringifyToolResult(b.content);
         const isError = b.is_error === true;
-        this.send({ type: 'tool_result', toolUseId, output, isError });
+        this.send({
+          type: 'tool_result',
+          toolUseId,
+          output,
+          isError,
+          ...(toolUseResult !== undefined && { toolUseResult }),
+        });
         if (this.activeSubagents.has(toolUseId)) {
           this.finalizeSubagent(toolUseId, isError ? 'error' : 'completed');
         }

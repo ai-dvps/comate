@@ -83,7 +83,10 @@ function stringifyOutput(content: unknown): string {
  * Unknown block types are skipped with a single `console.warn` per type per
  * process lifetime.
  */
-export function partsFromSdkContent(content: unknown): MessagePart[] {
+export function partsFromSdkContent(
+  content: unknown,
+  toolUseResult?: unknown,
+): MessagePart[] {
   if (typeof content === 'string') {
     return content.length === 0 ? [] : [{ type: 'text', text: content }];
   }
@@ -122,6 +125,7 @@ export function partsFromSdkContent(content: unknown): MessagePart[] {
           toolUseId: asString(b.tool_use_id),
           output: stringifyOutput(b.content),
           isError: b.is_error === true,
+          ...(toolUseResult !== undefined && { toolUseResult }),
         });
         break;
       }
@@ -159,7 +163,8 @@ export function normalizeSessionMessage(
   if (!role) return null;
 
   const raw = sessionMessage.message as RawMessage | null | undefined;
-  const parts = raw ? partsFromSdkContent(raw.content) : [];
+  const toolUseResult = (sessionMessage as Record<string, unknown>).toolUseResult;
+  const parts = raw ? partsFromSdkContent(raw.content, toolUseResult) : [];
   if (parts.length === 0) {
     return null;
   }

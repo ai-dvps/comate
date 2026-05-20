@@ -284,6 +284,12 @@ function renderMessage(
             )
           }
           if (part.type === 'tool_use') {
+            if (
+              part.toolName === 'TaskCreate' ||
+              part.toolName === 'TaskUpdate'
+            ) {
+              return null
+            }
             if (part.toolName === 'Agent') {
               return (
                 <SubagentBriefStatus
