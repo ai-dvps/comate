@@ -126,8 +126,8 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     <div className="flex flex-col h-full bg-bg">
       {/* Chat Header */}
       <div className="flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-text-primary">
+        <div className="flex items-center gap-2 min-w-0 max-w-full px-4">
+          <span className="text-sm font-medium text-text-primary truncate max-w-md">
             {activeSession?.name || 'No session'}
           </span>
           <span className="text-text-tertiary">/</span>
