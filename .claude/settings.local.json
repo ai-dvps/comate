@@ -67,7 +67,11 @@
       "Bash(node *)",
       "Bash(grep -nC1 -i \"description\\\\|truncat\\\\|wrap\" docs/brainstorms/2026-05-17-slash-command-discovery-requirements.md)",
       "Bash(curl -s \"http://localhost:3000/api/workspaces/2f8bea31-033f-4d89-a74b-f88c9696ebb4/files?recursive=true\")",
-      "Bash(curl -s \"http://localhost:3000/api/workspaces/2f8bea31-033f-4d89-a74b-f88c9696ebb4/files\")"
+      "Bash(curl -s \"http://localhost:3000/api/workspaces/2f8bea31-033f-4d89-a74b-f88c9696ebb4/files\")",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(npx playwright *)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(pkill -f \"tsx watch\")"
     ]
   }
 }
