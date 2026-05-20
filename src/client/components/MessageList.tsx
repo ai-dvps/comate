@@ -23,7 +23,7 @@ import {
   ReasoningContent,
   ReasoningTrigger,
 } from './ai-elements/reasoning'
-import { Response } from './ai-elements/response'
+import CompactableText from './ai-elements/compactable-text'
 import {
   Tool,
   ToolContent,
@@ -184,11 +184,15 @@ function renderMessage(
                 </p>
               )
             }
-            return <Response key={partKey}>{part.text}</Response>
+            return (
+              <CompactableText key={partKey}>{part.text}</CompactableText>
+            )
           }
           if (part.type === 'thinking') {
             return (
               <Reasoning
+                defaultOpen={false}
+                disableAutoBehavior
                 isStreaming={part.state === 'streaming'}
                 key={partKey}
               >
@@ -213,7 +217,7 @@ function renderMessage(
             const isStreaming = state === 'input-streaming'
             const streamingJson = part.inputJsonStream ?? ''
             return (
-              <Tool key={partKey} defaultOpen={isStreaming}>
+              <Tool key={partKey} defaultOpen={false}>
                 <ToolHeader
                   state={state}
                   type={`tool-${part.toolName}`}
