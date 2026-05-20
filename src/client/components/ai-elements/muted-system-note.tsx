@@ -6,7 +6,7 @@
  */
 'use client'
 
-import { ChevronDownIcon } from 'lucide-react'
+import { ChevronDownIcon, Slash } from 'lucide-react'
 import { useState } from 'react'
 
 import {
@@ -24,6 +24,7 @@ import type {
 } from '../../lib/cli-meta'
 
 const PREVIEW_CHARS = 120
+const ARGS_PREVIEW_CHARS = 80
 
 export type MutedSystemNoteProps =
   | { kind: 'single'; event: CliMetaEvent }
@@ -39,20 +40,51 @@ function NoteFrame({ children }: { children: React.ReactNode }) {
       role="note"
       className="my-1 flex items-center gap-2 text-xs text-text-tertiary"
     >
-      <span className="border-t border-border/30 flex-1" aria-hidden="true" />
-      <span className="whitespace-pre-wrap break-words min-w-0 max-w-full">
-        {children}
-      </span>
-      <span className="border-t border-border/30 flex-1" aria-hidden="true" />
+      {children}
     </div>
   )
 }
 
 function SlashCommandLine({ event }: { event: SlashCommandEvent }) {
-  const parts: string[] = [`/${event.name.replace(/^\//, '')}`]
-  if (event.message !== '') parts.push(event.message)
-  if (event.args !== '') parts.push(event.args)
-  return <>{parts.join(' · ')}</>
+  const [expanded, setExpanded] = useState(false)
+  const commandName = `/${event.name.replace(/^\//, '')}`
+  const hasArgs = event.args && event.args.length > 0
+  const argsPreview = hasArgs
+    ? event.args.length > ARGS_PREVIEW_CHARS
+      ? `${event.args.slice(0, ARGS_PREVIEW_CHARS)}…`
+      : event.args
+    : ''
+
+  return (
+    <div className="flex items-center gap-2 min-w-0 flex-1">
+      <Slash className="size-3 text-text-tertiary flex-shrink-0" />
+      <span className="font-mono text-xs text-text-secondary flex-shrink-0">
+        {commandName}
+      </span>
+      {hasArgs && (
+        <>
+          <span
+            className={cn(
+              'text-xs text-text-tertiary min-w-0',
+              expanded ? 'whitespace-pre-wrap break-words' : 'truncate',
+            )}
+            title={event.args}
+          >
+            {expanded ? event.args : argsPreview}
+          </span>
+          {event.args.length > ARGS_PREVIEW_CHARS && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="text-[10px] text-text-tertiary hover:text-text-secondary flex-shrink-0 transition-colors"
+            >
+              {expanded ? 'less' : 'more'}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  )
 }
 
 function StdoutBlock({ body }: { body: string }) {
@@ -145,8 +177,13 @@ export function MutedSystemNote(props: MutedSystemNoteProps) {
     return (
       <NoteFrame>
         <SlashCommandLine event={slash} />
-        {' · '}
-        {trimmedOutput}
+        <span className="text-text-tertiary flex-shrink-0">·</span>
+        <span className={cn(
+          'flex-shrink-0',
+          output.kind === 'local-stderr' ? 'text-text-secondary' : 'text-text-tertiary'
+        )}>
+          {trimmedOutput}
+        </span>
       </NoteFrame>
     )
   }
