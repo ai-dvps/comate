@@ -66,6 +66,26 @@ function buildResultMap(messages: ChatMessage[]): Map<string, ToolResultPart> {
   return map
 }
 
+function summarizeToolInput(input: unknown): string | undefined {
+  if (input === null || input === undefined) return undefined
+
+  if (typeof input === 'object' && input !== null) {
+    const obj = input as Record<string, unknown>
+    const keys = ['command', 'file_path', 'path', 'pattern', 'patterns', 'url', 'query']
+    for (const key of keys) {
+      if (obj[key] !== undefined) {
+        const value = String(obj[key])
+        return value.length > 60 ? value.slice(0, 60) + '…' : value
+      }
+    }
+    const str = JSON.stringify(input)
+    return str.length > 60 ? str.slice(0, 60) + '…' : str
+  }
+
+  const str = String(input)
+  return str.length > 60 ? str.slice(0, 60) + '…' : str
+}
+
 function toToolState(toolUse: ToolUsePart, result?: ToolResultPart): ToolState {
   if (toolUse.state === 'streaming') return 'input-streaming'
   if (!result) return 'input-available'
@@ -216,10 +236,12 @@ function renderMessage(
             const state = toToolState(part, result)
             const isStreaming = state === 'input-streaming'
             const streamingJson = part.inputJsonStream ?? ''
+            const summary = summarizeToolInput(part.input)
             return (
               <Tool key={partKey} defaultOpen={false}>
                 <ToolHeader
                   state={state}
+                  summary={summary}
                   type={`tool-${part.toolName}`}
                 />
                 <ToolContent>

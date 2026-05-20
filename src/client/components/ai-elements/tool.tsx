@@ -46,6 +46,7 @@ export const Tool = ({ className, ...props }: ToolProps) => (
 
 export type ToolHeaderProps = {
   title?: string
+  summary?: string
   className?: string
 } & (
   | { type: string; state: ToolState; toolName?: never }
@@ -77,6 +78,7 @@ export const getStatusBadge = (status: ToolState) => (
 export const ToolHeader = ({
   className,
   title,
+  summary,
   type,
   state,
   toolName,
@@ -93,12 +95,17 @@ export const ToolHeader = ({
       )}
       {...props}
     >
-      <div className="flex items-center gap-2">
-        <WrenchIcon className="size-4 text-text-tertiary" />
+      <div className="flex items-center gap-2 min-w-0">
+        <WrenchIcon className="size-4 text-text-tertiary flex-shrink-0" />
         <span className="font-medium text-sm">{title ?? derivedName}</span>
+        {summary && (
+          <span className="text-sm text-text-tertiary truncate max-w-[240px]">
+            {summary}
+          </span>
+        )}
         {getStatusBadge(state)}
       </div>
-      <ChevronDownIcon className="size-4 text-text-tertiary transition-transform group-data-[state=open]:rotate-180" />
+      <ChevronDownIcon className="size-4 text-text-tertiary transition-transform group-data-[state=open]:rotate-180 flex-shrink-0" />
     </CollapsibleTrigger>
   )
 }
