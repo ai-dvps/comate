@@ -34,6 +34,7 @@ import {
 } from './ai-elements/tool'
 import SubagentBriefStatus from './SubagentBriefStatus'
 import StreamingToolInputPreview from './StreamingToolInputPreview'
+import WriteToolInput from './ai-elements/write-tool'
 
 interface MessageListProps {
   sessionId: string
@@ -220,6 +221,8 @@ function renderMessage(
                 <ToolContent>
                   {isStreaming && streamingJson.length > 0 ? (
                     <StreamingToolInputPreview partialJson={streamingJson} />
+                  ) : part.toolName === 'Write' ? (
+                    <WriteToolInput input={part.input} />
                   ) : (
                     <ToolInput input={part.input} />
                   )}
