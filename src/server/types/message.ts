@@ -29,6 +29,7 @@ export type MessagePart =
       toolUseId: string
       output: string
       isError: boolean
+      toolUseResult?: unknown
     }
   | {
       type: 'thinking'
@@ -102,7 +103,7 @@ export type SseEvent =
       toolUseId: string
       partialJson: string
     }
-  | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }
+  | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean; toolUseResult?: unknown }
   | { type: 'thinking_start'; messageId: string; partIndex: number }
   | {
       type: 'thinking_delta'
