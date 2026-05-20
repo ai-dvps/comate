@@ -8,38 +8,39 @@
  *  - Token names remapped to this repo's Tailwind palette; the upstream destructive
  *    background/text utility is rendered with literal red palette tokens since the
  *    repo has no destructive token.
+ *  - Replaced Collapsible with a compactable body (max-height overflow + Show more/less).
+ *  - Header is now static (not a toggle).
  */
 'use client'
 
 import {
   CheckCircleIcon,
-  ChevronDownIcon,
+  ChevronDown,
+  ChevronUp,
   CircleIcon,
   ClockIcon,
   WrenchIcon,
   XCircleIcon,
 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import type { ComponentProps, ReactNode } from 'react'
 import { isValidElement } from 'react'
 
 import type { ToolPart, ToolState } from '../../types/message'
 import { Badge } from '../ui/badge'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '../ui/collapsible'
 import { cn } from '../ui/utils'
 
 import { CodeBlock } from './code-block'
 
 export type { ToolPart, ToolState }
 
-export type ToolProps = ComponentProps<typeof Collapsible>
+export type ToolProps = ComponentProps<'div'>
+
+const COMPACTABLE_MAX_HEIGHT_PX = 192
 
 export const Tool = ({ className, ...props }: ToolProps) => (
-  <Collapsible
-    className={cn('group not-prose mb-2 w-full rounded-md border border-border', className)}
+  <div
+    className={cn('not-prose mb-2 w-full rounded-md bg-surface-hover/30', className)}
     {...props}
   />
 )
@@ -88,7 +89,7 @@ export const ToolHeader = ({
     type === 'dynamic-tool' ? toolName : type.split('-').slice(1).join('-')
 
   return (
-    <CollapsibleTrigger
+    <div
       className={cn(
         'flex w-full items-center justify-between gap-3 p-2',
         className,
@@ -99,28 +100,75 @@ export const ToolHeader = ({
         <WrenchIcon className="size-4 text-text-tertiary flex-shrink-0" />
         <span className="font-medium text-sm">{title ?? derivedName}</span>
         {summary && (
-          <span className="text-sm text-text-tertiary truncate max-w-[240px]">
+          <span className="text-sm text-text-tertiary truncate max-w-[360px]">
             {summary}
           </span>
         )}
         {getStatusBadge(state)}
       </div>
-      <ChevronDownIcon className="size-4 text-text-tertiary transition-transform group-data-[state=open]:rotate-180 flex-shrink-0" />
-    </CollapsibleTrigger>
+    </div>
   )
 }
 
-export type ToolContentProps = ComponentProps<typeof CollapsibleContent>
+export type ToolContentProps = ComponentProps<'div'>
 
-export const ToolContent = ({ className, ...props }: ToolContentProps) => (
-  <CollapsibleContent
-    className={cn(
-      'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 space-y-2 p-3 text-text-primary outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',
-      className,
-    )}
-    {...props}
-  />
-)
+export const ToolContent = ({ className, children, ...props }: ToolContentProps) => {
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+
+    const measure = () => {
+      setOverflows(el.scrollHeight > COMPACTABLE_MAX_HEIGHT_PX)
+    }
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    measure()
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+
+  return (
+    <div className={cn(className)} {...props}>
+      <div
+        className="overflow-hidden"
+        style={{
+          maxHeight: expanded ? undefined : `${COMPACTABLE_MAX_HEIGHT_PX}px`,
+        }}
+      >
+        <div ref={contentRef} className="space-y-2 p-3 text-text-primary">
+          {children}
+        </div>
+      </div>
+      {overflows && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover/30 transition-colors"
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="w-3 h-3" />
+              Show less
+            </>
+          ) : (
+            <>
+              <ChevronDown className="w-3 h-3" />
+              Show more
+            </>
+          )}
+        </button>
+      )}
+    </div>
+  )
+}
 
 export type ToolInputProps = ComponentProps<'div'> & {
   input: ToolPart['input']
