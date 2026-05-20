@@ -291,12 +291,15 @@ function renderMessage(
               return null
             }
             if (part.toolName === 'Agent') {
+              const agentResult = resultMap.get(part.toolUseId)
               return (
                 <SubagentBriefStatus
                   key={partKey}
                   parentToolUseId={part.toolUseId}
                   sessionId={sessionId}
                   onOpenDrawer={onOpenDrawer}
+                  input={part.input}
+                  result={agentResult}
                 />
               )
             }

@@ -15,14 +15,11 @@
 
 import {
   CheckCircleIcon,
-  ChevronDown,
-  ChevronUp,
   CircleIcon,
   ClockIcon,
   WrenchIcon,
   XCircleIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
 import type { ComponentProps, ReactNode } from 'react'
 import { isValidElement } from 'react'
 
@@ -31,12 +28,11 @@ import { Badge } from '../ui/badge'
 import { cn } from '../ui/utils'
 
 import { CodeBlock } from './code-block'
+import { CompactableContainer } from './compactable-container'
 
 export type { ToolPart, ToolState }
 
 export type ToolProps = ComponentProps<'div'>
-
-const COMPACTABLE_MAX_HEIGHT_PX = 192
 
 export const Tool = ({ className, ...props }: ToolProps) => (
   <div
@@ -112,63 +108,13 @@ export const ToolHeader = ({
 
 export type ToolContentProps = ComponentProps<'div'>
 
-export const ToolContent = ({ className, children, ...props }: ToolContentProps) => {
-  const [expanded, setExpanded] = useState(false)
-  const [overflows, setOverflows] = useState(false)
-  const contentRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const el = contentRef.current
-    if (!el) return
-
-    const measure = () => {
-      setOverflows(el.scrollHeight > COMPACTABLE_MAX_HEIGHT_PX)
-    }
-
-    const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    measure()
-
-    return () => {
-      observer.disconnect()
-    }
-  }, [])
-
-  return (
-    <div className={cn(className)} {...props}>
-      <div
-        className="overflow-hidden"
-        style={{
-          maxHeight: expanded ? undefined : `${COMPACTABLE_MAX_HEIGHT_PX}px`,
-        }}
-      >
-        <div ref={contentRef} className="space-y-2 p-3 text-text-primary">
-          {children}
-        </div>
-      </div>
-      {overflows && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover/30 transition-colors"
-          aria-expanded={expanded}
-        >
-          {expanded ? (
-            <>
-              <ChevronUp className="w-3 h-3" />
-              Show less
-            </>
-          ) : (
-            <>
-              <ChevronDown className="w-3 h-3" />
-              Show more
-            </>
-          )}
-        </button>
-      )}
+export const ToolContent = ({ className, children, ...props }: ToolContentProps) => (
+  <CompactableContainer className={cn(className)} {...props}>
+    <div className="space-y-2 p-3 text-text-primary">
+      {children}
     </div>
-  )
-}
+  </CompactableContainer>
+)
 
 export type ToolInputProps = ComponentProps<'div'> & {
   input: ToolPart['input']
