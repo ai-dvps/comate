@@ -71,19 +71,60 @@ function summarizeToolInput(input: unknown): string | undefined {
 
   if (typeof input === 'object' && input !== null) {
     const obj = input as Record<string, unknown>
-    const keys = ['command', 'file_path', 'path', 'pattern', 'patterns', 'url', 'query']
-    for (const key of keys) {
+    const primaryKeys = [
+      'command', 'file_path', 'path', 'pattern', 'patterns', 'url', 'query',
+      'description', 'prompt', 'code', 'language', 'old_string', 'new_string',
+      'oldString', 'newString', 'model', 'topic', 'message',
+    ]
+
+    for (const key of primaryKeys) {
       if (obj[key] !== undefined) {
         const value = String(obj[key])
-        return value.length > 60 ? value.slice(0, 60) + '…' : value
+        const truncated = value.length > 120 ? value.slice(0, 120) + '…' : value
+
+        // Try to append a short secondary field for extra context
+        const secondaryKeys = ['language', 'model', 'path', 'file_path']
+        for (const secKey of secondaryKeys) {
+          if (secKey !== key && obj[secKey] !== undefined) {
+            const secValue = String(obj[secKey])
+            if (secValue.length <= 40) {
+              return `${truncated} → ${secValue}`
+            }
+          }
+        }
+
+        return truncated
       }
     }
+
+    // Handle short string content key separately
+    if (typeof obj.content === 'string' && obj.content.length <= 120) {
+      const content = obj.content
+      for (const secKey of ['language', 'model', 'path', 'file_path']) {
+        if (obj[secKey] !== undefined) {
+          const secValue = String(obj[secKey])
+          if (secValue.length <= 40) {
+            return `${content} → ${secValue}`
+          }
+        }
+      }
+      return content
+    }
+
+    // Fallback: first key-value pair
+    const firstKey = Object.keys(obj)[0]
+    if (firstKey !== undefined) {
+      const value = String(obj[firstKey])
+      const truncated = value.length > 120 ? value.slice(0, 120) + '…' : value
+      return `${firstKey}: ${truncated}`
+    }
+
     const str = JSON.stringify(input)
-    return str.length > 60 ? str.slice(0, 60) + '…' : str
+    return str.length > 120 ? str.slice(0, 120) + '…' : str
   }
 
   const str = String(input)
-  return str.length > 60 ? str.slice(0, 60) + '…' : str
+  return str.length > 120 ? str.slice(0, 120) + '…' : str
 }
 
 function toToolState(toolUse: ToolUsePart, result?: ToolResultPart): ToolState {
@@ -238,7 +279,7 @@ function renderMessage(
             const streamingJson = part.inputJsonStream ?? ''
             const summary = summarizeToolInput(part.input)
             return (
-              <Tool key={partKey} defaultOpen={false}>
+              <Tool key={partKey}>
                 <ToolHeader
                   state={state}
                   summary={summary}
@@ -253,10 +294,12 @@ function renderMessage(
                     <ToolInput input={part.input} />
                   )}
                   {result && (
-                    <ToolOutput
-                      errorText={result.isError ? result.output : undefined}
-                      output={result.isError ? undefined : result.output}
-                    />
+                    <div className="pt-2">
+                      <ToolOutput
+                        errorText={result.isError ? result.output : undefined}
+                        output={result.isError ? undefined : result.output}
+                      />
+                    </div>
                   )}
                 </ToolContent>
               </Tool>
