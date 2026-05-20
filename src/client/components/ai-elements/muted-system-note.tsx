@@ -37,7 +37,7 @@ function NoteFrame({ children }: { children: React.ReactNode }) {
   return (
     <div
       role="note"
-      className="my-2 flex items-center gap-2 text-xs text-text-tertiary"
+      className="my-1 flex items-center gap-2 text-xs text-text-tertiary"
     >
       <span className="border-t border-border/30 flex-1" aria-hidden="true" />
       <span className="whitespace-pre-wrap break-words min-w-0 max-w-full">
@@ -59,7 +59,7 @@ function StdoutBlock({ body }: { body: string }) {
   return (
     <div
       role="note"
-      className="my-2 flex items-start gap-2 text-xs text-text-tertiary"
+      className="my-1 flex items-start gap-2 text-xs text-text-tertiary"
     >
       <span className="font-medium uppercase tracking-wide text-[10px] mt-0.5">
         stdout
@@ -75,7 +75,7 @@ function StderrBlock({ body }: { body: string }) {
   return (
     <div
       role="note"
-      className="my-2 flex items-start gap-2 text-xs text-text-secondary"
+      className="my-1 flex items-start gap-2 text-xs text-text-secondary"
     >
       <span className="font-semibold uppercase tracking-wide text-[10px] mt-0.5">
         stderr
@@ -99,7 +99,7 @@ function SystemReminderNote({ body }: { body: string }) {
   return (
     <div
       role="note"
-      className="my-2 text-xs text-text-tertiary"
+      className="my-1 text-xs text-text-tertiary"
     >
       <Collapsible open={open} onOpenChange={setOpen}>
         <div className="flex items-center gap-2">
