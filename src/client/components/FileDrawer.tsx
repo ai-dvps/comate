@@ -1,6 +1,6 @@
 import { X, Copy, Pin } from 'lucide-react'
 import { CodeBlockContent } from './ai-elements/code-block'
-import { getLanguageFromFilename } from './FilePanel'
+import { getLanguageFromFilename } from '../lib/language'
 
 export interface ViewedFile {
   path: string
