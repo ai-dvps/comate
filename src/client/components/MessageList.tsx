@@ -32,6 +32,9 @@ import {
   ToolOutput,
   type ToolState,
 } from './ai-elements/tool'
+import BashToolInput from './ai-elements/bash-tool'
+import EditToolInput from './ai-elements/edit-tool'
+import ReadToolInput from './ai-elements/read-tool'
 import SubagentBriefStatus from './SubagentBriefStatus'
 import StreamingToolInputPreview from './StreamingToolInputPreview'
 import WriteToolInput from './ai-elements/write-tool'
@@ -71,9 +74,16 @@ function summarizeToolInput(input: unknown): string | undefined {
 
   if (typeof input === 'object' && input !== null) {
     const obj = input as Record<string, unknown>
+
+    // Prefer description as the summary when available — it's the human-readable intent
+    if (typeof obj.description === 'string') {
+      const value = obj.description
+      return value.length > 120 ? value.slice(0, 120) + '…' : value
+    }
+
     const primaryKeys = [
       'command', 'file_path', 'path', 'pattern', 'patterns', 'url', 'query',
-      'description', 'prompt', 'code', 'language', 'old_string', 'new_string',
+      'prompt', 'code', 'language', 'old_string', 'new_string',
       'oldString', 'newString', 'model', 'topic', 'message',
     ]
 
@@ -288,6 +298,12 @@ function renderMessage(
                 <ToolContent>
                   {isStreaming && streamingJson.length > 0 ? (
                     <StreamingToolInputPreview partialJson={streamingJson} />
+                  ) : part.toolName === 'Bash' ? (
+                    <BashToolInput input={part.input} />
+                  ) : part.toolName === 'Read' ? (
+                    <ReadToolInput input={part.input} />
+                  ) : part.toolName === 'Edit' ? (
+                    <EditToolInput input={part.input} />
                   ) : part.toolName === 'Write' ? (
                     <WriteToolInput input={part.input} />
                   ) : (
