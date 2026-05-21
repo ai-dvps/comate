@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { useChatStore } from '../stores/chat-store'
 import { useTheme } from '../hooks/use-theme'
 import { X, Eye, EyeOff, Plus, Trash2, Save, Sun, Moon, Monitor } from 'lucide-react'
 
@@ -13,6 +14,8 @@ type SettingsTab = 'general' | 'settings' | 'skills' | 'mcp' | 'hooks'
 export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelProps) {
   const workspace = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId))
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
+  const windowCap = useChatStore((s) => s.windowCap)
+  const setWindowCap = useChatStore((s) => s.setWindowCap)
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [showApiKey, setShowApiKey] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -22,6 +25,7 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
   const [description, setDescription] = useState('')
   const [model, setModel] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [windowCapInput, setWindowCapInput] = useState(String(windowCap))
   const [skills, setSkills] = useState<{ name: string }[]>([])
   const [mcpServers, setMcpServers] = useState<{ name: string; command: string; args: string }[]>([])
   const [hooks, setHooks] = useState<{ name: string; scriptPath: string }[]>([])
@@ -33,6 +37,10 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
   const [newMcpArgs, setNewMcpArgs] = useState('')
   const [newHookName, setNewHookName] = useState('')
   const [newHookPath, setNewHookPath] = useState('')
+
+  useEffect(() => {
+    setWindowCapInput(String(windowCap))
+  }, [windowCap])
 
   useEffect(() => {
     if (workspace) {
@@ -182,6 +190,38 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
                   </button>
                 </div>
                 <p className="text-[10px] text-text-tertiary mt-1">Stored locally. Falls back to environment variable if empty.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Message Window Cap</label>
+                <input
+                  type="number"
+                  min={50}
+                  max={1000}
+                  value={windowCapInput}
+                  onChange={(e) => setWindowCapInput(e.target.value)}
+                  onBlur={() => {
+                    const parsed = parseInt(windowCapInput, 10)
+                    if (!isNaN(parsed)) {
+                      setWindowCap(parsed)
+                    } else {
+                      setWindowCapInput(String(windowCap))
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const parsed = parseInt(windowCapInput, 10)
+                      if (!isNaN(parsed)) {
+                        setWindowCap(parsed)
+                      } else {
+                        setWindowCapInput(String(windowCap))
+                      }
+                    }
+                  }}
+                  className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                />
+                <p className="text-[10px] text-text-tertiary mt-1">
+                  Max messages kept in memory per session (50–1000). Older messages are pruned but can be re-fetched by scrolling up.
+                </p>
               </div>
             </div>
           )}
