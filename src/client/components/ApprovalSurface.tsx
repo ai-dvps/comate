@@ -195,7 +195,7 @@ function StopButton({
               setOpen(false)
             }}
             disabled={isResolving}
-            className="px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/90 rounded-md transition-colors"
+            className="px-3 py-1.5 text-xs font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
           >
             {isResolving ? (
               <span className="flex items-center gap-1">
@@ -555,7 +555,7 @@ function QuestionView({
           >
             {selected && (
               <svg
-                className="w-2.5 h-2.5 text-white"
+                className="w-2.5 h-2.5 text-accent-foreground"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"

@@ -9,6 +9,7 @@ import FilePanel from './components/FilePanel'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import { useWorkspaceStore } from './stores/workspace-store'
+import { useTheme } from './hooks/use-theme'
 
 export interface ViewedFile {
   path: string
@@ -17,6 +18,8 @@ export interface ViewedFile {
 }
 
 function App() {
+  useTheme()
+
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces)

@@ -3,9 +3,57 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --color-bg: 40 20% 96%;
+    --color-surface: 40 15% 98%;
+    --color-surface-hover: 40 10% 94%;
+    --color-surface-active: 40 10% 92%;
+    --color-border: 40 10% 85%;
+    --color-border-hover: 40 10% 80%;
+    --color-accent: 18 75% 55%;
+    --color-accent-hover: 20 84% 61%;
+    --color-accent-foreground: 0 0% 100%;
+    --color-text-primary: 40 10% 15%;
+    --color-text-secondary: 40 5% 40%;
+    --color-text-tertiary: 40 5% 55%;
+    --color-msg-user: 40 10% 92%;
+    --color-msg-assistant: 40 20% 96%;
+    --color-overlay: 0 0% 0%;
+    --color-destructive: 0 70% 45%;
+    --color-destructive-foreground: 0 0% 100%;
+    --color-success: 140 60% 35%;
+    --color-warning: 35 90% 45%;
+    --color-shimmer-base: 40 5% 40%;
+    --color-shimmer-highlight: 40 15% 98%;
+  }
+
+  .dark {
+    --color-bg: 0 0% 5%;
+    --color-surface: 0 0% 8%;
+    --color-surface-hover: 0 0% 10%;
+    --color-surface-active: 0 0% 12%;
+    --color-border: 0 0% 15%;
+    --color-border-hover: 0 0% 20%;
+    --color-accent: 18 75% 55%;
+    --color-accent-hover: 20 84% 61%;
+    --color-accent-foreground: 0 0% 100%;
+    --color-text-primary: 0 0% 96%;
+    --color-text-secondary: 0 0% 64%;
+    --color-text-tertiary: 0 0% 45%;
+    --color-msg-user: 0 0% 10%;
+    --color-msg-assistant: 0 0% 5%;
+    --color-overlay: 0 0% 0%;
+    --color-destructive: 0 70% 50%;
+    --color-destructive-foreground: 0 0% 100%;
+    --color-success: 140 60% 45%;
+    --color-warning: 35 90% 50%;
+    --color-shimmer-base: 0 0% 64%;
+    --color-shimmer-highlight: 0 0% 5%;
+  }
+
   * {
     scrollbar-width: thin;
-    scrollbar-color: #333 transparent;
+    scrollbar-color: hsl(var(--color-border-hover)) transparent;
   }
 
   ::-webkit-scrollbar {
@@ -17,12 +65,12 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #333;
+    background: hsl(var(--color-border-hover));
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #444;
+    background: hsl(var(--color-text-tertiary));
   }
 }
 
@@ -102,10 +150,10 @@
       linear-gradient(
         90deg,
         transparent calc(50% - var(--ai-shimmer-spread, 0px)),
-        #0d0d0d,
+        hsl(var(--color-shimmer-highlight)),
         transparent calc(50% + var(--ai-shimmer-spread, 0px))
       ),
-      linear-gradient(#a3a3a3, #a3a3a3);
+      linear-gradient(hsl(var(--color-shimmer-base)), hsl(var(--color-shimmer-base)));
     background-size: 250% 100%, auto;
     background-repeat: no-repeat, padding-box;
     background-clip: text;

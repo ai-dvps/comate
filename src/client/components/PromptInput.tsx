@@ -404,7 +404,7 @@ export default function PromptInput({
               <PopoverTrigger asChild>
                 <button
                   disabled={isInterrupting}
-                  className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors flex items-center gap-1.5 border border-red-500/20"
+                  className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
                 >
                   {isInterrupting ? (
                     <Loader2 className="w-5 h-5 animate-spin" />
@@ -438,7 +438,7 @@ export default function PromptInput({
                       setStopPopoverOpen(false)
                     }}
                     disabled={isInterrupting}
-                    className="px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/90 rounded-md transition-colors"
+                    className="px-3 py-1.5 text-xs font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
                   >
                     {isInterrupting ? (
                       <span className="flex items-center gap-1">

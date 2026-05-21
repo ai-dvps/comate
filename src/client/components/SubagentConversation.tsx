@@ -107,7 +107,7 @@ function PartRenderer({ part }: { part: SubagentPart }) {
         className={cn(
           'mt-1 rounded border px-2 py-1.5',
           part.isError
-            ? 'border-red-500/20 bg-red-500/10'
+            ? 'border-destructive/20 bg-destructive/10'
             : 'border-border/50 bg-surface-hover/30',
         )}
       >
@@ -115,13 +115,13 @@ function PartRenderer({ part }: { part: SubagentPart }) {
           <TerminalIcon
             className={cn(
               'size-3',
-              part.isError ? 'text-red-400' : 'text-text-tertiary',
+              part.isError ? 'text-destructive' : 'text-text-tertiary',
             )}
           />
           <span
             className={cn(
               'font-medium',
-              part.isError ? 'text-red-400' : 'text-text-tertiary',
+              part.isError ? 'text-destructive' : 'text-text-tertiary',
             )}
           >
             {part.isError ? 'Error' : 'Result'}
@@ -131,7 +131,7 @@ function PartRenderer({ part }: { part: SubagentPart }) {
           className={cn(
             'mt-1 max-h-32 overflow-auto rounded p-1.5 text-[11px] font-mono leading-relaxed',
             part.isError
-              ? 'bg-red-500/5 text-red-300'
+              ? 'bg-destructive/5 text-destructive'
               : 'bg-surface text-text-secondary',
           )}
         >

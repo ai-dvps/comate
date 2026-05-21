@@ -21,19 +21,19 @@ interface SubagentDrawerProps {
 
 const statusConfig = {
   running: {
-    icon: <ClockIcon className="size-4 animate-pulse text-amber-500" />,
+    icon: <ClockIcon className="size-4 animate-pulse text-warning" />,
     label: 'Running',
-    badgeClass: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+    badgeClass: 'bg-warning/10 text-warning border-warning/20',
   },
   completed: {
-    icon: <CheckCircleIcon className="size-4 text-green-600" />,
+    icon: <CheckCircleIcon className="size-4 text-success" />,
     label: 'Completed',
-    badgeClass: 'bg-green-500/10 text-green-600 border-green-500/20',
+    badgeClass: 'bg-success/10 text-success border-success/20',
   },
   error: {
-    icon: <XCircleIcon className="size-4 text-red-600" />,
+    icon: <XCircleIcon className="size-4 text-destructive" />,
     label: 'Error',
-    badgeClass: 'bg-red-500/10 text-red-600 border-red-500/20',
+    badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
   },
 }
 
@@ -69,7 +69,7 @@ export default function SubagentDrawer({
     <>
       {/* Overlay */}
       <div
-        className="fixed inset-x-0 bottom-0 z-40 bg-black/40"
+        className="fixed inset-x-0 bottom-0 z-40 bg-overlay/40"
         style={{ top: '3rem' }}
         onClick={onClose}
       />

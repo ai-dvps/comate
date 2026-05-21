@@ -50,12 +50,12 @@ export default function EditToolInput({ input }: EditToolInputProps) {
       {old_string.length > 0 && (
         <div className="space-y-1">
           <div className="flex items-center gap-1.5">
-            <Pencil className="size-3 text-red-400" />
-            <span className="text-[11px] font-medium text-red-400 uppercase tracking-wide">
+            <Pencil className="size-3 text-destructive" />
+            <span className="text-[11px] font-medium text-destructive uppercase tracking-wide">
               Before
             </span>
           </div>
-          <div className="rounded-md bg-red-900/10 overflow-hidden">
+          <div className="rounded-md bg-destructive/10 overflow-hidden">
             <CodeBlockContent code={old_string} language={language} />
           </div>
         </div>
@@ -64,12 +64,12 @@ export default function EditToolInput({ input }: EditToolInputProps) {
       {new_string.length > 0 && (
         <div className="space-y-1">
           <div className="flex items-center gap-1.5">
-            <Pencil className="size-3 text-green-400" />
-            <span className="text-[11px] font-medium text-green-400 uppercase tracking-wide">
+            <Pencil className="size-3 text-success" />
+            <span className="text-[11px] font-medium text-success uppercase tracking-wide">
               After
             </span>
           </div>
-          <div className="rounded-md bg-green-900/10 overflow-hidden">
+          <div className="rounded-md bg-success/10 overflow-hidden">
             <CodeBlockContent code={new_string} language={language} />
           </div>
         </div>

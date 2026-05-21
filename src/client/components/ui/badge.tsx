@@ -2,10 +2,10 @@ import * as React from 'react'
 import { cn } from './utils'
 
 const variantClasses = {
-  default: 'bg-accent text-white',
+  default: 'bg-accent text-accent-foreground',
   secondary: 'bg-surface text-text-primary border border-border',
   outline: 'text-text-primary border border-border',
-  destructive: 'bg-red-700 text-white',
+  destructive: 'bg-destructive text-destructive-foreground',
 } as const
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {

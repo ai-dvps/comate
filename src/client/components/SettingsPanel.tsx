@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import { X, Eye, EyeOff, Plus, Trash2, Save } from 'lucide-react'
+import { useTheme } from '../hooks/use-theme'
+import { X, Eye, EyeOff, Plus, Trash2, Save, Sun, Moon, Monitor } from 'lucide-react'
 
 interface SettingsPanelProps {
   workspaceId: string
@@ -84,7 +85,7 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-16">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-surface border border-border rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border/50 flex-shrink-0">
@@ -146,6 +147,8 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
                   className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-tertiary cursor-not-allowed"
                 />
               </div>
+
+              <ThemeSettings />
             </div>
           )}
 
@@ -205,7 +208,7 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
                       setNewSkill('')
                     }
                   }}
-                  className="p-2 rounded-lg bg-accent hover:bg-accent-hover text-white transition-colors"
+                  className="p-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
@@ -219,7 +222,7 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
                     <span className="text-sm text-text-primary">{skill.name}</span>
                     <button
                       onClick={() => setSkills(skills.filter((_, idx) => idx !== i))}
-                      className="p-1 rounded hover:bg-red-500/20 text-text-tertiary hover:text-red-400 transition-colors"
+                      className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -269,7 +272,7 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
                       setNewMcpArgs('')
                     }
                   }}
-                  className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                  className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add MCP Server
@@ -285,7 +288,7 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
                       <span className="text-sm font-medium text-text-primary">{mcp.name}</span>
                       <button
                         onClick={() => setMcpServers(mcpServers.filter((_, idx) => idx !== i))}
-                        className="p-1 rounded hover:bg-red-500/20 text-text-tertiary hover:text-red-400 transition-colors"
+                        className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -331,7 +334,7 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
                       setNewHookPath('')
                     }
                   }}
-                  className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                  className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add Hook
@@ -347,7 +350,7 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
                       <span className="text-sm font-medium text-text-primary">{hook.name}</span>
                       <button
                         onClick={() => setHooks(hooks.filter((_, idx) => idx !== i))}
-                        className="p-1 rounded hover:bg-red-500/20 text-text-tertiary hover:text-red-400 transition-colors"
+                        className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -376,12 +379,60 @@ export default function SettingsPanel({ workspaceId, onClose }: SettingsPanelPro
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-white rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
           >
             <Save className="w-3.5 h-3.5" />
             {isSaving ? 'Saving...' : 'Save'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function ThemeSettings() {
+  const { theme, isFollowingSystem, setTheme, resetToSystem } = useTheme()
+
+  return (
+    <div className="pt-2 border-t border-border/50">
+      <label className="block text-xs font-medium text-text-secondary mb-2">Appearance</label>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setTheme('light')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            theme === 'light'
+              ? 'bg-accent text-accent-foreground border-accent'
+              : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+          }`}
+        >
+          <Sun className="w-3.5 h-3.5" />
+          Light
+        </button>
+        <button
+          onClick={() => setTheme('dark')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            theme === 'dark'
+              ? 'bg-accent text-accent-foreground border-accent'
+              : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+          }`}
+        >
+          <Moon className="w-3.5 h-3.5" />
+          Dark
+        </button>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Monitor className="w-3 h-3 text-text-tertiary" />
+        <span className="text-[11px] text-text-tertiary">
+          {isFollowingSystem ? 'Following system preference' : 'Manual selection'}
+        </span>
+        {!isFollowingSystem && (
+          <button
+            onClick={resetToSystem}
+            className="text-[11px] text-accent hover:text-accent-hover underline underline-offset-2"
+          >
+            Reset to system
+          </button>
+        )}
       </div>
     </div>
   )

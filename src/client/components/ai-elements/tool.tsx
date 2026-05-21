@@ -60,8 +60,8 @@ const statusLabels: Record<ToolState, string> = {
 const statusIcons: Record<ToolState, ReactNode> = {
   'input-streaming': <CircleIcon className="size-4" />,
   'input-available': <ClockIcon className="size-4 animate-pulse" />,
-  'output-available': <CheckCircleIcon className="size-4 text-green-600" />,
-  'output-error': <XCircleIcon className="size-4 text-red-600" />,
+  'output-available': <CheckCircleIcon className="size-4 text-success" />,
+  'output-error': <XCircleIcon className="size-4 text-destructive" />,
 }
 
 // eslint-disable-next-line react-refresh/only-export-components -- vendored helper alongside components
@@ -165,7 +165,7 @@ export const ToolOutput = ({
         className={cn(
           'overflow-x-auto rounded-md text-xs [&_table]:w-full',
           errorText
-            ? 'bg-red-900/20 text-red-400'
+            ? 'bg-destructive/20 text-destructive'
             : 'bg-surface-hover/50 text-text-primary',
         )}
       >

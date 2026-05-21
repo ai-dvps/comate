@@ -245,7 +245,7 @@ function renderMessage(
     return (
       <div
         key={msg.id}
-        className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-[13px] text-red-300"
+        className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-[13px] text-destructive"
       >
         <AlertCircle className="mt-0.5 size-4 flex-shrink-0" />
         <span>{text}</span>
