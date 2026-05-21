@@ -22,7 +22,7 @@ export default function FileDrawer({ file, onClose, onPin, onCopy }: FileDrawerP
     <>
       {/* Overlay */}
       <div
-        className="fixed right-0 top-12 bottom-0 bg-black/40 z-40"
+        className="fixed right-0 top-12 bottom-0 bg-overlay/40 z-40"
         style={{ left: '18rem' }}
         onClick={onClose}
       />

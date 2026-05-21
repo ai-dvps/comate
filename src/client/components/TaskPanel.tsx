@@ -26,17 +26,17 @@ const statusConfig = {
   },
   in_progress: {
     icon: Loader2,
-    iconClass: 'text-amber-500 animate-spin',
+    iconClass: 'text-warning animate-spin',
     label: 'In progress',
   },
   completed: {
     icon: CheckCircle2,
-    iconClass: 'text-green-600',
+    iconClass: 'text-success',
     label: 'Completed',
   },
   failed: {
     icon: XCircle,
-    iconClass: 'text-red-500',
+    iconClass: 'text-destructive',
     label: 'Failed',
   },
   killed: {
@@ -46,7 +46,7 @@ const statusConfig = {
   },
   paused: {
     icon: PauseCircle,
-    iconClass: 'text-amber-500',
+    iconClass: 'text-warning',
     label: 'Paused',
   },
 }
@@ -72,7 +72,7 @@ function TaskRow({ task }: { task: TaskItem }) {
             isDone
               ? 'text-text-tertiary line-through'
               : task.status === 'failed'
-                ? 'text-red-500'
+                ? 'text-destructive'
                 : 'text-text-primary',
           )}
         >
@@ -137,7 +137,7 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
           </div>
         </div>
         {inProgressCount > 0 && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-500 shrink-0">
+          <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning shrink-0">
             <Loader2 className="size-3 animate-spin" />
             {inProgressCount}
           </span>

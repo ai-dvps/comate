@@ -99,7 +99,7 @@ export default function SubagentBriefStatus({
                 {result.isError ? 'Error' : 'Result'}
               </h4>
               {prompt && <hr className="border-border/50 my-1" />}
-              <div className={cn('text-xs whitespace-pre-wrap', result.isError ? 'text-red-400' : 'text-text-secondary')}>
+              <div className={cn('text-xs whitespace-pre-wrap', result.isError ? 'text-destructive' : 'text-text-secondary')}>
                 {result.output}
               </div>
             </div>
@@ -122,22 +122,22 @@ export default function SubagentBriefStatus({
 
 const statusConfig = {
   running: {
-    icon: <ClockIcon className="size-3.5 animate-pulse text-amber-500" />,
+    icon: <ClockIcon className="size-3.5 animate-pulse text-warning" />,
     label: 'Running',
-    badgeClass: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
-    borderClass: 'border-l-2 border-l-amber-500',
+    badgeClass: 'bg-warning/10 text-warning border-warning/20',
+    borderClass: 'border-l-2 border-l-warning',
   },
   completed: {
-    icon: <CheckCircleIcon className="size-3.5 text-green-600" />,
+    icon: <CheckCircleIcon className="size-3.5 text-success" />,
     label: 'Completed',
-    badgeClass: 'bg-green-500/10 text-green-600 border-green-500/20',
-    borderClass: 'border-l-2 border-l-green-500',
+    badgeClass: 'bg-success/10 text-success border-success/20',
+    borderClass: 'border-l-2 border-l-success',
   },
   error: {
-    icon: <XCircleIcon className="size-3.5 text-red-600" />,
+    icon: <XCircleIcon className="size-3.5 text-destructive" />,
     label: 'Error',
-    badgeClass: 'bg-red-500/10 text-red-600 border-red-500/20',
-    borderClass: 'border-l-2 border-l-red-500',
+    badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
+    borderClass: 'border-l-2 border-l-destructive',
   },
 }
 
@@ -221,7 +221,7 @@ function StatusCard({
             <div
               className={cn(
                 'text-xs whitespace-pre-wrap',
-                result.isError ? 'text-red-400' : 'text-text-secondary',
+                result.isError ? 'text-destructive' : 'text-text-secondary',
               )}
             >
               {result.output}

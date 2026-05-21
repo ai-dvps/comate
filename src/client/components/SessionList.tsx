@@ -95,7 +95,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             <div className="flex gap-2">
               <button
                 onClick={handleCreate}
-                className="flex-1 py-1.5 text-xs bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors"
+                className="flex-1 py-1.5 text-xs bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
               >
                 Create
               </button>
@@ -169,7 +169,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                       {getSessionDisplayName(session)}
                     </p>
                     {session.isDraft && (
-                      <span className="px-1 py-0.5 text-[9px] bg-yellow-500/20 text-yellow-500 rounded">
+                      <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
                         Draft
                       </span>
                     )}
@@ -187,7 +187,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 ) : (
                   <button
                     onClick={(e) => handleDelete(e, session.id)}
-                    className={`p-1 rounded hover:bg-red-500/20 text-text-tertiary hover:text-red-400 flex-shrink-0 transition-opacity ${
+                    className={`p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive flex-shrink-0 transition-opacity ${
                       hoveredSession === session.id ? 'opacity-100' : 'opacity-0'
                     }`}
                     title="Delete session"

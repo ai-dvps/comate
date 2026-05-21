@@ -82,7 +82,7 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-16">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-surface border border-border rounded-xl shadow-2xl w-full max-w-lg flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border/50 flex-shrink-0">
@@ -102,7 +102,7 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
         <div className="p-5 space-y-4">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              Workspace Name <span className="text-red-400">*</span>
+              Workspace Name <span className="text-destructive">*</span>
             </label>
             <input
               autoFocus
@@ -115,7 +115,7 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
 
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              Folder Path <span className="text-red-400">*</span>
+              Folder Path <span className="text-destructive">*</span>
             </label>
             <div className="flex gap-2">
               <input
@@ -147,7 +147,7 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
           </div>
 
           {error && (
-            <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+            <div className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
               {error}
             </div>
           )}
@@ -164,7 +164,7 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
           <button
             onClick={handleSubmit}
             disabled={!isValid || isCreating}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-white rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             {isCreating ? 'Creating...' : 'Create'}

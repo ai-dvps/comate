@@ -55,7 +55,7 @@ export default function WorkspaceTabs() {
             {counts.streaming > 0 && <StatusIndicator state="streaming" count={counts.streaming} />}
             {openWorkspaces.length > 1 && (
               <button
-                className={`ml-0.5 p-0.5 rounded hover:bg-surface-hover hover:text-red-400 transition-all ${
+                className={`ml-0.5 p-0.5 rounded hover:bg-surface-hover hover:text-destructive transition-all ${
                   isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                 }`}
                 onClick={(e) => {

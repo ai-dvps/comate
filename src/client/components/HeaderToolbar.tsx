@@ -1,4 +1,5 @@
-import { Plus, Settings } from 'lucide-react'
+import { Plus, Settings, Sun, Moon } from 'lucide-react'
+import { useTheme } from '../hooks/use-theme'
 
 interface HeaderToolbarProps {
   onCreateWorkspace: () => void
@@ -11,6 +12,8 @@ export default function HeaderToolbar({
   onOpenSettings,
   canOpenSettings,
 }: HeaderToolbarProps) {
+  const { theme, toggleTheme } = useTheme()
+
   return (
     <div className="flex items-center gap-1">
       <button
@@ -19,6 +22,14 @@ export default function HeaderToolbar({
         title="Create workspace"
       >
         <Plus className="w-4 h-4" />
+      </button>
+
+      <button
+        onClick={toggleTheme}
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        title="Toggle theme"
+      >
+        {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
       </button>
 
       <button

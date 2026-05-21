@@ -15,8 +15,8 @@ const ICON = {
 } as const
 
 const ICON_CLASS: Record<StatusIndicatorState, string> = {
-  'needs-me': 'text-orange-500',
-  'finished-unread': 'text-emerald-500',
+  'needs-me': 'text-warning',
+  'finished-unread': 'text-success',
   streaming: 'text-blue-500 animate-spin',
 }
 

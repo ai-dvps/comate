@@ -32,6 +32,7 @@ import { createHighlighter } from 'shiki/bundle/web'
 
 import { Button } from '../ui/button'
 import { cn } from '../ui/utils'
+import { useTheme } from '../../hooks/use-theme'
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 const isItalic = (fontStyle: number | undefined) => fontStyle && fontStyle & 1
@@ -58,7 +59,6 @@ const addKeysToTokens = (lines: ThemedToken[][]): KeyedLine[] =>
 
 const TokenSpan = ({ token }: { token: ThemedToken }) => (
   <span
-    className="dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)]"
     style={
       {
         backgroundColor: token.bgColor,
@@ -134,10 +134,14 @@ const tokensCache = new Map<string, TokenizedCode>()
 
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>()
 
-const getTokensCacheKey = (code: string, language: BundledLanguage) => {
+const getTokensCacheKey = (
+  code: string,
+  language: BundledLanguage,
+  theme: string,
+) => {
   const start = code.slice(0, 100)
   const end = code.length > 100 ? code.slice(-100) : ''
-  return `${language}:${code.length}:${start}:${end}`
+  return `${language}:${theme}:${code.length}:${start}:${end}`
 }
 
 const getHighlighter = (
@@ -176,9 +180,11 @@ const createRawTokens = (code: string): TokenizedCode => ({
 export const highlightCode = (
   code: string,
   language: BundledLanguage,
+  theme: 'dark' | 'light' = 'dark',
   callback?: (result: TokenizedCode) => void,
 ): TokenizedCode | null => {
-  const tokensCacheKey = getTokensCacheKey(code, language)
+  const themeName = theme === 'light' ? 'github-light' : 'github-dark'
+  const tokensCacheKey = getTokensCacheKey(code, language, themeName)
 
   const cached = tokensCache.get(tokensCacheKey)
   if (cached) {
@@ -196,10 +202,7 @@ export const highlightCode = (
     .then((highlighter) => {
       const result = highlighter.codeToTokens(code, {
         lang: language,
-        themes: {
-          dark: 'github-dark',
-          light: 'github-light',
-        },
+        theme: themeName,
       })
 
       const tokenized: TokenizedCode = {
@@ -252,7 +255,7 @@ const CodeBlockBody = memo(
     return (
       <pre
         className={cn(
-          'dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)] m-0 p-4 text-sm',
+          'm-0 p-4 text-sm',
           className,
         )}
         style={preStyle}
@@ -363,28 +366,30 @@ export const CodeBlockContent = ({
   showLineNumbers?: boolean
   className?: string
 }) => {
+  const { theme } = useTheme()
   const rawTokens = useMemo(() => createRawTokens(code), [code])
 
   const syncTokens = useMemo(
-    () => highlightCode(code, language) ?? rawTokens,
-    [code, language, rawTokens],
+    () => highlightCode(code, language, theme) ?? rawTokens,
+    [code, language, theme, rawTokens],
   )
 
   const [asyncTokens, setAsyncTokens] = useState<TokenizedCode | null>(null)
-  const asyncKeyRef = useRef({ code, language })
+  const asyncKeyRef = useRef({ code, language, theme })
 
   if (
     asyncKeyRef.current.code !== code ||
-    asyncKeyRef.current.language !== language
+    asyncKeyRef.current.language !== language ||
+    asyncKeyRef.current.theme !== theme
   ) {
-    asyncKeyRef.current = { code, language }
+    asyncKeyRef.current = { code, language, theme }
     setAsyncTokens(null)
   }
 
   useEffect(() => {
     let cancelled = false
 
-    highlightCode(code, language, (result) => {
+    highlightCode(code, language, theme, (result) => {
       if (!cancelled) {
         setAsyncTokens(result)
       }
@@ -393,7 +398,7 @@ export const CodeBlockContent = ({
     return () => {
       cancelled = true
     }
-  }, [code, language])
+  }, [code, language, theme])
 
   const tokenized = asyncTokens ?? syncTokens
 

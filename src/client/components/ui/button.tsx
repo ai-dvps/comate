@@ -2,11 +2,11 @@ import * as React from 'react'
 import { cn } from './utils'
 
 const variantClasses = {
-  default: 'bg-accent text-white hover:bg-accent-hover',
+  default: 'bg-accent text-accent-foreground hover:bg-accent-hover',
   ghost: 'hover:bg-surface-hover hover:text-text-primary',
   outline: 'border border-border bg-transparent hover:bg-surface-hover',
   secondary: 'bg-surface hover:bg-surface-hover text-text-primary',
-  destructive: 'bg-red-700 text-white hover:bg-red-800',
+  destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
 } as const
 
 const sizeClasses = {

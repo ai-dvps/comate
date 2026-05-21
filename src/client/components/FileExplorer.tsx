@@ -163,7 +163,7 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
   }
 
   if (error) {
-    return <div className="p-3 text-xs text-red-400">{error}</div>
+    return <div className="p-3 text-xs text-destructive">{error}</div>
   }
 
   if (rootNodes.length === 0) {
