@@ -127,6 +127,9 @@ interface ChatState {
   unreadCompletions: Record<string, boolean>
   tasks: Record<string, TaskItem[]>
   pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
+  windowCap: number
+  totalMessageCount: Record<string, number>
+  isLoadingOlderMessages: Record<string, boolean>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -143,11 +146,61 @@ interface ChatState {
     result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionUpdate[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
   ) => Promise<void>
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
+  fetchOlderMessages: (
+    workspaceId: string,
+    sessionId: string,
+    offset: number,
+    limit: number,
+  ) => Promise<void>
+  setWindowCap: (cap: number) => void
 }
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
+
+const DEFAULT_WINDOW_CAP = 200
+
+/**
+ * Prune the oldest messages to keep the window at or below the cap.
+ * Never splits a tool_use / tool_result pair: if a pair straddles the
+ * prune boundary, pruning stops before the pair so both halves are kept.
+ */
+function pruneWindow(messages: ChatMessage[], cap: number): ChatMessage[] {
+  if (messages.length <= cap) return messages
+
+  // Map toolUseId -> message index for tool_use and tool_result
+  const toolUsePositions = new Map<string, number>()
+  const toolResultPositions = new Map<string, number>()
+  for (let i = 0; i < messages.length; i++) {
+    for (const p of messages[i].parts) {
+      if (p.type === 'tool_use') toolUsePositions.set(p.toolUseId, i)
+      if (p.type === 'tool_result') toolResultPositions.set(p.toolUseId, i)
+    }
+  }
+
+  // Find intervals [usePos, resultPos] for complete pairs
+  const pairIntervals: [number, number][] = []
+  for (const [id, usePos] of toolUsePositions) {
+    const resultPos = toolResultPositions.get(id)
+    if (resultPos !== undefined) {
+      pairIntervals.push([usePos, resultPos])
+    }
+  }
+
+  const excess = messages.length - cap
+  let pruneCount = excess
+
+  // Move pruneCount backward to avoid splitting any pair
+  for (const [usePos, resultPos] of pairIntervals) {
+    if (usePos < pruneCount && pruneCount <= resultPos) {
+      pruneCount = usePos
+    }
+  }
+
+  return messages.slice(pruneCount)
+}
+
 
 async function* parseSSEStream(
   stream: ReadableStream<Uint8Array>,
@@ -544,21 +597,38 @@ function handleSseEvent(
     case 'assistant_start': {
       const messageId = typeof data.messageId === 'string' ? data.messageId : ''
       if (!messageId) return
-      set((state) => ({
-        messages: {
-          ...state.messages,
-          [sessionId]: [
-            ...(state.messages[sessionId] || []),
-            {
-              id: messageId,
-              role: 'assistant',
-              parts: [],
-              timestamp: Date.now(),
-              isStreaming: true,
+      set((state) => {
+        const existing = state.messages[sessionId] || []
+        if (existing.some((m) => m.id === messageId)) {
+          // Reconnect replay — message already exists, just ensure isStreaming
+          return {
+            messages: {
+              ...state.messages,
+              [sessionId]: existing.map((m) =>
+                m.id === messageId ? { ...m, isStreaming: true } : m,
+              ),
             },
-          ],
-        },
-      }))
+          }
+        }
+        const newMessages: ChatMessage[] = [
+          ...existing,
+          {
+            id: messageId,
+            role: 'assistant' as const,
+            parts: [],
+            timestamp: Date.now(),
+            isStreaming: true,
+          },
+        ]
+        const pruned = pruneWindow(newMessages, state.windowCap)
+        return {
+          messages: { ...state.messages, [sessionId]: pruned },
+          totalMessageCount: {
+            ...state.totalMessageCount,
+            [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
+          },
+        }
+      })
       return
     }
     case 'text_delta': {
@@ -685,26 +755,37 @@ function handleSseEvent(
       const toolUseResult = (data as Record<string, unknown>).toolUseResult
       if (!toolUseId) return
       set((state) => {
-        const updates: Partial<ChatState> = {
-          messages: {
-            ...state.messages,
-            [sessionId]: [
-              ...(state.messages[sessionId] || []),
+        const existing = state.messages[sessionId] || []
+        const alreadyHasResult = existing.some((m) =>
+          m.parts.some((p) => p.type === 'tool_result' && p.toolUseId === toolUseId),
+        )
+        if (alreadyHasResult) {
+          // Reconnect replay — tool_result already exists, skip
+          return {}
+        }
+        const newMessages: ChatMessage[] = [
+          ...existing,
+          {
+            id: generateId(),
+            role: 'user' as const,
+            parts: [
               {
-                id: generateId(),
-                role: 'user',
-                parts: [
-                  {
-                    type: 'tool_result',
-                    toolUseId,
-                    output,
-                    isError,
-                    ...(toolUseResult !== undefined && { toolUseResult }),
-                  },
-                ],
-                timestamp: Date.now(),
+                type: 'tool_result',
+                toolUseId,
+                output,
+                isError,
+                ...(toolUseResult !== undefined && { toolUseResult }),
               },
             ],
+            timestamp: Date.now(),
+          },
+        ]
+        const pruned = pruneWindow(newMessages, state.windowCap)
+        const updates: Partial<ChatState> = {
+          messages: { ...state.messages, [sessionId]: pruned },
+          totalMessageCount: {
+            ...state.totalMessageCount,
+            [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
         }
         const pendingCreates = state.pendingTaskCreates[sessionId]
@@ -1306,6 +1387,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unreadCompletions: {},
   tasks: {},
   pendingTaskCreates: {},
+  windowCap: DEFAULT_WINDOW_CAP,
+  totalMessageCount: {},
+  isLoadingOlderMessages: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -1387,6 +1471,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newTasks[sessionId]
         const newPendingTaskCreates = { ...state.pendingTaskCreates }
         delete newPendingTaskCreates[sessionId]
+        const newTotalMessageCount = { ...state.totalMessageCount }
+        delete newTotalMessageCount[sessionId]
+        const newIsLoadingOlderMessages = { ...state.isLoadingOlderMessages }
+        delete newIsLoadingOlderMessages[sessionId]
         return {
           sessions: { ...state.sessions, [workspaceId]: updated },
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
@@ -1401,6 +1489,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           unreadCompletions: newUnreadCompletions,
           tasks: newTasks,
           pendingTaskCreates: newPendingTaskCreates,
+          totalMessageCount: newTotalMessageCount,
+          isLoadingOlderMessages: newIsLoadingOlderMessages,
         }
       })
     } catch (err) {
@@ -1447,6 +1537,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (hasStreaming) {
           return { isLoadingMessages: false }
         }
+        const pruned = pruneWindow(mappedMessages, state.windowCap)
         const scannedTasks = scanMessagesForTasks(mappedMessages)
         const taskMap = new Map<string, TaskItem>()
         for (const task of serverTasks) taskMap.set(task.id, task)
@@ -1454,9 +1545,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           if (!taskMap.has(task.id)) taskMap.set(task.id, task)
         }
         return {
-          messages: { ...state.messages, [sessionId]: mappedMessages },
+          messages: { ...state.messages, [sessionId]: pruned },
           isLoadingMessages: false,
           tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
+          totalMessageCount: {
+            ...state.totalMessageCount,
+            [sessionId]: mappedMessages.length,
+          },
         }
       })
     } catch (err) {
@@ -1479,22 +1574,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete nextDrafts[sessionId]
       const nextUnread = { ...state.unreadCompletions }
       delete nextUnread[sessionId]
-      return {
-        messages: {
-          ...state.messages,
-          [sessionId]: [
-            ...(state.messages[sessionId] || []),
-            {
-              id: userMessageId,
-              role: 'user',
-              parts: [{ type: 'text', text: content }],
-              timestamp: Date.now(),
-            },
-          ],
+      const newMessages: ChatMessage[] = [
+        ...(state.messages[sessionId] || []),
+        {
+          id: userMessageId,
+          role: 'user' as const,
+          parts: [{ type: 'text', text: content }],
+          timestamp: Date.now(),
         },
+      ]
+      const pruned = pruneWindow(newMessages, state.windowCap)
+      return {
+        messages: { ...state.messages, [sessionId]: pruned },
         drafts: nextDrafts,
         isStreaming: { ...state.isStreaming, [sessionId]: true },
         unreadCompletions: nextUnread,
+        totalMessageCount: {
+          ...state.totalMessageCount,
+          [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
+        },
       }
     })
 
@@ -1638,5 +1736,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       )
     }
+  },
+
+  fetchOlderMessages: async (
+    workspaceId: string,
+    sessionId: string,
+    offset: number,
+    limit: number,
+  ) => {
+    try {
+      set((state) => ({
+        isLoadingOlderMessages: {
+          ...state.isLoadingOlderMessages,
+          [sessionId]: true,
+        },
+      }))
+      const url = new URL(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`,
+        window.location.origin,
+      )
+      url.searchParams.set('offset', String(offset))
+      url.searchParams.set('limit', String(limit))
+      const res = await fetch(url.pathname + url.search)
+      if (!res.ok) throw new Error('Failed to fetch older messages')
+      const data = (await res.json()) as {
+        messages?: ChatMessage[]
+        tasks?: TaskItem[]
+      }
+      const olderMessages = data.messages ?? []
+
+      set((state) => {
+        const current = state.messages[sessionId] || []
+        // Prepend older messages, avoiding duplicates by message id
+        const existingIds = new Set(current.map((m) => m.id))
+        const newOlder = olderMessages.filter((m) => !existingIds.has(m.id))
+        const merged = [...newOlder, ...current]
+        return {
+          messages: { ...state.messages, [sessionId]: merged },
+          isLoadingOlderMessages: {
+            ...state.isLoadingOlderMessages,
+            [sessionId]: false,
+          },
+        }
+      })
+    } catch (err) {
+      console.error('Failed to fetch older messages:', err)
+      set((state) => ({
+        isLoadingOlderMessages: {
+          ...state.isLoadingOlderMessages,
+          [sessionId]: false,
+        },
+      }))
+    }
+  },
+
+  setWindowCap: (cap: number) => {
+    const clamped = Math.max(50, Math.min(1000, cap))
+    set({ windowCap: clamped })
   },
 }))

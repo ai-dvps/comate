@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { useChatStore } from '../stores/chat-store'
 import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
 import type { Workspace } from '../stores/workspace-store'
@@ -53,6 +54,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
 
   const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace } = useAppSettings()
+  const windowCap = useChatStore((s) => s.windowCap)
+  const setWindowCap = useChatStore((s) => s.setWindowCap)
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
@@ -63,6 +66,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   // App-level form state
   const [appModel, setAppModel] = useState(defaultModel)
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
+  const [windowCapInput, setWindowCapInput] = useState(String(windowCap))
 
   // Workspace form state (keyed by workspace id)
   const [workspaceState, setWorkspaceState] = useState<Record<string, WorkspaceFormState>>({})
@@ -71,6 +75,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const snapshotRef = useRef({
     appModel: defaultModel,
     appReopen: reopenLastWorkspace,
+    appWindowCap: windowCap,
     workspaceState: {} as Record<string, WorkspaceFormState>,
   })
 
@@ -89,23 +94,30 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     snapshotRef.current = {
       appModel: defaultModel,
       appReopen: reopenLastWorkspace,
+      appWindowCap: windowCap,
       workspaceState: JSON.parse(JSON.stringify(initial)),
     }
     setAppModel(defaultModel)
     setAppReopen(reopenLastWorkspace)
+    setWindowCapInput(String(windowCap))
 
     if (workspaces.length > 0) {
       setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, defaultModel, reopenLastWorkspace, activeWorkspaceId])
+  }, [workspaces, defaultModel, reopenLastWorkspace, activeWorkspaceId, windowCap])
+
+  useEffect(() => {
+    setWindowCapInput(String(windowCap))
+  }, [windowCap])
 
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
   const isDirty = useCallback(() => {
     if (appModel !== snapshotRef.current.appModel) return true
     if (appReopen !== snapshotRef.current.appReopen) return true
+    if (windowCap !== snapshotRef.current.appWindowCap) return true
     return JSON.stringify(workspaceState) !== JSON.stringify(snapshotRef.current.workspaceState)
-  }, [appModel, appReopen, workspaceState])
+  }, [appModel, appReopen, windowCap, workspaceState])
 
   const handleClose = useCallback(() => {
     if (isDirty()) {
@@ -137,6 +149,10 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     // Save app settings
     setDefaultModel(appModel)
     setReopenLastWorkspace(appReopen)
+    const parsedCap = parseInt(windowCapInput, 10)
+    if (!isNaN(parsedCap)) {
+      setWindowCap(parsedCap)
+    }
 
     // Save workspace settings for selected workspace
     if (selectedWorkspaceId && workspaceState[selectedWorkspaceId]) {
@@ -163,6 +179,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     snapshotRef.current = {
       appModel,
       appReopen,
+      appWindowCap: windowCap,
       workspaceState: JSON.parse(JSON.stringify(workspaceState)),
     }
 
@@ -179,6 +196,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     // Reset to snapshot
     setAppModel(snapshotRef.current.appModel)
     setAppReopen(snapshotRef.current.appReopen)
+    setWindowCapInput(String(snapshotRef.current.appWindowCap))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
     onClose()
   }
@@ -186,6 +204,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const handleDiscard = () => {
     setAppModel(snapshotRef.current.appModel)
     setAppReopen(snapshotRef.current.appReopen)
+    setWindowCapInput(String(snapshotRef.current.appWindowCap))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
     setShowUnsavedDialog(false)
     setPendingClose(false)
@@ -249,6 +268,14 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
             onDefaultModelChange={setAppModel}
             reopenLastWorkspace={appReopen}
             onReopenLastWorkspaceChange={setAppReopen}
+            windowCap={windowCapInput}
+            onWindowCapChange={setWindowCapInput}
+            onWindowCapCommit={(val) => {
+              const parsed = parseInt(val, 10)
+              if (!isNaN(parsed)) {
+                setWindowCap(parsed)
+              }
+            }}
           />
         )}
 
@@ -342,11 +369,17 @@ function GeneralTab({
   onDefaultModelChange,
   reopenLastWorkspace,
   onReopenLastWorkspaceChange,
+  windowCap,
+  onWindowCapChange,
+  onWindowCapCommit,
 }: {
   defaultModel: string
   onDefaultModelChange: (v: string) => void
   reopenLastWorkspace: boolean
   onReopenLastWorkspaceChange: (v: boolean) => void
+  windowCap: string
+  onWindowCapChange: (v: string) => void
+  onWindowCapCommit: (v: string) => void
 }) {
   return (
     <div className="p-6 max-w-xl">
@@ -363,6 +396,29 @@ function GeneralTab({
           />
           <p className="text-[10px] text-text-tertiary mt-1">
             Leave empty to use the system default model.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">
+            Message Window Cap
+          </label>
+          <input
+            type="number"
+            min={50}
+            max={1000}
+            value={windowCap}
+            onChange={(e) => onWindowCapChange(e.target.value)}
+            onBlur={() => onWindowCapCommit(windowCap)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                onWindowCapCommit(windowCap)
+              }
+            }}
+            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">
+            Max messages kept in memory per session (50–1000). Older messages are pruned but can be re-fetched by scrolling up.
           </p>
         </div>
 

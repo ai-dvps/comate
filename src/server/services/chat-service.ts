@@ -125,13 +125,24 @@ export class ChatService {
 
   // Message history loading
 
-  async loadMessages(sessionId: string, workspaceId: string): Promise<{ messages: ChatMessage[]; tasks: TaskItem[] }> {
+  async loadMessages(
+    sessionId: string,
+    workspaceId: string,
+    offset?: number,
+    limit?: number,
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[] }> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
     }
 
-    const sdkMessages = await this.sdkClient.getSessionMessages(sessionId, { dir: workspace.folderPath });
+    const options: import('@anthropic-ai/claude-agent-sdk').GetSessionMessagesOptions = {
+      dir: workspace.folderPath,
+    };
+    if (offset !== undefined) options.offset = offset;
+    if (limit !== undefined) options.limit = limit;
+
+    const sdkMessages = await this.sdkClient.getSessionMessages(sessionId, options);
     const normalized: ChatMessage[] = [];
     sdkMessages.forEach((msg: SessionMessage, index: number) => {
       const chatMessage = normalizeSessionMessage(msg);
