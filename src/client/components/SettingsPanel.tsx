@@ -21,7 +21,7 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-type SettingsTab = 'general' | 'appearance' | 'workspace' | 'skills' | 'mcp' | 'hooks'
+type SettingsTab = 'general' | 'appearance' | 'workspace' | 'skills' | 'mcp' | 'hooks' | 'wecom'
 
 interface WorkspaceFormState {
   name: string
@@ -31,6 +31,9 @@ interface WorkspaceFormState {
   skills: { name: string }[]
   mcpServers: { name: string; command: string; args: string }[]
   hooks: { name: string; scriptPath: string }[]
+  wecomBotId: string
+  wecomBotSecret: string
+  wecomBotEnabled: boolean
 }
 
 function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
@@ -45,6 +48,9 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
       args: m.args?.join(' ') || '',
     })),
     hooks: [...workspace.hooks],
+    wecomBotId: (workspace.settings?.wecomBotId as string) || '',
+    wecomBotSecret: (workspace.settings?.wecomBotSecret as string) || '',
+    wecomBotEnabled: (workspace.settings?.wecomBotEnabled as boolean) || false,
   }
 }
 
@@ -164,6 +170,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           ...selectedWorkspace?.settings,
           model: ws.model || undefined,
           apiKey: ws.apiKey || undefined,
+          wecomBotId: ws.wecomBotId || undefined,
+          wecomBotSecret: ws.wecomBotSecret || undefined,
+          wecomBotEnabled: ws.wecomBotEnabled,
         },
         skills: ws.skills,
         mcpServers: ws.mcpServers.map((m) => ({
@@ -226,9 +235,10 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     { id: 'skills', label: 'Skills' },
     { id: 'mcp', label: 'MCP' },
     { id: 'hooks', label: 'Hooks' },
+    { id: 'wecom', label: 'WeCom Bot' },
   ]
 
-  const isWorkspaceTab = activeTab === 'workspace' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'hooks'
+  const isWorkspaceTab = activeTab === 'workspace' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'hooks' || activeTab === 'wecom'
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg">
@@ -514,7 +524,7 @@ function WorkspaceTabShell({
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
-  activeTab: 'workspace' | 'skills' | 'mcp' | 'hooks'
+  activeTab: 'workspace' | 'skills' | 'mcp' | 'hooks' | 'wecom'
   workspaceState: WorkspaceFormState | null
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
 }) {
@@ -571,6 +581,9 @@ function WorkspaceTabShell({
             )}
             {activeTab === 'hooks' && (
               <HooksTab state={workspaceState} onUpdate={onUpdateWorkspace} />
+            )}
+            {activeTab === 'wecom' && selectedWorkspaceId && (
+              <WeComBotTab state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId} />
             )}
           </>
         )}
@@ -860,6 +873,112 @@ function HooksTab({
         {state.hooks.length === 0 && (
           <p className="text-xs text-text-tertiary text-center py-4">No hooks added</p>
         )}
+      </div>
+    </div>
+  )
+}
+
+function WeComBotTab({
+  state,
+  onUpdate,
+  workspaceId,
+}: {
+  state: WorkspaceFormState
+  onUpdate: (updates: Partial<WorkspaceFormState>) => void
+  workspaceId: string
+}) {
+  const [showSecret, setShowSecret] = useState(false)
+  const [status, setStatus] = useState<string>('unknown')
+
+  // Fetch connection status
+  useEffect(() => {
+    let cancelled = false
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/bot/status`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled) setStatus(data.status || 'unknown')
+      } catch {
+        if (!cancelled) setStatus('unknown')
+      }
+    }
+    fetchStatus()
+    const interval = setInterval(fetchStatus, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [workspaceId])
+
+  const statusColor =
+    status === 'connected'
+      ? 'text-success'
+      : status === 'error'
+        ? 'text-destructive'
+        : 'text-text-tertiary'
+
+  return (
+    <div className="space-y-4 max-w-xl">
+      <div className="flex items-center justify-between py-2 border-b border-border/50">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary">
+            Enable WeCom Bot
+          </label>
+          <p className="text-[10px] text-text-tertiary mt-0.5">
+            When enabled, this workspace acts as a WeCom bot endpoint.
+          </p>
+        </div>
+        <button
+          onClick={() => onUpdate({ wecomBotEnabled: !state.wecomBotEnabled })}
+          className={`relative w-9 h-5 rounded-full transition-colors ${
+            state.wecomBotEnabled ? 'bg-accent' : 'bg-border'
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+              state.wecomBotEnabled ? 'translate-x-4' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Bot ID</label>
+        <input
+          value={state.wecomBotId}
+          onChange={(e) => onUpdate({ wecomBotId: e.target.value })}
+          placeholder="your-bot-id"
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Bot Secret</label>
+        <div className="flex gap-2">
+          <input
+            type={showSecret ? 'text' : 'password'}
+            value={state.wecomBotSecret}
+            onChange={(e) => onUpdate({ wecomBotSecret: e.target.value })}
+            placeholder="your-bot-secret"
+            className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
+          <button
+            onClick={() => setShowSecret(!showSecret)}
+            className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
+          >
+            {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 pt-2">
+        <span className="text-[11px] font-medium text-text-secondary">Status:</span>
+        <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
+      </div>
+
+      <div className="text-[10px] text-text-tertiary pt-2">
+        <p>Bot sessions have full tool auto-approval. Save changes to connect or disconnect.</p>
       </div>
     </div>
   )

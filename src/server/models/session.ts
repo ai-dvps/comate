@@ -3,6 +3,7 @@ export interface ChatSession {
   workspaceId: string;
   name: string;
   isDraft?: boolean;
+  source?: 'gui' | 'wecom';
   createdAt: string;
   updatedAt: string;
   // SDK-derived fields (populated when discovered via listSessions)

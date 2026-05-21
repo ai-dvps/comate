@@ -46,7 +46,18 @@ export class ChatService {
     const draftIds = new Set(sdkSessions.map((s) => s.id));
     const activeDrafts = drafts.filter((d) => !draftIds.has(d.id));
 
-    return [...activeDrafts, ...sdkSessions];
+    const allSessions = [...activeDrafts, ...sdkSessions];
+
+    // Identify bot sessions from the user mapping table
+    const wecomMappings = workspaceStore.listWecomSessions(workspaceId);
+    const botSessionIds = new Set(wecomMappings.map((m) => m.sessionId));
+    for (const session of allSessions) {
+      if (botSessionIds.has(session.id)) {
+        session.source = 'wecom';
+      }
+    }
+
+    return allSessions;
   }
 
   async createSession(input: CreateSessionInput): Promise<ChatSession> {
@@ -160,12 +171,28 @@ export class ChatService {
 
   // Session runtime management
 
-  async getOrCreateRuntime(sessionId: string, workspaceId: string): Promise<SessionRuntime> {
+  async getOrCreateRuntime(
+    sessionId: string,
+    workspaceId: string,
+    isBotSession?: boolean,
+    botEventHandler?: (id: number, event: import('../types/message.js').SseEvent) => void,
+  ): Promise<SessionRuntime> {
     const existing = this.runtimes.get(sessionId);
-    if (existing) return existing;
+    if (existing) {
+      if (botEventHandler) {
+        existing.addBotEventHandler(botEventHandler);
+      }
+      return existing;
+    }
 
     const pending = this.creatingRuntimes.get(sessionId);
-    if (pending) return pending;
+    if (pending) {
+      const runtime = await pending;
+      if (botEventHandler) {
+        runtime.addBotEventHandler(botEventHandler);
+      }
+      return runtime;
+    }
 
     const promise = (async () => {
       const workspace = await workspaceStore.get(workspaceId);
@@ -178,8 +205,8 @@ export class ChatService {
         throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
       }
 
-      const options = this.buildSdkOptions(workspace, session);
-      const runtime = SessionRuntime.open(sessionId, workspaceId, this.serverNonce, options, this.sdkClient);
+      const options = this.buildSdkOptions(workspace, session, isBotSession);
+      const runtime = SessionRuntime.open(sessionId, workspaceId, this.serverNonce, options, this.sdkClient, botEventHandler);
       this.runtimes.set(sessionId, runtime);
 
       if (session.isDraft) {
@@ -259,7 +286,11 @@ export class ChatService {
     return null;
   }
 
-  private buildSdkOptions(workspace: Workspace, session: ChatSession): import('@anthropic-ai/claude-agent-sdk').Options {
+  private buildSdkOptions(
+    workspace: Workspace,
+    session: ChatSession,
+    isBotSession?: boolean,
+  ): import('@anthropic-ai/claude-agent-sdk').Options {
     const env: Record<string, string | undefined> = { ...process.env };
     if (workspace.settings.apiKey) {
       env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
@@ -284,6 +315,13 @@ export class ChatService {
       includePartialMessages: true,
       pathToClaudeCodeExecutable: claudePath,
     };
+
+    if (isBotSession) {
+      options.canUseTool = async (
+        _toolName: string,
+        input: Record<string, unknown>,
+      ) => ({ behavior: 'allow', updatedInput: input });
+    }
 
     if (session.isDraft) {
       // First message to a draft session — create a new SDK session with our ID

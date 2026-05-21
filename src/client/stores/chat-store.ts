@@ -52,6 +52,7 @@ export interface ChatSession {
   workspaceId: string
   name: string
   isDraft?: boolean
+  source?: 'gui' | 'wecom'
   createdAt: string
   updatedAt: string
   summary?: string

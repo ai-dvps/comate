@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
+import { wecomBotService } from '../services/wecom-bot-service.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
 const router = Router();
@@ -57,10 +58,36 @@ router.put('/:id', async (req, res) => {
       res.status(404).json({ error: 'Workspace not found' });
       return;
     }
+
+    // Manage bot connection based on updated settings
+    const enabled = workspace.settings.wecomBotEnabled;
+    const hasCredentials = workspace.settings.wecomBotId && workspace.settings.wecomBotSecret;
+    if (enabled && hasCredentials) {
+      wecomBotService.connect(workspace);
+    } else {
+      wecomBotService.disconnect(workspace.id);
+    }
+
     res.json({ workspace });
   } catch (error) {
     console.error('Failed to update workspace:', error);
     res.status(500).json({ error: 'Failed to update workspace' });
+  }
+});
+
+// GET /api/workspaces/:id/bot/status
+router.get('/:id/bot/status', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const status = wecomBotService.getStatus(req.params.id);
+    res.json({ status });
+  } catch (error) {
+    console.error('Failed to get bot status:', error);
+    res.status(500).json({ error: 'Failed to get bot status' });
   }
 });
 

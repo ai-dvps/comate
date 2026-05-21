@@ -3,6 +3,9 @@ export interface WorkspaceSettings {
   apiKey?: string;
   maxTokens?: number;
   temperature?: number;
+  wecomBotId?: string;
+  wecomBotSecret?: string;
+  wecomBotEnabled?: boolean;
 }
 
 export interface Skill {
