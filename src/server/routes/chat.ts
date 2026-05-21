@@ -111,7 +111,7 @@ router.get('/sessions/:sessionId/stream', async (req, res) => {
     runtime.subscribe(res, lastEventId);
 
     req.on('close', () => {
-      runtime.unsubscribe();
+      runtime.unsubscribe(res);
     });
   } catch (error) {
     console.error('Failed to subscribe to stream:', error);
