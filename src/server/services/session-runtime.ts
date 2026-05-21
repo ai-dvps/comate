@@ -42,6 +42,7 @@ export class SessionRuntime {
   private closed = false;
   private messageLoopPromise: Promise<void> = Promise.resolve();
   private currentMessageStartId?: string;
+  private activeRes: Response | null = null;
 
   static open(
     sessionId: string,
@@ -225,6 +226,7 @@ export class SessionRuntime {
   }
 
   subscribe(res: Response, lastEventId?: string): void {
+    this.activeRes = res;
     this.emitter.setResponse(res);
     this.emitter.emitSubscriptionAck(this.serverNonce, this.sessionId);
     if (lastEventId !== undefined) {
@@ -251,8 +253,10 @@ export class SessionRuntime {
     }
   }
 
-  unsubscribe(): void {
-    this.emitter.setResponse(null);
+  unsubscribe(res?: Response): void {
+    if (!res || this.activeRes === res) {
+      this.emitter.setResponse(null);
+    }
   }
 
   getStatus(): { pendingCount: number; workspaceId: string } {
