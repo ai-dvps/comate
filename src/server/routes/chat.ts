@@ -81,7 +81,9 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const { messages, tasks } = await chatService.loadMessages(sessionId, workspaceId);
+    const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const { messages, tasks } = await chatService.loadMessages(sessionId, workspaceId, offset, limit);
     res.json({ messages, tasks });
   } catch (error) {
     console.error('Failed to load messages:', error);
