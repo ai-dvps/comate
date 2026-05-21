@@ -143,7 +143,6 @@ function App() {
         <HeaderToolbar
           onCreateWorkspace={() => setShowCreateModal(true)}
           onOpenSettings={() => setShowSettings(true)}
-          canOpenSettings={!!activeWorkspace}
         />
       </header>
 
@@ -181,9 +180,8 @@ function App() {
         onCopy={() => copyFileContent(drawerFile)}
       />
 
-      {showSettings && activeWorkspaceId && (
+      {showSettings && (
         <SettingsPanel
-          workspaceId={activeWorkspaceId}
           onClose={() => setShowSettings(false)}
         />
       )}

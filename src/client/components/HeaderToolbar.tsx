@@ -4,13 +4,11 @@ import { useTheme } from '../hooks/use-theme'
 interface HeaderToolbarProps {
   onCreateWorkspace: () => void
   onOpenSettings: () => void
-  canOpenSettings: boolean
 }
 
 export default function HeaderToolbar({
   onCreateWorkspace,
   onOpenSettings,
-  canOpenSettings,
 }: HeaderToolbarProps) {
   const { theme, toggleTheme } = useTheme()
 
@@ -34,9 +32,8 @@ export default function HeaderToolbar({
 
       <button
         onClick={onOpenSettings}
-        disabled={!canOpenSettings}
-        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-tertiary transition-colors"
-        title="Workspace settings"
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        title="Settings"
       >
         <Settings className="w-4 h-4" />
       </button>
