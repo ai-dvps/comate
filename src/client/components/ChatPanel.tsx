@@ -150,7 +150,9 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           </div>
         ) : activeSessionId ? (
           <MessageList
+            key={activeSessionId}
             sessionId={activeSessionId}
+            workspaceId={workspaceId}
             onOpenDrawer={setOpenDrawerToolUseId}
           />
         ) : (
