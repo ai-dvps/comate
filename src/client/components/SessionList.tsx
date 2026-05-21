@@ -20,7 +20,11 @@ function formatRelativeDate(dateStr: string): string {
 }
 
 function getSessionDisplayName(session: import('../stores/chat-store').ChatSession): string {
-  return session.customTitle || session.summary || session.name
+  const name = session.customTitle || session.summary || session.name
+  if (session.source === 'wecom' && name.startsWith('WeCom: ')) {
+    return name.slice(7)
+  }
+  return name
 }
 
 function getSessionTimestamp(session: import('../stores/chat-store').ChatSession): string {
@@ -172,6 +176,14 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                       <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
                         Draft
                       </span>
+                    )}
+                    {session.source === 'wecom' && (
+                      <img
+                        src="/wecom-icon.svg"
+                        alt="WeCom"
+                        className="w-3 h-3 flex-shrink-0"
+                        title="WeCom bot session"
+                      />
                     )}
                     {rowState !== 'idle' && <StatusIndicator state={rowState} />}
                   </div>

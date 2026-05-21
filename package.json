@@ -25,6 +25,7 @@
     "@tanstack/react-virtual": "^3.13.25",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@wecom/aibot-node-sdk": "^1.0.7",
     "better-sqlite3": "^12.10.0",
     "chokidar": "^5.0.0",
     "clsx": "^2.0.0",
@@ -39,6 +40,7 @@
     "tailwind-merge": "^2.0.0",
     "use-stick-to-bottom": "^1.0.0",
     "uuid": "^9.0.1",
+    "ws": "^8.20.1",
     "zustand": "^4.5.2"
   },
   "devDependencies": {

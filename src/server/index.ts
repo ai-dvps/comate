@@ -7,6 +7,7 @@ import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
+import { wecomBotService } from './services/wecom-bot-service.js';
 
 function getDirname(): string {
   try {
@@ -71,4 +72,21 @@ const server = app.listen(PORT, () => {
   if (process.env.CLAUDE_CODE_GUI_SIDECAR === '1') {
     console.log(JSON.stringify({ type: 'ready', port: actualPort }));
   }
+
+  // Initialize WeCom bot connections for enabled workspaces
+  wecomBotService.initialize().catch((err) => {
+    console.error('Failed to initialize WeCom bot service:', err);
+  });
 });
+
+// Graceful shutdown
+function shutdown(signal: string): void {
+  console.log(`Received ${signal}, shutting down...`);
+  wecomBotService.disconnectAll();
+  server.close(() => {
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

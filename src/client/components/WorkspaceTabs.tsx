@@ -1,7 +1,31 @@
+import { useEffect, useState } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { Folder, X } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
+
+type BotStatus = 'connected' | 'disconnected' | 'error' | 'not_configured'
+
+const BOT_STATUS_LABEL: Record<BotStatus, string> = {
+  connected: 'WeCom bot connected',
+  disconnected: 'WeCom bot disconnected',
+  error: 'WeCom bot error',
+  not_configured: 'WeCom bot not configured',
+}
+
+const BOT_STATUS_CLASS: Record<BotStatus, string> = {
+  connected: 'opacity-100',
+  disconnected: 'opacity-40 grayscale',
+  error: 'opacity-100',
+  not_configured: 'opacity-40 grayscale',
+}
+
+const BOT_STATUS_DOT: Record<BotStatus, string> = {
+  connected: 'bg-green-500',
+  disconnected: 'bg-text-tertiary',
+  error: 'bg-warning',
+  not_configured: 'bg-text-tertiary',
+}
 
 export default function WorkspaceTabs() {
   const { workspaces, openWorkspaceIds, activeWorkspaceId, setActiveWorkspace, closeWorkspace } = useWorkspaceStore()
@@ -11,6 +35,43 @@ export default function WorkspaceTabs() {
   const sessionStatus = useChatStore((s) => s.sessionStatus)
   const unreadCompletions = useChatStore((s) => s.unreadCompletions)
   const activeSessionIds = useChatStore((s) => s.activeSessionIds)
+
+  const [botStatuses, setBotStatuses] = useState<Record<string, BotStatus>>({})
+
+  useEffect(() => {
+    const enabledIds = openWorkspaceIds.filter((id) => {
+      const ws = workspaces.find((w) => w.id === id)
+      return ws?.settings.wecomBotEnabled
+    })
+    if (enabledIds.length === 0) {
+      setBotStatuses({})
+      return
+    }
+
+    const fetchStatuses = async () => {
+      const results = await Promise.all(
+        enabledIds.map(async (id) => {
+          try {
+            const res = await fetch(`/api/workspaces/${id}/bot/status`)
+            if (!res.ok) return { id, status: 'error' as BotStatus }
+            const data = await res.json()
+            return { id, status: (data.status as BotStatus) ?? 'error' }
+          } catch {
+            return { id, status: 'error' as BotStatus }
+          }
+        })
+      )
+      const next: Record<string, BotStatus> = {}
+      for (const { id, status } of results) {
+        next[id] = status
+      }
+      setBotStatuses(next)
+    }
+
+    fetchStatuses()
+    const interval = setInterval(fetchStatuses, 5000)
+    return () => clearInterval(interval)
+  }, [openWorkspaceIds, workspaces])
 
   const getWorkspaceCounts = (workspaceId: string) => {
     const list = sessions[workspaceId] ?? []
@@ -27,15 +88,16 @@ export default function WorkspaceTabs() {
   }
 
   const openWorkspaces = openWorkspaceIds
-    .map(id => workspaces.find(w => w.id === id))
+    .map((id) => workspaces.find((w) => w.id === id))
     .filter(Boolean)
 
   return (
     <div className="flex items-center gap-1">
-      {openWorkspaces.map(ws => {
+      {openWorkspaces.map((ws) => {
         if (!ws) return null
         const isActive = activeWorkspaceId === ws.id
         const counts = getWorkspaceCounts(ws.id)
+        const botStatus = botStatuses[ws.id]
         return (
           <div
             key={ws.id}
@@ -50,6 +112,18 @@ export default function WorkspaceTabs() {
           >
             <Folder className={`w-3 h-3 flex-shrink-0 ${isActive ? 'text-accent' : 'text-text-tertiary'}`} />
             <span className="truncate max-w-[100px]">{ws.name}</span>
+            {botStatus && (
+              <span className="relative inline-flex flex-shrink-0" title={BOT_STATUS_LABEL[botStatus]}>
+                <img
+                  src="/wecom-icon.svg"
+                  alt="WeCom"
+                  className={`w-3 h-3 flex-shrink-0 ${BOT_STATUS_CLASS[botStatus]}`}
+                />
+                <span
+                  className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${BOT_STATUS_DOT[botStatus]} ring-1 ring-bg`}
+                />
+              </span>
+            )}
             {counts.needsMe > 0 && <StatusIndicator state="needs-me" count={counts.needsMe} />}
             {counts.finishedUnread > 0 && <StatusIndicator state="finished-unread" count={counts.finishedUnread} />}
             {counts.streaming > 0 && <StatusIndicator state="streaming" count={counts.streaming} />}

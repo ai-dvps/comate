@@ -48,6 +48,17 @@ export class SqliteStore {
       )
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS wecom_user_sessions (
+        workspaceId TEXT NOT NULL,
+        wecomUserId TEXT NOT NULL,
+        sessionId TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (workspaceId, wecomUserId)
+      )
+    `);
+
     this.migrateFromLegacy();
   }
 
@@ -199,7 +210,39 @@ export class SqliteStore {
 
   async delete(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
+    if (result.changes > 0) {
+      this.db.prepare('DELETE FROM wecom_user_sessions WHERE workspaceId = ?').run(id);
+    }
     return result.changes > 0;
+  }
+
+  // WeCom user session mapping
+
+  getWecomSession(workspaceId: string, wecomUserId: string): string | null {
+    const row = this.db
+      .prepare('SELECT sessionId FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ?')
+      .get(workspaceId, wecomUserId) as { sessionId: string } | undefined;
+    return row?.sessionId ?? null;
+  }
+
+  setWecomSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(workspaceId, wecomUserId) DO UPDATE SET
+          sessionId = excluded.sessionId,
+          updatedAt = excluded.updatedAt
+      `)
+      .run(workspaceId, wecomUserId, sessionId, now, now);
+  }
+
+  listWecomSessions(workspaceId: string): Array<{ wecomUserId: string; sessionId: string }> {
+    const rows = this.db
+      .prepare('SELECT wecomUserId, sessionId FROM wecom_user_sessions WHERE workspaceId = ?')
+      .all(workspaceId) as Array<{ wecomUserId: string; sessionId: string }>;
+    return rows;
   }
 }
 

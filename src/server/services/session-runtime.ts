@@ -43,6 +43,7 @@ export class SessionRuntime {
   private messageLoopPromise: Promise<void> = Promise.resolve();
   private currentMessageStartId?: string;
   private activeRes: Response | null = null;
+  private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
 
   static open(
     sessionId: string,
@@ -50,6 +51,7 @@ export class SessionRuntime {
     serverNonce: string,
     options: Options,
     sdkClient: SdkClient,
+    botEventHandler?: (id: number, event: SseEvent) => void,
   ): SessionRuntime {
     const input = new PushableIterator<SDKUserMessage>();
     const runtime = new SessionRuntime(
@@ -60,8 +62,19 @@ export class SessionRuntime {
       options,
       sdkClient,
     );
+    if (botEventHandler) {
+      runtime.botEventHandlers.add(botEventHandler);
+    }
     runtime.start();
     return runtime;
+  }
+
+  addBotEventHandler(handler: (id: number, event: SseEvent) => void): void {
+    this.botEventHandlers.add(handler);
+  }
+
+  removeBotEventHandler(handler: (id: number, event: SseEvent) => void): void {
+    this.botEventHandlers.delete(handler);
   }
 
   private constructor(
@@ -88,13 +101,16 @@ export class SessionRuntime {
       if (this.ringBuffer.length > RING_BUFFER_CAP) {
         this.ringBuffer.shift();
       }
+      for (const handler of this.botEventHandlers) {
+        handler(id, event);
+      }
     });
   }
 
   private start(): void {
     const optionsWithCallback: Options = {
       ...this.options,
-      canUseTool: this.buildCanUseToolCallback(),
+      canUseTool: this.options.canUseTool ?? this.buildCanUseToolCallback(),
     };
     const { query, messages } = this.sdkClient.createStreamingQuery(
       this.input,
