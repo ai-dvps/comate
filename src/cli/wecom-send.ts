@@ -8,7 +8,7 @@ import { URL } from 'node:url';
 const CONTEXT_FILE_NAME = '.claude/wecom-context.json';
 
 function printUsage(): void {
-  console.error('Usage: wecom-send msg send --to-user <id> --message <text> [--msg-type text|markdown]');
+  console.error('Usage: wecom msg send --to-user <id> --message <text> [--msg-type text|markdown]');
 }
 
 function findContextFile(startDir: string): string | null {
