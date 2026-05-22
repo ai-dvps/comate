@@ -145,9 +145,33 @@ export class WeComBotService {
     const conn = this.connections.get(workspaceId);
     if (!conn) return;
 
+    const streamId = `${sessionId}-${Date.now()}`;
+
     let responseText = '';
     let collecting = false;
-    let streamId = '';
+    let animationInterval: NodeJS.Timeout | null = null;
+
+    const stopAnimation = () => {
+      if (animationInterval) {
+        clearInterval(animationInterval);
+        animationInterval = null;
+      }
+    };
+
+    // Start a cycling placeholder animation until the first token arrives
+    let dotCount = 0;
+    const sendAnimationFrame = () => {
+      dotCount = (dotCount + 1) % 3;
+      const text = `思考中${'.'.repeat(dotCount + 1)}`;
+      conn.client.replyStreamNonBlocking(frame, streamId, text, false).catch((err) => {
+        console.error('Failed to send WeCom animation frame:', err);
+      });
+    };
+
+    conn.client.replyStream(frame, streamId, '思考中.', false).catch((err) => {
+      console.error('Failed to send WeCom processing placeholder:', err);
+    });
+    animationInterval = setInterval(sendAnimationFrame, 600);
 
     const flushStream = debounce(() => {
       if (!collecting || !responseText) return;
@@ -160,8 +184,8 @@ export class WeComBotService {
       if (event.type === 'assistant_start') {
         responseText = '';
         collecting = true;
-        streamId = `${sessionId}-${Date.now()}`;
       } else if (collecting && event.type === 'text_delta') {
+        stopAnimation();
         responseText += event.text;
         flushStream();
       } else if (
@@ -169,18 +193,19 @@ export class WeComBotService {
         (event.type === 'assistant_done' || event.type === 'error_note' || event.type === 'interrupted')
       ) {
         collecting = false;
+        stopAnimation();
         flushStream.abort();
-
-        if (!responseText.trim()) return;
 
         conn!.client.replyStream(frame, streamId, responseText, true).catch((err) => {
           console.error('Failed to send WeCom stream final frame:', err);
-          conn!.client.sendMessage(wecomUserId, {
-            msgtype: 'markdown',
-            markdown: { content: responseText },
-          }).catch((fallbackErr) => {
-            console.error('Failed to send WeCom fallback response:', fallbackErr);
-          });
+          if (responseText.trim()) {
+            conn!.client.sendMessage(wecomUserId, {
+              msgtype: 'markdown',
+              markdown: { content: responseText },
+            }).catch((fallbackErr) => {
+              console.error('Failed to send WeCom fallback response:', fallbackErr);
+            });
+          }
         });
       }
     };
