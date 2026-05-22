@@ -120,7 +120,18 @@ async function build() {
     console.warn(`Warning: SDK binary not found at ${sdkBinarySource}`);
   }
 
-  // 7. Copy better_sqlite3.node to src-tauri/resources/
+  // 7. Copy wecom CLI to src-tauri/resources/
+  console.log('\n--- Copying wecom CLI ---');
+  const wecomCliSource = join(rootDir, 'packages', 'wecom-cli', 'dist', 'index.js');
+  if (existsSync(wecomCliSource)) {
+    const wecomCliDest = join(resourcesDir, 'wecom-send.js');
+    copyFileSync(wecomCliSource, wecomCliDest);
+    console.log(`Copied to ${wecomCliDest}`);
+  } else {
+    console.warn(`Warning: WeCom CLI not found at ${wecomCliSource}`);
+  }
+
+  // 8. Copy better_sqlite3.node to src-tauri/resources/
   console.log('\n--- Copying native module ---');
   const nativeModuleSource = join(
     rootDir,

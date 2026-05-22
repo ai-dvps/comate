@@ -6,6 +6,7 @@ import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import type { SseEvent } from '../types/message.js';
+import { SKILL_MD } from '../assets/wecom-skill.js';
 
 interface BotConnection {
   client: WSClient;
@@ -65,6 +66,9 @@ export class WeComBotService {
       this.writeContextFile(workspace, botId).catch((err) => {
         console.warn(`Failed to write WeCom context file for workspace ${workspace.id}:`, err);
       });
+      this.writeSkillFiles(workspace).catch((err) => {
+        console.warn(`Failed to write WeCom skill files for workspace ${workspace.id}:`, err);
+      });
     });
 
     client.on('disconnected', (reason) => {
@@ -94,6 +98,9 @@ export class WeComBotService {
     this.botIdToWorkspaceId.delete(conn.botId);
     this.removeContextFile(workspaceId).catch((err) => {
       console.warn(`Failed to remove WeCom context file for workspace ${workspaceId}:`, err);
+    });
+    this.removeSkillFiles(workspaceId).catch((err) => {
+      console.warn(`Failed to remove WeCom skill files for workspace ${workspaceId}:`, err);
     });
   }
 
@@ -240,6 +247,37 @@ export class WeComBotService {
         } catch (err) {
           console.warn(`Failed to clean up stale context file for workspace ${ws.id}:`, err);
         }
+      }
+    }
+  }
+
+  private async writeSkillFiles(workspace: Workspace): Promise<void> {
+    const claudeDir = path.join(workspace.folderPath, '.claude');
+    const skillsDir = path.join(claudeDir, 'skills', 'send-wecom-message');
+
+    const resolvedClaudeDir = path.resolve(claudeDir);
+    const resolvedBase = path.resolve(workspace.folderPath);
+    if (!resolvedClaudeDir.startsWith(resolvedBase)) {
+      throw new Error('Skill file path is outside workspace directory');
+    }
+
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'SKILL.md'), SKILL_MD, 'utf-8');
+  }
+
+  private async removeSkillFiles(workspaceId: string): Promise<void> {
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) return;
+
+    const skillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-message', 'SKILL.md');
+    const resolvedBase = path.resolve(workspace.folderPath);
+    const resolvedFile = path.resolve(skillFile);
+    if (!resolvedFile.startsWith(resolvedBase)) return;
+    if (fs.existsSync(skillFile)) {
+      try {
+        fs.unlinkSync(skillFile);
+      } catch {
+        // ignore
       }
     }
   }
