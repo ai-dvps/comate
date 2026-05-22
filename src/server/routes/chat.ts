@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { chatService, ChatError } from '../services/chat-service.js';
+import { diagLog } from '../utils/diag-logger.js';
 
 const router = Router({ mergeParams: true });
+diagLog('[Route] chat module loaded');
 
 // GET /api/workspaces/:id/sessions
 router.get('/sessions', async (req, res) => {
@@ -100,9 +102,11 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
 router.get('/sessions/:sessionId/stream', async (req, res) => {
   const sessionId = req.params.sessionId;
   const workspaceId = (req.params as unknown as { id: string }).id;
+  diagLog(`[Route] GET /sessions/${sessionId}/stream`);
 
   try {
     const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
+    diagLog(`[Route] got runtime for ${sessionId}`);
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -113,6 +117,7 @@ router.get('/sessions/:sessionId/stream', async (req, res) => {
     runtime.subscribe(res, lastEventId);
 
     req.on('close', () => {
+      diagLog(`[Route] req close for ${sessionId}`);
       runtime.unsubscribe(res);
     });
   } catch (error) {
@@ -138,9 +143,10 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
   }
 
   try {
+    diagLog(`[Route] POST message to ${sessionId}`);
     const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
     runtime.pushMessage(message);
-    res.json({ ok: true });
+    res.json({ ok: true, debug: `[Route] POST message to ${sessionId}` });
   } catch (error) {
     console.error('Failed to push message:', error);
     if (error instanceof ChatError) {
@@ -185,6 +191,7 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
       };
     }
 
+    diagLog(`[Route] resolveApproval ${requestId} behavior=${behavior}`);
     runtime.resolveApproval(requestId, result);
     res.json({ ok: true });
   } catch (error) {

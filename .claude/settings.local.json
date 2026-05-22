@@ -71,7 +71,10 @@
       "Bash(curl -s http://localhost:5173)",
       "Bash(npx playwright *)",
       "Bash(pkill -f \"vite\")",
-      "Bash(pkill -f \"tsx watch\")"
+      "Bash(pkill -f \"tsx watch\")",
+      "WebFetch(domain:developer.work.weixin.qq.com)",
+      "WebFetch(domain:learnku.com)",
+      "WebFetch(domain:www.workerman.net)"
     ]
   }
 }

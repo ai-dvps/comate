@@ -10,6 +10,7 @@ import workspaceCommandsRoutes from './routes/workspace-commands.js';
 import wecomBridgeRoutes from './routes/wecom-bridge.js';
 import cliInstallRoutes from './routes/cli-install.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
+import { diagLog } from './utils/diag-logger.js';
 
 function getDirname(): string {
   try {
@@ -39,6 +40,15 @@ app.use('/api/cli', cliInstallRoutes);
 // Health checks
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+// Client diagnostic log sink — forwards browser logs into sse-diag.log
+app.post('/api/log', express.json({ limit: '1mb' }), (req, res) => {
+  const { level = 'log', message } = req.body;
+  if (typeof message === 'string') {
+    diagLog(`[client] [${level}] ${message}`);
+  }
+  res.json({ ok: true });
 });
 
 app.get('/api/health/claude', (_req, res) => {
@@ -72,6 +82,7 @@ const server = app.listen(PORT, () => {
   const actualPort = typeof address === 'object' && address ? address.port : PORT;
   const serverUrl = `http://localhost:${actualPort}`;
   console.log(`Server running on ${serverUrl}`);
+  diagLog(`Server started on ${serverUrl} (diag log file: ${process.env.CLAUDE_CODE_GUI_DATA_DIR || '~/.claude-code-gui'}/sse-diag.log)`);
 
   // Emit ready message for Tauri sidecar discovery when PORT=0
   if (process.env.CLAUDE_CODE_GUI_SIDECAR === '1') {

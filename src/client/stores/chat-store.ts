@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 import type { ChatMessage, MessagePart, QuestionPayload, TaskItem } from '../types/message'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
+import { diagLog, diagWarn } from '../utils/diag-logger'
 
 export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
 
@@ -257,6 +258,8 @@ function parseData(data: string): unknown {
 type SseSetter = (
   updater: (state: ChatState) => ChatState | Partial<ChatState>,
 ) => void
+
+type SseGetter = () => ChatState
 
 function updateAssistantPart(
   state: ChatState,
@@ -591,6 +594,7 @@ function handleSseEvent(
   event: string,
   raw: unknown,
 ): void {
+  diagLog(`[Client] handleSseEvent session=${sessionId} event=${event}`)
   const data =
     raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
 
@@ -970,25 +974,31 @@ function handleSseEvent(
       const requestId = typeof data.requestId === 'string' ? data.requestId : ''
       const toolName = typeof data.toolName === 'string' ? data.toolName : ''
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
+      diagLog(`[Client] pending_approval requestId=${requestId} toolName=${toolName}`)
       if (!requestId) return
       set((state) => {
-        if (hasPendingItem(state, sessionId, requestId)) return {}
+        if (hasPendingItem(state, sessionId, requestId)) {
+          diagLog(`[Client] pending_approval duplicate, ignored`)
+          return {}
+        }
+        const queue = [
+          ...(state.approvalQueue[sessionId] || []),
+          {
+            requestId,
+            toolName,
+            toolUseId,
+            input: data.input,
+            inputSummary: typeof data.inputSummary === 'string' ? data.inputSummary : '',
+            title: typeof data.title === 'string' ? data.title : undefined,
+            description: typeof data.description === 'string' ? data.description : undefined,
+            suggestions: Array.isArray(data.suggestions) ? data.suggestions : undefined,
+          },
+        ]
+        diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
         return {
           approvalQueue: {
             ...state.approvalQueue,
-            [sessionId]: [
-              ...(state.approvalQueue[sessionId] || []),
-              {
-                requestId,
-                toolName,
-                toolUseId,
-                input: data.input,
-                inputSummary: typeof data.inputSummary === 'string' ? data.inputSummary : '',
-                title: typeof data.title === 'string' ? data.title : undefined,
-                description: typeof data.description === 'string' ? data.description : undefined,
-                suggestions: Array.isArray(data.suggestions) ? data.suggestions : undefined,
-              },
-            ],
+            [sessionId]: queue,
           },
         }
       })
@@ -997,16 +1007,22 @@ function handleSseEvent(
     case 'pending_question': {
       const requestId = typeof data.requestId === 'string' ? data.requestId : ''
       const questions = Array.isArray(data.questions) ? data.questions : []
+      diagLog(`[Client] pending_question requestId=${requestId} questions=${questions.length}`)
       if (!requestId) return
       set((state) => {
-        if (hasPendingItem(state, sessionId, requestId)) return {}
+        if (hasPendingItem(state, sessionId, requestId)) {
+          diagLog(`[Client] pending_question duplicate, ignored`)
+          return {}
+        }
+        const queue = [
+          ...(state.approvalQueue[sessionId] || []),
+          { requestId, questions },
+        ]
+        diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
         return {
           approvalQueue: {
             ...state.approvalQueue,
-            [sessionId]: [
-              ...(state.approvalQueue[sessionId] || []),
-              { requestId, questions },
-            ],
+            [sessionId]: queue,
           },
         }
       })
@@ -1014,10 +1030,12 @@ function handleSseEvent(
     }
     case 'approval_resolved': {
       const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      diagLog(`[Client] approval_resolved requestId=${requestId}`)
       if (!requestId) return
       set((state) => {
         const queue = state.approvalQueue[sessionId] || []
         const nextQueue = queue.filter((item) => item.requestId !== requestId)
+        diagLog(`[Client] approvalQueue resolved for ${sessionId}: ${queue.length} -> ${nextQueue.length}`)
         const updates: Partial<ChatState> = {
           approvalQueue: { ...state.approvalQueue, [sessionId]: nextQueue },
         }
@@ -1247,6 +1265,7 @@ function normalizeSdkStatus(status: string): TaskItem['status'] {
 
 function subscribeToSession(
   set: SseSetter,
+  get: SseGetter,
   workspaceId: string,
   sessionId: string,
 ): void {
@@ -1267,6 +1286,8 @@ function subscribeToSession(
     if (lastId) {
       headers['Last-Event-ID'] = lastId
     }
+
+    diagLog(`[SSE ${sessionId}] subscribing (lastId=${lastId ?? 'none'})`)
 
     const abortController = new AbortController()
     const thisClose = () => {
@@ -1290,6 +1311,8 @@ function subscribeToSession(
         }
         if (!res.body) throw new Error('No response body')
 
+        diagLog(`[SSE ${sessionId}] stream opened`)
+        let wasActiveAtCleanClose = false
         try {
           for await (const event of parseSSEStream(res.body)) {
             if (event.id) {
@@ -1310,11 +1333,34 @@ function subscribeToSession(
               )
             }
           }
+          diagWarn(`[SSE ${sessionId}] stream ended cleanly`)
+          wasActiveAtCleanClose = sessionSubscriptions.get(sessionId)?.close === thisClose
         } finally {
           const current = sessionSubscriptions.get(sessionId)
           if (current?.close === thisClose) {
             sessionSubscriptions.delete(sessionId)
+            diagLog(`[SSE ${sessionId}] subscription removed (clean close)`)
           }
+        }
+        if (wasActiveAtCleanClose) {
+          if (attempt >= maxAttempts) {
+            console.error('Subscription max retries exceeded after clean close')
+            set((state) =>
+              addSystemMessage(
+                state,
+                sessionId,
+                'Connection lost. Please reselect the session to reconnect.',
+              ),
+            )
+            set((state) => ({
+              isStreaming: { ...state.isStreaming, [sessionId]: false },
+            }))
+            return
+          }
+          const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay)
+          attempt++
+          diagLog(`[SSE ${sessionId}] retrying after clean close in ${delay}ms`)
+          retryTimer = setTimeout(connect, delay)
         }
       })
       .catch((err) => {
@@ -1322,7 +1368,10 @@ function subscribeToSession(
         if (current?.close === thisClose) {
           sessionSubscriptions.delete(sessionId)
         }
-        if (err.name === 'AbortError') return
+        if (err.name === 'AbortError') {
+          diagLog(`[SSE ${sessionId}] subscription aborted intentionally`)
+          return
+        }
 
         const status = (err as Error & { status?: number }).status
         if (status && status >= 400 && status < 500) {
@@ -1357,8 +1406,8 @@ function subscribeToSession(
 
         const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay)
         attempt++
-        console.log(
-          `Retrying SSE connection in ${delay}ms (attempt ${attempt}/${maxAttempts})`,
+        diagLog(
+          `[SSE ${sessionId}] retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`,
         )
         retryTimer = setTimeout(connect, delay)
       })
@@ -1519,7 +1568,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
     // Auto-subscribe when switching to a session
     if (sessionId) {
-      subscribeToSession(set, workspaceId, sessionId)
+      subscribeToSession(set, get, workspaceId, sessionId)
     }
   },
 
@@ -1564,7 +1613,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {
     // Ensure subscription is open
     if (!sessionSubscriptions.has(sessionId)) {
-      subscribeToSession(set, workspaceId, sessionId)
+      subscribeToSession(set, get, workspaceId, sessionId)
     }
 
     const userMessageId = generateId()
