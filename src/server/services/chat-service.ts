@@ -1,3 +1,4 @@
+import path from 'path';
 import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
@@ -8,6 +9,7 @@ import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-norm
 import { SdkClient } from './sdk-client.js';
 import { SessionRuntime } from './session-runtime.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
+import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 
 export interface MessageStream {
@@ -294,6 +296,16 @@ export class ChatService {
     const env: Record<string, string | undefined> = { ...process.env };
     if (workspace.settings.apiKey) {
       env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
+    }
+
+    const wecomCliPath = resolveWecomCliPath();
+    if (wecomCliPath) {
+      const cliDir = path.dirname(wecomCliPath);
+      const pathSeparator = process.platform === 'win32' ? ';' : ':';
+      env.PATH = cliDir + pathSeparator + (env.PATH || '');
+      env.WECOM_CLI_PATH = wecomCliPath;
+      sidecarLog(`[ChatService.buildSdkOptions] injected wecom CLI dir into PATH: ${cliDir}`);
+      sidecarLog(`[ChatService.buildSdkOptions] set WECOM_CLI_PATH=${wecomCliPath}`);
     }
 
     const mcpServers: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig> = {};

@@ -1,0 +1,19 @@
+{
+  "name": "@webank/wecom",
+  "version": "1.0.0",
+  "description": "CLI for sending WeCom messages via the Claude Code GUI server",
+  "type": "module",
+  "bin": {
+    "wecom": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/index.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}

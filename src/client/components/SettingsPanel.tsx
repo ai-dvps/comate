@@ -394,6 +394,7 @@ function GeneralTab({
   return (
     <div className="p-6 max-w-xl">
       <div className="space-y-5">
+        <WeComCliSection />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
             Default Model
@@ -507,6 +508,98 @@ function AppearanceTab() {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function WeComCliSection() {
+  const [status, setStatus] = useState<{ installed: boolean; path?: string; error?: string } | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/cli/status')
+      if (!res.ok) return
+      const data = await res.json()
+      setStatus(data)
+    } catch {
+      setStatus({ installed: false, error: 'Failed to check status' })
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchStatus()
+  }, [fetchStatus])
+
+  const handleInstall = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/cli/install', { method: 'POST' })
+      const data = await res.json()
+      setStatus(data)
+    } catch {
+      setStatus({ installed: false, error: 'Install request failed' })
+    }
+    setLoading(false)
+  }
+
+  const handleUninstall = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/cli/uninstall', { method: 'POST' })
+      const data = await res.json()
+      setStatus(data)
+    } catch {
+      setStatus({ installed: false, error: 'Uninstall request failed' })
+    }
+    setLoading(false)
+  }
+
+  const isInstalled = status?.installed
+
+  return (
+    <div className="py-3 border-b border-border/50">
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary">WeCom CLI</label>
+          <p className="text-[10px] text-text-tertiary mt-0.5">
+            Make the <code className="text-[10px] font-mono bg-surface-hover px-1 rounded">wecom</code> command available in your terminal.
+          </p>
+        </div>
+        {isInstalled ? (
+          <button
+            onClick={handleUninstall}
+            disabled={loading}
+            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
+          >
+            {loading ? 'Working...' : 'Uninstall'}
+          </button>
+        ) : (
+          <button
+            onClick={handleInstall}
+            disabled={loading}
+            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground transition-colors disabled:opacity-50"
+          >
+            {loading ? 'Installing...' : 'Install'}
+          </button>
+        )}
+      </div>
+
+      {status?.error && (
+        <p className="text-[11px] text-destructive mt-2">{status.error}</p>
+      )}
+
+      {isInstalled && status?.path && (
+        <p className="text-[11px] text-success mt-2">
+          Installed at <code className="font-mono bg-surface-hover px-1 rounded">{status.path}</code>
+        </p>
+      )}
+
+      {isInstalled && (
+        <p className="text-[10px] text-text-tertiary mt-1.5">
+          Make sure <code className="font-mono bg-surface-hover px-1 rounded">~/.local/bin</code> is on your PATH. You may need to restart your terminal or run <code className="font-mono bg-surface-hover px-1 rounded">hash -r</code> for the shell to discover the command.
+        </p>
+      )}
     </div>
   )
 }

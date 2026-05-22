@@ -3,16 +3,17 @@
   "version": "1.0.0",
   "description": "Personal workspace manager and GUI for Claude Code",
   "type": "module",
-  "bin": {
-    "wecom": "dist/cli/wecom-send.js"
-  },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch src/server/index.ts",
     "dev:client": "vite",
-    "build": "tsc -b && vite build && npm run build:cli",
-    "build:server": "tsc -p tsconfig.server.json",
-    "build:cli": "esbuild src/cli/wecom-send.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/cli/wecom-send.js",
+    "build": "npm run generate:skills && tsc -b && vite build && npm run build:cli",
+    "build:server": "npm run generate:skills && tsc -p tsconfig.server.json",
+    "build:cli": "npm run build -w packages/wecom-cli",
+    "generate:skills": "tsx scripts/generate-wecom-skill.ts",
     "build:sidecar": "tsx scripts/build-sidecar.ts",
     "start": "node dist/server/index.js",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
@@ -23,6 +24,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.144",
+    "@webank/wecom": "workspace:*",
     "@radix-ui/react-collapsible": "^1.1.0",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-use-controllable-state": "^1.1.0",
