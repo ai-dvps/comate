@@ -3,12 +3,16 @@
   "version": "1.0.0",
   "description": "Personal workspace manager and GUI for Claude Code",
   "type": "module",
+  "bin": {
+    "wecom-send": "dist/cli/wecom-send.js"
+  },
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch src/server/index.ts",
     "dev:client": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run build:cli",
     "build:server": "tsc -p tsconfig.server.json",
+    "build:cli": "esbuild src/cli/wecom-send.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/cli/wecom-send.js",
     "build:sidecar": "tsx scripts/build-sidecar.ts",
     "start": "node dist/server/index.js",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
