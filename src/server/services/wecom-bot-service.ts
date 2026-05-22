@@ -7,6 +7,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import type { SseEvent } from '../types/message.js';
 import { SKILL_MD } from '../assets/wecom-skill.js';
+import { debounce } from '../utils/debounce.js';
 
 interface BotConnection {
   client: WSClient;
@@ -146,20 +147,40 @@ export class WeComBotService {
 
     let responseText = '';
     let collecting = false;
+    let streamId = '';
+
+    const flushStream = debounce(() => {
+      if (!collecting || !responseText) return;
+      conn!.client.replyStreamNonBlocking(frame, streamId, responseText).catch((err) => {
+        console.error('Failed to send WeCom stream frame:', err);
+      });
+    }, 150);
 
     const handler = (id: number, event: SseEvent) => {
       if (event.type === 'assistant_start') {
         responseText = '';
         collecting = true;
+        streamId = `${sessionId}-${Date.now()}`;
       } else if (collecting && event.type === 'text_delta') {
         responseText += event.text;
+        flushStream();
       } else if (
         collecting &&
         (event.type === 'assistant_done' || event.type === 'error_note' || event.type === 'interrupted')
       ) {
         collecting = false;
-        this.sendResponse(conn!, wecomUserId, responseText).catch((err) => {
-          console.error('Failed to send WeCom response:', err);
+        flushStream.abort();
+
+        if (!responseText.trim()) return;
+
+        conn!.client.replyStream(frame, streamId, responseText, true).catch((err) => {
+          console.error('Failed to send WeCom stream final frame:', err);
+          conn!.client.sendMessage(wecomUserId, {
+            msgtype: 'markdown',
+            markdown: { content: responseText },
+          }).catch((fallbackErr) => {
+            console.error('Failed to send WeCom fallback response:', fallbackErr);
+          });
         });
       }
     };
@@ -184,14 +205,6 @@ export class WeComBotService {
     await conn.client.sendMessage(toUser, {
       msgtype: 'markdown',
       markdown: { content: message },
-    });
-  }
-
-  private async sendResponse(conn: BotConnection, wecomUserId: string, text: string): Promise<void> {
-    if (!text.trim()) return;
-    await conn.client.sendMessage(wecomUserId, {
-      msgtype: 'markdown',
-      markdown: { content: text },
     });
   }
 
