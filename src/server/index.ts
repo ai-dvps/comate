@@ -66,7 +66,8 @@ if (process.env.NODE_ENV === 'production') {
 const server = app.listen(PORT, () => {
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : PORT;
-  console.log(`Server running on http://localhost:${actualPort}`);
+  const serverUrl = `http://localhost:${actualPort}`;
+  console.log(`Server running on ${serverUrl}`);
 
   // Emit ready message for Tauri sidecar discovery when PORT=0
   if (process.env.CLAUDE_CODE_GUI_SIDECAR === '1') {
@@ -74,6 +75,7 @@ const server = app.listen(PORT, () => {
   }
 
   // Initialize WeCom bot connections for enabled workspaces
+  wecomBotService.setServerUrl(serverUrl);
   wecomBotService.initialize().catch((err) => {
     console.error('Failed to initialize WeCom bot service:', err);
   });
