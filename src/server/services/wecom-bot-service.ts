@@ -1,5 +1,7 @@
 import AiBot from '@wecom/aibot-node-sdk';
 import type { WSClient, WsFrame, TextMessage } from '@wecom/aibot-node-sdk';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
@@ -8,13 +10,21 @@ import type { SseEvent } from '../types/message.js';
 interface BotConnection {
   client: WSClient;
   workspaceId: string;
+  botId: string;
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
 }
 
 export class WeComBotService {
   private connections = new Map<string, BotConnection>();
+  private botIdToWorkspaceId = new Map<string, string>();
+  private serverUrl: string | null = null;
+
+  setServerUrl(url: string): void {
+    this.serverUrl = url;
+  }
 
   async initialize(): Promise<void> {
+    await this.cleanupStaleContextFiles();
     const workspaces = await workspaceStore.list();
     for (const ws of workspaces) {
       if (ws.settings.wecomBotEnabled && ws.settings.wecomBotId && ws.settings.wecomBotSecret) {
@@ -29,6 +39,11 @@ export class WeComBotService {
     const botId = workspace.settings.wecomBotId!;
     const secret = workspace.settings.wecomBotSecret!;
 
+    if (this.botIdToWorkspaceId.has(botId)) {
+      console.error(`WeCom bot ID ${botId} is already in use by workspace ${this.botIdToWorkspaceId.get(botId)}. Skipping connect for workspace ${workspace.id}.`);
+      return;
+    }
+
     const client = new AiBot.WSClient({
       botId,
       secret,
@@ -38,6 +53,7 @@ export class WeComBotService {
     const conn: BotConnection = {
       client,
       workspaceId: workspace.id,
+      botId,
       status: 'connecting',
     };
 
@@ -45,6 +61,10 @@ export class WeComBotService {
 
     client.on('authenticated', () => {
       conn.status = 'connected';
+      this.botIdToWorkspaceId.set(botId, workspace.id);
+      this.writeContextFile(workspace, botId).catch((err) => {
+        console.warn(`Failed to write WeCom context file for workspace ${workspace.id}:`, err);
+      });
     });
 
     client.on('disconnected', (reason) => {
@@ -71,6 +91,10 @@ export class WeComBotService {
     if (!conn) return;
     conn.client.disconnect();
     this.connections.delete(workspaceId);
+    this.botIdToWorkspaceId.delete(conn.botId);
+    this.removeContextFile(workspaceId).catch((err) => {
+      console.warn(`Failed to remove WeCom context file for workspace ${workspaceId}:`, err);
+    });
   }
 
   disconnectAll(): void {
@@ -137,12 +161,87 @@ export class WeComBotService {
     runtime.pushMessage(content);
   }
 
+  getWorkspaceIdByBotId(botId: string): string | undefined {
+    return this.botIdToWorkspaceId.get(botId);
+  }
+
+  async sendProactiveMessage(botId: string, toUser: string, message: string): Promise<void> {
+    const workspaceId = this.botIdToWorkspaceId.get(botId);
+    if (!workspaceId) {
+      throw new Error(`Unknown bot ID: ${botId}`);
+    }
+    const conn = this.connections.get(workspaceId);
+    if (!conn || conn.status !== 'connected') {
+      throw new Error(`Bot ${botId} is not connected`);
+    }
+    await conn.client.sendMessage(toUser, {
+      msgtype: 'markdown',
+      markdown: { content: message },
+    });
+  }
+
   private async sendResponse(conn: BotConnection, wecomUserId: string, text: string): Promise<void> {
     if (!text.trim()) return;
     await conn.client.sendMessage(wecomUserId, {
       msgtype: 'markdown',
       markdown: { content: text },
     });
+  }
+
+  private getContextFilePath(workspace: Workspace): string {
+    return path.join(workspace.folderPath, '.claude', 'wecom-context.json');
+  }
+
+  private async writeContextFile(workspace: Workspace, botId: string): Promise<void> {
+    if (!this.serverUrl) return;
+    const filePath = this.getContextFilePath(workspace);
+    const dir = path.dirname(filePath);
+    const resolvedDir = path.resolve(dir);
+    const resolvedBase = path.resolve(workspace.folderPath);
+    if (!resolvedDir.startsWith(resolvedBase)) {
+      throw new Error('Context file path is outside workspace directory');
+    }
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const content = JSON.stringify({ botId, serverUrl: this.serverUrl }, null, 2);
+    fs.writeFileSync(filePath, content, 'utf-8');
+  }
+
+  private async removeContextFile(workspaceId: string): Promise<void> {
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) return;
+    const filePath = this.getContextFilePath(workspace);
+    const resolvedFile = path.resolve(filePath);
+    const resolvedBase = path.resolve(workspace.folderPath);
+    if (!resolvedFile.startsWith(resolvedBase)) {
+      return;
+    }
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+
+  private async cleanupStaleContextFiles(): Promise<void> {
+    const workspaces = await workspaceStore.list();
+    for (const ws of workspaces) {
+      const filePath = this.getContextFilePath(ws);
+      const resolvedFile = path.resolve(filePath);
+      const resolvedBase = path.resolve(ws.folderPath);
+      if (!resolvedFile.startsWith(resolvedBase)) {
+        continue;
+      }
+      if (!fs.existsSync(filePath)) continue;
+      const botId = ws.settings.wecomBotId;
+      if (!botId || !this.botIdToWorkspaceId.has(botId)) {
+        try {
+          fs.unlinkSync(filePath);
+          console.log(`Cleaned up stale WeCom context file for workspace ${ws.id}`);
+        } catch (err) {
+          console.warn(`Failed to clean up stale context file for workspace ${ws.id}:`, err);
+        }
+      }
+    }
   }
 }
 
