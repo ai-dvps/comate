@@ -4,7 +4,7 @@
   "description": "Personal workspace manager and GUI for Claude Code",
   "type": "module",
   "bin": {
-    "wecom-send": "dist/cli/wecom-send.js"
+    "wecom": "dist/cli/wecom-send.js"
   },
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
