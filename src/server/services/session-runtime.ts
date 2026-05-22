@@ -77,6 +77,10 @@ export class SessionRuntime {
     this.botEventHandlers.delete(handler);
   }
 
+  clearBotEventHandlers(): void {
+    this.botEventHandlers.clear();
+  }
+
   private constructor(
     sessionId: string,
     workspaceId: string,

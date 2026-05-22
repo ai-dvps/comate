@@ -182,6 +182,7 @@ export class ChatService {
     const existing = this.runtimes.get(sessionId);
     if (existing) {
       if (botEventHandler) {
+        existing.clearBotEventHandlers();
         existing.addBotEventHandler(botEventHandler);
       }
       return existing;
@@ -191,6 +192,7 @@ export class ChatService {
     if (pending) {
       const runtime = await pending;
       if (botEventHandler) {
+        runtime.clearBotEventHandlers();
         runtime.addBotEventHandler(botEventHandler);
       }
       return runtime;
