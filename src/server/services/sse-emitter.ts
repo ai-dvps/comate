@@ -3,6 +3,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 import type { SseEvent, QuestionPayload } from '../types/message.js';
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import { diagLog, diagWarn } from '../utils/diag-logger.js';
 
 /**
  * Tracks the in-flight type for each SDK content-block index inside the
@@ -272,9 +273,15 @@ export class SseEmitter {
 
   private send(event: SseEvent): void {
     const id = this.eventIndex++;
+    diagLog(`[SseEmitter] send event ${id} type=${event.type} hasRes=${!!this.res}`);
     const payload = SseEmitter.formatSsePayload(id, event);
     if (this.res) {
-      this.res.write(payload);
+      const ok = this.res.write(payload);
+      if (!ok) {
+        diagWarn(`[SseEmitter] backpressure on event ${id} (${event.type})`);
+      }
+    } else {
+      diagWarn(`[SseEmitter] event ${id} (${event.type}) dropped — no active response`);
     }
     this.onEvent?.(id, event);
   }

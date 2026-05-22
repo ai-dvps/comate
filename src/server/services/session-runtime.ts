@@ -11,9 +11,11 @@ import type { SseEvent, QuestionPayload } from '../types/message.js';
 import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
+import { diagLog, diagWarn } from '../utils/diag-logger.js';
 
 
 const RING_BUFFER_CAP = 500;
+diagLog('[SessionRuntime] module loaded');
 
 export class SessionRuntime {
   private sessionId: string;
@@ -89,6 +91,7 @@ export class SessionRuntime {
     options: Options,
     sdkClient: SdkClient,
   ) {
+    diagLog(`[Runtime ${sessionId}] constructed`);
     this.sessionId = sessionId;
     this.workspaceId = workspaceId;
     this.serverNonce = serverNonce;
@@ -112,6 +115,7 @@ export class SessionRuntime {
   }
 
   private start(): void {
+    diagLog(`[Runtime ${this.sessionId}] start (hasCustomCanUseTool=${!!this.options.canUseTool})`);
     const optionsWithCallback: Options = {
       ...this.options,
       canUseTool: this.options.canUseTool ?? this.buildCanUseToolCallback(),
@@ -156,6 +160,7 @@ export class SessionRuntime {
 
       if (toolName === 'AskUserQuestion') {
         const questions = this.parseAskUserQuestion(input);
+        diagLog(`[Runtime ${this.sessionId}] emitPendingQuestion requestId=${requestId} questions=${questions.length}`);
         this.emitter.emitPendingQuestion(requestId, questions);
         return new Promise<PermissionResult>((resolve) => {
           this.pendingApprovals.set(requestId, {
@@ -179,6 +184,7 @@ export class SessionRuntime {
         });
       }
 
+      diagLog(`[Runtime ${this.sessionId}] emitPendingApproval requestId=${requestId} toolName=${toolName}`);
       this.emitter.emitPendingApproval(
         requestId,
         toolName,
@@ -246,6 +252,7 @@ export class SessionRuntime {
   }
 
   subscribe(res: Response, lastEventId?: string): void {
+    diagLog(`[Runtime ${this.sessionId}] subscribe (pending=${this.pendingApprovals.size}, lastEventId=${lastEventId ?? 'none'}, currentMessageStartId=${this.currentMessageStartId ?? 'none'})`);
     this.activeRes = res;
     this.emitter.setResponse(res);
     this.emitter.emitSubscriptionAck(this.serverNonce, this.sessionId);
@@ -274,9 +281,11 @@ export class SessionRuntime {
   }
 
   unsubscribe(res?: Response): void {
+    const hadRes = this.activeRes === res;
     if (!res || this.activeRes === res) {
       this.emitter.setResponse(null);
     }
+    diagLog(`[Runtime ${this.sessionId}] unsubscribe (matched=${hadRes})`);
   }
 
   getStatus(): { pendingCount: number; workspaceId: string } {
