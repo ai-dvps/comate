@@ -7,6 +7,7 @@ import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
+import wecomBridgeRoutes from './routes/wecom-bridge.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 
 function getDirname(): string {
@@ -31,6 +32,7 @@ app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/workspaces/:id/files', fileRoutes);
 app.use('/api/workspaces/:id/commands', workspaceCommandsRoutes);
 app.use('/api/workspaces/:id', chatRoutes);
+app.use('/api/wecom', wecomBridgeRoutes);
 
 // Health checks
 app.get('/api/health', (_req, res) => {
