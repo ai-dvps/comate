@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import i18next from 'i18next'
 
 import type { ChatMessage, MessagePart, QuestionPayload, TaskItem } from '../types/message'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
@@ -475,7 +476,11 @@ function addSystemMessage(
 }
 
 function hasPendingItem(state: ChatState, sessionId: string, requestId: string): boolean {
-  return (state.approvalQueue[sessionId] || []).some((item) => item.requestId === requestId)
+  const found = (state.approvalQueue[sessionId] || []).some((item) => item.requestId === requestId)
+  if (found) {
+    console.log(`[ChatStore] hasPendingItem found duplicate requestId=${requestId} for session=${sessionId}`)
+  }
+  return found
 }
 
 function findSubagent(
@@ -917,7 +922,7 @@ function handleSseEvent(
       return
     }
     case 'error': {
-      const message = typeof data.message === 'string' ? data.message : 'Stream error'
+      const message = typeof data.message === 'string' ? data.message : i18next.t('common:streamError', 'Stream error')
       throw new Error(message)
     }
     case 'subscription_ack': {
@@ -938,7 +943,7 @@ function handleSseEvent(
                 parts: [
                   {
                     type: 'text',
-                    text: 'Server was restarted. Background work may have been lost.',
+                    text: i18next.t('common:serverRestarted', 'Server was restarted. Background work may have been lost.'),
                   },
                 ],
                 timestamp: Date.now(),
@@ -961,7 +966,7 @@ function handleSseEvent(
               addSystemMessage(
                 s,
                 sessionId,
-                `Failed to send: ${err instanceof Error ? err.message : 'Network error'}`,
+                `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
               ),
             )
           })
@@ -975,10 +980,12 @@ function handleSseEvent(
       const toolName = typeof data.toolName === 'string' ? data.toolName : ''
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       diagLog(`[Client] pending_approval requestId=${requestId} toolName=${toolName}`)
+      console.log(`[ChatStore] pending_approval requestId=${requestId} toolName=${toolName}`)
       if (!requestId) return
       set((state) => {
         if (hasPendingItem(state, sessionId, requestId)) {
           diagLog(`[Client] pending_approval duplicate, ignored`)
+          console.log(`[ChatStore] pending_approval duplicate ignored requestId=${requestId}`)
           return {}
         }
         const queue = [
@@ -995,6 +1002,7 @@ function handleSseEvent(
           },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
+        console.log(`[ChatStore] approvalQueue ADDED for ${sessionId}: length=${queue.length}, requestId=${requestId}`)
         return {
           approvalQueue: {
             ...state.approvalQueue,
@@ -1008,10 +1016,12 @@ function handleSseEvent(
       const requestId = typeof data.requestId === 'string' ? data.requestId : ''
       const questions = Array.isArray(data.questions) ? data.questions : []
       diagLog(`[Client] pending_question requestId=${requestId} questions=${questions.length}`)
+      console.log(`[ChatStore] pending_question requestId=${requestId} questions=${questions.length}`)
       if (!requestId) return
       set((state) => {
         if (hasPendingItem(state, sessionId, requestId)) {
           diagLog(`[Client] pending_question duplicate, ignored`)
+          console.log(`[ChatStore] pending_question duplicate ignored requestId=${requestId}`)
           return {}
         }
         const queue = [
@@ -1019,6 +1029,7 @@ function handleSseEvent(
           { requestId, questions },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
+        console.log(`[ChatStore] approvalQueue ADDED for ${sessionId}: length=${queue.length}, requestId=${requestId}`)
         return {
           approvalQueue: {
             ...state.approvalQueue,
@@ -1031,11 +1042,13 @@ function handleSseEvent(
     case 'approval_resolved': {
       const requestId = typeof data.requestId === 'string' ? data.requestId : ''
       diagLog(`[Client] approval_resolved requestId=${requestId}`)
+      console.log(`[ChatStore] approval_resolved requestId=${requestId}`)
       if (!requestId) return
       set((state) => {
         const queue = state.approvalQueue[sessionId] || []
         const nextQueue = queue.filter((item) => item.requestId !== requestId)
         diagLog(`[Client] approvalQueue resolved for ${sessionId}: ${queue.length} -> ${nextQueue.length}`)
+        console.log(`[ChatStore] approvalQueue REMOVED for ${sessionId}: ${queue.length} -> ${nextQueue.length}, requestId=${requestId}`)
         const updates: Partial<ChatState> = {
           approvalQueue: { ...state.approvalQueue, [sessionId]: nextQueue },
         }
@@ -1065,7 +1078,7 @@ function handleSseEvent(
       return
     }
     case 'error_note': {
-      const text = typeof data.text === 'string' ? data.text : 'Error'
+      const text = typeof data.text === 'string' ? data.text : i18next.t('common:error', 'Error')
       set((state) => addSystemMessage(state, sessionId, text))
       return
     }
@@ -1074,7 +1087,7 @@ function handleSseEvent(
         addSystemMessage(
           state,
           sessionId,
-          'Server was restarted. Background work may have been lost.',
+          i18next.t('common:serverRestarted', 'Server was restarted. Background work may have been lost.'),
         ),
       )
       return
@@ -1098,7 +1111,7 @@ function handleSseEvent(
       const parentToolUseId =
         typeof data.parentToolUseId === 'string' ? data.parentToolUseId : ''
       const description =
-        typeof data.description === 'string' ? data.description : 'Agent'
+        typeof data.description === 'string' ? data.description : i18next.t('chat:agent', 'Agent')
       if (!parentToolUseId) return
       set((state) => {
         const existing = findSubagent(state, sessionId, parentToolUseId)
@@ -1288,14 +1301,32 @@ function subscribeToSession(
     }
 
     diagLog(`[SSE ${sessionId}] subscribing (lastId=${lastId ?? 'none'})`)
+    console.log(`[SSE ${sessionId}] connect() called, attempt=${attempt}, existingSub=${!!sessionSubscriptions.get(sessionId)}`)
 
     const abortController = new AbortController()
+    let readTimeout: ReturnType<typeof setTimeout> | undefined
+
     const thisClose = () => {
+      console.log(`[SSE ${sessionId}] thisClose called`)
       if (retryTimer) {
         clearTimeout(retryTimer)
         retryTimer = undefined
       }
+      if (readTimeout) {
+        clearTimeout(readTimeout)
+        readTimeout = undefined
+      }
       abortController.abort()
+    }
+
+    const resetReadTimeout = () => {
+      if (readTimeout) {
+        clearTimeout(readTimeout)
+      }
+      readTimeout = setTimeout(() => {
+        console.warn(`[SSE ${sessionId}] read timeout — forcing reconnect`)
+        abortController.abort()
+      }, 30000)
     }
 
     fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/stream`, {
@@ -1304,17 +1335,19 @@ function subscribeToSession(
     })
       .then(async (res) => {
         if (!res.ok) {
-          const error = await res.json().catch(() => ({ error: 'Subscription failed' }))
-          const err = new Error(error.error || 'Subscription failed')
+          const error = await res.json().catch(() => ({ error: i18next.t('common:subscriptionFailed', 'Subscription failed') }))
+          const err = new Error(error.error || i18next.t('common:subscriptionFailed', 'Subscription failed'))
           ;(err as Error & { status?: number }).status = res.status
           throw err
         }
-        if (!res.body) throw new Error('No response body')
+        if (!res.body) throw new Error(i18next.t('common:noResponseBody', 'No response body'))
 
         diagLog(`[SSE ${sessionId}] stream opened`)
+        console.log(`[SSE ${sessionId}] stream opened`)
         let wasActiveAtCleanClose = false
         try {
           for await (const event of parseSSEStream(res.body)) {
+            resetReadTimeout()
             if (event.id) {
               lastEventId.set(sessionId, event.id)
             }
@@ -1328,18 +1361,24 @@ function subscribeToSession(
                 addSystemMessage(
                   state,
                   sessionId,
-                  `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                  `${i18next.t('common:error', 'Error')}: ${err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')}`,
                 ),
               )
             }
           }
           diagWarn(`[SSE ${sessionId}] stream ended cleanly`)
+          console.log(`[SSE ${sessionId}] stream ended cleanly`)
           wasActiveAtCleanClose = sessionSubscriptions.get(sessionId)?.close === thisClose
         } finally {
+          if (readTimeout) {
+            clearTimeout(readTimeout)
+            readTimeout = undefined
+          }
           const current = sessionSubscriptions.get(sessionId)
           if (current?.close === thisClose) {
             sessionSubscriptions.delete(sessionId)
             diagLog(`[SSE ${sessionId}] subscription removed (clean close)`)
+            console.log(`[SSE ${sessionId}] subscription removed (clean close)`)
           }
         }
         if (wasActiveAtCleanClose) {
@@ -1349,7 +1388,7 @@ function subscribeToSession(
               addSystemMessage(
                 state,
                 sessionId,
-                'Connection lost. Please reselect the session to reconnect.',
+                i18next.t('common:connectionLost', 'Connection lost. Please reselect the session to reconnect.'),
               ),
             )
             set((state) => ({
@@ -1360,16 +1399,22 @@ function subscribeToSession(
           const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay)
           attempt++
           diagLog(`[SSE ${sessionId}] retrying after clean close in ${delay}ms`)
+          console.log(`[SSE ${sessionId}] retrying after clean close in ${delay}ms, attempt=${attempt}`)
           retryTimer = setTimeout(connect, delay)
         }
       })
       .catch((err) => {
+        if (readTimeout) {
+          clearTimeout(readTimeout)
+          readTimeout = undefined
+        }
         const current = sessionSubscriptions.get(sessionId)
         if (current?.close === thisClose) {
           sessionSubscriptions.delete(sessionId)
         }
         if (err.name === 'AbortError') {
           diagLog(`[SSE ${sessionId}] subscription aborted intentionally`)
+          console.log(`[SSE ${sessionId}] subscription aborted intentionally`)
           return
         }
 
@@ -1380,7 +1425,7 @@ function subscribeToSession(
             addSystemMessage(
               state,
               sessionId,
-              `Connection error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+              `${i18next.t('common:connectionError', 'Connection error')}: ${err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')}`,
             ),
           )
           set((state) => ({
@@ -1395,7 +1440,7 @@ function subscribeToSession(
             addSystemMessage(
               state,
               sessionId,
-              'Connection lost. Please reselect the session to reconnect.',
+              i18next.t('common:connectionLost', 'Connection lost. Please reselect the session to reconnect.'),
             ),
           )
           set((state) => ({
@@ -1409,12 +1454,14 @@ function subscribeToSession(
         diagLog(
           `[SSE ${sessionId}] retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`,
         )
+        console.log(`[SSE ${sessionId}] retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`)
         retryTimer = setTimeout(connect, delay)
       })
 
     sessionSubscriptions.set(sessionId, {
       close: thisClose,
     })
+    console.log(`[SSE ${sessionId}] subscription stored, close=${thisClose.name || 'anonymous'}`)
   }
 
   connect()
@@ -1445,7 +1492,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       set({ isLoadingSessions: true })
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`)
-      if (!res.ok) throw new Error('Failed to fetch sessions')
+      if (!res.ok) throw new Error(i18next.t('common:failedToFetchSessions', 'Failed to fetch sessions'))
       const data = await res.json()
       set((state) => ({
         sessions: { ...state.sessions, [workspaceId]: data.sessions || [] },
@@ -1465,7 +1512,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       })
-      if (!res.ok) throw new Error('Failed to create session')
+      if (!res.ok) throw new Error(i18next.t('common:failedToCreateSession', 'Failed to create session'))
       const session: ChatSession = await res.json()
       set((state) => ({
         sessions: {
@@ -1492,7 +1539,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
         method: 'DELETE',
       })
-      if (!res.ok && res.status !== 404) throw new Error('Failed to delete session')
+      if (!res.ok && res.status !== 404) throw new Error(i18next.t('common:failedToDeleteSession', 'Failed to delete session'))
       set((state) => {
         const updated = (state.sessions[workspaceId] || []).filter((s) => s.id !== sessionId)
         const newActive =
@@ -1576,7 +1623,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       set({ isLoadingMessages: true })
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
-      if (!res.ok) throw new Error('Failed to load messages')
+      if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
       const data = (await res.json()) as { messages?: ChatMessage[]; tasks?: TaskItem[] }
       const mappedMessages = data.messages ?? []
       const serverTasks = data.tasks ?? []
@@ -1676,7 +1723,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         addSystemMessage(
           state,
           sessionId,
-          `Failed to send: ${err instanceof Error ? err.message : 'Network error'}`,
+          `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
         ),
       )
     })
@@ -1749,8 +1796,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       )
       if (!res.ok) {
-        const error = await res.json().catch(() => ({ error: 'Request failed' }))
-        throw new Error(error.error || 'Request failed')
+        const error = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }))
+        throw new Error(error.error || i18next.t('common:requestFailed', 'Request failed'))
       }
     } catch (err) {
       console.error('Failed to resolve approval:', err)
@@ -1758,7 +1805,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         addSystemMessage(
           state,
           sessionId,
-          `Approval error: ${err instanceof Error ? err.message : 'Network error'}`,
+          `${i18next.t('common:approvalError', 'Approval error')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
         ),
       )
     }
@@ -1773,8 +1820,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       )
       if (!res.ok) {
-        const error = await res.json().catch(() => ({ error: 'Request failed' }))
-        throw new Error(error.error || 'Request failed')
+        const error = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }))
+        throw new Error(error.error || i18next.t('common:requestFailed', 'Request failed'))
       }
     } catch (err) {
       console.error('Failed to interrupt:', err)
@@ -1782,7 +1829,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         addSystemMessage(
           state,
           sessionId,
-          `Interrupt error: ${err instanceof Error ? err.message : 'Network error'}`,
+          `${i18next.t('common:interruptError', 'Interrupt error')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
         ),
       )
     }
@@ -1808,7 +1855,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       url.searchParams.set('offset', String(offset))
       url.searchParams.set('limit', String(limit))
       const res = await fetch(url.pathname + url.search)
-      if (!res.ok) throw new Error('Failed to fetch older messages')
+      if (!res.ok) throw new Error(i18next.t('common:failedToFetchOlderMessages', 'Failed to fetch older messages'))
       const data = (await res.json()) as {
         messages?: ChatMessage[]
         tasks?: TaskItem[]

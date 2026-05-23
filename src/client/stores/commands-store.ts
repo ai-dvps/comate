@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { create } from 'zustand';
+import i18next from 'i18next';
 
 export interface SlashCommandDto {
   name: string;
@@ -44,7 +45,7 @@ async function doFetch(
   try {
     const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/commands`);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Request failed' }));
+      const body = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }));
       throw new Error(body.error || `HTTP ${res.status}`);
     }
     const data = (await res.json()) as CachedCommandList;
@@ -60,7 +61,7 @@ async function doFetch(
       loadingByWorkspace: { ...state.loadingByWorkspace, [workspaceId]: false },
     }));
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to fetch commands';
+    const message = err instanceof Error ? err.message : i18next.t('common:failedToFetchCommands', 'Failed to fetch commands');
     set((state) => ({
       errorByWorkspace: { ...state.errorByWorkspace, [workspaceId]: message },
       loadingByWorkspace: { ...state.loadingByWorkspace, [workspaceId]: false },
