@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import Sidebar from './components/Sidebar'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
@@ -12,6 +13,7 @@ import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
+import { isMacOS } from './lib/platform'
 
 export interface ViewedFile {
   path: string
@@ -32,6 +34,7 @@ function App() {
   const [pinnedFile, setPinnedFile] = useState<ViewedFile | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [isMac, setIsMac] = useState(false)
   const [claudeCheck, setClaudeCheck] = useState<{ ok: boolean; checking: boolean; error?: string }>({
     ok: true,
     checking: true,
@@ -54,6 +57,7 @@ function App() {
   useEffect(() => {
     fetchWorkspaces()
     checkClaudeCli()
+    isMacOS().then(setIsMac)
   }, [fetchWorkspaces])
 
   const handleFileClick = async (path: string, name: string) => {
@@ -91,6 +95,11 @@ function App() {
       setPinnedFile(drawerFile)
       setDrawerFile(null)
     }
+  }
+
+  const handleDrag = (e: React.MouseEvent) => {
+    if (!isMac || e.button !== 0) return
+    getCurrentWindow().startDragging().catch(() => {})
   }
 
   if (claudeCheck.checking) {
@@ -133,9 +142,9 @@ function App() {
   return (
     <div className="h-screen flex flex-col bg-bg text-text-primary text-sm">
       {/* Top Bar */}
-      <header className="flex items-center justify-between px-4 h-12 flex-shrink-0 border-b border-border/50">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 mr-4">
+      <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50">
+        <div className={`flex items-center gap-3 flex-shrink-0 pr-4 ${isMac ? 'pl-20' : 'pl-4'}`}>
+          <div data-tauri-drag-region className="flex items-center gap-2 mr-4 select-none" onMouseDown={handleDrag}>
             <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-[10px] font-bold text-white">
               C
             </div>
@@ -144,10 +153,13 @@ function App() {
           <WorkspaceSwitcher />
           <WorkspaceTabs />
         </div>
-        <HeaderToolbar
-          onCreateWorkspace={() => setShowCreateModal(true)}
-          onOpenSettings={() => setShowSettings(true)}
-        />
+        <div data-tauri-drag-region className="flex-1 self-stretch select-none" onMouseDown={handleDrag} />
+        <div className="flex items-center flex-shrink-0 pl-4 pr-4">
+          <HeaderToolbar
+            onCreateWorkspace={() => setShowCreateModal(true)}
+            onOpenSettings={() => setShowSettings(true)}
+          />
+        </div>
       </header>
 
       {/* Main Content */}
