@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { readdir, readFile, stat } from 'fs/promises';
 import path from 'path';
 import { store } from '../storage/sqlite-store.js';
+import { searchFiles } from '../services/file-search.js';
 
 const router = Router({ mergeParams: true });
 
@@ -9,11 +10,6 @@ interface FileNode {
   name: string;
   type: 'file' | 'folder';
   children?: FileNode[];
-}
-
-interface FlatFileNode {
-  path: string;
-  type: 'file' | 'folder';
 }
 
 async function validatePath(workspacePath: string, requestedPath: string): Promise<string | null> {
@@ -28,24 +24,48 @@ async function validatePath(workspacePath: string, requestedPath: string): Promi
   return resolvedRequested;
 }
 
-async function walkRecursive(
-  dirPath: string,
-  basePath: string,
-  result: FlatFileNode[],
-): Promise<void> {
-  const entries = await readdir(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const relativePath = basePath ? `${basePath}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) {
-      result.push({ path: relativePath, type: 'folder' });
-      await walkRecursive(path.join(dirPath, entry.name), relativePath, result);
-    } else {
-      result.push({ path: relativePath, type: 'file' });
+// GET /api/workspaces/:id/files/search?q=&limit=
+router.get('/search', async (req, res) => {
+  try {
+    const workspace = await store.get((req.params as { id: string }).id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const query = typeof req.query.q === 'string' ? req.query.q : '';
+    const limitParam = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 200;
+
+    const controller = new AbortController();
+    req.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
+
+    try {
+      const result = await searchFiles({
+        workspaceRoot: workspace.folderPath,
+        query,
+        limit,
+        signal: controller.signal,
+      });
+      res.json(result);
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Client disconnected; nothing to send.
+        return;
+      }
+      throw err;
+    }
+  } catch (error) {
+    console.error('Failed to search files:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to search files' });
     }
   }
-}
+});
 
-// GET /api/workspaces/:id/files?path=&recursive=
+// GET /api/workspaces/:id/files?path=
 router.get('/', async (req, res) => {
   try {
     const workspace = await store.get((req.params as { id: string }).id);
@@ -59,16 +79,6 @@ router.get('/', async (req, res) => {
 
     if (!targetPath) {
       res.status(403).json({ error: 'Path outside workspace' });
-      return;
-    }
-
-    const isRecursive = req.query.recursive === 'true';
-
-    if (isRecursive) {
-      const result: FlatFileNode[] = [];
-      await walkRecursive(targetPath, relativePath, result);
-      result.sort((a, b) => a.path.localeCompare(b.path));
-      res.json({ path: relativePath, nodes: result });
       return;
     }
 
