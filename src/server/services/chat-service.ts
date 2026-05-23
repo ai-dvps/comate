@@ -24,6 +24,10 @@ export class ChatService {
   private creatingRuntimes = new Map<string, Promise<SessionRuntime>>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
+  getActiveSessionCount(): number {
+    return this.runtimes.size;
+  }
+
   // Session management
 
   async listSessions(workspaceId: string): Promise<ChatSession[]> {
