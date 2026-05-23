@@ -1,1 +1,121 @@
-{}
+{
+  "settings": "Settings",
+  "tabs": {
+    "general": "General",
+    "appearance": "Appearance",
+    "workspace": "Workspace",
+    "skills": "Skills",
+    "mcp": "MCP",
+    "hooks": "Hooks",
+    "wecom": "WeCom Bot"
+  },
+  "general": {
+    "defaultModel": "Default Model",
+    "defaultModelPlaceholder": "e.g. claude-sonnet-4-5-20250929",
+    "defaultModelHint": "Leave empty to use the system default model.",
+    "messageWindowCap": "Message Window Cap",
+    "messageWindowCapHint": "Max messages kept in memory per session (50–1000). Older messages are pruned but can be re-fetched by scrolling up.",
+    "reopenLastWorkspace": "Reopen last workspace on launch",
+    "reopenLastWorkspaceHint": "Automatically restore the last active workspace when the app starts."
+  },
+  "appearance": {
+    "theme": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "followingSystem": "Following system preference",
+    "manualSelection": "Manual selection",
+    "resetToSystem": "Reset to system",
+    "language": "Language"
+  },
+  "workspace": {
+    "name": "Name",
+    "description": "Description",
+    "modelOverride": "Model Override",
+    "modelOverridePlaceholder": "e.g. claude-sonnet-4-5-20250929",
+    "modelOverrideHint": "Leave empty to use the default model.",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "sk-ant-...",
+    "apiKeyHint": "Stored locally. Falls back to environment variable if empty."
+  },
+  "skills": {
+    "addSkill": "Add Skill",
+    "skillNamePlaceholder": "Skill name",
+    "noSkills": "No skills added"
+  },
+  "mcp": {
+    "serverName": "Server name",
+    "command": "Command (e.g. node)",
+    "arguments": "Arguments (space-separated)",
+    "addServer": "Add MCP Server",
+    "noServers": "No MCP servers added"
+  },
+  "hooks": {
+    "hookName": "Hook name",
+    "scriptPath": "Script path",
+    "addHook": "Add Hook",
+    "noHooks": "No hooks added"
+  },
+  "wecom": {
+    "enableBot": "Enable WeCom Bot",
+    "enableBotHint": "When enabled, this workspace acts as a WeCom bot endpoint.",
+    "botId": "Bot ID",
+    "botIdPlaceholder": "your-bot-id",
+    "botSecret": "Bot Secret",
+    "botSecretPlaceholder": "your-bot-secret",
+    "status": "Status:",
+    "botSessionNote": "Bot sessions have full tool auto-approval. Save changes to connect or disconnect."
+  },
+  "wecomCli": {
+    "title": "WeCom CLI",
+    "hint": "Make the wecom command available in your terminal.",
+    "install": "Install",
+    "uninstall": "Uninstall",
+    "installing": "Installing...",
+    "uninstalling": "Uninstall...",
+    "installedAt": "Installed at",
+    "pathHint": "Make sure ~/.local/bin is on your PATH. You may need to restart your terminal or run hash -r for the shell to discover the command.",
+    "checkError": "Failed to check status",
+    "installError": "Install request failed",
+    "uninstallError": "Uninstall request failed"
+  },
+  "unsavedDialog": {
+    "title": "Unsaved changes",
+    "message": "You have unsaved changes. Save them before closing?",
+    "keepEditing": "Keep editing",
+    "discard": "Discard",
+    "saveChanges": "Save changes",
+    "saving": "Saving..."
+  },
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close"
+  },
+  "createWorkspace": {
+    "title": "Create Workspace",
+    "subtitle": "Set up a new workspace for your project",
+    "nameLabel": "Workspace Name",
+    "namePlaceholder": "e.g. My Project",
+    "folderLabel": "Folder Path",
+    "folderPlaceholder": "/path/to/project",
+    "browse": "Browse",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Optional description...",
+    "cancel": "Cancel",
+    "creating": "Creating...",
+    "create": "Create",
+    "error": "Failed to create workspace"
+  },
+  "workspaceSwitcher": {
+    "switchWorkspace": "Switch workspace",
+    "workspaces": "Workspaces",
+    "noWorkspaces": "No workspaces yet"
+  },
+  "workspaceTabs": {
+    "botConnected": "WeCom bot connected",
+    "botDisconnected": "WeCom bot disconnected",
+    "botError": "WeCom bot error",
+    "botNotConfigured": "WeCom bot not configured",
+    "closeTab": "Close {{name}}"
+  }
+}

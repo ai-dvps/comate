@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { useTheme } from '../hooks/use-theme'
@@ -56,6 +57,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
 }
 
 export default function SettingsPanel({ onClose }: SettingsPanelProps) {
+  const { t } = useTranslation('settings')
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
@@ -230,13 +232,13 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   }
 
   const tabs: { id: SettingsTab; label: string }[] = [
-    { id: 'general', label: 'General' },
-    { id: 'appearance', label: 'Appearance' },
-    { id: 'workspace', label: 'Workspace' },
-    { id: 'skills', label: 'Skills' },
-    { id: 'mcp', label: 'MCP' },
-    { id: 'hooks', label: 'Hooks' },
-    { id: 'wecom', label: 'WeCom Bot' },
+    { id: 'general', label: t('tabs.general') },
+    { id: 'appearance', label: t('tabs.appearance') },
+    { id: 'workspace', label: t('tabs.workspace') },
+    { id: 'skills', label: t('tabs.skills') },
+    { id: 'mcp', label: t('tabs.mcp') },
+    { id: 'hooks', label: t('tabs.hooks') },
+    { id: 'wecom', label: t('tabs.wecom') },
   ]
 
   const isWorkspaceTab = activeTab === 'workspace' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'hooks' || activeTab === 'wecom'
@@ -245,7 +247,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     <div className="fixed inset-0 z-50 flex flex-col bg-bg">
       {/* Header */}
       <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
-        <h2 className="text-sm font-medium text-text-primary">Settings</h2>
+        <h2 className="text-sm font-medium text-text-primary">{t('settings')}</h2>
         <button
           onClick={handleClose}
           className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
@@ -307,14 +309,14 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       {/* Footer */}
       <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0">
         <div className="text-[11px] text-text-tertiary">
-          {isDirty() && 'You have unsaved changes'}
+          {isDirty() && t('unsavedDialog.message')}
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={handleCancel}
             className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
           >
-            Cancel
+            {t('actions.cancel')}
           </button>
           <button
             onClick={handleSave}
@@ -322,7 +324,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
             className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
           >
             <Save className="w-3.5 h-3.5" />
-            {isSaving ? 'Saving...' : 'Save changes'}
+            {isSaving ? t('unsavedDialog.saving') : t('actions.save')}
           </button>
         </div>
       </div>
@@ -335,9 +337,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
             <div className="flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
               <div>
-                <h3 className="text-sm font-medium text-text-primary">Unsaved changes</h3>
+                <h3 className="text-sm font-medium text-text-primary">{t('unsavedDialog.title')}</h3>
                 <p className="text-xs text-text-secondary mt-1">
-                  You have unsaved changes. Save them before closing?
+                  {t('unsavedDialog.message')}
                 </p>
               </div>
             </div>
@@ -349,13 +351,13 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 }}
                 className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
               >
-                Keep editing
+                {t('unsavedDialog.keepEditing')}
               </button>
               <button
                 onClick={handleDiscard}
                 className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
               >
-                Discard
+                {t('unsavedDialog.discard')}
               </button>
               <button
                 onClick={handleSave}
@@ -363,7 +365,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
               >
                 <Save className="w-3.5 h-3.5" />
-                {isSaving ? 'Saving...' : 'Save changes'}
+                {isSaving ? t('unsavedDialog.saving') : t('actions.save')}
               </button>
             </div>
           </div>
@@ -392,28 +394,30 @@ function GeneralTab({
   onWindowCapChange: (v: string) => void
   onWindowCapCommit: (v: string) => void
 }) {
+  const { t } = useTranslation('settings')
+
   return (
     <div className="p-6 max-w-xl">
       <div className="space-y-5">
         <WeComCliSection />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Default Model
+            {t('general.defaultModel')}
           </label>
           <input
             value={defaultModel}
             onChange={(e) => onDefaultModelChange(e.target.value)}
-            placeholder="e.g. claude-sonnet-4-5-20250929"
+            placeholder={t('general.defaultModelPlaceholder')}
             className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
           />
           <p className="text-[10px] text-text-tertiary mt-1">
-            Leave empty to use the system default model.
+            {t('general.defaultModelHint')}
           </p>
         </div>
 
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Message Window Cap
+            {t('general.messageWindowCap')}
           </label>
           <input
             type="number"
@@ -430,17 +434,17 @@ function GeneralTab({
             className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
           />
           <p className="text-[10px] text-text-tertiary mt-1">
-            Max messages kept in memory per session (50–1000). Older messages are pruned but can be re-fetched by scrolling up.
+            {t('general.messageWindowCapHint')}
           </p>
         </div>
 
         <div className="flex items-center justify-between py-3 border-t border-border/50">
           <div>
             <label className="block text-xs font-medium text-text-secondary">
-              Reopen last workspace on launch
+              {t('general.reopenLastWorkspace')}
             </label>
             <p className="text-[10px] text-text-tertiary mt-0.5">
-              Automatically restore the last active workspace when the app starts.
+              {t('general.reopenLastWorkspaceHint')}
             </p>
           </div>
           <button
@@ -464,6 +468,7 @@ function GeneralTab({
 function AppearanceTab() {
   const { theme, isFollowingSystem, setTheme, resetToSystem } = useTheme()
   const { language, setLanguage } = useAppSettings()
+  const { t } = useTranslation('settings')
 
   const handleLanguageChange = (lang: string) => {
     setLanguage(lang)
@@ -474,7 +479,7 @@ function AppearanceTab() {
     <div className="p-6 max-w-xl">
       <div className="space-y-5">
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-2">Theme</label>
+          <label className="block text-xs font-medium text-text-secondary mb-2">{t('appearance.theme')}</label>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setTheme('light')}
@@ -485,7 +490,7 @@ function AppearanceTab() {
               }`}
             >
               <Sun className="w-3.5 h-3.5" />
-              Light
+              {t('appearance.light')}
             </button>
             <button
               onClick={() => setTheme('dark')}
@@ -496,27 +501,27 @@ function AppearanceTab() {
               }`}
             >
               <Moon className="w-3.5 h-3.5" />
-              Dark
+              {t('appearance.dark')}
             </button>
           </div>
           <div className="mt-2 flex items-center gap-2">
             <Monitor className="w-3 h-3 text-text-tertiary" />
             <span className="text-[11px] text-text-tertiary">
-              {isFollowingSystem ? 'Following system preference' : 'Manual selection'}
+              {isFollowingSystem ? t('appearance.followingSystem') : t('appearance.manualSelection')}
             </span>
             {!isFollowingSystem && (
               <button
                 onClick={resetToSystem}
                 className="text-[11px] text-accent hover:text-accent-hover underline underline-offset-2"
               >
-                Reset to system
+                {t('appearance.resetToSystem')}
               </button>
             )}
           </div>
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-2">Language</label>
+          <label className="block text-xs font-medium text-text-secondary mb-2">{t('appearance.language')}</label>
           <div className="flex items-center gap-2">
             <button
               onClick={() => handleLanguageChange('en')}
@@ -546,6 +551,7 @@ function AppearanceTab() {
 }
 
 function WeComCliSection() {
+  const { t } = useTranslation('settings')
   const [status, setStatus] = useState<{ installed: boolean; path?: string; error?: string } | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -556,9 +562,9 @@ function WeComCliSection() {
       const data = await res.json()
       setStatus(data)
     } catch {
-      setStatus({ installed: false, error: 'Failed to check status' })
+      setStatus({ installed: false, error: t('wecomCli.checkError') })
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     fetchStatus()
@@ -571,7 +577,7 @@ function WeComCliSection() {
       const data = await res.json()
       setStatus(data)
     } catch {
-      setStatus({ installed: false, error: 'Install request failed' })
+      setStatus({ installed: false, error: t('wecomCli.installError') })
     }
     setLoading(false)
   }
@@ -583,7 +589,7 @@ function WeComCliSection() {
       const data = await res.json()
       setStatus(data)
     } catch {
-      setStatus({ installed: false, error: 'Uninstall request failed' })
+      setStatus({ installed: false, error: t('wecomCli.uninstallError') })
     }
     setLoading(false)
   }
@@ -594,9 +600,9 @@ function WeComCliSection() {
     <div className="py-3 border-b border-border/50">
       <div className="flex items-center justify-between">
         <div>
-          <label className="block text-xs font-medium text-text-secondary">WeCom CLI</label>
+          <label className="block text-xs font-medium text-text-secondary">{t('wecomCli.title')}</label>
           <p className="text-[10px] text-text-tertiary mt-0.5">
-            Make the <code className="text-[10px] font-mono bg-surface-hover px-1 rounded">wecom</code> command available in your terminal.
+            {t('wecomCli.hint')}
           </p>
         </div>
         {isInstalled ? (
@@ -605,7 +611,7 @@ function WeComCliSection() {
             disabled={loading}
             className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
           >
-            {loading ? 'Working...' : 'Uninstall'}
+            {loading ? t('wecomCli.uninstalling') : t('wecomCli.uninstall')}
           </button>
         ) : (
           <button
@@ -613,7 +619,7 @@ function WeComCliSection() {
             disabled={loading}
             className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground transition-colors disabled:opacity-50"
           >
-            {loading ? 'Installing...' : 'Install'}
+            {loading ? t('wecomCli.installing') : t('wecomCli.install')}
           </button>
         )}
       </div>
@@ -624,13 +630,13 @@ function WeComCliSection() {
 
       {isInstalled && status?.path && (
         <p className="text-[11px] text-success mt-2">
-          Installed at <code className="font-mono bg-surface-hover px-1 rounded">{status.path}</code>
+          {t('wecomCli.installedAt')} <code className="font-mono bg-surface-hover px-1 rounded">{status.path}</code>
         </p>
       )}
 
       {isInstalled && (
         <p className="text-[10px] text-text-tertiary mt-1.5">
-          Make sure <code className="font-mono bg-surface-hover px-1 rounded">~/.local/bin</code> is on your PATH. You may need to restart your terminal or run <code className="font-mono bg-surface-hover px-1 rounded">hash -r</code> for the shell to discover the command.
+          {t('wecomCli.pathHint')}
         </p>
       )}
     </div>
@@ -654,10 +660,12 @@ function WorkspaceTabShell({
   workspaceState: WorkspaceFormState | null
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
 }) {
+  const { t } = useTranslation('settings')
+
   if (workspaces.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-sm text-text-tertiary">No workspaces yet</p>
+        <p className="text-sm text-text-tertiary">{t('workspaceSwitcher.noWorkspaces')}</p>
       </div>
     )
   }
@@ -668,7 +676,7 @@ function WorkspaceTabShell({
       <div className="w-64 border-r border-border/50 flex-shrink-0 overflow-y-auto">
         <div className="p-3">
           <p className="text-[10px] font-medium text-text-tertiary uppercase tracking-wider mb-2 px-2">
-            Workspaces
+            {t('workspaceSwitcher.workspaces')}
           </p>
           <div className="space-y-0.5">
             {workspaces.map((ws) => (
@@ -692,7 +700,7 @@ function WorkspaceTabShell({
       <div className="flex-1 overflow-y-auto p-6">
         {!workspaceState ? (
           <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-text-tertiary">Select a workspace</p>
+            <p className="text-sm text-text-tertiary">{t('workspaceSwitcher.switchWorkspace')}</p>
           </div>
         ) : (
           <>
@@ -725,12 +733,13 @@ function WorkspaceDetailsTab({
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
 }) {
+  const { t } = useTranslation('settings')
   const [showApiKey, setShowApiKey] = useState(false)
 
   return (
     <div className="space-y-4 max-w-xl">
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Name</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.name')}</label>
         <input
           value={state.name}
           onChange={(e) => onUpdate({ name: e.target.value })}
@@ -738,7 +747,7 @@ function WorkspaceDetailsTab({
         />
       </div>
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.description')}</label>
         <textarea
           value={state.description}
           onChange={(e) => onUpdate({ description: e.target.value })}
@@ -747,23 +756,23 @@ function WorkspaceDetailsTab({
         />
       </div>
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Model Override</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.modelOverride')}</label>
         <input
           value={state.model}
           onChange={(e) => onUpdate({ model: e.target.value })}
-          placeholder="e.g. claude-sonnet-4-5-20250929"
+          placeholder={t('workspace.modelOverridePlaceholder')}
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
-        <p className="text-[10px] text-text-tertiary mt-1">Leave empty to use the default model.</p>
+        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.modelOverrideHint')}</p>
       </div>
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">API Key</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.apiKey')}</label>
         <div className="flex gap-2">
           <input
             type={showApiKey ? 'text' : 'password'}
             value={state.apiKey}
             onChange={(e) => onUpdate({ apiKey: e.target.value })}
-            placeholder="sk-ant-..."
+            placeholder={t('workspace.apiKeyPlaceholder')}
             className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
           />
           <button
@@ -774,7 +783,7 @@ function WorkspaceDetailsTab({
           </button>
         </div>
         <p className="text-[10px] text-text-tertiary mt-1">
-          Stored locally. Falls back to environment variable if empty.
+          {t('workspace.apiKeyHint')}
         </p>
       </div>
     </div>
@@ -788,6 +797,7 @@ function SkillsTab({
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
 }) {
+  const { t } = useTranslation('settings')
   const [newSkill, setNewSkill] = useState('')
 
   const addSkill = () => {
@@ -806,7 +816,7 @@ function SkillsTab({
           onKeyDown={(e) => {
             if (e.key === 'Enter') addSkill()
           }}
-          placeholder="Skill name"
+          placeholder={t('skills.skillNamePlaceholder')}
           className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
         <button
@@ -834,7 +844,7 @@ function SkillsTab({
           </div>
         ))}
         {state.skills.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">No skills added</p>
+          <p className="text-xs text-text-tertiary text-center py-4">{t('skills.noSkills')}</p>
         )}
       </div>
     </div>
@@ -848,6 +858,7 @@ function McpTab({
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
 }) {
+  const { t } = useTranslation('settings')
   const [newMcpName, setNewMcpName] = useState('')
   const [newMcpCommand, setNewMcpCommand] = useState('')
   const [newMcpArgs, setNewMcpArgs] = useState('')
@@ -873,19 +884,19 @@ function McpTab({
         <input
           value={newMcpName}
           onChange={(e) => setNewMcpName(e.target.value)}
-          placeholder="Server name"
+          placeholder={t('mcp.serverName')}
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
         <input
           value={newMcpCommand}
           onChange={(e) => setNewMcpCommand(e.target.value)}
-          placeholder="Command (e.g. node)"
+          placeholder={t('mcp.command')}
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
         <input
           value={newMcpArgs}
           onChange={(e) => setNewMcpArgs(e.target.value)}
-          placeholder="Arguments (space-separated)"
+          placeholder={t('mcp.arguments')}
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
         <button
@@ -893,7 +904,7 @@ function McpTab({
           className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
         >
           <Plus className="w-3.5 h-3.5" />
-          Add MCP Server
+          {t('mcp.addServer')}
         </button>
       </div>
       <div className="space-y-2">
@@ -921,7 +932,7 @@ function McpTab({
           </div>
         ))}
         {state.mcpServers.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">No MCP servers added</p>
+          <p className="text-xs text-text-tertiary text-center py-4">{t('mcp.noServers')}</p>
         )}
       </div>
     </div>
@@ -935,6 +946,7 @@ function HooksTab({
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
 }) {
+  const { t } = useTranslation('settings')
   const [newHookName, setNewHookName] = useState('')
   const [newHookPath, setNewHookPath] = useState('')
 
@@ -955,13 +967,13 @@ function HooksTab({
         <input
           value={newHookName}
           onChange={(e) => setNewHookName(e.target.value)}
-          placeholder="Hook name"
+          placeholder={t('hooks.hookName')}
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
         <input
           value={newHookPath}
           onChange={(e) => setNewHookPath(e.target.value)}
-          placeholder="Script path"
+          placeholder={t('hooks.scriptPath')}
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
         <button
@@ -969,7 +981,7 @@ function HooksTab({
           className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
         >
           <Plus className="w-3.5 h-3.5" />
-          Add Hook
+          {t('hooks.addHook')}
         </button>
       </div>
       <div className="space-y-2">
@@ -997,7 +1009,7 @@ function HooksTab({
           </div>
         ))}
         {state.hooks.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">No hooks added</p>
+          <p className="text-xs text-text-tertiary text-center py-4">{t('hooks.noHooks')}</p>
         )}
       </div>
     </div>
@@ -1013,6 +1025,7 @@ function WeComBotTab({
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
   workspaceId: string
 }) {
+  const { t } = useTranslation('settings')
   const [showSecret, setShowSecret] = useState(false)
   const [status, setStatus] = useState<string>('unknown')
 
@@ -1049,10 +1062,10 @@ function WeComBotTab({
       <div className="flex items-center justify-between py-2 border-b border-border/50">
         <div>
           <label className="block text-xs font-medium text-text-secondary">
-            Enable WeCom Bot
+            {t('wecom.enableBot')}
           </label>
           <p className="text-[10px] text-text-tertiary mt-0.5">
-            When enabled, this workspace acts as a WeCom bot endpoint.
+            {t('wecom.enableBotHint')}
           </p>
         </div>
         <button
@@ -1070,23 +1083,23 @@ function WeComBotTab({
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Bot ID</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botId')}</label>
         <input
           value={state.wecomBotId}
           onChange={(e) => onUpdate({ wecomBotId: e.target.value })}
-          placeholder="your-bot-id"
+          placeholder={t('wecom.botIdPlaceholder')}
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Bot Secret</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botSecret')}</label>
         <div className="flex gap-2">
           <input
             type={showSecret ? 'text' : 'password'}
             value={state.wecomBotSecret}
             onChange={(e) => onUpdate({ wecomBotSecret: e.target.value })}
-            placeholder="your-bot-secret"
+            placeholder={t('wecom.botSecretPlaceholder')}
             className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
           />
           <button
@@ -1099,12 +1112,12 @@ function WeComBotTab({
       </div>
 
       <div className="flex items-center gap-2 pt-2">
-        <span className="text-[11px] font-medium text-text-secondary">Status:</span>
+        <span className="text-[11px] font-medium text-text-secondary">{t('wecom.status')}</span>
         <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
       </div>
 
       <div className="text-[10px] text-text-tertiary pt-2">
-        <p>Bot sessions have full tool auto-approval. Save changes to connect or disconnect.</p>
+        <p>{t('wecom.botSessionNote')}</p>
       </div>
     </div>
   )

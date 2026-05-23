@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import MessageList from './MessageList'
@@ -12,6 +13,7 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ workspaceId }: ChatPanelProps) {
+  const { t } = useTranslation('chat')
   const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
@@ -51,6 +53,13 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
 
   const currentApproval = approvalQueue[0] || null
   const approvalQueueLength = approvalQueue.length
+
+  // DIAGNOSTIC: log render and approval state
+  console.log('[ChatPanel] render', { activeSessionId, approvalQueueLength, currentRequestId: currentApproval?.requestId ?? null })
+
+  useEffect(() => {
+    console.log('[ChatPanel] currentApproval changed:', currentApproval?.requestId ?? null)
+  }, [currentApproval])
 
   const handleSend = (content: string) => {
     if (!activeSessionId) return
@@ -128,7 +137,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       <div className="flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0 max-w-full px-4">
           <span className="text-sm font-medium text-text-primary truncate max-w-md">
-            {activeSession?.name || 'No session'}
+            {activeSession?.name || t('noSession')}
           </span>
           <span className="text-text-tertiary">/</span>
           <span className="text-xs text-text-tertiary">{modelName}</span>
@@ -157,7 +166,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-text-secondary">Select or create a session to start chatting</p>
+            <p className="text-sm text-text-secondary">{t('selectSessionPrompt')}</p>
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import SessionList from './SessionList'
 import FileExplorer from './FileExplorer'
@@ -11,6 +12,7 @@ interface SidebarProps {
 type SidebarTab = 'sessions' | 'files'
 
 export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps) {
+  const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<SidebarTab>('sessions')
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
 
@@ -26,7 +28,7 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
           }`}
           onClick={() => setActiveTab('sessions')}
         >
-          Sessions
+          {t('sidebar.sessions')}
         </button>
         <button
           className={`flex-1 py-3 text-xs font-medium text-center transition-all ${
@@ -36,7 +38,7 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
           }`}
           onClick={() => setActiveTab('files')}
         >
-          Files
+          {t('sidebar.files')}
         </button>
       </div>
 
@@ -48,7 +50,7 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
         {activeTab === 'sessions' && !activeWorkspaceId && (
           <div className="flex-1 flex items-center justify-center p-4">
             <p className="text-xs text-text-tertiary text-center">
-              Open a workspace to view sessions
+              {t('sidebar.noWorkspace')}
             </p>
           </div>
         )}
@@ -66,7 +68,7 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
           <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">
             D
           </div>
-          <span className="text-xs text-text-secondary">Developer</span>
+          <span className="text-xs text-text-secondary">{t('sidebar.developer')}</span>
         </div>
       </div>
     </aside>

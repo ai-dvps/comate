@@ -1,3 +1,36 @@
 {
-  "appName": "Claude Code"
+  "appName": "Claude Code",
+  "header": {
+    "createWorkspace": "Create workspace",
+    "toggleTheme": "Toggle theme",
+    "settings": "Settings",
+    "userProfile": "User profile (coming soon)"
+  },
+  "sidebar": {
+    "sessions": "Sessions",
+    "files": "Files",
+    "noWorkspace": "Open a workspace to view sessions",
+    "developer": "Developer"
+  },
+  "status": {
+    "needs-me": {
+      "singular": "Needs approval or input",
+      "plural": "{{count}} sessions need approval or input"
+    },
+    "finished-unread": {
+      "singular": "Finished",
+      "plural": "{{count}} sessions finished"
+    },
+    "streaming": {
+      "singular": "Streaming",
+      "plural": "{{count}} sessions streaming"
+    }
+  },
+  "commandPicker": {
+    "partialFallback": "Some built-in commands unavailable — check Claude credentials in Settings.",
+    "searchPlaceholder": "Search commands...",
+    "loading": "Loading commands...",
+    "noMatch": "No commands match `{{filter}}`",
+    "noCommands": "No commands available"
+  }
 }

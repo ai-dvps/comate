@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import type { SessionStatusState } from '../lib/session-status'
 
@@ -20,30 +22,19 @@ const ICON_CLASS: Record<StatusIndicatorState, string> = {
   streaming: 'text-blue-500 animate-spin',
 }
 
-const TITLE_SINGULAR: Record<StatusIndicatorState, string> = {
-  'needs-me': 'Needs approval or input',
-  'finished-unread': 'Finished',
-  streaming: 'Streaming',
-}
-
-const TITLE_PLURAL: Record<StatusIndicatorState, string> = {
-  'needs-me': 'need approval or input',
-  'finished-unread': 'finished',
-  streaming: 'streaming',
-}
-
 function formatCount(count: number): string {
   return count >= 10 ? '9+' : String(count)
 }
 
-function buildTitle(state: StatusIndicatorState, count: number | undefined): string {
-  if (count === undefined || count === 1) return TITLE_SINGULAR[state]
-  return `${formatCount(count)} sessions ${TITLE_PLURAL[state]}`
+function buildTitle(state: StatusIndicatorState, count: number | undefined, t: TFunction): string {
+  if (count === undefined || count === 1) return t(`status.${state}.singular`)
+  return t(`status.${state}.plural`, { count: formatCount(count) })
 }
 
 export default function StatusIndicator({ state, count }: StatusIndicatorProps) {
+  const { t } = useTranslation('common')
   const Icon = ICON[state]
-  const title = buildTitle(state, count)
+  const title = buildTitle(state, count, t)
   const icon = <Icon className={`w-3 h-3 flex-shrink-0 ${ICON_CLASS[state]}`} />
 
   if (count === undefined) {

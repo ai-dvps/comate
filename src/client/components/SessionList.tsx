@@ -1,10 +1,12 @@
+import type { TFunction } from 'i18next'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { MessageSquare, Plus, Trash2 } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
 
-function formatRelativeDate(dateStr: string): string {
+function formatRelativeDate(dateStr: string, t: TFunction): string {
   const date = new Date(dateStr)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
@@ -12,10 +14,10 @@ function formatRelativeDate(dateStr: string): string {
   const diffHours = Math.floor(diffMs / 3600000)
   const diffDays = Math.floor(diffMs / 86400000)
 
-  if (diffMins < 1) return 'Just now'
-  if (diffMins < 60) return `${diffMins} min ago`
-  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-  if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+  if (diffMins < 1) return t('time.justNow')
+  if (diffMins < 60) return t('time.minAgo', { count: diffMins })
+  if (diffHours < 24) return t('time.hourAgo', { count: diffHours })
+  if (diffDays < 7) return t('time.dayAgo', { count: diffDays })
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
@@ -27,11 +29,11 @@ function getSessionDisplayName(session: import('../stores/chat-store').ChatSessi
   return name
 }
 
-function getSessionTimestamp(session: import('../stores/chat-store').ChatSession): string {
+function getSessionTimestamp(session: import('../stores/chat-store').ChatSession, t: TFunction): string {
   if (session.lastModified) {
-    return formatRelativeDate(new Date(session.lastModified).toISOString())
+    return formatRelativeDate(new Date(session.lastModified).toISOString(), t)
   }
-  return formatRelativeDate(session.updatedAt)
+  return formatRelativeDate(session.updatedAt, t)
 }
 
 interface SessionListProps {
@@ -39,6 +41,7 @@ interface SessionListProps {
 }
 
 export default function SessionList({ workspaceId }: SessionListProps) {
+  const { t } = useTranslation('chat')
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
   const [hoveredSession, setHoveredSession] = useState<string | null>(null)
@@ -55,7 +58,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const deleteSession = useChatStore((s) => s.deleteSession)
 
   const handleCreate = async () => {
-    const name = newName.trim() || `Session ${sessions.length + 1}`
+    const name = newName.trim() || t('newSessionDefaultName', { count: sessions.length + 1 })
     await createSession(workspaceId, name)
     setNewName('')
     setShowCreate(false)
@@ -68,7 +71,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
 
   const getPreview = (sessionId: string): string => {
     const sessionMessages = messages[sessionId] || []
-    if (sessionMessages.length === 0) return 'Start a new conversation...'
+    if (sessionMessages.length === 0) return t('startConversation')
     const lastMsg = sessionMessages[sessionMessages.length - 1]
     const firstPart = lastMsg.parts[0]
     const text = firstPart?.type === 'text' ? firstPart.text : ''
@@ -93,7 +96,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                   setNewName('')
                 }
               }}
-              placeholder="Session name"
+              placeholder={t('sessionNamePlaceholder')}
               className="w-full px-3 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
             />
             <div className="flex gap-2">
@@ -101,7 +104,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 onClick={handleCreate}
                 className="flex-1 py-1.5 text-xs bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
               >
-                Create
+                {t('create')}
               </button>
               <button
                 onClick={() => {
@@ -110,7 +113,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 }}
                 className="flex-1 py-1.5 text-xs bg-surface-hover hover:bg-surface-active text-text-secondary rounded-lg transition-colors"
               >
-                Cancel
+                {t('cancel')}
               </button>
             </div>
           </div>
@@ -120,7 +123,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-bg border border-border hover:border-border-hover rounded-lg text-xs text-text-secondary hover:text-text-primary transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
-            New Session
+            {t('newSession')}
           </button>
         )}
       </div>
@@ -128,12 +131,12 @@ export default function SessionList({ workspaceId }: SessionListProps) {
       {/* Session List */}
       <div className="flex-1 overflow-y-auto py-1">
         {isLoading && sessions.length === 0 ? (
-          <div className="px-4 py-3 text-xs text-text-tertiary">Loading sessions...</div>
+          <div className="px-4 py-3 text-xs text-text-tertiary">{t('loadingSessions')}</div>
         ) : sessions.length === 0 ? (
           <div className="px-4 py-3 text-xs text-text-tertiary text-center">
-            No sessions yet.
+            {t('noSessions')}
             <br />
-            Create one to start chatting.
+            {t('createSessionPrompt')}
           </div>
         ) : (
           sessions.map((session) => {
@@ -174,7 +177,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                     </p>
                     {session.isDraft && (
                       <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
-                        Draft
+                        {t('draft')}
                       </span>
                     )}
                     {session.source === 'wecom' && (
@@ -182,7 +185,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                         src="/wecom-icon.svg"
                         alt="WeCom"
                         className="w-3 h-3 flex-shrink-0"
-                        title="WeCom bot session"
+                        title={t('wecomBotSession')}
                       />
                     )}
                     {rowState !== 'idle' && <StatusIndicator state={rowState} />}
@@ -191,7 +194,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                     {getPreview(session.id)}
                   </p>
                   <p className="text-[10px] text-text-tertiary/60 mt-1">
-                    {getSessionTimestamp(session)}
+                    {getSessionTimestamp(session, t)}
                   </p>
                 </div>
                 {session.id === activeSessionId ? (
@@ -202,7 +205,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                     className={`p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive flex-shrink-0 transition-opacity ${
                       hoveredSession === session.id ? 'opacity-100' : 'opacity-0'
                     }`}
-                    title="Delete session"
+                    title={t('deleteSession')}
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>
