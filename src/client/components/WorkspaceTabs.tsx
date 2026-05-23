@@ -1,16 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
+import { useTranslation } from 'react-i18next'
 import { Folder, X } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 
 type BotStatus = 'connected' | 'disconnected' | 'error' | 'not_configured'
 
-const BOT_STATUS_LABEL: Record<BotStatus, string> = {
-  connected: 'WeCom bot connected',
-  disconnected: 'WeCom bot disconnected',
-  error: 'WeCom bot error',
-  not_configured: 'WeCom bot not configured',
+function getBotStatusLabel(status: BotStatus, t: (key: string) => string): string {
+  const labels: Record<BotStatus, string> = {
+    connected: t('workspaceTabs.botConnected'),
+    disconnected: t('workspaceTabs.botDisconnected'),
+    error: t('workspaceTabs.botError'),
+    not_configured: t('workspaceTabs.botNotConfigured'),
+  }
+  return labels[status]
 }
 
 const BOT_STATUS_CLASS: Record<BotStatus, string> = {
@@ -28,6 +32,7 @@ const BOT_STATUS_DOT: Record<BotStatus, string> = {
 }
 
 export default function WorkspaceTabs() {
+  const { t } = useTranslation('settings')
   const { workspaces, openWorkspaceIds, activeWorkspaceId, setActiveWorkspace, closeWorkspace } = useWorkspaceStore()
 
   const sessions = useChatStore((s) => s.sessions)
@@ -113,7 +118,7 @@ export default function WorkspaceTabs() {
             <Folder className={`w-3 h-3 flex-shrink-0 ${isActive ? 'text-accent' : 'text-text-tertiary'}`} />
             <span className="truncate max-w-[100px]">{ws.name}</span>
             {botStatus && (
-              <span className="relative inline-flex flex-shrink-0" title={BOT_STATUS_LABEL[botStatus]}>
+              <span className="relative inline-flex flex-shrink-0" title={getBotStatusLabel(botStatus, t)}>
                 <img
                   src="/wecom-icon.svg"
                   alt="WeCom"
@@ -136,7 +141,7 @@ export default function WorkspaceTabs() {
                   e.stopPropagation()
                   closeWorkspace(ws.id)
                 }}
-                aria-label={`Close ${ws.name}`}
+                aria-label={t('workspaceTabs.closeTab', { name: ws.name })}
               >
                 <X className="w-3 h-3" />
               </button>

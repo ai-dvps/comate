@@ -6,6 +6,7 @@ import {
   useCallback,
   useId,
 } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Loader2, Square, SlashSquare, Paperclip } from 'lucide-react'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 
@@ -23,9 +24,7 @@ import PreviewPane from './PreviewPane'
 import { getToolRenderer, StructuredFallback } from './tool-renderers'
 
 export const CHAT_ABOUT_THIS_MESSAGE =
-  'I have questions before answering — can we discuss the options before I pick?'
-
-const OTHER_LABEL = 'Other'
+  'chatAboutThisMessage'
 
 interface PendingApproval {
   requestId: string
@@ -70,10 +69,11 @@ export default function ApprovalSurface({
   onChatAbout,
   onStop,
 }: ApprovalSurfaceProps) {
+  const { t } = useTranslation('chat')
   const titleId = useId()
   const isQuestion = 'questions' in pendingItem
   const headerTitle = isQuestion
-    ? 'Clarifying question'
+    ? t('approval.clarifyingQuestion')
     : pendingItem.title || pendingItem.toolName
   const headerDescription = isQuestion
     ? undefined
@@ -159,14 +159,15 @@ function StopButton({
   onStop: () => void
   isResolving: boolean
 }) {
+  const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label="Stop"
-          title="Stop"
+          aria-label={t('approval.stop')}
+          title={t('approval.stop')}
           disabled={isResolving}
           className="p-1.5 rounded-md text-text-tertiary hover:text-accent hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
@@ -181,14 +182,14 @@ function StopButton({
         align="end"
         className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
       >
-        <p className="text-sm text-text-primary mb-3">Cancel current turn?</p>
+        <p className="text-sm text-text-primary mb-3">{t('stopPopover.title')}</p>
         <div className="flex items-center justify-end gap-2">
           <button
             onClick={() => setOpen(false)}
             disabled={isResolving}
             className="px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
           >
-            Cancel
+            {t('stopPopover.cancel')}
           </button>
           <button
             onClick={() => {
@@ -201,10 +202,10 @@ function StopButton({
             {isResolving ? (
               <span className="flex items-center gap-1">
                 <Loader2 className="w-3 h-3 animate-spin" />
-                Stopping…
+                {t('stopPopover.stopping')}
               </span>
             ) : (
-              'Confirm'
+              t('stopPopover.confirm')
             )}
           </button>
         </div>
@@ -226,6 +227,7 @@ function ApprovalView({
   onAllowAlways: () => void
   onDeny: (message: string) => void
 }) {
+  const { t } = useTranslation('chat')
   const [showMore, setShowMore] = useState(false)
   const hasSuggestions = item.suggestions && item.suggestions.length > 0
 
@@ -260,7 +262,7 @@ function ApprovalView({
             onClick={() => setShowMore(!showMore)}
             className="text-xs text-accent hover:underline mt-1"
           >
-            {showMore ? 'Show less' : 'Show more'}
+            {showMore ? t('approval.showLess') : t('approval.showMore')}
           </button>
         )}
       </div>
@@ -273,7 +275,7 @@ function ApprovalView({
               …
             </span>
           ) : (
-            'Allow'
+            t('approval.allow')
           )}
         </Button>
         {hasSuggestions && (
@@ -283,7 +285,7 @@ function ApprovalView({
             variant="secondary"
             size="sm"
           >
-            Allow always
+            {t('approval.allowAlways')}
           </Button>
         )}
         <Button
@@ -292,7 +294,7 @@ function ApprovalView({
           variant="destructive"
           size="sm"
         >
-          Deny
+          {t('approval.deny')}
         </Button>
       </div>
     </div>
@@ -318,6 +320,7 @@ function QuestionView({
   onAnswerQuestion: (answers: Record<string, string>) => void
   onChatAbout: () => void
 }) {
+  const { t } = useTranslation('chat')
   const [selections, setSelections] = useState<Record<string, string[]>>({})
   const [otherSelected, setOtherSelected] = useState<Record<string, boolean>>(
     {},
@@ -627,7 +630,7 @@ function QuestionView({
             q,
             qIdx,
             q.options.length,
-            OTHER_LABEL,
+            t('approval.other'),
             undefined,
             otherIsOn,
             () => toggleOther(q.question, q.multiSelect),
@@ -656,7 +659,7 @@ function QuestionView({
       {isResolving ? (
         <div className="flex items-center gap-2 mb-3 text-sm text-text-tertiary">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          Submitted
+          {t('approval.submitted')}
         </div>
       ) : currentHasPreviews ? (
         <div className="flex gap-3 mb-3 max-h-[60vh]">
@@ -678,7 +681,7 @@ function QuestionView({
             variant="secondary"
             size="sm"
           >
-            Back
+            {t('approval.back')}
           </Button>
         )}
         {isStepper && !isLastStep && (
@@ -687,7 +690,7 @@ function QuestionView({
             disabled={!canNext}
             size="sm"
           >
-            Next
+            {t('approval.next')}
           </Button>
         )}
         {(!isStepper || isLastStep) && (
@@ -698,7 +701,7 @@ function QuestionView({
                 …
               </span>
             ) : (
-              'Confirm'
+              t('approval.confirm')
             )}
           </Button>
         )}
@@ -709,7 +712,7 @@ function QuestionView({
             variant="secondary"
             size="sm"
           >
-            Chat about this
+            {t('approval.chatAboutThis')}
           </Button>
         )}
       </div>
@@ -730,6 +733,7 @@ function OtherInput({
   disabled,
   onChange,
 }: OtherInputProps) {
+  const { t } = useTranslation('chat')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const commandHandleRef = useRef<CommandPickerHandle>(null)
   const fileHandleRef = useRef<FilePickerHandle>(null)
@@ -952,10 +956,10 @@ function OtherInput({
               onClick={openCommandsExplicit}
               disabled={disabled}
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Commands"
+              title={t('commands')}
             >
               <SlashSquare className="w-3 h-3" />
-              <span>Commands</span>
+              <span>{t('commands')}</span>
             </button>
           }
         />
@@ -979,10 +983,10 @@ function OtherInput({
               onClick={openFilesExplicit}
               disabled={disabled || !workspaceId}
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Files"
+              title={t('files')}
             >
               <Paperclip className="w-3 h-3" />
-              <span>Files</span>
+              <span>{t('files')}</span>
             </button>
           }
         />
@@ -994,7 +998,7 @@ function OtherInput({
           handleInputChange(e.target.value, e.target.selectionStart)
         }
         onKeyDown={handleKeyDown}
-        placeholder="Type your answer…"
+        placeholder={t('approval.typeAnswer')}
         disabled={disabled}
         rows={1}
         className="w-full bg-transparent border-0 px-3 py-2 text-xs text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto"

@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertCircle, Bot } from 'lucide-react'
 
 import { useChatStore } from '../stores/chat-store'
@@ -145,6 +146,7 @@ function toToolState(toolUse: ToolUsePart, result?: ToolResultPart): ToolState {
 }
 
 export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: MessageListProps) {
+  const { t } = useTranslation('chat')
   const messages = useChatStore((s) => s.messages[sessionId] || [])
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
   const visibleMessages = useMemo(
@@ -188,8 +190,8 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: Me
         <ConversationContent>
           <ConversationEmptyState
             icon={<Bot className="w-8 h-8" />}
-            title="Start a conversation"
-            description="Send a message to begin chatting with Claude"
+            title={t('emptyState.title')}
+            description={t('emptyState.description')}
           />
         </ConversationContent>
       </Conversation>

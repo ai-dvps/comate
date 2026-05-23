@@ -1,1 +1,56 @@
-{}
+{
+  "noSession": "No session",
+  "selectSessionPrompt": "Select or create a session to start chatting",
+  "emptyState": {
+    "title": "Start a conversation",
+    "description": "Send a message to begin chatting with Claude"
+  },
+  "commands": "Commands",
+  "files": "Files",
+  "placeholder": "Ask Claude anything about your code...",
+  "clear": "Clear",
+  "send": "Send",
+  "inputHint": "Enter to send, Shift+Enter for new line",
+  "stopPopover": {
+    "title": "Cancel current turn?",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "stopping": "Stopping..."
+  },
+  "approval": {
+    "clarifyingQuestion": "Clarifying question",
+    "stop": "Stop",
+    "showLess": "Show less",
+    "showMore": "Show more",
+    "allow": "Allow",
+    "allowAlways": "Allow always",
+    "deny": "Deny",
+    "chatAboutThis": "Chat about this",
+    "submitted": "Submitted",
+    "back": "Back",
+    "next": "Next",
+    "confirm": "Confirm",
+    "other": "Other",
+    "typeAnswer": "Type your answer..."
+  },
+  "sessionNamePlaceholder": "Session name",
+  "create": "Create",
+  "cancel": "Cancel",
+  "newSession": "New Session",
+  "newSessionDefaultName": "Session {{count}}",
+  "loadingSessions": "Loading sessions...",
+  "noSessions": "No sessions yet.",
+  "createSessionPrompt": "Create one to start chatting.",
+  "startConversation": "Start a new conversation...",
+  "draft": "Draft",
+  "deleteSession": "Delete session",
+  "wecomBotSession": "WeCom bot session",
+  "time": {
+    "justNow": "Just now",
+    "minAgo": "{{count}} min ago",
+    "hourAgo": "{{count}} hour ago",
+    "hourAgo_plural": "{{count}} hours ago",
+    "dayAgo": "{{count}} day ago",
+    "dayAgo_plural": "{{count}} days ago"
+  }
+}

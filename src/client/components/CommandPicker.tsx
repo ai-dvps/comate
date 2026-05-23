@@ -7,6 +7,7 @@ import {
   useImperativeHandle,
   forwardRef,
 } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { useCommands, type SlashCommandDto } from '../stores/commands-store'
@@ -46,6 +47,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
     },
     ref,
   ) {
+    const { t } = useTranslation('common')
     const { commands, loading, error, partial, partialReason, fetch, refresh } =
       useCommands(workspaceId)
     const [filter, setFilter] = useState(initialFilter)
@@ -177,8 +179,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
         >
           {partial && (
             <div className="text-[11px] text-text-tertiary px-2 py-1 mb-1 rounded bg-surface-hover">
-              {partialReason ||
-                'Some built-in commands unavailable — check Claude credentials in Settings.'}
+              {partialReason || t('commandPicker.partialFallback')}
             </div>
           )}
           {!hideFilterInput && (
@@ -191,7 +192,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
                 setActiveIndex(0)
               }}
               onKeyDown={handleKeyDown}
-              placeholder="Search commands…"
+              placeholder={t('commandPicker.searchPlaceholder')}
               className="w-full bg-transparent text-sm text-text-primary placeholder:text-text-tertiary px-2 py-1.5 border-b border-border focus:outline-none"
               autoComplete="off"
               spellCheck={false}
@@ -201,7 +202,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
             {showLoadingState && (
               <div className="flex items-center gap-2 px-2 py-3 text-xs text-text-tertiary">
                 <Loader2 className="w-3 h-3 animate-spin" />
-                Loading commands…
+                {t('commandPicker.loading')}
               </div>
             )}
             {showErrorState && (
@@ -211,7 +212,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
               !showErrorState &&
               filtered.length === 0 && (
                 <div className="px-2 py-3 text-xs text-text-tertiary">
-                  No commands match{filter ? ` \`${filter}\`` : ''}
+                  {filter ? t('commandPicker.noMatch', { filter }) : t('commandPicker.noCommands')}
                 </div>
               )}
             {!showLoadingState &&

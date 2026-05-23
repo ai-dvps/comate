@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Plus, Settings, Sun, Moon } from 'lucide-react'
 import { useTheme } from '../hooks/use-theme'
 
@@ -10,6 +11,7 @@ export default function HeaderToolbar({
   onCreateWorkspace,
   onOpenSettings,
 }: HeaderToolbarProps) {
+  const { t } = useTranslation('common')
   const { theme, toggleTheme } = useTheme()
 
   return (
@@ -17,7 +19,7 @@ export default function HeaderToolbar({
       <button
         onClick={onCreateWorkspace}
         className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-        title="Create workspace"
+        title={t('header.createWorkspace')}
       >
         <Plus className="w-4 h-4" />
       </button>
@@ -25,7 +27,7 @@ export default function HeaderToolbar({
       <button
         onClick={toggleTheme}
         className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-        title="Toggle theme"
+        title={t('header.toggleTheme')}
       >
         {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
       </button>
@@ -33,7 +35,7 @@ export default function HeaderToolbar({
       <button
         onClick={onOpenSettings}
         className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-        title="Settings"
+        title={t('header.settings')}
       >
         <Settings className="w-4 h-4" />
       </button>
@@ -41,7 +43,7 @@ export default function HeaderToolbar({
       {/* User Profile placeholder */}
       <div
         className="w-7 h-7 rounded-full bg-accent/20 flex items-center justify-center text-[11px] font-medium text-accent ml-0.5"
-        title="User profile (coming soon)"
+        title={t('header.userProfile')}
       >
         D
       </div>

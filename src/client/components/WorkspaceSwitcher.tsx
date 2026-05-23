@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check, LayoutGrid } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 
 export default function WorkspaceSwitcher() {
+  const { t } = useTranslation('settings')
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -41,7 +43,7 @@ export default function WorkspaceSwitcher() {
       <button
         onClick={() => setIsOpen((prev) => !prev)}
         className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-        title="Switch workspace"
+        title={t('workspaceSwitcher.switchWorkspace')}
         aria-expanded={isOpen}
       >
         <LayoutGrid className="w-4 h-4" />
@@ -53,13 +55,13 @@ export default function WorkspaceSwitcher() {
         >
           <div className="px-3 py-2 border-b border-border/50">
             <span className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">
-              Workspaces
+              {t('workspaceSwitcher.workspaces')}
             </span>
           </div>
           <div className="max-h-72 overflow-y-auto py-1">
             {workspaces.length === 0 ? (
               <div className="px-3 py-4 text-xs text-text-tertiary text-center">
-                No workspaces yet
+                {t('workspaceSwitcher.noWorkspaces')}
               </div>
             ) : (
               workspaces.map((ws) => {

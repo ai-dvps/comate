@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Send, X, Square, Loader2, SlashSquare, Paperclip } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
@@ -27,6 +28,7 @@ export default function PromptInput({
   isInterrupting = false,
   hasSession = false,
 }: PromptInputProps) {
+  const { t } = useTranslation('chat')
   const input = useChatStore((s) =>
     sessionId ? s.drafts[sessionId] ?? '' : '',
   )
@@ -329,10 +331,10 @@ export default function PromptInput({
                 onClick={handleCommandsClick}
                 disabled={commandsDisabled}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Commands"
+                title={t('commands')}
               >
                 <SlashSquare className="w-3 h-3" />
-                <span>Commands</span>
+                <span>{t('commands')}</span>
               </button>
             }
           />
@@ -356,10 +358,10 @@ export default function PromptInput({
                 onClick={handleFilesClick}
                 disabled={filesDisabled}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Files"
+                title={t('files')}
               >
                 <Paperclip className="w-3 h-3" />
-                <span>Files</span>
+                <span>{t('files')}</span>
               </button>
             }
           />
@@ -372,7 +374,7 @@ export default function PromptInput({
               handleInputChange(e.target.value, e.target.selectionStart)
             }
             onKeyDown={handleKeyDown}
-            placeholder="Ask Claude anything about your code..."
+            placeholder={t('placeholder')}
             disabled={disabled || isStreaming}
             rows={1}
             className="w-full bg-transparent border-0 px-4 py-3 pr-24 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
@@ -394,7 +396,7 @@ export default function PromptInput({
               onClick={handleClear}
               disabled={isInterrupting}
               className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary transition-colors"
-              title="Clear"
+              title={t('clear')}
             >
               <X className="w-4 h-4" />
             </button>
@@ -422,7 +424,7 @@ export default function PromptInput({
                 className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
               >
                 <p className="text-sm text-text-primary mb-3">
-                  Cancel current turn?
+                  {t('stopPopover.title')}
                 </p>
                 <div className="flex items-center justify-end gap-2">
                   <button
@@ -430,7 +432,7 @@ export default function PromptInput({
                     disabled={isInterrupting}
                     className="px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
                   >
-                    Cancel
+                    {t('stopPopover.cancel')}
                   </button>
                   <button
                     onClick={() => {
@@ -443,10 +445,10 @@ export default function PromptInput({
                     {isInterrupting ? (
                       <span className="flex items-center gap-1">
                         <Loader2 className="w-3 h-3 animate-spin" />
-                        Stopping…
+                        {t('stopPopover.stopping')}
                       </span>
                     ) : (
-                      'Confirm'
+                      t('stopPopover.confirm')
                     )}
                   </button>
                 </div>
@@ -457,7 +459,7 @@ export default function PromptInput({
               onClick={handleSend}
               disabled={!canSend}
               className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Send"
+              title={t('send')}
             >
               <Send className="w-4 h-4" />
             </button>
@@ -466,7 +468,7 @@ export default function PromptInput({
       </div>
       <div className="flex items-center justify-between mt-1.5 px-1">
         <span className="text-[11px] text-text-tertiary">
-          Enter to send, Shift+Enter for new line
+          {t('inputHint')}
         </span>
       </div>
     </div>
