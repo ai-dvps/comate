@@ -19,13 +19,13 @@ function getInitialSettings(): AppSettings {
       return {
         defaultModel: typeof parsed.defaultModel === 'string' ? parsed.defaultModel : '',
         reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
-        language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : 'en',
+        language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : i18n.language,
       }
     }
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false, language: 'en' }
+  return { defaultModel: '', reopenLastWorkspace: false, language: i18n.language }
 }
 
 function saveSettings(settings: AppSettings) {
