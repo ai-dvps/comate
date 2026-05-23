@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import Sidebar from './components/Sidebar'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
@@ -18,6 +19,7 @@ export interface ViewedFile {
 }
 
 function App() {
+  const { t } = useTranslation('common')
   useTheme()
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
@@ -166,7 +168,7 @@ function App() {
             <ChatPanel workspaceId={activeWorkspace.id} />
           ) : (
             <div className="flex items-center justify-center h-full">
-              <p className="text-text-secondary">Select or create a workspace to get started</p>
+              <p className="text-text-secondary">{t('selectOrCreateWorkspace')}</p>
             </div>
           )}
         </main>

@@ -38,5 +38,11 @@
   "pinSideBySide": "Pin side-by-side",
   "searchFiles": "Search files…",
   "loadingFiles": "Loading files…",
-  "noFilesMatch": "No files match{{filter}}"
+  "noFilesMatch": "No files match{{filter}}",
+  "selectOrCreateWorkspace": "Select or create a workspace to get started",
+  "noWorkspaceToBrowse": "Open a workspace to browse files",
+  "emptyWorkspace": "Empty workspace",
+  "emptyFolder": "Empty folder",
+  "failedToLoadFiles": "Failed to load files",
+  "unknownError": "Unknown error"
 }
