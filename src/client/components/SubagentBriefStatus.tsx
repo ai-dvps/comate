@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Bot,
   CheckCircleIcon,
@@ -70,6 +71,7 @@ export default function SubagentBriefStatus({
   input,
   result,
 }: SubagentBriefStatusProps) {
+  const { t } = useTranslation('chat')
   const subagent = useChatStore((s) =>
     (s.subagents[sessionId] || []).find(
       (sa) => sa.parentToolUseId === parentToolUseId,
@@ -83,7 +85,7 @@ export default function SubagentBriefStatus({
       <div className="mb-4 w-full rounded-md border border-border bg-surface p-3 text-sm text-text-secondary">
         <div className="flex items-center gap-2">
           <Bot className="size-4 text-text-tertiary" />
-          <span>Agent: {subagentType || 'Agent'}</span>
+          <span>{t('agentLabel', { type: subagentType || t('agent') })}</span>
         </div>
         {prompt && (
           <CompactableContainer className="mt-2">
@@ -96,7 +98,7 @@ export default function SubagentBriefStatus({
           <CompactableContainer className="mt-2">
             <div>
               <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
-                {result.isError ? 'Error' : 'Result'}
+                {result.isError ? t('subagentStatus.error') : t('result')}
               </h4>
               {prompt && <hr className="border-border/50 my-1" />}
               <div className={cn('text-xs whitespace-pre-wrap', result.isError ? 'text-destructive' : 'text-text-secondary')}>
@@ -123,19 +125,19 @@ export default function SubagentBriefStatus({
 const statusConfig = {
   running: {
     icon: <ClockIcon className="size-3.5 animate-pulse text-warning" />,
-    label: 'Running',
+    labelKey: 'subagentStatus.running',
     badgeClass: 'bg-warning/10 text-warning border-warning/20',
     borderClass: 'border-l-2 border-l-warning',
   },
   completed: {
     icon: <CheckCircleIcon className="size-3.5 text-success" />,
-    label: 'Completed',
+    labelKey: 'subagentStatus.completed',
     badgeClass: 'bg-success/10 text-success border-success/20',
     borderClass: 'border-l-2 border-l-success',
   },
   error: {
     icon: <XCircleIcon className="size-3.5 text-destructive" />,
-    label: 'Error',
+    labelKey: 'subagentStatus.error',
     badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
     borderClass: 'border-l-2 border-l-destructive',
   },
@@ -154,6 +156,7 @@ function StatusCard({
   result?: ToolResultPart
   onClick: () => void
 }) {
+  const { t } = useTranslation('chat')
   const isRunning = subagent.state === 'running'
   const elapsed = useElapsed(subagent.startTime, isRunning)
 
@@ -172,7 +175,7 @@ function StatusCard({
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Bot className="size-4 shrink-0 text-text-tertiary" />
           <span className="truncate text-sm font-medium text-text-primary">
-            Agent: {subagentType || 'Agent'}
+            {t('agentLabel', { type: subagentType || t('agent') })}
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -183,7 +186,7 @@ function StatusCard({
             )}
           >
             {config.icon}
-            {config.label}
+            {t(config.labelKey)}
           </span>
           <ChevronRightIcon className="size-4 text-text-tertiary transition-colors group-hover:text-text-secondary" />
         </div>
@@ -201,7 +204,7 @@ function StatusCard({
         <CompactableContainer className="mt-2">
           <div className="space-y-1">
             <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
-              Prompt
+              {t('prompt')}
             </h4>
             <div className="text-xs text-text-secondary whitespace-pre-wrap">
               {prompt}
@@ -235,7 +238,7 @@ function StatusCard({
         <span>{elapsed}</span>
         <span className="text-text-tertiary">•</span>
         <span>
-          {subagent.toolCount} tool{subagent.toolCount !== 1 ? 's' : ''}
+          {t('toolCount', { count: subagent.toolCount })}
         </span>
         {subagent.progressHint && (
           <>

@@ -9,6 +9,7 @@
 'use client'
 
 import { useControllableState } from '@radix-ui/react-use-controllable-state'
+import i18next from 'i18next'
 import { BrainIcon, ChevronDownIcon } from 'lucide-react'
 import type { ComponentProps, ReactNode } from 'react'
 import {
@@ -160,12 +161,12 @@ export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger> & 
 
 const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
   if (isStreaming || duration === 0) {
-    return <Shimmer duration={1}>Thinking...</Shimmer>
+    return <Shimmer duration={1}>{i18next.t('chat:thinking')}</Shimmer>
   }
   if (duration === undefined) {
-    return <p>Thought for a few seconds</p>
+    return <p>{i18next.t('chat:thoughtForSeconds')}</p>
   }
-  return <p>Thought for {duration} seconds</p>
+  return <p>{i18next.t('chat:thoughtForDuration', { duration })}</p>
 }
 
 export const ReasoningTrigger = memo(

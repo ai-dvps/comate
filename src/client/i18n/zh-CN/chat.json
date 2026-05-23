@@ -53,6 +53,13 @@
     "completed": "已完成",
     "error": "错误"
   },
+  "agent": "代理",
+  "agentLabel": "代理: {{type}}",
+  "prompt": "提示词",
+  "result": "结果",
+  "thinking": "思考中...",
+  "thoughtForSeconds": "思考了几秒",
+  "thoughtForDuration": "思考了 {{duration}} 秒",
   "time": {
     "justNow": "刚刚",
     "minAgo": "{{count}} 分钟前",
