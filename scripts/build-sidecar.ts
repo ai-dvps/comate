@@ -70,13 +70,37 @@ async function build() {
       `--banner:js="#!/usr/bin/env node"`,
   );
 
-  // Fix import.meta.url polyfills for pkg compatibility
+  // Fix import.meta.url polyfills for pkg compatibility.
+  //
+  // esbuild emits two shapes for the import_meta shim:
+  //   (a) inline:   `var import_meta3 = {};`
+  //   (b) hoisted:  `var ..., import_meta4, ...;` followed by `import_meta4 = {};`
+  // Shape (b) appears inside ESM-CJS wrappers like fdir's `init_dist`, where
+  // every module-scope binding is hoisted to a single `var` declaration and
+  // the assignment runs lazily on first require. The fdir wrapper then calls
+  // `createRequire(import_meta4.url)`; if url is undefined, Node throws
+  // `TypeError: The argument 'filename' must be a file URL ...` and any code
+  // path that triggers init_file_search_fallback (e.g. searchFiles falling
+  // through to the pure-Node walker) fails. Patch both shapes.
   const bundleContent = readFileSync(bundlePath, 'utf-8');
-  const fixedContent = bundleContent.replace(
-    /var import_meta(\d*) = \{\};/g,
-    (_match, num) => `var import_meta${num} = { url: 'file:///snapshot/bundle.js' };`,
-  );
+  const fixedContent = bundleContent
+    .replace(
+      /var import_meta(\d*) = \{\};/g,
+      (_match, num) => `var import_meta${num} = { url: 'file:///snapshot/bundle.js' };`,
+    )
+    .replace(
+      /^(\s*)import_meta(\d*) = \{\};$/gm,
+      (_match, ws, num) => `${ws}import_meta${num} = { url: 'file:///snapshot/bundle.js' };`,
+    );
   writeFileSync(bundlePath, fixedContent);
+
+  // Sanity check: fail the build if any unpatched import_meta shim survives.
+  if (/^\s*import_meta\d* = \{\};\s*$/m.test(fixedContent)) {
+    throw new Error(
+      'build-sidecar: unpatched `import_meta{N} = {};` found in bundle — ' +
+        'extend the regex in scripts/build-sidecar.ts to cover the new shape.',
+    );
+  }
 
   // 4. Package with pkg
   console.log('\n--- Packaging with pkg ---');
