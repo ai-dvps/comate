@@ -28,9 +28,13 @@ interface IgnoreLayer {
  * degraded path and this is good enough for AE4.
  */
 async function buildIgnoreLayers(workspaceRoot: string): Promise<IgnoreLayer[]> {
+  // Collect .gitignore files via a filename filter rather than fdir's
+  // `.glob()` matcher — the bundled sidecar runs inside a pkg snapshot where
+  // fdir's optional picomatch dependency is not resolvable, and `.glob()`
+  // throws "Please specify a glob function to use glob matching."
   const finder = new fdir()
     .withRelativePaths()
-    .glob('**/.gitignore')
+    .filter((p) => path.basename(p) === '.gitignore')
     .exclude((name) => HARD_EXCLUDES.has(name))
     .crawl(workspaceRoot);
   const paths = (await finder.withPromise()) as string[];

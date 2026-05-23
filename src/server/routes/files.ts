@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from 'fs/promises';
 import path from 'path';
 import { store } from '../storage/sqlite-store.js';
 import { searchFiles } from '../services/file-search.js';
+import { sidecarError } from '../utils/sidecar-logger.js';
 
 const router = Router({ mergeParams: true });
 
@@ -58,7 +59,7 @@ router.get('/search', async (req, res) => {
       throw err;
     }
   } catch (error) {
-    console.error('Failed to search files:', error);
+    sidecarError('[files/search] failed:', error instanceof Error ? (error.stack || error.message) : error);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Failed to search files' });
     }
