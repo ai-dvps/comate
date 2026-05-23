@@ -118,6 +118,33 @@ export class WeComBotService {
     return conn.status;
   }
 
+  async getAggregateStatus(): Promise<{
+    state: 'connected' | 'partial' | 'disconnected' | 'not_configured';
+  }> {
+    let workspaces: Workspace[];
+    try {
+      workspaces = await workspaceStore.list();
+    } catch {
+      return { state: 'not_configured' };
+    }
+
+    const configured = workspaces.filter(
+      (ws) =>
+        ws.settings.wecomBotEnabled &&
+        ws.settings.wecomBotId &&
+        ws.settings.wecomBotSecret,
+    );
+    if (configured.length === 0) return { state: 'not_configured' };
+
+    let connectedCount = 0;
+    for (const ws of configured) {
+      if (this.getStatus(ws.id) === 'connected') connectedCount += 1;
+    }
+    if (connectedCount === configured.length) return { state: 'connected' };
+    if (connectedCount === 0) return { state: 'disconnected' };
+    return { state: 'partial' };
+  }
+
   private async handleTextMessage(workspaceId: string, frame: WsFrame<TextMessage>): Promise<void> {
     if (!frame.body) return;
     const wecomUserId = frame.body.from.userid;

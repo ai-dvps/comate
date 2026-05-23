@@ -1,11 +1,22 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use std::time::Duration;
+
+use serde::Deserialize;
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+
+const TRAY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 struct AppState {
     api_port: Mutex<Option<u16>>,
     sidecar_child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
+    is_shutting_down: AtomicBool,
+    bot_status_item: Mutex<Option<MenuItem<tauri::Wry>>>,
+    session_count_item: Mutex<Option<MenuItem<tauri::Wry>>>,
 }
 
 #[tauri::command]
@@ -14,12 +25,126 @@ fn get_api_port(state: State<'_, AppState>) -> Result<u16, String> {
     port.ok_or_else(|| "API port not yet discovered".to_string())
 }
 
+// Verified OS-level kill matrix for `perform_shutdown` reuse (R16):
+// - macOS Cmd-Q / Quit menu / Activity Monitor Force Quit -> Tauri emits
+//   WindowEvent::Destroyed on the main window before exit -> shutdown runs.
+// - Windows close button (already routed through CloseRequested below) and
+//   Task Manager "End Task" -> Destroyed fires; shutdown runs.
+// - Linux SIGTERM/SIGINT to the Tauri PID -> Destroyed fires; shutdown runs.
+// `is_shutting_down` guards against double-entry when tray Quit calls
+// `app_handle.exit(0)` (which itself raises Destroyed on some platforms).
+fn perform_shutdown(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    if state
+        .is_shutting_down
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+
+    if let Ok(mut child_lock) = state.sidecar_child.lock() {
+        if let Some(child) = child_lock.take() {
+            if let Err(e) = child.kill() {
+                log::error!("Failed to kill sidecar: {}", e);
+            }
+        }
+    }
+    app_handle.exit(0);
+}
+
+fn show_main_window(app_handle: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Regular);
+    }
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[derive(Deserialize)]
+struct TrayStatusResponse {
+    #[serde(rename = "wecomBot")]
+    wecom_bot: String,
+    #[serde(rename = "activeSessions")]
+    active_sessions: u64,
+}
+
+fn bot_status_label(state: &str) -> String {
+    match state {
+        "connected" => "WeCom bot: connected".to_string(),
+        "partial" => "WeCom bot: partially connected".to_string(),
+        "disconnected" => "WeCom bot: disconnected".to_string(),
+        _ => "WeCom bot: not configured".to_string(),
+    }
+}
+
+async fn run_tray_status_poller(app_handle: AppHandle) {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to build tray status HTTP client: {}", e);
+            return;
+        }
+    };
+
+    loop {
+        {
+            let state = app_handle.state::<AppState>();
+            if state.is_shutting_down.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+
+        let port_opt = {
+            let state = app_handle.state::<AppState>();
+            state.api_port.lock().ok().and_then(|guard| *guard)
+        };
+
+        if let Some(port) = port_opt {
+            let url = format!("http://127.0.0.1:{}/api/system/tray-status", port);
+            match client.get(&url).send().await {
+                Ok(resp) => match resp.json::<TrayStatusResponse>().await {
+                    Ok(body) => {
+                        let bot_text = bot_status_label(&body.wecom_bot);
+                        let session_text = format!("Active sessions: {}", body.active_sessions);
+                        let state = app_handle.state::<AppState>();
+                        if let Ok(guard) = state.bot_status_item.lock() {
+                            if let Some(item) = guard.as_ref() {
+                                let _ = item.set_text(&bot_text);
+                            }
+                        }
+                        if let Ok(guard) = state.session_count_item.lock() {
+                            if let Some(item) = guard.as_ref() {
+                                let _ = item.set_text(&session_text);
+                            }
+                        };
+                    }
+                    Err(e) => log::debug!("Tray status parse failed: {}", e),
+                },
+                Err(e) => log::debug!("Tray status fetch failed: {}", e),
+            }
+        }
+
+        tokio::time::sleep(TRAY_POLL_INTERVAL).await;
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             api_port: Mutex::new(None),
             sidecar_child: Mutex::new(None),
+            is_shutting_down: AtomicBool::new(false),
+            bot_status_item: Mutex::new(None),
+            session_count_item: Mutex::new(None),
         })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -31,6 +156,72 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            // Build the tray menu. The two status items are disabled — they
+            // render as read-only labels and the poller updates their text.
+            let open_item = MenuItemBuilder::with_id("open", "Open Claude Code GUI")
+                .enabled(true)
+                .build(app)?;
+            let bot_item = MenuItemBuilder::with_id("bot_status", "WeCom bot: …")
+                .enabled(false)
+                .build(app)?;
+            let session_item = MenuItemBuilder::with_id("session_count", "Active sessions: …")
+                .enabled(false)
+                .build(app)?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit Claude Code GUI")
+                .enabled(true)
+                .build(app)?;
+
+            let tray_menu = MenuBuilder::new(app)
+                .item(&open_item)
+                .item(&bot_item)
+                .item(&session_item)
+                .item(&separator)
+                .item(&quit_item)
+                .build()?;
+
+            {
+                let state = app.state::<AppState>();
+                if let Ok(mut guard) = state.bot_status_item.lock() {
+                    *guard = Some(bot_item);
+                }
+                if let Ok(mut guard) = state.session_count_item.lock() {
+                    *guard = Some(session_item);
+                };
+            }
+
+            let tray_builder = TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
+                    tauri::image::Image::new(&[], 0, 0)
+                }))
+                .menu(&tray_menu)
+                .show_menu_on_left_click(cfg!(target_os = "macos"))
+                .on_menu_event(|app_handle, event| match event.id().as_ref() {
+                    "open" => show_main_window(app_handle),
+                    "quit" => perform_shutdown(app_handle),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if cfg!(target_os = "macos") {
+                        return;
+                    }
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                });
+
+            if let Err(e) = tray_builder.build(app) {
+                // On Linux desktops without a status notifier host, tray
+                // creation fails. Window close-to-hide still works; the user
+                // loses the tray entry but the app remains functional.
+                log::error!("Failed to build system tray: {}", e);
             }
 
             let app_handle = app.handle().clone();
@@ -126,21 +317,34 @@ pub fn run() {
                 }
             });
 
+            let poller_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                run_tray_status_poller(poller_handle).await;
+            });
+
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
                 let app_handle = window.app_handle();
-                let state = app_handle.state::<AppState>();
-                if let Ok(mut child_lock) = state.sidecar_child.lock() {
-                    if let Some(child) = child_lock.take() {
-                        if let Err(e) = child.kill() {
-                            log::error!("Failed to kill sidecar: {}", e);
-                        }
-                    }
+                if app_handle
+                    .state::<AppState>()
+                    .is_shutting_down
+                    .load(Ordering::SeqCst)
+                {
+                    return;
                 }
-                app_handle.exit(0);
+                let _ = window.hide();
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
             }
+            tauri::WindowEvent::Destroyed => {
+                perform_shutdown(&window.app_handle());
+            }
+            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

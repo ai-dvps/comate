@@ -9,6 +9,7 @@ import chatRoutes from './routes/chat.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
 import wecomBridgeRoutes from './routes/wecom-bridge.js';
 import cliInstallRoutes from './routes/cli-install.js';
+import systemRoutes from './routes/system.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { diagLog } from './utils/diag-logger.js';
 
@@ -36,6 +37,7 @@ app.use('/api/workspaces/:id/commands', workspaceCommandsRoutes);
 app.use('/api/workspaces/:id', chatRoutes);
 app.use('/api/wecom', wecomBridgeRoutes);
 app.use('/api/cli', cliInstallRoutes);
+app.use('/api/system', systemRoutes);
 
 // Health checks
 app.get('/api/health', (_req, res) => {
