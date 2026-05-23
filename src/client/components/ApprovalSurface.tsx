@@ -251,9 +251,9 @@ function ApprovalView({
             {renderer!(item.input) ?? <StructuredFallback data={item.input} />}
           </div>
         ) : (
-          <p className="text-xs text-text-secondary font-mono bg-bg rounded px-2 py-1.5 whitespace-pre-wrap break-words">
-            {showMore ? inputStr : item.inputSummary}
-          </p>
+          <div className="bg-bg rounded px-2 py-1.5">
+            <StructuredFallback data={item.input} maxDepth={showMore ? undefined : 2} />
+          </div>
         )}
         {(isTruncated || hasCustomRenderer) && (
           <button
