@@ -2,12 +2,11 @@ import {
   useState,
   useEffect,
   useRef,
-  useMemo,
   useCallback,
   useImperativeHandle,
   forwardRef,
 } from 'react'
-import { Loader2, Folder, FileCode, FileJson, FileText, File } from 'lucide-react'
+import { Loader2, FileCode, FileJson, FileText, File } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { useFiles } from '../stores/files-store'
 
@@ -26,6 +25,7 @@ interface FilePickerProps {
   side?: 'top' | 'bottom'
   align?: 'start' | 'center' | 'end'
   initialFilter?: string
+  /** @deprecated The search endpoint is per-query; no separate refresh path needed. Kept to avoid churning callers. */
   refetchOnOpen?: boolean
   hideFilterInput?: boolean
 }
@@ -44,10 +44,7 @@ function getFileIcon(name: string) {
   return <File className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
 }
 
-function getIconForPath(path: string, type: 'file' | 'folder') {
-  if (type === 'folder') {
-    return <Folder className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" />
-  }
+function getIconForPath(path: string) {
   const basename = path.split('/').pop() || path
   return getFileIcon(basename)
 }
@@ -63,12 +60,11 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
       side = 'top',
       align = 'start',
       initialFilter = '',
-      refetchOnOpen = false,
       hideFilterInput = false,
     },
     ref,
   ) {
-    const { files, loading, error, fetch, refresh } = useFiles(workspaceId)
+    const { results, loading, error, search } = useFiles(workspaceId)
     const [filter, setFilter] = useState(initialFilter)
     const [activeIndex, setActiveIndex] = useState(0)
 
@@ -79,12 +75,8 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
 
     useEffect(() => {
       if (!open) return
-      if (refetchOnOpen) {
-        void refresh()
-      } else {
-        void fetch()
-      }
-    }, [open, refetchOnOpen, fetch, refresh])
+      search(filter)
+    }, [open, filter, search])
 
     useEffect(() => {
       if (open) {
@@ -106,17 +98,11 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
       }
     }, [open, hideFilterInput, initialFilter])
 
-    const filtered = useMemo(() => {
-      if (filter === '') return files
-      const needle = filter.toLowerCase()
-      return files.filter((f) => f.path.toLowerCase().includes(needle))
-    }, [files, filter])
-
     useEffect(() => {
-      if (activeIndex >= filtered.length) {
-        setActiveIndex(filtered.length > 0 ? filtered.length - 1 : 0)
+      if (activeIndex >= results.length) {
+        setActiveIndex(results.length > 0 ? results.length - 1 : 0)
       }
-    }, [filtered, activeIndex])
+    }, [results, activeIndex])
 
     useEffect(() => {
       if (!open) return
@@ -126,41 +112,41 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
 
     const commit = useCallback(
       (index: number) => {
-        const entry = filtered[index]
+        const entry = results[index]
         if (!entry) return
         onSelect(entry.path)
         onOpenChange(false)
       },
-      [filtered, onSelect, onOpenChange],
+      [results, onSelect, onOpenChange],
     )
 
     useImperativeHandle(
       ref,
       () => ({
         moveDown: () => {
-          if (filtered.length === 0) return
-          setActiveIndex((i) => (i + 1) % filtered.length)
+          if (results.length === 0) return
+          setActiveIndex((i) => (i + 1) % results.length)
         },
         moveUp: () => {
-          if (filtered.length === 0) return
-          setActiveIndex((i) => (i - 1 + filtered.length) % filtered.length)
+          if (results.length === 0) return
+          setActiveIndex((i) => (i - 1 + results.length) % results.length)
         },
         commitActive: () => commit(activeIndex),
       }),
-      [filtered, activeIndex, commit],
+      [results, activeIndex, commit],
     )
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        if (filtered.length === 0) return
-        setActiveIndex((i) => (i + 1) % filtered.length)
+        if (results.length === 0) return
+        setActiveIndex((i) => (i + 1) % results.length)
         return
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        if (filtered.length === 0) return
-        setActiveIndex((i) => (i - 1 + filtered.length) % filtered.length)
+        if (results.length === 0) return
+        setActiveIndex((i) => (i - 1 + results.length) % results.length)
         return
       }
       if (e.key === 'Enter') {
@@ -180,15 +166,10 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
       }
     }
 
-    const showLoadingState = loading && files.length === 0
-    const showErrorState = !!error && files.length === 0
-    const showEmptyWorkspace =
-      !showLoadingState && !showErrorState && files.length === 0
-    const showEmptyFilter =
-      !showLoadingState &&
-      !showErrorState &&
-      !showEmptyWorkspace &&
-      filtered.length === 0
+    const showLoadingState = loading && results.length === 0
+    const showErrorState = !!error && results.length === 0
+    const showEmpty =
+      !showLoadingState && !showErrorState && results.length === 0
 
     return (
       <Popover open={open} onOpenChange={onOpenChange}>
@@ -229,20 +210,14 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
             {showErrorState && (
               <div className="px-2 py-3 text-xs text-accent">{error}</div>
             )}
-            {showEmptyWorkspace && (
-              <div className="px-2 py-3 text-xs text-text-tertiary">
-                This workspace is empty
-              </div>
-            )}
-            {showEmptyFilter && (
+            {showEmpty && (
               <div className="px-2 py-3 text-xs text-text-tertiary">
                 No files match{filter ? ` \`${filter}\`` : ''}
               </div>
             )}
             {!showLoadingState &&
               !showErrorState &&
-              !showEmptyWorkspace &&
-              filtered.map((entry, i) => (
+              results.map((entry, i) => (
                 <button
                   key={entry.path}
                   ref={(el) => {
@@ -258,7 +233,7 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
                   }`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    {getIconForPath(entry.path, entry.type)}
+                    {getIconForPath(entry.path)}
                     <span className="text-sm text-text-primary truncate">
                       {entry.path}
                     </span>
