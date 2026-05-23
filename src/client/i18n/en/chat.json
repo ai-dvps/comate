@@ -53,6 +53,13 @@
     "completed": "Completed",
     "error": "Error"
   },
+  "agent": "Agent",
+  "agentLabel": "Agent: {{type}}",
+  "prompt": "Prompt",
+  "result": "Result",
+  "thinking": "Thinking...",
+  "thoughtForSeconds": "Thought for a few seconds",
+  "thoughtForDuration": "Thought for {{duration}} seconds",
   "time": {
     "justNow": "Just now",
     "minAgo": "{{count}} min ago",
