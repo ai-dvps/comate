@@ -1,1 +1,42 @@
-{}
+{
+  "appName": "Claude Code",
+  "header": {
+    "createWorkspace": "创建工作区",
+    "toggleTheme": "切换主题",
+    "settings": "设置",
+    "userProfile": "用户资料（即将推出）"
+  },
+  "sidebar": {
+    "sessions": "会话",
+    "files": "文件",
+    "noWorkspace": "打开工作区以查看会话",
+    "developer": "开发者"
+  },
+  "status": {
+    "needs-me": {
+      "singular": "需要审批或输入",
+      "plural": "{{count}} 个会话需要审批或输入"
+    },
+    "finished-unread": {
+      "singular": "已完成",
+      "plural": "{{count}} 个会话已完成"
+    },
+    "streaming": {
+      "singular": "流式传输中",
+      "plural": "{{count}} 个会话流式传输中"
+    }
+  },
+  "commandPicker": {
+    "partialFallback": "部分内置命令不可用 — 请在设置中检查 Claude 凭据。",
+    "searchPlaceholder": "搜索命令...",
+    "loading": "正在加载命令...",
+    "noMatch": "没有匹配 `{{filter}}` 的命令",
+    "noCommands": "没有可用命令"
+  },
+  "copyContent": "复制内容",
+  "close": "关闭",
+  "pinSideBySide": "并排固定",
+  "searchFiles": "搜索文件…",
+  "loadingFiles": "正在加载文件…",
+  "noFilesMatch": "没有匹配的文件{{filter}}"
+}

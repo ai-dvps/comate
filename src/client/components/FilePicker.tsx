@@ -6,6 +6,7 @@ import {
   useImperativeHandle,
   forwardRef,
 } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Loader2, FileCode, FileJson, FileText, File } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { useFiles } from '../stores/files-store'
@@ -65,6 +66,7 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
     ref,
   ) {
     const { results, loading, error, search } = useFiles(workspaceId)
+    const { t } = useTranslation('common')
     const [filter, setFilter] = useState(initialFilter)
     const [activeIndex, setActiveIndex] = useState(0)
 
@@ -194,7 +196,7 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
                 setActiveIndex(0)
               }}
               onKeyDown={handleKeyDown}
-              placeholder="Search files…"
+              placeholder={t('searchFiles')}
               className="w-full bg-transparent text-sm text-text-primary placeholder:text-text-tertiary px-2 py-1.5 border-b border-border focus:outline-none"
               autoComplete="off"
               spellCheck={false}
@@ -204,7 +206,7 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
             {showLoadingState && (
               <div className="flex items-center gap-2 px-2 py-3 text-xs text-text-tertiary">
                 <Loader2 className="w-3 h-3 animate-spin" />
-                Loading files…
+                {t('loadingFiles')}
               </div>
             )}
             {showErrorState && (
@@ -212,7 +214,7 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
             )}
             {showEmpty && (
               <div className="px-2 py-3 text-xs text-text-tertiary">
-                No files match{filter ? ` \`${filter}\`` : ''}
+                {t('noFilesMatch', { filter: filter ? ` \`${filter}\`` : '' })}
               </div>
             )}
             {!showLoadingState &&

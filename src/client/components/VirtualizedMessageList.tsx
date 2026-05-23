@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertCircle, ArrowDown, Bot } from 'lucide-react'
 
@@ -151,6 +152,7 @@ export default function VirtualizedMessageList({
   workspaceId,
   onOpenDrawer,
 }: VirtualizedMessageListProps) {
+  const { t } = useTranslation('chat')
   const messages = useChatStore((s) => s.messages[sessionId] || [])
   const totalMessageCount = useChatStore((s) => s.totalMessageCount[sessionId] || 0)
   const isLoadingOlder = useChatStore((s) => s.isLoadingOlderMessages[sessionId] || false)
@@ -312,8 +314,8 @@ export default function VirtualizedMessageList({
         <div className="flex flex-col gap-4 p-3 max-w-3xl mx-auto w-full h-full">
           <ConversationEmptyState
             icon={<Bot className="w-8 h-8" />}
-            title="Start a conversation"
-            description="Send a message to begin chatting with Claude"
+            title={t('emptyState.title')}
+            description={t('emptyState.description')}
           />
         </div>
       </div>
