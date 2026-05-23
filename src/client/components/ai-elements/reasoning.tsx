@@ -216,7 +216,7 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      <Streamdown>{children}</Streamdown>
+      <Streamdown className="[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">{children}</Streamdown>
     </CollapsibleContent>
   ),
 )
