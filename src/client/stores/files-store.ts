@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { create } from 'zustand';
+import i18next from 'i18next';
 
 export interface FileEntry {
   path: string;
@@ -67,7 +68,7 @@ async function runSearch(
     const url = `${API_BASE}/workspaces/${workspaceId}/files/search?q=${encodeURIComponent(query)}&limit=200`;
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Request failed' }));
+      const body = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }));
       throw new Error(body.error || `HTTP ${res.status}`);
     }
     const data = (await res.json()) as SearchResponse;
@@ -83,7 +84,7 @@ async function runSearch(
     if (err instanceof Error && err.name === 'AbortError') return;
     if (ws.latestQuery !== query) return;
     const message =
-      err instanceof Error ? err.message : 'Failed to search files';
+      err instanceof Error ? err.message : i18next.t('common:failedToSearchFiles', 'Failed to search files');
     set((state) => ({
       errorByWorkspace: { ...state.errorByWorkspace, [workspaceId]: message },
       loadingByWorkspace: { ...state.loadingByWorkspace, [workspaceId]: false },

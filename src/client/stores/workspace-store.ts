@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import i18next from 'i18next';
 
 export interface Workspace {
   id: string;
@@ -42,11 +43,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const res = await fetch(`${API_BASE}/workspaces`);
-      if (!res.ok) throw new Error('Failed to fetch workspaces');
+      if (!res.ok) throw new Error(i18next.t('common:failedToFetchWorkspaces', 'Failed to fetch workspaces'));
       const data = await res.json();
       set({ workspaces: data.workspaces || [], isLoading: false });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'Unknown error', isLoading: false });
+      set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isLoading: false });
     }
   },
 
@@ -60,14 +61,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to create workspace');
+        throw new Error(data.error || i18next.t('common:failedToCreateWorkspace', 'Failed to create workspace'));
       }
       const data = await res.json();
       const workspace = data.workspace as Workspace;
       set({ workspaces: [...get().workspaces, workspace], isLoading: false });
       return workspace;
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'Unknown error', isLoading: false });
+      set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isLoading: false });
       return null;
     }
   },
@@ -117,7 +118,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to update workspace');
+        throw new Error(data.error || i18next.t('common:failedToUpdateWorkspace', 'Failed to update workspace'));
       }
       const data = await res.json();
       const updated = data.workspace as Workspace;
@@ -126,7 +127,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         isLoading: false,
       });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'Unknown error', isLoading: false });
+      set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isLoading: false });
     }
   },
 
