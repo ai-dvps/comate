@@ -26,6 +26,7 @@ import { isValidElement } from 'react'
 import type { ToolPart, ToolState } from '../../types/message'
 import { Badge } from '../ui/badge'
 import { cn } from '../ui/utils'
+import { getToolRenderer, StructuredFallback } from '../tool-renderers'
 
 import { CodeBlock } from './code-block'
 import { CompactableContainer } from './compactable-container'
@@ -110,7 +111,7 @@ export type ToolContentProps = ComponentProps<'div'>
 
 export const ToolContent = ({ className, children, ...props }: ToolContentProps) => (
   <CompactableContainer className={cn(className)} {...props}>
-    <div className="space-y-2 p-3 text-text-primary">
+    <div className="space-y-2 p-2 text-text-primary">
       {children}
     </div>
   </CompactableContainer>
@@ -118,18 +119,34 @@ export const ToolContent = ({ className, children, ...props }: ToolContentProps)
 
 export type ToolInputProps = ComponentProps<'div'> & {
   input: ToolPart['input']
+  toolName?: string
 }
 
-export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
-  <div className={cn('space-y-2 overflow-hidden', className)} {...props}>
-    <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
-      Parameters
-    </h4>
-    <div className="rounded-md bg-surface-hover/50">
-      <CodeBlock code={JSON.stringify(input, null, 2)} language="json" />
+export const ToolInput = ({ className, input, toolName, ...props }: ToolInputProps) => {
+  const renderer = toolName ? getToolRenderer(toolName) : undefined
+  const hasCustomRenderer = !!renderer
+
+  return (
+    <div className={cn('space-y-2 overflow-hidden', className)} {...props}>
+      <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
+        Parameters
+      </h4>
+      {hasCustomRenderer ? (
+        <div className="overflow-x-auto rounded-md">
+          <div className="bg-surface-hover/50 px-2 py-1.5 min-w-fit">
+            {renderer!(input) ?? <StructuredFallback data={input} />}
+          </div>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-md">
+          <div className="bg-surface-hover/50 min-w-fit">
+            <CodeBlock code={JSON.stringify(input, null, 2)} language="json" />
+          </div>
+        </div>
+      )}
     </div>
-  </div>
-)
+  )
+}
 
 export type ToolOutputProps = ComponentProps<'div'> & {
   output: ToolPart['output']
@@ -161,16 +178,18 @@ export const ToolOutput = ({
       <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
         {errorText ? 'Error' : 'Result'}
       </h4>
-      <div
-        className={cn(
-          'overflow-x-auto rounded-md text-xs [&_table]:w-full',
-          errorText
-            ? 'bg-destructive/20 text-destructive'
-            : 'bg-surface-hover/50 text-text-primary',
-        )}
-      >
-        {errorText && <div>{errorText}</div>}
-        {Output}
+      <div className="overflow-x-auto rounded-md">
+        <div
+          className={cn(
+            'p-2 text-xs [&_table]:w-full min-w-fit',
+            errorText
+              ? 'bg-destructive/20 text-destructive'
+              : 'bg-surface-hover/50 text-text-primary',
+          )}
+        >
+          {errorText && <div>{errorText}</div>}
+          {Output}
+        </div>
       </div>
     </div>
   )

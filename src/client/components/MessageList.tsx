@@ -32,14 +32,8 @@ import {
   ToolOutput,
   type ToolState,
 } from './ai-elements/tool'
-import BashToolInput from './ai-elements/bash-tool'
-import EditToolInput from './ai-elements/edit-tool'
-import GrepToolInput from './ai-elements/grep-tool'
-import ReadToolInput from './ai-elements/read-tool'
-import SkillToolInput from './ai-elements/skill-tool'
 import SubagentBriefStatus from './SubagentBriefStatus'
 import StreamingToolInputPreview from './StreamingToolInputPreview'
-import WriteToolInput from './ai-elements/write-tool'
 import SlashCommandMessage from './ai-elements/slash-command-message'
 import VirtualizedMessageList from './VirtualizedMessageList'
 
@@ -332,20 +326,8 @@ function renderMessage(
                 <ToolContent>
                   {isStreaming && streamingJson.length > 0 ? (
                     <StreamingToolInputPreview partialJson={streamingJson} />
-                  ) : part.toolName === 'Bash' ? (
-                    <BashToolInput input={part.input} />
-                  ) : part.toolName === 'Read' ? (
-                    <ReadToolInput input={part.input} />
-                  ) : part.toolName === 'Skill' ? (
-                    <SkillToolInput input={part.input} />
-                  ) : part.toolName === 'Edit' ? (
-                    <EditToolInput input={part.input} />
-                  ) : part.toolName === 'Grep' ? (
-                    <GrepToolInput input={part.input} />
-                  ) : part.toolName === 'Write' ? (
-                    <WriteToolInput input={part.input} />
                   ) : (
-                    <ToolInput input={part.input} />
+                    <ToolInput input={part.input} toolName={part.toolName} />
                   )}
                   {result && (
                     <div className="pt-2">

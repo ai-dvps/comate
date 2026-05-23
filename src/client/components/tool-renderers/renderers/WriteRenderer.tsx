@@ -1,14 +1,10 @@
 import { FileCode } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { CodeBlockContent } from '../../ai-elements/code-block'
+import { getLanguageFromFilename } from '@/lib/language'
+import { registerToolRenderer } from '../registry'
 
-import { getLanguageFromFilename } from '../../lib/language'
-import { CodeBlockContent } from './code-block'
-import { ToolInput } from './tool'
-
-interface WriteToolInputProps {
-  input: unknown
-}
-
-export default function WriteToolInput({ input }: WriteToolInputProps) {
+function WriteRenderer(input: unknown): ReactNode | null {
   if (
     typeof input !== 'object' ||
     input === null ||
@@ -17,7 +13,7 @@ export default function WriteToolInput({ input }: WriteToolInputProps) {
     typeof (input as Record<string, unknown>).file_path !== 'string' ||
     typeof (input as Record<string, unknown>).content !== 'string'
   ) {
-    return <ToolInput input={input} />
+    return null
   }
 
   const { file_path, content } = input as {
@@ -26,15 +22,15 @@ export default function WriteToolInput({ input }: WriteToolInputProps) {
   }
 
   return (
-    <div className="space-y-2 overflow-hidden">
+    <div className="space-y-2">
       <div className="flex items-center gap-2">
         <FileCode className="size-3.5 text-text-tertiary" />
-        <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
+        <span className="text-text-tertiary text-xs uppercase tracking-wide">
           Writing to
-        </h4>
+        </span>
         <span className="font-mono text-xs text-text-primary">{file_path}</span>
       </div>
-      <div className="rounded-md bg-surface-hover/50 overflow-hidden">
+      <div className="rounded-md overflow-hidden">
         <CodeBlockContent
           code={content}
           language={getLanguageFromFilename(file_path)}
@@ -44,3 +40,5 @@ export default function WriteToolInput({ input }: WriteToolInputProps) {
     </div>
   )
 }
+
+registerToolRenderer('Write', WriteRenderer)
