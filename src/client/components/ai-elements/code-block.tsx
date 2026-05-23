@@ -407,7 +407,7 @@ export const CodeBlockContent = ({
       <CodeBlockBody
         showLineNumbers={showLineNumbers}
         tokenized={tokenized}
-        className={className}
+        className={cn('min-w-fit', className)}
       />
     </div>
   )
