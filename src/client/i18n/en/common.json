@@ -32,5 +32,11 @@
     "loading": "Loading commands...",
     "noMatch": "No commands match `{{filter}}`",
     "noCommands": "No commands available"
-  }
+  },
+  "copyContent": "Copy content",
+  "close": "Close",
+  "pinSideBySide": "Pin side-by-side",
+  "searchFiles": "Search files…",
+  "loadingFiles": "Loading files…",
+  "noFilesMatch": "No files match{{filter}}"
 }

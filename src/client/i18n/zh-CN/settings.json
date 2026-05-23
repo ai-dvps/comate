@@ -1,1 +1,121 @@
-{}
+{
+  "settings": "设置",
+  "tabs": {
+    "general": "通用",
+    "appearance": "外观",
+    "workspace": "工作区",
+    "skills": "技能",
+    "mcp": "MCP",
+    "hooks": "钩子",
+    "wecom": "企业微信机器人"
+  },
+  "general": {
+    "defaultModel": "默认模型",
+    "defaultModelPlaceholder": "例如 claude-sonnet-4-5-20250929",
+    "defaultModelHint": "留空以使用系统默认模型。",
+    "messageWindowCap": "消息窗口上限",
+    "messageWindowCapHint": "每个会话保留在内存中的最大消息数（50–1000）。较早的消息会被裁剪，但可以通过向上滚动重新获取。",
+    "reopenLastWorkspace": "启动时重新打开上次工作区",
+    "reopenLastWorkspaceHint": "应用启动时自动恢复上次活动的工作区。"
+  },
+  "appearance": {
+    "theme": "主题",
+    "light": "浅色",
+    "dark": "深色",
+    "followingSystem": "跟随系统偏好",
+    "manualSelection": "手动选择",
+    "resetToSystem": "重置为系统",
+    "language": "语言"
+  },
+  "workspace": {
+    "name": "名称",
+    "description": "描述",
+    "modelOverride": "模型覆盖",
+    "modelOverridePlaceholder": "例如 claude-sonnet-4-5-20250929",
+    "modelOverrideHint": "留空以使用默认模型。",
+    "apiKey": "API 密钥",
+    "apiKeyPlaceholder": "sk-ant-...",
+    "apiKeyHint": "本地存储。留空则回退到环境变量。"
+  },
+  "skills": {
+    "addSkill": "添加技能",
+    "skillNamePlaceholder": "技能名称",
+    "noSkills": "尚未添加技能"
+  },
+  "mcp": {
+    "serverName": "服务器名称",
+    "command": "命令（例如 node）",
+    "arguments": "参数（空格分隔）",
+    "addServer": "添加 MCP 服务器",
+    "noServers": "尚未添加 MCP 服务器"
+  },
+  "hooks": {
+    "hookName": "钩子名称",
+    "scriptPath": "脚本路径",
+    "addHook": "添加钩子",
+    "noHooks": "尚未添加钩子"
+  },
+  "wecom": {
+    "enableBot": "启用企业微信机器人",
+    "enableBotHint": "启用后，此工作区将作为企业微信机器人端点。",
+    "botId": "机器人 ID",
+    "botIdPlaceholder": "your-bot-id",
+    "botSecret": "机器人密钥",
+    "botSecretPlaceholder": "your-bot-secret",
+    "status": "状态：",
+    "botSessionNote": "机器人会话具有完整的工具自动审批功能。保存更改以连接或断开。"
+  },
+  "wecomCli": {
+    "title": "企业微信 CLI",
+    "hint": "在终端中使 wecom 命令可用。",
+    "install": "安装",
+    "uninstall": "卸载",
+    "installing": "正在安装...",
+    "uninstalling": "正在卸载...",
+    "installedAt": "安装于",
+    "pathHint": "请确保 ~/.local/bin 在您的 PATH 中。您可能需要重启终端或运行 hash -r 以使 shell 发现该命令。",
+    "checkError": "检查状态失败",
+    "installError": "安装请求失败",
+    "uninstallError": "卸载请求失败"
+  },
+  "unsavedDialog": {
+    "title": "有未保存的更改",
+    "message": "您有未保存的更改。关闭前是否保存？",
+    "keepEditing": "继续编辑",
+    "discard": "放弃",
+    "saveChanges": "保存更改",
+    "saving": "正在保存..."
+  },
+  "actions": {
+    "save": "保存",
+    "cancel": "取消",
+    "close": "关闭"
+  },
+  "createWorkspace": {
+    "title": "创建工作区",
+    "subtitle": "为您的新项目设置工作区",
+    "nameLabel": "工作区名称",
+    "namePlaceholder": "例如 我的项目",
+    "folderLabel": "文件夹路径",
+    "folderPlaceholder": "/path/to/project",
+    "browse": "浏览",
+    "descriptionLabel": "描述",
+    "descriptionPlaceholder": "可选描述...",
+    "cancel": "取消",
+    "creating": "正在创建...",
+    "create": "创建",
+    "error": "创建工作区失败"
+  },
+  "workspaceSwitcher": {
+    "switchWorkspace": "切换工作区",
+    "workspaces": "工作区",
+    "noWorkspaces": "还没有工作区"
+  },
+  "workspaceTabs": {
+    "botConnected": "企业微信机器人已连接",
+    "botDisconnected": "企业微信机器人已断开",
+    "botError": "企业微信机器人错误",
+    "botNotConfigured": "企业微信机器人未配置",
+    "closeTab": "关闭 {{name}}"
+  }
+}

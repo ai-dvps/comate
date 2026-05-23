@@ -45,6 +45,14 @@
   "draft": "Draft",
   "deleteSession": "Delete session",
   "wecomBotSession": "WeCom bot session",
+  "close": "Close",
+  "toolCount_one": "{{count}} tool",
+  "toolCount_other": "{{count}} tools",
+  "subagentStatus": {
+    "running": "Running",
+    "completed": "Completed",
+    "error": "Error"
+  },
   "time": {
     "justNow": "Just now",
     "minAgo": "{{count}} min ago",

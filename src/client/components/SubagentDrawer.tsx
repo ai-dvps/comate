@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   X,
   ClockIcon,
@@ -22,17 +23,17 @@ interface SubagentDrawerProps {
 const statusConfig = {
   running: {
     icon: <ClockIcon className="size-4 animate-pulse text-warning" />,
-    label: 'Running',
+    labelKey: 'subagentStatus.running',
     badgeClass: 'bg-warning/10 text-warning border-warning/20',
   },
   completed: {
     icon: <CheckCircleIcon className="size-4 text-success" />,
-    label: 'Completed',
+    labelKey: 'subagentStatus.completed',
     badgeClass: 'bg-success/10 text-success border-success/20',
   },
   error: {
     icon: <XCircleIcon className="size-4 text-destructive" />,
-    label: 'Error',
+    labelKey: 'subagentStatus.error',
     badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
   },
 }
@@ -42,6 +43,7 @@ export default function SubagentDrawer({
   sessionId,
   onClose,
 }: SubagentDrawerProps) {
+  const { t } = useTranslation('chat')
   const subagent = useChatStore((s) =>
     (s.subagents[sessionId] || []).find(
       (sa) => sa.parentToolUseId === parentToolUseId,
@@ -97,7 +99,7 @@ export default function SubagentDrawer({
                   )}
                 >
                   {config.icon}
-                  {config.label}
+                  {t(config.labelKey)}
                 </span>
               </div>
               <div className="mt-0.5 flex items-center gap-2 text-xs text-text-secondary">
@@ -105,8 +107,7 @@ export default function SubagentDrawer({
                 <span className="text-text-tertiary">•</span>
                 <span className="flex items-center gap-1">
                   <WrenchIcon className="size-3" />
-                  {subagent.toolCount} tool
-                  {subagent.toolCount !== 1 ? 's' : ''}
+                  {t('toolCount', { count: subagent.toolCount })}
                 </span>
               </div>
             </div>
@@ -114,7 +115,7 @@ export default function SubagentDrawer({
           <button
             onClick={onClose}
             className="rounded-md p-1.5 text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-            title="Close"
+            title={t('close')}
           >
             <X className="size-4" />
           </button>

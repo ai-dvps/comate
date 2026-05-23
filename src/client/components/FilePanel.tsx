@@ -1,4 +1,5 @@
 import { X, Copy } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { ViewedFile } from './FileDrawer'
 import { CodeBlockContent } from './ai-elements/code-block'
 import { getLanguageFromFilename } from '../lib/language'
@@ -10,6 +11,7 @@ interface FilePanelProps {
 }
 
 export default function FilePanel({ file, onClose, onCopy }: FilePanelProps) {
+  const { t } = useTranslation('common')
   if (!file) return null
 
   return (
@@ -43,14 +45,14 @@ export default function FilePanel({ file, onClose, onCopy }: FilePanelProps) {
           <button
             onClick={onCopy}
             className="px-2 py-1.5 rounded-md text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-            title="Copy content"
+            title={t('copyContent')}
           >
             <Copy className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={onClose}
             className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-            title="Close"
+            title={t('close')}
           >
             <X className="w-4 h-4" />
           </button>
