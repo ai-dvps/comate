@@ -131,7 +131,46 @@ async function build() {
     console.warn(`Warning: WeCom CLI not found at ${wecomCliSource}`);
   }
 
-  // 8. Copy better_sqlite3.node to src-tauri/resources/
+  // 8. Copy ripgrep binary to src-tauri/resources/
+  console.log('\n--- Copying ripgrep binary ---');
+  const rgBinaryName = platform === 'win32' ? 'rg.exe' : 'rg';
+  // @vscode/ripgrep ships the binary via a per-platform optional dependency
+  // package — e.g. @vscode/ripgrep-darwin-arm64. The top-level package's
+  // bin/ directory is a copy from the platform package; either works at
+  // runtime, but the platform package is the canonical source.
+  const rgPlatformPkg = `@vscode/ripgrep-${platform}-${arch}`;
+  const rgBinarySource = join(
+    rootDir,
+    'node_modules',
+    rgPlatformPkg,
+    'bin',
+    rgBinaryName,
+  );
+  const rgFallbackSource = join(
+    rootDir,
+    'node_modules',
+    '@vscode',
+    'ripgrep',
+    'bin',
+    rgBinaryName,
+  );
+  let rgSource: string | null = null;
+  if (existsSync(rgBinarySource)) {
+    rgSource = rgBinarySource;
+  } else if (existsSync(rgFallbackSource)) {
+    rgSource = rgFallbackSource;
+  }
+  if (rgSource) {
+    const rgDest = join(resourcesDir, rgBinaryName);
+    copyFileSync(rgSource, rgDest);
+    console.log(`Copied to ${rgDest}`);
+  } else {
+    console.warn(
+      `Warning: ripgrep binary not found at ${rgBinarySource} or ${rgFallbackSource}`,
+    );
+  }
+
+  // 9. Copy better_sqlite3.node to src-tauri/resources/
   console.log('\n--- Copying native module ---');
   const nativeModuleSource = join(
     rootDir,
