@@ -11,6 +11,7 @@ import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useTheme } from './hooks/use-theme'
+import { useAppSettings } from './hooks/use-app-settings'
 
 export interface ViewedFile {
   path: string
@@ -21,6 +22,7 @@ export interface ViewedFile {
 function App() {
   const { t } = useTranslation('common')
   useTheme()
+  useAppSettings()
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
