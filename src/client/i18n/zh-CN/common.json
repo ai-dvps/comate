@@ -38,5 +38,11 @@
   "pinSideBySide": "并排固定",
   "searchFiles": "搜索文件…",
   "loadingFiles": "正在加载文件…",
-  "noFilesMatch": "没有匹配的文件{{filter}}"
+  "noFilesMatch": "没有匹配的文件{{filter}}",
+  "selectOrCreateWorkspace": "选择或创建工作区以开始",
+  "noWorkspaceToBrowse": "打开工作区以浏览文件",
+  "emptyWorkspace": "空工作区",
+  "emptyFolder": "空文件夹",
+  "failedToLoadFiles": "加载文件失败",
+  "unknownError": "未知错误"
 }

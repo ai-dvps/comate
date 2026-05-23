@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { ChevronRight, Folder, FileCode, FileJson, FileText, File } from 'lucide-react'
 
@@ -32,6 +33,7 @@ interface TreeNodeProps {
 }
 
 function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, level }: TreeNodeProps) {
+  const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
@@ -80,7 +82,7 @@ function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, lev
               </div>
             ) : children.length === 0 ? (
               <div className="py-1 px-2 text-[11px] text-text-tertiary" style={{ paddingLeft: `${(level + 1) * 12 + 8}px` }}>
-                Empty folder
+                {t('emptyFolder')}
               </div>
             ) : (
               children.map((child) => (
@@ -121,6 +123,7 @@ interface FileExplorerProps {
 }
 
 export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExplorerProps) {
+  const { t } = useTranslation('common')
   const { activeWorkspaceId } = useWorkspaceStore()
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
@@ -137,11 +140,11 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
       setError(null)
       try {
         const res = await fetch(`/api/workspaces/${activeWorkspaceId}/files`)
-        if (!res.ok) throw new Error('Failed to load files')
+        if (!res.ok) throw new Error(t('failedToLoadFiles'))
         const data = await res.json()
         setRootNodes(data.nodes || [])
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error')
+        setError(err instanceof Error ? err.message : t('unknownError'))
       } finally {
         setLoading(false)
       }
@@ -153,13 +156,13 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
   if (!activeWorkspaceId) {
     return (
       <div className="p-3 text-xs text-text-tertiary text-center">
-        Open a workspace to browse files
+        {t('noWorkspaceToBrowse')}
       </div>
     )
   }
 
   if (loading && rootNodes.length === 0) {
-    return <div className="p-3 text-xs text-text-tertiary">Loading files...</div>
+    return <div className="p-3 text-xs text-text-tertiary">{t('loadingFiles')}</div>
   }
 
   if (error) {
@@ -167,7 +170,7 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
   }
 
   if (rootNodes.length === 0) {
-    return <div className="p-3 text-xs text-text-tertiary">Empty workspace</div>
+    return <div className="p-3 text-xs text-text-tertiary">{t('emptyWorkspace')}</div>
   }
 
   return (
