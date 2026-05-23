@@ -20,6 +20,7 @@ import {
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import PreviewPane from './PreviewPane'
+import { getToolRenderer, StructuredFallback } from './tool-renderers'
 
 export const CHAT_ABOUT_THIS_MESSAGE =
   'I have questions before answering — can we discuss the options before I pick?'
@@ -228,24 +229,33 @@ function ApprovalView({
   const [showMore, setShowMore] = useState(false)
   const hasSuggestions = item.suggestions && item.suggestions.length > 0
 
-  const inputStr =
-    typeof item.input === 'string'
-      ? item.input
-      : JSON.stringify(item.input, null, 2)
-  const isTruncated = inputStr.length > 200
+  const renderer = getToolRenderer(item.toolName)
+  const hasCustomRenderer = !!renderer
 
   // Reset Show more across pendingItem swaps
   useEffect(() => {
     setShowMore(false)
   }, [item.requestId])
 
+  const inputStr =
+    typeof item.input === 'string'
+      ? item.input
+      : JSON.stringify(item.input, null, 2)
+  const isTruncated = inputStr.length > 200
+
   return (
     <div>
       <div className="mb-3">
-        <p className="text-xs text-text-secondary font-mono bg-bg rounded px-2 py-1.5 whitespace-pre-wrap break-words">
-          {showMore ? inputStr : item.inputSummary}
-        </p>
-        {isTruncated && (
+        {hasCustomRenderer && showMore ? (
+          <div className="bg-bg rounded px-2 py-1.5">
+            {renderer!(item.input) ?? <StructuredFallback data={item.input} />}
+          </div>
+        ) : (
+          <p className="text-xs text-text-secondary font-mono bg-bg rounded px-2 py-1.5 whitespace-pre-wrap break-words">
+            {showMore ? inputStr : item.inputSummary}
+          </p>
+        )}
+        {(isTruncated || hasCustomRenderer) && (
           <button
             onClick={() => setShowMore(!showMore)}
             className="text-xs text-accent hover:underline mt-1"

@@ -1,14 +1,10 @@
 import { FileText } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { registerToolRenderer } from '../registry'
 
-import { ToolInput } from './tool'
-
-interface ReadToolInputProps {
-  input: unknown
-}
-
-export default function ReadToolInput({ input }: ReadToolInputProps) {
+function ReadRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
-    return <ToolInput input={input} />
+    return null
   }
 
   const obj = input as Record<string, unknown>
@@ -20,16 +16,18 @@ export default function ReadToolInput({ input }: ReadToolInputProps) {
         : undefined
 
   if (!filePath) {
-    return <ToolInput input={input} />
+    return null
   }
 
   return (
     <div className="flex items-center gap-2">
       <FileText className="size-3.5 text-text-tertiary" />
-      <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
+      <span className="text-text-tertiary text-xs uppercase tracking-wide">
         Reading
-      </h4>
+      </span>
       <span className="font-mono text-xs text-text-primary">{filePath}</span>
     </div>
   )
 }
+
+registerToolRenderer('Read', ReadRenderer)

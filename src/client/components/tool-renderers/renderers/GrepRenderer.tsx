@@ -1,41 +1,37 @@
 import { FileText, Search } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { registerToolRenderer } from '../registry'
 
-import { ToolInput } from './tool'
-
-interface GrepToolInputProps {
-  input: unknown
-}
-
-export default function GrepToolInput({ input }: GrepToolInputProps) {
+function GrepRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
-    return <ToolInput input={input} />
+    return null
   }
 
   const obj = input as Record<string, unknown>
 
   if (typeof obj.pattern !== 'string' || typeof obj.path !== 'string') {
-    return <ToolInput input={input} />
+    return null
   }
 
   const { pattern, path } = obj
   const outputMode = typeof obj.output_mode === 'string' ? obj.output_mode : undefined
 
   return (
-    <div className="space-y-2 overflow-hidden">
+    <div className="space-y-2">
       <div className="flex items-center gap-2">
         <Search className="size-3.5 text-text-tertiary" />
-        <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
+        <span className="text-text-tertiary text-xs uppercase tracking-wide">
           Pattern
-        </h4>
+        </span>
         <code className="text-xs font-mono text-text-primary bg-surface-hover/50 px-1.5 py-0.5 rounded">
           {pattern}
         </code>
       </div>
       <div className="flex items-center gap-2">
         <FileText className="size-3.5 text-text-tertiary" />
-        <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
+        <span className="text-text-tertiary text-xs uppercase tracking-wide">
           Path
-        </h4>
+        </span>
         <span className="font-mono text-xs text-text-primary">{path}</span>
       </div>
       {outputMode && (
@@ -48,3 +44,5 @@ export default function GrepToolInput({ input }: GrepToolInputProps) {
     </div>
   )
 }
+
+registerToolRenderer('Grep', GrepRenderer)

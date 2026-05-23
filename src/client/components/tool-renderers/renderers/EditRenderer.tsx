@@ -1,16 +1,12 @@
 import { FileCode, Pencil } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { CodeBlockContent } from '../../ai-elements/code-block'
+import { getLanguageFromFilename } from '@/lib/language'
+import { registerToolRenderer } from '../registry'
 
-import { getLanguageFromFilename } from '../../lib/language'
-import { CodeBlockContent } from './code-block'
-import { ToolInput } from './tool'
-
-interface EditToolInputProps {
-  input: unknown
-}
-
-export default function EditToolInput({ input }: EditToolInputProps) {
+function EditRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
-    return <ToolInput input={input} />
+    return null
   }
 
   const obj = input as Record<string, unknown>
@@ -20,7 +16,7 @@ export default function EditToolInput({ input }: EditToolInputProps) {
     typeof obj.old_string !== 'string' ||
     typeof obj.new_string !== 'string'
   ) {
-    return <ToolInput input={input} />
+    return null
   }
 
   const { file_path, old_string, new_string } = obj as {
@@ -33,12 +29,12 @@ export default function EditToolInput({ input }: EditToolInputProps) {
   const replaceAll = obj.replace_all === true
 
   return (
-    <div className="space-y-3 overflow-hidden">
+    <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <FileCode className="size-3.5 text-text-tertiary" />
-        <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
+        <span className="text-text-tertiary text-xs uppercase tracking-wide">
           Editing
-        </h4>
+        </span>
         <span className="font-mono text-xs text-text-primary">{file_path}</span>
         {replaceAll && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-text-tertiary/20 text-text-tertiary">
@@ -77,3 +73,5 @@ export default function EditToolInput({ input }: EditToolInputProps) {
     </div>
   )
 }
+
+registerToolRenderer('Edit', EditRenderer)
