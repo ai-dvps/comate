@@ -3,6 +3,7 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
+import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
 import {
   X,
@@ -462,6 +463,12 @@ function GeneralTab({
 
 function AppearanceTab() {
   const { theme, isFollowingSystem, setTheme, resetToSystem } = useTheme()
+  const { language, setLanguage } = useAppSettings()
+
+  const handleLanguageChange = (lang: string) => {
+    setLanguage(lang)
+    i18n.changeLanguage(lang)
+  }
 
   return (
     <div className="p-6 max-w-xl">
@@ -505,6 +512,32 @@ function AppearanceTab() {
                 Reset to system
               </button>
             )}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-2">Language</label>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleLanguageChange('en')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                language === 'en'
+                  ? 'bg-accent text-accent-foreground border-accent'
+                  : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+              }`}
+            >
+              English
+            </button>
+            <button
+              onClick={() => handleLanguageChange('zh-CN')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                language === 'zh-CN'
+                  ? 'bg-accent text-accent-foreground border-accent'
+                  : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+              }`}
+            >
+              简体中文
+            </button>
           </div>
         </div>
       </div>

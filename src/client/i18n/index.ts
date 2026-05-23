@@ -33,9 +33,8 @@ i18n
       escapeValue: false,
     },
     detection: {
-      order: ['localStorage', 'navigator'],
-      caches: ['localStorage'],
-      lookupLocalStorage: 'app-language',
+      order: ['navigator'],
+      caches: [],
     },
   })
 

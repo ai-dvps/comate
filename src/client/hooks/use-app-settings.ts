@@ -1,11 +1,15 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
+import i18n from '../i18n'
 
 interface AppSettings {
   defaultModel: string
   reopenLastWorkspace: boolean
+  language: string
 }
 
 const STORAGE_KEY = 'app-settings'
+
+const SUPPORTED_LANGUAGES = ['en', 'zh-CN']
 
 function getInitialSettings(): AppSettings {
   try {
@@ -15,12 +19,13 @@ function getInitialSettings(): AppSettings {
       return {
         defaultModel: typeof parsed.defaultModel === 'string' ? parsed.defaultModel : '',
         reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
+        language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : 'en',
       }
     }
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false }
+  return { defaultModel: '', reopenLastWorkspace: false, language: 'en' }
 }
 
 function saveSettings(settings: AppSettings) {
@@ -33,6 +38,13 @@ function saveSettings(settings: AppSettings) {
 
 export function useAppSettings() {
   const [settings, setSettings] = useState<AppSettings>(getInitialSettings)
+
+  // Sync stored language preference to i18next on mount
+  useEffect(() => {
+    if (settings.language && i18n.language !== settings.language) {
+      i18n.changeLanguage(settings.language)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const setDefaultModel = useCallback((defaultModel: string) => {
     setSettings((prev) => {
@@ -50,10 +62,20 @@ export function useAppSettings() {
     })
   }, [])
 
+  const setLanguage = useCallback((language: string) => {
+    setSettings((prev) => {
+      const next = { ...prev, language }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
   return {
     defaultModel: settings.defaultModel,
     reopenLastWorkspace: settings.reopenLastWorkspace,
+    language: settings.language,
     setDefaultModel,
     setReopenLastWorkspace,
+    setLanguage,
   }
 }
