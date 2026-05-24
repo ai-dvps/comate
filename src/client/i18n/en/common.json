@@ -9,8 +9,7 @@
   "sidebar": {
     "sessions": "Sessions",
     "files": "Files",
-    "noWorkspace": "Open a workspace to view sessions",
-    "developer": "Developer"
+    "noWorkspace": "Open a workspace to view sessions"
   },
   "status": {
     "needs-me": {
