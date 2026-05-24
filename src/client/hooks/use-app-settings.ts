@@ -1,15 +1,24 @@
 import { useState, useCallback, useEffect } from 'react'
 import i18n from '../i18n'
 
+type FontSizePreset = 'small' | 'medium' | 'large'
+
 interface AppSettings {
   defaultModel: string
   reopenLastWorkspace: boolean
   language: string
+  chatFontSize: FontSizePreset
+  uiFontSize: FontSizePreset
 }
 
 const STORAGE_KEY = 'app-settings'
 
 const SUPPORTED_LANGUAGES = ['en', 'zh-CN']
+const FONT_SIZE_PRESETS: FontSizePreset[] = ['small', 'medium', 'large']
+
+function isValidFontSize(value: unknown): value is FontSizePreset {
+  return typeof value === 'string' && FONT_SIZE_PRESETS.includes(value as FontSizePreset)
+}
 
 function getInitialSettings(): AppSettings {
   try {
@@ -20,12 +29,14 @@ function getInitialSettings(): AppSettings {
         defaultModel: typeof parsed.defaultModel === 'string' ? parsed.defaultModel : '',
         reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
         language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : i18n.language,
+        chatFontSize: isValidFontSize(parsed.chatFontSize) ? parsed.chatFontSize : 'small',
+        uiFontSize: isValidFontSize(parsed.uiFontSize) ? parsed.uiFontSize : 'medium',
       }
     }
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false, language: i18n.language }
+  return { defaultModel: '', reopenLastWorkspace: false, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium' }
 }
 
 function saveSettings(settings: AppSettings) {
@@ -70,12 +81,32 @@ export function useAppSettings() {
     })
   }, [])
 
+  const setChatFontSize = useCallback((chatFontSize: FontSizePreset) => {
+    setSettings((prev) => {
+      const next = { ...prev, chatFontSize }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
+  const setUiFontSize = useCallback((uiFontSize: FontSizePreset) => {
+    setSettings((prev) => {
+      const next = { ...prev, uiFontSize }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
   return {
     defaultModel: settings.defaultModel,
     reopenLastWorkspace: settings.reopenLastWorkspace,
     language: settings.language,
+    chatFontSize: settings.chatFontSize,
+    uiFontSize: settings.uiFontSize,
     setDefaultModel,
     setReopenLastWorkspace,
     setLanguage,
+    setChatFontSize,
+    setUiFontSize,
   }
 }
