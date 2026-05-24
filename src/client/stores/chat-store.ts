@@ -105,6 +105,20 @@ export interface SubagentState {
   messages: SubagentMessage[]
 }
 
+export interface TurnUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+export interface SessionUsage {
+  cumulativeInput: number
+  cumulativeOutput: number
+  cumulativeCacheRead: number
+  cumulativeCacheWrite: number
+}
+
 export type { TaskItem }
 
 interface PendingTaskCreate {
@@ -133,6 +147,8 @@ interface ChatState {
   windowCap: number
   totalMessageCount: Record<string, number>
   isLoadingOlderMessages: Record<string, boolean>
+  lastTurnUsage: Record<string, TurnUsage>
+  sessionUsage: Record<string, SessionUsage>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
@@ -1103,6 +1119,51 @@ function handleSseEvent(
             [sessionId]: true,
           }
         }
+
+        const usage = data.usage as Record<string, unknown> | undefined
+        if (usage && typeof usage === 'object') {
+          const inputTokens =
+            typeof usage.input_tokens === 'number' ? usage.input_tokens : 0
+          const outputTokens =
+            typeof usage.output_tokens === 'number' ? usage.output_tokens : 0
+          const cacheReadTokens =
+            typeof usage.cache_read_input_tokens === 'number'
+              ? usage.cache_read_input_tokens
+              : 0
+          const cacheWriteTokens =
+            typeof usage.cache_creation_input_tokens === 'number'
+              ? usage.cache_creation_input_tokens
+              : 0
+
+          const turnUsage: TurnUsage = {
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            cacheWriteTokens,
+          }
+
+          const prevSession = state.sessionUsage[sessionId]
+          const sessionUsage: SessionUsage = {
+            cumulativeInput:
+              (prevSession?.cumulativeInput || 0) + inputTokens,
+            cumulativeOutput:
+              (prevSession?.cumulativeOutput || 0) + outputTokens,
+            cumulativeCacheRead:
+              (prevSession?.cumulativeCacheRead || 0) + cacheReadTokens,
+            cumulativeCacheWrite:
+              (prevSession?.cumulativeCacheWrite || 0) + cacheWriteTokens,
+          }
+
+          next.lastTurnUsage = {
+            ...state.lastTurnUsage,
+            [sessionId]: turnUsage,
+          }
+          next.sessionUsage = {
+            ...state.sessionUsage,
+            [sessionId]: sessionUsage,
+          }
+        }
+
         return next
       })
       return
@@ -1487,6 +1548,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   windowCap: DEFAULT_WINDOW_CAP,
   totalMessageCount: {},
   isLoadingOlderMessages: {},
+  lastTurnUsage: {},
+  sessionUsage: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -1572,6 +1635,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         delete newTotalMessageCount[sessionId]
         const newIsLoadingOlderMessages = { ...state.isLoadingOlderMessages }
         delete newIsLoadingOlderMessages[sessionId]
+        const newLastTurnUsage = { ...state.lastTurnUsage }
+        delete newLastTurnUsage[sessionId]
+        const newSessionUsage = { ...state.sessionUsage }
+        delete newSessionUsage[sessionId]
         return {
           sessions: { ...state.sessions, [workspaceId]: updated },
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
@@ -1588,6 +1655,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           pendingTaskCreates: newPendingTaskCreates,
           totalMessageCount: newTotalMessageCount,
           isLoadingOlderMessages: newIsLoadingOlderMessages,
+          lastTurnUsage: newLastTurnUsage,
+          sessionUsage: newSessionUsage,
         }
       })
     } catch (err) {
@@ -1739,11 +1808,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newTasks[sessionId]
       const newPendingTaskCreates = { ...state.pendingTaskCreates }
       delete newPendingTaskCreates[sessionId]
+      const newLastTurnUsage = { ...state.lastTurnUsage }
+      delete newLastTurnUsage[sessionId]
+      const newSessionUsage = { ...state.sessionUsage }
+      delete newSessionUsage[sessionId]
       return {
         messages: newMessages,
         subagents: newSubagents,
         tasks: newTasks,
         pendingTaskCreates: newPendingTaskCreates,
+        lastTurnUsage: newLastTurnUsage,
+        sessionUsage: newSessionUsage,
       }
     })
   },
