@@ -1587,7 +1587,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({
         sessions: {
           ...state.sessions,
-          [workspaceId]: [...(state.sessions[workspaceId] || []), session],
+          [workspaceId]: [session, ...(state.sessions[workspaceId] || [])],
         },
         activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
       }))
