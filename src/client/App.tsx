@@ -153,7 +153,7 @@ function App() {
           <div className="flex-shrink-0">
             <WorkspaceSwitcher />
           </div>
-          <div className="min-w-0 overflow-hidden">
+          <div className="min-w-0">
             <WorkspaceTabs />
           </div>
         </div>
