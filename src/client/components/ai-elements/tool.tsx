@@ -95,9 +95,9 @@ export const ToolHeader = ({
     >
       <div className="flex items-center gap-2 min-w-0">
         <WrenchIcon className="size-4 text-text-tertiary flex-shrink-0" />
-        <span className="font-medium text-sm">{title ?? derivedName}</span>
+        <span className="font-medium">{title ?? derivedName}</span>
         {summary && (
-          <span className="text-sm text-text-tertiary truncate max-w-[360px]">
+          <span className="text-text-tertiary truncate max-w-[360px]">
             {summary}
           </span>
         )}
@@ -128,7 +128,7 @@ export const ToolInput = ({ className, input, toolName, ...props }: ToolInputPro
 
   return (
     <div className={cn('space-y-2 overflow-hidden', className)} {...props}>
-      <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
+      <h4 className="font-medium text-text-tertiary uppercase tracking-wide">
         Parameters
       </h4>
       {hasCustomRenderer ? (
@@ -175,13 +175,13 @@ export const ToolOutput = ({
 
   return (
     <div className={cn('space-y-2', className)} {...props}>
-      <h4 className="font-medium text-text-tertiary text-xs uppercase tracking-wide">
+      <h4 className="font-medium text-text-tertiary uppercase tracking-wide">
         {errorText ? 'Error' : 'Result'}
       </h4>
       <div className="overflow-x-auto rounded-md">
         <div
           className={cn(
-            'p-2 text-xs [&_table]:w-full min-w-fit',
+            'p-2 [&_table]:w-full min-w-fit',
             errorText
               ? 'bg-destructive/20 text-destructive'
               : 'bg-surface-hover/50 text-text-primary',

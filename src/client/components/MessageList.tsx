@@ -2,6 +2,8 @@ import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertCircle, Bot } from 'lucide-react'
 
+import { useAppSettings } from '../hooks/use-app-settings'
+import { fontSizeClass } from '../lib/font-size'
 import { useChatStore } from '../stores/chat-store'
 import {
   detectCliMeta,
@@ -147,6 +149,7 @@ function toToolState(toolUse: ToolUsePart, result?: ToolResultPart): ToolState {
 
 export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: MessageListProps) {
   const { t } = useTranslation('chat')
+  const { chatFontSize } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] || [])
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
   const visibleMessages = useMemo(
@@ -200,7 +203,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: Me
 
   return (
     <Conversation>
-      <ConversationContent className="max-w-3xl mx-auto w-full">
+      <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)}`}>
         {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId))}
       </ConversationContent>
       <ConversationScrollButton />
@@ -255,7 +258,7 @@ function renderMessage(
     return (
       <div
         key={msg.id}
-        className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-[13px] text-destructive"
+        className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-destructive"
       >
         <AlertCircle className="mt-0.5 size-4 flex-shrink-0" />
         <span>{text}</span>

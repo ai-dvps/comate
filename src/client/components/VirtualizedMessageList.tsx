@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertCircle, ArrowDown, Bot } from 'lucide-react'
 
+import { useAppSettings } from '../hooks/use-app-settings'
+import { fontSizeClass } from '../lib/font-size'
 import { useChatStore } from '../stores/chat-store'
 import {
   detectCliMeta,
@@ -153,6 +155,7 @@ export default function VirtualizedMessageList({
   onOpenDrawer,
 }: VirtualizedMessageListProps) {
   const { t } = useTranslation('chat')
+  const { chatFontSize } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] || [])
   const totalMessageCount = useChatStore((s) => s.totalMessageCount[sessionId] || 0)
   const isLoadingOlder = useChatStore((s) => s.isLoadingOlderMessages[sessionId] || false)
@@ -334,7 +337,7 @@ export default function VirtualizedMessageList({
         </div>
       )}
       <div
-        className="p-3 max-w-3xl mx-auto w-full relative"
+        className={`p-3 max-w-3xl mx-auto w-full relative ${fontSizeClass(chatFontSize)}`}
         style={{ height: virtualizer.getTotalSize() }}
       >
         {virtualItems.map((virtualItem) => (
@@ -421,7 +424,7 @@ function renderMessage(
     return (
       <div
         key={msg.id}
-        className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-[13px] text-destructive"
+        className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-destructive"
       >
         <AlertCircle className="mt-0.5 size-4 flex-shrink-0" />
         <span>{text}</span>
