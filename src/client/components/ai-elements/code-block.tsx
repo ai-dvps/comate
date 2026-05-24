@@ -255,7 +255,7 @@ const CodeBlockBody = memo(
     return (
       <pre
         className={cn(
-          'm-0',
+          'm-0 p-4',
           className,
         )}
         style={preStyle}
