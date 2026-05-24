@@ -45,6 +45,7 @@ export class SessionRuntime {
   private messageLoopPromise: Promise<void> = Promise.resolve();
   private currentMessageStartId?: string;
   private activeRes: Response | null = null;
+  private heartbeatTimer?: NodeJS.Timeout;
   private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
 
   static open(
@@ -255,6 +256,9 @@ export class SessionRuntime {
     diagLog(`[Runtime ${this.sessionId}] subscribe (pending=${this.pendingApprovals.size}, lastEventId=${lastEventId ?? 'none'}, currentMessageStartId=${this.currentMessageStartId ?? 'none'})`);
     this.activeRes = res;
     this.emitter.setResponse(res);
+    if (!this.heartbeatTimer) {
+      this.heartbeatTimer = setInterval(() => this.emitter.emitHeartbeat(), 15000);
+    }
     this.emitter.emitSubscriptionAck(this.serverNonce, this.sessionId);
     if (lastEventId !== undefined) {
       this.replayFrom(lastEventId, res);
@@ -283,7 +287,12 @@ export class SessionRuntime {
   unsubscribe(res?: Response): void {
     const hadRes = this.activeRes === res;
     if (!res || this.activeRes === res) {
+      this.activeRes = null;
       this.emitter.setResponse(null);
+      if (this.heartbeatTimer) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = undefined;
+      }
     }
     diagLog(`[Runtime ${this.sessionId}] unsubscribe (matched=${hadRes})`);
   }
@@ -364,5 +373,6 @@ export class SessionRuntime {
       // Ignore interrupt errors during close
     }
     await this.messageLoopPromise.catch(() => {});
+    this.unsubscribe();
   }
 }
