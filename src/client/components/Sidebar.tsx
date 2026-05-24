@@ -21,7 +21,7 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
       {/* Tab Switcher */}
       <div className="flex border-b border-border/50">
         <button
-          className={`flex-1 py-3 text-xs font-medium text-center transition-all ${
+          className={`flex-1 py-3 font-medium text-center transition-all ${
             activeTab === 'sessions'
               ? 'text-text-primary border-b-2 border-accent'
               : 'text-text-secondary hover:text-text-primary'
@@ -31,7 +31,7 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
           {t('sidebar.sessions')}
         </button>
         <button
-          className={`flex-1 py-3 text-xs font-medium text-center transition-all ${
+          className={`flex-1 py-3 font-medium text-center transition-all ${
             activeTab === 'files'
               ? 'text-text-primary border-b-2 border-accent'
               : 'text-text-secondary hover:text-text-primary'
@@ -49,7 +49,7 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
         )}
         {activeTab === 'sessions' && !activeWorkspaceId && (
           <div className="flex-1 flex items-center justify-center p-4">
-            <p className="text-xs text-text-tertiary text-center">
+            <p className="text-text-tertiary text-center">
               {t('sidebar.noWorkspace')}
             </p>
           </div>
@@ -68,7 +68,7 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
           <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">
             D
           </div>
-          <span className="text-xs text-text-secondary">{t('sidebar.developer')}</span>
+          <span className="text-text-secondary">{t('sidebar.developer')}</span>
         </div>
       </div>
     </aside>

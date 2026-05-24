@@ -330,7 +330,7 @@ export default function PromptInput({
                 type="button"
                 onClick={handleCommandsClick}
                 disabled={commandsDisabled}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title={t('commands')}
               >
                 <SlashSquare className="w-3 h-3" />
@@ -357,7 +357,7 @@ export default function PromptInput({
                 type="button"
                 onClick={handleFilesClick}
                 disabled={filesDisabled}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 title={t('files')}
               >
                 <Paperclip className="w-3 h-3" />
@@ -377,13 +377,13 @@ export default function PromptInput({
             placeholder={t('placeholder')}
             disabled={disabled || isStreaming}
             rows={1}
-            className="w-full bg-transparent border-0 px-4 py-3 pr-24 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
+            className="w-full bg-transparent border-0 px-4 py-3 pr-24 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
             style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
           />
           {showGhost && argumentHint && (
             <div
               aria-hidden
-              className="absolute inset-0 px-4 py-3 pr-24 text-sm pointer-events-none whitespace-pre-wrap break-words"
+              className="absolute inset-0 px-4 py-3 pr-24 pointer-events-none whitespace-pre-wrap break-words"
             >
               <span className="invisible">{input}</span>
               <span className="text-text-tertiary">{argumentHint}</span>
@@ -423,14 +423,14 @@ export default function PromptInput({
                 align="center"
                 className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
               >
-                <p className="text-sm text-text-primary mb-3">
+                <p className="text-text-primary mb-3">
                   {t('stopPopover.title')}
                 </p>
                 <div className="flex items-center justify-end gap-2">
                   <button
                     onClick={() => setStopPopoverOpen(false)}
                     disabled={isInterrupting}
-                    className="px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
+                    className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
                   >
                     {t('stopPopover.cancel')}
                   </button>
@@ -440,7 +440,7 @@ export default function PromptInput({
                       setStopPopoverOpen(false)
                     }}
                     disabled={isInterrupting}
-                    className="px-3 py-1.5 text-xs font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
+                    className="px-3 py-1.5 font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
                   >
                     {isInterrupting ? (
                       <span className="flex items-center gap-1">
@@ -467,7 +467,7 @@ export default function PromptInput({
         </div>
       </div>
       <div className="flex items-center justify-between mt-1.5 px-1">
-        <span className="text-[11px] text-text-tertiary">
+        <span className="text-text-tertiary">
           {t('inputHint')}
         </span>
       </div>
