@@ -137,11 +137,11 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       {/* Chat Header */}
       <div className="flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0 max-w-full px-4">
-          <span className="text-sm font-medium text-text-primary truncate max-w-md">
+          <span className="font-medium text-text-primary truncate max-w-md">
             {activeSession?.name || t('noSession')}
           </span>
           <span className="text-text-tertiary">/</span>
-          <span className="text-xs text-text-tertiary">{modelName}</span>
+          <span className="text-text-tertiary">{modelName}</span>
         </div>
       </div>
 
@@ -167,7 +167,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-text-secondary">{t('selectSessionPrompt')}</p>
+            <p className="text-text-secondary">{t('selectSessionPrompt')}</p>
           </div>
         )}
       </div>

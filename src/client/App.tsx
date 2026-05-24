@@ -13,6 +13,7 @@ import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
+import { fontSizeClass } from './lib/font-size'
 import { isMacOS } from './lib/platform'
 
 export interface ViewedFile {
@@ -24,7 +25,7 @@ export interface ViewedFile {
 function App() {
   const { t } = useTranslation('common')
   useTheme()
-  useAppSettings()
+  const { uiFontSize } = useAppSettings()
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -140,7 +141,7 @@ function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-bg text-text-primary text-sm overflow-x-hidden">
+    <div className={`h-screen flex flex-col bg-bg text-text-primary ${fontSizeClass(uiFontSize)} overflow-x-hidden`}>
       {/* Top Bar */}
       <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50 relative z-30">
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>
