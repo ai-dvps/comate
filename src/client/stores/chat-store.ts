@@ -152,7 +152,6 @@ interface ChatState {
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
-  deleteSession: (sessionId: string, workspaceId: string) => Promise<void>
   setActiveSession: (workspaceId: string, sessionId: string) => void
   loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
   sendMessage: (workspaceId: string, sessionId: string, content: string) => void
@@ -1593,81 +1592,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
     } catch (err) {
       console.error('Failed to create session:', err)
-    }
-  },
-
-  deleteSession: async (sessionId: string, workspaceId: string) => {
-    try {
-      // Close subscription first
-      const sub = sessionSubscriptions.get(sessionId)
-      if (sub) {
-        sub.close()
-      }
-      sessionSubscriptions.delete(sessionId)
-      lastEventId.delete(sessionId)
-
-      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
-        method: 'DELETE',
-      })
-      if (!res.ok && res.status !== 404) throw new Error(i18next.t('common:failedToDeleteSession', 'Failed to delete session'))
-      set((state) => {
-        const updated = (state.sessions[workspaceId] || []).filter((s) => s.id !== sessionId)
-        const newActive =
-          state.activeSessionIds[workspaceId] === sessionId
-            ? updated[0]?.id || ''
-            : state.activeSessionIds[workspaceId]
-        const newMessages = { ...state.messages }
-        delete newMessages[sessionId]
-        const newApprovalQueue = { ...state.approvalQueue }
-        delete newApprovalQueue[sessionId]
-        const newDraftQueue = { ...state.draftQueue }
-        delete newDraftQueue[sessionId]
-        const newPendingSend = { ...state.pendingSend }
-        delete newPendingSend[sessionId]
-        const newDrafts = { ...state.drafts }
-        delete newDrafts[sessionId]
-        const newIsStreaming = { ...state.isStreaming }
-        delete newIsStreaming[sessionId]
-        const newSubagents = { ...state.subagents }
-        delete newSubagents[sessionId]
-        const newSessionStatus = { ...state.sessionStatus }
-        delete newSessionStatus[sessionId]
-        const newUnreadCompletions = { ...state.unreadCompletions }
-        delete newUnreadCompletions[sessionId]
-        const newTasks = { ...state.tasks }
-        delete newTasks[sessionId]
-        const newPendingTaskCreates = { ...state.pendingTaskCreates }
-        delete newPendingTaskCreates[sessionId]
-        const newTotalMessageCount = { ...state.totalMessageCount }
-        delete newTotalMessageCount[sessionId]
-        const newIsLoadingOlderMessages = { ...state.isLoadingOlderMessages }
-        delete newIsLoadingOlderMessages[sessionId]
-        const newLastTurnUsage = { ...state.lastTurnUsage }
-        delete newLastTurnUsage[sessionId]
-        const newSessionUsage = { ...state.sessionUsage }
-        delete newSessionUsage[sessionId]
-        return {
-          sessions: { ...state.sessions, [workspaceId]: updated },
-          activeSessionIds: { ...state.activeSessionIds, [workspaceId]: newActive },
-          messages: newMessages,
-          approvalQueue: newApprovalQueue,
-          draftQueue: newDraftQueue,
-          pendingSend: newPendingSend,
-          drafts: newDrafts,
-          isStreaming: newIsStreaming,
-          subagents: newSubagents,
-          sessionStatus: newSessionStatus,
-          unreadCompletions: newUnreadCompletions,
-          tasks: newTasks,
-          pendingTaskCreates: newPendingTaskCreates,
-          totalMessageCount: newTotalMessageCount,
-          isLoadingOlderMessages: newIsLoadingOlderMessages,
-          lastTurnUsage: newLastTurnUsage,
-          sessionUsage: newSessionUsage,
-        }
-      })
-    } catch (err) {
-      console.error('Failed to delete session:', err)
     }
   },
 
