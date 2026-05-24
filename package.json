@@ -1,7 +1,7 @@
 {
-  "name": "claude-code-gui",
+  "name": "comate",
   "version": "1.0.0",
-  "description": "Personal workspace manager and GUI for Claude Code",
+  "description": "Your friendly AI workspace companion",
   "type": "module",
   "workspaces": [
     "packages/*"

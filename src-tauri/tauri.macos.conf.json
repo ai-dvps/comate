@@ -3,7 +3,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Claude Code GUI",
+        "title": "Comate",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

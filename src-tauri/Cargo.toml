@@ -1,10 +1,10 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+name = "comate"
+version = "1.0.0"
+description = "Your friendly AI workspace companion"
+authors = ["spearwang"]
 license = ""
-repository = ""
+repository = "https://github.com/ai-dvps/claude-code-gui"
 edition = "2021"
 rust-version = "1.77.2"
 

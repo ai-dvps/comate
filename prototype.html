@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Code GUI</title>
+  <title>Comate</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -148,7 +148,7 @@
       <div class="flex items-center gap-3">
         <div class="flex items-center gap-2 mr-4">
           <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-[10px] font-bold text-white">C</div>
-          <span class="font-medium text-text-primary hidden sm:block">Claude Code</span>
+          <span class="font-medium text-text-primary hidden sm:block">Comate</span>
         </div>
         <div class="flex items-center gap-1" id="tab-bar"></div>
       </div>
@@ -258,7 +258,7 @@
                 id="chat-input"
                 class="w-full bg-transparent border-0 rounded-xl px-4 py-3.5 pr-12 text-text-primary placeholder-text-tertiary resize-none focus:outline-none focus:ring-0"
                 rows="1"
-                placeholder="Ask Claude anything about your code..."
+                placeholder="Ask Comate anything about your code..."
               ></textarea>
               <div class="absolute right-2 bottom-2 flex items-center gap-1">
                 <button id="attach-file-btn" class="btn-ghost" title="Attach file context">
@@ -697,7 +697,7 @@ Would you like me to update the login route too?`,
           const streamingIndicator = msg.streaming ? `
             <div class="flex items-center gap-2 mt-3">
               <span class="w-1.5 h-1.5 bg-accent rounded-full streaming-dot"></span>
-              <span class="text-[11px] text-text-tertiary">Claude is thinking...</span>
+              <span class="text-[11px] text-text-tertiary">Comate is thinking...</span>
             </div>
           ` : '';
 
@@ -711,7 +711,7 @@ Would you like me to update the login route too?`,
                 <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 mt-0.5">C</div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 mb-1">
-                    <span class="text-xs font-medium text-text-secondary">Claude</span>
+                    <span class="text-xs font-medium text-text-secondary">Comate</span>
                     <span class="text-[11px] text-text-tertiary">Sonnet 4.6</span>
                   </div>
                   <div class="text-sm leading-relaxed text-text-primary space-y-2">

@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Claude Code GUI",
+  "productName": "Comate",
   "version": "1.0.0",
-  "identifier": "com.claude-code-gui.app",
+  "identifier": "com.comate.app",
   "build": {
     "frontendDist": "../dist/client",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Claude Code GUI",
+        "title": "Comate",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
