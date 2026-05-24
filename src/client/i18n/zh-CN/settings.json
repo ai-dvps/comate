@@ -25,7 +25,12 @@
     "followingSystem": "跟随系统偏好",
     "manualSelection": "手动选择",
     "resetToSystem": "重置为系统",
-    "language": "语言"
+    "language": "语言",
+    "chatFontSize": "聊天字体大小",
+    "uiFontSize": "界面字体大小",
+    "fontSizeSmall": "小",
+    "fontSizeMedium": "中",
+    "fontSizeLarge": "大"
   },
   "workspace": {
     "name": "名称",

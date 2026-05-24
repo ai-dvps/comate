@@ -467,13 +467,19 @@ function GeneralTab({
 
 function AppearanceTab() {
   const { theme, isFollowingSystem, setTheme, resetToSystem } = useTheme()
-  const { language, setLanguage } = useAppSettings()
+  const { language, setLanguage, chatFontSize, setChatFontSize, uiFontSize, setUiFontSize } = useAppSettings()
   const { t } = useTranslation('settings')
 
   const handleLanguageChange = (lang: string) => {
     setLanguage(lang)
     i18n.changeLanguage(lang)
   }
+
+  const fontSizePresets: { value: 'small' | 'medium' | 'large'; label: string }[] = [
+    { value: 'small', label: t('appearance.fontSizeSmall') },
+    { value: 'medium', label: t('appearance.fontSizeMedium') },
+    { value: 'large', label: t('appearance.fontSizeLarge') },
+  ]
 
   return (
     <div className="p-6 max-w-xl">
@@ -543,6 +549,44 @@ function AppearanceTab() {
             >
               简体中文
             </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-2">{t('appearance.chatFontSize')}</label>
+          <div className="flex items-center gap-2">
+            {fontSizePresets.map((preset) => (
+              <button
+                key={preset.value}
+                onClick={() => setChatFontSize(preset.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  chatFontSize === preset.value
+                    ? 'bg-accent text-accent-foreground border-accent'
+                    : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-2">{t('appearance.uiFontSize')}</label>
+          <div className="flex items-center gap-2">
+            {fontSizePresets.map((preset) => (
+              <button
+                key={preset.value}
+                onClick={() => setUiFontSize(preset.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  uiFontSize === preset.value
+                    ? 'bg-accent text-accent-foreground border-accent'
+                    : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
