@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Folder, GitBranch } from 'lucide-react'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { getContextWindowForModel } from '../utils/model-context'
@@ -63,16 +64,20 @@ export default function TokenUsageBar({
       <div className="flex items-center gap-2 min-w-0 overflow-hidden">
         {/* Workspace path and git ref */}
         {folderPath && (
-          <span
-            className="text-[11px] text-text-tertiary truncate max-w-[200px]"
-            title={folderPath}
-          >
-            {folderPath}
+          <span className="flex items-center gap-1 min-w-0">
+            <Folder className="w-3 h-3 text-text-tertiary shrink-0" />
+            <span
+              className="text-[11px] text-text-tertiary truncate max-w-[200px]"
+              title={folderPath}
+            >
+              {folderPath}
+            </span>
           </span>
         )}
         {gitRef && (
-          <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-            ({gitRef})
+          <span className="flex items-center gap-1 text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+            <GitBranch className="w-3 h-3" />
+            {gitRef}
           </span>
         )}
         {hasData && lastTurn && (
