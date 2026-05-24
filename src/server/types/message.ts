@@ -119,6 +119,8 @@ export type SseEvent =
       isError: boolean
       result?: string
       errors?: unknown
+      usage?: unknown
+      modelUsage?: unknown
     }
   | { type: 'error'; message: string }
   | { type: 'done' }
