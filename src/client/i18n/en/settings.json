@@ -117,7 +117,9 @@
     "botError": "WeCom bot error",
     "botNotConfigured": "WeCom bot not configured",
     "closeTab": "Close {{name}}",
-    "hiddenTabs": "Hidden tabs",
-    "noHiddenTabs": "No hidden tabs"
+    "searchTabs": "Search tabs...",
+    "noSearchResults": "No matching tabs",
+    "noOpenTabs": "No open tabs",
+    "openTabList": "Open tab list"
   }
 }

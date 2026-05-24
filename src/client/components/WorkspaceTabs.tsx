@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { useTranslation } from 'react-i18next'
-import { Folder, X } from 'lucide-react'
+import { Folder, X, ChevronDown, Search } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 
 type BotStatus = 'connected' | 'disconnected' | 'error' | 'not_configured'
@@ -31,9 +31,6 @@ const BOT_STATUS_DOT: Record<BotStatus, string> = {
   not_configured: 'bg-text-tertiary',
 }
 
-const OVERFLOW_BUTTON_WIDTH = 48
-const GAP_WIDTH = 4
-
 interface WorkspaceItem {
   id: string
   name: string
@@ -55,7 +52,7 @@ function TabPill({ ws, isActive, counts, botStatus, botStatusTitle, onClick, onC
   return (
     <div
       data-tab-id={ws.id}
-      className={`tab-pill flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer text-xs transition-all group whitespace-nowrap ${
+      className={`tab-pill flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer text-xs transition-all group whitespace-nowrap flex-shrink-0 ${
         isActive
           ? 'bg-surface-hover text-text-primary'
           : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover'
@@ -108,12 +105,10 @@ export default function WorkspaceTabs() {
   const activeSessionIds = useChatStore((s) => s.activeSessionIds)
 
   const [botStatuses, setBotStatuses] = useState<Record<string, BotStatus>>({})
-  const [overflowIds, setOverflowIds] = useState<Set<string>>(new Set())
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
-  const [resizeTick, setResizeTick] = useState(0)
+  const [searchQuery, setSearchQuery] = useState('')
 
-  const visibleRef = useRef<HTMLDivElement>(null)
-  const measureRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -161,16 +156,6 @@ export default function WorkspaceTabs() {
   }, [openWorkspaceIds, workspaces])
 
   useEffect(() => {
-    if (!visibleRef.current || !measureRef.current) return
-    const observer = new ResizeObserver(() => {
-      setResizeTick((t) => t + 1)
-    })
-    observer.observe(visibleRef.current)
-    observer.observe(measureRef.current)
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
     if (!isDropdownOpen) return
     const handleMouseDown = (e: MouseEvent) => {
       if (
@@ -193,6 +178,15 @@ export default function WorkspaceTabs() {
     }
   }, [isDropdownOpen])
 
+  // Scroll active tab into view when it changes
+  useEffect(() => {
+    if (!scrollRef.current || !activeWorkspaceId) return
+    const activeTab = scrollRef.current.querySelector(`[data-tab-id="${activeWorkspaceId}"]`)
+    if (activeTab) {
+      activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+    }
+  }, [activeWorkspaceId])
+
   const getWorkspaceCounts = (workspaceId: string) => {
     const list = sessions[workspaceId] ?? []
     const activeId = activeSessionIds[workspaceId]
@@ -207,124 +201,32 @@ export default function WorkspaceTabs() {
     return { needsMe, finishedUnread, streaming }
   }
 
-  useEffect(() => {
-    if (!visibleRef.current || !measureRef.current || openWorkspaces.length === 0) {
-      setOverflowIds((prev) => (prev.size === 0 ? prev : new Set()))
-      return
-    }
+  const filteredWorkspaces = useMemo(() => {
+    if (!searchQuery.trim()) return openWorkspaces
+    const query = searchQuery.toLowerCase()
+    return openWorkspaces.filter((ws) => ws.name.toLowerCase().includes(query))
+  }, [openWorkspaces, searchQuery])
 
-    const widths = new Map<string, number>()
-    measureRef.current.querySelectorAll('[data-tab-id]').forEach((tab) => {
-      const id = tab.getAttribute('data-tab-id')
-      if (id) widths.set(id, (tab as HTMLElement).offsetWidth)
-    })
-
-    const containerWidth = visibleRef.current.clientWidth
-    const availableWidth = containerWidth - OVERFLOW_BUTTON_WIDTH
-
-    const tabsWithPriority = openWorkspaces.map((ws, index) => {
-      const counts = getWorkspaceCounts(ws.id)
-      const botStatus = botStatuses[ws.id]
-      let priority = 1
-      if (activeWorkspaceId === ws.id) {
-        priority = 3
-      } else if (
-        counts.needsMe > 0 ||
-        counts.finishedUnread > 0 ||
-        counts.streaming > 0 ||
-        botStatus === 'error'
-      ) {
-        priority = 2
-      }
-      return {
-        id: ws.id,
-        priority,
-        index,
-        width: widths.get(ws.id) ?? 0,
-      }
-    })
-
-    const sorted = [...tabsWithPriority].sort((a, b) => {
-      if (a.priority !== b.priority) return b.priority - a.priority
-      return a.index - b.index
-    })
-
-    let usedWidth = 0
-    let visibleCount = 0
-    for (const tab of sorted) {
-      const tabTotalWidth = tab.width + (visibleCount > 0 ? GAP_WIDTH : 0)
-      if (usedWidth + tabTotalWidth <= availableWidth) {
-        usedWidth += tabTotalWidth
-        visibleCount++
-      } else {
-        break
-      }
-    }
-
-    // Always show at least one tab to avoid empty tab bar
-    if (visibleCount === 0 && sorted.length > 0) {
-      visibleCount = 1
-    }
-
-    const visibleIds = new Set(sorted.slice(0, visibleCount).map((t) => t.id))
-    const newOverflowIds = new Set(
-      openWorkspaces.filter((ws) => !visibleIds.has(ws.id)).map((ws) => ws.id)
-    )
-
-    setOverflowIds((prev) => {
-      if (
-        prev.size !== newOverflowIds.size ||
-        Array.from(prev).some((id) => !newOverflowIds.has(id)) ||
-        Array.from(newOverflowIds).some((id) => !prev.has(id))
-      ) {
-        return newOverflowIds
-      }
-      return prev
-    })
-  }, [
-    openWorkspaces,
-    activeWorkspaceId,
-    botStatuses,
-    sessions,
-    sessionStatus,
-    unreadCompletions,
-    isStreaming,
-    activeSessionIds,
-    resizeTick,
-  ])
-
-  const visibleWorkspaces = openWorkspaces.filter((ws) => !overflowIds.has(ws.id))
-  const hiddenWorkspaces = openWorkspaces.filter((ws) => overflowIds.has(ws.id))
-
-  const hasHiddenStatus = hiddenWorkspaces.some((ws) => {
-    const counts = getWorkspaceCounts(ws.id)
-    const botStatus = botStatuses[ws.id]
-    return (
-      counts.needsMe > 0 ||
-      counts.finishedUnread > 0 ||
-      counts.streaming > 0 ||
-      botStatus === 'error'
-    )
-  })
-
-  const handleSelectHidden = (id: string) => {
+  const handleSelectFromDropdown = (id: string) => {
     setActiveWorkspace(id)
     setIsDropdownOpen(false)
+    setSearchQuery('')
   }
 
-  const handleCloseHidden = (e: React.MouseEvent, id: string) => {
+  const handleCloseFromDropdown = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     closeWorkspace(id)
-    if (hiddenWorkspaces.length <= 1) {
-      setIsDropdownOpen(false)
-    }
   }
 
   return (
     <div className="flex items-center gap-1 min-w-0 relative">
-      {/* Visible tabs */}
-      <div ref={visibleRef} className="flex items-center gap-1 min-w-0 overflow-hidden">
-        {visibleWorkspaces.map((ws) => {
+      {/* Scrollable tabs — wrapped in overflow-hidden to prevent window-level scroll */}
+      <div className="overflow-hidden flex-1 min-w-0">
+        <div
+          ref={scrollRef}
+          className="flex items-center gap-1 overflow-x-auto scrollbar-hide min-w-0"
+        >
+        {openWorkspaces.map((ws) => {
           const isActive = activeWorkspaceId === ws.id
           const counts = getWorkspaceCounts(ws.id)
           const botStatus = botStatuses[ws.id]
@@ -350,137 +252,112 @@ export default function WorkspaceTabs() {
           )
         })}
       </div>
+      </div>
 
-      {/* Overflow button */}
-      {overflowIds.size > 0 && (
-        <div className="relative flex-shrink-0">
-          <button
-            ref={buttonRef}
-            onClick={() => setIsDropdownOpen((prev) => !prev)}
-            className={`flex items-center justify-center h-[29px] px-2 rounded-lg text-xs font-medium transition-colors ${
-              isDropdownOpen
-                ? 'bg-surface-hover text-text-primary'
-                : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover'
-            }`}
-            aria-expanded={isDropdownOpen}
+      {/* Persistent dropdown button */}
+      <div className="relative flex-shrink-0">
+        <button
+          ref={buttonRef}
+          onClick={() => setIsDropdownOpen((prev) => !prev)}
+          className={`flex items-center justify-center h-[29px] px-2 rounded-lg text-xs font-medium transition-colors ${
+            isDropdownOpen
+              ? 'bg-surface-hover text-text-primary'
+              : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover'
+          }`}
+          aria-expanded={isDropdownOpen}
+          aria-label={t('workspaceTabs.openTabList')}
+        >
+          <ChevronDown className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Dropdown */}
+        {isDropdownOpen && (
+          <div
+            ref={dropdownRef}
+            className="absolute top-full right-0 mt-1 z-[60] w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden"
           >
-            <span>+{overflowIds.size}</span>
-            {hasHiddenStatus && (
-              <span className="ml-1 w-1.5 h-1.5 rounded-full bg-warning" />
-            )}
-          </button>
-
-          {/* Dropdown */}
-          {isDropdownOpen && (
-            <div
-              ref={dropdownRef}
-              className="absolute top-full right-0 mt-1 z-40 w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden"
-            >
-              <div className="px-3 py-2 border-b border-border/50">
-                <span className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">
-                  {t('workspaceTabs.hiddenTabs')}
-                </span>
-              </div>
-              <div className="max-h-72 overflow-y-auto py-1">
-                {hiddenWorkspaces.length === 0 ? (
-                  <div className="px-3 py-4 text-xs text-text-tertiary text-center">
-                    {t('workspaceTabs.noHiddenTabs')}
-                  </div>
-                ) : (
-                  hiddenWorkspaces.map((ws) => {
-                    const isActive = activeWorkspaceId === ws.id
-                    const counts = getWorkspaceCounts(ws.id)
-                    const botStatus = botStatuses[ws.id]
-                    return (
-                      <div
-                        key={ws.id}
-                        onClick={() => handleSelectHidden(ws.id)}
-                        className={`flex items-center gap-2 px-3 py-2 text-xs cursor-pointer transition-colors ${
-                          isActive
-                            ? 'bg-surface-active text-text-primary'
-                            : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
-                        }`}
-                      >
-                        <Folder
-                          className={`w-3 h-3 flex-shrink-0 ${
-                            isActive ? 'text-accent' : 'text-text-tertiary'
-                          }`}
-                        />
-                        <span className="truncate flex-1">{ws.name}</span>
-                        {botStatus && (
-                          <span
-                            className="relative inline-flex flex-shrink-0"
-                            title={getBotStatusLabel(botStatus, t)}
-                          >
-                            <img
-                              src="/wecom-icon.svg"
-                              alt="WeCom"
-                              className={`w-3 h-3 flex-shrink-0 ${BOT_STATUS_CLASS[botStatus]}`}
-                            />
-                            <span
-                              className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${BOT_STATUS_DOT[botStatus]} ring-1 ring-bg`}
-                            />
-                          </span>
-                        )}
-                        {counts.needsMe > 0 && (
-                          <StatusIndicator state="needs-me" count={counts.needsMe} />
-                        )}
-                        {counts.finishedUnread > 0 && (
-                          <StatusIndicator state="finished-unread" count={counts.finishedUnread} />
-                        )}
-                        {counts.streaming > 0 && (
-                          <StatusIndicator state="streaming" count={counts.streaming} />
-                        )}
-                        {openWorkspaces.length > 1 && (
-                          <button
-                            className="ml-0.5 p-0.5 rounded hover:bg-surface-hover hover:text-destructive transition-all"
-                            onClick={(e) => handleCloseHidden(e, ws.id)}
-                            aria-label={t('workspaceTabs.closeTab', { name: ws.name })}
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    )
-                  })
-                )}
+            {/* Search input */}
+            <div className="px-3 py-2 border-b border-border/50">
+              <div className="flex items-center gap-2 px-2 py-1.5 bg-surface-hover rounded-lg">
+                <Search className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t('workspaceTabs.searchTabs')}
+                  className="bg-transparent text-xs text-text-primary placeholder:text-text-tertiary outline-none w-full"
+                  autoFocus
+                />
               </div>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Hidden measurement container */}
-      <div
-        ref={measureRef}
-        className="absolute top-0 left-0 opacity-0 pointer-events-none -z-10"
-        aria-hidden="true"
-      >
-        <div className="flex items-center gap-1">
-          {openWorkspaces.map((ws) => {
-            const isActive = activeWorkspaceId === ws.id
-            const counts = getWorkspaceCounts(ws.id)
-            const botStatus = botStatuses[ws.id]
-            return (
-              <TabPill
-                key={`measure-${ws.id}`}
-                ws={ws}
-                isActive={isActive}
-                counts={counts}
-                botStatus={botStatus}
-                botStatusTitle={botStatus ? getBotStatusLabel(botStatus, t) : undefined}
-                onClick={() => {}}
-                onClose={
-                  openWorkspaces.length > 1
-                    ? (e) => {
-                        e.stopPropagation()
-                      }
-                    : undefined
-                }
-              />
-            )
-          })}
-        </div>
+            <div className="max-h-72 overflow-y-auto py-1">
+              {filteredWorkspaces.length === 0 ? (
+                <div className="px-3 py-4 text-xs text-text-tertiary text-center">
+                  {searchQuery.trim()
+                    ? t('workspaceTabs.noSearchResults')
+                    : t('workspaceTabs.noOpenTabs')}
+                </div>
+              ) : (
+                filteredWorkspaces.map((ws) => {
+                  const isActive = activeWorkspaceId === ws.id
+                  const counts = getWorkspaceCounts(ws.id)
+                  const botStatus = botStatuses[ws.id]
+                  return (
+                    <div
+                      key={ws.id}
+                      onClick={() => handleSelectFromDropdown(ws.id)}
+                      className={`flex items-center gap-2 px-3 py-2 text-xs cursor-pointer transition-colors ${
+                        isActive
+                          ? 'bg-surface-active text-text-primary'
+                          : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                      }`}
+                    >
+                      <Folder
+                        className={`w-3 h-3 flex-shrink-0 ${
+                          isActive ? 'text-accent' : 'text-text-tertiary'
+                        }`}
+                      />
+                      <span className="truncate flex-1">{ws.name}</span>
+                      {botStatus && (
+                        <span
+                          className="relative inline-flex flex-shrink-0"
+                          title={getBotStatusLabel(botStatus, t)}
+                        >
+                          <img
+                            src="/wecom-icon.svg"
+                            alt="WeCom"
+                            className={`w-3 h-3 flex-shrink-0 ${BOT_STATUS_CLASS[botStatus]}`}
+                          />
+                          <span
+                            className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${BOT_STATUS_DOT[botStatus]} ring-1 ring-bg`}
+                          />
+                        </span>
+                      )}
+                      {counts.needsMe > 0 && (
+                        <StatusIndicator state="needs-me" count={counts.needsMe} />
+                      )}
+                      {counts.finishedUnread > 0 && (
+                        <StatusIndicator state="finished-unread" count={counts.finishedUnread} />
+                      )}
+                      {counts.streaming > 0 && (
+                        <StatusIndicator state="streaming" count={counts.streaming} />
+                      )}
+                      {openWorkspaces.length > 1 && (
+                        <button
+                          className="ml-0.5 p-0.5 rounded hover:bg-surface-hover hover:text-destructive transition-all"
+                          onClick={(e) => handleCloseFromDropdown(e, ws.id)}
+                          aria-label={t('workspaceTabs.closeTab', { name: ws.name })}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

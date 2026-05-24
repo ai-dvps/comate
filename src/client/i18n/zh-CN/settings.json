@@ -117,7 +117,9 @@
     "botError": "企业微信机器人错误",
     "botNotConfigured": "企业微信机器人未配置",
     "closeTab": "关闭 {{name}}",
-    "hiddenTabs": "隐藏的标签页",
-    "noHiddenTabs": "没有隐藏的标签页"
+    "searchTabs": "搜索标签页...",
+    "noSearchResults": "没有匹配的标签页",
+    "noOpenTabs": "没有打开的标签页",
+    "openTabList": "打开标签页列表"
   }
 }
