@@ -1874,6 +1874,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const error = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }))
         throw new Error(error.error || i18next.t('common:requestFailed', 'Request failed'))
       }
+
+      // Optimistically remove from queue so the panel dismisses immediately
+      set((state) => {
+        const queue = state.approvalQueue[sessionId] || []
+        const nextQueue = queue.filter((item) => item.requestId !== requestId)
+        return {
+          approvalQueue: { ...state.approvalQueue, [sessionId]: nextQueue },
+        }
+      })
     } catch (err) {
       console.error('Failed to resolve approval:', err)
       set((state) =>
