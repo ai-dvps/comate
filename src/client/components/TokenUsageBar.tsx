@@ -1,0 +1,87 @@
+import { useTranslation } from 'react-i18next'
+import { useChatStore } from '../stores/chat-store'
+import { useWorkspaceStore } from '../stores/workspace-store'
+import { getContextWindowForModel } from '../utils/model-context'
+
+interface TokenUsageBarProps {
+  sessionId: string
+  workspaceId: string
+  modelUsage?: Record<string, unknown>
+}
+
+export default function TokenUsageBar({
+  sessionId,
+  workspaceId,
+  modelUsage,
+}: TokenUsageBarProps) {
+  const { t } = useTranslation('chat')
+  const lastTurn = useChatStore((s) => s.lastTurnUsage[sessionId])
+  const cumulative = useChatStore((s) => s.sessionUsage[sessionId])
+
+  const workspace = useWorkspaceStore((s) =>
+    s.workspaces.find((w) => w.id === workspaceId),
+  )
+  const modelName =
+    (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
+
+  const contextWindow = getContextWindowForModel(modelName, modelUsage)
+
+  const hasData = !!cumulative
+
+  const totalTokens = hasData
+    ? cumulative.cumulativeInput +
+      cumulative.cumulativeCacheRead +
+      cumulative.cumulativeCacheWrite
+    : 0
+
+  const fillPercentage = Math.min(
+    Math.round((totalTokens / contextWindow) * 100),
+    100,
+  )
+
+  const fmt = (n: number) =>
+    n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+
+  if (!hasData) {
+    return (
+      <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/20">
+        <span className="text-[11px] text-text-tertiary">—</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/20 gap-3">
+      <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+        {/* Last turn */}
+        {lastTurn && (
+          <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+            {t('tokenUsage.turn')}: {fmt(lastTurn.inputTokens)} /{' '}
+            {fmt(lastTurn.outputTokens)}
+            {lastTurn.cacheReadTokens > 0 &&
+              ` / ${fmt(lastTurn.cacheReadTokens)}`}
+            {lastTurn.cacheWriteTokens > 0 &&
+              ` / ${fmt(lastTurn.cacheWriteTokens)}`}
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+        {/* Cumulative */}
+        <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+          {t('tokenUsage.session')}: {fmt(cumulative.cumulativeInput)} /{' '}
+          {fmt(cumulative.cumulativeOutput)}
+          {cumulative.cumulativeCacheRead > 0 &&
+            ` / ${fmt(cumulative.cumulativeCacheRead)}`}
+          {cumulative.cumulativeCacheWrite > 0 &&
+            ` / ${fmt(cumulative.cumulativeCacheWrite)}`}
+        </span>
+
+        {/* Context fill */}
+        <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+          {t('tokenUsage.context')}: {fillPercentage}%
+        </span>
+      </div>
+    </div>
+  )
+}
