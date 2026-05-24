@@ -141,7 +141,6 @@ function App() {
   }
 
   return (
-<<<<<<< HEAD
     <div className={`h-screen flex flex-col bg-bg text-text-primary ${fontSizeClass(uiFontSize)} overflow-x-hidden`}>
       {/* Top Bar */}
       <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50 relative z-30">
