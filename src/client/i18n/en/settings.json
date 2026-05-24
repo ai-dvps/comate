@@ -116,6 +116,8 @@
     "botDisconnected": "WeCom bot disconnected",
     "botError": "WeCom bot error",
     "botNotConfigured": "WeCom bot not configured",
-    "closeTab": "Close {{name}}"
+    "closeTab": "Close {{name}}",
+    "hiddenTabs": "Hidden tabs",
+    "noHiddenTabs": "No hidden tabs"
   }
 }

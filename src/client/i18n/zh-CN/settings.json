@@ -116,6 +116,8 @@
     "botDisconnected": "企业微信机器人已断开",
     "botError": "企业微信机器人错误",
     "botNotConfigured": "企业微信机器人未配置",
-    "closeTab": "关闭 {{name}}"
+    "closeTab": "关闭 {{name}}",
+    "hiddenTabs": "隐藏的标签页",
+    "noHiddenTabs": "没有隐藏的标签页"
   }
 }
