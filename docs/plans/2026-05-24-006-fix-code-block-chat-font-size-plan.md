@@ -11,30 +11,29 @@ depth: lightweight
 
 ## Summary
 
-The configurable chat font size feature (Small/Medium/Large) was applied to message text, reasoning blocks, and tool headers, but code blocks were missed. Both markdown-rendered code blocks (Streamdown) and tool JSON code blocks (local CodeBlock component) still render at a fixed `text-sm` with `p-4` padding regardless of the user's chat font size preference. This plan fixes both paths.
+The configurable chat font size feature (Small/Medium/Large) was applied to message text, reasoning blocks, and tool headers, but code blocks were missed. Both markdown-rendered code blocks (Streamdown) and tool JSON code blocks (local CodeBlock component) still render at a fixed `text-sm` regardless of the user's chat font size preference. This plan fixes both paths while keeping the existing `p-4` body padding intact.
 
 ## Problem Frame
 
 When the chat font size preference was implemented, the focus was on removing hardcoded `text-sm` classes from message, reasoning, and conversation components so they inherit the container's font size. Code blocks were overlooked:
 
-- The local `CodeBlock` component (`code-block.tsx`) hardcodes `text-sm` on its `<pre>` and `<code>` elements, `text-xs` on its header, and `p-4` on its body.
-- Streamdown's internal markdown code block renderer also hardcodes `text-sm` and `p-4`, which cannot be modified directly since it lives inside the `streamdown` npm package.
+- The local `CodeBlock` component (`code-block.tsx`) hardcodes `text-sm` on its `<pre>` and `<code>` elements, and `text-xs` on its header.
+- Streamdown's internal markdown code block renderer also hardcodes `text-sm`, which cannot be modified directly since it lives inside the `streamdown` npm package.
 
-As a result, switching the chat font size to Small or Large leaves code blocks stuck at 14px with generous padding, breaking visual consistency.
+As a result, switching the chat font size to Small or Large leaves code blocks stuck at 14px, breaking visual consistency.
 
 ## Requirements
 
 - R1. Local `CodeBlock` components (tool input/output JSON) respect the chat font size.
 - R2. Streamdown markdown code blocks (assistant message fenced code) respect the chat font size.
-- R3. Code block body padding is reduced to 0.
-- R4. No regression in FileDrawer or FilePanel code block appearance.
+- R3. No regression in FileDrawer or FilePanel code block appearance.
 
 ## Scope Boundaries
 
 - Inline code spans (backtick `code`) inside markdown — out of scope unless the container-level fix naturally covers them.
-- FileDrawer/FilePanel code blocks — may inherit UI font size and 0 padding; no explicit change required.
+- FileDrawer/FilePanel code blocks — may inherit UI font size; no explicit change required.
 - Syntax highlighting colors or themes.
-- Code block border radius or layout.
+- Code block padding, border radius, or layout.
 
 ## Context & Research
 
@@ -52,16 +51,16 @@ As a result, switching the chat font size to Small or Large leaves code blocks s
 
 ## Key Technical Decisions
 
-- **Remove hardcoded sizes and padding from local CodeBlock.** Deleting `text-sm` and `p-4` from `CodeBlockBody` and `text-xs` from `CodeBlockHeader` lets them inherit from the parent container. This is consistent with how `message.tsx`, `reasoning.tsx`, and `conversation.tsx` were already updated.
-- **Container-level override for Streamdown code blocks.** Since Streamdown is an external package, we cannot modify its internal component. Instead, add Tailwind arbitrary variants on the message list container that target `[data-streamdown="code-block-body"]` and set `font-size: inherit` and `padding: 0`. This overrides Streamdown's hardcoded styles via higher selector specificity without touching the package internals.
+- **Remove hardcoded sizes from local CodeBlock.** Deleting `text-sm` from `CodeBlockBody` and `text-xs` from `CodeBlockHeader` lets them inherit from the parent container. This is consistent with how `message.tsx`, `reasoning.tsx`, and `conversation.tsx` were already updated. The existing `p-4` body padding is kept intact.
+- **Container-level override for Streamdown code blocks.** Since Streamdown is an external package, we cannot modify its internal component. Instead, add a Tailwind arbitrary variant on the message list container that targets `[data-streamdown="code-block-body"]` and sets `font-size: inherit`. This overrides Streamdown's `text-sm` via higher selector specificity without touching the package internals.
 
 ## Implementation Units
 
-### U1. Remove hardcoded font sizes and padding from local CodeBlock
+### U1. Remove hardcoded font sizes from local CodeBlock
 
-**Goal:** Make the local `CodeBlock` component inherit font size from its parent and remove body padding.
+**Goal:** Make the local `CodeBlock` component inherit font size from its parent.
 
-**Requirements:** R1, R3, R4
+**Requirements:** R1, R3
 
 **Dependencies:** None
 
@@ -69,7 +68,7 @@ As a result, switching the chat font size to Small or Large leaves code blocks s
 - Modify: `src/client/components/ai-elements/code-block.tsx`
 
 **Approach:**
-1. In `CodeBlockBody`, remove `text-sm` and `p-4` from the `<pre>` className, and remove `text-sm` from the `<code>` className.
+1. In `CodeBlockBody`, remove `text-sm` from the `<pre>` className and from the `<code>` className. Keep `p-4` intact.
 2. In `CodeBlockHeader`, remove `text-xs` from the className.
 
 **Patterns to follow:**
@@ -83,11 +82,11 @@ As a result, switching the chat font size to Small or Large leaves code blocks s
 - `npx tsc --noEmit` passes.
 - Manual: trigger a tool that shows JSON input/output; verify the code block text scales with the chat font size setting.
 
-### U2. Override Streamdown markdown code block font size and padding
+### U2. Override Streamdown markdown code block font size
 
-**Goal:** Make Streamdown-rendered markdown code blocks respect the chat font size and remove their body padding.
+**Goal:** Make Streamdown-rendered markdown code blocks respect the chat font size.
 
-**Requirements:** R2, R3
+**Requirements:** R2
 
 **Dependencies:** None
 
@@ -96,10 +95,8 @@ As a result, switching the chat font size to Small or Large leaves code blocks s
 - Modify: `src/client/components/VirtualizedMessageList.tsx`
 
 **Approach:**
-1. In `MessageList.tsx`, extend the `ConversationContent` className to include Tailwind arbitrary variants that target Streamdown code blocks:
-   - `[&_[data-streamdown="code-block-body"]]:[font-size:inherit]` for font size inheritance.
-   - `[&_[data-streamdown="code-block-body"]]:[padding:0]` for padding removal.
-2. In `VirtualizedMessageList.tsx`, add the same targeting variants to the inner content container div that already carries `fontSizeClass(chatFontSize)`.
+1. In `MessageList.tsx`, extend the `ConversationContent` className to include a Tailwind arbitrary variant that targets Streamdown code blocks: `[&_[data-streamdown="code-block-body"]]:[font-size:inherit]`.
+2. In `VirtualizedMessageList.tsx`, add the same targeting variant to the inner content container div that already carries `fontSizeClass(chatFontSize)`.
 3. Optionally also target inline code with `[&_[data-streamdown="inline-code"]]:[font-size:inherit]` on both containers.
 
 **Patterns to follow:**
@@ -119,7 +116,7 @@ As a result, switching the chat font size to Small or Large leaves code blocks s
 - **Interaction graph:** `MessageList` and `VirtualizedMessageList` gain new className utilities. `code-block.tsx` loses explicit text-size classes. No other components are affected.
 - **Error propagation:** None — this is a pure styling change.
 - **State lifecycle risks:** None.
-- **Unchanged invariants:** Syntax highlighting, copy buttons, and line numbers are untouched. Code block body padding is intentionally changed (reduced to 0).
+- **Unchanged invariants:** Syntax highlighting, copy buttons, line numbers, and code block layout (including body padding) are untouched.
 
 ## Risks & Dependencies
 

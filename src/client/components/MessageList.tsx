@@ -203,7 +203,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: Me
 
   return (
     <Conversation>
-      <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)} [&_[data-streamdown="code-block-body"]]:[font-size:inherit] [&_[data-streamdown="code-block-body"]]:[padding:0] [&_[data-streamdown="inline-code"]]:[font-size:inherit]`}>
+      <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)} [&_[data-streamdown="code-block-body"]]:[font-size:inherit] [&_[data-streamdown="inline-code"]]:[font-size:inherit]`}>
         {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId))}
       </ConversationContent>
       <ConversationScrollButton />
