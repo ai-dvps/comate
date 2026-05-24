@@ -2,7 +2,7 @@ import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 
 export function getNativeBindingPath(): string | undefined {
-  if (!process.env.CLAUDE_CODE_GUI_SIDECAR) {
+  if (!process.env.COMATE_SIDECAR) {
     return undefined;
   }
 

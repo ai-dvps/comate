@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 
-const dataDir = process.env.CLAUDE_CODE_GUI_DATA_DIR;
+const dataDir = process.env.COMATE_DATA_DIR;
 const logFile = dataDir ? path.join(dataDir, 'sidecar.log') : null;
 
 if (logFile && !existsSync(path.dirname(logFile))) {

@@ -160,7 +160,7 @@ pub fn run() {
 
             // Build the tray menu. The two status items are disabled — they
             // render as read-only labels and the poller updates their text.
-            let open_item = MenuItemBuilder::with_id("open", "Open Claude Code GUI")
+            let open_item = MenuItemBuilder::with_id("open", "Open Comate")
                 .enabled(true)
                 .build(app)?;
             let bot_item = MenuItemBuilder::with_id("bot_status", "WeCom bot: …")
@@ -170,7 +170,7 @@ pub fn run() {
                 .enabled(false)
                 .build(app)?;
             let separator = PredefinedMenuItem::separator(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit Claude Code GUI")
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit Comate")
                 .enabled(true)
                 .build(app)?;
 
@@ -258,10 +258,10 @@ pub fn run() {
                 }
 
                 let sidecar_command = sidecar_command
-                    .env("CLAUDE_CODE_GUI_DATA_DIR", &data_dir)
+                    .env("COMATE_DATA_DIR", &data_dir)
                     .env("TAURI_RESOURCE_DIR", &resource_dir)
                     .env("PORT", "0")
-                    .env("CLAUDE_CODE_GUI_SIDECAR", "1");
+                    .env("COMATE_SIDECAR", "1");
 
                 let (mut rx, child) = match sidecar_command.spawn() {
                     Ok((rx, child)) => (rx, child),

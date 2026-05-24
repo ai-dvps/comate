@@ -86,10 +86,10 @@ const server = app.listen(PORT, () => {
   const actualPort = typeof address === 'object' && address ? address.port : PORT;
   const serverUrl = `http://localhost:${actualPort}`;
   console.log(`Server running on ${serverUrl}`);
-  diagLog(`Server started on ${serverUrl} (diag log file: ${process.env.CLAUDE_CODE_GUI_DATA_DIR || '~/.claude-code-gui'}/sse-diag.log)`);
+  diagLog(`Server started on ${serverUrl} (diag log file: ${process.env.COMATE_DATA_DIR || '~/.comate'}/sse-diag.log)`);
 
   // Emit ready message for Tauri sidecar discovery when PORT=0
-  if (process.env.CLAUDE_CODE_GUI_SIDECAR === '1') {
+  if (process.env.COMATE_SIDECAR === '1') {
     console.log(JSON.stringify({ type: 'ready', port: actualPort }));
   }
 

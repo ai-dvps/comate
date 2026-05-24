@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { getStorageDir } from '../storage/data-dir.js';
 
-const dataDir = process.env.CLAUDE_CODE_GUI_DATA_DIR || getStorageDir();
+const dataDir = process.env.COMATE_DATA_DIR || getStorageDir();
 const logFile = path.join(dataDir, 'sse-diag.log');
 
 if (logFile && !existsSync(path.dirname(logFile))) {
