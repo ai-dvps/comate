@@ -51,7 +51,7 @@ export default function WorkspaceSwitcher() {
 
       {isOpen && (
         <div
-          className="absolute top-full left-0 mt-1 z-40 w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden"
+          className="absolute top-full left-0 mt-1 z-[60] w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden"
         >
           <div className="px-3 py-2 border-b border-border/50">
             <span className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">

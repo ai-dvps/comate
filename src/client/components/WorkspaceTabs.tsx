@@ -224,7 +224,7 @@ export default function WorkspaceTabs() {
       <div className="overflow-hidden flex-1 min-w-0">
         <div
           ref={scrollRef}
-          className="flex items-center gap-1 overflow-x-auto scrollbar-hide"
+          className="flex items-center gap-1 overflow-x-auto scrollbar-hide min-w-0"
         >
         {openWorkspaces.map((ws) => {
           const isActive = activeWorkspaceId === ws.id
@@ -274,7 +274,7 @@ export default function WorkspaceTabs() {
         {isDropdownOpen && (
           <div
             ref={dropdownRef}
-            className="absolute top-full right-0 mt-1 z-40 w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden"
+            className="absolute top-full right-0 mt-1 z-[60] w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden"
           >
             {/* Search input */}
             <div className="px-3 py-2 border-b border-border/50">
