@@ -1,7 +1,7 @@
 ---
 title: Workspace Path and Git Status Display
 type: feat
-status: active
+status: completed
 date: 2026-05-24
 origin: docs/brainstorms/2026-05-24-workspace-path-git-status-requirements.md
 ---
