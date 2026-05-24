@@ -74,7 +74,12 @@
       "Bash(pkill -f \"tsx watch\")",
       "WebFetch(domain:developer.work.weixin.qq.com)",
       "WebFetch(domain:learnku.com)",
-      "WebFetch(domain:www.workerman.net)"
+      "WebFetch(domain:www.workerman.net)",
+      "Bash(npx tauri *)",
+      "Bash(sips -g pixelWidth -g pixelHeight src-tauri/icons/icon.icns)",
+      "Bash(sips -g pixelWidth -g pixelHeight src-tauri/icons/logo.png)",
+      "Bash(convert --version)",
+      "Bash(magick --version)"
     ]
   }
 }

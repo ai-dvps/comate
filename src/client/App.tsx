@@ -145,12 +145,7 @@ function App() {
       {/* Top Bar */}
       <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50 relative z-30">
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>
-          <div data-tauri-drag-region className="flex items-center gap-2 mr-4 select-none flex-shrink-0" onMouseDown={handleDrag}>
-            <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-[10px] font-bold text-white">
-              C
-            </div>
-            <span className="font-medium text-text-primary hidden sm:block">Claude Code</span>
-          </div>
+          <div data-tauri-drag-region className="w-4 self-stretch select-none flex-shrink-0" onMouseDown={handleDrag} />
           <div className="flex-shrink-0">
             <WorkspaceSwitcher />
           </div>
