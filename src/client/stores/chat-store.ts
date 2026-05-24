@@ -1339,7 +1339,7 @@ function normalizeSdkStatus(status: string): TaskItem['status'] {
 
 function subscribeToSession(
   set: SseSetter,
-  get: SseGetter,
+  _get: SseGetter,
   workspaceId: string,
   sessionId: string,
 ): void {
