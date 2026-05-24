@@ -144,6 +144,14 @@
 }
 
 @layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
   /* Shimmer effect for AI Elements `Shimmer` component (CSS replacement for motion/react). */
   .ai-shimmer {
     background-image:
