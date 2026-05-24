@@ -43,7 +43,6 @@
   "createSessionPrompt": "创建一个以开始聊天。",
   "startConversation": "开始新对话...",
   "draft": "草稿",
-  "deleteSession": "删除会话",
   "wecomBotSession": "企业微信机器人会话",
   "close": "关闭",
   "toolCount_one": "{{count}} 个工具",

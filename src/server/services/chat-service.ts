@@ -114,28 +114,6 @@ export class ChatService {
     return null;
   }
 
-  async deleteSession(id: string, workspaceId: string): Promise<boolean> {
-    // Close runtime if active
-    await this.closeRuntime(id);
-
-    // Try draft first
-    const draftDeleted = await draftStore.deleteDraft(id);
-    if (draftDeleted) return true;
-
-    // Otherwise delete SDK session
-    const workspace = await workspaceStore.get(workspaceId);
-    if (!workspace) {
-      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
-    }
-
-    try {
-      await this.sdkClient.deleteSession(id, { dir: workspace.folderPath });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   async clearDraftFlag(id: string): Promise<boolean> {
     return draftStore.clearDraftFlag(id);
   }

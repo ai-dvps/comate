@@ -83,16 +83,6 @@ export class DraftSessionStore {
     return data.sessions[index];
   }
 
-  async deleteDraft(id: string): Promise<boolean> {
-    const data = await readDrafts();
-    const index = data.sessions.findIndex(s => s.id === id);
-    if (index === -1) return false;
-
-    data.sessions.splice(index, 1);
-    await writeDrafts(data);
-    return true;
-  }
-
   async clearDraftFlag(id: string): Promise<boolean> {
     const data = await readDrafts();
     const index = data.sessions.findIndex(s => s.id === id);

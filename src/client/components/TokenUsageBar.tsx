@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Folder, GitBranch } from 'lucide-react'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { getContextWindowForModel } from '../utils/model-context'
@@ -42,19 +44,43 @@ export default function TokenUsageBar({
   const fmt = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 
-  if (!hasData) {
-    return (
-      <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/20">
-        <span className="text-[11px] text-text-tertiary">—</span>
-      </div>
-    )
-  }
+  const [gitRef, setGitRef] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setGitRef(null)
+      return
+    }
+    fetch(`/api/workspaces/${workspaceId}/git-ref`)
+      .then((res) => res.json())
+      .then((data: { ref?: string | null }) => setGitRef(data.ref ?? null))
+      .catch(() => setGitRef(null))
+  }, [workspaceId])
+
+  const folderPath = workspace?.folderPath
 
   return (
     <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/20 gap-3">
       <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-        {/* Last turn */}
-        {lastTurn && (
+        {/* Workspace path and git ref */}
+        {folderPath && (
+          <span className="flex items-center gap-1 min-w-0">
+            <Folder className="w-3 h-3 text-text-tertiary shrink-0" />
+            <span
+              className="text-[11px] text-text-tertiary truncate max-w-[200px]"
+              title={folderPath}
+            >
+              {folderPath}
+            </span>
+          </span>
+        )}
+        {gitRef && (
+          <span className="flex items-center gap-1 text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+            <GitBranch className="w-3 h-3" />
+            {gitRef}
+          </span>
+        )}
+        {hasData && lastTurn && (
           <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
             {t('tokenUsage.turn')}: {fmt(lastTurn.inputTokens)} /{' '}
             {fmt(lastTurn.outputTokens)}
@@ -67,20 +93,26 @@ export default function TokenUsageBar({
       </div>
 
       <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-        {/* Cumulative */}
-        <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-          {t('tokenUsage.session')}: {fmt(cumulative.cumulativeInput)} /{' '}
-          {fmt(cumulative.cumulativeOutput)}
-          {cumulative.cumulativeCacheRead > 0 &&
-            ` / ${fmt(cumulative.cumulativeCacheRead)}`}
-          {cumulative.cumulativeCacheWrite > 0 &&
-            ` / ${fmt(cumulative.cumulativeCacheWrite)}`}
-        </span>
+        {!hasData ? (
+          <span className="text-[11px] text-text-tertiary">—</span>
+        ) : (
+          <>
+            {/* Cumulative */}
+            <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+              {t('tokenUsage.session')}: {fmt(cumulative.cumulativeInput)} /{' '}
+              {fmt(cumulative.cumulativeOutput)}
+              {cumulative.cumulativeCacheRead > 0 &&
+                ` / ${fmt(cumulative.cumulativeCacheRead)}`}
+              {cumulative.cumulativeCacheWrite > 0 &&
+                ` / ${fmt(cumulative.cumulativeCacheWrite)}`}
+            </span>
 
-        {/* Context fill */}
-        <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-          {t('tokenUsage.context')}: {fillPercentage}%
-        </span>
+            {/* Context fill */}
+            <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+              {t('tokenUsage.context')}: {fillPercentage}%
+            </span>
+          </>
+        )}
       </div>
     </div>
   )

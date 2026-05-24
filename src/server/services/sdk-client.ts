@@ -4,7 +4,6 @@ import {
   getSessionInfo,
   getSessionMessages,
   renameSession,
-  deleteSession,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   Query,
@@ -85,10 +84,6 @@ export class SdkClient {
     options?: SessionMutationOptions,
   ): Promise<void> {
     return renameSession(sessionId, title, options);
-  }
-
-  async deleteSession(sessionId: string, options?: SessionMutationOptions): Promise<void> {
-    return deleteSession(sessionId, options);
   }
 
   async fetchInitialization(options: Options): Promise<InitializationResponse> {

@@ -43,7 +43,6 @@
   "createSessionPrompt": "Create one to start chatting.",
   "startConversation": "Start a new conversation...",
   "draft": "Draft",
-  "deleteSession": "Delete session",
   "wecomBotSession": "WeCom bot session",
   "close": "Close",
   "toolCount_one": "{{count}} tool",
