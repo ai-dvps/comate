@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { useTranslation } from 'react-i18next'
@@ -117,9 +117,13 @@ export default function WorkspaceTabs() {
   const buttonRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const openWorkspaces = openWorkspaceIds
-    .map((id) => workspaces.find((w) => w.id === id))
-    .filter(Boolean) as WorkspaceItem[]
+  const openWorkspaces = useMemo(
+    () =>
+      openWorkspaceIds
+        .map((id) => workspaces.find((w) => w.id === id))
+        .filter(Boolean) as WorkspaceItem[],
+    [openWorkspaceIds, workspaces]
+  )
 
   useEffect(() => {
     const enabledIds = openWorkspaceIds.filter((id) => {
@@ -203,9 +207,9 @@ export default function WorkspaceTabs() {
     return { needsMe, finishedUnread, streaming }
   }
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!visibleRef.current || !measureRef.current || openWorkspaces.length === 0) {
-      setOverflowIds(new Set())
+      setOverflowIds((prev) => (prev.size === 0 ? prev : new Set()))
       return
     }
 
