@@ -67,5 +67,10 @@
     "hourAgo_plural": "{{count}} 小时前",
     "dayAgo": "{{count}} 天前",
     "dayAgo_plural": "{{count}} 天前"
+  },
+  "tokenUsage": {
+    "turn": "本轮",
+    "session": "累计",
+    "context": "上下文"
   }
 }

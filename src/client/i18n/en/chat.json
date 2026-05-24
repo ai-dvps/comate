@@ -67,5 +67,10 @@
     "hourAgo_plural": "{{count}} hours ago",
     "dayAgo": "{{count}} day ago",
     "dayAgo_plural": "{{count}} days ago"
+  },
+  "tokenUsage": {
+    "turn": "Turn",
+    "session": "Session",
+    "context": "Context"
   }
 }
