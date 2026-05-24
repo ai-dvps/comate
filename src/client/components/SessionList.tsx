@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
-import { MessageSquare, Plus, Trash2 } from 'lucide-react'
+import { MessageSquare, Plus } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
 
@@ -44,7 +44,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const { t } = useTranslation('chat')
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
-  const [hoveredSession, setHoveredSession] = useState<string | null>(null)
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
@@ -55,18 +54,12 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const isLoading = useChatStore((s) => s.isLoadingSessions)
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const createSession = useChatStore((s) => s.createSession)
-  const deleteSession = useChatStore((s) => s.deleteSession)
 
   const handleCreate = async () => {
     const name = newName.trim() || t('newSessionDefaultName', { count: sessions.length + 1 })
     await createSession(workspaceId, name)
     setNewName('')
     setShowCreate(false)
-  }
-
-  const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation()
-    await deleteSession(sessionId, workspaceId)
   }
 
   const getPreview = (sessionId: string): string => {
@@ -150,8 +143,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             <div
               key={session.id}
               onClick={() => setActiveSession(workspaceId, session.id)}
-              onMouseEnter={() => setHoveredSession(session.id)}
-              onMouseLeave={() => setHoveredSession(null)}
               className={`session-item mx-2 px-3 py-2.5 rounded-lg cursor-pointer group transition-all ${
                 session.id === activeSessionId
                   ? 'bg-surface-active'
@@ -197,19 +188,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                     {getSessionTimestamp(session, t)}
                   </p>
                 </div>
-                {session.id === activeSessionId ? (
-                  <div className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0 mt-2" />
-                ) : (
-                  <button
-                    onClick={(e) => handleDelete(e, session.id)}
-                    className={`p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive flex-shrink-0 transition-opacity ${
-                      hoveredSession === session.id ? 'opacity-100' : 'opacity-0'
-                    }`}
-                    title={t('deleteSession')}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                )}
               </div>
             </div>
           )})

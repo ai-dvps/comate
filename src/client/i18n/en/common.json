@@ -58,7 +58,6 @@
   "connectionError": "Connection error",
   "failedToFetchSessions": "Failed to fetch sessions",
   "failedToCreateSession": "Failed to create session",
-  "failedToDeleteSession": "Failed to delete session",
   "failedToLoadMessages": "Failed to load messages",
   "failedToFetchOlderMessages": "Failed to fetch older messages",
   "failedToFetchCommands": "Failed to fetch commands",
