@@ -61,16 +61,6 @@ export default function Sidebar({ onFileClick, onFileDoubleClick }: SidebarProps
           />
         )}
       </div>
-
-      {/* Footer */}
-      <div className="p-3 border-t border-border/50">
-        <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-surface-hover cursor-pointer transition-colors">
-          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">
-            D
-          </div>
-          <span className="text-text-secondary">{t('sidebar.developer')}</span>
-        </div>
-      </div>
     </aside>
   )
 }

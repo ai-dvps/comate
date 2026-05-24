@@ -327,7 +327,7 @@ export default function VirtualizedMessageList({
 
   return (
     <div className="relative flex-1">
-      <div ref={parentRef} className="h-full overflow-y-auto">
+      <div ref={parentRef} className="absolute inset-0 overflow-y-auto">
         {isLoadingOlder && (
           <div className="p-3 max-w-3xl mx-auto w-full text-center">
             <div className="flex gap-1 justify-center">
