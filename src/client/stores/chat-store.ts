@@ -1311,6 +1311,8 @@ function handleSseEvent(
       })
       return
     }
+    case 'heartbeat':
+      return
     case 'system_init':
     case 'done':
     default:
@@ -1366,9 +1368,11 @@ function subscribeToSession(
 
     const abortController = new AbortController()
     let readTimeout: ReturnType<typeof setTimeout> | undefined
+    let abortedIntentionally = false
 
     const thisClose = () => {
       console.log(`[SSE ${sessionId}] thisClose called`)
+      abortedIntentionally = true
       if (retryTimer) {
         clearTimeout(retryTimer)
         retryTimer = undefined
@@ -1387,7 +1391,7 @@ function subscribeToSession(
       readTimeout = setTimeout(() => {
         console.warn(`[SSE ${sessionId}] read timeout — forcing reconnect`)
         abortController.abort()
-      }, 30000)
+      }, 35000)
     }
 
     fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/stream`, {
@@ -1474,9 +1478,12 @@ function subscribeToSession(
           sessionSubscriptions.delete(sessionId)
         }
         if (err.name === 'AbortError') {
-          diagLog(`[SSE ${sessionId}] subscription aborted intentionally`)
-          console.log(`[SSE ${sessionId}] subscription aborted intentionally`)
-          return
+          if (abortedIntentionally) {
+            diagLog(`[SSE ${sessionId}] subscription aborted intentionally`)
+            console.log(`[SSE ${sessionId}] subscription aborted intentionally`)
+            return
+          }
+          // Timeout-driven abort — fall through to retry logic
         }
 
         const status = (err as Error & { status?: number }).status

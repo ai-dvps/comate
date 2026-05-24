@@ -176,3 +176,4 @@ export type SseEvent =
       taskId: string
       patch: { status?: string; description?: string; error?: string }
     }
+  | { type: 'heartbeat' }
