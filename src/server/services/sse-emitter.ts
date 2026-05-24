@@ -248,6 +248,16 @@ export class SseEmitter {
     this.send({ type: 'server_restarted', serverNonce });
   }
 
+  emitHeartbeat(): void {
+    if (this.res) {
+      try {
+        this.res.write('event: heartbeat\ndata: {}\n\n');
+      } catch {
+        // Ignore write errors on closed connections
+      }
+    }
+  }
+
   /** Public wrapper so nested SubagentEmitter can emit events. */
   emitEvent(event: SseEvent): void {
     this.send(event);
