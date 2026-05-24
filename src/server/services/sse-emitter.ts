@@ -181,6 +181,8 @@ export class SseEmitter {
           isError: msg.is_error,
           result: msg.subtype === 'success' ? msg.result : undefined,
           errors: 'errors' in msg ? (msg as { errors?: unknown }).errors : undefined,
+          usage: (msg as Record<string, unknown>).usage,
+          modelUsage: (msg as Record<string, unknown>).modelUsage,
         });
         return;
 
