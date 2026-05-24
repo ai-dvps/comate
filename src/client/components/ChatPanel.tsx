@@ -33,6 +33,9 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const modelName = (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
 
   const [isInterrupting, setIsInterrupting] = useState(false)
+  const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(
+    null,
+  )
   const [openDrawerToolUseId, setOpenDrawerToolUseId] = useState<
     string | null
   >(null)
@@ -77,55 +80,103 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     }
   }
 
-  const handleAllow = () => {
+  const handleAllow = async () => {
     if (!activeSessionId || !currentApproval) return
-    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
-      behavior: 'allow',
-    })
+    setResolvingRequestId(currentApproval.requestId)
+    try {
+      await resolveApproval(
+        workspaceId,
+        activeSessionId,
+        currentApproval.requestId,
+        { behavior: 'allow' },
+      )
+    } finally {
+      setResolvingRequestId(null)
+    }
   }
 
-  const handleAllowAlways = () => {
+  const handleAllowAlways = async () => {
     if (!activeSessionId || !currentApproval) return
+    setResolvingRequestId(currentApproval.requestId)
     const suggestions =
       'suggestions' in currentApproval ? currentApproval.suggestions : undefined
-    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
-      behavior: 'allow',
-      updatedPermissions: suggestions,
-    })
+    try {
+      await resolveApproval(
+        workspaceId,
+        activeSessionId,
+        currentApproval.requestId,
+        {
+          behavior: 'allow',
+          updatedPermissions: suggestions,
+        },
+      )
+    } finally {
+      setResolvingRequestId(null)
+    }
   }
 
-  const handleDeny = (message: string) => {
+  const handleDeny = async (message: string) => {
     if (!activeSessionId || !currentApproval) return
-    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
-      behavior: 'deny',
-      message,
-    })
+    setResolvingRequestId(currentApproval.requestId)
+    try {
+      await resolveApproval(
+        workspaceId,
+        activeSessionId,
+        currentApproval.requestId,
+        {
+          behavior: 'deny',
+          message,
+        },
+      )
+    } finally {
+      setResolvingRequestId(null)
+    }
   }
 
-  const handleAnswerQuestion = (answers: Record<string, string>) => {
+  const handleAnswerQuestion = async (answers: Record<string, string>) => {
     if (!activeSessionId || !currentApproval) return
+    setResolvingRequestId(currentApproval.requestId)
     const questions =
       'questions' in currentApproval ? currentApproval.questions : undefined
-    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
-      behavior: 'allow',
-      answers,
-      questions,
-    })
+    try {
+      await resolveApproval(
+        workspaceId,
+        activeSessionId,
+        currentApproval.requestId,
+        {
+          behavior: 'allow',
+          answers,
+          questions,
+        },
+      )
+    } finally {
+      setResolvingRequestId(null)
+    }
   }
 
-  const handleChatAbout = () => {
+  const handleChatAbout = async () => {
     if (!activeSessionId || !currentApproval) return
+    setResolvingRequestId(currentApproval.requestId)
     const questions =
       'questions' in currentApproval ? currentApproval.questions : []
     const answers: Record<string, string> = {}
     for (const q of questions) {
       answers[q.question] = CHAT_ABOUT_THIS_MESSAGE
     }
-    resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, {
-      behavior: 'allow',
-      answers,
-      questions,
-    })
+    try {
+      await resolveApproval(
+        workspaceId,
+        activeSessionId,
+        currentApproval.requestId,
+        {
+          behavior: 'allow',
+          answers,
+          questions,
+        },
+      )
+    } finally {
+      setResolvingRequestId(null)
+    }
   }
 
   const handleCloseDrawer = useCallback(() => {
@@ -179,6 +230,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             workspaceId={workspaceId}
             pendingItem={currentApproval}
             queueDepth={approvalQueueLength - 1}
+            isResolving={resolvingRequestId === currentApproval?.requestId}
             onAllow={handleAllow}
             onAllowAlways={handleAllowAlways}
             onDeny={handleDeny}
