@@ -25,7 +25,12 @@
     "followingSystem": "Following system preference",
     "manualSelection": "Manual selection",
     "resetToSystem": "Reset to system",
-    "language": "Language"
+    "language": "Language",
+    "chatFontSize": "Chat Font Size",
+    "uiFontSize": "UI Font Size",
+    "fontSizeSmall": "Small",
+    "fontSizeMedium": "Medium",
+    "fontSizeLarge": "Large"
   },
   "workspace": {
     "name": "Name",
