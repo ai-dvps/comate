@@ -326,41 +326,43 @@ export default function VirtualizedMessageList({
   }
 
   return (
-    <div ref={parentRef} className="relative flex-1 overflow-y-auto">
-      {isLoadingOlder && (
-        <div className="p-3 max-w-3xl mx-auto w-full text-center">
-          <div className="flex gap-1 justify-center">
-            <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
-            <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
-            <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+    <div className="relative flex-1">
+      <div ref={parentRef} className="h-full overflow-y-auto">
+        {isLoadingOlder && (
+          <div className="p-3 max-w-3xl mx-auto w-full text-center">
+            <div className="flex gap-1 justify-center">
+              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
           </div>
+        )}
+        <div
+          className={`p-3 max-w-3xl mx-auto w-full relative ${fontSizeClass(chatFontSize)} [&_[data-streamdown="code-block-body"]]:[font-size:inherit] [&_[data-streamdown="code-block-body"]]:p-2 [&_[data-streamdown="inline-code"]]:[font-size:inherit]`}
+          style={{ height: virtualizer.getTotalSize() }}
+        >
+          {virtualItems.map((virtualItem) => (
+            <div
+              key={virtualItem.key}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: '0.75rem',
+                right: '0.75rem',
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              {renderViewItem(
+                viewItems[virtualItem.index],
+                resultMap,
+                onOpenDrawer,
+                sessionId,
+              )}
+            </div>
+          ))}
         </div>
-      )}
-      <div
-        className={`p-3 max-w-3xl mx-auto w-full relative ${fontSizeClass(chatFontSize)} [&_[data-streamdown="code-block-body"]]:[font-size:inherit] [&_[data-streamdown="code-block-body"]]:p-2 [&_[data-streamdown="inline-code"]]:[font-size:inherit]`}
-        style={{ height: virtualizer.getTotalSize() }}
-      >
-        {virtualItems.map((virtualItem) => (
-          <div
-            key={virtualItem.key}
-            data-index={virtualItem.index}
-            ref={virtualizer.measureElement}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: '0.75rem',
-              right: '0.75rem',
-              transform: `translateY(${virtualItem.start}px)`,
-            }}
-          >
-            {renderViewItem(
-              viewItems[virtualItem.index],
-              resultMap,
-              onOpenDrawer,
-              sessionId,
-            )}
-          </div>
-        ))}
       </div>
       {!isAtBottom && (
         <Button
