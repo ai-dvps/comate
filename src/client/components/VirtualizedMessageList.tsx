@@ -337,7 +337,7 @@ export default function VirtualizedMessageList({
         </div>
       )}
       <div
-        className={`p-3 max-w-3xl mx-auto w-full relative ${fontSizeClass(chatFontSize)}`}
+        className={`p-3 max-w-3xl mx-auto w-full relative ${fontSizeClass(chatFontSize)} [&_[data-streamdown="code-block-body"]]:[font-size:inherit] [&_[data-streamdown="code-block-body"]]:[padding:0] [&_[data-streamdown="inline-code"]]:[font-size:inherit]`}
         style={{ height: virtualizer.getTotalSize() }}
       >
         {virtualItems.map((virtualItem) => (

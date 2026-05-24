@@ -255,14 +255,14 @@ const CodeBlockBody = memo(
     return (
       <pre
         className={cn(
-          'm-0 p-4 text-sm',
+          'm-0',
           className,
         )}
         style={preStyle}
       >
         <code
           className={cn(
-            'font-mono text-sm',
+            'font-mono',
             showLineNumbers && '[counter-increment:line_0] [counter-reset:line]',
           )}
         >
@@ -313,7 +313,7 @@ export const CodeBlockHeader = ({
 }: HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      'flex items-center justify-between border-b border-border bg-surface-hover/80 px-3 py-2 text-text-tertiary text-xs',
+      'flex items-center justify-between border-b border-border bg-surface-hover/80 px-3 py-2 text-text-tertiary',
       className,
     )}
     {...props}
