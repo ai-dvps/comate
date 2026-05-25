@@ -13,6 +13,7 @@ import cliInstallRoutes from './routes/cli-install.js';
 import systemRoutes from './routes/system.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { diagLog } from './utils/diag-logger.js';
+import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
 
 function getDirname(): string {
   try {
@@ -56,17 +57,24 @@ app.post('/api/log', express.json({ limit: '1mb' }), (req, res) => {
 });
 
 app.get('/api/health/claude', (_req, res) => {
-  try {
-    execSync('claude --version', { stdio: 'pipe', timeout: 5000 });
-    res.json({ ok: true });
-  } catch (err) {
-    const isWindows = process.platform === 'win32';
+  const binaryPath = resolveSdkBinary();
+  if (!binaryPath) {
     res.status(503).json({
       ok: false,
-      error: 'Claude CLI not found or not authenticated',
-      message: isWindows
-        ? 'Claude CLI must be installed and authenticated. Run "claude login" in your terminal.'
-        : 'Claude CLI must be installed and authenticated. Run "claude login" in your terminal.',
+      error: 'Claude binary not found',
+      message: 'Claude binary not found in app bundle.',
+    });
+    return;
+  }
+
+  try {
+    execSync(`"${binaryPath}" --version`, { stdio: 'pipe', timeout: 5000 });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(503).json({
+      ok: false,
+      error: 'Claude binary failed to execute',
+      message: 'Claude binary failed to execute.',
     });
   }
 });
