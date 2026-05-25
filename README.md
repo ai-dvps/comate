@@ -48,6 +48,12 @@ Comate is a desktop AI workspace that brings Claude Code into a polished, native
 - Dark and light themes with OS preference detection
 - English and Simplified Chinese (zh-CN) localization
 
+**WeCom Bot Integration**
+- Connect a workspace to a WeChat Work (WeCom) bot
+- Each WeCom user gets their own persistent Claude session
+- Bot sessions visible in the GUI with WeCom badges for monitoring
+- HTTP bridge for sending messages from external systems
+
 **Task Tracking**
 - Real-time task/todo panel extracted from agent tool calls
 - Live task status as the model works through multi-step requests
@@ -72,7 +78,6 @@ Download the latest release for your platform:
 
 - **macOS** 13.0 or later (Ventura+)
 - **Windows** 10 or later
-- An [Anthropic API key](https://console.anthropic.com/) for AI features
 
 ## Contributing
 
@@ -80,4 +85,4 @@ See [development.md](development.md) for setup instructions and contribution gui
 
 ## License
 
-No license is currently declared for this project.
+[Apache License 2.0](LICENSE)
