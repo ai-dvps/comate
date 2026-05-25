@@ -12,6 +12,7 @@ import { SessionRuntime } from './session-runtime.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
+import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
@@ -163,7 +164,7 @@ export class ChatService {
     }
 
     const options: import('@anthropic-ai/claude-agent-sdk').GetSessionMessagesOptions = {
-      dir: workspace.folderPath,
+      dir: normalizeWindowsPath(workspace.folderPath),
     };
     if (offset !== undefined) options.offset = offset;
     if (limit !== undefined) options.limit = limit;
@@ -223,7 +224,7 @@ export class ChatService {
       }
 
       const options = this.buildSdkOptions(workspace, session, isBotSession);
-      await this.testClaudeBinary(options.pathToClaudeCodeExecutable, workspace.folderPath, options.env || process.env);
+      await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
       const runtime = SessionRuntime.open(sessionId, workspaceId, this.serverNonce, options, this.sdkClient, botEventHandler);
       this.runtimes.set(sessionId, runtime);
 
@@ -295,7 +296,7 @@ export class ChatService {
     const workspaces = await workspaceStore.list();
     for (const ws of workspaces) {
       try {
-        const info = await this.sdkClient.getSessionInfo(sessionId, { dir: ws.folderPath });
+        const info = await this.sdkClient.getSessionInfo(sessionId, { dir: normalizeWindowsPath(ws.folderPath) });
         if (info) return ws;
       } catch {
         // Continue searching
@@ -335,13 +336,14 @@ export class ChatService {
     }
 
     const claudePath = resolveSdkBinary();
+    const normalizedCwd = normalizeWindowsPath(workspace.folderPath);
     sidecarLog(`[ChatService.buildSdkOptions] pathToClaudeCodeExecutable=${claudePath}`);
-    sidecarLog(`[ChatService.buildSdkOptions] cwd=${workspace.folderPath}`);
+    sidecarLog(`[ChatService.buildSdkOptions] cwd=${normalizedCwd} (raw=${workspace.folderPath})`);
     sidecarLog(`[ChatService.buildSdkOptions] model=${workspace.settings.model || 'default'}`);
     sidecarLog(`[ChatService.buildSdkOptions] sessionId=${session.id} isDraft=${!!session.isDraft}`);
     sidecarLog(`[ChatService.buildSdkOptions] platform=${process.platform} arch=${process.arch}`);
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
-      cwd: workspace.folderPath,
+      cwd: normalizedCwd,
       env,
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: workspace.settings.model || undefined,

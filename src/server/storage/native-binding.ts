@@ -1,13 +1,6 @@
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
-
-/** Strip Windows extended-length path prefix so paths work with spawn/exec. */
-function normalizeWindowsPath(p: string): string {
-  if (process.platform === 'win32' && p.startsWith('\\\\?\\')) {
-    return p.slice(4);
-  }
-  return p;
-}
+import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 
 export function getNativeBindingPath(): string | undefined {
   if (!process.env.COMATE_SIDECAR) {
