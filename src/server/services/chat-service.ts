@@ -316,6 +316,13 @@ export class ChatService {
       env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
     }
 
+    // Log all ANTHROPIC_* env vars for diagnostics
+    for (const [key, value] of Object.entries(env)) {
+      if (key.startsWith('ANTHROPIC_') && value) {
+        sidecarLog(`[ChatService.buildSdkOptions] env.${key}=${value}`);
+      }
+    }
+
     const wecomCliPath = resolveWecomCliPath();
     if (wecomCliPath) {
       const cliDir = path.dirname(wecomCliPath);
