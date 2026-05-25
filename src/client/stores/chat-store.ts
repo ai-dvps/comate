@@ -238,7 +238,8 @@ async function* parseSSEStream(
     const lines = buffer.split('\n')
     buffer = lines.pop() || ''
 
-    for (const line of lines) {
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r$/, '')
       if (line.startsWith('event: ')) {
         if (currentData) {
           yield { event: currentEvent, data: parseData(currentData), id: currentId }
