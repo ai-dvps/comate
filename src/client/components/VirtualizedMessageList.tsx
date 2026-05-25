@@ -341,27 +341,31 @@ export default function VirtualizedMessageList({
           className={`p-3 max-w-3xl mx-auto w-full relative ${fontSizeClass(chatFontSize)} [&_[data-streamdown="code-block-body"]]:[font-size:inherit] [&_[data-streamdown="code-block-body"]]:p-2 [&_[data-streamdown="inline-code"]]:[font-size:inherit]`}
           style={{ height: virtualizer.getTotalSize() }}
         >
-          {virtualItems.map((virtualItem) => (
-            <div
-              key={virtualItem.key}
-              data-index={virtualItem.index}
-              ref={virtualizer.measureElement}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: '0.75rem',
-                right: '0.75rem',
-                transform: `translateY(${virtualItem.start}px)`,
-              }}
-            >
-              {renderViewItem(
-                viewItems[virtualItem.index],
-                resultMap,
-                onOpenDrawer,
-                sessionId,
-              )}
-            </div>
-          ))}
+          {virtualItems.map((virtualItem) => {
+            const item = viewItems[virtualItem.index]
+            if (!item) return null
+            return (
+              <div
+                key={virtualItem.key}
+                data-index={virtualItem.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: '0.75rem',
+                  right: '0.75rem',
+                  transform: `translateY(${virtualItem.start}px)`,
+                }}
+              >
+                {renderViewItem(
+                  item,
+                  resultMap,
+                  onOpenDrawer,
+                  sessionId,
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
       {!isAtBottom && (
