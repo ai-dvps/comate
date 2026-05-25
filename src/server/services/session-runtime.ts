@@ -138,6 +138,11 @@ export class SessionRuntime {
         this.emitter.handle(msg);
       }
     } catch (err) {
+      const errDetail = err instanceof Error
+        ? { message: err.message, name: err.name, stack: err.stack, ...(err as Record<string, unknown>) }
+        : err;
+      const errJson = JSON.stringify(errDetail, Object.getOwnPropertyNames(errDetail), 2);
+      diagLog(`[Runtime ${this.sessionId}] message loop error: ${errJson}`);
       console.error('SessionRuntime message loop error:', err);
       this.emitter.emitErrorNote(
         `Stream error: ${err instanceof Error ? err.message : String(err)}`,
