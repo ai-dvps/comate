@@ -5,6 +5,14 @@ import { sidecarLog } from './sidecar-logger.js';
 const PLATFORM_ARCH = `${process.platform}-${process.arch}`;
 const CLAUDE_BINARY_NAME = process.platform === 'win32' ? 'claude.exe' : 'claude';
 
+/** Strip Windows extended-length path prefix so paths work with spawn/exec. */
+function normalizeWindowsPath(p: string): string {
+  if (process.platform === 'win32' && p.startsWith('\\\\?\\')) {
+    return p.slice(4);
+  }
+  return p;
+}
+
 function tryResolve(packageName: string): string | undefined {
   try {
     return createRequire(import.meta.url).resolve(packageName);
@@ -32,13 +40,13 @@ export function resolveSdkBinary(): string | undefined {
   }
 
   if (resolved) {
-    const binaryPath = path.join(path.dirname(resolved), CLAUDE_BINARY_NAME);
+    const binaryPath = normalizeWindowsPath(path.join(path.dirname(resolved), CLAUDE_BINARY_NAME));
     sidecarLog(`[resolveSdkBinary] Strategy 1 (require.resolve): ${binaryPath}`);
     return binaryPath;
   }
 
   // Strategy 2: look next to the executable (pkg-bundled sidecar)
-  const nextToExec = path.join(path.dirname(process.execPath), CLAUDE_BINARY_NAME);
+  const nextToExec = normalizeWindowsPath(path.join(path.dirname(process.execPath), CLAUDE_BINARY_NAME));
   sidecarLog(`[resolveSdkBinary] Strategy 2 (next to exec): ${nextToExec}, exists=${tryFile(nextToExec)}`);
   if (tryFile(nextToExec)) {
     return nextToExec;
@@ -50,9 +58,10 @@ export function resolveSdkBinary(): string | undefined {
     path.resolve(`../node_modules/@anthropic-ai/claude-agent-sdk-${PLATFORM_ARCH}/${CLAUDE_BINARY_NAME}`),
   ];
   for (const p of cwdPaths) {
-    sidecarLog(`[resolveSdkBinary] Strategy 3 (CWD): ${p}, exists=${tryFile(p)}`);
-    if (tryFile(p)) {
-      return p;
+    const normalized = normalizeWindowsPath(p);
+    sidecarLog(`[resolveSdkBinary] Strategy 3 (CWD): ${normalized}, exists=${tryFile(normalized)}`);
+    if (tryFile(normalized)) {
+      return normalized;
     }
   }
 
@@ -64,9 +73,10 @@ export function resolveSdkBinary(): string | undefined {
       path.join(resourceDir, 'resources', CLAUDE_BINARY_NAME),
     ];
     for (const p of resourcePaths) {
-      sidecarLog(`[resolveSdkBinary] Strategy 4 (resources): ${p}, exists=${tryFile(p)}`);
-      if (tryFile(p)) {
-        return p;
+      const normalized = normalizeWindowsPath(p);
+      sidecarLog(`[resolveSdkBinary] Strategy 4 (resources): ${normalized}, exists=${tryFile(normalized)}`);
+      if (tryFile(normalized)) {
+        return normalized;
       }
     }
   }

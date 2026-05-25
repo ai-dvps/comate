@@ -3,7 +3,16 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { sidecarLog } from './sidecar-logger.js';
 
+/** Strip Windows extended-length path prefix so paths work with spawn/exec. */
+function normalizeWindowsPath(p: string): string {
+  if (process.platform === 'win32' && p.startsWith('\\\\?\\')) {
+    return p.slice(4);
+  }
+  return p;
+}
+
 function tryPath(label: string, filePath: string): string | undefined {
+  filePath = normalizeWindowsPath(filePath);
   sidecarLog(`[resolveWecomCliPath] ${label}: ${filePath}, exists=${existsSync(filePath)}`);
   if (existsSync(filePath)) {
     return filePath;
