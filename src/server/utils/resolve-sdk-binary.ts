@@ -58,10 +58,15 @@ export function resolveSdkBinary(): string | undefined {
   // Strategy 4: Tauri resource directory (production builds)
   const resourceDir = process.env.TAURI_RESOURCE_DIR;
   if (resourceDir) {
-    const fromResources = path.join(resourceDir, 'claude');
-    sidecarLog(`[resolveSdkBinary] Strategy 4 (resources): ${fromResources}, exists=${tryFile(fromResources)}`);
-    if (tryFile(fromResources)) {
-      return fromResources;
+    const resourcePaths = [
+      path.join(resourceDir, 'claude'),
+      path.join(resourceDir, 'resources', 'claude'),
+    ];
+    for (const p of resourcePaths) {
+      sidecarLog(`[resolveSdkBinary] Strategy 4 (resources): ${p}, exists=${tryFile(p)}`);
+      if (tryFile(p)) {
+        return p;
+      }
     }
   }
 
