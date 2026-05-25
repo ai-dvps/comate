@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { homedir } from 'os';
 import path from 'path';
 import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
@@ -13,6 +14,7 @@ import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
+import { loadClaudeSettings } from '../utils/claude-settings.js';
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
@@ -311,10 +313,21 @@ export class ChatService {
     session: ChatSession,
     isBotSession?: boolean,
   ): import('@anthropic-ai/claude-agent-sdk').Options {
-    const env: Record<string, string | undefined> = { ...process.env };
+    const claudeSettings = loadClaudeSettings();
+    const env: Record<string, string | undefined> = {
+      ...claudeSettings,
+      ...process.env,
+    };
     if (workspace.settings.apiKey) {
       env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
     }
+
+    // Diagnostic: log Windows home-dir env vars
+    sidecarLog(`[ChatService.buildSdkOptions] USERPROFILE=${process.env.USERPROFILE}`);
+    sidecarLog(`[ChatService.buildSdkOptions] HOME=${process.env.HOME}`);
+    sidecarLog(`[ChatService.buildSdkOptions] HOMEDRIVE=${process.env.HOMEDRIVE}`);
+    sidecarLog(`[ChatService.buildSdkOptions] HOMEPATH=${process.env.HOMEPATH}`);
+    sidecarLog(`[ChatService.buildSdkOptions] homedir=${homedir()}`);
 
     // Log all ANTHROPIC_* env vars for diagnostics
     for (const [key, value] of Object.entries(env)) {
