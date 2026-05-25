@@ -52,6 +52,14 @@ async function build() {
   }
   mkdirSync(sidecarDir, { recursive: true });
 
+  // Remove stale tsbuildinfo so TypeScript re-emits output files
+  // (dist/ is gitignored but .tsbuildinfo may be stale on CI)
+  const tsBuildInfo = join(rootDir, 'tsconfig.server.tsbuildinfo');
+  if (existsSync(tsBuildInfo)) {
+    rmSync(tsBuildInfo);
+    console.log('Removed stale tsconfig.server.tsbuildinfo');
+  }
+
   // 2. Compile server TypeScript
   console.log('\n--- Compiling server ---');
   run('npx tsc -p tsconfig.server.json');
