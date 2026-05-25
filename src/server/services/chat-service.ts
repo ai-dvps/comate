@@ -1,3 +1,4 @@
+import { spawn } from 'child_process';
 import path from 'path';
 import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
@@ -26,6 +27,36 @@ export class ChatService {
 
   getActiveSessionCount(): number {
     return this.runtimes.size;
+  }
+
+  /** Diagnostic: test-run the Claude binary in the workspace cwd to capture stderr. */
+  private async testClaudeBinary(claudePath: string | undefined, cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
+    if (!claudePath) {
+      sidecarLog('[ChatService.testClaudeBinary] no binary path, skipping test');
+      return;
+    }
+    sidecarLog(`[ChatService.testClaudeBinary] testing binary: ${claudePath} in cwd: ${cwd}`);
+    return new Promise((resolve) => {
+      const proc = spawn(claudePath, ['--version'], { cwd, env, shell: process.platform === 'win32' });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout?.on('data', (d) => { stdout += String(d); });
+      proc.stderr?.on('data', (d) => { stderr += String(d); });
+      proc.on('close', (code) => {
+        sidecarLog(`[ChatService.testClaudeBinary] exit code=${code} stdout=${stdout.trim()} stderr=${stderr.trim()}`);
+        resolve();
+      });
+      proc.on('error', (err) => {
+        sidecarLog(`[ChatService.testClaudeBinary] spawn error: ${err.message}`);
+        resolve();
+      });
+      // 10s timeout
+      setTimeout(() => {
+        sidecarLog('[ChatService.testClaudeBinary] timeout after 10s');
+        proc.kill();
+        resolve();
+      }, 10000);
+    });
   }
 
   // Session management
@@ -192,6 +223,7 @@ export class ChatService {
       }
 
       const options = this.buildSdkOptions(workspace, session, isBotSession);
+      await this.testClaudeBinary(options.pathToClaudeCodeExecutable, workspace.folderPath, options.env || process.env);
       const runtime = SessionRuntime.open(sessionId, workspaceId, this.serverNonce, options, this.sdkClient, botEventHandler);
       this.runtimes.set(sessionId, runtime);
 
@@ -244,6 +276,7 @@ export class ChatService {
     }
 
     const options = this.buildSdkOptions(workspace, session);
+    await this.testClaudeBinary(options.pathToClaudeCodeExecutable, workspace.folderPath, options.env || process.env);
     const { query, messages: rawMessages } = this.sdkClient.createQuery(message, options);
 
     const messages = this.wrapStream(rawMessages);
@@ -303,6 +336,10 @@ export class ChatService {
 
     const claudePath = resolveSdkBinary();
     sidecarLog(`[ChatService.buildSdkOptions] pathToClaudeCodeExecutable=${claudePath}`);
+    sidecarLog(`[ChatService.buildSdkOptions] cwd=${workspace.folderPath}`);
+    sidecarLog(`[ChatService.buildSdkOptions] model=${workspace.settings.model || 'default'}`);
+    sidecarLog(`[ChatService.buildSdkOptions] sessionId=${session.id} isDraft=${!!session.isDraft}`);
+    sidecarLog(`[ChatService.buildSdkOptions] platform=${process.platform} arch=${process.arch}`);
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
       cwd: workspace.folderPath,
       env,
