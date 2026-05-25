@@ -117,15 +117,19 @@ async function build() {
   );
 
   // Fix import.meta.url polyfills for pkg compatibility.
+  // Use __filename instead of a hardcoded file:// URL so the path is a valid
+  // absolute path on every platform (Windows, macOS, Linux). createRequire
+  // accepts absolute path strings, and __filename inside a pkg snapshot is
+  // already the snapshot's absolute path.
   const bundleContent = readFileSync(bundlePath, 'utf-8');
   const fixedContent = bundleContent
     .replace(
       /var import_meta(\d*) = \{\};/g,
-      (_match, num) => `var import_meta${num} = { url: 'file:///snapshot/bundle.js' };`,
+      (_match, num) => `var import_meta${num} = { url: __filename };`,
     )
     .replace(
       /^(\s*)import_meta(\d*) = \{\};$/gm,
-      (_match, ws, num) => `${ws}import_meta${num} = { url: 'file:///snapshot/bundle.js' };`,
+      (_match, ws, num) => `${ws}import_meta${num} = { url: __filename };`,
     );
   writeFileSync(bundlePath, fixedContent);
 
