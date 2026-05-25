@@ -5,6 +5,7 @@ import path from 'path';
 import readline from 'readline';
 import fuzzysort from 'fuzzysort';
 import { sidecarLog } from '../utils/sidecar-logger.js';
+import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 
 export interface FileSearchResult {
   path: string;
@@ -46,13 +47,6 @@ function tryFile(p: string | undefined): p is string {
  * pkg-bundled sidecar (next to the executable), and Tauri production
  * (resources dir).
  */
-/** Strip Windows extended-length path prefix so paths work with spawn/exec. */
-function normalizeWindowsPath(p: string): string {
-  if (process.platform === 'win32' && p.startsWith('\\\\?\\')) {
-    return p.slice(4);
-  }
-  return p;
-}
 
 export function resolveRgPath(): string | null {
   if (cachedRgPath !== undefined) return cachedRgPath;

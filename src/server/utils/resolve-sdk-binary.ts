@@ -1,17 +1,10 @@
 import { createRequire } from 'module';
 import path from 'path';
 import { sidecarLog } from './sidecar-logger.js';
+import { normalizeWindowsPath } from './normalize-windows-path.js';
 
 const PLATFORM_ARCH = `${process.platform}-${process.arch}`;
 const CLAUDE_BINARY_NAME = process.platform === 'win32' ? 'claude.exe' : 'claude';
-
-/** Strip Windows extended-length path prefix so paths work with spawn/exec. */
-function normalizeWindowsPath(p: string): string {
-  if (process.platform === 'win32' && p.startsWith('\\\\?\\')) {
-    return p.slice(4);
-  }
-  return p;
-}
 
 function tryResolve(packageName: string): string | undefined {
   try {
