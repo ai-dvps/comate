@@ -17,32 +17,70 @@ function run(cmd: string, opts?: { cwd?: string; env?: NodeJS.ProcessEnv }) {
   execSync(cmd, { stdio: 'inherit', cwd: opts?.cwd || rootDir, env: { ...process.env, ...opts?.env } });
 }
 
-function getPlatformTarget(): string {
+function getNodeMajor(): string {
+  return process.version.split('.')[0].replace('v', '');
+}
+
+function getPkgTarget(triple: string): string {
+  const nodeMajor = getNodeMajor();
+  if (triple.includes('aarch64-apple-darwin')) {
+    return `node${nodeMajor}-darwin-arm64`;
+  }
+  if (triple.includes('x86_64-apple-darwin')) {
+    return `node${nodeMajor}-darwin-x64`;
+  }
+  if (triple.includes('x86_64-pc-windows-msvc')) {
+    return `node${nodeMajor}-win-x64`;
+  }
+  if (triple.includes('x86_64-unknown-linux-gnu')) {
+    return `node${nodeMajor}-linux-x64`;
+  }
+  if (triple.includes('aarch64-unknown-linux-gnu')) {
+    return `node${nodeMajor}-linux-arm64`;
+  }
+  throw new Error(`Unsupported target triple: ${triple}`);
+}
+
+function getHostTriple(): string {
   const platform = process.platform;
   const arch = process.arch;
-  const nodeMajor = process.version.split('.')[0].replace('v', '');
 
   if (platform === 'darwin') {
-    return arch === 'arm64' ? `node${nodeMajor}-darwin-arm64` : `node${nodeMajor}-darwin-x64`;
+    return arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
   }
   if (platform === 'win32') {
-    return `node${nodeMajor}-win-x64`;
+    return 'x86_64-pc-windows-msvc';
+  }
+  if (platform === 'linux') {
+    return arch === 'arm64' ? 'aarch64-unknown-linux-gnu' : 'x86_64-unknown-linux-gnu';
   }
   throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
 
-function getBinaryName(target: string): string {
-  const platform = process.platform;
-  const arch = process.arch;
+function getBinaryName(triple: string): string {
+  const ext = triple.includes('windows') ? '.exe' : '';
+  return `sidecar-node-${triple}${ext}`;
+}
 
-  if (platform === 'darwin') {
-    const triple = arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
-    return `sidecar-node-${triple}`;
-  }
-  if (platform === 'win32') {
-    return 'sidecar-node-x86_64-pc-windows-msvc.exe';
-  }
-  throw new Error(`Unsupported platform: ${platform}-${arch}`);
+function buildSidecarTriple(triple: string, bundlePath: string) {
+  const target = getPkgTarget(triple);
+  const binaryName = getBinaryName(triple);
+
+  console.log(`\n--- Packaging with pkg for ${triple} ---`);
+  run(
+    `npx pkg ${bundlePath} ` +
+      `--targets ${target} ` +
+      `--output ${join(sidecarDir, `sidecar-node-${triple}`)} ` +
+      `--no-bytecode ` +
+      `--public ` +
+      `--public-packages "*"`,
+  );
+
+  console.log('\n--- Copying binary ---');
+  const sourceBinary = join(sidecarDir, `sidecar-node-${triple}${triple.includes('windows') ? '.exe' : ''}`);
+  const destBinary = join(binariesDir, binaryName);
+  copyFileSync(sourceBinary, destBinary);
+  console.log(`Copied to ${destBinary}`);
 }
 
 async function build() {
@@ -79,17 +117,6 @@ async function build() {
   );
 
   // Fix import.meta.url polyfills for pkg compatibility.
-  //
-  // esbuild emits two shapes for the import_meta shim:
-  //   (a) inline:   `var import_meta3 = {};`
-  //   (b) hoisted:  `var ..., import_meta4, ...;` followed by `import_meta4 = {};`
-  // Shape (b) appears inside ESM-CJS wrappers like fdir's `init_dist`, where
-  // every module-scope binding is hoisted to a single `var` declaration and
-  // the assignment runs lazily on first require. The fdir wrapper then calls
-  // `createRequire(import_meta4.url)`; if url is undefined, Node throws
-  // `TypeError: The argument 'filename' must be a file URL ...` and any code
-  // path that triggers init_file_search_fallback (e.g. searchFiles falling
-  // through to the pure-Node walker) fails. Patch both shapes.
   const bundleContent = readFileSync(bundlePath, 'utf-8');
   const fixedContent = bundleContent
     .replace(
@@ -110,28 +137,19 @@ async function build() {
     );
   }
 
-  // 4. Package with pkg
-  console.log('\n--- Packaging with pkg ---');
-  const target = getPlatformTarget();
-  const binaryName = getBinaryName(target);
+  // 4. Package with pkg for host platform
+  const hostTriple = getHostTriple();
+  buildSidecarTriple(hostTriple, bundlePath);
 
-  run(
-    `npx pkg ${join(sidecarDir, 'bundle.cjs')} ` +
-      `--targets ${target} ` +
-      `--output ${join(sidecarDir, 'sidecar-node')} ` +
-      `--no-bytecode ` +
-      `--public ` +
-      `--public-packages "*"`,
-  );
+  // On macOS, also build the other architecture for universal support
+  if (process.platform === 'darwin') {
+    const otherTriple = hostTriple === 'aarch64-apple-darwin'
+      ? 'x86_64-apple-darwin'
+      : 'aarch64-apple-darwin';
+    buildSidecarTriple(otherTriple, bundlePath);
+  }
 
-  // 5. Copy binary to src-tauri/binaries/
-  console.log('\n--- Copying binary ---');
-  const sourceBinary = join(sidecarDir, process.platform === 'win32' ? 'sidecar-node.exe' : 'sidecar-node');
-  const destBinary = join(binariesDir, binaryName);
-  copyFileSync(sourceBinary, destBinary);
-  console.log(`Copied to ${destBinary}`);
-
-  // 6. Copy Claude Code CLI binary to src-tauri/resources/
+  // 5. Copy Claude Code CLI binary to src-tauri/resources/
   console.log('\n--- Copying Claude Code binary ---');
   const platform = process.platform;
   const arch = process.arch;
@@ -152,7 +170,7 @@ async function build() {
     console.warn(`Warning: SDK binary not found at ${sdkBinarySource}`);
   }
 
-  // 7. Copy wecom CLI to src-tauri/resources/
+  // 6. Copy wecom CLI to src-tauri/resources/
   console.log('\n--- Copying wecom CLI ---');
   const wecomCliSource = join(rootDir, 'packages', 'wecom-cli', 'dist', 'index.js');
   if (existsSync(wecomCliSource)) {
@@ -163,13 +181,9 @@ async function build() {
     console.warn(`Warning: WeCom CLI not found at ${wecomCliSource}`);
   }
 
-  // 8. Copy ripgrep binary to src-tauri/resources/
+  // 7. Copy ripgrep binary to src-tauri/resources/
   console.log('\n--- Copying ripgrep binary ---');
   const rgBinaryName = platform === 'win32' ? 'rg.exe' : 'rg';
-  // @vscode/ripgrep ships the binary via a per-platform optional dependency
-  // package — e.g. @vscode/ripgrep-darwin-arm64. The top-level package's
-  // bin/ directory is a copy from the platform package; either works at
-  // runtime, but the platform package is the canonical source.
   const rgPlatformPkg = `@vscode/ripgrep-${platform}-${arch}`;
   const rgBinarySource = join(
     rootDir,
@@ -202,7 +216,7 @@ async function build() {
     );
   }
 
-  // 9. Copy better_sqlite3.node to src-tauri/resources/
+  // 8. Copy better_sqlite3.node to src-tauri/resources/
   console.log('\n--- Copying native module ---');
   const nativeModuleSource = join(
     rootDir,
@@ -220,8 +234,6 @@ async function build() {
   console.log(`Copied to ${nativeModuleDest}`);
 
   console.log('\n=== Sidecar build complete ===');
-  console.log(`Binary: ${destBinary}`);
-  console.log(`Native module: ${nativeModuleDest}`);
 }
 
 build().catch((err) => {
