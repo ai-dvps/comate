@@ -9,8 +9,11 @@ export function getNativeBindingPath(): string | undefined {
   const execDir = dirname(process.execPath);
 
   const candidates = [
+    // macOS app bundle
     join(execDir, '..', 'Resources', 'resources', 'better_sqlite3.node'),
     join(execDir, 'resources', 'better_sqlite3.node'),
+    // Windows / Linux (resources next to executable)
+    join(execDir, '..', 'resources', 'better_sqlite3.node'),
   ];
 
   for (const path of candidates) {

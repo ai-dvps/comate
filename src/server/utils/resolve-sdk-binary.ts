@@ -3,6 +3,7 @@ import path from 'path';
 import { sidecarLog } from './sidecar-logger.js';
 
 const PLATFORM_ARCH = `${process.platform}-${process.arch}`;
+const CLAUDE_BINARY_NAME = process.platform === 'win32' ? 'claude.exe' : 'claude';
 
 function tryResolve(packageName: string): string | undefined {
   try {
@@ -31,13 +32,13 @@ export function resolveSdkBinary(): string | undefined {
   }
 
   if (resolved) {
-    const binaryPath = path.join(path.dirname(resolved), 'claude');
+    const binaryPath = path.join(path.dirname(resolved), CLAUDE_BINARY_NAME);
     sidecarLog(`[resolveSdkBinary] Strategy 1 (require.resolve): ${binaryPath}`);
     return binaryPath;
   }
 
   // Strategy 2: look next to the executable (pkg-bundled sidecar)
-  const nextToExec = path.join(path.dirname(process.execPath), 'claude');
+  const nextToExec = path.join(path.dirname(process.execPath), CLAUDE_BINARY_NAME);
   sidecarLog(`[resolveSdkBinary] Strategy 2 (next to exec): ${nextToExec}, exists=${tryFile(nextToExec)}`);
   if (tryFile(nextToExec)) {
     return nextToExec;
@@ -45,8 +46,8 @@ export function resolveSdkBinary(): string | undefined {
 
   // Strategy 3: look in CWD/node_modules and CWD/../node_modules (fallback)
   const cwdPaths = [
-    path.resolve(`node_modules/@anthropic-ai/claude-agent-sdk-${PLATFORM_ARCH}/claude`),
-    path.resolve(`../node_modules/@anthropic-ai/claude-agent-sdk-${PLATFORM_ARCH}/claude`),
+    path.resolve(`node_modules/@anthropic-ai/claude-agent-sdk-${PLATFORM_ARCH}/${CLAUDE_BINARY_NAME}`),
+    path.resolve(`../node_modules/@anthropic-ai/claude-agent-sdk-${PLATFORM_ARCH}/${CLAUDE_BINARY_NAME}`),
   ];
   for (const p of cwdPaths) {
     sidecarLog(`[resolveSdkBinary] Strategy 3 (CWD): ${p}, exists=${tryFile(p)}`);
@@ -59,8 +60,8 @@ export function resolveSdkBinary(): string | undefined {
   const resourceDir = process.env.TAURI_RESOURCE_DIR;
   if (resourceDir) {
     const resourcePaths = [
-      path.join(resourceDir, 'claude'),
-      path.join(resourceDir, 'resources', 'claude'),
+      path.join(resourceDir, CLAUDE_BINARY_NAME),
+      path.join(resourceDir, 'resources', CLAUDE_BINARY_NAME),
     ];
     for (const p of resourcePaths) {
       sidecarLog(`[resolveSdkBinary] Strategy 4 (resources): ${p}, exists=${tryFile(p)}`);

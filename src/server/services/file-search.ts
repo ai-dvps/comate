@@ -83,11 +83,16 @@ export function resolveRgPath(): string | null {
   // Strategy 2: Tauri resource directory (production builds)
   const resourceDir = process.env.TAURI_RESOURCE_DIR;
   if (resourceDir) {
-    const fromResources = path.join(resourceDir, rgBinaryName);
-    if (tryFile(fromResources)) {
-      sidecarLog(`[file-search] resolved rg via TAURI_RESOURCE_DIR: ${fromResources}`);
-      cachedRgPath = fromResources;
-      return fromResources;
+    const resourcePaths = [
+      path.join(resourceDir, rgBinaryName),
+      path.join(resourceDir, 'resources', rgBinaryName),
+    ];
+    for (const p of resourcePaths) {
+      if (tryFile(p)) {
+        sidecarLog(`[file-search] resolved rg via TAURI_RESOURCE_DIR: ${p}`);
+        cachedRgPath = p;
+        return p;
+      }
     }
   }
 
