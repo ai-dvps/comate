@@ -14,6 +14,7 @@ import { SdkClient } from './sdk-client.js';
 import type { Options } from './sdk-client.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
+import { loadClaudeSettings } from '../utils/claude-settings.js';
 
 interface FsCommandEntry {
   filePath: string;
@@ -209,10 +210,21 @@ export class CommandsService {
   }
 
   private buildSdkOptions(workspace: Workspace): Options {
-    const env: Record<string, string | undefined> = { ...process.env };
+    const claudeSettings = loadClaudeSettings();
+    const env: Record<string, string | undefined> = {
+      ...claudeSettings,
+      ...process.env,
+    };
     if (workspace.settings.apiKey) {
       env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
     }
+
+    // Diagnostic: log Windows home-dir env vars
+    sidecarLog(`[CommandsService.buildSdkOptions] USERPROFILE=${process.env.USERPROFILE}`);
+    sidecarLog(`[CommandsService.buildSdkOptions] HOME=${process.env.HOME}`);
+    sidecarLog(`[CommandsService.buildSdkOptions] HOMEDRIVE=${process.env.HOMEDRIVE}`);
+    sidecarLog(`[CommandsService.buildSdkOptions] HOMEPATH=${process.env.HOMEPATH}`);
+    sidecarLog(`[CommandsService.buildSdkOptions] homedir=${os.homedir()}`);
 
     const mcpServers: Record<
       string,
