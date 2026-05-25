@@ -46,6 +46,14 @@ function tryFile(p: string | undefined): p is string {
  * pkg-bundled sidecar (next to the executable), and Tauri production
  * (resources dir).
  */
+/** Strip Windows extended-length path prefix so paths work with spawn/exec. */
+function normalizeWindowsPath(p: string): string {
+  if (process.platform === 'win32' && p.startsWith('\\\\?\\')) {
+    return p.slice(4);
+  }
+  return p;
+}
+
 export function resolveRgPath(): string | null {
   if (cachedRgPath !== undefined) return cachedRgPath;
 
@@ -88,16 +96,17 @@ export function resolveRgPath(): string | null {
       path.join(resourceDir, 'resources', rgBinaryName),
     ];
     for (const p of resourcePaths) {
-      if (tryFile(p)) {
-        sidecarLog(`[file-search] resolved rg via TAURI_RESOURCE_DIR: ${p}`);
-        cachedRgPath = p;
-        return p;
+      const normalized = normalizeWindowsPath(p);
+      if (tryFile(normalized)) {
+        sidecarLog(`[file-search] resolved rg via TAURI_RESOURCE_DIR: ${normalized}`);
+        cachedRgPath = normalized;
+        return normalized;
       }
     }
   }
 
   // Strategy 3: next to the executable (pkg-bundled sidecar)
-  const nextToExec = path.join(path.dirname(process.execPath), rgBinaryName);
+  const nextToExec = normalizeWindowsPath(path.join(path.dirname(process.execPath), rgBinaryName));
   if (tryFile(nextToExec)) {
     sidecarLog(`[file-search] resolved rg next to exec: ${nextToExec}`);
     cachedRgPath = nextToExec;
