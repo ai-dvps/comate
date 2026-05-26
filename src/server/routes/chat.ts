@@ -46,14 +46,21 @@ router.put('/sessions/:sessionId', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const { name } = req.body;
+    const { name, isWip } = req.body;
 
-    if (!name || typeof name !== 'string' || name.trim() === '') {
-      res.status(400).json({ error: 'name is required and must be a non-empty string' });
+    const hasName = name !== undefined && typeof name === 'string' && name.trim() !== '';
+    const hasWip = isWip !== undefined && typeof isWip === 'boolean';
+
+    if (!hasName && !hasWip) {
+      res.status(400).json({ error: 'name or isWip is required' });
       return;
     }
 
-    const session = await chatService.updateSession(sessionId, { name: name.trim() }, workspaceId);
+    const input: { name?: string; isWip?: boolean } = {};
+    if (hasName) input.name = name.trim();
+    if (hasWip) input.isWip = isWip;
+
+    const session = await chatService.updateSession(sessionId, input, workspaceId);
     if (!session) {
       res.status(404).json({ error: 'Session not found' });
       return;

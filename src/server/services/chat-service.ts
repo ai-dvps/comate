@@ -144,10 +144,20 @@ export class ChatService {
   }
 
   async updateSession(id: string, input: UpdateSessionInput, workspaceId: string): Promise<ChatSession | null> {
+    // Persist isWip to metadata table (applies to both drafts and SDK sessions)
+    if (input.isWip !== undefined) {
+      workspaceStore.setSessionMetadata(id, input.isWip);
+    }
+
     // Check if it's a draft
     const draft = await draftStore.getDraft(id);
     if (draft) {
-      const updated = await draftStore.updateDraft(id, input);
+      // Only pass name to draft update; isWip is handled via metadata table
+      const draftInput: UpdateSessionInput = input.name !== undefined ? { name: input.name } : {};
+      const updated = await draftStore.updateDraft(id, draftInput);
+      if (updated) {
+        updated.isWip = input.isWip !== undefined ? input.isWip : workspaceStore.getSessionMetadata([id])[id]?.isWip;
+      }
       return updated;
     }
 
@@ -164,7 +174,9 @@ export class ChatService {
     // Return updated session info
     const sdkSession = await this.sdkClient.getSessionInfo(id, { dir: workspace.folderPath });
     if (sdkSession) {
-      return this.mapSdkSessionInfo(sdkSession, workspaceId);
+      const session = this.mapSdkSessionInfo(sdkSession, workspaceId);
+      session.isWip = input.isWip !== undefined ? input.isWip : workspaceStore.getSessionMetadata([id])[id]?.isWip;
+      return session;
     }
     return null;
   }
