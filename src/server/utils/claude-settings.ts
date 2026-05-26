@@ -15,8 +15,12 @@ export function loadClaudeSettings(): Record<string, string> {
   try {
     const content = readFileSync(settingsPath, 'utf-8');
     const settings = JSON.parse(content) as Record<string, unknown>;
+    const envSettings =
+      settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)
+        ? (settings.env as Record<string, unknown>)
+        : {};
     const result: Record<string, string> = {};
-    for (const [key, value] of Object.entries(settings)) {
+    for (const [key, value] of Object.entries(envSettings)) {
       if (key.startsWith('ANTHROPIC_') && typeof value === 'string') {
         result[key] = value;
       }
