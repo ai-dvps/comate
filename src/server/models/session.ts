@@ -3,6 +3,7 @@ export interface ChatSession {
   workspaceId: string;
   name: string;
   isDraft?: boolean;
+  isWip?: boolean;
   source?: 'gui' | 'wecom';
   createdAt: string;
   updatedAt: string;
@@ -21,4 +22,5 @@ export interface CreateSessionInput {
 
 export interface UpdateSessionInput {
   name?: string;
+  isWip?: boolean;
 }
