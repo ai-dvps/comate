@@ -179,6 +179,81 @@ function generateId(): string {
 
 const DEFAULT_WINDOW_CAP = 200
 
+function sanitizeMessagePart(part: unknown): MessagePart | null {
+  if (!part || typeof part !== 'object') return null
+
+  const p = part as Record<string, unknown>
+  switch (p.type) {
+    case 'text':
+      return typeof p.text === 'string' ? { type: 'text', text: p.text } : null
+    case 'thinking':
+      return typeof p.text === 'string'
+        ? {
+            type: 'thinking',
+            text: p.text,
+            state: p.state === 'streaming' ? 'streaming' : 'complete',
+          }
+        : null
+    case 'tool_use':
+      return typeof p.toolUseId === 'string' && typeof p.toolName === 'string'
+        ? {
+            type: 'tool_use',
+            toolUseId: p.toolUseId,
+            toolName: p.toolName,
+            input: p.input,
+            ...(typeof p.inputJsonStream === 'string' && {
+              inputJsonStream: p.inputJsonStream,
+            }),
+            state: p.state === 'streaming' ? 'streaming' : 'complete',
+          }
+        : null
+    case 'tool_result':
+      return typeof p.toolUseId === 'string'
+        ? {
+            type: 'tool_result',
+            toolUseId: p.toolUseId,
+            output: typeof p.output === 'string' ? p.output : '',
+            isError: p.isError === true,
+            ...(p.toolUseResult !== undefined && {
+              toolUseResult: p.toolUseResult,
+            }),
+          }
+        : null
+    default:
+      return null
+  }
+}
+
+function sanitizeMessages(messages: unknown): ChatMessage[] {
+  if (!Array.isArray(messages)) return []
+
+  const sanitized: ChatMessage[] = []
+  for (const raw of messages) {
+    if (!raw || typeof raw !== 'object') continue
+
+    const msg = raw as Record<string, unknown>
+    const role = msg.role
+    if (role !== 'user' && role !== 'assistant' && role !== 'system') continue
+
+    const parts = Array.isArray(msg.parts)
+      ? msg.parts
+          .map((part) => sanitizeMessagePart(part))
+          .filter((part): part is MessagePart => part !== null)
+      : []
+    if (parts.length === 0) continue
+
+    sanitized.push({
+      id: typeof msg.id === 'string' ? msg.id : generateId(),
+      role,
+      parts,
+      timestamp: typeof msg.timestamp === 'number' ? msg.timestamp : Date.now(),
+      ...(msg.isStreaming === true && { isStreaming: true }),
+    })
+  }
+
+  return sanitized
+}
+
 /**
  * Prune the oldest messages to keep the window at or below the cap.
  * Never splits a tool_use / tool_result pair: if a pair straddles the
@@ -192,8 +267,8 @@ function pruneWindow(messages: ChatMessage[], cap: number): ChatMessage[] {
   const toolResultPositions = new Map<string, number>()
   for (let i = 0; i < messages.length; i++) {
     for (const p of messages[i].parts) {
-      if (p.type === 'tool_use') toolUsePositions.set(p.toolUseId, i)
-      if (p.type === 'tool_result') toolResultPositions.set(p.toolUseId, i)
+      if (p?.type === 'tool_use') toolUsePositions.set(p.toolUseId, i)
+      if (p?.type === 'tool_result') toolResultPositions.set(p.toolUseId, i)
     }
   }
 
@@ -290,6 +365,9 @@ function updateAssistantPart(
   if (idx < 0) return {}
   const target = msgs[idx]
   const parts = [...target.parts]
+  while (parts.length < partIndex) {
+    parts.push({ type: 'text', text: '' })
+  }
   parts[partIndex] = produce(parts[partIndex])
   const updated: ChatMessage = { ...target, parts }
   const nextMsgs = [...msgs.slice(0, idx), updated, ...msgs.slice(idx + 1)]
@@ -306,7 +384,7 @@ function mutateToolUsePart(
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]
     const partIdx = m.parts.findIndex(
-      (p) => p.type === 'tool_use' && p.toolUseId === toolUseId,
+      (p) => p?.type === 'tool_use' && p.toolUseId === toolUseId,
     )
     if (partIdx >= 0) {
       const part = m.parts[partIdx] as Extract<MessagePart, { type: 'tool_use' }>
@@ -329,7 +407,7 @@ function findToolName(
   for (const m of msgs) {
     const part = m.parts.find(
       (p): p is Extract<MessagePart, { type: 'tool_use' }> =>
-        p.type === 'tool_use' && p.toolUseId === toolUseId,
+        p?.type === 'tool_use' && p.toolUseId === toolUseId,
     )
     if (part) return part.toolName
   }
@@ -343,6 +421,7 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
 
   for (const message of messages) {
     for (const part of message.parts) {
+      if (!part) continue
       if (part.type === 'tool_use') {
         if (part.toolName === 'TodoWrite') {
           const input = part.input as
@@ -531,11 +610,11 @@ function appendSubagentPart(
   if (delta.type === 'text' || delta.type === 'thinking') {
     if (lastMessage && lastMessage.role === 'assistant') {
       const existingIdx = lastMessage.parts.findIndex(
-        (p) => p.type === delta.type,
+        (p) => p?.type === delta.type,
       )
       if (existingIdx >= 0) {
         const existing = lastMessage.parts[existingIdx]
-        if (existing.type === 'text' || existing.type === 'thinking') {
+        if (existing?.type === 'text' || existing?.type === 'thinking') {
           const updatedParts = [...lastMessage.parts]
           updatedParts[existingIdx] = {
             ...existing,
@@ -783,7 +862,7 @@ function handleSseEvent(
       set((state) => {
         const existing = state.messages[sessionId] || []
         const alreadyHasResult = existing.some((m) =>
-          m.parts.some((p) => p.type === 'tool_result' && p.toolUseId === toolUseId),
+          m.parts.some((p) => p?.type === 'tool_result' && p.toolUseId === toolUseId),
         )
         if (alreadyHasResult) {
           // Reconnect replay — tool_result already exists, skip
@@ -1625,8 +1704,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ isLoadingMessages: true })
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
       if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
-      const data = (await res.json()) as { messages?: ChatMessage[]; tasks?: TaskItem[] }
-      const mappedMessages = data.messages ?? []
+      const data = (await res.json()) as { messages?: unknown; tasks?: TaskItem[] }
+      const mappedMessages = sanitizeMessages(data.messages)
       const serverTasks = data.tasks ?? []
 
       set((state) => {
@@ -1873,10 +1952,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const res = await fetch(url.pathname + url.search)
       if (!res.ok) throw new Error(i18next.t('common:failedToFetchOlderMessages', 'Failed to fetch older messages'))
       const data = (await res.json()) as {
-        messages?: ChatMessage[]
+        messages?: unknown
         tasks?: TaskItem[]
       }
-      const olderMessages = data.messages ?? []
+      const olderMessages = sanitizeMessages(data.messages)
 
       set((state) => {
         const current = state.messages[sessionId] || []

@@ -65,7 +65,9 @@ function MessageBlock({ message }: { message: SubagentMessage }) {
   )
 }
 
-function PartRenderer({ part }: { part: SubagentPart }) {
+function PartRenderer({ part }: { part: SubagentPart | undefined }) {
+  if (!part) return null
+
   if (part.type === 'text') {
     return <p className="whitespace-pre-wrap leading-relaxed">{part.text}</p>
   }
