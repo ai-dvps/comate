@@ -14,7 +14,7 @@ import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
-import { loadClaudeSettings } from '../utils/claude-settings.js';
+import { loadClaudeSettings, resolveClaudeConfigDir } from '../utils/claude-settings.js';
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
@@ -40,21 +40,32 @@ export class ChatService {
     }
     sidecarLog(`[ChatService.testClaudeBinary] testing binary: ${claudePath} in cwd: ${cwd}`);
     return new Promise((resolve) => {
-      const proc = spawn(claudePath, ['--version'], { cwd, env, shell: process.platform === 'win32' });
+      let settled = false;
+      let timeout: NodeJS.Timeout | undefined;
+      const finish = () => {
+        if (settled) return false;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        return true;
+      };
+      const proc = spawn(claudePath, ['--version'], { cwd, env });
       let stdout = '';
       let stderr = '';
       proc.stdout?.on('data', (d) => { stdout += String(d); });
       proc.stderr?.on('data', (d) => { stderr += String(d); });
       proc.on('close', (code) => {
+        if (!finish()) return;
         sidecarLog(`[ChatService.testClaudeBinary] exit code=${code} stdout=${stdout.trim()} stderr=${stderr.trim()}`);
         resolve();
       });
       proc.on('error', (err) => {
+        if (!finish()) return;
         sidecarLog(`[ChatService.testClaudeBinary] spawn error: ${err.message}`);
         resolve();
       });
       // 10s timeout
-      setTimeout(() => {
+      timeout = setTimeout(() => {
+        if (!finish()) return;
         sidecarLog('[ChatService.testClaudeBinary] timeout after 10s');
         proc.kill();
         resolve();
@@ -314,10 +325,7 @@ export class ChatService {
     isBotSession?: boolean,
   ): import('@anthropic-ai/claude-agent-sdk').Options {
     const claudeSettings = loadClaudeSettings();
-    const env: Record<string, string | undefined> = {
-      ...claudeSettings,
-      ...process.env,
-    };
+    const { env, sources: envSources } = buildClaudeEnv(claudeSettings);
     if (workspace.settings.apiKey) {
       env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
     }
@@ -328,11 +336,13 @@ export class ChatService {
     sidecarLog(`[ChatService.buildSdkOptions] HOMEDRIVE=${process.env.HOMEDRIVE}`);
     sidecarLog(`[ChatService.buildSdkOptions] HOMEPATH=${process.env.HOMEPATH}`);
     sidecarLog(`[ChatService.buildSdkOptions] homedir=${homedir()}`);
+    sidecarLog(`[ChatService.buildSdkOptions] CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR}`);
+    sidecarLog(`[ChatService.buildSdkOptions] CLAUDE_SECURESTORAGE_CONFIG_DIR=${env.CLAUDE_SECURESTORAGE_CONFIG_DIR}`);
 
     // Log all ANTHROPIC_* env vars for diagnostics
-    for (const [key, value] of Object.entries(env)) {
-      if (key.startsWith('ANTHROPIC_') && value) {
-        sidecarLog(`[ChatService.buildSdkOptions] env.${key}=${value}`);
+    for (const key of Object.keys(env)) {
+      if (key.startsWith('ANTHROPIC_') && env[key]) {
+        sidecarLog(`[ChatService.buildSdkOptions] env.${key}=<set> source=${envSources[key] ?? 'process'}`);
       }
     }
 
@@ -369,6 +379,10 @@ export class ChatService {
       model: workspace.settings.model || undefined,
       includePartialMessages: true,
       pathToClaudeCodeExecutable: claudePath,
+      stderr: (data) => {
+        const trimmed = data.trim();
+        if (trimmed) sidecarLog(`[ChatService.claude.stderr] ${trimmed}`);
+      },
     };
 
     if (isBotSession) {
@@ -424,6 +438,35 @@ export class ChatError extends Error {
     super(message);
     this.name = 'ChatError';
   }
+}
+
+function buildClaudeEnv(
+  claudeSettings: Record<string, string>,
+): {
+  env: Record<string, string | undefined>;
+  sources: Record<string, 'process' | 'settings'>;
+} {
+  const env: Record<string, string | undefined> = { ...process.env };
+  const sources: Record<string, 'process' | 'settings'> = {};
+  const claudeConfigDir = resolveClaudeConfigDir();
+  if (!env.CLAUDE_CONFIG_DIR) {
+    env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+  }
+  if (process.platform === 'win32' && !env.CLAUDE_SECURESTORAGE_CONFIG_DIR) {
+    env.CLAUDE_SECURESTORAGE_CONFIG_DIR = claudeConfigDir;
+  }
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('ANTHROPIC_') && env[key]) {
+      sources[key] = 'process';
+    }
+  }
+  for (const [key, value] of Object.entries(claudeSettings)) {
+    if (!env[key]) {
+      env[key] = value;
+      sources[key] = 'settings';
+    }
+  }
+  return { env, sources };
 }
 
 export const chatService = new ChatService();

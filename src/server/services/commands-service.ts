@@ -14,7 +14,7 @@ import { SdkClient } from './sdk-client.js';
 import type { Options } from './sdk-client.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
-import { loadClaudeSettings } from '../utils/claude-settings.js';
+import { loadClaudeSettings, resolveClaudeConfigDir } from '../utils/claude-settings.js';
 
 interface FsCommandEntry {
   filePath: string;
@@ -211,10 +211,7 @@ export class CommandsService {
 
   private buildSdkOptions(workspace: Workspace): Options {
     const claudeSettings = loadClaudeSettings();
-    const env: Record<string, string | undefined> = {
-      ...claudeSettings,
-      ...process.env,
-    };
+    const { env, sources: envSources } = buildClaudeEnv(claudeSettings);
     if (workspace.settings.apiKey) {
       env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
     }
@@ -225,6 +222,13 @@ export class CommandsService {
     sidecarLog(`[CommandsService.buildSdkOptions] HOMEDRIVE=${process.env.HOMEDRIVE}`);
     sidecarLog(`[CommandsService.buildSdkOptions] HOMEPATH=${process.env.HOMEPATH}`);
     sidecarLog(`[CommandsService.buildSdkOptions] homedir=${os.homedir()}`);
+    sidecarLog(`[CommandsService.buildSdkOptions] CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR}`);
+    sidecarLog(`[CommandsService.buildSdkOptions] CLAUDE_SECURESTORAGE_CONFIG_DIR=${env.CLAUDE_SECURESTORAGE_CONFIG_DIR}`);
+    for (const key of Object.keys(env)) {
+      if (key.startsWith('ANTHROPIC_') && env[key]) {
+        sidecarLog(`[CommandsService.buildSdkOptions] env.${key}=<set> source=${envSources[key] ?? 'process'}`);
+      }
+    }
 
     const mcpServers: Record<
       string,
@@ -246,6 +250,10 @@ export class CommandsService {
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: workspace.settings.model || undefined,
       pathToClaudeCodeExecutable: claudePath,
+      stderr: (data) => {
+        const trimmed = data.trim();
+        if (trimmed) sidecarLog(`[CommandsService.claude.stderr] ${trimmed}`);
+      },
     };
   }
 }
@@ -286,5 +294,34 @@ function sourceForPath(filePath: string, workspaceFolder: string): CommandSource
 
 // Exposed only for tests that need to validate name extraction.
 export { commandNameFromFilePath };
+
+function buildClaudeEnv(
+  claudeSettings: Record<string, string>,
+): {
+  env: Record<string, string | undefined>;
+  sources: Record<string, 'process' | 'settings'>;
+} {
+  const env: Record<string, string | undefined> = { ...process.env };
+  const sources: Record<string, 'process' | 'settings'> = {};
+  const claudeConfigDir = resolveClaudeConfigDir();
+  if (!env.CLAUDE_CONFIG_DIR) {
+    env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+  }
+  if (process.platform === 'win32' && !env.CLAUDE_SECURESTORAGE_CONFIG_DIR) {
+    env.CLAUDE_SECURESTORAGE_CONFIG_DIR = claudeConfigDir;
+  }
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('ANTHROPIC_') && env[key]) {
+      sources[key] = 'process';
+    }
+  }
+  for (const [key, value] of Object.entries(claudeSettings)) {
+    if (!env[key]) {
+      env[key] = value;
+      sources[key] = 'settings';
+    }
+  }
+  return { env, sources };
+}
 
 export const commandsService = new CommandsService();
