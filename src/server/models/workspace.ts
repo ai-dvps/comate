@@ -6,6 +6,8 @@ export interface WorkspaceSettings {
   wecomBotId?: string;
   wecomBotSecret?: string;
   wecomBotEnabled?: boolean;
+  wecomCorpId?: string;
+  wecomCorpSecret?: string;
 }
 
 export interface Skill {

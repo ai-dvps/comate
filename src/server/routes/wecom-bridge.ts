@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { wecomBotService } from '../services/wecom-bot-service.js';
+import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 
 const router = Router();
 
@@ -35,6 +36,28 @@ router.post('/send', async (req, res) => {
   } catch (error) {
     console.error('Failed to send WeCom message:', error);
     const message = error instanceof Error ? error.message : 'Failed to send message';
+    res.status(502).json({ error: message });
+  }
+});
+
+// POST /api/wecom/resolve-user
+router.post('/resolve-user', async (req, res) => {
+  try {
+    const { workspaceId, encryptedUserId } = req.body as {
+      workspaceId?: string;
+      encryptedUserId?: string;
+    };
+
+    if (!workspaceId || !encryptedUserId) {
+      res.status(400).json({ error: 'workspaceId and encryptedUserId are required' });
+      return;
+    }
+
+    const plaintextUserId = await wecomUserResolver.resolveImmediate(workspaceId, encryptedUserId);
+    res.json({ plaintextUserId });
+  } catch (error) {
+    console.error('Failed to resolve WeCom user ID:', error);
+    const message = error instanceof Error ? error.message : 'Failed to resolve user ID';
     res.status(502).json({ error: message });
   }
 });

@@ -36,6 +36,8 @@ interface WorkspaceFormState {
   wecomBotId: string
   wecomBotSecret: string
   wecomBotEnabled: boolean
+  wecomCorpId: string
+  wecomCorpSecret: string
 }
 
 function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
@@ -53,6 +55,8 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     wecomBotId: (workspace.settings?.wecomBotId as string) || '',
     wecomBotSecret: (workspace.settings?.wecomBotSecret as string) || '',
     wecomBotEnabled: (workspace.settings?.wecomBotEnabled as boolean) || false,
+    wecomCorpId: (workspace.settings?.wecomCorpId as string) || '',
+    wecomCorpSecret: (workspace.settings?.wecomCorpSecret as string) || '',
   }
 }
 
@@ -176,6 +180,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           wecomBotId: ws.wecomBotId || undefined,
           wecomBotSecret: ws.wecomBotSecret || undefined,
           wecomBotEnabled: ws.wecomBotEnabled,
+          wecomCorpId: ws.wecomCorpId || undefined,
+          wecomCorpSecret: ws.wecomCorpSecret || undefined,
         },
         skills: ws.skills,
         mcpServers: ws.mcpServers.map((m) => ({
@@ -1060,6 +1066,13 @@ function HooksTab({
   )
 }
 
+interface WeComWorkspaceUser {
+  encryptedUserId: string
+  plaintextUserId?: string
+  firstSeenAt: string
+  lastSeenAt: string
+}
+
 function WeComBotTab({
   state,
   onUpdate,
@@ -1071,7 +1084,9 @@ function WeComBotTab({
 }) {
   const { t } = useTranslation('settings')
   const [showSecret, setShowSecret] = useState(false)
+  const [showCorpSecret, setShowCorpSecret] = useState(false)
   const [status, setStatus] = useState<string>('unknown')
+  const [users, setUsers] = useState<WeComWorkspaceUser[]>([])
 
   // Fetch connection status
   useEffect(() => {
@@ -1088,6 +1103,27 @@ function WeComBotTab({
     }
     fetchStatus()
     const interval = setInterval(fetchStatus, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [workspaceId])
+
+  // Fetch WeCom workspace users
+  useEffect(() => {
+    let cancelled = false
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/wecom/users`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled) setUsers(data.users || [])
+      } catch {
+        if (!cancelled) setUsers([])
+      }
+    }
+    fetchUsers()
+    const interval = setInterval(fetchUsers, 10000)
     return () => {
       cancelled = true
       clearInterval(interval)
@@ -1155,6 +1191,35 @@ function WeComBotTab({
         </div>
       </div>
 
+      <div className="pt-4 border-t border-border/50">
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpId')}</label>
+        <input
+          value={state.wecomCorpId}
+          onChange={(e) => onUpdate({ wecomCorpId: e.target.value })}
+          placeholder={t('wecom.corpIdPlaceholder')}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpSecret')}</label>
+        <div className="flex gap-2">
+          <input
+            type={showCorpSecret ? 'text' : 'password'}
+            value={state.wecomCorpSecret}
+            onChange={(e) => onUpdate({ wecomCorpSecret: e.target.value })}
+            placeholder={t('wecom.corpSecretPlaceholder')}
+            className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
+          <button
+            onClick={() => setShowCorpSecret(!showCorpSecret)}
+            className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
+          >
+            {showCorpSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+
       <div className="flex items-center gap-2 pt-2">
         <span className="text-[11px] font-medium text-text-secondary">{t('wecom.status')}</span>
         <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
@@ -1162,6 +1227,42 @@ function WeComBotTab({
 
       <div className="text-[10px] text-text-tertiary pt-2">
         <p>{t('wecom.botSessionNote')}</p>
+      </div>
+
+      {/* Workspace Users */}
+      <div className="pt-6 border-t border-border/50">
+        <h3 className="text-xs font-medium text-text-secondary mb-3">{t('wecom.usersTitle')}</h3>
+        {users.length === 0 ? (
+          <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
+        ) : (
+          <div className="space-y-2">
+            {users.map((user) => (
+              <div
+                key={user.encryptedUserId}
+                className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-text-primary">
+                    {user.plaintextUserId || user.encryptedUserId}
+                  </span>
+                  {!user.plaintextUserId && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
+                      {t('wecom.userPending')}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-4 mt-1">
+                  <span className="text-[10px] text-text-tertiary">
+                    {t('wecom.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
+                  </span>
+                  <span className="text-[10px] text-text-tertiary">
+                    {t('wecom.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

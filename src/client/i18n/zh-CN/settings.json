@@ -67,7 +67,16 @@
     "botIdPlaceholder": "your-bot-id",
     "botSecret": "机器人密钥",
     "botSecretPlaceholder": "your-bot-secret",
+    "corpId": "企业 ID",
+    "corpIdPlaceholder": "your-corp-id",
+    "corpSecret": "企业密钥",
+    "corpSecretPlaceholder": "your-corp-secret",
     "status": "状态：",
+    "usersTitle": "企业微信用户",
+    "usersEmpty": "还没有企业微信用户向此工作区发送消息。",
+    "userPending": "待解析",
+    "firstSeen": "首次出现",
+    "lastSeen": "最近出现",
     "botSessionNote": "机器人会话具有完整的工具自动审批功能。保存更改以连接或断开。"
   },
   "wecomCli": {

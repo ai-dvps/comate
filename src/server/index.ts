@@ -12,6 +12,7 @@ import wecomBridgeRoutes from './routes/wecom-bridge.js';
 import cliInstallRoutes from './routes/cli-install.js';
 import systemRoutes from './routes/system.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
+import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { diagLog } from './utils/diag-logger.js';
 import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
 
@@ -106,16 +107,30 @@ const server = app.listen(PORT, () => {
   wecomBotService.initialize().catch((err) => {
     console.error('Failed to initialize WeCom bot service:', err);
   });
+
+  // Initialize WeCom user ID resolver background flush
+  wecomUserResolver.initialize();
 });
 
 // Graceful shutdown
-function shutdown(signal: string): void {
+async function shutdown(signal: string): Promise<void> {
   console.log(`Received ${signal}, shutting down...`);
   wecomBotService.disconnectAll();
+  await wecomUserResolver.shutdown();
   server.close(() => {
     process.exit(0);
   });
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => {
+  shutdown('SIGTERM').catch((err) => {
+    console.error('Error during SIGTERM shutdown:', err);
+    process.exit(1);
+  });
+});
+process.on('SIGINT', () => {
+  shutdown('SIGINT').catch((err) => {
+    console.error('Error during SIGINT shutdown:', err);
+    process.exit(1);
+  });
+});

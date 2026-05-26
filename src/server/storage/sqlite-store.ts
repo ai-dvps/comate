@@ -59,7 +59,55 @@ export class SqliteStore {
       )
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS wecom_user_id_mappings (
+        encryptedUserId TEXT PRIMARY KEY,
+        plaintextUserId TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS wecom_workspace_users (
+        workspaceId TEXT NOT NULL,
+        encryptedUserId TEXT NOT NULL,
+        firstSeenAt TEXT NOT NULL,
+        lastSeenAt TEXT NOT NULL,
+        PRIMARY KEY (workspaceId, encryptedUserId)
+      )
+    `);
+
+    this.migrateMappingTable();
     this.migrateFromLegacy();
+  }
+
+  private migrateMappingTable(): void {
+    // Check if the old per-workspace mapping table exists and migrate to global
+    const tableInfo = this.db.prepare("PRAGMA table_info(wecom_user_id_mappings)").all() as Array<{ name: string }>;
+    const hasWorkspaceId = tableInfo.some((col) => col.name === 'workspaceId');
+    if (!hasWorkspaceId) return;
+
+    try {
+      this.db.exec(`
+        ALTER TABLE wecom_user_id_mappings RENAME TO wecom_user_id_mappings_old;
+        CREATE TABLE wecom_user_id_mappings (
+          encryptedUserId TEXT PRIMARY KEY,
+          plaintextUserId TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
+        INSERT INTO wecom_user_id_mappings (encryptedUserId, plaintextUserId, createdAt, updatedAt)
+        SELECT encryptedUserId, plaintextUserId, createdAt, updatedAt
+        FROM wecom_user_id_mappings_old
+        GROUP BY encryptedUserId
+        HAVING rowid = (SELECT rowid FROM wecom_user_id_mappings_old AS sub WHERE sub.encryptedUserId = wecom_user_id_mappings_old.encryptedUserId ORDER BY updatedAt DESC LIMIT 1);
+        DROP TABLE wecom_user_id_mappings_old;
+      `);
+      console.log('[SqliteStore] Migrated wecom_user_id_mappings to global schema');
+    } catch (err) {
+      console.error('[SqliteStore] Failed to migrate wecom_user_id_mappings:', err);
+    }
   }
 
   private migrateFromLegacy(): void {
@@ -212,6 +260,7 @@ export class SqliteStore {
     const result = this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
     if (result.changes > 0) {
       this.db.prepare('DELETE FROM wecom_user_sessions WHERE workspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
     }
     return result.changes > 0;
   }
@@ -242,6 +291,63 @@ export class SqliteStore {
     const rows = this.db
       .prepare('SELECT wecomUserId, sessionId FROM wecom_user_sessions WHERE workspaceId = ?')
       .all(workspaceId) as Array<{ wecomUserId: string; sessionId: string }>;
+    return rows;
+  }
+
+  // WeCom user ID mapping (encrypted -> plaintext), global across workspaces
+
+  getWecomUserMapping(encryptedUserId: string): string | null {
+    const row = this.db
+      .prepare('SELECT plaintextUserId FROM wecom_user_id_mappings WHERE encryptedUserId = ?')
+      .get(encryptedUserId) as { plaintextUserId: string } | undefined;
+    return row?.plaintextUserId ?? null;
+  }
+
+  setWecomUserMapping(encryptedUserId: string, plaintextUserId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO wecom_user_id_mappings (encryptedUserId, plaintextUserId, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(encryptedUserId) DO UPDATE SET
+          plaintextUserId = excluded.plaintextUserId,
+          updatedAt = excluded.updatedAt
+      `)
+      .run(encryptedUserId, plaintextUserId, now, now);
+  }
+
+  listWecomUserMappings(): Array<{ encryptedUserId: string; plaintextUserId: string }> {
+    const rows = this.db
+      .prepare('SELECT encryptedUserId, plaintextUserId FROM wecom_user_id_mappings')
+      .all() as Array<{ encryptedUserId: string; plaintextUserId: string }>;
+    return rows;
+  }
+
+  // WeCom workspace user tracking
+
+  getWecomWorkspaceUser(workspaceId: string, encryptedUserId: string): { firstSeenAt: string; lastSeenAt: string } | null {
+    const row = this.db
+      .prepare('SELECT firstSeenAt, lastSeenAt FROM wecom_workspace_users WHERE workspaceId = ? AND encryptedUserId = ?')
+      .get(workspaceId, encryptedUserId) as { firstSeenAt: string; lastSeenAt: string } | undefined;
+    return row ?? null;
+  }
+
+  setWecomWorkspaceUser(workspaceId: string, encryptedUserId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO wecom_workspace_users (workspaceId, encryptedUserId, firstSeenAt, lastSeenAt)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspaceId, encryptedUserId) DO UPDATE SET
+          lastSeenAt = excluded.lastSeenAt
+      `)
+      .run(workspaceId, encryptedUserId, now, now);
+  }
+
+  listWecomWorkspaceUsers(workspaceId: string): Array<{ encryptedUserId: string; firstSeenAt: string; lastSeenAt: string }> {
+    const rows = this.db
+      .prepare('SELECT encryptedUserId, firstSeenAt, lastSeenAt FROM wecom_workspace_users WHERE workspaceId = ? ORDER BY lastSeenAt DESC')
+      .all(workspaceId) as Array<{ encryptedUserId: string; firstSeenAt: string; lastSeenAt: string }>;
     return rows;
   }
 }
