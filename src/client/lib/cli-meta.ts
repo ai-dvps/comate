@@ -82,9 +82,9 @@ const MAX_PAIRED_OUTPUT_CHARS = 80
 function canonicalUserText(message: ChatMessage): string | null {
   if (message.role !== 'user') return null
   if (message.parts.length === 0) return null
-  if (!message.parts.every((p) => p.type === 'text')) return null
+  if (!message.parts.every((p) => p?.type === 'text')) return null
   return message.parts
-    .map((p) => (p.type === 'text' ? p.text : ''))
+    .map((p) => (p?.type === 'text' ? p.text : ''))
     .join('')
 }
 

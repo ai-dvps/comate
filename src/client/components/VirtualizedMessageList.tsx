@@ -60,7 +60,7 @@ function isToolResultOnly(msg: ChatMessage): boolean {
   return (
     msg.role === 'user' &&
     msg.parts.length > 0 &&
-    msg.parts.every((p) => p.type === 'tool_result')
+    msg.parts.every((p) => p?.type === 'tool_result')
   )
 }
 
@@ -68,7 +68,7 @@ function buildResultMap(messages: ChatMessage[]): Map<string, ToolResultPart> {
   const map = new Map<string, ToolResultPart>()
   for (const m of messages) {
     for (const p of m.parts) {
-      if (p.type === 'tool_result') {
+      if (p?.type === 'tool_result') {
         map.set(p.toolUseId, p)
       }
     }
@@ -292,9 +292,9 @@ export default function VirtualizedMessageList({
     for (const message of visibleMessages) {
       if (message.role !== 'user') continue
       if (message.parts.length === 0) continue
-      if (!message.parts.every((p) => p.type === 'text')) continue
+      if (!message.parts.every((p) => p?.type === 'text')) continue
       const text = message.parts
-        .map((p) => (p.type === 'text' ? p.text : ''))
+        .map((p) => (p?.type === 'text' ? p.text : ''))
         .join('')
       if (!isWrapperShape(text)) continue
       if (detectCliMeta(text) !== null) continue
@@ -426,7 +426,7 @@ function renderMessage(
   sessionId: string,
 ): React.ReactNode {
   if (msg.role === 'system') {
-    const text = msg.parts.find((p) => p.type === 'text')?.text ?? ''
+    const text = msg.parts.find((p) => p?.type === 'text')?.text ?? ''
     return (
       <div
         key={msg.id}
@@ -443,6 +443,7 @@ function renderMessage(
       <MessageContent>
         {msg.parts.map((part, idx) => {
           const partKey = `${msg.id}-${idx}`
+          if (!part) return null
           if (part.type === 'text') {
             if (msg.role === 'user') {
               return (
