@@ -8,6 +8,7 @@ import { chatService } from './chat-service.js';
 import type { SseEvent } from '../types/message.js';
 import { SKILL_MD } from '../assets/wecom-skill.js';
 import { debounce } from '../utils/debounce.js';
+import { wecomUserResolver } from './wecom-user-resolver.js';
 
 interface BotConnection {
   client: WSClient;
@@ -149,6 +150,14 @@ export class WeComBotService {
     if (!frame.body) return;
     const wecomUserId = frame.body.from.userid;
     const content = frame.body.text.content;
+
+    // Fire-and-forget: queue unseen user IDs for batch resolution
+    wecomUserResolver.resolveOnMessage(workspaceId, wecomUserId).catch(() => {
+      // Ignore: resolver failures degrade gracefully to encrypted ID usage
+    });
+
+    // Track that this user has interacted with this workspace
+    wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
 
     let sessionId = workspaceStore.getWecomSession(workspaceId, wecomUserId);
 

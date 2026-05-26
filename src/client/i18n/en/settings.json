@@ -67,7 +67,16 @@
     "botIdPlaceholder": "your-bot-id",
     "botSecret": "Bot Secret",
     "botSecretPlaceholder": "your-bot-secret",
+    "corpId": "Corp ID",
+    "corpIdPlaceholder": "your-corp-id",
+    "corpSecret": "Corp Secret",
+    "corpSecretPlaceholder": "your-corp-secret",
     "status": "Status:",
+    "usersTitle": "WeCom Users",
+    "usersEmpty": "No WeCom users have messaged this workspace yet.",
+    "userPending": "Pending resolution",
+    "firstSeen": "First seen",
+    "lastSeen": "Last seen",
     "botSessionNote": "Bot sessions have full tool auto-approval. Save changes to connect or disconnect."
   },
   "wecomCli": {

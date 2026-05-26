@@ -106,4 +106,31 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/wecom/users
+router.get('/:id/wecom/users', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const users = store.listWecomWorkspaceUsers(req.params.id);
+    const mappings = store.listWecomUserMappings();
+    const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
+
+    const result = users.map((u) => ({
+      encryptedUserId: u.encryptedUserId,
+      plaintextUserId: mappingMap.get(u.encryptedUserId) || undefined,
+      firstSeenAt: u.firstSeenAt,
+      lastSeenAt: u.lastSeenAt,
+    }));
+
+    res.json({ users: result });
+  } catch (error) {
+    console.error('Failed to list WeCom workspace users:', error);
+    res.status(500).json({ error: 'Failed to list WeCom workspace users' });
+  }
+});
+
 export default router;
