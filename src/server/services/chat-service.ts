@@ -349,8 +349,7 @@ export class ChatService {
     const wecomCliPath = resolveWecomCliPath();
     if (wecomCliPath) {
       const cliDir = path.dirname(wecomCliPath);
-      const pathSeparator = process.platform === 'win32' ? ';' : ':';
-      env.PATH = cliDir + pathSeparator + (env.PATH || '');
+      prependEnvPath(env, cliDir);
       env.WECOM_CLI_PATH = wecomCliPath;
       sidecarLog(`[ChatService.buildSdkOptions] injected wecom CLI dir into PATH: ${cliDir}`);
       sidecarLog(`[ChatService.buildSdkOptions] set WECOM_CLI_PATH=${wecomCliPath}`);
@@ -467,6 +466,27 @@ function buildClaudeEnv(
     }
   }
   return { env, sources };
+}
+
+function prependEnvPath(
+  env: Record<string, string | undefined>,
+  dir: string,
+): void {
+  const pathKey = getPathEnvKey(env);
+  const pathSeparator = process.platform === 'win32' ? ';' : ':';
+  env[pathKey] = dir + pathSeparator + (env[pathKey] || '');
+  if (process.platform === 'win32') {
+    for (const key of Object.keys(env)) {
+      if (key !== pathKey && key.toLowerCase() === 'path') {
+        delete env[key];
+      }
+    }
+  }
+}
+
+function getPathEnvKey(env: Record<string, string | undefined>): string {
+  if (process.platform !== 'win32') return 'PATH';
+  return Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'Path';
 }
 
 export const chatService = new ChatService();
