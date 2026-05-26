@@ -185,6 +185,8 @@ export class WeComBotService {
 
     let responseText = '';
     let collecting = false;
+    let streamFinalized = false;
+    let thinkingShown = false;
     let animationInterval: NodeJS.Timeout | null = null;
 
     const stopAnimation = () => {
@@ -210,24 +212,48 @@ export class WeComBotService {
     animationInterval = setInterval(sendAnimationFrame, 600);
 
     const flushStream = debounce(() => {
-      if (!collecting || !responseText) return;
+      if (!responseText) return;
       conn!.client.replyStreamNonBlocking(frame, streamId, responseText).catch((err) => {
         console.error('Failed to send WeCom stream frame:', err);
       });
     }, 150);
 
     const handler = (id: number, event: SseEvent) => {
+      if (streamFinalized) return;
+
       if (event.type === 'assistant_start') {
-        responseText = '';
         collecting = true;
+        if (responseText && !responseText.endsWith('\n\n')) {
+          responseText += '\n\n';
+        }
       } else if (collecting && event.type === 'text_delta') {
         stopAnimation();
         responseText += event.text;
         flushStream();
-      } else if (
-        collecting &&
-        (event.type === 'assistant_done' || event.type === 'error_note' || event.type === 'interrupted')
-      ) {
+      } else if (collecting && event.type === 'thinking_delta') {
+        if (!thinkingShown) {
+          thinkingShown = true;
+          responseText += '\n\n💭 Thinking…';
+          flushStream.flush();
+        }
+      } else if (collecting && event.type === 'tool_use_start') {
+        responseText += `\n\n🔧 ${event.toolName}`;
+        flushStream.flush();
+      } else if (event.type === 'tool_result') {
+        responseText += '\n✅ Done';
+        flushStream.flush();
+      } else if (event.type === 'subagent_start') {
+        responseText += `\n\n🤖 ${event.description ?? 'Running subagent'}…`;
+        flushStream.flush();
+      } else if (event.type === 'subagent_done') {
+        responseText += `\n✅ Subagent ${event.state}`;
+        flushStream.flush();
+      } else if (collecting && event.type === 'assistant_done') {
+        collecting = false;
+        stopAnimation();
+        flushStream.flush();
+      } else if (event.type === 'result' || event.type === 'error_note' || event.type === 'interrupted') {
+        streamFinalized = true;
         collecting = false;
         stopAnimation();
         flushStream.abort();
