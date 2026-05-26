@@ -218,6 +218,25 @@ export class WeComBotService {
       });
     }, 150);
 
+    const finalizeStream = () => {
+      streamFinalized = true;
+      collecting = false;
+      stopAnimation();
+      flushStream.abort();
+
+      conn!.client.replyStream(frame, streamId, responseText, true).catch((err) => {
+        console.error('Failed to send WeCom stream final frame:', err);
+        if (responseText.trim()) {
+          conn!.client.sendMessage(wecomUserId, {
+            msgtype: 'markdown',
+            markdown: { content: responseText },
+          }).catch((fallbackErr) => {
+            console.error('Failed to send WeCom fallback response:', fallbackErr);
+          });
+        }
+      });
+    };
+
     const handler = (id: number, event: SseEvent) => {
       if (streamFinalized) return;
 
@@ -252,23 +271,18 @@ export class WeComBotService {
         collecting = false;
         stopAnimation();
         flushStream.flush();
-      } else if (event.type === 'result' || event.type === 'error_note' || event.type === 'interrupted') {
-        streamFinalized = true;
-        collecting = false;
-        stopAnimation();
-        flushStream.abort();
-
-        conn!.client.replyStream(frame, streamId, responseText, true).catch((err) => {
-          console.error('Failed to send WeCom stream final frame:', err);
-          if (responseText.trim()) {
-            conn!.client.sendMessage(wecomUserId, {
-              msgtype: 'markdown',
-              markdown: { content: responseText },
-            }).catch((fallbackErr) => {
-              console.error('Failed to send WeCom fallback response:', fallbackErr);
-            });
-          }
-        });
+      } else if (event.type === 'error_note') {
+        if (event.text) {
+          responseText += `\n\n⚠️ ${event.text}`;
+        }
+        finalizeStream();
+      } else if (event.type === 'result') {
+        if (event.isError) {
+          responseText += '\n\n⚠️ 处理失败，请稍后重试。';
+        }
+        finalizeStream();
+      } else if (event.type === 'interrupted') {
+        finalizeStream();
       }
     };
 
