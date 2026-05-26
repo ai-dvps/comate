@@ -54,6 +54,7 @@ export interface ChatSession {
   workspaceId: string
   name: string
   isDraft?: boolean
+  isWip?: boolean
   source?: 'gui' | 'wecom'
   createdAt: string
   updatedAt: string
@@ -153,6 +154,7 @@ interface ChatState {
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
   renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
+  toggleSessionWip: (workspaceId: string, sessionId: string, isWip: boolean) => Promise<void>
   setActiveSession: (workspaceId: string, sessionId: string) => void
   loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
   sendMessage: (workspaceId: string, sessionId: string, content: string) => void
@@ -1698,6 +1700,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
     } catch (err) {
       console.error('Failed to rename session:', err)
+    }
+  },
+
+  toggleSessionWip: async (workspaceId: string, sessionId: string, isWip: boolean) => {
+    try {
+      // Optimistic update
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, isWip } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isWip }),
+      })
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+      const updated: ChatSession = await res.json()
+      // Confirm state with server response
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, isWip: updated.isWip } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+    } catch (err) {
+      console.error('Failed to toggle session WIP:', err)
+      // Revert optimistic update on error
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, isWip: !isWip } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
     }
   },
 
