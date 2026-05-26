@@ -36,6 +36,7 @@
   "sessionNamePlaceholder": "会话名称",
   "create": "创建",
   "cancel": "取消",
+  "renameSession": "重命名会话",
   "newSession": "新会话",
   "newSessionDefaultName": "会话 {{count}}",
   "loadingSessions": "正在加载会话...",

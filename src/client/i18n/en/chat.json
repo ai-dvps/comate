@@ -36,6 +36,7 @@
   "sessionNamePlaceholder": "Session name",
   "create": "Create",
   "cancel": "Cancel",
+  "renameSession": "Rename session",
   "newSession": "New Session",
   "newSessionDefaultName": "Session {{count}}",
   "loadingSessions": "Loading sessions...",
