@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
-import { MessageSquare, Plus } from 'lucide-react'
+import { MessageSquare, Plus, Pencil } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
 
@@ -44,6 +44,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const { t } = useTranslation('chat')
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
@@ -54,12 +56,32 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const isLoading = useChatStore((s) => s.isLoadingSessions)
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const createSession = useChatStore((s) => s.createSession)
+  const renameSession = useChatStore((s) => s.renameSession)
 
   const handleCreate = async () => {
     const name = newName.trim() || t('newSessionDefaultName', { count: sessions.length + 1 })
     await createSession(workspaceId, name)
     setNewName('')
     setShowCreate(false)
+  }
+
+  const startEdit = (session: import('../stores/chat-store').ChatSession) => {
+    setEditingSessionId(session.id)
+    setEditingName(getSessionDisplayName(session))
+  }
+
+  const commitEdit = async (sessionId: string) => {
+    const trimmed = editingName.trim()
+    if (trimmed) {
+      await renameSession(workspaceId, sessionId, trimmed)
+    }
+    setEditingSessionId(null)
+    setEditingName('')
+  }
+
+  const cancelEdit = () => {
+    setEditingSessionId(null)
+    setEditingName('')
   }
 
   const getPreview = (sessionId: string): string => {
@@ -157,15 +179,48 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <p
-                      className={`text-xs truncate ${
-                        session.id === activeSessionId
-                          ? 'text-text-primary font-medium'
-                          : 'text-text-secondary'
-                      }`}
-                    >
-                      {getSessionDisplayName(session)}
-                    </p>
+                    {editingSessionId === session.id ? (
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            commitEdit(session.id)
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault()
+                            cancelEdit()
+                          }
+                        }}
+                        onBlur={() => cancelEdit()}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-1 min-w-0 px-2 py-0.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary"
+                      />
+                    ) : (
+                      <>
+                        <p
+                          className={`text-xs truncate ${
+                            session.id === activeSessionId
+                              ? 'text-text-primary font-medium'
+                              : 'text-text-secondary'
+                          }`}
+                        >
+                          {getSessionDisplayName(session)}
+                        </p>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            startEdit(session)
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-hover text-text-tertiary hover:text-text-secondary transition-opacity"
+                          title={t('renameSession')}
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
                     {session.isDraft && (
                       <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
                         {t('draft')}

@@ -41,6 +41,35 @@ router.post('/sessions', async (req, res) => {
   }
 });
 
+// PUT /api/workspaces/:id/sessions/:sessionId
+router.put('/sessions/:sessionId', async (req, res) => {
+  try {
+    const workspaceId = (req.params as unknown as { id: string }).id;
+    const sessionId = req.params.sessionId;
+    const { name } = req.body;
+
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      res.status(400).json({ error: 'name is required and must be a non-empty string' });
+      return;
+    }
+
+    const session = await chatService.updateSession(sessionId, { name: name.trim() }, workspaceId);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    res.json(session);
+  } catch (error) {
+    console.error('Failed to update session:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to update session' });
+  }
+});
+
 // GET /api/workspaces/:id/sessions/status
 // Lightweight status check for background session discovery
 router.get('/sessions/status', async (req, res) => {

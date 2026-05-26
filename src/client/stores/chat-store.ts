@@ -152,6 +152,7 @@ interface ChatState {
 
   fetchSessions: (workspaceId: string) => Promise<void>
   createSession: (workspaceId: string, name: string) => Promise<void>
+  renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
   setActiveSession: (workspaceId: string, sessionId: string) => void
   loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
   sendMessage: (workspaceId: string, sessionId: string, content: string) => void
@@ -1672,6 +1673,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
     } catch (err) {
       console.error('Failed to create session:', err)
+    }
+  },
+
+  renameSession: async (workspaceId: string, sessionId: string, name: string) => {
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      if (!res.ok) throw new Error(i18next.t('common:failedToRenameSession', 'Failed to rename session'))
+      const updated: ChatSession = await res.json()
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId
+            ? { ...s, name: updated.name, customTitle: updated.customTitle, updatedAt: updated.updatedAt }
+            : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+    } catch (err) {
+      console.error('Failed to rename session:', err)
     }
   },
 

@@ -58,6 +58,7 @@
   "connectionError": "连接错误",
   "failedToFetchSessions": "获取会话失败",
   "failedToCreateSession": "创建会话失败",
+  "failedToRenameSession": "重命名会话失败",
   "failedToLoadMessages": "加载消息失败",
   "failedToFetchOlderMessages": "获取历史消息失败",
   "failedToFetchCommands": "获取命令失败",
