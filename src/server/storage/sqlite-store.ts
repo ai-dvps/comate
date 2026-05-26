@@ -78,6 +78,13 @@ export class SqliteStore {
       )
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS session_metadata (
+        session_id TEXT PRIMARY KEY,
+        is_wip INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
     this.migrateMappingTable();
     this.migrateFromLegacy();
   }
@@ -349,6 +356,32 @@ export class SqliteStore {
       .prepare('SELECT encryptedUserId, firstSeenAt, lastSeenAt FROM wecom_workspace_users WHERE workspaceId = ? ORDER BY lastSeenAt DESC')
       .all(workspaceId) as Array<{ encryptedUserId: string; firstSeenAt: string; lastSeenAt: string }>;
     return rows;
+  }
+
+  // Session metadata (WIP, etc.)
+
+  getSessionMetadata(sessionIds: string[]): Record<string, { isWip: boolean }> {
+    if (sessionIds.length === 0) return {};
+    const placeholders = sessionIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT session_id, is_wip FROM session_metadata WHERE session_id IN (${placeholders})`)
+      .all(...sessionIds) as Array<{ session_id: string; is_wip: number }>;
+    const result: Record<string, { isWip: boolean }> = {};
+    for (const row of rows) {
+      result[row.session_id] = { isWip: row.is_wip === 1 };
+    }
+    return result;
+  }
+
+  setSessionMetadata(sessionId: string, isWip: boolean): void {
+    this.db
+      .prepare(`
+        INSERT INTO session_metadata (session_id, is_wip)
+        VALUES (?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+          is_wip = excluded.is_wip
+      `)
+      .run(sessionId, isWip ? 1 : 0);
   }
 }
 

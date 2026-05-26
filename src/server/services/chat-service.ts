@@ -99,6 +99,16 @@ export class ChatService {
 
     const allSessions = [...activeDrafts, ...sdkSessions];
 
+    // Merge session metadata (WIP, etc.)
+    const sessionIds = allSessions.map((s) => s.id);
+    const metadata = workspaceStore.getSessionMetadata(sessionIds);
+    for (const session of allSessions) {
+      const meta = metadata[session.id];
+      if (meta) {
+        session.isWip = meta.isWip;
+      }
+    }
+
     // Identify bot sessions from the user mapping table
     const wecomMappings = workspaceStore.listWecomSessions(workspaceId);
     const botSessionIds = new Set(wecomMappings.map((m) => m.sessionId));
