@@ -40,7 +40,16 @@ function timestamp(): string {
 function write(level: string, ...args: unknown[]): void {
   ensureDir();
   rotateIfNeeded();
-  const line = `[${timestamp()}] [${level}] ${args.map(String).join(' ')}`;
+  const line = `[${timestamp()}] [${level}] ${args.map((a) => {
+    if (typeof a === 'object' && a !== null) {
+      try {
+        return JSON.stringify(a);
+      } catch {
+        return String(a);
+      }
+    }
+    return String(a);
+  }).join(' ')}`;
   try {
     appendFileSync(logFile, line + '\n');
   } catch {
