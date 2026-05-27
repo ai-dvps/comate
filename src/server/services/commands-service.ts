@@ -14,7 +14,8 @@ import { SdkClient } from './sdk-client.js';
 import type { Options } from './sdk-client.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
-import { loadClaudeSettings, resolveClaudeConfigDir } from '../utils/claude-settings.js';
+import { buildClaudeEnv } from '../utils/sdk-env.js';
+import { loadClaudeSettings } from '../utils/claude-settings.js';
 
 interface FsCommandEntry {
   filePath: string;
@@ -294,34 +295,5 @@ function sourceForPath(filePath: string, workspaceFolder: string): CommandSource
 
 // Exposed only for tests that need to validate name extraction.
 export { commandNameFromFilePath };
-
-function buildClaudeEnv(
-  claudeSettings: Record<string, string>,
-): {
-  env: Record<string, string | undefined>;
-  sources: Record<string, 'process' | 'settings'>;
-} {
-  const env: Record<string, string | undefined> = { ...process.env };
-  const sources: Record<string, 'process' | 'settings'> = {};
-  const claudeConfigDir = resolveClaudeConfigDir();
-  if (!env.CLAUDE_CONFIG_DIR) {
-    env.CLAUDE_CONFIG_DIR = claudeConfigDir;
-  }
-  if (process.platform === 'win32' && !env.CLAUDE_SECURESTORAGE_CONFIG_DIR) {
-    env.CLAUDE_SECURESTORAGE_CONFIG_DIR = claudeConfigDir;
-  }
-  for (const key of Object.keys(env)) {
-    if (key.startsWith('ANTHROPIC_') && env[key]) {
-      sources[key] = 'process';
-    }
-  }
-  for (const [key, value] of Object.entries(claudeSettings)) {
-    if (!env[key]) {
-      env[key] = value;
-      sources[key] = 'settings';
-    }
-  }
-  return { env, sources };
-}
 
 export const commandsService = new CommandsService();

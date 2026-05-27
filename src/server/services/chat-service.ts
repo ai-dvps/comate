@@ -14,7 +14,8 @@ import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
-import { loadClaudeSettings, resolveClaudeConfigDir } from '../utils/claude-settings.js';
+import { loadClaudeSettings } from '../utils/claude-settings.js';
+import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.js';
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
@@ -459,56 +460,6 @@ export class ChatError extends Error {
     super(message);
     this.name = 'ChatError';
   }
-}
-
-function buildClaudeEnv(
-  claudeSettings: Record<string, string>,
-): {
-  env: Record<string, string | undefined>;
-  sources: Record<string, 'process' | 'settings'>;
-} {
-  const env: Record<string, string | undefined> = { ...process.env };
-  const sources: Record<string, 'process' | 'settings'> = {};
-  const claudeConfigDir = resolveClaudeConfigDir();
-  if (!env.CLAUDE_CONFIG_DIR) {
-    env.CLAUDE_CONFIG_DIR = claudeConfigDir;
-  }
-  if (process.platform === 'win32' && !env.CLAUDE_SECURESTORAGE_CONFIG_DIR) {
-    env.CLAUDE_SECURESTORAGE_CONFIG_DIR = claudeConfigDir;
-  }
-  for (const key of Object.keys(env)) {
-    if (key.startsWith('ANTHROPIC_') && env[key]) {
-      sources[key] = 'process';
-    }
-  }
-  for (const [key, value] of Object.entries(claudeSettings)) {
-    if (!env[key]) {
-      env[key] = value;
-      sources[key] = 'settings';
-    }
-  }
-  return { env, sources };
-}
-
-function prependEnvPath(
-  env: Record<string, string | undefined>,
-  dir: string,
-): void {
-  const pathKey = getPathEnvKey(env);
-  const pathSeparator = process.platform === 'win32' ? ';' : ':';
-  env[pathKey] = dir + pathSeparator + (env[pathKey] || '');
-  if (process.platform === 'win32') {
-    for (const key of Object.keys(env)) {
-      if (key !== pathKey && key.toLowerCase() === 'path') {
-        delete env[key];
-      }
-    }
-  }
-}
-
-function getPathEnvKey(env: Record<string, string | undefined>): string {
-  if (process.platform !== 'win32') return 'PATH';
-  return Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'Path';
 }
 
 export const chatService = new ChatService();
