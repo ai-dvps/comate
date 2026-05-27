@@ -16,7 +16,19 @@
     "messageWindowCap": "消息窗口上限",
     "messageWindowCapHint": "每个会话保留在内存中的最大消息数（50–1000）。较早的消息会被裁剪，但可以通过向上滚动重新获取。",
     "reopenLastWorkspace": "启动时重新打开上次工作区",
-    "reopenLastWorkspaceHint": "应用启动时自动恢复上次活动的工作区。"
+    "reopenLastWorkspaceHint": "应用启动时自动恢复上次活动的工作区。",
+    "pathConfigTitle": "Claude Code PATH",
+    "pathConfigHint": "此处添加的目录将被前置到传递给 Claude Code 的 PATH 中。",
+    "pathConfigResolvedPath": "已解析的 PATH",
+    "pathConfigCustomPaths": "自定义 PATH 目录",
+    "pathConfigAddPath": "添加目录",
+    "pathConfigPathPlaceholder": "/path/to/tools",
+    "pathConfigNoCustomPaths": "尚未添加自定义目录。",
+    "pathConfigLoading": "正在加载 PATH...",
+    "pathConfigRefreshHint": "Shell 捕获的 PATH 仅在应用启动时刷新。自定义路径对新 Claude Code 会话即时生效。",
+    "pathConfigSourceShell": "Shell 捕获",
+    "pathConfigSourceFallback": "回退目录",
+    "pathConfigInvalidPath": "路径必须是绝对路径。"
   },
   "appearance": {
     "theme": "主题",
