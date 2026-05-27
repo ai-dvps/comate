@@ -1,11 +1,15 @@
 import { appendFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
+import { ensureLogsDir, getLogsDir } from './log-cleanup.js';
 
-const dataDir = process.env.COMATE_DATA_DIR;
-const logFile = dataDir ? path.join(dataDir, 'sidecar.log') : null;
+const logFile = path.join(getLogsDir(), 'sidecar.log');
 
-if (logFile && !existsSync(path.dirname(logFile))) {
-  mkdirSync(path.dirname(logFile), { recursive: true });
+if (!existsSync(path.dirname(logFile))) {
+  try {
+    mkdirSync(path.dirname(logFile), { recursive: true });
+  } catch {
+    // Ignore directory creation errors
+  }
 }
 
 function timestamp(): string {
@@ -17,6 +21,7 @@ export function sidecarLog(...args: unknown[]): void {
   console.log(line);
   if (logFile) {
     try {
+      ensureLogsDir();
       appendFileSync(logFile, line + '\n');
     } catch {
       // Ignore file write errors
@@ -29,6 +34,7 @@ export function sidecarError(...args: unknown[]): void {
   console.error(line);
   if (logFile) {
     try {
+      ensureLogsDir();
       appendFileSync(logFile, line + '\n');
     } catch {
       // Ignore file write errors

@@ -1,9 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'fs';
 import path from 'path';
-import { getStorageDir } from '../storage/data-dir.js';
+import { getLogsDir } from './log-cleanup.js';
 
-const dataDir = process.env.COMATE_DATA_DIR || getStorageDir();
-const logsDir = path.join(dataDir, 'logs');
+const logsDir = getLogsDir();
 const logFile = path.join(logsDir, 'wecom-resolver.log');
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -21,7 +20,7 @@ function rotateIfNeeded(): void {
       const rotated = `${logFile}.1`;
       if (existsSync(rotated)) {
         // Simple rotation: drop the old .1
-        // In a production system you might want a chain (.1 → .2, etc.)
+        // In a production system you might want a chain (.1 -> .2, etc.)
         // For diagnostic logging, one backup is enough.
       }
       renameSync(logFile, rotated);
