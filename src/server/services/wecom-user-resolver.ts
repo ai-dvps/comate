@@ -1,4 +1,5 @@
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { resolverLog, resolverWarn, resolverError } from '../utils/resolver-logger.js';
 
 interface TokenCacheEntry {
   token: string;
@@ -49,11 +50,11 @@ export class WeComUserIdResolver {
     if (typeof this.flushTimer.unref === 'function') {
       this.flushTimer.unref();
     }
-    console.log(`[WeComUserIdResolver] Initialized, flush interval=${FLUSH_INTERVAL_MS}ms`);
+    resolverLog(`[WeComUserIdResolver] Initialized, flush interval=${FLUSH_INTERVAL_MS}ms`);
   }
 
   async shutdown(): Promise<void> {
-    console.log('[WeComUserIdResolver] Shutting down...');
+    resolverLog('[WeComUserIdResolver] Shutting down...');
     this.shuttingDown = true;
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
@@ -68,9 +69,9 @@ export class WeComUserIdResolver {
 
     try {
       await Promise.race([flushPromise, timeoutPromise]);
-      console.log('[WeComUserIdResolver] Shutdown flush complete');
+      resolverLog('[WeComUserIdResolver] Shutdown flush complete');
     } catch {
-      console.warn('[WeComUserIdResolver] Shutdown flush timed out, remaining queue dropped');
+      resolverWarn('[WeComUserIdResolver] Shutdown flush timed out, remaining queue dropped');
     }
 
     this.tokenRefreshInFlight.clear();
@@ -104,10 +105,10 @@ export class WeComUserIdResolver {
       try {
         const existing = workspaceStore.getWecomUserMapping(encryptedUserId);
         if (existing) {
-          console.log(`[WeComUserIdResolver] Message from workspace=${workspaceId} user=${tid(encryptedUserId)} cached=true`);
+          resolverLog(`[WeComUserIdResolver] Message from workspace=${workspaceId} user=${tid(encryptedUserId)} cached=true`);
           return;
         }
-        console.log(`[WeComUserIdResolver] Message from workspace=${workspaceId} user=${tid(encryptedUserId)} cached=false, queuing`);
+        resolverLog(`[WeComUserIdResolver] Message from workspace=${workspaceId} user=${tid(encryptedUserId)} cached=false, queuing`);
         this.queueId(workspaceId, encryptedUserId);
       } finally {
         clearTimeout(timeout);
@@ -124,7 +125,7 @@ export class WeComUserIdResolver {
   trackWorkspaceUser(workspaceId: string, encryptedUserId: string): void {
     try {
       workspaceStore.setWecomWorkspaceUser(workspaceId, encryptedUserId);
-      console.log(`[WeComUserIdResolver] Tracked workspace=${workspaceId} user=${tid(encryptedUserId)}`);
+      resolverLog(`[WeComUserIdResolver] Tracked workspace=${workspaceId} user=${tid(encryptedUserId)}`);
     } catch {
       // Silently degrade: tracking failure must not block message handling
     }
@@ -139,11 +140,11 @@ export class WeComUserIdResolver {
     const start = Date.now();
     const existing = workspaceStore.getWecomUserMapping(encryptedUserId);
     if (existing) {
-      console.log(`[WeComUserIdResolver] Immediate resolve workspace=${workspaceId} user=${tid(encryptedUserId)} cacheHit=true elapsed=${Date.now() - start}ms`);
+      resolverLog(`[WeComUserIdResolver] Immediate resolve workspace=${workspaceId} user=${tid(encryptedUserId)} cacheHit=true elapsed=${Date.now() - start}ms`);
       return existing;
     }
 
-    console.log(`[WeComUserIdResolver] Immediate resolve workspace=${workspaceId} user=${tid(encryptedUserId)} cacheHit=false`);
+    resolverLog(`[WeComUserIdResolver] Immediate resolve workspace=${workspaceId} user=${tid(encryptedUserId)} cacheHit=false`);
 
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace?.settings.wecomCorpId || !workspace.settings.wecomCorpSecret) {
@@ -155,13 +156,13 @@ export class WeComUserIdResolver {
 
     const mapping = result.mappings.find((m) => m.encryptedUserId === encryptedUserId);
     if (!mapping) {
-      console.error(`[WeComUserIdResolver] Immediate resolve failed workspace=${workspaceId} user=${tid(encryptedUserId)} elapsed=${Date.now() - start}ms`);
+      resolverError(`[WeComUserIdResolver] Immediate resolve failed workspace=${workspaceId} user=${tid(encryptedUserId)} elapsed=${Date.now() - start}ms`);
       throw new Error('Failed to resolve WeCom user ID immediately');
     }
 
     workspaceStore.setWecomUserMapping(mapping.encryptedUserId, mapping.plaintextUserId);
     this.removeFromQueue(workspaceId, encryptedUserId);
-    console.log(`[WeComUserIdResolver] Immediate resolve success workspace=${workspaceId} user=${tid(encryptedUserId)} -> ${tid(mapping.plaintextUserId)} elapsed=${Date.now() - start}ms`);
+    resolverLog(`[WeComUserIdResolver] Immediate resolve success workspace=${workspaceId} user=${tid(encryptedUserId)} -> ${tid(mapping.plaintextUserId)} elapsed=${Date.now() - start}ms`);
     return mapping.plaintextUserId;
   }
 
@@ -175,12 +176,12 @@ export class WeComUserIdResolver {
     }
 
     if (wsQueue.size >= MAX_QUEUE_DEPTH) {
-      console.warn(`[WeComUserIdResolver] Queue depth limit reached for workspace=${workspaceId} depth=${wsQueue.size}, dropping user=${tid(encryptedUserId)}`);
+      resolverWarn(`[WeComUserIdResolver] Queue depth limit reached for workspace=${workspaceId} depth=${wsQueue.size}, dropping user=${tid(encryptedUserId)}`);
       return;
     }
 
     wsQueue.add(encryptedUserId);
-    console.log(`[WeComUserIdResolver] Queued workspace=${workspaceId} user=${tid(encryptedUserId)} depth=${wsQueue.size}`);
+    resolverLog(`[WeComUserIdResolver] Queued workspace=${workspaceId} user=${tid(encryptedUserId)} depth=${wsQueue.size}`);
   }
 
   private removeFromQueue(workspaceId: string, encryptedUserId: string): void {
@@ -205,24 +206,24 @@ export class WeComUserIdResolver {
     const workspaceCount = this.queue.size;
     if (workspaceCount === 0) return;
 
-    console.log(`[WeComUserIdResolver] Flush started, workspaces=${workspaceCount}`);
+    resolverLog(`[WeComUserIdResolver] Flush started, workspaces=${workspaceCount}`);
 
     for (const [workspaceId] of this.queue) {
       try {
         await this.flushWorkspace(workspaceId);
       } catch (err) {
-        console.error(`[WeComUserIdResolver] Flush failed for workspace ${workspaceId}:`, this.redactedError(err));
+        resolverError(`[WeComUserIdResolver] Flush failed for workspace ${workspaceId}:`, this.redactedError(err));
       }
     }
 
     this.lastFlushAt = Date.now();
-    console.log(`[WeComUserIdResolver] Flush finished, elapsed=${Date.now() - start}ms`);
+    resolverLog(`[WeComUserIdResolver] Flush finished, elapsed=${Date.now() - start}ms`);
   }
 
   private async flushWorkspace(workspaceId: string): Promise<void> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace?.settings.wecomCorpId || !workspace.settings.wecomCorpSecret) {
-      console.warn(`[WeComUserIdResolver] Flush skipped workspace=${workspaceId} reason=no_credentials`);
+      resolverWarn(`[WeComUserIdResolver] Flush skipped workspace=${workspaceId} reason=no_credentials`);
       this.queue.delete(workspaceId);
       this.retryMeta.delete(workspaceId);
       return;
@@ -245,7 +246,7 @@ export class WeComUserIdResolver {
 
     if (readyIds.length === 0) return;
 
-    console.log(`[WeComUserIdResolver] Flush workspace=${workspaceId} readyIds=${readyIds.length} totalQueued=${wsQueue.size}`);
+    resolverLog(`[WeComUserIdResolver] Flush workspace=${workspaceId} readyIds=${readyIds.length} totalQueued=${wsQueue.size}`);
     const flushStart = Date.now();
 
     const token = await this.getToken(workspaceId);
@@ -266,7 +267,7 @@ export class WeComUserIdResolver {
       }
       meta.attempts += 1;
       if (meta.attempts > MAX_RETRY_ATTEMPTS) {
-        console.warn(`[WeComUserIdResolver] Dropping ID after ${MAX_RETRY_ATTEMPTS} failed attempts for workspace=${workspaceId} user=${tid(id)}`);
+        resolverWarn(`[WeComUserIdResolver] Dropping ID after ${MAX_RETRY_ATTEMPTS} failed attempts for workspace=${workspaceId} user=${tid(id)}`);
         this.removeFromQueue(workspaceId, id);
         continue;
       }
@@ -278,21 +279,21 @@ export class WeComUserIdResolver {
       this.retryMeta.set(workspaceId, wsRetry);
     }
 
-    console.log(`[WeComUserIdResolver] Flush workspace=${workspaceId} done success=${result.mappings.length} failed=${result.failedIds.length} elapsed=${Date.now() - flushStart}ms`);
+    resolverLog(`[WeComUserIdResolver] Flush workspace=${workspaceId} done success=${result.mappings.length} failed=${result.failedIds.length} elapsed=${Date.now() - flushStart}ms`);
   }
 
   private async getToken(workspaceId: string): Promise<string> {
     const cached = this.tokenCache.get(workspaceId);
     if (cached && cached.expiresAt > Date.now()) {
-      console.log(`[WeComUserIdResolver] Token cache hit workspace=${workspaceId}`);
+      resolverLog(`[WeComUserIdResolver] Token cache hit workspace=${workspaceId}`);
       return cached.token;
     }
 
-    console.log(`[WeComUserIdResolver] Token cache miss workspace=${workspaceId}`);
+    resolverLog(`[WeComUserIdResolver] Token cache miss workspace=${workspaceId}`);
 
     const inFlight = this.tokenRefreshInFlight.get(workspaceId);
     if (inFlight) {
-      console.log(`[WeComUserIdResolver] Token refresh in-flight workspace=${workspaceId}, waiting`);
+      resolverLog(`[WeComUserIdResolver] Token refresh in-flight workspace=${workspaceId}, waiting`);
       return inFlight;
     }
 
@@ -313,7 +314,7 @@ export class WeComUserIdResolver {
       throw new Error('WeCom corp credentials are not configured for this workspace');
     }
 
-    console.log(`[WeComUserIdResolver] Fetching token workspace=${workspaceId}`);
+    resolverLog(`[WeComUserIdResolver] Fetching token workspace=${workspaceId}`);
     const fetchStart = Date.now();
 
     const corpId = workspace.settings.wecomCorpId;
@@ -335,7 +336,7 @@ export class WeComUserIdResolver {
     const expiresAt = Date.now() + expiresIn * 1000 - TOKEN_EXPIRY_BUFFER_MS;
 
     this.tokenCache.set(workspaceId, { token, expiresAt });
-    console.log(`[WeComUserIdResolver] Token fetched workspace=${workspaceId} expiresIn=${expiresIn}s elapsed=${Date.now() - fetchStart}ms`);
+    resolverLog(`[WeComUserIdResolver] Token fetched workspace=${workspaceId} expiresIn=${expiresIn}s elapsed=${Date.now() - fetchStart}ms`);
     return token;
   }
 
@@ -343,7 +344,7 @@ export class WeComUserIdResolver {
     token: string,
     encryptedUserIds: string[],
   ): Promise<{ mappings: Array<{ encryptedUserId: string; plaintextUserId: string }>; failedIds: string[] }> {
-    console.log(`[WeComUserIdResolver] Batch API call ids=${encryptedUserIds.length}`);
+    resolverLog(`[WeComUserIdResolver] Batch API call ids=${encryptedUserIds.length}`);
     const apiStart = Date.now();
 
     const url = `https://qyapi.weixin.qq.com/cgi-bin/batch/openuserid_to_userid?access_token=${encodeURIComponent(token)}`;
@@ -396,7 +397,7 @@ export class WeComUserIdResolver {
       }
     }
 
-    console.log(`[WeComUserIdResolver] Batch API result success=${mappings.length} failed=${failedIds.length} elapsed=${Date.now() - apiStart}ms`);
+    resolverLog(`[WeComUserIdResolver] Batch API result success=${mappings.length} failed=${failedIds.length} elapsed=${Date.now() - apiStart}ms`);
     return { mappings, failedIds };
   }
 
