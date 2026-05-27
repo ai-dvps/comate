@@ -15,6 +15,7 @@ import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { diagLog } from './utils/diag-logger.js';
 import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
+import { initializeResolvedShellPath } from './utils/resolve-shell-path.js';
 
 function getDirname(): string {
   try {
@@ -89,6 +90,11 @@ if (process.env.NODE_ENV === 'production') {
     res.sendFile(path.join(__dirname, '../../dist/client/index.html'));
   });
 }
+
+// Start shell PATH resolution early so it's ready before first SDK spawn
+initializeResolvedShellPath().catch((err) => {
+  console.error('Failed to initialize resolved shell path:', err);
+});
 
 const server = app.listen(PORT, () => {
   const address = server.address();
