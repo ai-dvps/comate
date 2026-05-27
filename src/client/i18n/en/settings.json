@@ -147,5 +147,11 @@
     "noSearchResults": "No matching tabs",
     "noOpenTabs": "No open tabs",
     "openTabList": "Open tab list"
+  },
+  "closeWorkspace": {
+    "confirmTitle": "Close {{name}}?",
+    "confirmMessage": "This workspace has an active session. Closing the tab will stop it.",
+    "confirmButton": "Close anyway",
+    "cancelButton": "Cancel"
   }
 }
