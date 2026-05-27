@@ -16,7 +16,19 @@
     "messageWindowCap": "Message Window Cap",
     "messageWindowCapHint": "Max messages kept in memory per session (50–1000). Older messages are pruned but can be re-fetched by scrolling up.",
     "reopenLastWorkspace": "Reopen last workspace on launch",
-    "reopenLastWorkspaceHint": "Automatically restore the last active workspace when the app starts."
+    "reopenLastWorkspaceHint": "Automatically restore the last active workspace when the app starts.",
+    "pathConfigTitle": "Claude Code PATH",
+    "pathConfigHint": "Directories added here are prepended to the PATH passed to Claude Code.",
+    "pathConfigResolvedPath": "Resolved PATH",
+    "pathConfigCustomPaths": "Custom PATH directories",
+    "pathConfigAddPath": "Add directory",
+    "pathConfigPathPlaceholder": "/path/to/tools",
+    "pathConfigNoCustomPaths": "No custom directories added.",
+    "pathConfigLoading": "Loading PATH...",
+    "pathConfigRefreshHint": "Shell-captured PATH is refreshed at app startup. Custom paths take effect for new Claude Code sessions immediately.",
+    "pathConfigSourceShell": "Shell capture",
+    "pathConfigSourceFallback": "Fallback directories",
+    "pathConfigInvalidPath": "Path must be an absolute path."
   },
   "appearance": {
     "theme": "Theme",
