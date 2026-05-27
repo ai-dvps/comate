@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertCircle, ArrowDown, Bot } from 'lucide-react'
+import CompactBoundary from './CompactBoundary'
 
 import { useAppSettings } from '../hooks/use-app-settings'
 import { fontSizeClass } from '../lib/font-size'
@@ -159,6 +160,7 @@ export default function VirtualizedMessageList({
   const messages = useChatStore((s) => s.messages[sessionId] || [])
   const totalMessageCount = useChatStore((s) => s.totalMessageCount[sessionId] || 0)
   const isLoadingOlder = useChatStore((s) => s.isLoadingOlderMessages[sessionId] || false)
+  const isCompacting = useChatStore((s) => s.isCompacting[sessionId] || false)
   const fetchOlderMessages = useChatStore((s) => s.fetchOlderMessages)
   const parentRef = useRef<HTMLDivElement>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -366,6 +368,12 @@ export default function VirtualizedMessageList({
               </div>
             )
           })}
+          {isCompacting && (
+            <div className="my-2 flex items-center gap-2 text-xs text-text-tertiary">
+              <span className="inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              <span>Compacting conversation…</span>
+            </div>
+          )}
         </div>
       </div>
       {!isAtBottom && (
@@ -426,6 +434,9 @@ function renderMessage(
   sessionId: string,
 ): React.ReactNode {
   if (msg.role === 'system') {
+    if (msg.isCompactBoundary) {
+      return <CompactBoundary key={msg.id} />
+    }
     const text = msg.parts.find((p) => p?.type === 'text')?.text ?? ''
     return (
       <div

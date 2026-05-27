@@ -149,6 +149,22 @@ export class SseEmitter {
           return;
         }
 
+        if (msg.subtype === 'compact_boundary') {
+          this.send({ type: 'compact_boundary' });
+          return;
+        }
+
+        if (msg.subtype === 'status') {
+          const statusMsg = msg as Record<string, unknown>;
+          const status = statusMsg.status;
+          if (status === 'compacting') {
+            this.send({ type: 'compact_status', active: true });
+          } else if (status === null) {
+            this.send({ type: 'compact_status', active: false });
+          }
+          return;
+        }
+
         return;
       }
 

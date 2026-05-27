@@ -168,6 +168,7 @@ interface ChatState {
     result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionUpdate[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
   ) => Promise<void>
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
+  cleanupWorkspace: (workspaceId: string) => void
   fetchOlderMessages: (
     workspaceId: string,
     sessionId: string,

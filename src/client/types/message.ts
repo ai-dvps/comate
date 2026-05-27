@@ -43,6 +43,7 @@ export interface ChatMessage {
   parts: MessagePart[]
   timestamp: number
   isStreaming?: boolean
+  isCompactBoundary?: boolean
 }
 
 /**
@@ -176,4 +177,6 @@ export type SseEvent =
       taskId: string
       patch: { status?: string; description?: string; error?: string }
     }
+  | { type: 'compact_boundary' }
+  | { type: 'compact_status'; active: boolean }
   | { type: 'heartbeat' }
