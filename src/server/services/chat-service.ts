@@ -378,6 +378,9 @@ export class ChatService {
       sidecarLog(`[ChatService.buildSdkOptions] set WECOM_CLI_PATH=${wecomCliPath}`);
     }
 
+    const pathKey = getPathEnvKey(env);
+    sidecarLog(`[ChatService.buildSdkOptions] enriched PATH=${env[pathKey]}`);
+
     const mcpServers: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig> = {};
     for (const mcp of workspace.mcpServers) {
       mcpServers[mcp.name] = {

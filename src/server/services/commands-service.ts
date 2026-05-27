@@ -14,7 +14,7 @@ import { SdkClient } from './sdk-client.js';
 import type { Options } from './sdk-client.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
-import { buildClaudeEnv } from '../utils/sdk-env.js';
+import { buildClaudeEnv, getPathEnvKey } from '../utils/sdk-env.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
 
 interface FsCommandEntry {
@@ -230,6 +230,9 @@ export class CommandsService {
         sidecarLog(`[CommandsService.buildSdkOptions] env.${key}=<set> source=${envSources[key] ?? 'process'}`);
       }
     }
+
+    const pathKey = getPathEnvKey(env);
+    sidecarLog(`[CommandsService.buildSdkOptions] enriched PATH=${env[pathKey]}`);
 
     const mcpServers: Record<
       string,
