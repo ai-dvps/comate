@@ -186,13 +186,36 @@ export class WeComBotService {
     let responseText = '';
     let collecting = false;
     let streamFinalized = false;
-    let thinkingShown = false;
     let animationInterval: NodeJS.Timeout | null = null;
+    let currentPlaceholder: string | null = null;
+    let placeholderAnimationInterval: NodeJS.Timeout | null = null;
 
     const stopAnimation = () => {
       if (animationInterval) {
         clearInterval(animationInterval);
         animationInterval = null;
+      }
+    };
+
+    const stopPlaceholderAnimation = () => {
+      if (placeholderAnimationInterval) {
+        clearInterval(placeholderAnimationInterval);
+        placeholderAnimationInterval = null;
+      }
+    };
+
+    const clearPlaceholder = () => {
+      stopPlaceholderAnimation();
+      if (currentPlaceholder) {
+        if (responseText.endsWith(currentPlaceholder)) {
+          responseText = responseText.slice(0, -currentPlaceholder.length);
+        } else {
+          const idx = responseText.lastIndexOf(currentPlaceholder);
+          if (idx >= 0) {
+            responseText = responseText.slice(0, idx) + responseText.slice(idx + currentPlaceholder.length);
+          }
+        }
+        currentPlaceholder = null;
       }
     };
 
@@ -218,10 +241,39 @@ export class WeComBotService {
       });
     }, 150);
 
+    const setPlaceholder = (text: string, animate: boolean = false) => {
+      clearPlaceholder();
+      currentPlaceholder = text;
+      responseText += text;
+      flushStream.flush();
+      if (animate) {
+        const baseText = text.replace(/\.*$/, '');
+        let dotCount = 0;
+        const myPlaceholder = text;
+        placeholderAnimationInterval = setInterval(() => {
+          if (currentPlaceholder !== myPlaceholder) return;
+          dotCount = (dotCount + 1) % 3;
+          const newPlaceholder = `${baseText}${'.'.repeat(dotCount + 1)}`;
+          if (responseText.endsWith(currentPlaceholder)) {
+            responseText = responseText.slice(0, -currentPlaceholder.length) + newPlaceholder;
+          } else {
+            const idx = responseText.lastIndexOf(currentPlaceholder);
+            if (idx < 0) return;
+            responseText = responseText.slice(0, idx) + newPlaceholder + responseText.slice(idx + currentPlaceholder.length);
+          }
+          currentPlaceholder = newPlaceholder;
+          conn!.client.replyStreamNonBlocking(frame, streamId, responseText).catch((err) => {
+            console.error('Failed to send WeCom placeholder animation frame:', err);
+          });
+        }, 600);
+      }
+    };
+
     const finalizeStream = () => {
       streamFinalized = true;
       collecting = false;
       stopAnimation();
+      stopPlaceholderAnimation();
       flushStream.abort();
 
       conn!.client.replyStream(frame, streamId, responseText, true).catch((err) => {
@@ -242,46 +294,48 @@ export class WeComBotService {
 
       if (event.type === 'assistant_start') {
         collecting = true;
+        clearPlaceholder();
         if (responseText && !responseText.endsWith('\n\n')) {
           responseText += '\n\n';
         }
       } else if (collecting && event.type === 'text_delta') {
         stopAnimation();
+        clearPlaceholder();
         responseText += event.text;
         flushStream();
-      } else if (collecting && event.type === 'thinking_delta') {
-        if (!thinkingShown) {
-          thinkingShown = true;
-          responseText += '\n\n💭 Thinking…';
-          flushStream.flush();
-        }
+      } else if (collecting && event.type === 'thinking_start') {
+        setPlaceholder('\n\n💭 Thinking.', true);
       } else if (collecting && event.type === 'tool_use_start') {
-        responseText += `\n\n🔧 ${event.toolName}`;
-        flushStream.flush();
+        clearPlaceholder();
+        setPlaceholder(`\n\n🔧 ${event.toolName}...`, false);
       } else if (event.type === 'tool_result') {
-        responseText += '\n✅ Done';
-        flushStream.flush();
+        clearPlaceholder();
       } else if (event.type === 'subagent_start') {
-        responseText += `\n\n🤖 ${event.description ?? 'Running subagent'}…`;
-        flushStream.flush();
+        clearPlaceholder();
+        setPlaceholder(`\n\n🤖 ${event.description ?? 'Running subagent'}...`, false);
       } else if (event.type === 'subagent_done') {
-        responseText += `\n✅ Subagent ${event.state}`;
-        flushStream.flush();
+        clearPlaceholder();
       } else if (collecting && event.type === 'assistant_done') {
         collecting = false;
         stopAnimation();
+        if (currentPlaceholder && currentPlaceholder.includes('💭 Thinking')) {
+          clearPlaceholder();
+        }
         flushStream.flush();
       } else if (event.type === 'error_note') {
+        clearPlaceholder();
         if (event.text) {
           responseText += `\n\n⚠️ ${event.text}`;
         }
         finalizeStream();
       } else if (event.type === 'result') {
+        clearPlaceholder();
         if (event.isError) {
           responseText += '\n\n⚠️ 处理失败，请稍后重试。';
         }
         finalizeStream();
       } else if (event.type === 'interrupted') {
+        clearPlaceholder();
         finalizeStream();
       }
     };
