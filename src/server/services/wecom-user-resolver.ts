@@ -361,13 +361,16 @@ export class WeComUserIdResolver {
 
     const data = (await response.json()) as Record<string, unknown>;
     if (data.errcode !== 0) {
+      const responseBody = JSON.stringify(data).replace(/access_token=[^&\s]+/g, 'access_token=<redacted>');
+      resolverError(`[WeComUserIdResolver] Batch API error response: ${responseBody}`);
       throw new Error(`batch API error: ${data.errcode} - ${data.errmsg}`);
     }
 
     const mappings: Array<{ encryptedUserId: string; plaintextUserId: string }> = [];
     const failedIds: string[] = [];
 
-    const resultList = Array.isArray(data.open_userid_list) ? data.open_userid_list : [];
+    // Per WeChat Work API docs, the response field is "userid_list" (not "open_userid_list")
+    const resultList = Array.isArray(data.userid_list) ? data.userid_list : [];
     for (const item of resultList) {
       if (
         item &&
