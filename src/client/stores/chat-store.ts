@@ -1844,6 +1844,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  cleanupWorkspace: (workspaceId: string) => {
+    const sessionId = get().activeSessionIds[workspaceId]
+    if (sessionId) {
+      const sub = sessionSubscriptions.get(sessionId)
+      if (sub) {
+        sub.close()
+        sessionSubscriptions.delete(sessionId)
+      }
+    }
+    const poll = workspacePollIntervals.get(workspaceId)
+    if (poll) {
+      clearInterval(poll)
+      workspacePollIntervals.delete(workspaceId)
+    }
+  },
+
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {
     // Ensure subscription is open
     if (!sessionSubscriptions.has(sessionId)) {
