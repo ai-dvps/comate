@@ -165,23 +165,28 @@ export function normalizeSessionMessage(
   const raw = sessionMessage.message as RawMessage | null | undefined;
   const toolUseResult = (sessionMessage as Record<string, unknown>).toolUseResult;
   const parts = raw ? partsFromSdkContent(raw.content, toolUseResult) : [];
-  if (parts.length === 0) {
+
+  const rawMessage = sessionMessage.message as Record<string, unknown> | undefined;
+  const subtype = typeof rawMessage?.subtype === 'string' ? rawMessage.subtype : '';
+  const isCompactBoundary = subtype === 'compact_boundary';
+
+  if (parts.length === 0 && !isCompactBoundary) {
     return null;
   }
 
   return {
     id: sessionMessage.uuid,
     role,
-    parts,
+    parts: parts.length > 0 ? parts : [{ type: 'text', text: 'Conversation compacted' }],
     timestamp: Date.now(),
+    isCompactBoundary,
   };
 }
 
 function roleFromType(type: SessionMessage['type']): MessageRole | null {
   if (type === 'user') return 'user';
   if (type === 'assistant') return 'assistant';
-  // SDK system messages are subprocess control frames (init, etc.) — not
-  // transcript content. Drop from the visible message list.
+  if (type === 'system') return 'system';
   return null;
 }
 

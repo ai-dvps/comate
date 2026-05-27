@@ -35,6 +35,7 @@ import {
   ToolOutput,
   type ToolState,
 } from './ai-elements/tool'
+import CompactBoundary from './CompactBoundary'
 import SubagentBriefStatus from './SubagentBriefStatus'
 import StreamingToolInputPreview from './StreamingToolInputPreview'
 import SlashCommandMessage from './ai-elements/slash-command-message'
@@ -151,6 +152,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: Me
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] || [])
+  const isCompacting = useChatStore((s) => s.isCompacting[sessionId] || false)
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
   const visibleMessages = useMemo(
     () => messages.filter((m) => !isToolResultOnly(m)),
@@ -205,6 +207,12 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: Me
     <Conversation>
       <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)} [&_[data-streamdown="code-block-body"]]:[font-size:inherit] [&_[data-streamdown="code-block-body"]]:p-2 [&_[data-streamdown="inline-code"]]:[font-size:inherit]`}>
         {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId))}
+        {isCompacting && (
+          <div className="my-2 flex items-center gap-2 text-xs text-text-tertiary">
+            <span className="inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            <span>Compacting conversation…</span>
+          </div>
+        )}
       </ConversationContent>
       <ConversationScrollButton />
     </Conversation>
@@ -254,6 +262,9 @@ function renderMessage(
   sessionId: string,
 ): React.ReactNode {
   if (msg.role === 'system') {
+    if (msg.isCompactBoundary) {
+      return <CompactBoundary key={msg.id} />
+    }
     const text = msg.parts.find((p) => p?.type === 'text')?.text ?? ''
     return (
       <div
