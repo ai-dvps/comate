@@ -15,6 +15,7 @@ import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
 import { isMacOS } from './lib/platform'
+import { cn } from './components/ui/utils'
 
 export interface ViewedFile {
   path: string
@@ -29,6 +30,7 @@ function App() {
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces)
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const [drawerFile, setDrawerFile] = useState<ViewedFile | null>(null)
@@ -176,10 +178,22 @@ function App() {
           onCopy={() => copyFileContent(pinnedFile)}
         />
 
-        {/* Main Area — always ChatPanel */}
-        <main className="flex-1 flex flex-col overflow-hidden">
+        {/* Main Area — keep all open workspace panels mounted */}
+        <main className="flex-1 flex flex-col overflow-hidden relative">
           {activeWorkspace ? (
-            <ChatPanel workspaceId={activeWorkspace.id} />
+            openWorkspaceIds.map((wsId) => (
+              <div
+                key={wsId}
+                className={cn(
+                  'absolute inset-0 flex flex-col',
+                  wsId === activeWorkspaceId ? 'visible' : 'invisible pointer-events-none'
+                )}
+                aria-hidden={wsId !== activeWorkspaceId}
+                {...(wsId !== activeWorkspaceId ? { inert: '' } : {})}
+              >
+                <ChatPanel workspaceId={wsId} />
+              </div>
+            ))
           ) : (
             <div className="flex items-center justify-center h-full">
               <p className="text-text-secondary">{t('selectOrCreateWorkspace')}</p>
