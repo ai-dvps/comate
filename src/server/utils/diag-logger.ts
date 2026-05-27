@@ -1,12 +1,15 @@
 import { appendFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
-import { getStorageDir } from '../storage/data-dir.js';
+import { ensureLogsDir, getLogsDir } from './log-cleanup.js';
 
-const dataDir = process.env.COMATE_DATA_DIR || getStorageDir();
-const logFile = path.join(dataDir, 'sse-diag.log');
+const logFile = path.join(getLogsDir(), 'sse-diag.log');
 
-if (logFile && !existsSync(path.dirname(logFile))) {
-  mkdirSync(path.dirname(logFile), { recursive: true });
+if (!existsSync(path.dirname(logFile))) {
+  try {
+    mkdirSync(path.dirname(logFile), { recursive: true });
+  } catch {
+    // Ignore directory creation errors
+  }
 }
 
 function timestamp(): string {
@@ -20,6 +23,7 @@ export function diagLog(...args: unknown[]): void {
   console.log(line);
   if (logFile) {
     try {
+      ensureLogsDir();
       appendFileSync(logFile, line + '\n');
     } catch {
       // Ignore file write errors
@@ -32,6 +36,7 @@ export function diagWarn(...args: unknown[]): void {
   console.warn(line);
   if (logFile) {
     try {
+      ensureLogsDir();
       appendFileSync(logFile, line + '\n');
     } catch {
       // Ignore file write errors

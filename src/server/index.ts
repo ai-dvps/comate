@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
+import { existsSync, unlinkSync } from 'fs';
 import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
@@ -14,6 +15,8 @@ import systemRoutes from './routes/system.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { diagLog } from './utils/diag-logger.js';
+import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
+import { getStorageDir } from './storage/data-dir.js';
 import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
 import { initializeResolvedShellPath } from './utils/resolve-shell-path.js';
 
@@ -30,6 +33,7 @@ const __dirname = getDirname();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+let logCleanupTimer: NodeJS.Timeout | null = null;
 
 app.use(cors());
 app.use(express.json());
@@ -101,7 +105,7 @@ const server = app.listen(PORT, () => {
   const actualPort = typeof address === 'object' && address ? address.port : PORT;
   const serverUrl = `http://localhost:${actualPort}`;
   console.log(`Server running on ${serverUrl}`);
-  diagLog(`Server started on ${serverUrl} (diag log file: ${process.env.COMATE_DATA_DIR || '~/.comate'}/sse-diag.log)`);
+  diagLog(`Server started on ${serverUrl} (diag log file: ${path.join(getLogsDir(), 'sse-diag.log')})`);
 
   // Emit ready message for Tauri sidecar discovery when PORT=0
   if (process.env.COMATE_SIDECAR === '1') {
@@ -116,11 +120,35 @@ const server = app.listen(PORT, () => {
 
   // Initialize WeCom user ID resolver background flush
   wecomUserResolver.initialize();
+
+  // Initialize log cleanup — run once at startup, then periodically
+  runLogCleanup();
+  logCleanupTimer = setInterval(() => {
+    runLogCleanup();
+  }, 6 * 60 * 60 * 1000); // 6 hours
+  logCleanupTimer.unref();
+
+  // Clean up legacy log files from storage root
+  try {
+    const storageDir = getStorageDir();
+    for (const legacyFile of ['sidecar.log', 'sse-diag.log']) {
+      const legacyPath = path.join(storageDir, legacyFile);
+      if (existsSync(legacyPath)) {
+        unlinkSync(legacyPath);
+      }
+    }
+  } catch {
+    // Ignore legacy cleanup errors
+  }
 });
 
 // Graceful shutdown
 async function shutdown(signal: string): Promise<void> {
   console.log(`Received ${signal}, shutting down...`);
+  if (logCleanupTimer) {
+    clearInterval(logCleanupTimer);
+    logCleanupTimer = null;
+  }
   wecomBotService.disconnectAll();
   await wecomUserResolver.shutdown();
   server.close(() => {
