@@ -223,13 +223,13 @@ export class WeComBotService {
     let dotCount = 0;
     const sendAnimationFrame = () => {
       dotCount = (dotCount + 1) % 3;
-      const text = `思考中${'.'.repeat(dotCount + 1)}`;
+      const text = `收到，正在处理中${'.'.repeat(dotCount + 1)}`;
       conn.client.replyStreamNonBlocking(frame, streamId, text, false).catch((err) => {
         console.error('Failed to send WeCom animation frame:', err);
       });
     };
 
-    conn.client.replyStream(frame, streamId, '思考中.', false).catch((err) => {
+    conn.client.replyStream(frame, streamId, '收到，正在处理中.', false).catch((err) => {
       console.error('Failed to send WeCom processing placeholder:', err);
     });
     animationInterval = setInterval(sendAnimationFrame, 600);
@@ -304,7 +304,7 @@ export class WeComBotService {
         responseText += event.text;
         flushStream();
       } else if (collecting && event.type === 'thinking_start') {
-        setPlaceholder('\n\n💭 Thinking.', true);
+        setPlaceholder('\n\n收到，正在处理中.', true);
       } else if (collecting && event.type === 'tool_use_start') {
         clearPlaceholder();
         setPlaceholder(`\n\n🔧 ${event.toolName}...`, false);
@@ -318,7 +318,7 @@ export class WeComBotService {
       } else if (collecting && event.type === 'assistant_done') {
         collecting = false;
         stopAnimation();
-        if (currentPlaceholder && currentPlaceholder.includes('💭 Thinking')) {
+        if (currentPlaceholder && currentPlaceholder.includes('收到，正在处理中')) {
           clearPlaceholder();
         }
         flushStream.flush();
