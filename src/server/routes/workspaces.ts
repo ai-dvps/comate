@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
+import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
 const router = Router();
@@ -130,6 +131,30 @@ router.get('/:id/wecom/users', async (req, res) => {
   } catch (error) {
     console.error('Failed to list WeCom workspace users:', error);
     res.status(500).json({ error: 'Failed to list WeCom workspace users' });
+  }
+});
+
+// GET /api/workspaces/:id/wecom/resolver-status
+router.get('/:id/wecom/resolver-status', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const status = wecomUserResolver.getStatus();
+    const wsQueue = status.workspaceQueues.find((q) => q.workspaceId === req.params.id);
+
+    res.json({
+      initialized: status.initialized,
+      queueDepth: wsQueue?.depth ?? 0,
+      inFlightTokenRefresh: status.inFlightRefreshes > 0,
+      lastFlushAt: status.lastFlushAt,
+    });
+  } catch (error) {
+    console.error('Failed to get resolver status:', error);
+    res.status(500).json({ error: 'Failed to get resolver status' });
   }
 });
 
