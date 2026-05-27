@@ -54,7 +54,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const sessionStatus = useChatStore((s) => s.sessionStatus)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const unreadCompletions = useChatStore((s) => s.unreadCompletions)
-  const isLoading = useChatStore((s) => s.isLoadingSessions)
+  const isLoading = useChatStore((s) => s.isLoadingSessions[workspaceId])
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const createSession = useChatStore((s) => s.createSession)
   const renameSession = useChatStore((s) => s.renameSession)

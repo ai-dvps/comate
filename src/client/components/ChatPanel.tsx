@@ -18,7 +18,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
-  const isLoadingMessages = useChatStore((s) => s.isLoadingMessages)
+  const isLoadingMessages = useChatStore((s) => s.isLoadingMessages[activeSessionId || ''])
   const approvalQueue = useChatStore((s) => s.approvalQueue[activeSessionId || ''] || [])
   const fetchSessions = useChatStore((s) => s.fetchSessions)
   const sendMessage = useChatStore((s) => s.sendMessage)

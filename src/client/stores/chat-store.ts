@@ -133,8 +133,9 @@ interface ChatState {
   messages: Record<string, ChatMessage[]>
   activeSessionIds: Record<string, string>
   isStreaming: Record<string, boolean>
-  isLoadingSessions: boolean
-  isLoadingMessages: boolean
+  isCompacting: Record<string, boolean>
+  isLoadingSessions: Record<string, boolean>
+  isLoadingMessages: Record<string, boolean>
   approvalQueue: Record<string, PendingItem[]>
   serverNonce: Record<string, string>
   draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
@@ -729,13 +730,17 @@ function handleSseEvent(
           },
         ]
         const pruned = pruneWindow(newMessages, state.windowCap)
-        return {
+        const updates: Partial<ChatState> = {
           messages: { ...state.messages, [sessionId]: pruned },
           totalMessageCount: {
             ...state.totalMessageCount,
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
         }
+        if (state.isCompacting[sessionId]) {
+          updates.isCompacting = { ...state.isCompacting, [sessionId]: false }
+        }
+        return updates
       })
       return
     }
@@ -1004,6 +1009,34 @@ function handleSseEvent(
           return existing ?? { type: 'thinking', text: '', state: 'complete' }
         }),
       )
+      return
+    }
+    case 'compact_boundary': {
+      set((state) => {
+        const withMessage = addSystemMessage(state, sessionId, 'Conversation compacted')
+        const messages = withMessage.messages?.[sessionId] || state.messages[sessionId] || []
+        const lastMessage = messages[messages.length - 1]
+        if (lastMessage && lastMessage.role === 'system') {
+          return {
+            ...withMessage,
+            messages: {
+              ...state.messages,
+              [sessionId]: messages.map((m, idx) =>
+                idx === messages.length - 1 ? { ...m, isCompactBoundary: true } : m
+              ),
+            },
+            isCompacting: { ...state.isCompacting, [sessionId]: false },
+          }
+        }
+        return { ...withMessage, isCompacting: { ...state.isCompacting, [sessionId]: false } }
+      })
+      return
+    }
+    case 'compact_status': {
+      const active = data.active === true
+      set((state) => ({
+        isCompacting: { ...state.isCompacting, [sessionId]: active },
+      }))
       return
     }
     case 'assistant_done': {
@@ -1622,8 +1655,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: {},
   activeSessionIds: {},
   isStreaming: {},
-  isLoadingSessions: false,
-  isLoadingMessages: false,
+  isCompacting: {},
+  isLoadingSessions: {},
+  isLoadingMessages: {},
   approvalQueue: {},
   serverNonce: {},
   draftQueue: {},
@@ -1642,18 +1676,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   fetchSessions: async (workspaceId: string) => {
     try {
-      set({ isLoadingSessions: true })
+      set((state) => ({ isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: true } }))
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`)
       if (!res.ok) throw new Error(i18next.t('common:failedToFetchSessions', 'Failed to fetch sessions'))
       const data = await res.json()
       set((state) => ({
         sessions: { ...state.sessions, [workspaceId]: data.sessions || [] },
-        isLoadingSessions: false,
+        isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: false },
       }))
       startBackgroundPolling(set, workspaceId)
     } catch (err) {
       console.error('Failed to fetch sessions:', err)
-      set({ isLoadingSessions: false })
+      set((state) => ({ isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: false } }))
     }
   },
 
@@ -1774,7 +1808,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   loadMessages: async (workspaceId: string, sessionId: string) => {
     try {
-      set({ isLoadingMessages: true })
+      set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true } }))
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
       if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
       const data = (await res.json()) as { messages?: unknown; tasks?: TaskItem[] }
@@ -1785,7 +1819,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const existing = state.messages[sessionId] || []
         const hasStreaming = existing.some((m) => m.isStreaming)
         if (hasStreaming) {
-          return { isLoadingMessages: false }
+          return { isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } }
         }
         const pruned = pruneWindow(mappedMessages, state.windowCap)
         const scannedTasks = scanMessagesForTasks(mappedMessages)
@@ -1796,7 +1830,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return {
           messages: { ...state.messages, [sessionId]: pruned },
-          isLoadingMessages: false,
+          isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
           tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
           totalMessageCount: {
             ...state.totalMessageCount,
@@ -1806,7 +1840,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
     } catch (err) {
       console.error('Failed to load messages:', err)
-      set({ isLoadingMessages: false })
+      set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } }))
     }
   },
 
