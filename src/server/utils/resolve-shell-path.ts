@@ -9,6 +9,8 @@ const TIMEOUT_MS = 5000;
 interface ResolvedPath {
   path: string;
   source: 'shell' | 'fallback' | 'none';
+  shellDirs: string[] | null;
+  fallbackDirs: string[] | null;
 }
 
 let cached: ResolvedPath | null = null;
@@ -128,9 +130,9 @@ async function resolveShellPath(): Promise<ResolvedPath> {
     if (newDirs.length > 0) {
       const enriched = newDirs.join(';') + (basePath ? ';' + basePath : '');
       sidecarLog(`[resolve-shell-path] Windows base PATH enriched with fallback dirs: ${newDirs.join('; ')}`);
-      return { path: enriched, source: 'fallback' };
+      return { path: enriched, source: 'fallback', shellDirs: null, fallbackDirs: newDirs };
     }
-    return { path: basePath, source: 'none' };
+    return { path: basePath, source: 'none', shellDirs: null, fallbackDirs: null };
   }
 
   // macOS / Linux
@@ -144,7 +146,8 @@ async function resolveShellPath(): Promise<ResolvedPath> {
     const result = await spawnShellForPath(shell);
     if (result) {
       sidecarLog(`[resolve-shell-path] captured PATH from ${shell}`);
-      return { path: result, source: 'shell' };
+      const shellDirs = result.split(':').filter((d) => d.trim().length > 0);
+      return { path: result, source: 'shell', shellDirs, fallbackDirs: null };
     }
   }
 
@@ -152,11 +155,11 @@ async function resolveShellPath(): Promise<ResolvedPath> {
   if (fallbackDirs.length > 0) {
     const fallbackPath = fallbackDirs.join(':');
     sidecarLog(`[resolve-shell-path] using fallback directories: ${fallbackDirs.join(': ')}`);
-    return { path: fallbackPath, source: 'fallback' };
+    return { path: fallbackPath, source: 'fallback', shellDirs: null, fallbackDirs };
   }
 
   sidecarLog('[resolve-shell-path] no shell capture or fallback directories available');
-  return { path: '', source: 'none' };
+  return { path: '', source: 'none', shellDirs: null, fallbackDirs: null };
 }
 
 export async function initializeResolvedShellPath(): Promise<void> {
@@ -168,7 +171,7 @@ export async function initializeResolvedShellPath(): Promise<void> {
 export function getResolvedShellPath(): ResolvedPath {
   if (!cached) {
     // Synchronous fallback for safety; should not happen if initialize was called
-    return { path: '', source: 'none' };
+    return { path: '', source: 'none', shellDirs: null, fallbackDirs: null };
   }
   return cached;
 }
