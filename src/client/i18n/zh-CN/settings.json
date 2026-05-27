@@ -147,5 +147,11 @@
     "noSearchResults": "没有匹配的标签页",
     "noOpenTabs": "没有打开的标签页",
     "openTabList": "打开标签页列表"
+  },
+  "closeWorkspace": {
+    "confirmTitle": "关闭 {{name}}？",
+    "confirmMessage": "此工作区有一个活动会话。关闭标签页将中断该会话。",
+    "confirmButton": "仍要关闭",
+    "cancelButton": "取消"
   }
 }

@@ -4,6 +4,7 @@ import { useChatStore } from '../stores/chat-store'
 import { useTranslation } from 'react-i18next'
 import { Folder, X, ChevronDown, Search } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
+import ConfirmDialog from './ConfirmDialog'
 
 type BotStatus = 'connected' | 'disconnected' | 'error' | 'not_configured'
 
@@ -107,6 +108,7 @@ export default function WorkspaceTabs() {
   const [botStatuses, setBotStatuses] = useState<Record<string, BotStatus>>({})
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -213,9 +215,19 @@ export default function WorkspaceTabs() {
     setSearchQuery('')
   }
 
-  const handleCloseFromDropdown = (e: React.MouseEvent, id: string) => {
+  const hasLiveSession = (workspaceId: string) => {
+    const sessionId = activeSessionIds[workspaceId]
+    if (!sessionId) return false
+    return isStreaming[sessionId] || (sessionStatus[sessionId]?.pendingCount ?? 0) > 0
+  }
+
+  const handleClose = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    closeWorkspace(id)
+    if (hasLiveSession(id)) {
+      setConfirmCloseId(id)
+    } else {
+      closeWorkspace(id)
+    }
   }
 
   return (
@@ -239,14 +251,7 @@ export default function WorkspaceTabs() {
               botStatus={botStatus}
               botStatusTitle={botStatus ? getBotStatusLabel(botStatus, t) : undefined}
               onClick={() => setActiveWorkspace(ws.id)}
-              onClose={
-                openWorkspaces.length > 1
-                  ? (e) => {
-                      e.stopPropagation()
-                      closeWorkspace(ws.id)
-                    }
-                  : undefined
-              }
+              onClose={(e) => handleClose(e, ws.id)}
               closeLabel={t('workspaceTabs.closeTab', { name: ws.name })}
             />
           )
@@ -342,15 +347,13 @@ export default function WorkspaceTabs() {
                       {counts.streaming > 0 && (
                         <StatusIndicator state="streaming" count={counts.streaming} />
                       )}
-                      {openWorkspaces.length > 1 && (
-                        <button
-                          className="ml-0.5 p-0.5 rounded hover:bg-surface-hover hover:text-destructive transition-all"
-                          onClick={(e) => handleCloseFromDropdown(e, ws.id)}
-                          aria-label={t('workspaceTabs.closeTab', { name: ws.name })}
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      )}
+                      <button
+                        className="ml-0.5 p-0.5 rounded hover:bg-surface-hover hover:text-destructive transition-all"
+                        onClick={(e) => handleClose(e, ws.id)}
+                        aria-label={t('workspaceTabs.closeTab', { name: ws.name })}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
                     </div>
                   )
                 })
@@ -359,6 +362,23 @@ export default function WorkspaceTabs() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={!!confirmCloseId}
+        title={t('closeWorkspace.confirmTitle', {
+          name: workspaces.find((w) => w.id === confirmCloseId)?.name ?? '',
+        })}
+        message={t('closeWorkspace.confirmMessage')}
+        confirmLabel={t('closeWorkspace.confirmButton')}
+        cancelLabel={t('closeWorkspace.cancelButton')}
+        onConfirm={() => {
+          if (confirmCloseId) {
+            closeWorkspace(confirmCloseId)
+          }
+          setConfirmCloseId(null)
+        }}
+        onCancel={() => setConfirmCloseId(null)}
+      />
     </div>
   )
 }
