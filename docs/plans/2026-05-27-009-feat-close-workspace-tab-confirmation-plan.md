@@ -1,7 +1,7 @@
 ---
 title: "feat: Close Workspace Tab Confirmation"
 type: feat
-status: active
+status: completed
 date: 2026-05-27
 origin: docs/brainstorms/2026-05-27-close-workspace-tab-confirmation-requirements.md
 ---
