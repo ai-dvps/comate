@@ -25,6 +25,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const loadMessages = useChatStore((s) => s.loadMessages)
   const resolveApproval = useChatStore((s) => s.resolveApproval)
   const interruptSession = useChatStore((s) => s.interruptSession)
+  const cleanupWorkspace = useChatStore((s) => s.cleanupWorkspace)
 
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === workspaceId)
@@ -54,6 +55,12 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       loadMessages(workspaceId, activeSessionId)
     }
   }, [workspaceId, activeSessionId, activeSession, loadMessages])
+
+  useEffect(() => {
+    return () => {
+      cleanupWorkspace(workspaceId)
+    }
+  }, [workspaceId, cleanupWorkspace])
 
   const currentApproval = approvalQueue[0] || null
   const approvalQueueLength = approvalQueue.length
