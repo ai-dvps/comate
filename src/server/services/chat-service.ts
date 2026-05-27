@@ -151,7 +151,7 @@ export class ChatService {
 
     // Check if it's a draft
     const draft = await draftStore.getDraft(id);
-    if (draft) {
+    if (draft && draft.isDraft) {
       // Only pass name to draft update; isWip is handled via metadata table
       const draftInput: UpdateSessionInput = input.name !== undefined ? { name: input.name } : {};
       const updated = await draftStore.updateDraft(id, draftInput);
