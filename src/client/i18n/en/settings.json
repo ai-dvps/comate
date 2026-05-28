@@ -4,9 +4,6 @@
     "general": "General",
     "appearance": "Appearance",
     "workspace": "Workspace",
-    "skills": "Skills",
-    "mcp": "MCP",
-    "hooks": "Hooks",
     "wecom": "WeCom Bot"
   },
   "general": {
@@ -44,9 +41,19 @@
     "fontSizeMedium": "Medium",
     "fontSizeLarge": "Large"
   },
+  "workspaceSections": {
+    "basic": "Basic Info",
+    "model": "Model & API",
+    "wecom": "WeCom Bot",
+    "skills": "Skills",
+    "mcp": "MCP",
+    "hooks": "Hooks"
+  },
   "workspace": {
     "name": "Name",
     "description": "Description",
+    "folderPath": "Folder Path",
+    "folderPathHint": "The workspace folder cannot be changed because Claude Code session history is bound to this path. Changing it would reset existing sessions.",
     "modelOverride": "Model Override",
     "modelOverridePlaceholder": "e.g. claude-sonnet-4-5-20250929",
     "modelOverrideHint": "Leave empty to use the default model.",
@@ -72,9 +79,16 @@
     "addHook": "Add Hook",
     "noHooks": "No hooks added"
   },
+  "placeholder": {
+    "comingSoon": "Coming Soon",
+    "contact": "Have ideas or requirements? Contact spearwang to share them."
+  },
   "wecom": {
     "enableBot": "Enable WeCom Bot",
     "enableBotHint": "When enabled, this workspace acts as a WeCom bot endpoint.",
+    "botName": "Bot Name",
+    "botNamePlaceholder": "My Bot",
+    "botNameHint": "A friendly name for this bot.",
     "botId": "Bot ID",
     "botIdPlaceholder": "your-bot-id",
     "botSecret": "Bot Secret",
