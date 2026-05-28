@@ -48,6 +48,7 @@ interface MessageListProps {
   sessionId: string
   workspaceId: string
   onOpenDrawer: (parentToolUseId: string) => void
+  isVisible?: boolean
 }
 
 type ToolUsePart = Extract<MessagePart, { type: 'tool_use' }>
@@ -81,7 +82,7 @@ function toToolState(toolUse: ToolUsePart, result?: ToolResultPart): ToolState {
   return result.isError ? 'output-error' : 'output-available'
 }
 
-export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: MessageListProps) {
+export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVisible = true }: MessageListProps) {
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] || [])
@@ -118,6 +119,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: Me
         sessionId={sessionId}
         workspaceId={workspaceId}
         onOpenDrawer={onOpenDrawer}
+        isVisible={isVisible}
       />
     )
   }

@@ -20,6 +20,8 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
   const isLoadingMessages = useChatStore((s) => s.isLoadingMessages[activeSessionId || ''])
   const approvalQueue = useChatStore((s) => s.approvalQueue[activeSessionId || ''] || [])
+  const cachedMessages = useChatStore((s) => s.messages[activeSessionId || ''] || [])
+  const domCache = useChatStore((s) => s.domCache[workspaceId] || [])
   const fetchSessions = useChatStore((s) => s.fetchSessions)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const loadMessages = useChatStore((s) => s.loadMessages)
@@ -51,10 +53,10 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   }, [activeSessionId])
 
   useEffect(() => {
-    if (activeSessionId && activeSession && !activeSession.isDraft) {
+    if (activeSessionId && activeSession && !activeSession.isDraft && cachedMessages.length === 0) {
       loadMessages(workspaceId, activeSessionId)
     }
-  }, [workspaceId, activeSessionId, activeSession, loadMessages])
+  }, [workspaceId, activeSessionId, activeSession, loadMessages, cachedMessages.length])
 
   useEffect(() => {
     return () => {
@@ -207,8 +209,8 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       {activeSessionId && <TaskPanel sessionId={activeSessionId} />}
 
       {/* Messages */}
-      <div className="flex-1 overflow-hidden flex flex-col">
-        {isLoadingMessages ? (
+      <div className="flex-1 overflow-hidden flex flex-col relative">
+        {isLoadingMessages && cachedMessages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="flex gap-1">
               <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -217,12 +219,21 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             </div>
           </div>
         ) : activeSessionId ? (
-          <MessageList
-            key={activeSessionId}
-            sessionId={activeSessionId}
-            workspaceId={workspaceId}
-            onOpenDrawer={setOpenDrawerToolUseId}
-          />
+          domCache.map((sessionId) => (
+            <div
+              key={sessionId}
+              className={sessionId === activeSessionId ? 'flex flex-col h-full' : 'hidden'}
+              aria-hidden={sessionId !== activeSessionId}
+              {...(sessionId !== activeSessionId ? { inert: 'true' } : {})}
+            >
+              <MessageList
+                sessionId={sessionId}
+                workspaceId={workspaceId}
+                onOpenDrawer={setOpenDrawerToolUseId}
+                isVisible={sessionId === activeSessionId}
+              />
+            </div>
+          ))
         ) : (
           <div className="flex items-center justify-center h-full">
             <p className="text-text-secondary">{t('selectSessionPrompt')}</p>
