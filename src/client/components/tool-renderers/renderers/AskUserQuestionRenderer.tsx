@@ -1,5 +1,7 @@
 import { HelpCircle } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { Streamdown } from 'streamdown'
+
 import { registerToolRenderer } from '../registry'
 
 function AskUserQuestionRenderer(input: unknown): ReactNode | null {
@@ -37,7 +39,11 @@ function AskUserQuestionRenderer(input: unknown): ReactNode | null {
               )}
             </div>
             {text && (
-              <p className="text-sm text-text-secondary font-medium">{text}</p>
+              <div className="text-sm text-text-secondary font-medium">
+                <Streamdown className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+                  {text}
+                </Streamdown>
+              </div>
             )}
             {options.length > 0 && (
               <div className="pl-4 space-y-1">
@@ -47,9 +53,11 @@ function AskUserQuestionRenderer(input: unknown): ReactNode | null {
                       {opt.label ?? `Option ${oi + 1}`}
                     </span>
                     {typeof opt.description === 'string' && (
-                      <span className="text-xs text-text-tertiary">
-                        {opt.description}
-                      </span>
+                      <div className="text-xs text-text-tertiary">
+                        <Streamdown className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+                          {opt.description}
+                        </Streamdown>
+                      </div>
                     )}
                   </div>
                 ))}
