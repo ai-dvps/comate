@@ -10,7 +10,6 @@
   "placeholder": "Ask Claude anything about your code...",
   "clear": "Clear",
   "send": "Send",
-  "inputHint": "Enter to send, Shift+Enter for new line",
   "stopPopover": {
     "title": "Cancel current turn?",
     "cancel": "Cancel",

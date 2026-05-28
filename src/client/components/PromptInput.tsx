@@ -466,11 +466,6 @@ export default function PromptInput({
           )}
         </div>
       </div>
-      <div className="flex items-center justify-between mt-1.5 px-1">
-        <span className="text-text-tertiary">
-          {t('inputHint')}
-        </span>
-      </div>
     </div>
   )
 }
