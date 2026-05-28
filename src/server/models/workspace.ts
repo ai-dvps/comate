@@ -6,6 +6,7 @@ export interface WorkspaceSettings {
   wecomBotId?: string;
   wecomBotSecret?: string;
   wecomBotEnabled?: boolean;
+  wecomBotName?: string;
   wecomCorpId?: string;
   wecomCorpSecret?: string;
 }

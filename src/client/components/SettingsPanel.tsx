@@ -23,11 +23,14 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-type SettingsTab = 'general' | 'appearance' | 'workspace' | 'skills' | 'mcp' | 'hooks' | 'wecom'
+type SettingsTab = 'general' | 'appearance' | 'workspace'
+
+type WorkspaceSection = 'basic' | 'model' | 'wecom' | 'skills' | 'mcp' | 'hooks'
 
 interface WorkspaceFormState {
   name: string
   description: string
+  folderPath: string
   model: string
   apiKey: string
   skills: { name: string }[]
@@ -36,6 +39,7 @@ interface WorkspaceFormState {
   wecomBotId: string
   wecomBotSecret: string
   wecomBotEnabled: boolean
+  wecomBotName: string
   wecomCorpId: string
   wecomCorpSecret: string
 }
@@ -44,6 +48,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
   return {
     name: workspace.name,
     description: workspace.description,
+    folderPath: workspace.folderPath,
     model: (workspace.settings?.model as string) || '',
     apiKey: (workspace.settings?.apiKey as string) || '',
     skills: [...workspace.skills],
@@ -55,6 +60,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     wecomBotId: (workspace.settings?.wecomBotId as string) || '',
     wecomBotSecret: (workspace.settings?.wecomBotSecret as string) || '',
     wecomBotEnabled: (workspace.settings?.wecomBotEnabled as boolean) || false,
+    wecomBotName: (workspace.settings?.wecomBotName as string) || '',
     wecomCorpId: (workspace.settings?.wecomCorpId as string) || '',
     wecomCorpSecret: (workspace.settings?.wecomCorpSecret as string) || '',
   }
@@ -123,6 +129,13 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setWindowCapInput(String(windowCap))
   }, [windowCap])
 
+  // Guard: reset activeTab if it holds a removed value (hot-reload / stale state)
+  useEffect(() => {
+    if (activeTab !== 'general' && activeTab !== 'appearance' && activeTab !== 'workspace') {
+      setActiveTab('workspace')
+    }
+  }, [activeTab])
+
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
   const isDirty = useCallback(() => {
@@ -180,6 +193,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           wecomBotId: ws.wecomBotId || undefined,
           wecomBotSecret: ws.wecomBotSecret || undefined,
           wecomBotEnabled: ws.wecomBotEnabled,
+          wecomBotName: ws.wecomBotName || undefined,
           wecomCorpId: ws.wecomCorpId || undefined,
           wecomCorpSecret: ws.wecomCorpSecret || undefined,
         },
@@ -241,13 +255,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     { id: 'general', label: t('tabs.general') },
     { id: 'appearance', label: t('tabs.appearance') },
     { id: 'workspace', label: t('tabs.workspace') },
-    { id: 'skills', label: t('tabs.skills') },
-    { id: 'mcp', label: t('tabs.mcp') },
-    { id: 'hooks', label: t('tabs.hooks') },
-    { id: 'wecom', label: t('tabs.wecom') },
   ]
 
-  const isWorkspaceTab = activeTab === 'workspace' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'hooks' || activeTab === 'wecom'
+  const isWorkspaceTab = activeTab === 'workspace'
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col">
@@ -255,12 +265,12 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       <div className="h-11 pointer-events-none" />
 
       {/* Modal area */}
-      <div className="flex-1 flex items-center justify-center p-4 relative">
+      <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
         {/* Backdrop */}
         <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={handleClose} />
 
         {/* Card */}
-        <div className="relative w-full h-full max-w-6xl bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="relative w-full h-full max-h-[90vh] max-w-[90vw] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
             <h2 className="text-sm font-medium text-text-primary">{t('settings')}</h2>
@@ -290,7 +300,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto min-h-0">
             {activeTab === 'general' && (
               <GeneralTab
                 defaultModel={appModel}
@@ -315,7 +325,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 workspaces={workspaces}
                 selectedWorkspaceId={selectedWorkspaceId}
                 onSelectWorkspace={setSelectedWorkspaceId}
-                activeTab={activeTab}
                 workspaceState={selectedWorkspaceId ? workspaceState[selectedWorkspaceId] : null}
                 onUpdateWorkspace={updateSelectedWorkspace}
               />
@@ -886,18 +895,22 @@ function WorkspaceTabShell({
   workspaces,
   selectedWorkspaceId,
   onSelectWorkspace,
-  activeTab,
   workspaceState,
   onUpdateWorkspace,
 }: {
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
-  activeTab: 'workspace' | 'skills' | 'mcp' | 'hooks' | 'wecom'
   workspaceState: WorkspaceFormState | null
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
 }) {
   const { t } = useTranslation('settings')
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>('basic')
+
+  // Reset to Basic Info when switching workspaces
+  useEffect(() => {
+    setActiveSection('basic')
+  }, [selectedWorkspaceId])
 
   if (workspaces.length === 0) {
     return (
@@ -906,6 +919,15 @@ function WorkspaceTabShell({
       </div>
     )
   }
+
+  const sections: { id: WorkspaceSection; label: string }[] = [
+    { id: 'basic', label: t('workspaceSections.basic') },
+    { id: 'model', label: t('workspaceSections.model') },
+    { id: 'wecom', label: t('workspaceSections.wecom') },
+    { id: 'skills', label: t('workspaceSections.skills') },
+    { id: 'mcp', label: t('workspaceSections.mcp') },
+    { id: 'hooks', label: t('workspaceSections.hooks') },
+  ]
 
   return (
     <div className="flex h-full">
@@ -934,36 +956,53 @@ function WorkspaceTabShell({
       </div>
 
       {/* Right column: settings content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {!workspaceState ? (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-text-tertiary">{t('workspaceSwitcher.switchWorkspace')}</p>
-          </div>
-        ) : (
-          <>
-            {activeTab === 'workspace' && (
-              <WorkspaceDetailsTab state={workspaceState} onUpdate={onUpdateWorkspace} />
-            )}
-            {activeTab === 'skills' && (
-              <SkillsTab state={workspaceState} onUpdate={onUpdateWorkspace} />
-            )}
-            {activeTab === 'mcp' && (
-              <McpTab state={workspaceState} onUpdate={onUpdateWorkspace} />
-            )}
-            {activeTab === 'hooks' && (
-              <HooksTab state={workspaceState} onUpdate={onUpdateWorkspace} />
-            )}
-            {activeTab === 'wecom' && selectedWorkspaceId && (
-              <WeComBotTab state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId} />
-            )}
-          </>
-        )}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Section tabs */}
+        <div className="flex border-b border-border/50 flex-shrink-0 px-6">
+          {sections.map((section) => (
+            <button
+              key={section.id}
+              onClick={() => setActiveSection(section.id)}
+              className={`py-2 px-3 text-[11px] font-medium transition-all ${
+                activeSection === section.id
+                  ? 'text-text-primary border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Section content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {!workspaceState ? (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-sm text-text-tertiary">{t('workspaceSwitcher.switchWorkspace')}</p>
+            </div>
+          ) : (
+            <div className="max-w-xl">
+              {activeSection === 'basic' && (
+                <BasicInfoSection state={workspaceState} onUpdate={onUpdateWorkspace} />
+              )}
+              {activeSection === 'model' && (
+                <ModelApiSection state={workspaceState} onUpdate={onUpdateWorkspace} />
+              )}
+              {activeSection === 'wecom' && (
+                <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
+              )}
+              {activeSection === 'skills' && <ComingSoonPlaceholder />}
+              {activeSection === 'mcp' && <ComingSoonPlaceholder />}
+              {activeSection === 'hooks' && <ComingSoonPlaceholder />}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-function WorkspaceDetailsTab({
+function BasicInfoSection({
   state,
   onUpdate,
 }: {
@@ -971,10 +1010,8 @@ function WorkspaceDetailsTab({
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
 }) {
   const { t } = useTranslation('settings')
-  const [showApiKey, setShowApiKey] = useState(false)
-
   return (
-    <div className="space-y-4 max-w-xl">
+    <div className="space-y-4">
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.name')}</label>
         <input
@@ -992,6 +1029,28 @@ function WorkspaceDetailsTab({
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary resize-none"
         />
       </div>
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.folderPath')}</label>
+        <div className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-secondary overflow-x-auto">
+          <code className="font-mono text-[11px] whitespace-pre-wrap break-all">{state.folderPath}</code>
+        </div>
+        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
+      </div>
+    </div>
+  )
+}
+
+function ModelApiSection({
+  state,
+  onUpdate,
+}: {
+  state: WorkspaceFormState
+  onUpdate: (updates: Partial<WorkspaceFormState>) => void
+}) {
+  const { t } = useTranslation('settings')
+  const [showApiKey, setShowApiKey] = useState(false)
+  return (
+    <div className="space-y-4">
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.modelOverride')}</label>
         <input
@@ -1027,232 +1086,6 @@ function WorkspaceDetailsTab({
   )
 }
 
-function SkillsTab({
-  state,
-  onUpdate,
-}: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-}) {
-  const { t } = useTranslation('settings')
-  const [newSkill, setNewSkill] = useState('')
-
-  const addSkill = () => {
-    const trimmed = newSkill.trim()
-    if (!trimmed) return
-    onUpdate({ skills: [...state.skills, { name: trimmed }] })
-    setNewSkill('')
-  }
-
-  return (
-    <div className="space-y-3 max-w-xl">
-      <div className="flex gap-2">
-        <input
-          value={newSkill}
-          onChange={(e) => setNewSkill(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') addSkill()
-          }}
-          placeholder={t('skills.skillNamePlaceholder')}
-          className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <button
-          onClick={addSkill}
-          className="p-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
-      </div>
-      <div className="space-y-1">
-        {state.skills.map((skill, i) => (
-          <div
-            key={i}
-            className="flex items-center justify-between px-3 py-2 bg-bg rounded-lg border border-border/50"
-          >
-            <span className="text-sm text-text-primary">{skill.name}</span>
-            <button
-              onClick={() =>
-                onUpdate({ skills: state.skills.filter((_, idx) => idx !== i) })
-              }
-              className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ))}
-        {state.skills.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">{t('skills.noSkills')}</p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function McpTab({
-  state,
-  onUpdate,
-}: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-}) {
-  const { t } = useTranslation('settings')
-  const [newMcpName, setNewMcpName] = useState('')
-  const [newMcpCommand, setNewMcpCommand] = useState('')
-  const [newMcpArgs, setNewMcpArgs] = useState('')
-
-  const addMcp = () => {
-    const name = newMcpName.trim()
-    const command = newMcpCommand.trim()
-    if (!name || !command) return
-    onUpdate({
-      mcpServers: [
-        ...state.mcpServers,
-        { name, command, args: newMcpArgs },
-      ],
-    })
-    setNewMcpName('')
-    setNewMcpCommand('')
-    setNewMcpArgs('')
-  }
-
-  return (
-    <div className="space-y-3 max-w-xl">
-      <div className="space-y-2">
-        <input
-          value={newMcpName}
-          onChange={(e) => setNewMcpName(e.target.value)}
-          placeholder={t('mcp.serverName')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <input
-          value={newMcpCommand}
-          onChange={(e) => setNewMcpCommand(e.target.value)}
-          placeholder={t('mcp.command')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <input
-          value={newMcpArgs}
-          onChange={(e) => setNewMcpArgs(e.target.value)}
-          placeholder={t('mcp.arguments')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <button
-          onClick={addMcp}
-          className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          {t('mcp.addServer')}
-        </button>
-      </div>
-      <div className="space-y-2">
-        {state.mcpServers.map((mcp, i) => (
-          <div
-            key={i}
-            className="px-3 py-2.5 bg-bg rounded-lg border border-border/50 space-y-1"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-text-primary">{mcp.name}</span>
-              <button
-                onClick={() =>
-                  onUpdate({
-                    mcpServers: state.mcpServers.filter((_, idx) => idx !== i),
-                  })
-                }
-                className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="text-[11px] text-text-tertiary font-mono">
-              {mcp.command} {mcp.args}
-            </div>
-          </div>
-        ))}
-        {state.mcpServers.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">{t('mcp.noServers')}</p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function HooksTab({
-  state,
-  onUpdate,
-}: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-}) {
-  const { t } = useTranslation('settings')
-  const [newHookName, setNewHookName] = useState('')
-  const [newHookPath, setNewHookPath] = useState('')
-
-  const addHook = () => {
-    const name = newHookName.trim()
-    const path = newHookPath.trim()
-    if (!name || !path) return
-    onUpdate({
-      hooks: [...state.hooks, { name, scriptPath: path }],
-    })
-    setNewHookName('')
-    setNewHookPath('')
-  }
-
-  return (
-    <div className="space-y-3 max-w-xl">
-      <div className="space-y-2">
-        <input
-          value={newHookName}
-          onChange={(e) => setNewHookName(e.target.value)}
-          placeholder={t('hooks.hookName')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <input
-          value={newHookPath}
-          onChange={(e) => setNewHookPath(e.target.value)}
-          placeholder={t('hooks.scriptPath')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <button
-          onClick={addHook}
-          className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          {t('hooks.addHook')}
-        </button>
-      </div>
-      <div className="space-y-2">
-        {state.hooks.map((hook, i) => (
-          <div
-            key={i}
-            className="px-3 py-2.5 bg-bg rounded-lg border border-border/50 space-y-1"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-text-primary">{hook.name}</span>
-              <button
-                onClick={() =>
-                  onUpdate({
-                    hooks: state.hooks.filter((_, idx) => idx !== i),
-                  })
-                }
-                className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="text-[11px] text-text-tertiary font-mono truncate">
-              {hook.scriptPath}
-            </div>
-          </div>
-        ))}
-        {state.hooks.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">{t('hooks.noHooks')}</p>
-        )}
-      </div>
-    </div>
-  )
-}
-
 interface WeComWorkspaceUser {
   encryptedUserId: string
   plaintextUserId?: string
@@ -1260,7 +1093,7 @@ interface WeComWorkspaceUser {
   lastSeenAt: string
 }
 
-function WeComBotTab({
+function WeComBotSection({
   state,
   onUpdate,
   workspaceId,
@@ -1325,8 +1158,8 @@ function WeComBotTab({
         : 'text-text-tertiary'
 
   return (
-    <div className="space-y-4 max-w-xl">
-      <div className="flex items-center justify-between py-2 border-b border-border/50">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between py-2">
         <div>
           <label className="block text-xs font-medium text-text-secondary">
             {t('wecom.enableBot')}
@@ -1347,6 +1180,17 @@ function WeComBotTab({
             }`}
           />
         </button>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botName')}</label>
+        <input
+          value={state.wecomBotName}
+          onChange={(e) => onUpdate({ wecomBotName: e.target.value })}
+          placeholder={t('wecom.botNamePlaceholder')}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+        />
+        <p className="text-[10px] text-text-tertiary mt-1">{t('wecom.botNameHint')}</p>
       </div>
 
       <div>
@@ -1454,3 +1298,16 @@ function WeComBotTab({
     </div>
   )
 }
+
+function ComingSoonPlaceholder() {
+  const { t } = useTranslation('settings')
+  return (
+    <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
+      <div className="space-y-1">
+        <h3 className="text-sm font-medium text-text-primary">{t('placeholder.comingSoon')}</h3>
+        <p className="text-xs text-text-secondary max-w-sm">{t('placeholder.contact')}</p>
+      </div>
+    </div>
+  )
+}
+

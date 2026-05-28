@@ -4,9 +4,6 @@
     "general": "通用",
     "appearance": "外观",
     "workspace": "工作区",
-    "skills": "技能",
-    "mcp": "MCP",
-    "hooks": "钩子",
     "wecom": "企业微信机器人"
   },
   "general": {
@@ -44,9 +41,19 @@
     "fontSizeMedium": "中",
     "fontSizeLarge": "大"
   },
+  "workspaceSections": {
+    "basic": "基本信息",
+    "model": "模型与 API",
+    "wecom": "企业微信机器人",
+    "skills": "技能",
+    "mcp": "MCP",
+    "hooks": "钩子"
+  },
   "workspace": {
     "name": "名称",
     "description": "描述",
+    "folderPath": "文件夹路径",
+    "folderPathHint": "工作区文件夹无法更改，因为 Claude Code 会话历史绑定于此路径。更改将导致现有会话重置。",
     "modelOverride": "模型覆盖",
     "modelOverridePlaceholder": "例如 claude-sonnet-4-5-20250929",
     "modelOverrideHint": "留空以使用默认模型。",
@@ -72,9 +79,16 @@
     "addHook": "添加钩子",
     "noHooks": "尚未添加钩子"
   },
+  "placeholder": {
+    "comingSoon": "即将推出",
+    "contact": "有想法或需求？请联系 spearwang 分享您的想法。"
+  },
   "wecom": {
     "enableBot": "启用企业微信机器人",
     "enableBotHint": "启用后，此工作区将作为企业微信机器人端点。",
+    "botName": "机器人名称",
+    "botNamePlaceholder": "我的机器人",
+    "botNameHint": "此机器人的友好名称。",
     "botId": "机器人 ID",
     "botIdPlaceholder": "your-bot-id",
     "botSecret": "机器人密钥",
