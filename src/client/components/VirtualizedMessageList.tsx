@@ -42,6 +42,7 @@ interface VirtualizedMessageListProps {
   sessionId: string
   workspaceId: string
   onOpenDrawer: (parentToolUseId: string) => void
+  isVisible?: boolean
 }
 
 type ToolUsePart = Extract<MessagePart, { type: 'tool_use' }>
@@ -91,6 +92,7 @@ export default function VirtualizedMessageList({
   sessionId,
   workspaceId,
   onOpenDrawer,
+  isVisible = true,
 }: VirtualizedMessageListProps) {
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
@@ -127,6 +129,17 @@ export default function VirtualizedMessageList({
   const virtualItems = virtualizer.getVirtualItems()
   const prevViewItemsRef = useRef(viewItems)
   const anchorKeyRef = useRef<string | null>(null)
+
+  // Remeasure virtualizer when transitioning from hidden to visible
+  const wasVisibleRef = useRef(isVisible)
+  useEffect(() => {
+    if (isVisible && !wasVisibleRef.current) {
+      requestAnimationFrame(() => {
+        virtualizer.measure()
+      })
+    }
+    wasVisibleRef.current = isVisible
+  }, [isVisible, virtualizer])
 
   // Detect prepend and anchor scroll position
   useEffect(() => {

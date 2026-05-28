@@ -151,8 +151,11 @@ interface ChatState {
   isLoadingOlderMessages: Record<string, boolean>
   lastTurnUsage: Record<string, TurnUsage>
   sessionUsage: Record<string, SessionUsage>
+  domCache: Record<string, string[]>
 
   fetchSessions: (workspaceId: string) => Promise<void>
+  touchDomCache: (workspaceId: string, sessionId: string) => string | null
+  getDomCache: (workspaceId: string) => string[]
   createSession: (workspaceId: string, name: string) => Promise<void>
   renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
   toggleSessionWip: (workspaceId: string, sessionId: string, isWip: boolean) => Promise<void>
@@ -183,6 +186,7 @@ function generateId(): string {
 }
 
 const DEFAULT_WINDOW_CAP = 200
+const DOM_CACHE_LIMIT = 3
 
 function sanitizeMessagePart(part: unknown): MessagePart | null {
   if (!part || typeof part !== 'object') return null
@@ -1674,6 +1678,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoadingOlderMessages: {},
   lastTurnUsage: {},
   sessionUsage: {},
+  domCache: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -1796,9 +1801,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const nextUnread = { ...state.unreadCompletions }
       if (sessionId) delete nextUnread[sessionId]
+      // Update DOM cache: move session to most-recent, evict oldest if over limit
+      const currentCache = state.domCache[workspaceId] || []
+      const withoutSession = currentCache.filter((id) => id !== sessionId)
+      const nextCache = [...withoutSession, sessionId]
+      if (nextCache.length > DOM_CACHE_LIMIT) {
+        nextCache.shift()
+      }
       return {
         activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
         unreadCompletions: nextUnread,
+        domCache: { ...state.domCache, [workspaceId]: nextCache },
       }
     })
     // Auto-subscribe when switching to a session
@@ -1807,7 +1820,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  touchDomCache: (workspaceId: string, sessionId: string) => {
+    let evicted: string | null = null
+    set((state) => {
+      const currentCache = state.domCache[workspaceId] || []
+      const withoutSession = currentCache.filter((id) => id !== sessionId)
+      const nextCache = [...withoutSession, sessionId]
+      if (nextCache.length > DOM_CACHE_LIMIT) {
+        evicted = nextCache.shift() || null
+      }
+      return {
+        domCache: { ...state.domCache, [workspaceId]: nextCache },
+      }
+    })
+    return evicted
+  },
+
+  getDomCache: (workspaceId: string) => {
+    return get().domCache[workspaceId] || []
+  },
+
   loadMessages: async (workspaceId: string, sessionId: string) => {
+    // Skip fetch if messages are already cached for this session
+    const existing = get().messages[sessionId] || []
+    if (existing.length > 0) {
+      set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } }))
+      return
+    }
+
     try {
       set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true } }))
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
