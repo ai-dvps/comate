@@ -74,6 +74,10 @@
     "addHook": "添加钩子",
     "noHooks": "尚未添加钩子"
   },
+  "placeholder": {
+    "comingSoon": "即将推出",
+    "contact": "有想法或需求？请联系 spearwang 分享您的想法。"
+  },
   "wecom": {
     "enableBot": "启用企业微信机器人",
     "enableBotHint": "启用后，此工作区将作为企业微信机器人端点。",
