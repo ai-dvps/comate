@@ -59,12 +59,12 @@ export const CompactableContainer = ({
           {expanded ? (
             <>
               <ChevronUp className="w-3 h-3" />
-              Show less
+              Hide details
             </>
           ) : (
             <>
               <ChevronDown className="w-3 h-3" />
-              Show more
+              Show details
             </>
           )}
         </button>
