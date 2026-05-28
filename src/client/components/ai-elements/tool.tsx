@@ -59,15 +59,15 @@ const statusLabels: Record<ToolState, string> = {
 }
 
 const statusIcons: Record<ToolState, ReactNode> = {
-  'input-streaming': <CircleIcon className="size-4" />,
-  'input-available': <ClockIcon className="size-4 animate-pulse" />,
-  'output-available': <CheckCircleIcon className="size-4 text-success" />,
-  'output-error': <XCircleIcon className="size-4 text-destructive" />,
+  'input-streaming': <CircleIcon className="size-3" />,
+  'input-available': <ClockIcon className="size-3 animate-pulse" />,
+  'output-available': <CheckCircleIcon className="size-3 text-success" />,
+  'output-error': <XCircleIcon className="size-3 text-destructive" />,
 }
 
 // eslint-disable-next-line react-refresh/only-export-components -- vendored helper alongside components
 export const getStatusBadge = (status: ToolState) => (
-  <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
+  <Badge className="gap-1 rounded-full px-1.5 py-0 text-[10px]" variant="secondary">
     {statusIcons[status]}
     {statusLabels[status]}
   </Badge>
@@ -97,7 +97,15 @@ export const ToolHeader = ({
         <WrenchIcon className="size-4 text-text-tertiary flex-shrink-0" />
         <span className="font-medium">{title ?? derivedName}</span>
         {summary && (
-          <span className="text-text-tertiary truncate max-w-[360px]">
+          <span
+            className="text-text-tertiary truncate max-w-[360px]"
+            title={summary}
+            style={
+              summary.includes('/')
+                ? { direction: 'rtl', textAlign: 'left' }
+                : undefined
+            }
+          >
             {summary}
           </span>
         )}
@@ -110,7 +118,7 @@ export const ToolHeader = ({
 export type ToolContentProps = ComponentProps<'div'>
 
 export const ToolContent = ({ className, children, ...props }: ToolContentProps) => (
-  <CompactableContainer className={cn(className)} {...props}>
+  <CompactableContainer className={cn(className)} compactHeight={0} alwaysShowToggle {...props}>
     <div className="space-y-2 p-2 text-text-primary">
       {children}
     </div>

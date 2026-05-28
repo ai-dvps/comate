@@ -6,11 +6,16 @@ import { cn } from '../ui/utils'
 
 const COMPACTABLE_MAX_HEIGHT_PX = 192
 
-export type CompactableContainerProps = ComponentProps<'div'>
+export type CompactableContainerProps = ComponentProps<'div'> & {
+  compactHeight?: number
+  alwaysShowToggle?: boolean
+}
 
 export const CompactableContainer = ({
   className,
   children,
+  compactHeight = COMPACTABLE_MAX_HEIGHT_PX,
+  alwaysShowToggle = false,
   ...props
 }: CompactableContainerProps) => {
   const [expanded, setExpanded] = useState(false)
@@ -22,7 +27,7 @@ export const CompactableContainer = ({
     if (!el) return
 
     const measure = () => {
-      setOverflows(el.scrollHeight > COMPACTABLE_MAX_HEIGHT_PX)
+      setOverflows(el.scrollHeight > compactHeight)
     }
 
     const observer = new ResizeObserver(measure)
@@ -32,34 +37,34 @@ export const CompactableContainer = ({
     return () => {
       observer.disconnect()
     }
-  }, [])
+  }, [compactHeight])
 
   return (
     <div className={cn(className)} {...props}>
       <div
         className="overflow-hidden"
         style={{
-          maxHeight: expanded ? undefined : `${COMPACTABLE_MAX_HEIGHT_PX}px`,
+          maxHeight: expanded ? undefined : `${compactHeight}px`,
         }}
       >
         <div ref={contentRef}>{children}</div>
       </div>
-      {overflows && (
+      {(overflows || alwaysShowToggle) && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover/30 transition-colors"
+          className="w-full flex items-center justify-start gap-1 px-3 py-1.5 text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover/30 transition-colors"
           aria-expanded={expanded}
         >
           {expanded ? (
             <>
               <ChevronUp className="w-3 h-3" />
-              Show less
+              Hide details
             </>
           ) : (
             <>
               <ChevronDown className="w-3 h-3" />
-              Show more
+              Show details
             </>
           )}
         </button>

@@ -87,24 +87,24 @@ export default function SubagentBriefStatus({
           <Bot className="size-4 text-text-tertiary" />
           <span>{t('agentLabel', { type: subagentType || t('agent') })}</span>
         </div>
-        {prompt && (
-          <CompactableContainer className="mt-2">
-            <div className="text-xs text-text-secondary whitespace-pre-wrap">
-              {prompt}
-            </div>
-          </CompactableContainer>
-        )}
-        {result && (
-          <CompactableContainer className="mt-2">
-            <div>
-              <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
-                {result.isError ? t('subagentStatus.error') : t('result')}
-              </h4>
-              {prompt && <hr className="border-border/50 my-1" />}
-              <div className={cn('text-xs whitespace-pre-wrap', result.isError ? 'text-destructive' : 'text-text-secondary')}>
-                {result.output}
+        {(prompt || result) && (
+          <CompactableContainer compactHeight={0} alwaysShowToggle className="mt-2">
+            {prompt && (
+              <div className="text-xs text-text-secondary whitespace-pre-wrap">
+                {prompt}
               </div>
-            </div>
+            )}
+            {result && (
+              <div className="mt-2">
+                <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
+                  {result.isError ? t('subagentStatus.error') : t('result')}
+                </h4>
+                {prompt && <hr className="border-border/50 my-1" />}
+                <div className={cn('text-xs whitespace-pre-wrap', result.isError ? 'text-destructive' : 'text-text-secondary')}>
+                  {result.output}
+                </div>
+              </div>
+            )}
           </CompactableContainer>
         )}
       </div>
@@ -161,17 +161,20 @@ function StatusCard({
   const elapsed = useElapsed(subagent.startTime, isRunning)
 
   const config = statusConfig[subagent.state]
+  const hasContent = subagent.description || prompt || result
 
   return (
-    <button
-      onClick={onClick}
+    <div
       className={cn(
-        'group mb-4 w-full rounded-md border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-hover/50',
+        'mb-4 w-full rounded-md border border-border bg-surface text-left',
         config.borderClass,
       )}
     >
-      {/* Line 1: Agent type + status */}
-      <div className="flex items-center justify-between gap-3">
+      {/* Header: clickable to open drawer */}
+      <button
+        onClick={onClick}
+        className="group flex w-full items-center justify-between gap-3 p-3 text-left transition-colors hover:bg-surface-hover/50"
+      >
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Bot className="size-4 shrink-0 text-text-tertiary" />
           <span className="truncate text-sm font-medium text-text-primary">
@@ -190,65 +193,72 @@ function StatusCard({
           </span>
           <ChevronRightIcon className="size-4 text-text-tertiary transition-colors group-hover:text-text-secondary" />
         </div>
-      </div>
+      </button>
 
-      {/* Line 2: Description */}
-      {subagent.description && (
-        <div className="mt-1.5 text-sm text-text-secondary truncate">
-          {subagent.description}
-        </div>
-      )}
+      {/* Collapsible body */}
+      {hasContent && (
+        <CompactableContainer compactHeight={0} alwaysShowToggle>
+          <div className="px-3 pb-3">
+            {/* Description */}
+            {subagent.description && (
+              <div className="text-sm text-text-secondary truncate">
+                {subagent.description}
+              </div>
+            )}
 
-      {/* Line 3: Prompt */}
-      {prompt && (
-        <CompactableContainer className="mt-2">
-          <div className="space-y-1">
-            <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
-              {t('prompt')}
-            </h4>
-            <div className="text-xs text-text-secondary whitespace-pre-wrap">
-              {prompt}
-            </div>
-          </div>
-        </CompactableContainer>
-      )}
+            {/* Prompt */}
+            {prompt && (
+              <CompactableContainer className="mt-2">
+                <div className="space-y-1">
+                  <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
+                    {t('prompt')}
+                  </h4>
+                  <div className="text-xs text-text-secondary whitespace-pre-wrap">
+                    {prompt}
+                  </div>
+                </div>
+              </CompactableContainer>
+            )}
 
-      {/* Line 4: Result */}
-      {result && (
-        <CompactableContainer className="mt-2">
-          <div>
-            <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
-              {result.isError ? 'Error' : 'Result'}
-            </h4>
-            {prompt && <hr className="border-border/50 my-1" />}
-            <div
-              className={cn(
-                'text-xs whitespace-pre-wrap',
-                result.isError ? 'text-destructive' : 'text-text-secondary',
+            {/* Result */}
+            {result && (
+              <CompactableContainer className="mt-2">
+                <div>
+                  <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
+                    {result.isError ? 'Error' : 'Result'}
+                  </h4>
+                  {prompt && <hr className="border-border/50 my-1" />}
+                  <div
+                    className={cn(
+                      'text-xs whitespace-pre-wrap',
+                      result.isError ? 'text-destructive' : 'text-text-secondary',
+                    )}
+                  >
+                    {result.output}
+                  </div>
+                </div>
+              </CompactableContainer>
+            )}
+
+            {/* Meta row: elapsed + tools */}
+            <div className="mt-1.5 flex items-center gap-2 text-xs text-text-secondary">
+              <span>{elapsed}</span>
+              <span className="text-text-tertiary">•</span>
+              <span>
+                {t('toolCount', { count: subagent.toolCount })}
+              </span>
+              {subagent.progressHint && (
+                <>
+                  <span className="text-text-tertiary">•</span>
+                  <span className="truncate max-w-[200px]" title={subagent.progressHint}>
+                    {subagent.progressHint}
+                  </span>
+                </>
               )}
-            >
-              {result.output}
             </div>
           </div>
         </CompactableContainer>
       )}
-
-      {/* Meta row: elapsed + tools */}
-      <div className="mt-1.5 flex items-center gap-2 text-xs text-text-secondary">
-        <span>{elapsed}</span>
-        <span className="text-text-tertiary">•</span>
-        <span>
-          {t('toolCount', { count: subagent.toolCount })}
-        </span>
-        {subagent.progressHint && (
-          <>
-            <span className="text-text-tertiary">•</span>
-            <span className="truncate max-w-[200px]" title={subagent.progressHint}>
-              {subagent.progressHint}
-            </span>
-          </>
-        )}
-      </div>
-    </button>
+    </div>
   )
 }
