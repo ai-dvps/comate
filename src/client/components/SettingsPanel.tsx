@@ -23,7 +23,7 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-type SettingsTab = 'general' | 'appearance' | 'workspace' | 'skills' | 'mcp' | 'hooks' | 'wecom'
+type SettingsTab = 'general' | 'appearance' | 'workspace' | 'skills' | 'mcp' | 'hooks'
 
 interface WorkspaceFormState {
   name: string
@@ -244,10 +244,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     { id: 'skills', label: t('tabs.skills') },
     { id: 'mcp', label: t('tabs.mcp') },
     { id: 'hooks', label: t('tabs.hooks') },
-    { id: 'wecom', label: t('tabs.wecom') },
   ]
 
-  const isWorkspaceTab = activeTab === 'workspace' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'hooks' || activeTab === 'wecom'
+  const isWorkspaceTab = activeTab === 'workspace' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'hooks'
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col">
@@ -893,7 +892,7 @@ function WorkspaceTabShell({
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
-  activeTab: 'workspace' | 'skills' | 'mcp' | 'hooks' | 'wecom'
+  activeTab: 'workspace' | 'skills' | 'mcp' | 'hooks'
   workspaceState: WorkspaceFormState | null
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
 }) {
@@ -942,7 +941,7 @@ function WorkspaceTabShell({
         ) : (
           <>
             {activeTab === 'workspace' && (
-              <WorkspaceDetailsTab state={workspaceState} onUpdate={onUpdateWorkspace} />
+              <WorkspaceDetailsTab state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
             )}
             {activeTab === 'skills' && (
               <SkillsTab state={workspaceState} onUpdate={onUpdateWorkspace} />
@@ -952,9 +951,6 @@ function WorkspaceTabShell({
             )}
             {activeTab === 'hooks' && (
               <HooksTab state={workspaceState} onUpdate={onUpdateWorkspace} />
-            )}
-            {activeTab === 'wecom' && selectedWorkspaceId && (
-              <WeComBotTab state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId} />
             )}
           </>
         )}
@@ -966,12 +962,67 @@ function WorkspaceTabShell({
 function WorkspaceDetailsTab({
   state,
   onUpdate,
+  workspaceId,
 }: {
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
+  workspaceId: string
 }) {
   const { t } = useTranslation('settings')
   const [showApiKey, setShowApiKey] = useState(false)
+  const [showSecret, setShowSecret] = useState(false)
+  const [showCorpSecret, setShowCorpSecret] = useState(false)
+  const [status, setStatus] = useState<string>('unknown')
+  const [users, setUsers] = useState<WeComWorkspaceUser[]>([])
+
+  // Fetch connection status
+  useEffect(() => {
+    let cancelled = false
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/bot/status`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled) setStatus(data.status || 'unknown')
+      } catch {
+        if (!cancelled) setStatus('unknown')
+      }
+    }
+    fetchStatus()
+    const interval = setInterval(fetchStatus, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [workspaceId])
+
+  // Fetch WeCom workspace users
+  useEffect(() => {
+    let cancelled = false
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/wecom/users`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled) setUsers(data.users || [])
+      } catch {
+        if (!cancelled) setUsers([])
+      }
+    }
+    fetchUsers()
+    const interval = setInterval(fetchUsers, 10000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [workspaceId])
+
+  const statusColor =
+    status === 'connected'
+      ? 'text-success'
+      : status === 'error'
+        ? 'text-destructive'
+        : 'text-text-tertiary'
 
   return (
     <div className="space-y-4 max-w-xl">
@@ -1022,6 +1073,135 @@ function WorkspaceDetailsTab({
         <p className="text-[10px] text-text-tertiary mt-1">
           {t('workspace.apiKeyHint')}
         </p>
+      </div>
+
+      {/* WeCom Bot Configuration */}
+      <div className="pt-6 border-t border-border/50 space-y-4">
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary">
+              {t('wecom.enableBot')}
+            </label>
+            <p className="text-[10px] text-text-tertiary mt-0.5">
+              {t('wecom.enableBotHint')}
+            </p>
+          </div>
+          <button
+            onClick={() => onUpdate({ wecomBotEnabled: !state.wecomBotEnabled })}
+            className={`relative w-9 h-5 rounded-full transition-colors ${
+              state.wecomBotEnabled ? 'bg-accent' : 'bg-border'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                state.wecomBotEnabled ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botId')}</label>
+          <input
+            value={state.wecomBotId}
+            onChange={(e) => onUpdate({ wecomBotId: e.target.value })}
+            placeholder={t('wecom.botIdPlaceholder')}
+            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botSecret')}</label>
+          <div className="flex gap-2">
+            <input
+              type={showSecret ? 'text' : 'password'}
+              value={state.wecomBotSecret}
+              onChange={(e) => onUpdate({ wecomBotSecret: e.target.value })}
+              placeholder={t('wecom.botSecretPlaceholder')}
+              className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+            />
+            <button
+              onClick={() => setShowSecret(!showSecret)}
+              className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
+            >
+              {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-border/50">
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpId')}</label>
+          <input
+            value={state.wecomCorpId}
+            onChange={(e) => onUpdate({ wecomCorpId: e.target.value })}
+            placeholder={t('wecom.corpIdPlaceholder')}
+            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpSecret')}</label>
+          <div className="flex gap-2">
+            <input
+              type={showCorpSecret ? 'text' : 'password'}
+              value={state.wecomCorpSecret}
+              onChange={(e) => onUpdate({ wecomCorpSecret: e.target.value })}
+              placeholder={t('wecom.corpSecretPlaceholder')}
+              className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+            />
+            <button
+              onClick={() => setShowCorpSecret(!showCorpSecret)}
+              className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
+            >
+              {showCorpSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 pt-2">
+          <span className="text-[11px] font-medium text-text-secondary">{t('wecom.status')}</span>
+          <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
+        </div>
+
+        <div className="text-[10px] text-text-tertiary pt-2">
+          <p>{t('wecom.botSessionNote')}</p>
+        </div>
+
+        {/* Workspace Users */}
+        <div className="pt-6 border-t border-border/50">
+          <h3 className="text-xs font-medium text-text-secondary mb-3">{t('wecom.usersTitle')}</h3>
+          {users.length === 0 ? (
+            <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
+          ) : (
+            <div className="space-y-2">
+              {users.map((user) => (
+                <div
+                  key={user.encryptedUserId}
+                  className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-text-primary">
+                      {user.plaintextUserId || user.encryptedUserId}
+                    </span>
+                    {!user.plaintextUserId && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
+                        {t('wecom.userPending')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4 mt-1">
+                    <span className="text-[10px] text-text-tertiary">
+                      {t('wecom.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
+                    </span>
+                    <span className="text-[10px] text-text-tertiary">
+                      {t('wecom.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1258,199 +1438,4 @@ interface WeComWorkspaceUser {
   plaintextUserId?: string
   firstSeenAt: string
   lastSeenAt: string
-}
-
-function WeComBotTab({
-  state,
-  onUpdate,
-  workspaceId,
-}: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-  workspaceId: string
-}) {
-  const { t } = useTranslation('settings')
-  const [showSecret, setShowSecret] = useState(false)
-  const [showCorpSecret, setShowCorpSecret] = useState(false)
-  const [status, setStatus] = useState<string>('unknown')
-  const [users, setUsers] = useState<WeComWorkspaceUser[]>([])
-
-  // Fetch connection status
-  useEffect(() => {
-    let cancelled = false
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/bot/status`)
-        if (!res.ok) return
-        const data = await res.json()
-        if (!cancelled) setStatus(data.status || 'unknown')
-      } catch {
-        if (!cancelled) setStatus('unknown')
-      }
-    }
-    fetchStatus()
-    const interval = setInterval(fetchStatus, 5000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [workspaceId])
-
-  // Fetch WeCom workspace users
-  useEffect(() => {
-    let cancelled = false
-    const fetchUsers = async () => {
-      try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/wecom/users`)
-        if (!res.ok) return
-        const data = await res.json()
-        if (!cancelled) setUsers(data.users || [])
-      } catch {
-        if (!cancelled) setUsers([])
-      }
-    }
-    fetchUsers()
-    const interval = setInterval(fetchUsers, 10000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [workspaceId])
-
-  const statusColor =
-    status === 'connected'
-      ? 'text-success'
-      : status === 'error'
-        ? 'text-destructive'
-        : 'text-text-tertiary'
-
-  return (
-    <div className="space-y-4 max-w-xl">
-      <div className="flex items-center justify-between py-2 border-b border-border/50">
-        <div>
-          <label className="block text-xs font-medium text-text-secondary">
-            {t('wecom.enableBot')}
-          </label>
-          <p className="text-[10px] text-text-tertiary mt-0.5">
-            {t('wecom.enableBotHint')}
-          </p>
-        </div>
-        <button
-          onClick={() => onUpdate({ wecomBotEnabled: !state.wecomBotEnabled })}
-          className={`relative w-9 h-5 rounded-full transition-colors ${
-            state.wecomBotEnabled ? 'bg-accent' : 'bg-border'
-          }`}
-        >
-          <span
-            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-              state.wecomBotEnabled ? 'translate-x-4' : 'translate-x-0'
-            }`}
-          />
-        </button>
-      </div>
-
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botId')}</label>
-        <input
-          value={state.wecomBotId}
-          onChange={(e) => onUpdate({ wecomBotId: e.target.value })}
-          placeholder={t('wecom.botIdPlaceholder')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-      </div>
-
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botSecret')}</label>
-        <div className="flex gap-2">
-          <input
-            type={showSecret ? 'text' : 'password'}
-            value={state.wecomBotSecret}
-            onChange={(e) => onUpdate({ wecomBotSecret: e.target.value })}
-            placeholder={t('wecom.botSecretPlaceholder')}
-            className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <button
-            onClick={() => setShowSecret(!showSecret)}
-            className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-          >
-            {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
-
-      <div className="pt-4 border-t border-border/50">
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpId')}</label>
-        <input
-          value={state.wecomCorpId}
-          onChange={(e) => onUpdate({ wecomCorpId: e.target.value })}
-          placeholder={t('wecom.corpIdPlaceholder')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-      </div>
-
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpSecret')}</label>
-        <div className="flex gap-2">
-          <input
-            type={showCorpSecret ? 'text' : 'password'}
-            value={state.wecomCorpSecret}
-            onChange={(e) => onUpdate({ wecomCorpSecret: e.target.value })}
-            placeholder={t('wecom.corpSecretPlaceholder')}
-            className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <button
-            onClick={() => setShowCorpSecret(!showCorpSecret)}
-            className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-          >
-            {showCorpSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 pt-2">
-        <span className="text-[11px] font-medium text-text-secondary">{t('wecom.status')}</span>
-        <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
-      </div>
-
-      <div className="text-[10px] text-text-tertiary pt-2">
-        <p>{t('wecom.botSessionNote')}</p>
-      </div>
-
-      {/* Workspace Users */}
-      <div className="pt-6 border-t border-border/50">
-        <h3 className="text-xs font-medium text-text-secondary mb-3">{t('wecom.usersTitle')}</h3>
-        {users.length === 0 ? (
-          <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
-        ) : (
-          <div className="space-y-2">
-            {users.map((user) => (
-              <div
-                key={user.encryptedUserId}
-                className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-text-primary">
-                    {user.plaintextUserId || user.encryptedUserId}
-                  </span>
-                  {!user.plaintextUserId && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
-                      {t('wecom.userPending')}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-4 mt-1">
-                  <span className="text-[10px] text-text-tertiary">
-                    {t('wecom.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
-                  </span>
-                  <span className="text-[10px] text-text-tertiary">
-                    {t('wecom.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
 }
