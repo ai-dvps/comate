@@ -6,11 +6,16 @@ import { cn } from '../ui/utils'
 
 const COMPACTABLE_MAX_HEIGHT_PX = 192
 
-export type CompactableContainerProps = ComponentProps<'div'>
+export type CompactableContainerProps = ComponentProps<'div'> & {
+  compactHeight?: number
+  alwaysShowToggle?: boolean
+}
 
 export const CompactableContainer = ({
   className,
   children,
+  compactHeight = COMPACTABLE_MAX_HEIGHT_PX,
+  alwaysShowToggle = false,
   ...props
 }: CompactableContainerProps) => {
   const [expanded, setExpanded] = useState(false)
@@ -22,7 +27,7 @@ export const CompactableContainer = ({
     if (!el) return
 
     const measure = () => {
-      setOverflows(el.scrollHeight > COMPACTABLE_MAX_HEIGHT_PX)
+      setOverflows(el.scrollHeight > compactHeight)
     }
 
     const observer = new ResizeObserver(measure)
@@ -32,19 +37,19 @@ export const CompactableContainer = ({
     return () => {
       observer.disconnect()
     }
-  }, [])
+  }, [compactHeight])
 
   return (
     <div className={cn(className)} {...props}>
       <div
         className="overflow-hidden"
         style={{
-          maxHeight: expanded ? undefined : `${COMPACTABLE_MAX_HEIGHT_PX}px`,
+          maxHeight: expanded ? undefined : `${compactHeight}px`,
         }}
       >
         <div ref={contentRef}>{children}</div>
       </div>
-      {overflows && (
+      {(overflows || alwaysShowToggle) && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
