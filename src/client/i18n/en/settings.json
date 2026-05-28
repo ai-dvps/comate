@@ -4,9 +4,6 @@
     "general": "General",
     "appearance": "Appearance",
     "workspace": "Workspace",
-    "skills": "Skills",
-    "mcp": "MCP",
-    "hooks": "Hooks",
     "wecom": "WeCom Bot"
   },
   "general": {
@@ -43,6 +40,14 @@
     "fontSizeSmall": "Small",
     "fontSizeMedium": "Medium",
     "fontSizeLarge": "Large"
+  },
+  "workspaceSections": {
+    "basic": "Basic Info",
+    "model": "Model & API",
+    "wecom": "WeCom Bot",
+    "skills": "Skills",
+    "mcp": "MCP",
+    "hooks": "Hooks"
   },
   "workspace": {
     "name": "Name",

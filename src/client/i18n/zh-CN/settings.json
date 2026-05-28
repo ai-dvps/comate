@@ -4,9 +4,6 @@
     "general": "通用",
     "appearance": "外观",
     "workspace": "工作区",
-    "skills": "技能",
-    "mcp": "MCP",
-    "hooks": "钩子",
     "wecom": "企业微信机器人"
   },
   "general": {
@@ -43,6 +40,14 @@
     "fontSizeSmall": "小",
     "fontSizeMedium": "中",
     "fontSizeLarge": "大"
+  },
+  "workspaceSections": {
+    "basic": "基本信息",
+    "model": "模型与 API",
+    "wecom": "企业微信机器人",
+    "skills": "技能",
+    "mcp": "MCP",
+    "hooks": "钩子"
   },
   "workspace": {
     "name": "名称",

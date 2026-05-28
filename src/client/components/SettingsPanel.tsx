@@ -23,7 +23,9 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-type SettingsTab = 'general' | 'appearance' | 'workspace' | 'skills' | 'mcp' | 'hooks'
+type SettingsTab = 'general' | 'appearance' | 'workspace'
+
+type WorkspaceSection = 'basic' | 'model' | 'wecom' | 'skills' | 'mcp' | 'hooks'
 
 interface WorkspaceFormState {
   name: string
@@ -126,6 +128,13 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   useEffect(() => {
     setWindowCapInput(String(windowCap))
   }, [windowCap])
+
+  // Guard: reset activeTab if it holds a removed value (hot-reload / stale state)
+  useEffect(() => {
+    if (activeTab !== 'general' && activeTab !== 'appearance' && activeTab !== 'workspace') {
+      setActiveTab('workspace')
+    }
+  }, [activeTab])
 
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
@@ -246,12 +255,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     { id: 'general', label: t('tabs.general') },
     { id: 'appearance', label: t('tabs.appearance') },
     { id: 'workspace', label: t('tabs.workspace') },
-    { id: 'skills', label: t('tabs.skills') },
-    { id: 'mcp', label: t('tabs.mcp') },
-    { id: 'hooks', label: t('tabs.hooks') },
   ]
 
-  const isWorkspaceTab = activeTab === 'workspace' || activeTab === 'skills' || activeTab === 'mcp' || activeTab === 'hooks'
+  const isWorkspaceTab = activeTab === 'workspace'
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col">
@@ -319,7 +325,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 workspaces={workspaces}
                 selectedWorkspaceId={selectedWorkspaceId}
                 onSelectWorkspace={setSelectedWorkspaceId}
-                activeTab={activeTab}
                 workspaceState={selectedWorkspaceId ? workspaceState[selectedWorkspaceId] : null}
                 onUpdateWorkspace={updateSelectedWorkspace}
               />
@@ -890,18 +895,22 @@ function WorkspaceTabShell({
   workspaces,
   selectedWorkspaceId,
   onSelectWorkspace,
-  activeTab,
   workspaceState,
   onUpdateWorkspace,
 }: {
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
-  activeTab: 'workspace' | 'skills' | 'mcp' | 'hooks'
   workspaceState: WorkspaceFormState | null
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
 }) {
   const { t } = useTranslation('settings')
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>('basic')
+
+  // Reset to Basic Info when switching workspaces
+  useEffect(() => {
+    setActiveSection('basic')
+  }, [selectedWorkspaceId])
 
   if (workspaces.length === 0) {
     return (
@@ -910,6 +919,15 @@ function WorkspaceTabShell({
       </div>
     )
   }
+
+  const sections: { id: WorkspaceSection; label: string }[] = [
+    { id: 'basic', label: t('workspaceSections.basic') },
+    { id: 'model', label: t('workspaceSections.model') },
+    { id: 'wecom', label: t('workspaceSections.wecom') },
+    { id: 'skills', label: t('workspaceSections.skills') },
+    { id: 'mcp', label: t('workspaceSections.mcp') },
+    { id: 'hooks', label: t('workspaceSections.hooks') },
+  ]
 
   return (
     <div className="flex h-full">
@@ -938,33 +956,144 @@ function WorkspaceTabShell({
       </div>
 
       {/* Right column: settings content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {!workspaceState ? (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-text-tertiary">{t('workspaceSwitcher.switchWorkspace')}</p>
-          </div>
-        ) : (
-          <>
-            {activeTab === 'workspace' && (
-              <WorkspaceDetailsTab state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
-            )}
-            {activeTab === 'skills' && (
-              <SkillsTab state={workspaceState} onUpdate={onUpdateWorkspace} />
-            )}
-            {activeTab === 'mcp' && (
-              <McpTab state={workspaceState} onUpdate={onUpdateWorkspace} />
-            )}
-            {activeTab === 'hooks' && (
-              <HooksTab state={workspaceState} onUpdate={onUpdateWorkspace} />
-            )}
-          </>
-        )}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Section tabs */}
+        <div className="flex border-b border-border/50 flex-shrink-0 px-6">
+          {sections.map((section) => (
+            <button
+              key={section.id}
+              onClick={() => setActiveSection(section.id)}
+              className={`py-2 px-3 text-[11px] font-medium transition-all ${
+                activeSection === section.id
+                  ? 'text-text-primary border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Section content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {!workspaceState ? (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-sm text-text-tertiary">{t('workspaceSwitcher.switchWorkspace')}</p>
+            </div>
+          ) : (
+            <div className="max-w-xl">
+              {activeSection === 'basic' && (
+                <BasicInfoSection state={workspaceState} onUpdate={onUpdateWorkspace} />
+              )}
+              {activeSection === 'model' && (
+                <ModelApiSection state={workspaceState} onUpdate={onUpdateWorkspace} />
+              )}
+              {activeSection === 'wecom' && (
+                <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
+              )}
+              {activeSection === 'skills' && <ComingSoonPlaceholder />}
+              {activeSection === 'mcp' && <ComingSoonPlaceholder />}
+              {activeSection === 'hooks' && <ComingSoonPlaceholder />}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-function WorkspaceDetailsTab({
+function BasicInfoSection({
+  state,
+  onUpdate,
+}: {
+  state: WorkspaceFormState
+  onUpdate: (updates: Partial<WorkspaceFormState>) => void
+}) {
+  const { t } = useTranslation('settings')
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.name')}</label>
+        <input
+          value={state.name}
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.description')}</label>
+        <textarea
+          value={state.description}
+          onChange={(e) => onUpdate({ description: e.target.value })}
+          rows={3}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary resize-none"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.folderPath')}</label>
+        <div className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-secondary overflow-x-auto">
+          <code className="font-mono text-[11px] whitespace-pre-wrap break-all">{state.folderPath}</code>
+        </div>
+        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
+      </div>
+    </div>
+  )
+}
+
+function ModelApiSection({
+  state,
+  onUpdate,
+}: {
+  state: WorkspaceFormState
+  onUpdate: (updates: Partial<WorkspaceFormState>) => void
+}) {
+  const { t } = useTranslation('settings')
+  const [showApiKey, setShowApiKey] = useState(false)
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.modelOverride')}</label>
+        <input
+          value={state.model}
+          onChange={(e) => onUpdate({ model: e.target.value })}
+          placeholder={t('workspace.modelOverridePlaceholder')}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+        />
+        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.modelOverrideHint')}</p>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.apiKey')}</label>
+        <div className="flex gap-2">
+          <input
+            type={showApiKey ? 'text' : 'password'}
+            value={state.apiKey}
+            onChange={(e) => onUpdate({ apiKey: e.target.value })}
+            placeholder={t('workspace.apiKeyPlaceholder')}
+            className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
+          <button
+            onClick={() => setShowApiKey(!showApiKey)}
+            className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
+          >
+            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+        <p className="text-[10px] text-text-tertiary mt-1">
+          {t('workspace.apiKeyHint')}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+interface WeComWorkspaceUser {
+  encryptedUserId: string
+  plaintextUserId?: string
+  firstSeenAt: string
+  lastSeenAt: string
+}
+
+function WeComBotSection({
   state,
   onUpdate,
   workspaceId,
@@ -974,7 +1103,6 @@ function WorkspaceDetailsTab({
   workspaceId: string
 }) {
   const { t } = useTranslation('settings')
-  const [showApiKey, setShowApiKey] = useState(false)
   const [showSecret, setShowSecret] = useState(false)
   const [showCorpSecret, setShowCorpSecret] = useState(false)
   const [status, setStatus] = useState<string>('unknown')
@@ -1030,201 +1158,142 @@ function WorkspaceDetailsTab({
         : 'text-text-tertiary'
 
   return (
-    <div className="space-y-4 max-w-xl">
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.name')}</label>
-        <input
-          value={state.name}
-          onChange={(e) => onUpdate({ name: e.target.value })}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
-        />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.description')}</label>
-        <textarea
-          value={state.description}
-          onChange={(e) => onUpdate({ description: e.target.value })}
-          rows={3}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary resize-none"
-        />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.folderPath')}</label>
-        <div className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-secondary overflow-x-auto">
-          <code className="font-mono text-[11px] whitespace-pre-wrap break-all">{state.folderPath}</code>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between py-2">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary">
+            {t('wecom.enableBot')}
+          </label>
+          <p className="text-[10px] text-text-tertiary mt-0.5">
+            {t('wecom.enableBotHint')}
+          </p>
         </div>
-        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
+        <button
+          onClick={() => onUpdate({ wecomBotEnabled: !state.wecomBotEnabled })}
+          className={`relative w-9 h-5 rounded-full transition-colors ${
+            state.wecomBotEnabled ? 'bg-accent' : 'bg-border'
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+              state.wecomBotEnabled ? 'translate-x-4' : 'translate-x-0'
+            }`}
+          />
+        </button>
       </div>
+
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.modelOverride')}</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botName')}</label>
         <input
-          value={state.model}
-          onChange={(e) => onUpdate({ model: e.target.value })}
-          placeholder={t('workspace.modelOverridePlaceholder')}
+          value={state.wecomBotName}
+          onChange={(e) => onUpdate({ wecomBotName: e.target.value })}
+          placeholder={t('wecom.botNamePlaceholder')}
           className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
-        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.modelOverrideHint')}</p>
+        <p className="text-[10px] text-text-tertiary mt-1">{t('wecom.botNameHint')}</p>
       </div>
+
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.apiKey')}</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botId')}</label>
+        <input
+          value={state.wecomBotId}
+          onChange={(e) => onUpdate({ wecomBotId: e.target.value })}
+          placeholder={t('wecom.botIdPlaceholder')}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botSecret')}</label>
         <div className="flex gap-2">
           <input
-            type={showApiKey ? 'text' : 'password'}
-            value={state.apiKey}
-            onChange={(e) => onUpdate({ apiKey: e.target.value })}
-            placeholder={t('workspace.apiKeyPlaceholder')}
+            type={showSecret ? 'text' : 'password'}
+            value={state.wecomBotSecret}
+            onChange={(e) => onUpdate({ wecomBotSecret: e.target.value })}
+            placeholder={t('wecom.botSecretPlaceholder')}
             className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
           />
           <button
-            onClick={() => setShowApiKey(!showApiKey)}
+            onClick={() => setShowSecret(!showSecret)}
             className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
           >
-            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </button>
         </div>
-        <p className="text-[10px] text-text-tertiary mt-1">
-          {t('workspace.apiKeyHint')}
-        </p>
       </div>
 
-      {/* WeCom Bot Configuration */}
-      <div className="pt-6 border-t border-border/50 space-y-4">
-        <div className="flex items-center justify-between py-2">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary">
-              {t('wecom.enableBot')}
-            </label>
-            <p className="text-[10px] text-text-tertiary mt-0.5">
-              {t('wecom.enableBotHint')}
-            </p>
-          </div>
+      <div className="pt-4 border-t border-border/50">
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpId')}</label>
+        <input
+          value={state.wecomCorpId}
+          onChange={(e) => onUpdate({ wecomCorpId: e.target.value })}
+          placeholder={t('wecom.corpIdPlaceholder')}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpSecret')}</label>
+        <div className="flex gap-2">
+          <input
+            type={showCorpSecret ? 'text' : 'password'}
+            value={state.wecomCorpSecret}
+            onChange={(e) => onUpdate({ wecomCorpSecret: e.target.value })}
+            placeholder={t('wecom.corpSecretPlaceholder')}
+            className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
           <button
-            onClick={() => onUpdate({ wecomBotEnabled: !state.wecomBotEnabled })}
-            className={`relative w-9 h-5 rounded-full transition-colors ${
-              state.wecomBotEnabled ? 'bg-accent' : 'bg-border'
-            }`}
+            onClick={() => setShowCorpSecret(!showCorpSecret)}
+            className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
           >
-            <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                state.wecomBotEnabled ? 'translate-x-4' : 'translate-x-0'
-              }`}
-            />
+            {showCorpSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </button>
         </div>
+      </div>
 
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botName')}</label>
-          <input
-            value={state.wecomBotName}
-            onChange={(e) => onUpdate({ wecomBotName: e.target.value })}
-            placeholder={t('wecom.botNamePlaceholder')}
-            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <p className="text-[10px] text-text-tertiary mt-1">{t('wecom.botNameHint')}</p>
-        </div>
+      <div className="flex items-center gap-2 pt-2">
+        <span className="text-[11px] font-medium text-text-secondary">{t('wecom.status')}</span>
+        <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
+      </div>
 
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botId')}</label>
-          <input
-            value={state.wecomBotId}
-            onChange={(e) => onUpdate({ wecomBotId: e.target.value })}
-            placeholder={t('wecom.botIdPlaceholder')}
-            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-        </div>
+      <div className="text-[10px] text-text-tertiary pt-2">
+        <p>{t('wecom.botSessionNote')}</p>
+      </div>
 
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botSecret')}</label>
-          <div className="flex gap-2">
-            <input
-              type={showSecret ? 'text' : 'password'}
-              value={state.wecomBotSecret}
-              onChange={(e) => onUpdate({ wecomBotSecret: e.target.value })}
-              placeholder={t('wecom.botSecretPlaceholder')}
-              className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-            <button
-              onClick={() => setShowSecret(!showSecret)}
-              className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-            >
-              {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-
-        <div className="pt-4 border-t border-border/50">
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpId')}</label>
-          <input
-            value={state.wecomCorpId}
-            onChange={(e) => onUpdate({ wecomCorpId: e.target.value })}
-            placeholder={t('wecom.corpIdPlaceholder')}
-            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpSecret')}</label>
-          <div className="flex gap-2">
-            <input
-              type={showCorpSecret ? 'text' : 'password'}
-              value={state.wecomCorpSecret}
-              onChange={(e) => onUpdate({ wecomCorpSecret: e.target.value })}
-              placeholder={t('wecom.corpSecretPlaceholder')}
-              className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-            <button
-              onClick={() => setShowCorpSecret(!showCorpSecret)}
-              className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-            >
-              {showCorpSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 pt-2">
-          <span className="text-[11px] font-medium text-text-secondary">{t('wecom.status')}</span>
-          <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
-        </div>
-
-        <div className="text-[10px] text-text-tertiary pt-2">
-          <p>{t('wecom.botSessionNote')}</p>
-        </div>
-
-        {/* Workspace Users */}
-        <div className="pt-6 border-t border-border/50">
-          <h3 className="text-xs font-medium text-text-secondary mb-3">{t('wecom.usersTitle')}</h3>
-          {users.length === 0 ? (
-            <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
-          ) : (
-            <div className="space-y-2">
-              {users.map((user) => (
-                <div
-                  key={user.encryptedUserId}
-                  className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-text-primary">
-                      {user.plaintextUserId || user.encryptedUserId}
+      {/* Workspace Users */}
+      <div className="pt-6 border-t border-border/50">
+        <h3 className="text-xs font-medium text-text-secondary mb-3">{t('wecom.usersTitle')}</h3>
+        {users.length === 0 ? (
+          <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
+        ) : (
+          <div className="space-y-2">
+            {users.map((user) => (
+              <div
+                key={user.encryptedUserId}
+                className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-text-primary">
+                    {user.plaintextUserId || user.encryptedUserId}
+                  </span>
+                  {!user.plaintextUserId && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
+                      {t('wecom.userPending')}
                     </span>
-                    {!user.plaintextUserId && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
-                        {t('wecom.userPending')}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-4 mt-1">
-                    <span className="text-[10px] text-text-tertiary">
-                      {t('wecom.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
-                    </span>
-                    <span className="text-[10px] text-text-tertiary">
-                      {t('wecom.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
-                    </span>
-                  </div>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <div className="flex items-center gap-4 mt-1">
+                  <span className="text-[10px] text-text-tertiary">
+                    {t('wecom.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
+                  </span>
+                  <span className="text-[10px] text-text-tertiary">
+                    {t('wecom.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1242,33 +1311,3 @@ function ComingSoonPlaceholder() {
   )
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function SkillsTab(_: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-}) {
-  return <ComingSoonPlaceholder />
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function McpTab(_: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-}) {
-  return <ComingSoonPlaceholder />
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function HooksTab(_: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-}) {
-  return <ComingSoonPlaceholder />
-}
-
-interface WeComWorkspaceUser {
-  encryptedUserId: string
-  plaintextUserId?: string
-  firstSeenAt: string
-  lastSeenAt: string
-}
