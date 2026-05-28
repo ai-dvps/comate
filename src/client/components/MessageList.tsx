@@ -138,7 +138,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer }: Me
 
   return (
     <Conversation>
-      <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)} [&_[data-streamdown="code-block-body"]]:[font-size:inherit] [&_[data-streamdown="code-block-body"]]:p-2 [&_[data-streamdown="inline-code"]]:[font-size:inherit]`}>
+      <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)}`}>
         {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId))}
         {isCompacting && (
           <div className="my-2 flex items-center gap-2 text-xs text-text-tertiary">
