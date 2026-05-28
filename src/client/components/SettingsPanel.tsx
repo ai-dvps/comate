@@ -255,12 +255,12 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       <div className="h-11 pointer-events-none" />
 
       {/* Modal area */}
-      <div className="flex-1 flex items-center justify-center p-4 relative">
+      <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
         {/* Backdrop */}
         <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={handleClose} />
 
         {/* Card */}
-        <div className="relative w-full h-full max-w-6xl bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="relative w-full h-full max-h-[90vh] max-w-[90vw] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
             <h2 className="text-sm font-medium text-text-primary">{t('settings')}</h2>
@@ -290,7 +290,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto min-h-0">
             {activeTab === 'general' && (
               <GeneralTab
                 defaultModel={appModel}
