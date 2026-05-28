@@ -97,7 +97,15 @@ export const ToolHeader = ({
         <WrenchIcon className="size-4 text-text-tertiary flex-shrink-0" />
         <span className="font-medium">{title ?? derivedName}</span>
         {summary && (
-          <span className="text-text-tertiary truncate max-w-[360px]">
+          <span
+            className="text-text-tertiary truncate max-w-[360px]"
+            title={summary}
+            style={
+              summary.includes('/')
+                ? { direction: 'rtl', textAlign: 'left' }
+                : undefined
+            }
+          >
             {summary}
           </span>
         )}
