@@ -59,15 +59,15 @@ const statusLabels: Record<ToolState, string> = {
 }
 
 const statusIcons: Record<ToolState, ReactNode> = {
-  'input-streaming': <CircleIcon className="size-4" />,
-  'input-available': <ClockIcon className="size-4 animate-pulse" />,
-  'output-available': <CheckCircleIcon className="size-4 text-success" />,
-  'output-error': <XCircleIcon className="size-4 text-destructive" />,
+  'input-streaming': <CircleIcon className="size-3" />,
+  'input-available': <ClockIcon className="size-3 animate-pulse" />,
+  'output-available': <CheckCircleIcon className="size-3 text-success" />,
+  'output-error': <XCircleIcon className="size-3 text-destructive" />,
 }
 
 // eslint-disable-next-line react-refresh/only-export-components -- vendored helper alongside components
 export const getStatusBadge = (status: ToolState) => (
-  <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
+  <Badge className="gap-1 rounded-full px-1.5 py-0 text-[10px]" variant="secondary">
     {statusIcons[status]}
     {statusLabels[status]}
   </Badge>
