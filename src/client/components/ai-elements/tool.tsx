@@ -110,7 +110,7 @@ export const ToolHeader = ({
 export type ToolContentProps = ComponentProps<'div'>
 
 export const ToolContent = ({ className, children, ...props }: ToolContentProps) => (
-  <CompactableContainer className={cn(className)} {...props}>
+  <CompactableContainer className={cn(className)} compactHeight={0} alwaysShowToggle {...props}>
     <div className="space-y-2 p-2 text-text-primary">
       {children}
     </div>
