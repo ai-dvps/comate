@@ -1230,230 +1230,40 @@ function WorkspaceDetailsTab({
   )
 }
 
-function SkillsTab({
-  state,
-  onUpdate,
-}: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-}) {
+function ComingSoonPlaceholder() {
   const { t } = useTranslation('settings')
-  const [newSkill, setNewSkill] = useState('')
-
-  const addSkill = () => {
-    const trimmed = newSkill.trim()
-    if (!trimmed) return
-    onUpdate({ skills: [...state.skills, { name: trimmed }] })
-    setNewSkill('')
-  }
-
   return (
-    <div className="space-y-3 max-w-xl">
-      <div className="flex gap-2">
-        <input
-          value={newSkill}
-          onChange={(e) => setNewSkill(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') addSkill()
-          }}
-          placeholder={t('skills.skillNamePlaceholder')}
-          className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <button
-          onClick={addSkill}
-          className="p-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
-      </div>
+    <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
       <div className="space-y-1">
-        {state.skills.map((skill, i) => (
-          <div
-            key={i}
-            className="flex items-center justify-between px-3 py-2 bg-bg rounded-lg border border-border/50"
-          >
-            <span className="text-sm text-text-primary">{skill.name}</span>
-            <button
-              onClick={() =>
-                onUpdate({ skills: state.skills.filter((_, idx) => idx !== i) })
-              }
-              className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ))}
-        {state.skills.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">{t('skills.noSkills')}</p>
-        )}
+        <h3 className="text-sm font-medium text-text-primary">{t('placeholder.comingSoon')}</h3>
+        <p className="text-xs text-text-secondary max-w-sm">{t('placeholder.contact')}</p>
       </div>
     </div>
   )
 }
 
-function McpTab({
-  state,
-  onUpdate,
-}: {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function SkillsTab(_: {
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
 }) {
-  const { t } = useTranslation('settings')
-  const [newMcpName, setNewMcpName] = useState('')
-  const [newMcpCommand, setNewMcpCommand] = useState('')
-  const [newMcpArgs, setNewMcpArgs] = useState('')
-
-  const addMcp = () => {
-    const name = newMcpName.trim()
-    const command = newMcpCommand.trim()
-    if (!name || !command) return
-    onUpdate({
-      mcpServers: [
-        ...state.mcpServers,
-        { name, command, args: newMcpArgs },
-      ],
-    })
-    setNewMcpName('')
-    setNewMcpCommand('')
-    setNewMcpArgs('')
-  }
-
-  return (
-    <div className="space-y-3 max-w-xl">
-      <div className="space-y-2">
-        <input
-          value={newMcpName}
-          onChange={(e) => setNewMcpName(e.target.value)}
-          placeholder={t('mcp.serverName')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <input
-          value={newMcpCommand}
-          onChange={(e) => setNewMcpCommand(e.target.value)}
-          placeholder={t('mcp.command')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <input
-          value={newMcpArgs}
-          onChange={(e) => setNewMcpArgs(e.target.value)}
-          placeholder={t('mcp.arguments')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <button
-          onClick={addMcp}
-          className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          {t('mcp.addServer')}
-        </button>
-      </div>
-      <div className="space-y-2">
-        {state.mcpServers.map((mcp, i) => (
-          <div
-            key={i}
-            className="px-3 py-2.5 bg-bg rounded-lg border border-border/50 space-y-1"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-text-primary">{mcp.name}</span>
-              <button
-                onClick={() =>
-                  onUpdate({
-                    mcpServers: state.mcpServers.filter((_, idx) => idx !== i),
-                  })
-                }
-                className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="text-[11px] text-text-tertiary font-mono">
-              {mcp.command} {mcp.args}
-            </div>
-          </div>
-        ))}
-        {state.mcpServers.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">{t('mcp.noServers')}</p>
-        )}
-      </div>
-    </div>
-  )
+  return <ComingSoonPlaceholder />
 }
 
-function HooksTab({
-  state,
-  onUpdate,
-}: {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function McpTab(_: {
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
 }) {
-  const { t } = useTranslation('settings')
-  const [newHookName, setNewHookName] = useState('')
-  const [newHookPath, setNewHookPath] = useState('')
+  return <ComingSoonPlaceholder />
+}
 
-  const addHook = () => {
-    const name = newHookName.trim()
-    const path = newHookPath.trim()
-    if (!name || !path) return
-    onUpdate({
-      hooks: [...state.hooks, { name, scriptPath: path }],
-    })
-    setNewHookName('')
-    setNewHookPath('')
-  }
-
-  return (
-    <div className="space-y-3 max-w-xl">
-      <div className="space-y-2">
-        <input
-          value={newHookName}
-          onChange={(e) => setNewHookName(e.target.value)}
-          placeholder={t('hooks.hookName')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <input
-          value={newHookPath}
-          onChange={(e) => setNewHookPath(e.target.value)}
-          placeholder={t('hooks.scriptPath')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <button
-          onClick={addHook}
-          className="w-full py-2 rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          {t('hooks.addHook')}
-        </button>
-      </div>
-      <div className="space-y-2">
-        {state.hooks.map((hook, i) => (
-          <div
-            key={i}
-            className="px-3 py-2.5 bg-bg rounded-lg border border-border/50 space-y-1"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-text-primary">{hook.name}</span>
-              <button
-                onClick={() =>
-                  onUpdate({
-                    hooks: state.hooks.filter((_, idx) => idx !== i),
-                  })
-                }
-                className="p-1 rounded hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="text-[11px] text-text-tertiary font-mono truncate">
-              {hook.scriptPath}
-            </div>
-          </div>
-        ))}
-        {state.hooks.length === 0 && (
-          <p className="text-xs text-text-tertiary text-center py-4">{t('hooks.noHooks')}</p>
-        )}
-      </div>
-    </div>
-  )
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function HooksTab(_: {
+  state: WorkspaceFormState
+  onUpdate: (updates: Partial<WorkspaceFormState>) => void
+}) {
+  return <ComingSoonPlaceholder />
 }
 
 interface WeComWorkspaceUser {

@@ -74,6 +74,10 @@
     "addHook": "Add Hook",
     "noHooks": "No hooks added"
   },
+  "placeholder": {
+    "comingSoon": "Coming Soon",
+    "contact": "Have ideas or requirements? Contact spearwang to share them."
+  },
   "wecom": {
     "enableBot": "Enable WeCom Bot",
     "enableBotHint": "When enabled, this workspace acts as a WeCom bot endpoint.",
