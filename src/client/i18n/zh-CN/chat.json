@@ -10,7 +10,6 @@
   "placeholder": "向 Claude 询问任何关于代码的问题...",
   "clear": "清空",
   "send": "发送",
-  "inputHint": "按 Enter 发送，Shift+Enter 换行",
   "stopPopover": {
     "title": "取消当前轮次？",
     "cancel": "取消",
