@@ -11,7 +11,7 @@ import type { SseEvent, QuestionPayload } from '../types/message.js';
 import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
-import { diagLog, diagWarn } from '../utils/diag-logger.js';
+import { diagLog } from '../utils/diag-logger.js';
 
 
 const RING_BUFFER_CAP = 500;
@@ -47,6 +47,8 @@ export class SessionRuntime {
   private activeRes: Response | null = null;
   private heartbeatTimer?: NodeJS.Timeout;
   private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
+  private onSubscribed?: () => void;
+  private onUnsubscribed?: () => void;
 
   static open(
     sessionId: string,
@@ -55,6 +57,8 @@ export class SessionRuntime {
     options: Options,
     sdkClient: SdkClient,
     botEventHandler?: (id: number, event: SseEvent) => void,
+    onSubscribed?: () => void,
+    onUnsubscribed?: () => void,
   ): SessionRuntime {
     const input = new PushableIterator<SDKUserMessage>();
     const runtime = new SessionRuntime(
@@ -64,6 +68,8 @@ export class SessionRuntime {
       input,
       options,
       sdkClient,
+      onSubscribed,
+      onUnsubscribed,
     );
     if (botEventHandler) {
       runtime.botEventHandlers.add(botEventHandler);
@@ -91,6 +97,8 @@ export class SessionRuntime {
     input: PushableIterator<SDKUserMessage>,
     options: Options,
     sdkClient: SdkClient,
+    onSubscribed?: () => void,
+    onUnsubscribed?: () => void,
   ) {
     diagLog(`[Runtime ${sessionId}] constructed`);
     this.sessionId = sessionId;
@@ -99,6 +107,8 @@ export class SessionRuntime {
     this.input = input;
     this.options = options;
     this.sdkClient = sdkClient;
+    this.onSubscribed = onSubscribed;
+    this.onUnsubscribed = onUnsubscribed;
     this.emitter = new SseEmitter(null, (id, event) => {
       if (event.type === 'assistant_start') {
         this.currentMessageStartId = String(id);
@@ -287,6 +297,7 @@ export class SessionRuntime {
         );
       }
     }
+    this.onSubscribed?.();
   }
 
   unsubscribe(res?: Response): void {
@@ -300,6 +311,9 @@ export class SessionRuntime {
       }
     }
     diagLog(`[Runtime ${this.sessionId}] unsubscribe (matched=${hadRes})`);
+    if (hadRes) {
+      this.onUnsubscribed?.();
+    }
   }
 
   getStatus(): { pendingCount: number; workspaceId: string } {
