@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Square, SlashSquare, Paperclip } from 'lucide-react'
+import { Streamdown } from 'streamdown'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 
 import type { QuestionPayload } from '../types/message'
@@ -585,7 +586,11 @@ function QuestionView({
           <span className="font-medium">{label}</span>
         </div>
         {description && (
-          <p className="mt-0.5 ml-5 text-text-tertiary">{description}</p>
+          <div className="mt-0.5 ml-5 text-text-tertiary">
+            <Streamdown className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+              {description}
+            </Streamdown>
+          </div>
         )}
       </button>
     )
@@ -609,7 +614,11 @@ function QuestionView({
             {q.header}
           </p>
         )}
-        <p className="text-sm text-text-secondary mb-2">{q.question}</p>
+        <div className="text-sm text-text-secondary mb-2">
+          <Streamdown className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+            {q.question}
+          </Streamdown>
+        </div>
         <div
           role={q.multiSelect ? 'group' : 'radiogroup'}
           aria-label={q.question}
