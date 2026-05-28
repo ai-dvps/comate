@@ -47,6 +47,8 @@
   "workspace": {
     "name": "名称",
     "description": "描述",
+    "folderPath": "文件夹路径",
+    "folderPathHint": "工作区文件夹无法更改，因为 Claude Code 会话历史绑定于此路径。更改将导致现有会话重置。",
     "modelOverride": "模型覆盖",
     "modelOverridePlaceholder": "例如 claude-sonnet-4-5-20250929",
     "modelOverrideHint": "留空以使用默认模型。",
@@ -75,6 +77,9 @@
   "wecom": {
     "enableBot": "启用企业微信机器人",
     "enableBotHint": "启用后，此工作区将作为企业微信机器人端点。",
+    "botName": "机器人名称",
+    "botNamePlaceholder": "我的机器人",
+    "botNameHint": "此机器人的友好名称。",
     "botId": "机器人 ID",
     "botIdPlaceholder": "your-bot-id",
     "botSecret": "机器人密钥",

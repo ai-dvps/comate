@@ -28,6 +28,7 @@ type SettingsTab = 'general' | 'appearance' | 'workspace' | 'skills' | 'mcp' | '
 interface WorkspaceFormState {
   name: string
   description: string
+  folderPath: string
   model: string
   apiKey: string
   skills: { name: string }[]
@@ -36,6 +37,7 @@ interface WorkspaceFormState {
   wecomBotId: string
   wecomBotSecret: string
   wecomBotEnabled: boolean
+  wecomBotName: string
   wecomCorpId: string
   wecomCorpSecret: string
 }
@@ -44,6 +46,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
   return {
     name: workspace.name,
     description: workspace.description,
+    folderPath: workspace.folderPath,
     model: (workspace.settings?.model as string) || '',
     apiKey: (workspace.settings?.apiKey as string) || '',
     skills: [...workspace.skills],
@@ -55,6 +58,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     wecomBotId: (workspace.settings?.wecomBotId as string) || '',
     wecomBotSecret: (workspace.settings?.wecomBotSecret as string) || '',
     wecomBotEnabled: (workspace.settings?.wecomBotEnabled as boolean) || false,
+    wecomBotName: (workspace.settings?.wecomBotName as string) || '',
     wecomCorpId: (workspace.settings?.wecomCorpId as string) || '',
     wecomCorpSecret: (workspace.settings?.wecomCorpSecret as string) || '',
   }
@@ -180,6 +184,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           wecomBotId: ws.wecomBotId || undefined,
           wecomBotSecret: ws.wecomBotSecret || undefined,
           wecomBotEnabled: ws.wecomBotEnabled,
+          wecomBotName: ws.wecomBotName || undefined,
           wecomCorpId: ws.wecomCorpId || undefined,
           wecomCorpSecret: ws.wecomCorpSecret || undefined,
         },
@@ -1044,6 +1049,13 @@ function WorkspaceDetailsTab({
         />
       </div>
       <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.folderPath')}</label>
+        <div className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-secondary overflow-x-auto">
+          <code className="font-mono text-[11px] whitespace-pre-wrap break-all">{state.folderPath}</code>
+        </div>
+        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
+      </div>
+      <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.modelOverride')}</label>
         <input
           value={state.model}
@@ -1098,6 +1110,17 @@ function WorkspaceDetailsTab({
               }`}
             />
           </button>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botName')}</label>
+          <input
+            value={state.wecomBotName}
+            onChange={(e) => onUpdate({ wecomBotName: e.target.value })}
+            placeholder={t('wecom.botNamePlaceholder')}
+            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">{t('wecom.botNameHint')}</p>
         </div>
 
         <div>
