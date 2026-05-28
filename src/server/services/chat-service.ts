@@ -23,10 +23,13 @@ export interface MessageStream {
   wasDraft: boolean;
 }
 
+const RUNTIME_IDLE_GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
+
 export class ChatService {
   private sdkClient = new SdkClient();
   private runtimes = new Map<string, SessionRuntime>();
   private creatingRuntimes = new Map<string, Promise<SessionRuntime>>();
+  private idleTimeouts = new Map<string, NodeJS.Timeout>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   getActiveSessionCount(): number {
@@ -42,11 +45,9 @@ export class ChatService {
     sidecarLog(`[ChatService.testClaudeBinary] testing binary: ${claudePath} in cwd: ${cwd}`);
     return new Promise((resolve) => {
       let settled = false;
-      let timeout: NodeJS.Timeout | undefined;
       const finish = () => {
         if (settled) return false;
         settled = true;
-        if (timeout) clearTimeout(timeout);
         return true;
       };
       const proc = spawn(claudePath, ['--version'], { cwd, env });
@@ -54,23 +55,24 @@ export class ChatService {
       let stderr = '';
       proc.stdout?.on('data', (d) => { stdout += String(d); });
       proc.stderr?.on('data', (d) => { stderr += String(d); });
-      proc.on('close', (code) => {
-        if (!finish()) return;
-        sidecarLog(`[ChatService.testClaudeBinary] exit code=${code} stdout=${stdout.trim()} stderr=${stderr.trim()}`);
-        resolve();
-      });
-      proc.on('error', (err) => {
-        if (!finish()) return;
-        sidecarLog(`[ChatService.testClaudeBinary] spawn error: ${err.message}`);
-        resolve();
-      });
-      // 10s timeout
-      timeout = setTimeout(() => {
+      const timeout = setTimeout(() => {
         if (!finish()) return;
         sidecarLog('[ChatService.testClaudeBinary] timeout after 10s');
         proc.kill();
         resolve();
       }, 10000);
+      proc.on('close', (code) => {
+        if (!finish()) return;
+        clearTimeout(timeout);
+        sidecarLog(`[ChatService.testClaudeBinary] exit code=${code} stdout=${stdout.trim()} stderr=${stderr.trim()}`);
+        resolve();
+      });
+      proc.on('error', (err) => {
+        if (!finish()) return;
+        clearTimeout(timeout);
+        sidecarLog(`[ChatService.testClaudeBinary] spawn error: ${err.message}`);
+        resolve();
+      });
     });
   }
 
@@ -231,6 +233,7 @@ export class ChatService {
   ): Promise<SessionRuntime> {
     const existing = this.runtimes.get(sessionId);
     if (existing) {
+      this.cancelIdleClose(sessionId);
       if (botEventHandler) {
         existing.clearBotEventHandlers();
         existing.addBotEventHandler(botEventHandler);
@@ -261,7 +264,16 @@ export class ChatService {
 
       const options = this.buildSdkOptions(workspace, session, isBotSession);
       await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
-      const runtime = SessionRuntime.open(sessionId, workspaceId, this.serverNonce, options, this.sdkClient, botEventHandler);
+      const runtime = SessionRuntime.open(
+        sessionId,
+        workspaceId,
+        this.serverNonce,
+        options,
+        this.sdkClient,
+        botEventHandler,
+        () => this.cancelIdleClose(sessionId),
+        () => this.scheduleIdleClose(sessionId),
+      );
       this.runtimes.set(sessionId, runtime);
 
       if (session.isDraft) {
@@ -284,8 +296,51 @@ export class ChatService {
   async closeRuntime(sessionId: string): Promise<void> {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
+    this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
+    sidecarLog(`[ChatService] closing runtime ${sessionId}`);
     await runtime.close();
+  }
+
+  private scheduleIdleClose(sessionId: string): void {
+    this.cancelIdleClose(sessionId);
+    const timeout = setTimeout(() => {
+      sidecarLog(`[ChatService] idle close fired for ${sessionId}`);
+      this.closeRuntime(sessionId).catch((err) => {
+        console.error(`Failed to idle-close runtime ${sessionId}:`, err);
+      });
+    }, RUNTIME_IDLE_GRACE_PERIOD_MS);
+    this.idleTimeouts.set(sessionId, timeout);
+    sidecarLog(`[ChatService] idle close scheduled for ${sessionId} (${RUNTIME_IDLE_GRACE_PERIOD_MS}ms)`);
+  }
+
+  private cancelIdleClose(sessionId: string): void {
+    const timeout = this.idleTimeouts.get(sessionId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.idleTimeouts.delete(sessionId);
+      sidecarLog(`[ChatService] idle close cancelled for ${sessionId}`);
+    }
+  }
+
+  async closeAllRuntimes(): Promise<void> {
+    const entries = Array.from(this.runtimes.entries());
+    if (entries.length === 0) return;
+    sidecarLog(`[ChatService] closing ${entries.length} runtimes on shutdown`);
+    for (const [sessionId] of entries) {
+      this.cancelIdleClose(sessionId);
+    }
+    await Promise.all(
+      entries.map(async ([sessionId, runtime]) => {
+        try {
+          await runtime.close();
+        } catch (err) {
+          console.error(`Failed to close runtime ${sessionId} during shutdown:`, err);
+        }
+      }),
+    );
+    this.runtimes.clear();
+    this.idleTimeouts.clear();
   }
 
   getSessionsStatus(workspaceId: string): Record<string, { pendingCount: number }> {

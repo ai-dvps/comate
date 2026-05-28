@@ -14,6 +14,7 @@ import cliInstallRoutes from './routes/cli-install.js';
 import systemRoutes from './routes/system.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
+import { chatService } from './services/chat-service.js';
 import { diagLog } from './utils/diag-logger.js';
 import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
 import { getStorageDir } from './storage/data-dir.js';
@@ -151,6 +152,7 @@ async function shutdown(signal: string): Promise<void> {
   }
   wecomBotService.disconnectAll();
   await wecomUserResolver.shutdown();
+  await chatService.closeAllRuntimes();
   server.close(() => {
     process.exit(0);
   });
