@@ -36,6 +36,13 @@ export function summarizeToolInput(input: unknown): string | undefined {
     for (const key of primaryKeys) {
       if (obj[key] !== undefined) {
         const value = String(obj[key])
+
+        // For file paths, return the full path and let the UI left-truncate
+        // so the filename at the end stays visible
+        if (key === 'file_path' || key === 'path') {
+          return value
+        }
+
         const truncated = value.length > 120 ? value.slice(0, 120) + '…' : value
 
         // Try to append a short secondary field for extra context
