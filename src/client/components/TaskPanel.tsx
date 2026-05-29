@@ -12,6 +12,8 @@ import {
 } from 'lucide-react'
 
 import { useChatStore, type TaskItem } from '../stores/chat-store'
+import { useAppSettings } from '../hooks/use-app-settings'
+import { fontSizeClass } from '../lib/font-size'
 import { cn } from './ui/utils'
 
 interface TaskPanelProps {
@@ -68,7 +70,6 @@ function TaskRow({ task }: { task: TaskItem }) {
       <div className="min-w-0 flex-1">
         <span
           className={cn(
-            'text-sm',
             isDone
               ? 'text-text-tertiary line-through'
               : task.status === 'failed'
@@ -88,7 +89,8 @@ function TaskRow({ task }: { task: TaskItem }) {
 
 export default function TaskPanel({ sessionId }: TaskPanelProps) {
   const tasks = useChatStore((s) => s.tasks[sessionId] || [])
-  const [expanded, setExpanded] = useState(false)
+  const { chatFontSize } = useAppSettings()
+  const [expanded, setExpanded] = useState(true)
 
   const completedCount = tasks.filter((t) => t.status === 'completed').length
   const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length
@@ -106,9 +108,9 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded])
 
-  // Auto-collapse when switching sessions (sessionId changes)
+  // Reset to open when switching sessions (sessionId changes)
   useEffect(() => {
-    setExpanded(false)
+    setExpanded(true)
   }, [sessionId])
 
   if (total === 0) return null
@@ -151,7 +153,7 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
 
       {/* Expanded popup panel */}
       {expanded && (
-        <div className="absolute top-full left-0 right-0 border-b border-x border-border/30 rounded-b-lg bg-bg shadow-lg max-h-64 overflow-y-auto">
+        <div className={`absolute top-full left-0 right-0 border-b border-x border-border/30 rounded-b-lg bg-bg shadow-lg max-h-64 overflow-y-auto ${fontSizeClass(chatFontSize)}`}>
           {tasks.length === 0 ? (
             <div className="px-4 py-3 text-sm text-text-tertiary">
               No tasks yet.
