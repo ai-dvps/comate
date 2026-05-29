@@ -148,6 +148,9 @@ pub fn run() {
         })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .invoke_handler(tauri::generate_handler![get_api_port])
         .setup(|app| {
             if cfg!(debug_assertions) {
