@@ -154,8 +154,21 @@ export class SessionRuntime {
       const errJson = JSON.stringify(errDetail, Object.getOwnPropertyNames(errDetail), 2);
       diagLog(`[Runtime ${this.sessionId}] message loop error: ${errJson}`);
       console.error('SessionRuntime message loop error:', err);
+
+      const message = err instanceof Error ? err.message : String(err);
+      const isNoConversationError = message.includes('No conversation found');
+
+      if (isNoConversationError) {
+        // Fatal: the SDK has lost this session. Close the runtime so the
+        // next client reconnect will trigger a fresh getOrCreateRuntime,
+        // which can fall back to sessionId mode and recreate the conversation.
+        diagLog(`[Runtime ${this.sessionId}] closing due to lost conversation`);
+        this.closed = true;
+        this.input.close();
+      }
+
       this.emitter.emitErrorNote(
-        `Stream error: ${err instanceof Error ? err.message : String(err)}`,
+        `Stream error: ${message}`,
       );
     }
   }
@@ -321,6 +334,10 @@ export class SessionRuntime {
       pendingCount: this.pendingApprovals.size,
       workspaceId: this.workspaceId,
     };
+  }
+
+  isClosed(): boolean {
+    return this.closed;
   }
 
   pushMessage(content: string): void {
