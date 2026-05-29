@@ -2,7 +2,13 @@ import { useCallback } from 'react'
 import { X, Copy } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { CodeBlockContent } from './ai-elements/code-block'
+import MarkdownPreview from './MarkdownPreview'
 import { getLanguageFromFilename } from '../lib/language'
+
+function isMarkdown(name: string): boolean {
+  const ext = name.split('.').pop()?.toLowerCase()
+  return ext === 'md' || ext === 'markdown'
+}
 
 export interface ViewedFile {
   path: string
@@ -135,12 +141,16 @@ export default function FilePanel({
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
-        <CodeBlockContent
-          code={activeFile.content}
-          language={getLanguageFromFilename(activeFile.name)}
-          showLineNumbers={true}
-          className="!p-0"
-        />
+        {isMarkdown(activeFile.name) ? (
+          <MarkdownPreview content={activeFile.content} />
+        ) : (
+          <CodeBlockContent
+            code={activeFile.content}
+            language={getLanguageFromFilename(activeFile.name)}
+            showLineNumbers={true}
+            className="!p-0"
+          />
+        )}
       </div>
     </aside>
   )
