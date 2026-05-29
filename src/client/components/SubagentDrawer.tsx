@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   X,
@@ -17,8 +17,13 @@ import SubagentConversation from './SubagentConversation'
 interface SubagentDrawerProps {
   parentToolUseId: string
   sessionId: string
+  width: number
   onClose: () => void
+  onWidthChange: (width: number) => void
 }
+
+const MIN_WIDTH = 300
+const MAX_WIDTH = 600
 
 const statusConfig = {
   running: {
@@ -41,7 +46,9 @@ const statusConfig = {
 export default function SubagentDrawer({
   parentToolUseId,
   sessionId,
+  width,
   onClose,
+  onWidthChange,
 }: SubagentDrawerProps) {
   const { t } = useTranslation('chat')
   const subagent = useChatStore((s) =>
@@ -60,6 +67,36 @@ export default function SubagentDrawer({
     return () => window.removeEventListener('keydown', onKey)
   }, [parentToolUseId, onClose])
 
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startWidth = width
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const delta = startX - moveEvent.clientX
+        const newWidth = Math.min(
+          MAX_WIDTH,
+          Math.max(MIN_WIDTH, startWidth + delta),
+        )
+        onWidthChange(newWidth)
+      }
+
+      const handleMouseUp = () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.style.userSelect = ''
+        document.body.style.cursor = ''
+      }
+
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'col-resize'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+    },
+    [width, onWidthChange],
+  )
+
   if (!subagent) return null
 
   const config = statusConfig[subagent.state]
@@ -68,65 +105,59 @@ export default function SubagentDrawer({
   )
 
   return (
-    <>
-      {/* Overlay */}
+    <aside
+      className="relative bg-surface border-l border-border flex flex-col flex-shrink-0 h-full"
+      style={{ width }}
+    >
+      {/* Resize handle */}
       <div
-        className="fixed inset-x-0 bottom-0 z-40 bg-overlay/40"
-        style={{ top: '3rem' }}
-        onClick={onClose}
+        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
+        onMouseDown={handleMouseDown}
       />
 
-      {/* Drawer */}
-      <div
-        className={cn(
-          'fixed inset-x-0 bottom-0 z-50 flex flex-col border-t border-border bg-surface shadow-2xl',
-          'h-[50vh] max-h-[600px] min-h-[300px]',
-        )}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border/50 px-4 py-3 flex-shrink-0">
-          <div className="flex min-w-0 items-center gap-3">
-            <Bot className="size-5 shrink-0 text-text-tertiary" />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-sm font-medium text-text-primary">
-                  {subagent.description}
-                </span>
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium',
-                    config.badgeClass,
-                  )}
-                >
-                  {config.icon}
-                  {t(config.labelKey)}
-                </span>
-              </div>
-              <div className="mt-0.5 flex items-center gap-2 text-xs text-text-secondary">
-                <span>{duration}</span>
-                <span className="text-text-tertiary">•</span>
-                <span className="flex items-center gap-1">
-                  <WrenchIcon className="size-3" />
-                  {t('toolCount', { count: subagent.toolCount })}
-                </span>
-              </div>
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-border/50 px-4 py-3 flex-shrink-0">
+        <div className="flex min-w-0 items-center gap-3">
+          <Bot className="size-5 shrink-0 text-text-tertiary" />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-medium text-text-primary">
+                {subagent.description}
+              </span>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium',
+                  config.badgeClass,
+                )}
+              >
+                {config.icon}
+                {t(config.labelKey)}
+              </span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-2 text-xs text-text-secondary">
+              <span>{duration}</span>
+              <span className="text-text-tertiary">•</span>
+              <span className="flex items-center gap-1">
+                <WrenchIcon className="size-3" />
+                {t('toolCount', { count: subagent.toolCount })}
+              </span>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-md p-1.5 text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-            title={t('close')}
-          >
-            <X className="size-4" />
-          </button>
         </div>
-
-        {/* Conversation */}
-        <SubagentConversation
-          messages={subagent.messages}
-          isRunning={subagent.state === 'running'}
-        />
+        <button
+          onClick={onClose}
+          className="rounded-md p-1.5 text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+          title={t('close')}
+        >
+          <X className="size-4" />
+        </button>
       </div>
-    </>
+
+      {/* Conversation */}
+      <SubagentConversation
+        messages={subagent.messages}
+        isRunning={subagent.state === 'running'}
+      />
+    </aside>
   )
 }
