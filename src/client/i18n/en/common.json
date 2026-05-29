@@ -8,6 +8,7 @@
   },
   "sidebar": {
     "sessions": "Sessions",
+    "todos": "Todos",
     "files": "Files",
     "noWorkspace": "Open a workspace to view sessions"
   },

@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
+import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
 import { getStorageDir } from './data-dir.js';
 import { getNativeBindingPath } from './native-binding.js';
 
@@ -100,6 +101,19 @@ export class SqliteStore {
         first_prompt TEXT,
         git_branch TEXT,
         custom_title TEXT
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS todos (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        detail TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        session_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       )
     `);
 
@@ -360,6 +374,7 @@ export class SqliteStore {
     if (result.changes > 0) {
       this.db.prepare('DELETE FROM wecom_user_sessions WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
     }
     return result.changes > 0;
   }
@@ -586,6 +601,88 @@ export class SqliteStore {
       session.customTitle ?? null
     );
   }
+
+  // Todo CRUD
+
+  createTodo(workspaceId: string, input: CreateTodoInput): Todo {
+    const now = new Date().toISOString();
+    const todo: Todo = {
+      id: uuidv4(),
+      workspaceId,
+      text: input.text.trim(),
+      detail: input.detail?.trim() ?? '',
+      status: 'pending',
+      sessionId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.db.prepare(`
+      INSERT INTO todos (id, workspace_id, text, detail, status, session_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(todo.id, todo.workspaceId, todo.text, todo.detail, todo.status, todo.sessionId, todo.createdAt, todo.updatedAt);
+    return todo;
+  }
+
+  getTodosByWorkspace(workspaceId: string): Todo[] {
+    const rows = this.db
+      .prepare('SELECT * FROM todos WHERE workspace_id = ? ORDER BY created_at DESC')
+      .all(workspaceId) as RawTodoRow[];
+    return rows.map(parseTodoRow);
+  }
+
+  getTodoById(id: string): Todo | null {
+    const row = this.db.prepare('SELECT * FROM todos WHERE id = ?').get(id) as RawTodoRow | undefined;
+    return row ? parseTodoRow(row) : null;
+  }
+
+  updateTodo(id: string, input: UpdateTodoInput): Todo | null {
+    const existing = this.getTodoById(id);
+    if (!existing) return null;
+
+    const sets: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.text !== undefined) {
+      sets.push('text = ?');
+      values.push(input.text.trim());
+    }
+    if (input.detail !== undefined) {
+      sets.push('detail = ?');
+      values.push(input.detail.trim());
+    }
+    if (input.status !== undefined) {
+      sets.push('status = ?');
+      values.push(input.status);
+    }
+    if (input.sessionId !== undefined) {
+      sets.push('session_id = ?');
+      values.push(input.sessionId);
+    }
+    if (sets.length === 0) return existing;
+
+    sets.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    this.db.prepare(`UPDATE todos SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return this.getTodoById(id);
+  }
+
+  deleteTodo(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  linkTodoToSession(todoId: string, sessionId: string): Todo | null {
+    return this.updateTodo(todoId, { sessionId });
+  }
+
+  unlinkTodoBySessionId(sessionId: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE todos SET session_id = NULL, updated_at = ? WHERE session_id = ?
+    `).run(new Date().toISOString(), sessionId);
+    return result.changes > 0;
+  }
 }
 
 interface RawWorkspaceRow {
@@ -647,6 +744,30 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     firstPrompt: row.first_prompt ?? undefined,
     gitBranch: row.git_branch ?? undefined,
     customTitle: row.custom_title ?? undefined,
+  };
+}
+
+interface RawTodoRow {
+  id: string;
+  workspace_id: string;
+  text: string;
+  detail: string;
+  status: string;
+  session_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseTodoRow(row: RawTodoRow): Todo {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    text: row.text,
+    detail: row.detail,
+    status: row.status as TodoStatus,
+    sessionId: row.session_id ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

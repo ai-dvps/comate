@@ -74,5 +74,15 @@
     "turn": "Turn",
     "session": "Session",
     "context": "Context"
-  }
+  },
+  "searchTodos": "Search todos...",
+  "loadingTodos": "Loading todos...",
+  "noSearchResults": "No todos match your search.",
+  "noTodos": "No todos yet.",
+  "createTodoPrompt": "Create one below.",
+  "newTodoPlaceholder": "Add a todo...",
+  "startSession": "Start session",
+  "startSessionConfirm": "Start a new session named \"{{name}}\"?",
+  "goToSession": "Go to session",
+  "deleteTodo": "Delete todo"
 }

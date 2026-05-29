@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { chatService, ChatError } from '../services/chat-service.js';
+import { store } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 
 const router = Router({ mergeParams: true });
@@ -82,6 +83,8 @@ router.delete('/sessions/:sessionId', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
+    // Unlink any todo tied to this session before deleting
+    store.unlinkTodoBySessionId(sessionId);
     const success = await chatService.deleteSession(sessionId, workspaceId);
     if (!success) {
       res.status(404).json({ error: 'Session not found' });
