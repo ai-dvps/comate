@@ -51,7 +51,7 @@ export default function FilePanel({
       const startWidth = width
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
-        const delta = startX - moveEvent.clientX
+        const delta = moveEvent.clientX - startX
         onWidthChange(startWidth + delta)
       }
 
@@ -81,7 +81,7 @@ export default function FilePanel({
     >
       {/* Resize handle */}
       <div
-        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
+        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
         onMouseDown={handleMouseDown}
       />
 
