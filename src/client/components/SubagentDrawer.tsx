@@ -157,6 +157,7 @@ export default function SubagentDrawer({
       <SubagentConversation
         messages={subagent.messages}
         isRunning={subagent.state === 'running'}
+        sessionId={sessionId}
       />
     </aside>
   )
