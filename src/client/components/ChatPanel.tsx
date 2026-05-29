@@ -42,6 +42,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const [openDrawerToolUseId, setOpenDrawerToolUseId] = useState<
     string | null
   >(null)
+  const [subagentPanelWidth, setSubagentPanelWidth] = useState(400)
 
   useEffect(() => {
     fetchSessions(workspaceId)
@@ -208,81 +209,86 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       {/* Task Panel */}
       {activeSessionId && <TaskPanel sessionId={activeSessionId} />}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-hidden flex flex-col relative">
-        {isLoadingMessages && cachedMessages.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="flex gap-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+      {/* Main content row: chat area + optional subagent panel */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Messages */}
+        <div className="flex-1 overflow-hidden flex flex-col relative">
+          {isLoadingMessages && cachedMessages.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="flex gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
             </div>
-          </div>
-        ) : activeSessionId ? (
-          domCache.map((sessionId) => (
-            <div
-              key={sessionId}
-              className={sessionId === activeSessionId ? 'flex flex-col h-full' : 'hidden'}
-              aria-hidden={sessionId !== activeSessionId}
-              {...(sessionId !== activeSessionId ? { inert: 'true' } : {})}
-            >
-              <MessageList
-                sessionId={sessionId}
+          ) : activeSessionId ? (
+            domCache.map((sessionId) => (
+              <div
+                key={sessionId}
+                className={sessionId === activeSessionId ? 'flex flex-col h-full' : 'hidden'}
+                aria-hidden={sessionId !== activeSessionId}
+                {...(sessionId !== activeSessionId ? { inert: 'true' } : {})}
+              >
+                <MessageList
+                  sessionId={sessionId}
+                  workspaceId={workspaceId}
+                  onOpenDrawer={setOpenDrawerToolUseId}
+                  isVisible={sessionId === activeSessionId}
+                />
+              </div>
+            ))
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-text-secondary">{t('selectSessionPrompt')}</p>
+            </div>
+          )}
+
+          {/* Approval Surface or Prompt Input */}
+          <div className="flex-shrink-0 border-t border-border/30 bg-bg">
+            {activeSessionId && currentApproval ? (
+              <ApprovalSurface
                 workspaceId={workspaceId}
-                onOpenDrawer={setOpenDrawerToolUseId}
-                isVisible={sessionId === activeSessionId}
+                pendingItem={currentApproval}
+                queueDepth={approvalQueueLength - 1}
+                isResolving={resolvingRequestId === currentApproval?.requestId}
+                onAllow={handleAllow}
+                onAllowAlways={handleAllowAlways}
+                onDeny={handleDeny}
+                onAnswerQuestion={handleAnswerQuestion}
+                onChatAbout={handleChatAbout}
+                onStop={handleStop}
               />
-            </div>
-          ))
-        ) : (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-text-secondary">{t('selectSessionPrompt')}</p>
+            ) : (
+              <PromptInput
+                workspaceId={workspaceId}
+                sessionId={activeSessionId || ''}
+                onSend={handleSend}
+                onStop={handleStop}
+                disabled={!activeSessionId}
+                isStreaming={isStreaming}
+                isInterrupting={isInterrupting}
+                hasSession={!!activeSessionId}
+              />
+            )}
           </div>
-        )}
-      </div>
 
-      {/* Approval Surface or Prompt Input */}
-      <div className="flex-shrink-0 border-t border-border/30 bg-bg">
-        {activeSessionId && currentApproval ? (
-          <ApprovalSurface
-            workspaceId={workspaceId}
-            pendingItem={currentApproval}
-            queueDepth={approvalQueueLength - 1}
-            isResolving={resolvingRequestId === currentApproval?.requestId}
-            onAllow={handleAllow}
-            onAllowAlways={handleAllowAlways}
-            onDeny={handleDeny}
-            onAnswerQuestion={handleAnswerQuestion}
-            onChatAbout={handleChatAbout}
-            onStop={handleStop}
-          />
-        ) : (
-          <PromptInput
-            workspaceId={workspaceId}
-            sessionId={activeSessionId || ''}
-            onSend={handleSend}
-            onStop={handleStop}
-            disabled={!activeSessionId}
-            isStreaming={isStreaming}
-            isInterrupting={isInterrupting}
-            hasSession={!!activeSessionId}
+          {/* Token Usage Bar */}
+          {activeSessionId && (
+            <TokenUsageBar sessionId={activeSessionId} workspaceId={workspaceId} />
+          )}
+        </div>
+
+        {/* Subagent Drawer */}
+        {activeSessionId && openDrawerToolUseId && (
+          <SubagentDrawer
+            parentToolUseId={openDrawerToolUseId}
+            sessionId={activeSessionId}
+            width={subagentPanelWidth}
+            onClose={handleCloseDrawer}
+            onWidthChange={setSubagentPanelWidth}
           />
         )}
       </div>
-
-      {/* Token Usage Bar */}
-      {activeSessionId && (
-        <TokenUsageBar sessionId={activeSessionId} workspaceId={workspaceId} />
-      )}
-
-      {/* Subagent Drawer */}
-      {activeSessionId && openDrawerToolUseId && (
-        <SubagentDrawer
-          parentToolUseId={openDrawerToolUseId}
-          sessionId={activeSessionId}
-          onClose={handleCloseDrawer}
-        />
-      )}
     </div>
   )
 }

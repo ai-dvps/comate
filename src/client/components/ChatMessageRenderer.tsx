@@ -152,7 +152,8 @@ export function buildResultMap<
   for (const m of messages) {
     for (const p of m.parts) {
       if (p.type === 'tool_result') {
-        map.set(p.toolUseId, p as Extract<RenderablePart, { type: 'tool_result' }>)
+        const toolResult = p as Extract<RenderablePart, { type: 'tool_result' }>
+        map.set(toolResult.toolUseId, toolResult)
       }
     }
   }
