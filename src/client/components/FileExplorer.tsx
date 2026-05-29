@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useFiles } from '../stores/files-store'
@@ -88,7 +88,7 @@ function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, lev
             ) : (
               children.map((child) => (
                 <TreeNode
-                  key={child.name}
+                  key={`${workspaceId}-${child.name}`}
                   node={child}
                   path={nodePath}
                   workspaceId={workspaceId}
@@ -131,10 +131,15 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
   const [treeLoading, setTreeLoading] = useState(false)
   const [treeError, setTreeError] = useState<string | null>(null)
+  const prevWorkspaceIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     setSearchQuery('')
-    clear()
+    const prevId = prevWorkspaceIdRef.current
+    if (prevId && prevId !== activeWorkspaceId) {
+      clear()
+    }
+    prevWorkspaceIdRef.current = activeWorkspaceId ?? null
   }, [activeWorkspaceId, clear])
 
   useEffect(() => {
@@ -143,15 +148,20 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
       return
     }
 
+    const controller = new AbortController()
+
     async function loadRoot() {
       setTreeLoading(true)
       setTreeError(null)
       try {
-        const res = await fetch(`/api/workspaces/${activeWorkspaceId}/files`)
+        const res = await fetch(`/api/workspaces/${activeWorkspaceId}/files`, {
+          signal: controller.signal,
+        })
         if (!res.ok) throw new Error(t('failedToLoadFiles'))
         const data = await res.json()
         setRootNodes(data.nodes || [])
       } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
         setTreeError(err instanceof Error ? err.message : t('unknownError'))
       } finally {
         setTreeLoading(false)
@@ -159,6 +169,7 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
     }
 
     loadRoot()
+    return () => controller.abort()
   }, [activeWorkspaceId, t])
 
   const handleSearchChange = useCallback(
@@ -242,7 +253,7 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
             )}
             {rootNodes.map((node) => (
               <TreeNode
-                key={node.name}
+                key={`${activeWorkspaceId}-${node.name}`}
                 node={node}
                 path=""
                 workspaceId={activeWorkspaceId}
