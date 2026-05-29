@@ -85,8 +85,28 @@ export class SqliteStore {
       )
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        is_draft INTEGER NOT NULL DEFAULT 1,
+        is_wip INTEGER NOT NULL DEFAULT 0,
+        source TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        summary TEXT,
+        last_modified INTEGER,
+        first_prompt TEXT,
+        git_branch TEXT,
+        custom_title TEXT
+      )
+    `);
+
     this.migrateMappingTable();
     this.migrateFromLegacy();
+    this.migrateDraftSessions();
+    this.migrateSessionMetadataToSessions();
   }
 
   private migrateMappingTable(): void {
@@ -181,6 +201,78 @@ export class SqliteStore {
       renameSync(LEGACY_FILE, BACKUP_FILE);
     } catch (err) {
       console.error('Failed to rename legacy storage file:', err);
+    }
+  }
+
+  private migrateDraftSessions(): void {
+    const DRAFTS_FILE = join(STORAGE_DIR, 'draft-sessions.json');
+    if (!existsSync(DRAFTS_FILE)) return;
+
+    // Check if sessions table already has data (idempotent)
+    const count = this.db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
+    if (count.count > 0) return;
+
+    try {
+      const raw = readFileSync(DRAFTS_FILE, 'utf-8');
+      const data = JSON.parse(raw) as { sessions?: ChatSession[] };
+      const sessions = data.sessions || [];
+      if (sessions.length === 0) return;
+
+      const insert = this.db.prepare(`
+        INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, source, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const insertMany = this.db.transaction((items: ChatSession[]) => {
+        for (const s of items) {
+          insert.run(
+            s.id,
+            s.workspaceId,
+            s.name,
+            s.isDraft ? 1 : 0,
+            s.isWip ? 1 : 0,
+            s.source ?? null,
+            s.createdAt,
+            s.updatedAt,
+            s.summary ?? null,
+            s.lastModified ?? null,
+            s.firstPrompt ?? null,
+            s.gitBranch ?? null,
+            s.customTitle ?? null
+          );
+        }
+      });
+
+      insertMany(sessions);
+      console.log(`[SqliteStore] Migrated ${sessions.length} sessions from draft-sessions.json`);
+
+      // Rename draft file to backup after successful migration
+      try {
+        renameSync(DRAFTS_FILE, `${DRAFTS_FILE}.bak`);
+      } catch (err) {
+        console.error('[SqliteStore] Failed to rename draft-sessions.json:', err);
+      }
+    } catch (err) {
+      console.error('[SqliteStore] Failed to migrate draft sessions:', err);
+    }
+  }
+
+  private migrateSessionMetadataToSessions(): void {
+    // Pull is_wip from old session_metadata table into sessions table for any rows that exist there
+    try {
+      const rows = this.db.prepare('SELECT session_id, is_wip FROM session_metadata').all() as Array<{ session_id: string; is_wip: number }>;
+      if (rows.length === 0) return;
+
+      const update = this.db.prepare('UPDATE sessions SET is_wip = ? WHERE id = ?');
+      const updateMany = this.db.transaction((items: Array<{ session_id: string; is_wip: number }>) => {
+        for (const row of items) {
+          update.run(row.is_wip, row.session_id);
+        }
+      });
+      updateMany(rows);
+      console.log(`[SqliteStore] Migrated ${rows.length} session_metadata entries into sessions table`);
+    } catch (err) {
+      console.error('[SqliteStore] Failed to migrate session_metadata:', err);
     }
   }
 
@@ -382,6 +474,117 @@ export class SqliteStore {
           is_wip = excluded.is_wip
       `)
       .run(sessionId, isWip ? 1 : 0);
+
+    // Also keep sessions table in sync
+    this.db.prepare(`UPDATE sessions SET is_wip = ? WHERE id = ?`).run(isWip ? 1 : 0, sessionId);
+  }
+
+  // Session CRUD (replaces draft-sessions.json)
+
+  listLocalSessions(workspaceId?: string): ChatSession[] {
+    const sql = workspaceId
+      ? 'SELECT * FROM sessions WHERE workspace_id = ? ORDER BY updated_at DESC'
+      : 'SELECT * FROM sessions ORDER BY updated_at DESC';
+    const rows = workspaceId
+      ? (this.db.prepare(sql).all(workspaceId) as RawSessionRow[])
+      : (this.db.prepare(sql).all() as RawSessionRow[]);
+    return rows.map(parseSessionRow);
+  }
+
+  getLocalSession(id: string): ChatSession | null {
+    const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as RawSessionRow | undefined;
+    return row ? parseSessionRow(row) : null;
+  }
+
+  createLocalSession(workspaceId: string, name: string): ChatSession {
+    const now = new Date().toISOString();
+    const session: ChatSession = {
+      id: uuidv4(),
+      workspaceId,
+      name,
+      isDraft: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.db.prepare(`
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, session.createdAt, session.updatedAt);
+    return session;
+  }
+
+  updateLocalSession(id: string, input: { name?: string; isWip?: boolean }): ChatSession | null {
+    const existing = this.getLocalSession(id);
+    if (!existing) return null;
+
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (input.name !== undefined) {
+      sets.push('name = ?');
+      values.push(input.name);
+    }
+    if (input.isWip !== undefined) {
+      sets.push('is_wip = ?');
+      values.push(input.isWip ? 1 : 0);
+    }
+    if (sets.length === 0) return existing;
+
+    sets.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return this.getLocalSession(id);
+  }
+
+  deleteLocalSession(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  clearDraftFlag(id: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE sessions SET is_draft = 0, updated_at = ? WHERE id = ?
+    `).run(new Date().toISOString(), id);
+    return result.changes > 0;
+  }
+
+  setSessionDraft(id: string, isDraft: boolean): boolean {
+    const result = this.db.prepare(`
+      UPDATE sessions SET is_draft = ?, updated_at = ? WHERE id = ?
+    `).run(isDraft ? 1 : 0, new Date().toISOString(), id);
+    return result.changes > 0;
+  }
+
+  syncSdkSession(session: ChatSession): void {
+    this.db.prepare(`
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, source, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        is_draft = excluded.is_draft,
+        source = excluded.source,
+        updated_at = excluded.updated_at,
+        summary = excluded.summary,
+        last_modified = excluded.last_modified,
+        first_prompt = excluded.first_prompt,
+        git_branch = excluded.git_branch,
+        custom_title = excluded.custom_title
+    `).run(
+      session.id,
+      session.workspaceId,
+      session.name,
+      session.isDraft ? 1 : 0,
+      session.isWip ? 1 : 0,
+      session.source ?? null,
+      session.createdAt,
+      session.updatedAt,
+      session.summary ?? null,
+      session.lastModified ?? null,
+      session.firstPrompt ?? null,
+      session.gitBranch ?? null,
+      session.customTitle ?? null
+    );
   }
 }
 
@@ -410,6 +613,40 @@ function parseRow(row: RawWorkspaceRow): Workspace {
     hooks: safeJsonParse(row.hooks, []),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+interface RawSessionRow {
+  id: string;
+  workspace_id: string;
+  name: string;
+  is_draft: number;
+  is_wip: number;
+  source: string | null;
+  created_at: string;
+  updated_at: string;
+  summary: string | null;
+  last_modified: number | null;
+  first_prompt: string | null;
+  git_branch: string | null;
+  custom_title: string | null;
+}
+
+function parseSessionRow(row: RawSessionRow): ChatSession {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    name: row.name,
+    isDraft: row.is_draft === 1,
+    isWip: row.is_wip === 1,
+    source: (row.source as 'gui' | 'wecom') ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    summary: row.summary ?? undefined,
+    lastModified: row.last_modified ?? undefined,
+    firstPrompt: row.first_prompt ?? undefined,
+    gitBranch: row.git_branch ?? undefined,
+    customTitle: row.custom_title ?? undefined,
   };
 }
 
