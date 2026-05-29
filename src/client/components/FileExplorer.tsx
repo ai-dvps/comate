@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import { ChevronRight, Folder, FileCode, FileJson, FileText, File } from 'lucide-react'
+import { useFiles } from '../stores/files-store'
+import { ChevronRight, Folder, FileCode, FileJson, FileText, File, Loader2 } from 'lucide-react'
 
 interface FileNode {
   name: string
@@ -125,9 +126,16 @@ interface FileExplorerProps {
 export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExplorerProps) {
   const { t } = useTranslation('common')
   const { activeWorkspaceId } = useWorkspaceStore()
+  const { results, loading: searchLoading, error: searchError, search, clear } = useFiles(activeWorkspaceId ?? '')
+  const [searchQuery, setSearchQuery] = useState('')
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [treeLoading, setTreeLoading] = useState(false)
+  const [treeError, setTreeError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSearchQuery('')
+    clear()
+  }, [activeWorkspaceId, clear])
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -136,22 +144,37 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
     }
 
     async function loadRoot() {
-      setLoading(true)
-      setError(null)
+      setTreeLoading(true)
+      setTreeError(null)
       try {
         const res = await fetch(`/api/workspaces/${activeWorkspaceId}/files`)
         if (!res.ok) throw new Error(t('failedToLoadFiles'))
         const data = await res.json()
         setRootNodes(data.nodes || [])
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('unknownError'))
+        setTreeError(err instanceof Error ? err.message : t('unknownError'))
       } finally {
-        setLoading(false)
+        setTreeLoading(false)
       }
     }
 
     loadRoot()
-  }, [activeWorkspaceId])
+  }, [activeWorkspaceId, t])
+
+  const handleSearchChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const query = e.target.value
+      setSearchQuery(query)
+      if (query.trim()) {
+        search(query)
+      } else {
+        clear()
+      }
+    },
+    [search, clear]
+  )
+
+  const isSearching = searchQuery.trim().length > 0
 
   if (!activeWorkspaceId) {
     return (
@@ -161,31 +184,76 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
     )
   }
 
-  if (loading && rootNodes.length === 0) {
-    return <div className="p-3 text-xs text-text-tertiary">{t('loadingFiles')}</div>
-  }
-
-  if (error) {
-    return <div className="p-3 text-xs text-destructive">{error}</div>
-  }
-
-  if (rootNodes.length === 0) {
-    return <div className="p-3 text-xs text-text-tertiary">{t('emptyWorkspace')}</div>
-  }
-
   return (
-    <div className="flex-1 overflow-y-auto py-1">
-      {rootNodes.map((node) => (
-        <TreeNode
-          key={node.name}
-          node={node}
-          path=""
-          workspaceId={activeWorkspaceId}
-          onFileClick={onFileClick}
-          onFileDoubleClick={onFileDoubleClick}
-          level={0}
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {/* Search input */}
+      <div className="px-3 py-2 border-b border-border/50 flex-shrink-0">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={handleSearchChange}
+          placeholder={t('searchFiles')}
+          className="w-full bg-transparent text-xs text-text-primary placeholder:text-text-tertiary outline-none"
         />
-      ))}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto py-1">
+        {isSearching ? (
+          <>
+            {searchLoading && results.length === 0 && (
+              <div className="flex items-center gap-2 px-3 py-3 text-xs text-text-tertiary">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {t('loadingFiles')}
+              </div>
+            )}
+            {searchError && results.length === 0 && (
+              <div className="px-3 py-3 text-xs text-accent">{searchError}</div>
+            )}
+            {!searchLoading && !searchError && results.length === 0 && (
+              <div className="px-3 py-3 text-xs text-text-tertiary">
+                {t('noFilesMatch', { filter: searchQuery ? ` \`${searchQuery}\`` : '' })}
+              </div>
+            )}
+            {results.map((entry) => {
+              const basename = entry.path.split('/').pop() || entry.path
+              return (
+                <div
+                  key={entry.path}
+                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-surface-hover rounded-lg cursor-pointer text-xs"
+                  onClick={() => onFileClick(entry.path, basename)}
+                >
+                  {getFileIcon(basename)}
+                  <span className="truncate text-text-secondary">{entry.path}</span>
+                </div>
+              )
+            })}
+          </>
+        ) : (
+          <>
+            {treeLoading && rootNodes.length === 0 && (
+              <div className="p-3 text-xs text-text-tertiary">{t('loadingFiles')}</div>
+            )}
+            {treeError && (
+              <div className="p-3 text-xs text-destructive">{treeError}</div>
+            )}
+            {!treeLoading && !treeError && rootNodes.length === 0 && (
+              <div className="p-3 text-xs text-text-tertiary">{t('emptyWorkspace')}</div>
+            )}
+            {rootNodes.map((node) => (
+              <TreeNode
+                key={node.name}
+                node={node}
+                path=""
+                workspaceId={activeWorkspaceId}
+                onFileClick={onFileClick}
+                onFileDoubleClick={onFileDoubleClick}
+                level={0}
+              />
+            ))}
+          </>
+        )}
+      </div>
     </div>
   )
 }
