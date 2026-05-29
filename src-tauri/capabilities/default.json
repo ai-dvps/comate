@@ -9,6 +9,7 @@
     "core:default",
     "core:window:allow-start-dragging",
     "dialog:default",
+    "single-instance:default",
     {
       "identifier": "shell:allow-spawn",
       "allow": [{ "name": "binaries/sidecar-node", "sidecar": true }]
