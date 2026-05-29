@@ -283,13 +283,15 @@ export default function VirtualizedMessageList({
               </div>
             )
           })}
-          {isCompacting && (
+        </div>
+        {isCompacting && (
+          <div className="px-3 pb-3 max-w-3xl mx-auto w-full">
             <div className="my-2 flex items-center gap-2 text-xs text-text-tertiary">
               <span className="inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
               <span>Compacting conversation…</span>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
       {!isAtBottom && (
         <Button
