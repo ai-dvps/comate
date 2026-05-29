@@ -3,6 +3,7 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { useTranslation } from 'react-i18next'
 import { Folder, X, ChevronDown, Search } from 'lucide-react'
+import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import StatusIndicator from './StatusIndicator'
 import ConfirmDialog from './ConfirmDialog'
 
@@ -111,8 +112,6 @@ export default function WorkspaceTabs() {
   const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const openWorkspaces = useMemo(
     () =>
@@ -156,29 +155,6 @@ export default function WorkspaceTabs() {
     const interval = setInterval(fetchStatuses, 5000)
     return () => clearInterval(interval)
   }, [openWorkspaceIds, workspaces])
-
-  useEffect(() => {
-    if (!isDropdownOpen) return
-    const handleMouseDown = (e: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node) &&
-        buttonRef.current &&
-        !buttonRef.current.contains(e.target as Node)
-      ) {
-        setIsDropdownOpen(false)
-      }
-    }
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsDropdownOpen(false)
-    }
-    document.addEventListener('mousedown', handleMouseDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [isDropdownOpen])
 
   // Scroll active tab into view when it changes
   useEffect(() => {
@@ -261,25 +237,24 @@ export default function WorkspaceTabs() {
 
       {/* Persistent dropdown button */}
       <div className="relative flex-shrink-0">
-        <button
-          ref={buttonRef}
-          onClick={() => setIsDropdownOpen((prev) => !prev)}
-          className={`flex items-center justify-center h-[29px] px-2 rounded-lg text-xs font-medium transition-colors ${
-            isDropdownOpen
-              ? 'bg-surface-hover text-text-primary'
-              : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover'
-          }`}
-          aria-expanded={isDropdownOpen}
-          aria-label={t('workspaceTabs.openTabList')}
-        >
-          <ChevronDown className="w-3.5 h-3.5" />
-        </button>
-
-        {/* Dropdown */}
-        {isDropdownOpen && (
-          <div
-            ref={dropdownRef}
-            className="absolute top-full right-0 mt-1 z-[60] w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden"
+        <Popover open={isDropdownOpen} onOpenChange={setIsDropdownOpen}>
+          <PopoverTrigger asChild>
+            <button
+              className={`flex items-center justify-center h-[29px] px-2 rounded-lg text-xs font-medium transition-colors ${
+                isDropdownOpen
+                  ? 'bg-surface-hover text-text-primary'
+                  : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover'
+              }`}
+              aria-label={t('workspaceTabs.openTabList')}
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="bottom"
+            align="end"
+            sideOffset={4}
+            className="z-[60] w-64 bg-surface border border-border rounded-xl shadow-lg overflow-hidden p-0"
           >
             {/* Search input */}
             <div className="px-3 py-2 border-b border-border/50">
@@ -359,8 +334,8 @@ export default function WorkspaceTabs() {
                 })
               )}
             </div>
-          </div>
-        )}
+          </PopoverContent>
+        </Popover>
       </div>
 
       <ConfirmDialog
