@@ -542,6 +542,22 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
             }
           }
 
+          // Fallback: parse plain text like "Task #1 created successfully: ..."
+          if (!taskCreated) {
+            const match = part.output.match(/Task #(\d+) created successfully: (.+)/)
+            if (match) {
+              const item: TaskItem = {
+                id: match[1],
+                subject: match[2].trim() || pending.subject,
+                description: pending.description,
+                status: 'pending',
+                activeForm: pending.activeForm,
+              }
+              taskMap.set(item.id, item)
+              tasks.push(item)
+            }
+          }
+
           pendingCreates.delete(part.toolUseId)
         }
       }
@@ -960,6 +976,25 @@ function handleSseEvent(
               }
             } catch {
               // Ignore parse errors
+            }
+          }
+
+          // Fallback: parse plain text like "Task #1 created successfully: ..."
+          if (!taskCreated) {
+            const match = output.match(/Task #(\d+) created successfully: (.+)/)
+            if (match) {
+              const newTask: TaskItem = {
+                id: match[1],
+                subject: match[2].trim() || pending.subject,
+                description: pending.description,
+                status: 'pending',
+                activeForm: pending.activeForm,
+              }
+              const existingTasks = state.tasks[sessionId] || []
+              updates.tasks = {
+                ...state.tasks,
+                [sessionId]: [...existingTasks, newTask],
+              }
             }
           }
 
