@@ -20,9 +20,6 @@ interface FilePanelProps {
   onCopy: () => void
 }
 
-const MIN_WIDTH = 200
-const MAX_WIDTH = 600
-
 export default function FilePanel({
   files,
   activeFilePath,
@@ -34,10 +31,6 @@ export default function FilePanel({
 }: FilePanelProps) {
   const { t } = useTranslation('common')
 
-  const activeFile = files.find((f) => f.path === activeFilePath)
-
-  if (files.length === 0 || !activeFile) return null
-
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
@@ -46,8 +39,7 @@ export default function FilePanel({
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const delta = startX - moveEvent.clientX
-        const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + delta))
-        onWidthChange(newWidth)
+        onWidthChange(startWidth + delta)
       }
 
       const handleMouseUp = () => {
@@ -64,6 +56,10 @@ export default function FilePanel({
     },
     [width, onWidthChange]
   )
+
+  const activeFile = files.find((f) => f.path === activeFilePath)
+
+  if (files.length === 0 || !activeFile) return null
 
   return (
     <aside
