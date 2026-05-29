@@ -18,6 +18,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -375,16 +376,10 @@ export const CodeBlockContent = ({
   )
 
   const [asyncTokens, setAsyncTokens] = useState<TokenizedCode | null>(null)
-  const asyncKeyRef = useRef({ code, language, theme })
 
-  if (
-    asyncKeyRef.current.code !== code ||
-    asyncKeyRef.current.language !== language ||
-    asyncKeyRef.current.theme !== theme
-  ) {
-    asyncKeyRef.current = { code, language, theme }
+  useLayoutEffect(() => {
     setAsyncTokens(null)
-  }
+  }, [code, language, theme])
 
   useEffect(() => {
     let cancelled = false

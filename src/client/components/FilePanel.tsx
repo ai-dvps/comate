@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { X, Copy } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { CodeBlockContent } from './ai-elements/code-block'
@@ -36,6 +36,13 @@ export default function FilePanel({
   onCopy,
 }: FilePanelProps) {
   const { t } = useTranslation('common')
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTop = 0
+    }
+  }, [activeFilePath])
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -140,7 +147,7 @@ export default function FilePanel({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto">
+      <div ref={contentRef} className="flex-1 overflow-auto">
         {isMarkdown(activeFile.name) ? (
           <MarkdownPreview content={activeFile.content} />
         ) : (
