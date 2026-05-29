@@ -225,7 +225,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             domCache.map((sessionId) => (
               <div
                 key={sessionId}
-                className={sessionId === activeSessionId ? 'flex flex-col h-full' : 'hidden'}
+                className={sessionId === activeSessionId ? 'flex flex-col h-full min-h-0' : 'hidden'}
                 aria-hidden={sessionId !== activeSessionId}
                 {...(sessionId !== activeSessionId ? { inert: 'true' } : {})}
               >
