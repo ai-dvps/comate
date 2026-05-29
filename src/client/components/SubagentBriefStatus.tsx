@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next'
 import {
   Bot,
   CheckCircleIcon,
-  ChevronRightIcon,
   ClockIcon,
+  PanelRightOpen,
   XCircleIcon,
 } from 'lucide-react'
 
@@ -170,11 +170,8 @@ function StatusCard({
         config.borderClass,
       )}
     >
-      {/* Header: clickable to open drawer */}
-      <button
-        onClick={onClick}
-        className="group flex w-full items-center justify-between gap-3 p-3 text-left transition-colors hover:bg-surface-hover/50"
-      >
+      {/* Header: left info (non-clickable), right open button */}
+      <div className="flex w-full items-center justify-between gap-3 p-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Bot className="size-4 shrink-0 text-text-tertiary" />
           <span className="truncate text-sm font-medium text-text-primary">
@@ -191,9 +188,15 @@ function StatusCard({
             {config.icon}
             {t(config.labelKey)}
           </span>
-          <ChevronRightIcon className="size-4 text-text-tertiary transition-colors group-hover:text-text-secondary" />
+          <button
+            onClick={onClick}
+            title={t('openSubagentPanel')}
+            className="inline-flex items-center justify-center rounded-md border border-border bg-surface p-1.5 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary"
+          >
+            <PanelRightOpen className="size-4" />
+          </button>
         </div>
-      </button>
+      </div>
 
       {/* Collapsible body */}
       {hasContent && (
