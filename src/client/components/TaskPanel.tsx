@@ -90,7 +90,7 @@ function TaskRow({ task }: { task: TaskItem }) {
 export default function TaskPanel({ sessionId }: TaskPanelProps) {
   const tasks = useChatStore((s) => s.tasks[sessionId] || [])
   const { chatFontSize } = useAppSettings()
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
 
   const completedCount = tasks.filter((t) => t.status === 'completed').length
   const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length
@@ -108,9 +108,9 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded])
 
-  // Reset to open when switching sessions (sessionId changes)
+  // Auto-collapse when switching sessions (sessionId changes)
   useEffect(() => {
-    setExpanded(true)
+    setExpanded(false)
   }, [sessionId])
 
   if (total === 0) return null
