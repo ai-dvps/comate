@@ -3,12 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
+import { useResizableWidth } from './hooks/use-resizable-width'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
-import FileDrawer from './components/FileDrawer'
-import FilePanel from './components/FilePanel'
+import FilePanel, { ViewedFile } from './components/FilePanel'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import { useWorkspaceStore } from './stores/workspace-store'
@@ -17,12 +17,6 @@ import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
 import { isMacOS } from './lib/platform'
 import { cn } from './components/ui/utils'
-
-export interface ViewedFile {
-  path: string
-  name: string
-  content: string
-}
 
 function App() {
   const { t } = useTranslation('common')
@@ -34,8 +28,8 @@ function App() {
   const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces)
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
-  const [drawerFile, setDrawerFile] = useState<ViewedFile | null>(null)
-  const [pinnedFile, setPinnedFile] = useState<ViewedFile | null>(null)
+  const [openFiles, setOpenFiles] = useState<ViewedFile[]>([])
+  const [activeFilePath, setActiveFilePath] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isMac, setIsMac] = useState(false)
@@ -66,6 +60,13 @@ function App() {
 
   const handleFileClick = async (path: string, name: string) => {
     if (!activeWorkspaceId) return
+
+    const existing = openFiles.find((f) => f.path === path)
+    if (existing) {
+      setActiveFilePath(path)
+      return
+    }
+
     try {
       const res = await fetch(
         `/api/workspaces/${activeWorkspaceId}/files/content?path=${encodeURIComponent(path)}`
@@ -77,7 +78,8 @@ function App() {
         name,
         content: data.isBinary ? '[Binary file]' : data.content,
       }
-      setDrawerFile(file)
+      setOpenFiles((prev) => [...prev, file])
+      setActiveFilePath(path)
     } catch (err) {
       console.error('Failed to load file:', err)
     }
@@ -88,20 +90,43 @@ function App() {
     console.log(`Double-clicked file: ${name} — attach to chat context (deferred)`)
   }
 
-  const copyFileContent = (file: ViewedFile | null) => {
+  const handleCloseFile = (path: string) => {
+    setOpenFiles((prev) => {
+      const next = prev.filter((f) => f.path !== path)
+      if (activeFilePath === path && next.length > 0) {
+        const closedIndex = prev.findIndex((f) => f.path === path)
+        const nextIndex = Math.min(closedIndex, next.length - 1)
+        setActiveFilePath(next[nextIndex].path)
+      } else if (next.length === 0) {
+        setActiveFilePath('')
+      }
+      return next
+    })
+  }
+
+  const handleSelectFile = (path: string) => {
+    setActiveFilePath(path)
+  }
+
+  const copyFileContent = () => {
+    const file = openFiles.find((f) => f.path === activeFilePath)
     if (file?.content) {
       navigator.clipboard.writeText(file.content)
     }
   }
 
-  const handlePinDrawer = () => {
-    if (drawerFile) {
-      setPinnedFile(drawerFile)
-      setDrawerFile(null)
-    }
-  }
+  useEffect(() => {
+    setOpenFiles([])
+    setActiveFilePath('')
+  }, [activeWorkspaceId])
 
   const { width: sidebarWidth, setWidth: setSidebarWidth } = useSidebarWidth()
+  const { width: filePanelWidth, setWidth: setFilePanelWidth } = useResizableWidth({
+    storageKey: 'file-panel-width',
+    defaultWidth: 384,
+    minWidth: 200,
+    maxWidth: 600,
+  })
 
   const handleDrag = (e: React.MouseEvent) => {
     if (!isMac || e.button !== 0) return
@@ -176,11 +201,15 @@ function App() {
           onFileDoubleClick={handleFileDoubleClick}
         />
 
-        {/* Optional pinned file panel */}
+        {/* File panel */}
         <FilePanel
-          file={pinnedFile}
-          onClose={() => setPinnedFile(null)}
-          onCopy={() => copyFileContent(pinnedFile)}
+          files={openFiles}
+          activeFilePath={activeFilePath}
+          width={filePanelWidth}
+          onSelectFile={handleSelectFile}
+          onCloseFile={handleCloseFile}
+          onWidthChange={setFilePanelWidth}
+          onCopy={copyFileContent}
         />
 
         {/* Main Area — keep all open workspace panels mounted */}
@@ -206,14 +235,6 @@ function App() {
           )}
         </main>
       </div>
-
-      {/* File Drawer (overlay) */}
-      <FileDrawer
-        file={drawerFile}
-        onClose={() => setDrawerFile(null)}
-        onPin={handlePinDrawer}
-        onCopy={() => copyFileContent(drawerFile)}
-      />
 
       {showSettings && (
         <SettingsPanel
