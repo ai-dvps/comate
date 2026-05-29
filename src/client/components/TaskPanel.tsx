@@ -116,7 +116,7 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
   const progressPercent = total > 0 ? (completedCount / total) * 100 : 0
 
   return (
-    <div className="flex-shrink-0 border-b border-border/30 bg-bg">
+    <div className="relative flex-shrink-0 border-b border-border/30 bg-bg z-20">
       {/* Collapsed bar */}
       <button
         onClick={toggle}
@@ -149,9 +149,9 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
         )}
       </button>
 
-      {/* Expanded panel */}
+      {/* Expanded popup panel */}
       {expanded && (
-        <div className="border-t border-border/20 bg-surface/30">
+        <div className="absolute top-full left-0 right-0 border-b border-x border-border/30 rounded-b-lg bg-bg shadow-lg max-h-64 overflow-y-auto">
           {tasks.length === 0 ? (
             <div className="px-4 py-3 text-sm text-text-tertiary">
               No tasks yet.
