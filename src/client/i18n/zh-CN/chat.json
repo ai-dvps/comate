@@ -74,5 +74,15 @@
     "turn": "本轮",
     "session": "累计",
     "context": "上下文"
-  }
+  },
+  "searchTodos": "搜索待办...",
+  "loadingTodos": "正在加载待办...",
+  "noSearchResults": "没有匹配的待办。",
+  "noTodos": "还没有待办。",
+  "createTodoPrompt": "在下方创建一个。",
+  "newTodoPlaceholder": "添加待办...",
+  "startSession": "开始会话",
+  "startSessionConfirm": "开始名为 \"{{name}}\" 的新会话？",
+  "goToSession": "前往会话",
+  "deleteTodo": "删除待办"
 }
