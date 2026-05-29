@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import Sidebar from './components/Sidebar'
+import { useSidebarWidth } from './hooks/use-sidebar-width'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 import ChatPanel from './components/ChatPanel'
@@ -100,6 +101,8 @@ function App() {
     }
   }
 
+  const { width: sidebarWidth, setWidth: setSidebarWidth } = useSidebarWidth()
+
   const handleDrag = (e: React.MouseEvent) => {
     if (!isMac || e.button !== 0) return
     getCurrentWindow().startDragging().catch(() => {})
@@ -167,6 +170,8 @@ function App() {
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
+          width={sidebarWidth}
+          onWidthChange={setSidebarWidth}
           onFileClick={handleFileClick}
           onFileDoubleClick={handleFileDoubleClick}
         />
