@@ -33,11 +33,6 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    if (input.detail && input.detail.trim().length > 2000) {
-      res.status(400).json({ error: 'detail must be 2000 characters or less' });
-      return;
-    }
-
     const todo = store.createTodo(workspaceId, input);
     res.status(201).json({ todo });
   } catch (error) {
@@ -59,11 +54,6 @@ router.put('/:todoId', async (req, res) => {
 
     if (input.text && input.text.trim().length > 500) {
       res.status(400).json({ error: 'text must be 500 characters or less' });
-      return;
-    }
-
-    if (input.detail && input.detail.trim().length > 2000) {
-      res.status(400).json({ error: 'detail must be 2000 characters or less' });
       return;
     }
 

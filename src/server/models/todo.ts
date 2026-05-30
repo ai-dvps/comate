@@ -4,7 +4,6 @@ export interface Todo {
   id: string;
   workspaceId: string;
   text: string;
-  detail: string;
   status: TodoStatus;
   sessionId: string | null;
   createdAt: string;
@@ -13,12 +12,10 @@ export interface Todo {
 
 export interface CreateTodoInput {
   text: string;
-  detail?: string;
 }
 
 export interface UpdateTodoInput {
   text?: string;
-  detail?: string;
   status?: TodoStatus;
   sessionId?: string | null;
 }

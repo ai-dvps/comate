@@ -7,7 +7,6 @@ export interface Todo {
   id: string;
   workspaceId: string;
   text: string;
-  detail: string;
   status: TodoStatus;
   sessionId: string | null;
   createdAt: string;
@@ -21,8 +20,8 @@ interface TodoState {
   searchQuery: string;
 
   fetchTodos: (workspaceId: string) => Promise<void>;
-  createTodo: (workspaceId: string, text: string, detail?: string) => Promise<Todo | null>;
-  updateTodo: (todoId: string, patch: Partial<Pick<Todo, 'text' | 'detail' | 'status' | 'sessionId'>>) => Promise<Todo | null>;
+  createTodo: (workspaceId: string, text: string) => Promise<Todo | null>;
+  updateTodo: (todoId: string, patch: Partial<Pick<Todo, 'text' | 'status' | 'sessionId'>>) => Promise<Todo | null>;
   deleteTodo: (todoId: string) => Promise<boolean>;
   changeStatus: (todoId: string, status: TodoStatus) => Promise<void>;
   setSearchQuery: (query: string) => void;
@@ -70,7 +69,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
   },
 
-  createTodo: async (workspaceId: string, text: string, detail?: string) => {
+  createTodo: async (workspaceId: string, text: string) => {
     const trimmedText = text.trim();
     if (!trimmedText) return null;
 
@@ -78,7 +77,6 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       id: `temp-${Date.now()}`,
       workspaceId,
       text: trimmedText,
-      detail: detail?.trim() ?? '',
       status: 'pending',
       sessionId: null,
       createdAt: new Date().toISOString(),
@@ -96,7 +94,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       const res = await fetch(`/api/workspaces/${workspaceId}/todos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmedText, detail: detail?.trim() }),
+        body: JSON.stringify({ text: trimmedText }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -244,10 +242,6 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     const todos = state.todosByWorkspace[workspaceId] || [];
     const query = state.searchQuery.trim().toLowerCase();
     if (!query) return todos;
-    return todos.filter(
-      (t) =>
-        t.text.toLowerCase().includes(query) ||
-        t.detail.toLowerCase().includes(query)
-    );
+    return todos.filter((t) => t.text.toLowerCase().includes(query));
   },
 }));
