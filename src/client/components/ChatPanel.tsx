@@ -5,7 +5,6 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
-import ApprovalModeToggle from './ApprovalModeToggle'
 import SubagentDrawer from './SubagentDrawer'
 import TaskPanel from './TaskPanel'
 import TokenUsageBar from './TokenUsageBar'
@@ -256,12 +255,6 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           </span>
           <span className="text-text-tertiary">/</span>
           <span className="text-text-tertiary">{modelName}</span>
-          {activeSessionId && !isBotSession && (
-            <>
-              <span className="text-text-tertiary">/</span>
-              <ApprovalModeToggle workspaceId={workspaceId} sessionId={activeSessionId} />
-            </>
-          )}
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
+import ApprovalModeToggle from './ApprovalModeToggle'
 
 interface RefreshMeta {
   lastRefreshedAt: Date | null
@@ -451,6 +452,10 @@ export default function PromptInput({
                   </button>
                 }
               />
+              <div className="flex-1" />
+              {sessionId && !isBotSession && (
+                <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} />
+              )}
             </div>
             <div className="relative">
               <textarea
