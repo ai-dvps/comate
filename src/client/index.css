@@ -174,4 +174,14 @@
     from { background-position: 100% center; }
     to { background-position: 0% center; }
   }
+
+  /* Indeterminate progress bar for CompactingIndicator */
+  .animate-indeterminate-progress {
+    animation: indeterminate-progress 1.5s linear infinite;
+  }
+
+  @keyframes indeterminate-progress {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(300%); }
+  }
 }
