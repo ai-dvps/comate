@@ -137,6 +137,25 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/sessions/:sessionId/messages/latest
+// Returns messages newer than a given message ID
+router.get('/sessions/:sessionId/messages/latest', async (req, res) => {
+  try {
+    const workspaceId = (req.params as unknown as { id: string }).id;
+    const sessionId = req.params.sessionId;
+    const afterMessageId = req.query.afterMessageId as string | undefined;
+    const { messages, tasks } = await chatService.loadMessagesAfter(sessionId, workspaceId, afterMessageId);
+    res.json({ messages, tasks });
+  } catch (error) {
+    console.error('Failed to load latest messages:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to load latest messages' });
+  }
+});
+
 // GET /api/workspaces/:id/sessions/:sessionId/stream
 // Long-lived SSE subscription for streaming output
 router.get('/sessions/:sessionId/stream', async (req, res) => {

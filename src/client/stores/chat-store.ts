@@ -179,6 +179,7 @@ interface ChatState {
     offset: number,
     limit: number,
   ) => Promise<void>
+  refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
   setWindowCap: (cap: number) => void
 }
 
@@ -1860,9 +1861,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         domCache: { ...state.domCache, [workspaceId]: nextCache },
       }
     })
-    // Auto-subscribe when switching to a session
+    // Auto-subscribe when switching to a session (skip for bot sessions)
     if (sessionId) {
-      subscribeToSession(set, get, workspaceId, sessionId)
+      const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
+      if (session?.source !== 'wecom') {
+        subscribeToSession(set, get, workspaceId, sessionId)
+      }
     }
   },
 
@@ -1948,6 +1952,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {
+    // Defensive guard: do not send messages to bot sessions
+    const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
+    if (session?.source === 'wecom') {
+      console.warn('[sendMessage] blocked: cannot send messages to bot sessions')
+      return
+    }
+
     // Ensure subscription is open
     if (!sessionSubscriptions.has(sessionId)) {
       subscribeToSession(set, get, workspaceId, sessionId)
@@ -2188,6 +2199,53 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...state.isLoadingOlderMessages,
           [sessionId]: false,
         },
+      }))
+    }
+  },
+
+  refreshBotMessages: async (workspaceId: string, sessionId: string) => {
+    const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
+    if (session?.source !== 'wecom') {
+      console.warn('[refreshBotMessages] blocked: only bot sessions support refresh')
+      return
+    }
+
+    const currentMessages = get().messages[sessionId] || []
+    const lastMessage = currentMessages[currentMessages.length - 1]
+    const afterMessageId = lastMessage?.id
+
+    try {
+      set((state) => ({
+        isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true },
+      }))
+
+      const url = new URL(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}/messages/latest`,
+        window.location.origin,
+      )
+      if (afterMessageId) {
+        url.searchParams.set('afterMessageId', afterMessageId)
+      }
+
+      const res = await fetch(url.pathname + url.search)
+      if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
+      const data = (await res.json()) as { messages?: unknown; tasks?: TaskItem[] }
+      const newMessages = sanitizeMessages(data.messages)
+
+      set((state) => {
+        const current = state.messages[sessionId] || []
+        const existingIds = new Set(current.map((m) => m.id))
+        const uniqueNew = newMessages.filter((m) => !existingIds.has(m.id))
+        const merged = [...current, ...uniqueNew]
+        return {
+          messages: { ...state.messages, [sessionId]: merged },
+          isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
+        }
+      })
+    } catch (err) {
+      console.error('Failed to refresh bot messages:', err)
+      set((state) => ({
+        isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
       }))
     }
   },
