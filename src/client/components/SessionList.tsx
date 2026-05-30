@@ -246,15 +246,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                         {t('draft')}
                       </span>
                     )}
-                    {session.approvalMode && session.approvalMode !== 'manual' && (
-                      <span className={`px-1 py-0.5 text-[9px] rounded ${
-                        session.approvalMode === 'auto'
-                          ? 'bg-red-500/20 text-red-400'
-                          : 'bg-amber-500/20 text-amber-400'
-                      }`}>
-                        {t(`approvalMode.${session.approvalMode}`)}
-                      </span>
-                    )}
                     {session.source === 'wecom' && (
                       <img
                         src="/wecom-icon.svg"
@@ -272,6 +263,15 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                     {session.isWip && (
                       <span className="px-1 py-0.5 text-[9px] bg-purple-500/20 text-purple-400 rounded">
                         {t('wip')}
+                      </span>
+                    )}
+                    {session.approvalMode && session.approvalMode !== 'manual' && (
+                      <span className={`px-1 py-0.5 text-[9px] rounded ${
+                        session.approvalMode === 'auto'
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-amber-500/20 text-amber-400'
+                      }`}>
+                        {t(`approvalMode.${session.approvalMode}`)}
                       </span>
                     )}
                     <span className="text-[10px] text-text-tertiary/60">
