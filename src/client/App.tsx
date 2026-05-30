@@ -12,6 +12,7 @@ import FilePanel, { ViewedFile } from './components/FilePanel'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import { useWorkspaceStore } from './stores/workspace-store'
+import { useProviderStore } from './stores/provider-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
@@ -37,6 +38,13 @@ function App() {
     ok: true,
     checking: true,
   })
+  const [providerCheck, setProviderCheck] = useState<{ ok: boolean; checking: boolean; error?: string }>({
+    ok: true,
+    checking: true,
+  })
+
+  const fetchProviders = useProviderStore((s) => s.fetchProviders)
+  const detectProviders = useProviderStore((s) => s.detectProviders)
 
   const checkClaudeCli = async () => {
     try {
@@ -52,9 +60,28 @@ function App() {
     }
   }
 
+  const initProviders = async () => {
+    try {
+      await fetchProviders()
+      const currentProviders = useProviderStore.getState().providers
+      if (currentProviders.length === 0) {
+        await detectProviders()
+        const afterDetect = useProviderStore.getState().providers
+        if (afterDetect.length === 0) {
+          setProviderCheck({ ok: false, checking: false, error: t('provider.noProviderConfigured') })
+          return
+        }
+      }
+      setProviderCheck({ ok: true, checking: false })
+    } catch {
+      setProviderCheck({ ok: false, checking: false, error: t('provider.noProviderConfigured') })
+    }
+  }
+
   useEffect(() => {
     fetchWorkspaces()
     checkClaudeCli()
+    initProviders()
     isMacOS().then(setIsMac)
   }, [fetchWorkspaces])
 
@@ -171,6 +198,19 @@ function App() {
 
   return (
     <div className={`h-screen flex flex-col bg-bg text-text-primary ${fontSizeClass(uiFontSize)} overflow-x-hidden`}>
+      {/* Provider Error Banner */}
+      {!providerCheck.ok && !providerCheck.checking && (
+        <div className="flex-shrink-0 bg-destructive/10 border-b border-destructive/20 px-4 py-2 flex items-center justify-between gap-3">
+          <span className="text-xs text-destructive">{providerCheck.error}</span>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="px-3 py-1 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors flex-shrink-0"
+          >
+            {t('provider.configure')}
+          </button>
+        </div>
+      )}
+
       {/* Top Bar */}
       <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50 relative z-30">
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>

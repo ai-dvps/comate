@@ -68,5 +68,10 @@
   "approvalError": "Approval error",
   "interruptError": "Interrupt error",
   "requestFailed": "Request failed",
-  "failedToUpdateApprovalMode": "Failed to update approval mode"
+  "failedToUpdateApprovalMode": "Failed to update approval mode",
+  "failedToUpdateSession": "Failed to update session",
+  "provider": {
+    "noProviderConfigured": "No LLM provider configured. Go to Settings → Providers to add one.",
+    "configure": "Configure Provider"
+  }
 }

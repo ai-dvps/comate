@@ -70,6 +70,13 @@
     "completed": "Completed",
     "error": "Error"
   },
+  "provider": {
+    "default": "Default",
+    "noDefault": "No default configured",
+    "selectorTitle": "Select LLM provider for this session",
+    "selectProvider": "Provider",
+    "noProviders": "No providers configured. Add one in Settings → Providers."
+  },
   "agent": "Agent",
   "agentLabel": "Agent: {{type}}",
   "prompt": "Prompt",
