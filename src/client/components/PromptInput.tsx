@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw } from 'lucide-react'
+import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
@@ -53,6 +53,7 @@ interface PromptInputProps {
   isBotSession?: boolean
   refreshMeta?: RefreshMeta
   botName?: string
+  wecomUser?: { userId: string; lastSeenAt: string | null } | null
 }
 
 export default function PromptInput({
@@ -68,6 +69,7 @@ export default function PromptInput({
   isBotSession = false,
   refreshMeta,
   botName,
+  wecomUser,
 }: PromptInputProps) {
   const { t } = useTranslation('chat')
   const input = useChatStore((s) =>
@@ -353,31 +355,46 @@ export default function PromptInput({
   return (
     <div className="max-w-3xl mx-auto px-4 py-4">
       {isBotSession ? (
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <img src="/wecom-icon.svg" alt="WeCom" className="w-4 h-4 flex-shrink-0" />
-            {botName ? (
-              <span className="text-sm font-medium text-text-secondary truncate">{botName}</span>
-            ) : (
-              <span className="text-sm text-text-tertiary truncate">{t('notSet')}</span>
-            )}
-            <span className="text-xs text-text-tertiary truncate">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <img src="/wecom-icon.svg" alt="WeCom" className="w-4 h-4 flex-shrink-0" />
+              {botName ? (
+                <span className="text-sm font-medium text-text-secondary truncate">{botName}</span>
+              ) : (
+                <span className="text-sm text-text-tertiary truncate">{t('notSet')}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <User className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+              <span className="text-sm text-text-secondary truncate">
+                {wecomUser?.userId ?? '...'}
+              </span>
+              {wecomUser?.lastSeenAt && (
+                <span className="text-xs text-text-tertiary flex-shrink-0">
+                  · {formatRelativeDate(new Date(wecomUser.lastSeenAt), t)}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-text-tertiary truncate">
               {getRefreshStatusText(refreshMeta, t)}
             </span>
+            <button
+              onClick={onRefresh}
+              disabled={!hasSession || refreshMeta?.isRefreshing}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover active:bg-surface-active active:scale-[0.98] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+              title={t('refresh')}
+            >
+              {refreshMeta?.isRefreshing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              <span>{t('refresh')}</span>
+            </button>
           </div>
-          <button
-            onClick={onRefresh}
-            disabled={!hasSession || refreshMeta?.isRefreshing}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-            title={t('refresh')}
-          >
-            {refreshMeta?.isRefreshing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
-            <span>{t('refresh')}</span>
-          </button>
         </div>
       ) : (
         <div className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">

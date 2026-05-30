@@ -156,6 +156,34 @@ router.get('/sessions/:sessionId/messages/latest', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/sessions/:sessionId/wecom-user
+// Returns WeCom user info for bot sessions
+router.get('/sessions/:sessionId/wecom-user', async (req, res) => {
+  try {
+    const workspaceId = (req.params as unknown as { id: string }).id;
+    const sessionId = req.params.sessionId;
+    const session = await chatService.getSession(sessionId, workspaceId);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    const encryptedUserId = session.name;
+    const mapping = store.getWecomUserMapping(encryptedUserId);
+    const workspaceUser = store.getWecomWorkspaceUser(workspaceId, encryptedUserId);
+    res.json({
+      userId: mapping ?? encryptedUserId,
+      lastSeenAt: workspaceUser?.lastSeenAt ?? null,
+    });
+  } catch (error) {
+    console.error('Failed to get WeCom user:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to get WeCom user' });
+  }
+});
+
 // GET /api/workspaces/:id/sessions/:sessionId/stream
 // Long-lived SSE subscription for streaming output
 router.get('/sessions/:sessionId/stream', async (req, res) => {
