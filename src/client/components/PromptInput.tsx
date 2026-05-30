@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, X, Square, Loader2, SlashSquare, Paperclip } from 'lucide-react'
+import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
@@ -12,10 +12,12 @@ interface PromptInputProps {
   sessionId: string
   onSend: (content: string) => void
   onStop: () => void
+  onRefresh?: () => void
   disabled?: boolean
   isStreaming?: boolean
   isInterrupting?: boolean
   hasSession?: boolean
+  isBotSession?: boolean
 }
 
 export default function PromptInput({
@@ -23,10 +25,12 @@ export default function PromptInput({
   sessionId,
   onSend,
   onStop,
+  onRefresh,
   disabled = false,
   isStreaming = false,
   isInterrupting = false,
   hasSession = false,
+  isBotSession = false,
 }: PromptInputProps) {
   const { t } = useTranslation('chat')
   const input = useChatStore((s) =>
@@ -304,11 +308,11 @@ export default function PromptInput({
   }
 
   const canSend =
-    input.trim().length > 0 && hasSession && !isStreaming && !disabled
-  const showClear = input.length > 0
+    input.trim().length > 0 && hasSession && !isStreaming && !disabled && !isBotSession
+  const showClear = input.length > 0 && !isBotSession
   const showGhost = !!argumentHint && input === lastInsertedCommand
-  const commandsDisabled = disabled || isStreaming
-  const filesDisabled = disabled || isStreaming || !workspaceId
+  const commandsDisabled = disabled || isStreaming || isBotSession
+  const filesDisabled = disabled || isStreaming || !workspaceId || isBotSession
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-4">
@@ -374,8 +378,9 @@ export default function PromptInput({
               handleInputChange(e.target.value, e.target.selectionStart)
             }
             onKeyDown={handleKeyDown}
-            placeholder={t('placeholder')}
-            disabled={disabled || isStreaming}
+            placeholder={isBotSession ? t('botSessionPlaceholder') : t('placeholder')}
+            disabled={disabled || isStreaming || isBotSession}
+            title={isBotSession ? t('botSessionTooltip') : undefined}
             rows={1}
             className="w-full bg-transparent border-0 px-4 py-3 pr-24 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
             style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
@@ -454,6 +459,15 @@ export default function PromptInput({
                 </div>
               </PopoverContent>
             </Popover>
+          ) : isBotSession ? (
+            <button
+              onClick={onRefresh}
+              disabled={!hasSession}
+              className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={t('refresh')}
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
           ) : (
             <button
               onClick={handleSend}

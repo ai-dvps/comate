@@ -25,6 +25,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const fetchSessions = useChatStore((s) => s.fetchSessions)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const loadMessages = useChatStore((s) => s.loadMessages)
+  const refreshBotMessages = useChatStore((s) => s.refreshBotMessages)
   const resolveApproval = useChatStore((s) => s.resolveApproval)
   const interruptSession = useChatStore((s) => s.interruptSession)
   const cleanupWorkspace = useChatStore((s) => s.cleanupWorkspace)
@@ -33,6 +34,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     s.workspaces.find((w) => w.id === workspaceId)
   )
   const activeSession = sessions.find((s) => s.id === activeSessionId)
+  const isBotSession = activeSession?.source === 'wecom'
   const modelName = (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
 
   const [isInterrupting, setIsInterrupting] = useState(false)
@@ -78,6 +80,11 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const handleSend = (content: string) => {
     if (!activeSessionId) return
     sendMessage(workspaceId, activeSessionId, content)
+  }
+
+  const handleRefresh = async () => {
+    if (!activeSessionId) return
+    await refreshBotMessages(workspaceId, activeSessionId)
   }
 
   const handleStop = async () => {
@@ -264,10 +271,12 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                 sessionId={activeSessionId || ''}
                 onSend={handleSend}
                 onStop={handleStop}
-                disabled={!activeSessionId}
+                onRefresh={handleRefresh}
+                disabled={!activeSessionId || isBotSession}
                 isStreaming={isStreaming}
                 isInterrupting={isInterrupting}
                 hasSession={!!activeSessionId}
+                isBotSession={isBotSession}
               />
             )}
           </div>

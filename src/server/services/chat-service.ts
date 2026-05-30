@@ -244,6 +244,44 @@ export class ChatService {
     return { messages: normalized, tasks };
   }
 
+  async loadMessagesAfter(
+    sessionId: string,
+    workspaceId: string,
+    afterMessageId?: string,
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[] }> {
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+    }
+
+    const options: import('@anthropic-ai/claude-agent-sdk').GetSessionMessagesOptions = {
+      dir: normalizeWindowsPath(workspace.folderPath),
+    };
+
+    const sdkMessages = await this.sdkClient.getSessionMessages(sessionId, options);
+
+    let sliceStart = 0;
+    if (afterMessageId) {
+      const idx = sdkMessages.findIndex((msg: SessionMessage) => msg.uuid === afterMessageId);
+      if (idx >= 0) {
+        sliceStart = idx + 1;
+      }
+    }
+
+    const sliced = sdkMessages.slice(sliceStart);
+
+    const normalized: ChatMessage[] = [];
+    sliced.forEach((msg: SessionMessage, index: number) => {
+      const chatMessage = normalizeSessionMessage(msg);
+      if (chatMessage) {
+        chatMessage.timestamp = Date.now() - (sliced.length - index) * 1000;
+        normalized.push(chatMessage);
+      }
+    });
+    const tasks = scanSdkMessagesForTasks(sliced);
+    return { messages: normalized, tasks };
+  }
+
   // Session runtime management
 
   async getOrCreateRuntime(
