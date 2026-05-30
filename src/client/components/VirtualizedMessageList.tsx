@@ -18,6 +18,7 @@ import { ConversationEmptyState } from './ai-elements/conversation'
 import { MutedSystemNote } from './ai-elements/muted-system-note'
 import SlashCommandMessage from './ai-elements/slash-command-message'
 import { Button } from './ui/button'
+import CompactingIndicator from './CompactingIndicator'
 import ChatMessageRenderer, {
   adaptChatMessage,
   buildResultMap,
@@ -286,10 +287,7 @@ export default function VirtualizedMessageList({
         </div>
         {isCompacting && (
           <div className="px-3 pb-3 max-w-3xl mx-auto w-full">
-            <div className="my-2 flex items-center gap-2 text-xs text-text-tertiary">
-              <span className="inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              <span>Compacting conversation…</span>
-            </div>
+            <CompactingIndicator sessionId={sessionId} />
           </div>
         )}
       </div>

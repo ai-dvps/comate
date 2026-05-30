@@ -134,6 +134,7 @@ interface ChatState {
   activeSessionIds: Record<string, string>
   isStreaming: Record<string, boolean>
   isCompacting: Record<string, boolean>
+  compactingStartTime: Record<string, number>
   isLoadingSessions: Record<string, boolean>
   isLoadingMessages: Record<string, boolean>
   approvalQueue: Record<string, PendingItem[]>
@@ -762,6 +763,7 @@ function handleSseEvent(
         }
         if (state.isCompacting[sessionId]) {
           updates.isCompacting = { ...state.isCompacting, [sessionId]: false }
+          updates.compactingStartTime = { ...state.compactingStartTime, [sessionId]: 0 }
         }
         return updates
       })
@@ -1068,9 +1070,14 @@ function handleSseEvent(
               ),
             },
             isCompacting: { ...state.isCompacting, [sessionId]: false },
+            compactingStartTime: { ...state.compactingStartTime, [sessionId]: 0 },
           }
         }
-        return { ...withMessage, isCompacting: { ...state.isCompacting, [sessionId]: false } }
+        return {
+          ...withMessage,
+          isCompacting: { ...state.isCompacting, [sessionId]: false },
+          compactingStartTime: { ...state.compactingStartTime, [sessionId]: 0 },
+        }
       })
       return
     }
@@ -1078,6 +1085,9 @@ function handleSseEvent(
       const active = data.active === true
       set((state) => ({
         isCompacting: { ...state.isCompacting, [sessionId]: active },
+        compactingStartTime: active
+          ? { ...state.compactingStartTime, [sessionId]: Date.now() }
+          : { ...state.compactingStartTime, [sessionId]: 0 },
       }))
       return
     }
@@ -1698,6 +1708,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeSessionIds: {},
   isStreaming: {},
   isCompacting: {},
+  compactingStartTime: {},
   isLoadingSessions: {},
   isLoadingMessages: {},
   approvalQueue: {},

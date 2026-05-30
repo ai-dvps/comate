@@ -27,6 +27,7 @@ import ChatMessageRenderer, {
   buildResultMap,
   CompactBoundary,
 } from './ChatMessageRenderer'
+import CompactingIndicator from './CompactingIndicator'
 
 const VIRTUALIZATION_THRESHOLD = 50
 
@@ -51,7 +52,6 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] || [])
-  const isCompacting = useChatStore((s) => s.isCompacting[sessionId] || false)
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
   const visibleMessages = useMemo(
     () => messages.filter((m) => !isToolResultOnly(m)),
@@ -107,12 +107,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
     <Conversation>
       <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)}`}>
         {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId))}
-        {isCompacting && (
-          <div className="my-2 flex items-center gap-2 text-xs text-text-tertiary">
-            <span className="inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            <span>Compacting conversation…</span>
-          </div>
-        )}
+        <CompactingIndicator sessionId={sessionId} />
       </ConversationContent>
       <ConversationScrollButton />
     </Conversation>
