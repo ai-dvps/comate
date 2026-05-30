@@ -27,14 +27,19 @@ router.get('/sessions', async (req, res) => {
 router.post('/sessions', async (req, res) => {
   try {
     const workspaceId = (req.params as { id: string }).id;
-    const { name } = req.body;
+    const { name, approvalMode } = req.body;
 
     if (!name || typeof name !== 'string') {
       res.status(400).json({ error: 'name is required' });
       return;
     }
 
-    const session = await chatService.createSession({ workspaceId, name });
+    if (approvalMode !== undefined && !['auto', 'readonly', 'manual'].includes(approvalMode)) {
+      res.status(400).json({ error: 'approvalMode must be one of: auto, readonly, manual' });
+      return;
+    }
+
+    const session = await chatService.createSession({ workspaceId, name, approvalMode });
     res.status(201).json(session);
   } catch (error) {
     console.error('Failed to create session:', error);
@@ -307,6 +312,37 @@ router.post('/sessions/:sessionId/interrupt', async (req, res) => {
       return;
     }
     res.status(500).json({ error: 'Failed to interrupt' });
+  }
+});
+
+// POST /api/workspaces/:id/sessions/:sessionId/approval-mode
+// Change the approval mode for a session (mid-session or persist for next start)
+router.post('/sessions/:sessionId/approval-mode', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const workspaceId = (req.params as unknown as { id: string }).id;
+  const { approvalMode } = req.body;
+
+  if (!approvalMode || !['auto', 'readonly', 'manual'].includes(approvalMode)) {
+    res.status(400).json({ error: 'approvalMode must be one of: auto, readonly, manual' });
+    return;
+  }
+
+  try {
+    // Persist to store so it survives restart
+    store.updateLocalSession(sessionId, { approvalMode });
+
+    // If runtime is active, update it in-memory
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    const active = !!runtime;
+    if (runtime) {
+      runtime.setApprovalMode(approvalMode);
+    }
+
+    diagLog(`[Route] setApprovalMode sessionId=${sessionId} mode=${approvalMode} active=${active}`);
+    res.json({ ok: true, active });
+  } catch (error) {
+    console.error('Failed to set approval mode:', error);
+    res.status(500).json({ error: 'Failed to set approval mode' });
   }
 });
 
