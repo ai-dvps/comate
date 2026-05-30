@@ -16,6 +16,7 @@ import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import { buildClaudeEnv, getPathEnvKey } from '../utils/sdk-env.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
+import { store as workspaceStore } from '../storage/sqlite-store.js';
 
 interface FsCommandEntry {
   filePath: string;
@@ -213,8 +214,35 @@ export class CommandsService {
   private buildSdkOptions(workspace: Workspace): Options {
     const claudeSettings = loadClaudeSettings();
     const { env, sources: envSources } = buildClaudeEnv(claudeSettings);
-    if (workspace.settings.apiKey) {
-      env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
+
+    // Use default provider for command discovery (no session context)
+    const provider = workspaceStore.getDefaultProvider();
+    if (provider) {
+      env.ANTHROPIC_BASE_URL = provider.baseUrl;
+      env.ANTHROPIC_API_KEY = provider.authToken;
+      if (provider.model) {
+        env.ANTHROPIC_MODEL = provider.model;
+      }
+      if (provider.defaultOpusModel) {
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.defaultOpusModel;
+      }
+      if (provider.defaultSonnetModel) {
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.defaultSonnetModel;
+      }
+      if (provider.defaultHaikuModel) {
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.defaultHaikuModel;
+      }
+      if (provider.subagentModel) {
+        env.CLAUDE_CODE_SUBAGENT_MODEL = provider.subagentModel;
+      }
+      if (provider.effortLevel) {
+        env.CLAUDE_CODE_EFFORT_LEVEL = provider.effortLevel;
+      }
+      if (provider.customEnvVars) {
+        for (const [key, value] of Object.entries(provider.customEnvVars)) {
+          env[key] = value;
+        }
+      }
     }
 
     // Diagnostic: log Windows home-dir env vars
@@ -252,7 +280,7 @@ export class CommandsService {
       cwd: workspace.folderPath,
       env,
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-      model: workspace.settings.model || undefined,
+      model: provider?.model || undefined,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {
         const trimmed = data.trim();
