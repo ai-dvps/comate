@@ -6,6 +6,7 @@ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 interface ApprovalModeToggleProps {
   workspaceId: string
   sessionId: string
+  disabled?: boolean
 }
 
 const MODE_META: Record<
@@ -45,7 +46,7 @@ const MODE_META: Record<
   },
 }
 
-export default function ApprovalModeToggle({ workspaceId, sessionId }: ApprovalModeToggleProps) {
+export default function ApprovalModeToggle({ workspaceId, sessionId, disabled = false }: ApprovalModeToggleProps) {
   const { t } = useTranslation('chat')
 
   const session = useChatStore((s) =>
@@ -68,7 +69,8 @@ export default function ApprovalModeToggle({ workspaceId, sessionId }: ApprovalM
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border cursor-pointer active:scale-[0.97] transition-all ${meta.bg} ${meta.border} ${meta.color} ${meta.hoverBg}`}
+          disabled={disabled}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed ${meta.bg} ${meta.border} ${meta.color} ${meta.hoverBg}`}
           title={t(`approvalMode.${currentMode}Desc`)}
         >
           <Icon className="w-3 h-3" />

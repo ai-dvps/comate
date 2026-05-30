@@ -454,7 +454,7 @@ export default function PromptInput({
               />
               <div className="flex-1" />
               {sessionId && !isBotSession && (
-                <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} />
+                <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming} />
               )}
             </div>
             <div className="relative">
