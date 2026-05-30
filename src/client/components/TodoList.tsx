@@ -136,10 +136,10 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
           throw new Error(data.error || 'Failed to create session');
         }
         const session = await res.json();
-        // Pre-fill draft if detail exists
-        if (todo.detail) {
-          useChatStore.getState().setDraft(session.id, todo.detail);
-        }
+        // Add session to store so it renders in SessionList immediately
+        useChatStore.getState().addSession(workspaceId, session);
+        // Pre-fill draft with detail, falling back to todo text
+        useChatStore.getState().setDraft(session.id, todo.detail.trim() || todo.text);
         // Switch to sessions tab and activate the new session
         setActiveSession(workspaceId, session.id);
         onSessionNavigate?.();
