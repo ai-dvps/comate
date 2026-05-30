@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useFiles } from '../stores/files-store'
-import { ChevronRight, Folder, FileCode, FileJson, FileText, File, Loader2 } from 'lucide-react'
+import { ChevronRight, Folder, FileCode, FileJson, FileText, File, Loader2, X } from 'lucide-react'
 
 interface FileNode {
   name: string
@@ -198,14 +198,27 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* Search input */}
-      <div className="px-3 py-2 border-b border-border/50 flex-shrink-0">
+      <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 relative">
         <input
           type="text"
           value={searchQuery}
           onChange={handleSearchChange}
           placeholder={t('searchFiles')}
-          className="w-full bg-transparent text-xs text-text-primary placeholder:text-text-tertiary outline-none"
+          className="w-full bg-transparent text-xs text-text-primary placeholder:text-text-tertiary outline-none pr-6"
         />
+        {searchQuery.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setSearchQuery('')
+              clear()
+            }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
+            title={t('clear')}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Content */}
