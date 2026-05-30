@@ -8,6 +8,7 @@ import type {
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent, QuestionPayload } from '../types/message.js';
+import type { ApprovalMode } from '../models/session.js';
 import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
@@ -16,6 +17,15 @@ import { diagLog } from '../utils/diag-logger.js';
 
 const RING_BUFFER_CAP = 500;
 diagLog('[SessionRuntime] module loaded');
+
+const READONLY_TOOLS: readonly string[] = [
+  'Read',
+  'Grep',
+  'Glob',
+  'LSP',
+  'WebSearch',
+  'WebFetch',
+];
 
 export class SessionRuntime {
   private sessionId: string;
@@ -49,6 +59,7 @@ export class SessionRuntime {
   private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
   private onSubscribed?: () => void;
   private onUnsubscribed?: () => void;
+  private approvalMode: ApprovalMode = 'manual';
 
   static open(
     sessionId: string,
@@ -88,6 +99,15 @@ export class SessionRuntime {
 
   clearBotEventHandlers(): void {
     this.botEventHandlers.clear();
+  }
+
+  setApprovalMode(mode: ApprovalMode): void {
+    diagLog(`[Runtime ${this.sessionId}] approvalMode changed: ${this.approvalMode} -> ${mode}`);
+    this.approvalMode = mode;
+  }
+
+  getApprovalMode(): ApprovalMode {
+    return this.approvalMode;
   }
 
   private constructor(
@@ -211,6 +231,17 @@ export class SessionRuntime {
             options.signal.addEventListener('abort', onAbort, { once: true });
           }
         });
+      }
+
+      // Check approval mode (after AskUserQuestion guard — questions always require user input)
+      if (this.approvalMode === 'auto') {
+        diagLog(`[Runtime ${this.sessionId}] auto-approve tool=${toolName} requestId=${requestId}`);
+        return { behavior: 'allow', updatedInput: input };
+      }
+
+      if (this.approvalMode === 'readonly' && READONLY_TOOLS.includes(toolName)) {
+        diagLog(`[Runtime ${this.sessionId}] readonly-auto-approve tool=${toolName} requestId=${requestId}`);
+        return { behavior: 'allow', updatedInput: input };
       }
 
       diagLog(`[Runtime ${this.sessionId}] emitPendingApproval requestId=${requestId} toolName=${toolName}`);
