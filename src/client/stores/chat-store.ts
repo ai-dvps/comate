@@ -59,6 +59,7 @@ export interface ChatSession {
   isWip?: boolean
   source?: 'gui' | 'wecom'
   approvalMode?: ApprovalMode
+  providerId?: string
   createdAt: string
   updatedAt: string
   summary?: string
@@ -160,7 +161,7 @@ interface ChatState {
   fetchSessions: (workspaceId: string) => Promise<void>
   touchDomCache: (workspaceId: string, sessionId: string) => string | null
   getDomCache: (workspaceId: string) => string[]
-  createSession: (workspaceId: string, name: string, approvalMode?: ApprovalMode) => Promise<void>
+  createSession: (workspaceId: string, name: string, approvalMode?: ApprovalMode, providerId?: string) => Promise<void>
   addSession: (workspaceId: string, session: ChatSession) => void
   renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
   toggleSessionWip: (workspaceId: string, sessionId: string, isWip: boolean) => Promise<void>
@@ -186,6 +187,7 @@ interface ChatState {
   refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
   setWindowCap: (cap: number) => void
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
+  setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
 }
 
 function generateId(): string {
@@ -1749,12 +1751,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  createSession: async (workspaceId: string, name: string, approvalMode?: ApprovalMode) => {
+  createSession: async (workspaceId: string, name: string, approvalMode?: ApprovalMode, providerId?: string) => {
     try {
+      const body: Record<string, unknown> = { name }
+      if (approvalMode) body.approvalMode = approvalMode
+      if (providerId) body.providerId = providerId
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, approvalMode }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) throw new Error(i18next.t('common:failedToCreateSession', 'Failed to create session'))
       const session: ChatSession = await res.json()
@@ -2303,6 +2308,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : session?.approvalMode
         const nextSessions = workspaceSessions.map((s) =>
           s.id === sessionId ? { ...s, approvalMode: prevMode } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+    }
+  },
+
+  setSessionProvider: async (workspaceId: string, sessionId: string, providerId: string | null) => {
+    // Optimistic update
+    set((state) => {
+      const workspaceSessions = state.sessions[workspaceId] || []
+      const nextSessions = workspaceSessions.map((s) =>
+        s.id === sessionId ? { ...s, providerId: providerId ?? undefined } : s,
+      )
+      return {
+        sessions: { ...state.sessions, [workspaceId]: nextSessions },
+      }
+    })
+
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providerId: providerId ?? undefined }),
+        },
+      )
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+    } catch (err) {
+      console.error('Failed to set session provider:', err)
+      // Revert optimistic update on error
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const session = workspaceSessions.find((s) => s.id === sessionId)
+        const prevProviderId = session?.providerId
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, providerId: prevProviderId } : s,
         )
         return {
           sessions: { ...state.sessions, [workspaceId]: nextSessions },

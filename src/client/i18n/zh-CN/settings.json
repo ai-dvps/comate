@@ -4,6 +4,7 @@
     "general": "通用",
     "appearance": "外观",
     "workspace": "工作区",
+    "providers": "服务商",
     "wecom": "企业微信机器人"
   },
   "general": {
@@ -43,7 +44,6 @@
   },
   "workspaceSections": {
     "basic": "基本信息",
-    "model": "模型与 API",
     "wecom": "企业微信机器人",
     "skills": "技能",
     "mcp": "MCP",
@@ -53,13 +53,7 @@
     "name": "名称",
     "description": "描述",
     "folderPath": "文件夹路径",
-    "folderPathHint": "工作区文件夹无法更改，因为 Claude Code 会话历史绑定于此路径。更改将导致现有会话重置。",
-    "modelOverride": "模型覆盖",
-    "modelOverridePlaceholder": "例如 claude-sonnet-4-5-20250929",
-    "modelOverrideHint": "留空以使用默认模型。",
-    "apiKey": "API 密钥",
-    "apiKeyPlaceholder": "sk-ant-...",
-    "apiKeyHint": "本地存储。留空则回退到环境变量。"
+    "folderPathHint": "工作区文件夹无法更改，因为 Claude Code 会话历史绑定于此路径。更改将导致现有会话重置。"
   },
   "skills": {
     "addSkill": "添加技能",

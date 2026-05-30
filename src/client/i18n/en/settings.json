@@ -4,6 +4,7 @@
     "general": "General",
     "appearance": "Appearance",
     "workspace": "Workspace",
+    "providers": "Providers",
     "wecom": "WeCom Bot"
   },
   "general": {
@@ -43,7 +44,6 @@
   },
   "workspaceSections": {
     "basic": "Basic Info",
-    "model": "Model & API",
     "wecom": "WeCom Bot",
     "skills": "Skills",
     "mcp": "MCP",
@@ -53,13 +53,7 @@
     "name": "Name",
     "description": "Description",
     "folderPath": "Folder Path",
-    "folderPathHint": "The workspace folder cannot be changed because Claude Code session history is bound to this path. Changing it would reset existing sessions.",
-    "modelOverride": "Model Override",
-    "modelOverridePlaceholder": "e.g. claude-sonnet-4-5-20250929",
-    "modelOverrideHint": "Leave empty to use the default model.",
-    "apiKey": "API Key",
-    "apiKeyPlaceholder": "sk-ant-...",
-    "apiKeyHint": "Stored locally. Falls back to environment variable if empty."
+    "folderPathHint": "The workspace folder cannot be changed because Claude Code session history is bound to this path. Changing it would reset existing sessions."
   },
   "skills": {
     "addSkill": "Add Skill",

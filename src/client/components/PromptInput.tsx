@@ -8,6 +8,7 @@ import FilePicker, { type FilePickerHandle } from './FilePicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
 import ApprovalModeToggle from './ApprovalModeToggle'
+import ProviderSelector from './ProviderSelector'
 
 interface RefreshMeta {
   lastRefreshedAt: Date | null
@@ -454,7 +455,10 @@ export default function PromptInput({
               />
               <div className="flex-1" />
               {sessionId && !isBotSession && (
-                <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming} />
+                <>
+                  <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming} />
+                  <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming} />
+                </>
               )}
             </div>
             <div className="relative">

@@ -6,6 +6,7 @@ import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
+import ProviderSection from './ProviderSection'
 import {
   X,
   Eye,
@@ -23,16 +24,14 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-type SettingsTab = 'general' | 'appearance' | 'workspace'
+type SettingsTab = 'general' | 'appearance' | 'workspace' | 'providers'
 
-type WorkspaceSection = 'basic' | 'model' | 'wecom' | 'skills' | 'mcp' | 'hooks'
+type WorkspaceSection = 'basic' | 'wecom' | 'skills' | 'mcp' | 'hooks'
 
 interface WorkspaceFormState {
   name: string
   description: string
   folderPath: string
-  model: string
-  apiKey: string
   skills: { name: string }[]
   mcpServers: { name: string; command: string; args: string }[]
   hooks: { name: string; scriptPath: string }[]
@@ -49,8 +48,6 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     name: workspace.name,
     description: workspace.description,
     folderPath: workspace.folderPath,
-    model: (workspace.settings?.model as string) || '',
-    apiKey: (workspace.settings?.apiKey as string) || '',
     skills: [...workspace.skills],
     mcpServers: workspace.mcpServers.map((m) => ({
       ...m,
@@ -131,7 +128,12 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   // Guard: reset activeTab if it holds a removed value (hot-reload / stale state)
   useEffect(() => {
-    if (activeTab !== 'general' && activeTab !== 'appearance' && activeTab !== 'workspace') {
+    if (
+      activeTab !== 'general' &&
+      activeTab !== 'appearance' &&
+      activeTab !== 'workspace' &&
+      activeTab !== 'providers'
+    ) {
       setActiveTab('workspace')
     }
   }, [activeTab])
@@ -188,8 +190,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
         description: ws.description,
         settings: {
           ...selectedWorkspace?.settings,
-          model: ws.model || undefined,
-          apiKey: ws.apiKey || undefined,
           wecomBotId: ws.wecomBotId || undefined,
           wecomBotSecret: ws.wecomBotSecret || undefined,
           wecomBotEnabled: ws.wecomBotEnabled,
@@ -255,6 +255,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     { id: 'general', label: t('tabs.general') },
     { id: 'appearance', label: t('tabs.appearance') },
     { id: 'workspace', label: t('tabs.workspace') },
+    { id: 'providers', label: t('tabs.providers') },
   ]
 
   const isWorkspaceTab = activeTab === 'workspace'
@@ -319,6 +320,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
             )}
 
             {activeTab === 'appearance' && <AppearanceTab />}
+
+            {activeTab === 'providers' && <ProviderSection />}
 
             {isWorkspaceTab && (
               <WorkspaceTabShell
@@ -922,7 +925,6 @@ function WorkspaceTabShell({
 
   const sections: { id: WorkspaceSection; label: string }[] = [
     { id: 'basic', label: t('workspaceSections.basic') },
-    { id: 'model', label: t('workspaceSections.model') },
     { id: 'wecom', label: t('workspaceSections.wecom') },
     { id: 'skills', label: t('workspaceSections.skills') },
     { id: 'mcp', label: t('workspaceSections.mcp') },
@@ -985,9 +987,6 @@ function WorkspaceTabShell({
               {activeSection === 'basic' && (
                 <BasicInfoSection state={workspaceState} onUpdate={onUpdateWorkspace} />
               )}
-              {activeSection === 'model' && (
-                <ModelApiSection state={workspaceState} onUpdate={onUpdateWorkspace} />
-              )}
               {activeSection === 'wecom' && (
                 <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
               )}
@@ -1035,52 +1034,6 @@ function BasicInfoSection({
           <code className="font-mono text-[11px] whitespace-pre-wrap break-all">{state.folderPath}</code>
         </div>
         <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
-      </div>
-    </div>
-  )
-}
-
-function ModelApiSection({
-  state,
-  onUpdate,
-}: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-}) {
-  const { t } = useTranslation('settings')
-  const [showApiKey, setShowApiKey] = useState(false)
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.modelOverride')}</label>
-        <input
-          value={state.model}
-          onChange={(e) => onUpdate({ model: e.target.value })}
-          placeholder={t('workspace.modelOverridePlaceholder')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.modelOverrideHint')}</p>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.apiKey')}</label>
-        <div className="flex gap-2">
-          <input
-            type={showApiKey ? 'text' : 'password'}
-            value={state.apiKey}
-            onChange={(e) => onUpdate({ apiKey: e.target.value })}
-            placeholder={t('workspace.apiKeyPlaceholder')}
-            className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <button
-            onClick={() => setShowApiKey(!showApiKey)}
-            className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-          >
-            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-        <p className="text-[10px] text-text-tertiary mt-1">
-          {t('workspace.apiKeyHint')}
-        </p>
       </div>
     </div>
   )
