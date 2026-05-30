@@ -408,6 +408,13 @@ export class SqliteStore {
     return rows;
   }
 
+  getWecomUserIdBySession(workspaceId: string, sessionId: string): string | null {
+    const row = this.db
+      .prepare('SELECT wecomUserId FROM wecom_user_sessions WHERE workspaceId = ? AND sessionId = ?')
+      .get(workspaceId, sessionId) as { wecomUserId: string } | undefined;
+    return row?.wecomUserId ?? null;
+  }
+
   // WeCom user ID mapping (encrypted -> plaintext), global across workspaces
 
   getWecomUserMapping(encryptedUserId: string): string | null {
