@@ -51,8 +51,8 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const [searchQuery, setSearchQuery] = useState('');
   const [quickAddText, setQuickAddText] = useState('');
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
-  const [editingField, setEditingField] = useState<'text' | 'detail' | null>(null);
-  const [editText, setEditText] = useState('');
+  const [editTitle, setEditTitle] = useState('');
+  const [editDetail, setEditDetail] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; todoId: string } | null>(null);
   const [statusMenuTodoId, setStatusMenuTodoId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -86,6 +86,21 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
     };
   }, [contextMenu]);
 
+  useEffect(() => {
+    if (!editingTodoId) return;
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const todoEl = target.closest(`[data-todo-id="${editingTodoId}"]`);
+      if (!todoEl) {
+        cancelEdit();
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+    };
+  }, [editingTodoId]);
+
   const handleQuickAdd = async () => {
     const text = quickAddText.trim();
     if (!text) return;
@@ -93,26 +108,33 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
     setQuickAddText('');
   };
 
-  const startEdit = (todo: Todo, field: 'text' | 'detail') => {
+  const startEdit = (todo: Todo) => {
     setEditingTodoId(todo.id);
-    setEditingField(field);
-    setEditText(field === 'text' ? todo.text : todo.detail);
+    setEditTitle(todo.text);
+    setEditDetail(todo.detail);
   };
 
   const commitEdit = async (todoId: string) => {
-    const trimmed = editText.trim();
-    if (trimmed && editingField) {
-      await updateTodo(todoId, { [editingField]: trimmed });
+    const todo = todos.find((t) => t.id === todoId);
+    if (!todo) {
+      cancelEdit();
+      return;
     }
-    setEditingTodoId(null);
-    setEditingField(null);
-    setEditText('');
+    const patch: Partial<Pick<Todo, 'text' | 'detail'>> = {};
+    const trimmedTitle = editTitle.trim();
+    const trimmedDetail = editDetail.trim();
+    if (trimmedTitle !== todo.text) patch.text = trimmedTitle;
+    if (trimmedDetail !== todo.detail) patch.detail = trimmedDetail;
+    if (Object.keys(patch).length > 0) {
+      await updateTodo(todoId, patch);
+    }
+    cancelEdit();
   };
 
   const cancelEdit = () => {
     setEditingTodoId(null);
-    setEditingField(null);
-    setEditText('');
+    setEditTitle('');
+    setEditDetail('');
   };
 
   const handleDelete = async (todoId: string) => {
@@ -208,6 +230,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
             return (
               <div
                 key={todo.id}
+                data-todo-id={todo.id}
                 className={`mx-2 px-3 py-2.5 rounded-lg group transition-all ${
                   isDoneOrDiscard ? 'opacity-60' : ''
                 } hover:bg-surface-hover`}
@@ -253,13 +276,14 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
 
                   <div className="flex-1 min-w-0">
                     {/* Text */}
-                    {isEditing && editingField === 'text' ? (
-                      <input
+                    {isEditing ? (
+                      <textarea
                         autoFocus
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
+                        rows={2}
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
+                          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                             e.preventDefault();
                             commitEdit(todo.id);
                           }
@@ -268,13 +292,12 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                             cancelEdit();
                           }
                         }}
-                        onBlur={() => commitEdit(todo.id)}
-                        className="w-full px-2 py-0.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary"
+                        className="w-full px-2 py-0.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary resize-none"
                       />
                     ) : (
                       <p
-                        onClick={() => startEdit(todo, 'text')}
-                        className={`text-xs truncate cursor-text ${
+                        onClick={() => startEdit(todo)}
+                        className={`text-xs break-words cursor-text ${
                           isDoneOrDiscard ? 'line-through text-text-tertiary' : 'text-text-primary'
                         }`}
                       >
@@ -283,35 +306,32 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                     )}
 
                     {/* Detail */}
-                    {todo.detail && (
-                      <>
-                        {isEditing && editingField === 'detail' ? (
-                          <input
-                            autoFocus
-                            value={editText}
-                            onChange={(e) => setEditText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                commitEdit(todo.id);
-                              }
-                              if (e.key === 'Escape') {
-                                e.preventDefault();
-                                cancelEdit();
-                              }
-                            }}
-                            onBlur={() => commitEdit(todo.id)}
-                            className="w-full mt-1 px-2 py-0.5 text-[11px] bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-secondary"
-                          />
-                        ) : (
-                          <p
-                            onClick={() => startEdit(todo, 'detail')}
-                            className="text-[11px] text-text-tertiary truncate mt-0.5 cursor-text hover:text-text-secondary transition-colors"
-                          >
-                            {todo.detail}
-                          </p>
-                        )}
-                      </>
+                    {isEditing ? (
+                      <textarea
+                        rows={3}
+                        value={editDetail}
+                        onChange={(e) => setEditDetail(e.target.value)}
+                        onKeyDown={(e) => {
+                          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                            e.preventDefault();
+                            commitEdit(todo.id);
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            cancelEdit();
+                          }
+                        }}
+                        className="w-full mt-1 px-2 py-0.5 text-[11px] bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-secondary resize-none"
+                      />
+                    ) : (
+                      todo.detail && (
+                        <p
+                          onClick={() => startEdit(todo)}
+                          className="text-[11px] text-text-tertiary truncate mt-0.5 cursor-text hover:text-text-secondary transition-colors"
+                        >
+                          {todo.detail}
+                        </p>
+                      )
                     )}
 
                     {/* Actions */}
@@ -387,7 +407,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
             >
               <button
                 onClick={() => {
-                  startEdit(todo, 'text');
+                  startEdit(todo);
                   setContextMenu(null);
                 }}
                 className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
