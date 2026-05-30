@@ -45,6 +45,14 @@
   "renameSession": "重命名会话",
   "newSession": "新会话",
   "newSessionDefaultName": "会话 {{count}}",
+  "approvalMode": {
+    "manual": "手动",
+    "manualDesc": "每次工具调用都需审批",
+    "readonly": "只读",
+    "readonlyDesc": "自动审批只读工具",
+    "auto": "自动",
+    "autoDesc": "自动审批所有工具"
+  },
   "loadingSessions": "正在加载会话...",
   "noSessions": "还没有会话。",
   "createSessionPrompt": "创建一个以开始聊天。",

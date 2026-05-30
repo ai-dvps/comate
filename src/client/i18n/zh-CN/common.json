@@ -67,5 +67,6 @@
   "failedToSearchFiles": "搜索文件失败",
   "approvalError": "审批错误",
   "interruptError": "中断错误",
-  "requestFailed": "请求失败"
+  "requestFailed": "请求失败",
+  "failedToUpdateApprovalMode": "更新审批模式失败"
 }
