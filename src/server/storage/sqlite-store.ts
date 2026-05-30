@@ -3,7 +3,7 @@ import { join } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
-import type { ChatSession } from '../models/session.js';
+import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
 import { getStorageDir } from './data-dir.js';
 import { getNativeBindingPath } from './native-binding.js';
@@ -94,6 +94,7 @@ export class SqliteStore {
         is_draft INTEGER NOT NULL DEFAULT 1,
         is_wip INTEGER NOT NULL DEFAULT 0,
         source TEXT,
+        approval_mode TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         summary TEXT,
@@ -103,6 +104,12 @@ export class SqliteStore {
         custom_title TEXT
       )
     `);
+
+    // Migration: add approval_mode column to existing sessions table
+    const sessionColumns = this.db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
+    if (!sessionColumns.some(col => col.name === 'approval_mode')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN approval_mode TEXT');
+    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todos (
@@ -546,24 +553,26 @@ export class SqliteStore {
     return row ? parseSessionRow(row) : null;
   }
 
-  createLocalSession(workspaceId: string, name: string): ChatSession {
+  createLocalSession(workspaceId: string, name: string, approvalMode?: string): ChatSession {
     const now = new Date().toISOString();
+    const mode = approvalMode ?? 'manual';
     const session: ChatSession = {
       id: uuidv4(),
       workspaceId,
       name,
       isDraft: true,
+      approvalMode: mode as ChatSession['approvalMode'],
       createdAt: now,
       updatedAt: now,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, session.createdAt, session.updatedAt);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, approval_mode, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, mode, session.createdAt, session.updatedAt);
     return session;
   }
 
-  updateLocalSession(id: string, input: { name?: string; isWip?: boolean }): ChatSession | null {
+  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; approvalMode?: string }): ChatSession | null {
     const existing = this.getLocalSession(id);
     if (!existing) return null;
 
@@ -576,6 +585,10 @@ export class SqliteStore {
     if (input.isWip !== undefined) {
       sets.push('is_wip = ?');
       values.push(input.isWip ? 1 : 0);
+    }
+    if (input.approvalMode !== undefined) {
+      sets.push('approval_mode = ?');
+      values.push(input.approvalMode);
     }
     if (sets.length === 0) return existing;
 
@@ -750,6 +763,7 @@ interface RawSessionRow {
   is_draft: number;
   is_wip: number;
   source: string | null;
+  approval_mode: string | null;
   created_at: string;
   updated_at: string;
   summary: string | null;
@@ -767,6 +781,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     isDraft: row.is_draft === 1,
     isWip: row.is_wip === 1,
     source: (row.source as 'gui' | 'wecom') ?? undefined,
+    approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     summary: row.summary ?? undefined,
