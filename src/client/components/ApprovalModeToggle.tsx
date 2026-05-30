@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { useChatStore, type ApprovalMode } from '../stores/chat-store'
-import { Shield, ShieldCheck, ShieldAlert } from 'lucide-react'
+import { Shield, ShieldCheck, ShieldAlert, ChevronDown } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 
 interface ApprovalModeToggleProps {
@@ -68,11 +68,12 @@ export default function ApprovalModeToggle({ workspaceId, sessionId }: ApprovalM
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors ${meta.bg} ${meta.border} ${meta.color} ${meta.hoverBg}`}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border cursor-pointer active:scale-[0.97] transition-all ${meta.bg} ${meta.border} ${meta.color} ${meta.hoverBg}`}
           title={t(`approvalMode.${currentMode}Desc`)}
         >
           <Icon className="w-3 h-3" />
           <span>{t(`approvalMode.${currentMode}`)}</span>
+          <ChevronDown className="w-3 h-3 opacity-60" />
         </button>
       </PopoverTrigger>
       <PopoverContent
