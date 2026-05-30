@@ -6,6 +6,14 @@ import ChatMessageRenderer, {
   buildResultMap,
 } from './ChatMessageRenderer'
 
+function isToolResultOnly(msg: SubagentMessage): boolean {
+  return (
+    msg.role === 'user' &&
+    msg.parts.length > 0 &&
+    msg.parts.every((p) => p.type === 'tool_result')
+  )
+}
+
 interface SubagentConversationProps {
   messages: SubagentMessage[]
   isRunning: boolean
@@ -36,9 +44,11 @@ export default function SubagentConversation({
     )
   }
 
+  const visibleMessages = messages.filter((m) => !isToolResultOnly(m))
+
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 p-4">
-      {messages.map((msg) => {
+      {visibleMessages.map((msg) => {
         const adapted = adaptSubagentMessage(msg, isRunning)
         return (
           <ChatMessageRenderer
