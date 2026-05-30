@@ -11,6 +11,7 @@
   "clear": "Clear",
   "send": "Send",
   "refresh": "Refresh",
+  "notSet": "Not set",
   "neverRefreshed": "Never refreshed",
   "noNewMessages": "No new messages",
   "refreshFailed": "Refresh failed",

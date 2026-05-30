@@ -11,6 +11,7 @@
   "clear": "清空",
   "send": "发送",
   "refresh": "刷新",
+  "notSet": "未设置",
   "neverRefreshed": "从未刷新",
   "noNewMessages": "无新消息",
   "refreshFailed": "刷新失败",
