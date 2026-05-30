@@ -10,6 +10,9 @@
   "placeholder": "向 Claude 询问任何关于代码的问题...",
   "clear": "清空",
   "send": "发送",
+  "refresh": "刷新",
+  "botSessionPlaceholder": "请从企业微信发送回复...",
+  "botSessionTooltip": "这是企业微信机器人会话，请从企业微信发送回复。",
   "stopPopover": {
     "title": "取消当前轮次？",
     "cancel": "取消",
