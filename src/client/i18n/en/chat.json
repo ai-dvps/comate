@@ -11,8 +11,11 @@
   "clear": "Clear",
   "send": "Send",
   "refresh": "Refresh",
-  "botSessionPlaceholder": "Replies must be sent from WeCom...",
-  "botSessionTooltip": "This is a WeCom bot session. Replies must be sent from WeCom.",
+  "neverRefreshed": "Never refreshed",
+  "noNewMessages": "No new messages",
+  "refreshFailed": "Refresh failed",
+  "newMessages_one": "{{count}} new message",
+  "newMessages_other": "{{count}} new messages",
   "stopPopover": {
     "title": "Cancel current turn?",
     "cancel": "Cancel",
