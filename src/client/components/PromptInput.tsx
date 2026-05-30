@@ -1,11 +1,44 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
+
+interface RefreshMeta {
+  lastRefreshedAt: Date | null
+  lastNewCount: number
+  lastError: boolean
+  isRefreshing: boolean
+}
+
+function formatRelativeDate(date: Date, t: TFunction): string {
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+  const diffDays = Math.floor(diffMs / 86400000)
+
+  if (diffMins < 1) return t('time.justNow')
+  if (diffMins < 60) return t('time.minAgo', { count: diffMins })
+  if (diffHours < 24) return t('time.hourAgo', { count: diffHours })
+  if (diffDays < 7) return t('time.dayAgo', { count: diffDays })
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function getRefreshStatusText(meta: RefreshMeta | undefined, t: TFunction): string {
+  if (!meta) return ''
+  if (meta.isRefreshing) return t('refreshing')
+  if (!meta.lastRefreshedAt) return t('neverRefreshed')
+
+  const timeAgo = formatRelativeDate(meta.lastRefreshedAt, t)
+  if (meta.lastError) return `${timeAgo} · ${t('refreshFailed')}`
+  if (meta.lastNewCount > 0) return `${timeAgo} · ${t('newMessages', { count: meta.lastNewCount })}`
+  return `${timeAgo} · ${t('noNewMessages')}`
+}
 
 interface PromptInputProps {
   workspaceId: string
@@ -18,6 +51,7 @@ interface PromptInputProps {
   isInterrupting?: boolean
   hasSession?: boolean
   isBotSession?: boolean
+  refreshMeta?: RefreshMeta
 }
 
 export default function PromptInput({
@@ -31,6 +65,7 @@ export default function PromptInput({
   isInterrupting = false,
   hasSession = false,
   isBotSession = false,
+  refreshMeta,
 }: PromptInputProps) {
   const { t } = useTranslation('chat')
   const input = useChatStore((s) =>
@@ -307,178 +342,195 @@ export default function PromptInput({
     setFilePickerOpen(true)
   }
 
-  const canSend =
-    input.trim().length > 0 && hasSession && !isStreaming && !disabled && !isBotSession
-  const showClear = input.length > 0 && !isBotSession
+  const canSend = input.trim().length > 0 && hasSession && !isStreaming && !disabled
+  const showClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
-  const commandsDisabled = disabled || isStreaming || isBotSession
-  const filesDisabled = disabled || isStreaming || !workspaceId || isBotSession
+  const commandsDisabled = disabled || isStreaming
+  const filesDisabled = disabled || isStreaming || !workspaceId
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-4">
-      <div className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
-        <div className="flex items-center px-2 pt-2 gap-1">
-          <CommandPicker
-            ref={pickerHandleRef}
-            workspaceId={workspaceId}
-            open={pickerOpen}
-            onOpenChange={setPickerOpen}
-            onSelect={handleCommandSelect}
-            side="top"
-            align="start"
-            initialFilter={pickerFilter}
-            hideFilterInput={pickerSource === 'slash'}
-            refetchOnOpen
-            anchor={
-              <button
-                type="button"
-                onClick={handleCommandsClick}
-                disabled={commandsDisabled}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title={t('commands')}
-              >
-                <SlashSquare className="w-3 h-3" />
-                <span>{t('commands')}</span>
-              </button>
-            }
-          />
-          <FilePicker
-            ref={filePickerHandleRef}
-            workspaceId={workspaceId}
-            open={filePickerOpen}
-            onOpenChange={(open) => {
-              setFilePickerOpen(open)
-              if (!open) setFileTriggerStart(null)
-            }}
-            onSelect={handleFileSelect}
-            side="top"
-            align="start"
-            initialFilter={filePickerFilter}
-            hideFilterInput={filePickerSource === 'at'}
-            refetchOnOpen
-            anchor={
-              <button
-                type="button"
-                onClick={handleFilesClick}
-                disabled={filesDisabled}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                title={t('files')}
-              >
-                <Paperclip className="w-3 h-3" />
-                <span>{t('files')}</span>
-              </button>
-            }
-          />
-        </div>
-        <div className="relative">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) =>
-              handleInputChange(e.target.value, e.target.selectionStart)
-            }
-            onKeyDown={handleKeyDown}
-            placeholder={isBotSession ? t('botSessionPlaceholder') : t('placeholder')}
-            disabled={disabled || isStreaming || isBotSession}
-            title={isBotSession ? t('botSessionTooltip') : undefined}
-            rows={1}
-            className="w-full bg-transparent border-0 px-4 py-3 pr-24 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
-            style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
-          />
-          {showGhost && argumentHint && (
-            <div
-              aria-hidden
-              className="absolute inset-0 px-4 py-3 pr-24 pointer-events-none whitespace-pre-wrap break-words"
-            >
-              <span className="invisible">{input}</span>
-              <span className="text-text-tertiary">{argumentHint}</span>
+      <div className={`relative bg-surface border border-border rounded-xl transition-colors ${!isBotSession ? 'focus-within:border-border-hover' : ''}`}>
+        {isBotSession ? (
+          <div className="flex items-center justify-between px-4 py-3 gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-medium text-text-secondary truncate">
+                {t('wecomBotSession')}
+              </span>
+              <span className="text-xs text-text-tertiary truncate">
+                {getRefreshStatusText(refreshMeta, t)}
+              </span>
             </div>
-          )}
-        </div>
-        <div className="absolute right-2 bottom-2 flex items-center gap-1">
-          {showClear && (
-            <button
-              onClick={handleClear}
-              disabled={isInterrupting}
-              className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary transition-colors"
-              title={t('clear')}
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-          {isStreaming ? (
-            <Popover open={stopPopoverOpen} onOpenChange={setStopPopoverOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  disabled={isInterrupting}
-                  className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
-                >
-                  {isInterrupting ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <span className="relative w-5 h-5 flex items-center justify-center">
-                      <Loader2 className="absolute inset-0 w-5 h-5 animate-spin opacity-60" />
-                      <Square className="w-2.5 h-2.5 fill-current" />
-                    </span>
-                  )}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                side="top"
-                align="center"
-                className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
-              >
-                <p className="text-text-primary mb-3">
-                  {t('stopPopover.title')}
-                </p>
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    onClick={() => setStopPopoverOpen(false)}
-                    disabled={isInterrupting}
-                    className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
-                  >
-                    {t('stopPopover.cancel')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      onStop()
-                      setStopPopoverOpen(false)
-                    }}
-                    disabled={isInterrupting}
-                    className="px-3 py-1.5 font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
-                  >
-                    {isInterrupting ? (
-                      <span className="flex items-center gap-1">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        {t('stopPopover.stopping')}
-                      </span>
-                    ) : (
-                      t('stopPopover.confirm')
-                    )}
-                  </button>
-                </div>
-              </PopoverContent>
-            </Popover>
-          ) : isBotSession ? (
             <button
               onClick={onRefresh}
-              disabled={!hasSession}
-              className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!hasSession || refreshMeta?.isRefreshing}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
               title={t('refresh')}
             >
-              <RefreshCw className="w-4 h-4" />
+              {refreshMeta?.isRefreshing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              <span>{t('refresh')}</span>
             </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!canSend}
-              className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title={t('send')}
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center px-2 pt-2 gap-1">
+              <CommandPicker
+                ref={pickerHandleRef}
+                workspaceId={workspaceId}
+                open={pickerOpen}
+                onOpenChange={setPickerOpen}
+                onSelect={handleCommandSelect}
+                side="top"
+                align="start"
+                initialFilter={pickerFilter}
+                hideFilterInput={pickerSource === 'slash'}
+                refetchOnOpen
+                anchor={
+                  <button
+                    type="button"
+                    onClick={handleCommandsClick}
+                    disabled={commandsDisabled}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={t('commands')}
+                  >
+                    <SlashSquare className="w-3 h-3" />
+                    <span>{t('commands')}</span>
+                  </button>
+                }
+              />
+              <FilePicker
+                ref={filePickerHandleRef}
+                workspaceId={workspaceId}
+                open={filePickerOpen}
+                onOpenChange={(open) => {
+                  setFilePickerOpen(open)
+                  if (!open) setFileTriggerStart(null)
+                }}
+                onSelect={handleFileSelect}
+                side="top"
+                align="start"
+                initialFilter={filePickerFilter}
+                hideFilterInput={filePickerSource === 'at'}
+                refetchOnOpen
+                anchor={
+                  <button
+                    type="button"
+                    onClick={handleFilesClick}
+                    disabled={filesDisabled}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={t('files')}
+                  >
+                    <Paperclip className="w-3 h-3" />
+                    <span>{t('files')}</span>
+                  </button>
+                }
+              />
+            </div>
+            <div className="relative">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) =>
+                  handleInputChange(e.target.value, e.target.selectionStart)
+                }
+                onKeyDown={handleKeyDown}
+                placeholder={t('placeholder')}
+                disabled={disabled || isStreaming}
+                rows={1}
+                className="w-full bg-transparent border-0 px-4 py-3 pr-24 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
+                style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
+              />
+              {showGhost && argumentHint && (
+                <div
+                  aria-hidden
+                  className="absolute inset-0 px-4 py-3 pr-24 pointer-events-none whitespace-pre-wrap break-words"
+                >
+                  <span className="invisible">{input}</span>
+                  <span className="text-text-tertiary">{argumentHint}</span>
+                </div>
+              )}
+            </div>
+            <div className="absolute right-2 bottom-2 flex items-center gap-1">
+              {showClear && (
+                <button
+                  onClick={handleClear}
+                  disabled={isInterrupting}
+                  className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary transition-colors"
+                  title={t('clear')}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+              {isStreaming ? (
+                <Popover open={stopPopoverOpen} onOpenChange={setStopPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      disabled={isInterrupting}
+                      className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
+                    >
+                      {isInterrupting ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <span className="relative w-5 h-5 flex items-center justify-center">
+                          <Loader2 className="absolute inset-0 w-5 h-5 animate-spin opacity-60" />
+                          <Square className="w-2.5 h-2.5 fill-current" />
+                        </span>
+                      )}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    side="top"
+                    align="center"
+                    className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
+                  >
+                    <p className="text-text-primary mb-3">
+                      {t('stopPopover.title')}
+                    </p>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => setStopPopoverOpen(false)}
+                        disabled={isInterrupting}
+                        className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
+                      >
+                        {t('stopPopover.cancel')}
+                      </button>
+                      <button
+                        onClick={() => {
+                          onStop()
+                          setStopPopoverOpen(false)
+                        }}
+                        disabled={isInterrupting}
+                        className="px-3 py-1.5 font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
+                      >
+                        {isInterrupting ? (
+                          <span className="flex items-center gap-1">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            {t('stopPopover.stopping')}
+                          </span>
+                        ) : (
+                          t('stopPopover.confirm')
+                        )}
+                      </button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={!canSend}
+                  className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={t('send')}
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

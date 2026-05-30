@@ -11,8 +11,11 @@
   "clear": "清空",
   "send": "发送",
   "refresh": "刷新",
-  "botSessionPlaceholder": "请从企业微信发送回复...",
-  "botSessionTooltip": "这是企业微信机器人会话，请从企业微信发送回复。",
+  "neverRefreshed": "从未刷新",
+  "noNewMessages": "无新消息",
+  "refreshFailed": "刷新失败",
+  "newMessages_one": "{{count}} 条新消息",
+  "newMessages_other": "{{count}} 条新消息",
   "stopPopover": {
     "title": "取消当前轮次？",
     "cancel": "取消",

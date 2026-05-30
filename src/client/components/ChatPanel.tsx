@@ -45,6 +45,11 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     string | null
   >(null)
   const [subagentPanelWidth, setSubagentPanelWidth] = useState(400)
+  const [refreshMeta, setRefreshMeta] = useState<{
+    lastRefreshedAt: Date | null
+    lastNewCount: number
+    lastError: boolean
+  }>({ lastRefreshedAt: null, lastNewCount: 0, lastError: false })
 
   useEffect(() => {
     fetchSessions(workspaceId)
@@ -67,6 +72,10 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     }
   }, [workspaceId, cleanupWorkspace])
 
+  useEffect(() => {
+    setRefreshMeta({ lastRefreshedAt: null, lastNewCount: 0, lastError: false })
+  }, [activeSessionId])
+
   const currentApproval = approvalQueue[0] || null
   const approvalQueueLength = approvalQueue.length
 
@@ -84,7 +93,23 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
 
   const handleRefresh = async () => {
     if (!activeSessionId) return
-    await refreshBotMessages(workspaceId, activeSessionId)
+    setRefreshMeta((prev) => ({ ...prev, lastError: false }))
+    const messagesBefore = useChatStore.getState().messages[activeSessionId]?.length || 0
+    try {
+      await refreshBotMessages(workspaceId, activeSessionId)
+      const messagesAfter = useChatStore.getState().messages[activeSessionId]?.length || 0
+      setRefreshMeta({
+        lastRefreshedAt: new Date(),
+        lastNewCount: messagesAfter - messagesBefore,
+        lastError: false,
+      })
+    } catch {
+      setRefreshMeta({
+        lastRefreshedAt: new Date(),
+        lastNewCount: 0,
+        lastError: true,
+      })
+    }
   }
 
   const handleStop = async () => {
@@ -277,6 +302,12 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                 isInterrupting={isInterrupting}
                 hasSession={!!activeSessionId}
                 isBotSession={isBotSession}
+                refreshMeta={{
+                  lastRefreshedAt: refreshMeta.lastRefreshedAt,
+                  lastNewCount: refreshMeta.lastNewCount,
+                  lastError: refreshMeta.lastError,
+                  isRefreshing: isLoadingMessages,
+                }}
               />
             )}
           </div>
