@@ -51,6 +51,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     lastNewCount: number
     lastError: boolean
   }>({ lastRefreshedAt: null, lastNewCount: 0, lastError: false })
+  const [wecomUser, setWecomUser] = useState<{ userId: string; lastSeenAt: string | null } | null>(null)
 
   useEffect(() => {
     fetchSessions(workspaceId)
@@ -75,7 +76,25 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
 
   useEffect(() => {
     setRefreshMeta({ lastRefreshedAt: null, lastNewCount: 0, lastError: false })
+    setWecomUser(null)
   }, [activeSessionId])
+
+  useEffect(() => {
+    if (!activeSessionId || !isBotSession) return
+    const fetchWecomUser = async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${activeSessionId}/wecom-user`)
+        if (!res.ok) return
+        const data = (await res.json()) as { userId?: string; lastSeenAt?: string | null }
+        if (data.userId) {
+          setWecomUser({ userId: data.userId, lastSeenAt: data.lastSeenAt ?? null })
+        }
+      } catch {
+        // silently ignore
+      }
+    }
+    fetchWecomUser()
+  }, [workspaceId, activeSessionId, isBotSession])
 
   const currentApproval = approvalQueue[0] || null
   const approvalQueueLength = approvalQueue.length
@@ -304,6 +323,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                 hasSession={!!activeSessionId}
                 isBotSession={isBotSession}
                 botName={botName}
+                wecomUser={wecomUser}
                 refreshMeta={{
                   lastRefreshedAt: refreshMeta.lastRefreshedAt,
                   lastNewCount: refreshMeta.lastNewCount,
