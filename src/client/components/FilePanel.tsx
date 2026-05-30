@@ -48,7 +48,8 @@ export default function FilePanel({
     (e: React.MouseEvent) => {
       e.preventDefault()
       const startX = e.clientX
-      const startWidth = width
+      const asideEl = (e.currentTarget as HTMLElement).parentElement as HTMLElement
+      const startWidth = asideEl.getBoundingClientRect().width
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const delta = moveEvent.clientX - startX
@@ -67,7 +68,7 @@ export default function FilePanel({
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     },
-    [width, onWidthChange]
+    [onWidthChange]
   )
 
   const activeFile = files.find((f) => f.path === activeFilePath)
@@ -77,7 +78,7 @@ export default function FilePanel({
   return (
     <aside
       className="relative bg-surface border-r border-border flex flex-col flex-shrink-0"
-      style={{ width }}
+      style={{ width, maxWidth: '70%' }}
     >
       {/* Resize handle */}
       <div
