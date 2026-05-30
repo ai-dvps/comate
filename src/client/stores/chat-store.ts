@@ -157,6 +157,7 @@ interface ChatState {
   touchDomCache: (workspaceId: string, sessionId: string) => string | null
   getDomCache: (workspaceId: string) => string[]
   createSession: (workspaceId: string, name: string) => Promise<void>
+  addSession: (workspaceId: string, session: ChatSession) => void
   renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
   toggleSessionWip: (workspaceId: string, sessionId: string, isWip: boolean) => Promise<void>
   setActiveSession: (workspaceId: string, sessionId: string) => void
@@ -1751,6 +1752,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (err) {
       console.error('Failed to create session:', err)
     }
+  },
+
+  addSession: (workspaceId: string, session: ChatSession) => {
+    set((state) => ({
+      sessions: {
+        ...state.sessions,
+        [workspaceId]: [session, ...(state.sessions[workspaceId] || [])],
+      },
+      activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
+    }))
   },
 
   renameSession: async (workspaceId: string, sessionId: string, name: string) => {
