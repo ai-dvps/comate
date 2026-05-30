@@ -265,6 +265,15 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                         {t('draft')}
                       </span>
                     )}
+                    {session.approvalMode && session.approvalMode !== 'manual' && (
+                      <span className={`px-1 py-0.5 text-[9px] rounded ${
+                        session.approvalMode === 'auto'
+                          ? 'bg-green-500/20 text-green-400'
+                          : 'bg-blue-500/20 text-blue-400'
+                      }`}>
+                        {t(`approvalMode.${session.approvalMode}`)}
+                      </span>
+                    )}
                     {session.source === 'wecom' && (
                       <img
                         src="/wecom-icon.svg"
