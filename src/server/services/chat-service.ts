@@ -111,7 +111,7 @@ export class ChatService {
   }
 
   async createSession(input: CreateSessionInput): Promise<ChatSession> {
-    return workspaceStore.createLocalSession(input.workspaceId, input.name);
+    return workspaceStore.createLocalSession(input.workspaceId, input.name, input.approvalMode);
   }
 
   async getSession(id: string, workspaceId: string): Promise<ChatSession | null> {
@@ -356,6 +356,11 @@ export class ChatService {
       );
       this.runtimes.set(sessionId, runtime);
 
+      // Set initial approval mode from session data
+      if (!isBotSession && session.approvalMode) {
+        runtime.setApprovalMode(session.approvalMode);
+      }
+
       return runtime;
     })();
 
@@ -374,6 +379,12 @@ export class ChatService {
     this.runtimes.delete(sessionId);
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
     await runtime.close();
+  }
+
+  getRuntimeIfExists(sessionId: string): SessionRuntime | undefined {
+    const runtime = this.runtimes.get(sessionId);
+    if (runtime && !runtime.isClosed()) return runtime;
+    return undefined;
   }
 
   private scheduleIdleClose(sessionId: string): void {
