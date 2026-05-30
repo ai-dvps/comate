@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
+import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import { getStorageDir } from './data-dir.js';
 import { getNativeBindingPath } from './native-binding.js';
 
@@ -110,6 +111,25 @@ export class SqliteStore {
     if (!sessionColumns.some(col => col.name === 'approval_mode')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN approval_mode TEXT');
     }
+
+    // Migration: add provider_id column to existing sessions table
+    if (!sessionColumns.some(col => col.name === 'provider_id')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
+    }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS providers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        base_url TEXT NOT NULL,
+        auth_token TEXT NOT NULL,
+        model TEXT,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        options_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todos (
@@ -553,7 +573,7 @@ export class SqliteStore {
     return row ? parseSessionRow(row) : null;
   }
 
-  createLocalSession(workspaceId: string, name: string, approvalMode?: string): ChatSession {
+  createLocalSession(workspaceId: string, name: string, approvalMode?: string, providerId?: string): ChatSession {
     const now = new Date().toISOString();
     const mode = approvalMode ?? 'manual';
     const session: ChatSession = {
@@ -566,13 +586,13 @@ export class SqliteStore {
       updatedAt: now,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, approval_mode, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, mode, session.createdAt, session.updatedAt);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, approval_mode, provider_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, mode, providerId ?? null, session.createdAt, session.updatedAt);
     return session;
   }
 
-  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; approvalMode?: string }): ChatSession | null {
+  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; approvalMode?: string; providerId?: string | null }): ChatSession | null {
     const existing = this.getLocalSession(id);
     if (!existing) return null;
 
@@ -589,6 +609,10 @@ export class SqliteStore {
     if (input.approvalMode !== undefined) {
       sets.push('approval_mode = ?');
       values.push(input.approvalMode);
+    }
+    if (input.providerId !== undefined) {
+      sets.push('provider_id = ?');
+      values.push(input.providerId);
     }
     if (sets.length === 0) return existing;
 
@@ -621,12 +645,13 @@ export class SqliteStore {
 
   syncSdkSession(session: ChatSession): void {
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, source, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, source, provider_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         is_draft = excluded.is_draft,
         source = excluded.source,
+        provider_id = COALESCE(excluded.provider_id, sessions.provider_id),
         updated_at = excluded.updated_at,
         summary = excluded.summary,
         last_modified = excluded.last_modified,
@@ -640,6 +665,7 @@ export class SqliteStore {
       session.isDraft ? 1 : 0,
       session.isWip ? 1 : 0,
       session.source ?? null,
+      session.providerId ?? null,
       session.createdAt,
       session.updatedAt,
       session.summary ?? null,
@@ -648,6 +674,134 @@ export class SqliteStore {
       session.gitBranch ?? null,
       session.customTitle ?? null
     );
+  }
+
+  // Provider CRUD
+
+  listProviders(): Provider[] {
+    const rows = this.db.prepare('SELECT * FROM providers ORDER BY created_at DESC').all() as RawProviderRow[];
+    return rows.map(parseProviderRow);
+  }
+
+  getProvider(id: string): Provider | null {
+    const row = this.db.prepare('SELECT * FROM providers WHERE id = ?').get(id) as RawProviderRow | undefined;
+    return row ? parseProviderRow(row) : null;
+  }
+
+  getProviderByName(name: string): Provider | null {
+    const row = this.db.prepare('SELECT * FROM providers WHERE name = ?').get(name) as RawProviderRow | undefined;
+    return row ? parseProviderRow(row) : null;
+  }
+
+  getDefaultProvider(): Provider | null {
+    const row = this.db.prepare('SELECT * FROM providers WHERE is_default = 1 LIMIT 1').get() as RawProviderRow | undefined;
+    return row ? parseProviderRow(row) : null;
+  }
+
+  createProvider(input: CreateProviderInput): Provider {
+    const now = new Date().toISOString();
+    const provider: Provider = {
+      id: uuidv4(),
+      name: input.name.trim(),
+      baseUrl: input.baseUrl.trim(),
+      authToken: input.authToken,
+      model: input.model,
+      isDefault: input.isDefault ?? false,
+      defaultOpusModel: input.defaultOpusModel,
+      defaultSonnetModel: input.defaultSonnetModel,
+      defaultHaikuModel: input.defaultHaikuModel,
+      subagentModel: input.subagentModel,
+      effortLevel: input.effortLevel,
+      customEnvVars: input.customEnvVars,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const optionsJson = JSON.stringify({
+      defaultOpusModel: provider.defaultOpusModel,
+      defaultSonnetModel: provider.defaultSonnetModel,
+      defaultHaikuModel: provider.defaultHaikuModel,
+      subagentModel: provider.subagentModel,
+      effortLevel: provider.effortLevel,
+      customEnvVars: provider.customEnvVars,
+    });
+
+    this.db.prepare(`
+      INSERT INTO providers (id, name, base_url, auth_token, model, is_default, options_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      provider.id,
+      provider.name,
+      provider.baseUrl,
+      provider.authToken,
+      provider.model ?? null,
+      provider.isDefault ? 1 : 0,
+      optionsJson,
+      provider.createdAt,
+      provider.updatedAt
+    );
+
+    if (provider.isDefault) {
+      this.db.prepare('UPDATE providers SET is_default = 0 WHERE id != ?').run(provider.id);
+    }
+
+    return provider;
+  }
+
+  updateProvider(id: string, input: UpdateProviderInput): Provider | null {
+    const existing = this.getProvider(id);
+    if (!existing) return null;
+
+    const provider: Provider = {
+      ...existing,
+      ...(input.name !== undefined && { name: input.name.trim() }),
+      ...(input.baseUrl !== undefined && { baseUrl: input.baseUrl.trim() }),
+      ...(input.authToken !== undefined && { authToken: input.authToken }),
+      ...(input.model !== undefined && { model: input.model }),
+      ...(input.isDefault !== undefined && { isDefault: input.isDefault }),
+      ...(input.defaultOpusModel !== undefined && { defaultOpusModel: input.defaultOpusModel }),
+      ...(input.defaultSonnetModel !== undefined && { defaultSonnetModel: input.defaultSonnetModel }),
+      ...(input.defaultHaikuModel !== undefined && { defaultHaikuModel: input.defaultHaikuModel }),
+      ...(input.subagentModel !== undefined && { subagentModel: input.subagentModel }),
+      ...(input.effortLevel !== undefined && { effortLevel: input.effortLevel }),
+      ...(input.customEnvVars !== undefined && { customEnvVars: input.customEnvVars }),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const optionsJson = JSON.stringify({
+      defaultOpusModel: provider.defaultOpusModel,
+      defaultSonnetModel: provider.defaultSonnetModel,
+      defaultHaikuModel: provider.defaultHaikuModel,
+      subagentModel: provider.subagentModel,
+      effortLevel: provider.effortLevel,
+      customEnvVars: provider.customEnvVars,
+    });
+
+    this.db.prepare(`
+      UPDATE providers
+      SET name = ?, base_url = ?, auth_token = ?, model = ?, is_default = ?, options_json = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      provider.name,
+      provider.baseUrl,
+      provider.authToken,
+      provider.model ?? null,
+      provider.isDefault ? 1 : 0,
+      optionsJson,
+      provider.updatedAt,
+      id
+    );
+
+    if (provider.isDefault) {
+      this.db.prepare('UPDATE providers SET is_default = 0 WHERE id != ?').run(id);
+    }
+
+    return provider;
+  }
+
+  deleteProvider(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM providers WHERE id = ?').run(id);
+    return result.changes > 0;
   }
 
   // Todo CRUD
@@ -764,6 +918,7 @@ interface RawSessionRow {
   is_wip: number;
   source: string | null;
   approval_mode: string | null;
+  provider_id: string | null;
   created_at: string;
   updated_at: string;
   summary: string | null;
@@ -782,6 +937,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     isWip: row.is_wip === 1,
     source: (row.source as 'gui' | 'wecom') ?? undefined,
     approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
+    providerId: row.provider_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     summary: row.summary ?? undefined,
@@ -809,6 +965,40 @@ function parseTodoRow(row: RawTodoRow): Todo {
     text: row.text,
     status: row.status as TodoStatus,
     sessionId: row.session_id ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface RawProviderRow {
+  id: string;
+  name: string;
+  base_url: string;
+  auth_token: string;
+  model: string | null;
+  is_default: number;
+  options_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseProviderRow(row: RawProviderRow): Provider {
+  const options = safeJsonParse(row.options_json, {} as Record<string, unknown>);
+  return {
+    id: row.id,
+    name: row.name,
+    baseUrl: row.base_url,
+    authToken: row.auth_token,
+    model: row.model ?? undefined,
+    isDefault: row.is_default === 1,
+    defaultOpusModel: typeof options.defaultOpusModel === 'string' ? options.defaultOpusModel : undefined,
+    defaultSonnetModel: typeof options.defaultSonnetModel === 'string' ? options.defaultSonnetModel : undefined,
+    defaultHaikuModel: typeof options.defaultHaikuModel === 'string' ? options.defaultHaikuModel : undefined,
+    subagentModel: typeof options.subagentModel === 'string' ? options.subagentModel : undefined,
+    effortLevel: typeof options.effortLevel === 'string' ? options.effortLevel : undefined,
+    customEnvVars: typeof options.customEnvVars === 'object' && options.customEnvVars !== null
+      ? (options.customEnvVars as Record<string, string>)
+      : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

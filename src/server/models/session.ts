@@ -8,6 +8,7 @@ export interface ChatSession {
   isWip?: boolean;
   source?: 'gui' | 'wecom';
   approvalMode?: ApprovalMode;
+  providerId?: string;
   createdAt: string;
   updatedAt: string;
   // SDK-derived fields (populated when discovered via listSessions)
@@ -22,10 +23,12 @@ export interface CreateSessionInput {
   workspaceId: string;
   name: string;
   approvalMode?: ApprovalMode;
+  providerId?: string;
 }
 
 export interface UpdateSessionInput {
   name?: string;
   isWip?: boolean;
   approvalMode?: ApprovalMode;
+  providerId?: string;
 }
