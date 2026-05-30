@@ -272,7 +272,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                     {isEditing ? (
                       <textarea
                         autoFocus
-                        rows={2}
+                        rows={4}
                         value={editTitle}
                         onChange={(e) => setEditTitle(e.target.value)}
                         onKeyDown={(e) => {
