@@ -20,28 +20,28 @@ const MODE_META: Record<
   }
 > = {
   manual: {
-    icon: ShieldAlert,
-    color: 'text-amber-400',
-    bg: 'bg-amber-400/10',
-    border: 'border-amber-400/25',
-    hoverBg: 'hover:bg-amber-400/20',
-    activeClass: 'bg-amber-400/10 text-amber-400 border-amber-400/30',
-  },
-  readonly: {
-    icon: Shield,
-    color: 'text-blue-400',
-    bg: 'bg-blue-400/10',
-    border: 'border-blue-400/25',
-    hoverBg: 'hover:bg-blue-400/20',
-    activeClass: 'bg-blue-400/10 text-blue-400 border-blue-400/30',
-  },
-  auto: {
     icon: ShieldCheck,
     color: 'text-green-400',
     bg: 'bg-green-400/10',
     border: 'border-green-400/25',
     hoverBg: 'hover:bg-green-400/20',
     activeClass: 'bg-green-400/10 text-green-400 border-green-400/30',
+  },
+  readonly: {
+    icon: Shield,
+    color: 'text-amber-400',
+    bg: 'bg-amber-400/10',
+    border: 'border-amber-400/25',
+    hoverBg: 'hover:bg-amber-400/20',
+    activeClass: 'bg-amber-400/10 text-amber-400 border-amber-400/30',
+  },
+  auto: {
+    icon: ShieldAlert,
+    color: 'text-red-400',
+    bg: 'bg-red-400/10',
+    border: 'border-red-400/25',
+    hoverBg: 'hover:bg-red-400/20',
+    activeClass: 'bg-red-400/10 text-red-400 border-red-400/30',
   },
 }
 
