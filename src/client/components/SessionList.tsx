@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
-import { MessageSquare, Plus, Pencil, Shield, ShieldCheck, ShieldAlert } from 'lucide-react'
+import { MessageSquare, Plus, Pencil, Shield, ShieldAlert } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
 
