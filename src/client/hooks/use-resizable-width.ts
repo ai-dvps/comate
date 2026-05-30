@@ -4,11 +4,11 @@ export interface UseResizableWidthOptions {
   storageKey: string
   defaultWidth: number
   minWidth: number
-  maxWidth: number
+  maxWidth?: number
 }
 
 export function useResizableWidth(options: UseResizableWidthOptions) {
-  const { storageKey, defaultWidth, minWidth, maxWidth } = options
+  const { storageKey, defaultWidth, minWidth, maxWidth = Number.MAX_SAFE_INTEGER } = options
 
   const [width, setWidthState] = useState<number>(() => {
     try {

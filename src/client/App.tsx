@@ -125,7 +125,6 @@ function App() {
     storageKey: 'file-panel-width',
     defaultWidth: 384,
     minWidth: 200,
-    maxWidth: 600,
   })
 
   const handleDrag = (e: React.MouseEvent) => {
