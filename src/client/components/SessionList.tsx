@@ -1,7 +1,7 @@
 import type { TFunction } from 'i18next'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useChatStore, type ApprovalMode } from '../stores/chat-store'
+import { useChatStore } from '../stores/chat-store'
 import { MessageSquare, Plus, Pencil } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
@@ -47,7 +47,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
-  const [newApprovalMode, setNewApprovalMode] = useState<ApprovalMode>('manual')
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
@@ -63,9 +62,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
 
   const handleCreate = async () => {
     const name = newName.trim() || t('newSessionDefaultName', { count: sessions.length + 1 })
-    await createSession(workspaceId, name, newApprovalMode)
+    await createSession(workspaceId, name)
     setNewName('')
-    setNewApprovalMode('manual')
     setShowCreate(false)
   }
 
@@ -132,22 +130,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
               placeholder={t('sessionNamePlaceholder')}
               className="w-full px-3 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
             />
-            <div className="flex gap-1">
-              {(['manual', 'readonly', 'auto'] as ApprovalMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setNewApprovalMode(mode)}
-                  className={`flex-1 py-1 text-[10px] rounded transition-colors ${
-                    newApprovalMode === mode
-                      ? 'bg-accent/20 text-accent border border-accent/40'
-                      : 'bg-bg text-text-tertiary border border-border hover:text-text-secondary'
-                  }`}
-                  title={t(`approvalMode.${mode}Desc`)}
-                >
-                  {t(`approvalMode.${mode}`)}
-                </button>
-              ))}
-            </div>
             <div className="flex gap-2">
               <button
                 onClick={handleCreate}
@@ -159,7 +141,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 onClick={() => {
                   setShowCreate(false)
                   setNewName('')
-                  setNewApprovalMode('manual')
                 }}
                 className="flex-1 py-1.5 text-xs bg-surface-hover hover:bg-surface-active text-text-secondary rounded-lg transition-colors"
               >
