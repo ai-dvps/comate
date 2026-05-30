@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
-import { MessageSquare, Plus, Pencil } from 'lucide-react'
+import { MessageSquare, Plus, Pencil, Shield, ShieldCheck, ShieldAlert } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
 
@@ -266,11 +266,16 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                       </span>
                     )}
                     {session.approvalMode && session.approvalMode !== 'manual' && (
-                      <span className={`px-1 py-0.5 text-[9px] rounded ${
+                      <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px] rounded ${
                         session.approvalMode === 'auto'
                           ? 'bg-red-500/20 text-red-400'
                           : 'bg-amber-500/20 text-amber-400'
                       }`}>
+                        {session.approvalMode === 'auto' ? (
+                          <ShieldAlert className="w-2.5 h-2.5" />
+                        ) : (
+                          <Shield className="w-2.5 h-2.5" />
+                        )}
                         {t(`approvalMode.${session.approvalMode}`)}
                       </span>
                     )}
