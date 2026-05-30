@@ -162,12 +162,11 @@ router.get('/sessions/:sessionId/wecom-user', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const session = await chatService.getSession(sessionId, workspaceId);
-    if (!session) {
+    const encryptedUserId = store.getWecomUserIdBySession(workspaceId, sessionId);
+    if (!encryptedUserId) {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
-    const encryptedUserId = session.name;
     const mapping = store.getWecomUserMapping(encryptedUserId);
     const workspaceUser = store.getWecomWorkspaceUser(workspaceId, encryptedUserId);
     res.json({

@@ -353,11 +353,11 @@ export default function PromptInput({
   const filesDisabled = disabled || isStreaming || !workspaceId
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-4">
+    <div className={`max-w-3xl mx-auto px-4 ${isBotSession ? 'py-2' : 'py-4'}`}>
       {isBotSession ? (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
               <img src="/wecom-icon.svg" alt="WeCom" className="w-4 h-4 flex-shrink-0" />
               {botName ? (
                 <span className="text-sm font-medium text-text-secondary truncate">{botName}</span>
@@ -377,22 +377,22 @@ export default function PromptInput({
               )}
             </div>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-text-tertiary truncate">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-xs text-text-tertiary truncate hidden sm:block max-w-[160px]">
               {getRefreshStatusText(refreshMeta, t)}
             </span>
             <button
               onClick={onRefresh}
               disabled={!hasSession || refreshMeta?.isRefreshing}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover active:bg-surface-active active:scale-[0.98] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover active:bg-surface-active active:scale-[0.98] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title={t('refresh')}
             >
               {refreshMeta?.isRefreshing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <RefreshCw className="w-4 h-4" />
+                <RefreshCw className="w-3.5 h-3.5" />
               )}
-              <span>{t('refresh')}</span>
+              <span className="hidden sm:inline">{t('refresh')}</span>
             </button>
           </div>
         </div>
