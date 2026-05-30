@@ -10,21 +10,37 @@ interface ApprovalModeToggleProps {
 
 const MODE_META: Record<
   ApprovalMode,
-  { icon: typeof Shield; color: string; activeClass: string }
+  {
+    icon: typeof Shield
+    color: string
+    bg: string
+    border: string
+    hoverBg: string
+    activeClass: string
+  }
 > = {
   manual: {
     icon: ShieldAlert,
     color: 'text-amber-400',
+    bg: 'bg-amber-400/10',
+    border: 'border-amber-400/25',
+    hoverBg: 'hover:bg-amber-400/20',
     activeClass: 'bg-amber-400/10 text-amber-400 border-amber-400/30',
   },
   readonly: {
     icon: Shield,
     color: 'text-blue-400',
+    bg: 'bg-blue-400/10',
+    border: 'border-blue-400/25',
+    hoverBg: 'hover:bg-blue-400/20',
     activeClass: 'bg-blue-400/10 text-blue-400 border-blue-400/30',
   },
   auto: {
     icon: ShieldCheck,
     color: 'text-green-400',
+    bg: 'bg-green-400/10',
+    border: 'border-green-400/25',
+    hoverBg: 'hover:bg-green-400/20',
     activeClass: 'bg-green-400/10 text-green-400 border-green-400/30',
   },
 }
@@ -52,10 +68,11 @@ export default function ApprovalModeToggle({ workspaceId, sessionId }: ApprovalM
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors ${meta.bg} ${meta.border} ${meta.color} ${meta.hoverBg}`}
           title={t(`approvalMode.${currentMode}Desc`)}
         >
-          <Icon className={`w-3.5 h-3.5 ${meta.color}`} />
+          <Icon className="w-3 h-3" />
+          <span>{t(`approvalMode.${currentMode}`)}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent
