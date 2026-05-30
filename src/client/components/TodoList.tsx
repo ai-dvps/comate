@@ -52,7 +52,6 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const [quickAddText, setQuickAddText] = useState('');
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const [editDetail, setEditDetail] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; todoId: string } | null>(null);
   const [statusMenuTodoId, setStatusMenuTodoId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -111,7 +110,6 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const startEdit = (todo: Todo) => {
     setEditingTodoId(todo.id);
     setEditTitle(todo.text);
-    setEditDetail(todo.detail);
   };
 
   const commitEdit = async (todoId: string) => {
@@ -120,13 +118,9 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
       cancelEdit();
       return;
     }
-    const patch: Partial<Pick<Todo, 'text' | 'detail'>> = {};
     const trimmedTitle = editTitle.trim();
-    const trimmedDetail = editDetail.trim();
-    if (trimmedTitle !== todo.text) patch.text = trimmedTitle;
-    if (trimmedDetail !== todo.detail) patch.detail = trimmedDetail;
-    if (Object.keys(patch).length > 0) {
-      await updateTodo(todoId, patch);
+    if (trimmedTitle !== todo.text) {
+      await updateTodo(todoId, { text: trimmedTitle });
     }
     cancelEdit();
   };
@@ -134,7 +128,6 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const cancelEdit = () => {
     setEditingTodoId(null);
     setEditTitle('');
-    setEditDetail('');
   };
 
   const handleDelete = async (todoId: string) => {
@@ -160,8 +153,8 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
         const session = await res.json();
         // Add session to store so it renders in SessionList immediately
         useChatStore.getState().addSession(workspaceId, session);
-        // Pre-fill draft with detail, falling back to todo text
-        useChatStore.getState().setDraft(session.id, todo.detail.trim() || todo.text);
+        // Pre-fill draft with todo text
+        useChatStore.getState().setDraft(session.id, todo.text);
         // Switch to sessions tab and activate the new session
         setActiveSession(workspaceId, session.id);
         onSessionNavigate?.();
@@ -181,7 +174,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const filteredTodos = todos.filter((todo) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
-    return todo.text.toLowerCase().includes(q) || todo.detail.toLowerCase().includes(q);
+    return todo.text.toLowerCase().includes(q);
   });
 
   const navigateToSession = useCallback((sessionId: string) => {
@@ -303,35 +296,6 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                       >
                         {todo.text}
                       </p>
-                    )}
-
-                    {/* Detail */}
-                    {isEditing ? (
-                      <textarea
-                        rows={3}
-                        value={editDetail}
-                        onChange={(e) => setEditDetail(e.target.value)}
-                        onKeyDown={(e) => {
-                          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                            e.preventDefault();
-                            commitEdit(todo.id);
-                          }
-                          if (e.key === 'Escape') {
-                            e.preventDefault();
-                            cancelEdit();
-                          }
-                        }}
-                        className="w-full mt-1 px-2 py-0.5 text-[11px] bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-secondary resize-none"
-                      />
-                    ) : (
-                      todo.detail && (
-                        <p
-                          onClick={() => startEdit(todo)}
-                          className="text-[11px] text-text-tertiary truncate mt-0.5 cursor-text hover:text-text-secondary transition-colors"
-                        >
-                          {todo.detail}
-                        </p>
-                      )
                     )}
 
                     {/* Actions */}

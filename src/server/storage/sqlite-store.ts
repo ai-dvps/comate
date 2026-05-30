@@ -109,7 +109,6 @@ export class SqliteStore {
         id TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
         text TEXT NOT NULL,
-        detail TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'pending',
         session_id TEXT,
         created_at TEXT NOT NULL,
@@ -117,10 +116,39 @@ export class SqliteStore {
       )
     `);
 
+    this.migrateTodoDetailColumn();
     this.migrateMappingTable();
     this.migrateFromLegacy();
     this.migrateDraftSessions();
     this.migrateSessionMetadataToSessions();
+  }
+
+  private migrateTodoDetailColumn(): void {
+    const tableInfo = this.db.prepare("PRAGMA table_info(todos)").all() as Array<{ name: string }>;
+    const hasDetail = tableInfo.some((col) => col.name === 'detail');
+    if (!hasDetail) return;
+
+    try {
+      this.db.exec(`
+        ALTER TABLE todos RENAME TO todos_old;
+        CREATE TABLE todos (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          text TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          session_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO todos (id, workspace_id, text, status, session_id, created_at, updated_at)
+        SELECT id, workspace_id, text, status, session_id, created_at, updated_at
+        FROM todos_old;
+        DROP TABLE todos_old;
+      `);
+      console.log('[SqliteStore] Migrated todos table: dropped detail column');
+    } catch (err) {
+      console.error('[SqliteStore] Failed to migrate todos table:', err);
+    }
   }
 
   private migrateMappingTable(): void {
@@ -617,16 +645,15 @@ export class SqliteStore {
       id: uuidv4(),
       workspaceId,
       text: input.text.trim(),
-      detail: input.detail?.trim() ?? '',
       status: 'pending',
       sessionId: null,
       createdAt: now,
       updatedAt: now,
     };
     this.db.prepare(`
-      INSERT INTO todos (id, workspace_id, text, detail, status, session_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(todo.id, todo.workspaceId, todo.text, todo.detail, todo.status, todo.sessionId, todo.createdAt, todo.updatedAt);
+      INSERT INTO todos (id, workspace_id, text, status, session_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(todo.id, todo.workspaceId, todo.text, todo.status, todo.sessionId, todo.createdAt, todo.updatedAt);
     return todo;
   }
 
@@ -652,10 +679,6 @@ export class SqliteStore {
     if (input.text !== undefined) {
       sets.push('text = ?');
       values.push(input.text.trim());
-    }
-    if (input.detail !== undefined) {
-      sets.push('detail = ?');
-      values.push(input.detail.trim());
     }
     if (input.status !== undefined) {
       sets.push('status = ?');
@@ -758,7 +781,6 @@ interface RawTodoRow {
   id: string;
   workspace_id: string;
   text: string;
-  detail: string;
   status: string;
   session_id: string | null;
   created_at: string;
@@ -770,7 +792,6 @@ function parseTodoRow(row: RawTodoRow): Todo {
     id: row.id,
     workspaceId: row.workspace_id,
     text: row.text,
-    detail: row.detail,
     status: row.status as TodoStatus,
     sessionId: row.session_id ?? null,
     createdAt: row.created_at,
