@@ -49,6 +49,8 @@ function startBackgroundPolling(
 }
 
 
+export type ApprovalMode = 'auto' | 'readonly' | 'manual'
+
 export interface ChatSession {
   id: string
   workspaceId: string
@@ -56,6 +58,7 @@ export interface ChatSession {
   isDraft?: boolean
   isWip?: boolean
   source?: 'gui' | 'wecom'
+  approvalMode?: ApprovalMode
   createdAt: string
   updatedAt: string
   summary?: string
@@ -157,7 +160,7 @@ interface ChatState {
   fetchSessions: (workspaceId: string) => Promise<void>
   touchDomCache: (workspaceId: string, sessionId: string) => string | null
   getDomCache: (workspaceId: string) => string[]
-  createSession: (workspaceId: string, name: string) => Promise<void>
+  createSession: (workspaceId: string, name: string, approvalMode?: ApprovalMode) => Promise<void>
   addSession: (workspaceId: string, session: ChatSession) => void
   renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
   toggleSessionWip: (workspaceId: string, sessionId: string, isWip: boolean) => Promise<void>
@@ -182,6 +185,7 @@ interface ChatState {
   ) => Promise<void>
   refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
   setWindowCap: (cap: number) => void
+  setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
 }
 
 function generateId(): string {
@@ -1745,12 +1749,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  createSession: async (workspaceId: string, name: string) => {
+  createSession: async (workspaceId: string, name: string, approvalMode?: ApprovalMode) => {
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, approvalMode }),
       })
       if (!res.ok) throw new Error(i18next.t('common:failedToCreateSession', 'Failed to create session'))
       const session: ChatSession = await res.json()
@@ -2264,5 +2268,46 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setWindowCap: (cap: number) => {
     const clamped = Math.max(50, Math.min(1000, cap))
     set({ windowCap: clamped })
+  },
+
+  setSessionApprovalMode: async (workspaceId: string, sessionId: string, mode: ApprovalMode) => {
+    // Optimistic update
+    set((state) => {
+      const workspaceSessions = state.sessions[workspaceId] || []
+      const nextSessions = workspaceSessions.map((s) =>
+        s.id === sessionId ? { ...s, approvalMode: mode } : s,
+      )
+      return {
+        sessions: { ...state.sessions, [workspaceId]: nextSessions },
+      }
+    })
+
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}/approval-mode`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approvalMode: mode }),
+        },
+      )
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateApprovalMode', 'Failed to update approval mode'))
+    } catch (err) {
+      console.error('Failed to set approval mode:', err)
+      // Revert optimistic update on error
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const session = workspaceSessions.find((s) => s.id === sessionId)
+        const prevMode = session?.approvalMode === mode
+          ? (mode === 'auto' ? 'manual' : mode === 'readonly' ? 'manual' : 'auto')
+          : session?.approvalMode
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, approvalMode: prevMode } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+    }
   },
 }))
