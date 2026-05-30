@@ -1,7 +1,7 @@
 ---
 title: Bot Session History Viewer
 type: feat
-status: active
+status: completed
 date: 2026-05-30
 origin: docs/brainstorms/2026-05-30-bot-session-history-viewer-requirements.md
 ---
