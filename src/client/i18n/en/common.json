@@ -67,5 +67,6 @@
   "failedToSearchFiles": "Failed to search files",
   "approvalError": "Approval error",
   "interruptError": "Interrupt error",
-  "requestFailed": "Request failed"
+  "requestFailed": "Request failed",
+  "failedToUpdateApprovalMode": "Failed to update approval mode"
 }

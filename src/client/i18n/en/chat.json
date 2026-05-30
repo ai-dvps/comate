@@ -45,6 +45,14 @@
   "renameSession": "Rename session",
   "newSession": "New Session",
   "newSessionDefaultName": "Session {{count}}",
+  "approvalMode": {
+    "manual": "Manual",
+    "manualDesc": "You approve every tool call",
+    "readonly": "Readonly",
+    "readonlyDesc": "Auto-approve read-only tools",
+    "auto": "Auto",
+    "autoDesc": "Auto-approve all tools"
+  },
   "loadingSessions": "Loading sessions...",
   "noSessions": "No sessions yet.",
   "createSessionPrompt": "Create one to start chatting.",
