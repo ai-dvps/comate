@@ -1,8 +1,4 @@
 export interface WorkspaceSettings {
-  model?: string;
-  apiKey?: string;
-  maxTokens?: number;
-  temperature?: number;
   wecomBotId?: string;
   wecomBotSecret?: string;
   wecomBotEnabled?: boolean;

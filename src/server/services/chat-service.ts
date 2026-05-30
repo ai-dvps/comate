@@ -4,6 +4,7 @@ import path from 'path';
 import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
+import type { Provider } from '../models/provider.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import type { ChatMessage, TaskItem } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
@@ -111,7 +112,7 @@ export class ChatService {
   }
 
   async createSession(input: CreateSessionInput): Promise<ChatSession> {
-    return workspaceStore.createLocalSession(input.workspaceId, input.name, input.approvalMode);
+    return workspaceStore.createLocalSession(input.workspaceId, input.name, input.approvalMode, input.providerId);
   }
 
   async getSession(id: string, workspaceId: string): Promise<ChatSession | null> {
@@ -143,7 +144,9 @@ export class ChatService {
     // Check local DB
     const localSession = workspaceStore.getLocalSession(id);
     if (localSession && localSession.isDraft) {
-      const draftInput: UpdateSessionInput = input.name !== undefined ? { name: input.name } : {};
+      const draftInput: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
+      if (input.name !== undefined) draftInput.name = input.name;
+      if (input.providerId !== undefined) draftInput.providerId = input.providerId;
       const updated = workspaceStore.updateLocalSession(id, draftInput);
       return updated;
     }
@@ -489,8 +492,45 @@ export class ChatService {
   ): import('@anthropic-ai/claude-agent-sdk').Options {
     const claudeSettings = loadClaudeSettings();
     const { env, sources: envSources } = buildClaudeEnv(claudeSettings);
-    if (workspace.settings.apiKey) {
-      env.ANTHROPIC_API_KEY = workspace.settings.apiKey;
+
+    // Resolve active provider: session -> default
+    const provider = session.providerId
+      ? workspaceStore.getProvider(session.providerId)
+      : workspaceStore.getDefaultProvider();
+
+    if (!provider) {
+      throw new ChatError(
+        'No LLM provider configured. Add a provider in Settings.',
+        'PROVIDER_NOT_FOUND',
+        500,
+      );
+    }
+
+    // Apply provider env vars (overwrite buildClaudeEnv defaults)
+    env.ANTHROPIC_BASE_URL = provider.baseUrl;
+    env.ANTHROPIC_API_KEY = provider.authToken;
+    if (provider.model) {
+      env.ANTHROPIC_MODEL = provider.model;
+    }
+    if (provider.defaultOpusModel) {
+      env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.defaultOpusModel;
+    }
+    if (provider.defaultSonnetModel) {
+      env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.defaultSonnetModel;
+    }
+    if (provider.defaultHaikuModel) {
+      env.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.defaultHaikuModel;
+    }
+    if (provider.subagentModel) {
+      env.CLAUDE_CODE_SUBAGENT_MODEL = provider.subagentModel;
+    }
+    if (provider.effortLevel) {
+      env.CLAUDE_CODE_EFFORT_LEVEL = provider.effortLevel;
+    }
+    if (provider.customEnvVars) {
+      for (const [key, value] of Object.entries(provider.customEnvVars)) {
+        env[key] = value;
+      }
     }
 
     // Diagnostic: log Windows home-dir env vars
@@ -534,14 +574,14 @@ export class ChatService {
     const normalizedCwd = normalizeWindowsPath(workspace.folderPath);
     sidecarLog(`[ChatService.buildSdkOptions] pathToClaudeCodeExecutable=${claudePath}`);
     sidecarLog(`[ChatService.buildSdkOptions] cwd=${normalizedCwd} (raw=${workspace.folderPath})`);
-    sidecarLog(`[ChatService.buildSdkOptions] model=${workspace.settings.model || 'default'}`);
+    sidecarLog(`[ChatService.buildSdkOptions] provider=${provider.name} model=${provider.model || 'default'}`);
     sidecarLog(`[ChatService.buildSdkOptions] sessionId=${session.id} isDraft=${!!session.isDraft}`);
     sidecarLog(`[ChatService.buildSdkOptions] platform=${process.platform} arch=${process.arch}`);
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
       cwd: normalizedCwd,
       env,
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-      model: workspace.settings.model || undefined,
+      model: provider.model || undefined,
       includePartialMessages: true,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {

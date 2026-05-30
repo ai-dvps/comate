@@ -27,7 +27,7 @@ router.get('/sessions', async (req, res) => {
 router.post('/sessions', async (req, res) => {
   try {
     const workspaceId = (req.params as { id: string }).id;
-    const { name, approvalMode } = req.body;
+    const { name, approvalMode, providerId } = req.body;
 
     if (!name || typeof name !== 'string') {
       res.status(400).json({ error: 'name is required' });
@@ -39,7 +39,7 @@ router.post('/sessions', async (req, res) => {
       return;
     }
 
-    const session = await chatService.createSession({ workspaceId, name, approvalMode });
+    const session = await chatService.createSession({ workspaceId, name, approvalMode, providerId });
     res.status(201).json(session);
   } catch (error) {
     console.error('Failed to create session:', error);
@@ -52,19 +52,21 @@ router.put('/sessions/:sessionId', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const { name, isWip } = req.body;
+    const { name, isWip, providerId } = req.body;
 
     const hasName = name !== undefined && typeof name === 'string' && name.trim() !== '';
     const hasWip = isWip !== undefined && typeof isWip === 'boolean';
+    const hasProviderId = providerId !== undefined;
 
-    if (!hasName && !hasWip) {
-      res.status(400).json({ error: 'name or isWip is required' });
+    if (!hasName && !hasWip && !hasProviderId) {
+      res.status(400).json({ error: 'name, isWip, or providerId is required' });
       return;
     }
 
-    const input: { name?: string; isWip?: boolean } = {};
+    const input: { name?: string; isWip?: boolean; providerId?: string } = {};
     if (hasName) input.name = name.trim();
     if (hasWip) input.isWip = isWip;
+    if (hasProviderId) input.providerId = providerId;
 
     const session = await chatService.updateSession(sessionId, input, workspaceId);
     if (!session) {
