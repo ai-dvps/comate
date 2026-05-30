@@ -10,6 +10,9 @@
   "placeholder": "Ask Claude anything about your code...",
   "clear": "Clear",
   "send": "Send",
+  "refresh": "Refresh",
+  "botSessionPlaceholder": "Replies must be sent from WeCom...",
+  "botSessionTooltip": "This is a WeCom bot session. Replies must be sent from WeCom.",
   "stopPopover": {
     "title": "Cancel current turn?",
     "cancel": "Cancel",
