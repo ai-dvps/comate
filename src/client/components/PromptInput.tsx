@@ -52,6 +52,7 @@ interface PromptInputProps {
   hasSession?: boolean
   isBotSession?: boolean
   refreshMeta?: RefreshMeta
+  botName?: string
 }
 
 export default function PromptInput({
@@ -66,6 +67,7 @@ export default function PromptInput({
   hasSession = false,
   isBotSession = false,
   refreshMeta,
+  botName,
 }: PromptInputProps) {
   const { t } = useTranslation('chat')
   const input = useChatStore((s) =>
@@ -350,32 +352,35 @@ export default function PromptInput({
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-4">
-      <div className={`relative bg-surface border border-border rounded-xl transition-colors ${!isBotSession ? 'focus-within:border-border-hover' : ''}`}>
-        {isBotSession ? (
-          <div className="flex items-center justify-between px-4 py-3 gap-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-medium text-text-secondary truncate">
-                {t('wecomBotSession')}
-              </span>
-              <span className="text-xs text-text-tertiary truncate">
-                {getRefreshStatusText(refreshMeta, t)}
-              </span>
-            </div>
-            <button
-              onClick={onRefresh}
-              disabled={!hasSession || refreshMeta?.isRefreshing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-              title={t('refresh')}
-            >
-              {refreshMeta?.isRefreshing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-              <span>{t('refresh')}</span>
-            </button>
+      {isBotSession ? (
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <img src="/wecom-icon.svg" alt="WeCom" className="w-4 h-4 flex-shrink-0" />
+            {botName ? (
+              <span className="text-sm font-medium text-text-secondary truncate">{botName}</span>
+            ) : (
+              <span className="text-sm text-text-tertiary truncate">{t('notSet')}</span>
+            )}
+            <span className="text-xs text-text-tertiary truncate">
+              {getRefreshStatusText(refreshMeta, t)}
+            </span>
           </div>
-        ) : (
+          <button
+            onClick={onRefresh}
+            disabled={!hasSession || refreshMeta?.isRefreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            title={t('refresh')}
+          >
+            {refreshMeta?.isRefreshing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            <span>{t('refresh')}</span>
+          </button>
+        </div>
+      ) : (
+        <div className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
           <>
             <div className="flex items-center px-2 pt-2 gap-1">
               <CommandPicker
@@ -530,8 +535,8 @@ export default function PromptInput({
               )}
             </div>
           </>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

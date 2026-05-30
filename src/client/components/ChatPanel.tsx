@@ -35,6 +35,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   )
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const isBotSession = activeSession?.source === 'wecom'
+  const botName = (workspace?.settings?.wecomBotName as string) || ''
   const modelName = (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
 
   const [isInterrupting, setIsInterrupting] = useState(false)
@@ -302,6 +303,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                 isInterrupting={isInterrupting}
                 hasSession={!!activeSessionId}
                 isBotSession={isBotSession}
+                botName={botName}
                 refreshMeta={{
                   lastRefreshedAt: refreshMeta.lastRefreshedAt,
                   lastNewCount: refreshMeta.lastNewCount,
