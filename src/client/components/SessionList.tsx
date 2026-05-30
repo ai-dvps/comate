@@ -249,8 +249,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                     {session.approvalMode && session.approvalMode !== 'manual' && (
                       <span className={`px-1 py-0.5 text-[9px] rounded ${
                         session.approvalMode === 'auto'
-                          ? 'bg-green-500/20 text-green-400'
-                          : 'bg-blue-500/20 text-blue-400'
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-amber-500/20 text-amber-400'
                       }`}>
                         {t(`approvalMode.${session.approvalMode}`)}
                       </span>
