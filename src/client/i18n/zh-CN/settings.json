@@ -63,6 +63,7 @@
     "saveAnywayTitle": "健康检查失败",
     "saveAnywayMessage": "无法连接到服务商端点。仍要保存该服务商吗？",
     "saveAnywayConfirm": "仍要保存",
+    "checkingHealth": "正在检查健康状态...",
     "delete": "删除",
     "defaultBadge": "默认",
     "healthy": "正常",

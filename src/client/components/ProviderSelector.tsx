@@ -2,13 +2,24 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useProviderStore } from '../stores/provider-store'
-import { Server, ChevronDown, Check } from 'lucide-react'
+import { ChevronDown, Check } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 
 interface ProviderSelectorProps {
   workspaceId: string
   sessionId: string
   disabled?: boolean
+}
+
+function ProviderAvatar({ name, className = '' }: { name: string; className?: string }) {
+  const initial = name.charAt(0).toUpperCase()
+  return (
+    <div
+      className={`flex items-center justify-center rounded-full bg-accent/15 text-accent font-semibold ${className}`}
+    >
+      {initial}
+    </div>
+  )
 }
 
 export default function ProviderSelector({ workspaceId, sessionId, disabled = false }: ProviderSelectorProps) {
@@ -49,7 +60,7 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-accent/10 border-accent/25 text-accent hover:bg-accent/20"
           title={t('provider.selectorTitle')}
         >
-          <Server className="w-3 h-3" />
+          <ProviderAvatar name={displayName} className="w-4 h-4 text-[9px]" />
           <span className="max-w-[120px] truncate">{displayName}</span>
           <ChevronDown className="w-3 h-3 opacity-60" />
         </button>
@@ -75,11 +86,12 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
                   : 'text-text-secondary hover:bg-surface-hover'
               }`}
             >
-              <Check className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? '' : 'opacity-0'}`} />
-              <div className="min-w-0">
+              <ProviderAvatar name={provider.name} className="w-5 h-5 text-[10px] flex-shrink-0" />
+              <div className="min-w-0 flex-1">
                 <div className="font-medium truncate">{provider.name}</div>
                 <div className="text-[10px] text-text-tertiary truncate">{provider.baseUrl}</div>
               </div>
+              <Check className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? '' : 'opacity-0'}`} />
             </button>
           )
         })}

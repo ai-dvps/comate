@@ -431,7 +431,7 @@ export default function ProviderSection() {
               {isSaving ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  {t('unsavedDialog.saving')}
+                  {t('providers.checkingHealth')}
                 </>
               ) : (
                 <>
