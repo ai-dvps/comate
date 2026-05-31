@@ -209,9 +209,11 @@ export default function PromptInput({
     setLastInsertedCommand(null)
   }
 
+  const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
+
   const handleSend = () => {
     const trimmed = input.trim()
-    if (!trimmed || disabled || isStreaming || !hasSession) return
+    if (!trimmed || disabled || isStreaming || isRestarting || !hasSession) return
     onSend(trimmed)
     resetInput()
     textareaRef.current?.focus()
@@ -348,11 +350,11 @@ export default function PromptInput({
     setFilePickerOpen(true)
   }
 
-  const canSend = input.trim().length > 0 && hasSession && !isStreaming && !disabled
+  const canSend = input.trim().length > 0 && hasSession && !isStreaming && !isRestarting && !disabled
   const showClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
-  const commandsDisabled = disabled || isStreaming
-  const filesDisabled = disabled || isStreaming || !workspaceId
+  const commandsDisabled = disabled || isStreaming || isRestarting
+  const filesDisabled = disabled || isStreaming || isRestarting || !workspaceId
 
   return (
     <div className={`max-w-3xl mx-auto px-4 ${isBotSession ? 'py-2' : 'py-4'}`}>
@@ -385,7 +387,7 @@ export default function PromptInput({
             </span>
             <button
               onClick={onRefresh}
-              disabled={!hasSession || refreshMeta?.isRefreshing}
+              disabled={!hasSession || refreshMeta?.isRefreshing || isRestarting}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover active:bg-surface-active active:scale-[0.98] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title={t('refresh')}
             >
@@ -456,8 +458,8 @@ export default function PromptInput({
               <div className="flex-1" />
               {sessionId && !isBotSession && (
                 <>
-                  <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming} />
-                  <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming} />
+                  <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
+                  <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
                 </>
               )}
             </div>
@@ -470,7 +472,7 @@ export default function PromptInput({
                 }
                 onKeyDown={handleKeyDown}
                 placeholder={t('placeholder')}
-                disabled={disabled || isStreaming}
+                disabled={disabled || isStreaming || isRestarting}
                 rows={1}
                 className="w-full bg-transparent border-0 px-4 py-3 pr-24 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
                 style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
