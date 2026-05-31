@@ -56,10 +56,34 @@ export default function TokenUsageBar({
       setGitRef(null)
       return
     }
-    fetch(`/api/workspaces/${workspaceId}/git-ref`)
-      .then((res) => res.json())
-      .then((data: { ref?: string | null }) => setGitRef(data.ref ?? null))
-      .catch(() => setGitRef(null))
+
+    const fetchGitRef = () => {
+      fetch(`/api/workspaces/${workspaceId}/git-ref`)
+        .then((res) => res.json())
+        .then((data: { ref?: string | null }) => setGitRef(data.ref ?? null))
+        .catch(() => setGitRef(null))
+    }
+
+    fetchGitRef()
+    const interval = setInterval(fetchGitRef, 10000)
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchGitRef()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    const handleFocus = () => {
+      fetchGitRef()
+    }
+    window.addEventListener('focus', handleFocus)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
+    }
   }, [workspaceId])
 
   const folderPath = workspace?.folderPath
