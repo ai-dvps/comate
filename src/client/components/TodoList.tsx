@@ -13,6 +13,7 @@ import {
   Circle,
   ExternalLink,
 } from 'lucide-react';
+import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
 interface TodoListProps {
   workspaceId: string;
@@ -53,7 +54,6 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; todoId: string } | null>(null);
-  const [statusMenuTodoId, setStatusMenuTodoId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const todos = useTodoStore((s) => s.todosByWorkspace[workspaceId] || []);
@@ -234,27 +234,23 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
               >
                 <div className="flex items-start gap-2">
                   {/* Status indicator */}
-                  <button
-                    onClick={() => setStatusMenuTodoId(statusMenuTodoId === todo.id ? null : todo.id)}
-                    className={`mt-0.5 p-0.5 rounded flex-shrink-0 ${status.bg} ${status.color} hover:opacity-80 transition-opacity`}
-                    title={status.label}
-                  >
-                    <StatusIcon className="w-3.5 h-3.5" />
-                  </button>
-
-                  {/* Status dropdown */}
-                  {statusMenuTodoId === todo.id && (
-                    <div className="absolute z-50 mt-5 ml-0 min-w-[120px] bg-surface-active border border-border rounded-lg shadow-lg py-1">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        className={`mt-0.5 p-0.5 rounded flex-shrink-0 ${status.bg} ${status.color} hover:opacity-80 transition-opacity cursor-pointer`}
+                        title={status.label}
+                      >
+                        <StatusIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent side="bottom" align="start" sideOffset={4} className="min-w-[120px] p-0 bg-surface-active border border-border rounded-lg shadow-lg z-50 py-1">
                       {(Object.keys(statusConfig) as TodoStatus[]).map((s) => {
                         const cfg = statusConfig[s];
                         const Icon = cfg.icon;
                         return (
                           <button
                             key={s}
-                            onClick={() => {
-                              changeStatus(todo.id, s);
-                              setStatusMenuTodoId(null);
-                            }}
+                            onClick={() => changeStatus(todo.id, s)}
                             className={`w-full px-3 py-1.5 text-left text-xs flex items-center gap-2 hover:bg-surface-hover transition-colors ${
                               todo.status === s ? 'text-text-primary font-medium' : 'text-text-secondary'
                             }`}
@@ -264,8 +260,8 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                           </button>
                         );
                       })}
-                    </div>
-                  )}
+                    </PopoverContent>
+                  </Popover>
 
                   <div className="flex-1 min-w-0">
                     {/* Text */}
