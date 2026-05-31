@@ -441,6 +441,11 @@ export class SessionRuntime {
     } catch {
       // Ignore interrupt errors during close
     }
+    try {
+      this.query.close();
+    } catch {
+      // Ignore close errors during cleanup
+    }
     await this.messageLoopPromise.catch(() => {});
     this.unsubscribe();
   }
