@@ -511,6 +511,7 @@ export class ChatService {
     const settingsEnv: Record<string, string> = {};
     settingsEnv.ANTHROPIC_BASE_URL = provider.baseUrl;
     settingsEnv.ANTHROPIC_API_KEY = provider.authToken;
+    settingsEnv.ANTHROPIC_AUTH_TOKEN = provider.authToken;
     if (provider.model) {
       settingsEnv.ANTHROPIC_MODEL = provider.model;
     }
