@@ -1803,26 +1803,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       if (!res.ok) throw new Error(i18next.t('common:failedToCreateSession', 'Failed to create session'))
       const session: ChatSession = await res.json()
-      set((state) => ({
-        sessions: {
-          ...state.sessions,
-          [workspaceId]: [session, ...(state.sessions[workspaceId] || [])],
-        },
-        activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
-      }))
+      set((state) => {
+        const nextUnread = { ...state.unreadCompletions }
+        delete nextUnread[session.id]
+        const currentCache = state.domCache[workspaceId] || []
+        const withoutSession = currentCache.filter((id) => id !== session.id)
+        const nextCache = [...withoutSession, session.id]
+        if (nextCache.length > DOM_CACHE_LIMIT) {
+          nextCache.shift()
+        }
+        return {
+          sessions: {
+            ...state.sessions,
+            [workspaceId]: [session, ...(state.sessions[workspaceId] || [])],
+          },
+          activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
+          unreadCompletions: nextUnread,
+          domCache: { ...state.domCache, [workspaceId]: nextCache },
+        }
+      })
     } catch (err) {
       console.error('Failed to create session:', err)
     }
   },
 
   addSession: (workspaceId: string, session: ChatSession) => {
-    set((state) => ({
-      sessions: {
-        ...state.sessions,
-        [workspaceId]: [session, ...(state.sessions[workspaceId] || [])],
-      },
-      activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
-    }))
+    set((state) => {
+      const nextUnread = { ...state.unreadCompletions }
+      delete nextUnread[session.id]
+      const currentCache = state.domCache[workspaceId] || []
+      const withoutSession = currentCache.filter((id) => id !== session.id)
+      const nextCache = [...withoutSession, session.id]
+      if (nextCache.length > DOM_CACHE_LIMIT) {
+        nextCache.shift()
+      }
+      return {
+        sessions: {
+          ...state.sessions,
+          [workspaceId]: [session, ...(state.sessions[workspaceId] || [])],
+        },
+        activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
+        unreadCompletions: nextUnread,
+        domCache: { ...state.domCache, [workspaceId]: nextCache },
+      }
+    })
   },
 
   renameSession: async (workspaceId: string, sessionId: string, name: string) => {
