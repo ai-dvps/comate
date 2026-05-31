@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { useProviderStore } from '../stores/provider-store'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
@@ -36,7 +37,10 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const isBotSession = activeSession?.source === 'wecom'
   const botName = (workspace?.settings?.wecomBotName as string) || ''
-  const modelName = (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
+
+  const providers = useProviderStore((s) => s.providers)
+  const activeProvider = providers.find((p) => p.id === activeSession?.providerId)
+  const modelName = activeProvider?.model || activeProvider?.name || 'claude-sonnet-4-6'
 
   const [isInterrupting, setIsInterrupting] = useState(false)
   const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(
