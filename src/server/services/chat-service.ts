@@ -491,7 +491,7 @@ export class ChatService {
     isBotSession?: boolean,
   ): import('@anthropic-ai/claude-agent-sdk').Options {
     const claudeSettings = loadClaudeSettings();
-    const { env, sources: envSources } = buildClaudeEnv(claudeSettings);
+    const { env } = buildClaudeEnv(claudeSettings);
 
     // Resolve active provider: session -> default
     const provider = session.providerId
@@ -506,30 +506,32 @@ export class ChatService {
       );
     }
 
-    // Apply provider env vars (overwrite buildClaudeEnv defaults)
-    env.ANTHROPIC_BASE_URL = provider.baseUrl;
-    env.ANTHROPIC_API_KEY = provider.authToken;
+    // Build flag-settings env so provider credentials survive upstream
+    // settings reloads (applyConfigEnvironmentVariables overwrites process.env).
+    const settingsEnv: Record<string, string> = {};
+    settingsEnv.ANTHROPIC_BASE_URL = provider.baseUrl;
+    settingsEnv.ANTHROPIC_API_KEY = provider.authToken;
     if (provider.model) {
-      env.ANTHROPIC_MODEL = provider.model;
+      settingsEnv.ANTHROPIC_MODEL = provider.model;
     }
     if (provider.defaultOpusModel) {
-      env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.defaultOpusModel;
+      settingsEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.defaultOpusModel;
     }
     if (provider.defaultSonnetModel) {
-      env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.defaultSonnetModel;
+      settingsEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.defaultSonnetModel;
     }
     if (provider.defaultHaikuModel) {
-      env.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.defaultHaikuModel;
+      settingsEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.defaultHaikuModel;
     }
     if (provider.subagentModel) {
-      env.CLAUDE_CODE_SUBAGENT_MODEL = provider.subagentModel;
+      settingsEnv.CLAUDE_CODE_SUBAGENT_MODEL = provider.subagentModel;
     }
     if (provider.effortLevel) {
-      env.CLAUDE_CODE_EFFORT_LEVEL = provider.effortLevel;
+      settingsEnv.CLAUDE_CODE_EFFORT_LEVEL = provider.effortLevel;
     }
     if (provider.customEnvVars) {
       for (const [key, value] of Object.entries(provider.customEnvVars)) {
-        env[key] = value;
+        settingsEnv[key] = value;
       }
     }
 
@@ -542,11 +544,9 @@ export class ChatService {
     sidecarLog(`[ChatService.buildSdkOptions] CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR}`);
     sidecarLog(`[ChatService.buildSdkOptions] CLAUDE_SECURESTORAGE_CONFIG_DIR=${env.CLAUDE_SECURESTORAGE_CONFIG_DIR}`);
 
-    // Log all ANTHROPIC_* env vars for diagnostics
-    for (const key of Object.keys(env)) {
-      if (key.startsWith('ANTHROPIC_') && env[key]) {
-        sidecarLog(`[ChatService.buildSdkOptions] env.${key}=<set> source=${envSources[key] ?? 'process'}`);
-      }
+    // Log provider env vars passed via flag settings for diagnostics
+    for (const key of Object.keys(settingsEnv)) {
+      sidecarLog(`[ChatService.buildSdkOptions] settings.env.${key}=<set>`);
     }
 
     const wecomCliPath = resolveWecomCliPath();
@@ -580,6 +580,7 @@ export class ChatService {
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
       cwd: normalizedCwd,
       env,
+      settings: { env: settingsEnv },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: provider.model || undefined,
       includePartialMessages: true,
