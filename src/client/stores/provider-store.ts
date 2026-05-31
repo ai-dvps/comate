@@ -40,8 +40,8 @@ interface ProviderState {
 
   fetchProviders: () => Promise<void>
   detectProviders: () => Promise<void>
-  createProvider: (data: ProviderFormData) => Promise<Provider | null>
-  updateProvider: (id: string, data: ProviderFormData) => Promise<Provider | null>
+  createProvider: (data: ProviderFormData, options?: { skipHealthCheck?: boolean }) => Promise<{ provider: Provider | null; status?: number }>
+  updateProvider: (id: string, data: ProviderFormData, options?: { skipHealthCheck?: boolean }) => Promise<{ provider: Provider | null; status?: number }>
   deleteProvider: (id: string) => Promise<boolean>
   setDefaultProvider: (id: string) => Promise<void>
   runHealthCheck: (id: string) => Promise<{ ok: boolean; error?: string }>
@@ -111,49 +111,53 @@ export const useProviderStore = create<ProviderState>((set) => ({
     }
   },
 
-  createProvider: async (data) => {
+  createProvider: async (data, options) => {
     set({ isSaving: true, error: null })
     try {
+      const body = { ...formToInput(data), ...(options?.skipHealthCheck ? { skipHealthCheck: true } : {}) }
       const res = await fetch(API_BASE, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formToInput(data)),
+        body: JSON.stringify(body),
       })
       const responseData = await res.json()
       if (!res.ok) {
-        throw new Error(responseData.error || i18next.t('settings:providers.createFailed', 'Failed to create provider'))
+        set({ error: responseData.error || i18next.t('settings:providers.createFailed', 'Failed to create provider'), isSaving: false })
+        return { provider: null, status: res.status }
       }
       set((state) => ({
         providers: [responseData.provider, ...state.providers],
         isSaving: false,
       }))
-      return responseData.provider as Provider
+      return { provider: responseData.provider as Provider }
     } catch (err) {
       set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isSaving: false })
-      return null
+      return { provider: null }
     }
   },
 
-  updateProvider: async (id, data) => {
+  updateProvider: async (id, data, options) => {
     set({ isSaving: true, error: null })
     try {
+      const body = { ...formToInput(data), ...(options?.skipHealthCheck ? { skipHealthCheck: true } : {}) }
       const res = await fetch(`${API_BASE}/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formToInput(data)),
+        body: JSON.stringify(body),
       })
       const responseData = await res.json()
       if (!res.ok) {
-        throw new Error(responseData.error || i18next.t('settings:providers.updateFailed', 'Failed to update provider'))
+        set({ error: responseData.error || i18next.t('settings:providers.updateFailed', 'Failed to update provider'), isSaving: false })
+        return { provider: null, status: res.status }
       }
       set((state) => ({
         providers: state.providers.map((p) => (p.id === id ? responseData.provider : p)),
         isSaving: false,
       }))
-      return responseData.provider as Provider
+      return { provider: responseData.provider as Provider }
     } catch (err) {
       set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isSaving: false })
-      return null
+      return { provider: null }
     }
   },
 

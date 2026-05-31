@@ -104,10 +104,12 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    const health = await runHealthCheck(input.baseUrl, input.authToken);
-    if (!health.ok) {
-      res.status(422).json({ error: health.error || 'Health check failed.' });
-      return;
+    if (!input.skipHealthCheck) {
+      const health = await runHealthCheck(input.baseUrl, input.authToken);
+      if (!health.ok) {
+        res.status(422).json({ error: health.error || 'Health check failed.' });
+        return;
+      }
     }
 
     const provider = store.createProvider(input);
@@ -149,7 +151,7 @@ router.put('/:id', async (req, res) => {
     // Run health check if baseUrl or authToken changed
     const baseUrl = input.baseUrl ?? existing.baseUrl;
     const authToken = input.authToken ?? existing.authToken;
-    if (input.baseUrl !== undefined || input.authToken !== undefined) {
+    if (!input.skipHealthCheck && (input.baseUrl !== undefined || input.authToken !== undefined)) {
       const health = await runHealthCheck(baseUrl, authToken);
       if (!health.ok) {
         res.status(422).json({ error: health.error || 'Health check failed.' });
