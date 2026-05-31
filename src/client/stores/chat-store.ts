@@ -158,6 +158,7 @@ interface ChatState {
   lastTurnUsage: Record<string, TurnUsage>
   sessionUsage: Record<string, SessionUsage>
   domCache: Record<string, string[]>
+  isRestartingRuntime: Record<string, boolean>
 
   fetchSessions: (workspaceId: string) => Promise<void>
   touchDomCache: (workspaceId: string, sessionId: string) => string | null
@@ -1605,8 +1606,11 @@ function subscribeToSession(
             if (event.id) {
               lastEventId.set(sessionId, event.id)
             }
-            // Connection is healthy — reset retry counter
+            // Connection is healthy — reset retry counter and clear restart state
             attempt = 0
+            set((state) => ({
+              isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
+            }))
             try {
               handleSseEvent(set, sessionId, event.event, event.data)
             } catch (err) {
@@ -1647,6 +1651,7 @@ function subscribeToSession(
             )
             set((state) => ({
               isStreaming: { ...state.isStreaming, [sessionId]: false },
+              isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
             }))
             return
           }
@@ -1687,6 +1692,7 @@ function subscribeToSession(
           )
           set((state) => ({
             isStreaming: { ...state.isStreaming, [sessionId]: false },
+            isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
           }))
           return
         }
@@ -1702,6 +1708,7 @@ function subscribeToSession(
           )
           set((state) => ({
             isStreaming: { ...state.isStreaming, [sessionId]: false },
+            isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
           }))
           return
         }
@@ -1750,6 +1757,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   lastTurnUsage: {},
   sessionUsage: {},
   domCache: {},
+  isRestartingRuntime: {},
 
   fetchSessions: async (workspaceId: string) => {
     try {
@@ -2083,6 +2091,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newSessionUsage[sessionId]
       const newAutoApprovedTools = { ...state.autoApprovedTools }
       delete newAutoApprovedTools[sessionId]
+      const newIsRestartingRuntime = { ...state.isRestartingRuntime }
+      delete newIsRestartingRuntime[sessionId]
       return {
         messages: newMessages,
         subagents: newSubagents,
@@ -2091,6 +2101,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         lastTurnUsage: newLastTurnUsage,
         sessionUsage: newSessionUsage,
         autoApprovedTools: newAutoApprovedTools,
+        isRestartingRuntime: newIsRestartingRuntime,
       }
     })
   },
@@ -2358,6 +2369,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       )
       if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+      // Signal that a runtime restart is in progress; cleared when SSE reconnects
+      set((state) => ({
+        isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: true },
+      }))
     } catch (err) {
       console.error('Failed to set session provider:', err)
       // Revert optimistic update on error

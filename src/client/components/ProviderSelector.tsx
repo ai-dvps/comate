@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useProviderStore } from '../stores/provider-store'
-import { ChevronDown, Check } from 'lucide-react'
+import { ChevronDown, Check, Loader2 } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 
 interface ProviderSelectorProps {
@@ -43,6 +43,7 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
 
   const currentProviderId = session?.providerId
   const currentProvider = providers.find((p) => p.id === currentProviderId)
+  const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
 
   const handleSelect = (providerId: string | null) => {
     setSessionProvider(workspaceId, sessionId, providerId)
@@ -62,7 +63,11 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
         >
           <ProviderAvatar name={displayName} className="w-4 h-4 text-[9px]" />
           <span className="max-w-[120px] truncate">{displayName}</span>
-          <ChevronDown className="w-3 h-3 opacity-60" />
+          {isRestarting ? (
+            <Loader2 className="w-3 h-3 animate-spin opacity-60" />
+          ) : (
+            <ChevronDown className="w-3 h-3 opacity-60" />
+          )}
         </button>
       </PopoverTrigger>
       <PopoverContent

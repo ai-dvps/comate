@@ -141,13 +141,27 @@ export class ChatService {
       workspaceStore.setSessionMetadata(id, input.isWip);
     }
 
-    // Check local DB
+    // Check local DB for current provider before update
     const localSession = workspaceStore.getLocalSession(id);
+    const previousProviderId = localSession?.providerId;
+
     if (localSession && localSession.isDraft) {
       const draftInput: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
       if (input.name !== undefined) draftInput.name = input.name;
       if (input.providerId !== undefined) draftInput.providerId = input.providerId;
       const updated = workspaceStore.updateLocalSession(id, draftInput);
+
+      // Close runtime if provider changed so next message creates a fresh one
+      if (input.providerId !== undefined && input.providerId !== previousProviderId) {
+        const runtime = this.getRuntimeIfExists(id);
+        if (runtime) {
+          sidecarLog(`[ChatService] closing runtime ${id} due to provider change`);
+          this.closeRuntime(id).catch((err) => {
+            console.error(`Failed to close runtime ${id} during provider switch:`, err);
+          });
+        }
+      }
+
       return updated;
     }
 
@@ -159,6 +173,22 @@ export class ChatService {
 
     if (input.name) {
       await this.sdkClient.renameSession(id, input.name, { dir: workspace.folderPath });
+    }
+
+    // Also update local DB for providerId change on non-draft sessions
+    if (input.providerId !== undefined) {
+      workspaceStore.updateLocalSession(id, { providerId: input.providerId });
+    }
+
+    // Close runtime if provider changed so next message creates a fresh one
+    if (input.providerId !== undefined && input.providerId !== previousProviderId) {
+      const runtime = this.getRuntimeIfExists(id);
+      if (runtime) {
+        sidecarLog(`[ChatService] closing runtime ${id} due to provider change`);
+        this.closeRuntime(id).catch((err) => {
+          console.error(`Failed to close runtime ${id} during provider switch:`, err);
+        });
+      }
     }
 
     // Return updated session info

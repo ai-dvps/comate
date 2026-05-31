@@ -79,7 +79,10 @@
       "Bash(sips -g pixelWidth -g pixelHeight src-tauri/icons/icon.icns)",
       "Bash(sips -g pixelWidth -g pixelHeight src-tauri/icons/logo.png)",
       "Bash(convert --version)",
-      "Bash(magick --version)"
+      "Bash(magick --version)",
+      "Bash(rm -f src/server/models/provider.ts src/server/routes/providers.ts src/server/services/provider-detection.ts && git merge worktree-feat-llm-provider-management --no-edit)",
+      "Bash(npx eslint *)",
+      "Bash(ls /Users/shunyun/.claude/plugins/cache/compound-engineering-plugin/compound-engineering/3.8.4/skills/ce-plan/references/)"
     ]
   }
 }
