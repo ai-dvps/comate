@@ -18,7 +18,6 @@ export default function TokenUsageBar({
   modelUsage,
 }: TokenUsageBarProps) {
   const { t } = useTranslation('chat')
-  const lastTurn = useChatStore((s) => s.lastTurnUsage[sessionId])
   const cumulative = useChatStore((s) => s.sessionUsage[sessionId])
 
   const workspace = useWorkspaceStore((s) =>
@@ -35,11 +34,7 @@ export default function TokenUsageBar({
 
   const hasData = !!cumulative
 
-  const totalTokens = hasData
-    ? cumulative.cumulativeInput +
-      cumulative.cumulativeCacheRead +
-      cumulative.cumulativeCacheWrite
-    : 0
+  const totalTokens = hasData ? cumulative.cumulativeInput : 0
 
   const fillPercentage = Math.min(
     Math.round((totalTokens / contextWindow) * 100),
@@ -107,16 +102,6 @@ export default function TokenUsageBar({
           <span className="flex items-center gap-1 text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
             <GitBranch className="w-3 h-3" />
             {gitRef}
-          </span>
-        )}
-        {hasData && lastTurn && (
-          <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-            {t('tokenUsage.turn')}: {fmt(lastTurn.inputTokens)} /{' '}
-            {fmt(lastTurn.outputTokens)}
-            {lastTurn.cacheReadTokens > 0 &&
-              ` / ${fmt(lastTurn.cacheReadTokens)}`}
-            {lastTurn.cacheWriteTokens > 0 &&
-              ` / ${fmt(lastTurn.cacheWriteTokens)}`}
           </span>
         )}
       </div>
