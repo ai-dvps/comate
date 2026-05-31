@@ -276,7 +276,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                         value={editTitle}
                         onChange={(e) => setEditTitle(e.target.value)}
                         onKeyDown={(e) => {
-                          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                          if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
                             commitEdit(todo.id);
                           }
