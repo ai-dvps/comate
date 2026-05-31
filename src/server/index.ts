@@ -90,6 +90,21 @@ app.get('/api/health/claude', (_req, res) => {
   }
 });
 
+// Graceful shutdown endpoint — triggered by the Tauri layer before force-kill
+app.post('/shutdown', (req, res) => {
+  const clientIp = req.ip || req.socket.remoteAddress;
+  const allowedIps = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
+  if (!clientIp || !allowedIps.includes(clientIp)) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  res.json({ ok: true });
+  shutdown('http').catch((err) => {
+    console.error('Error during HTTP shutdown:', err);
+    process.exit(1);
+  });
+});
+
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../../dist/client')));
