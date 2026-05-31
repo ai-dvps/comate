@@ -63,22 +63,6 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
         <div className="px-2 py-1 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">
           {t('provider.selectProvider')}
         </div>
-        <button
-          onClick={() => handleSelect(null)}
-          className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors ${
-            !currentProviderId
-              ? 'bg-accent/10 text-accent'
-              : 'text-text-secondary hover:bg-surface-hover'
-          }`}
-        >
-          <Check className={`w-3.5 h-3.5 flex-shrink-0 ${!currentProviderId ? '' : 'opacity-0'}`} />
-          <div className="min-w-0">
-            <div className="font-medium">{t('provider.default')}</div>
-            <div className="text-[10px] text-text-tertiary truncate">
-              {defaultProvider?.name ?? t('provider.noDefault')}
-            </div>
-          </div>
-        </button>
         {providers.map((provider) => {
           const isActive = provider.id === currentProviderId
           return (
