@@ -16,6 +16,7 @@ import {
   Server,
 } from 'lucide-react'
 import { useProviderStore, type Provider } from '../stores/provider-store'
+import ConfirmDialog from './ConfirmDialog'
 
 interface ProviderFormData {
   name: string
@@ -71,6 +72,7 @@ export default function ProviderSection() {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showToken, setShowToken] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [showSaveAnywayConfirm, setShowSaveAnywayConfirm] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
 
   useEffect(() => {
@@ -121,11 +123,37 @@ export default function ProviderSection() {
 
     let result: Provider | null = null
     if (editingId === 'new') {
-      result = await createProvider(form)
+      const { provider, status } = await createProvider(form)
+      if (!provider && status === 422) {
+        setShowSaveAnywayConfirm(true)
+        return
+      }
+      result = provider
     } else if (editingId) {
-      result = await updateProvider(editingId, form)
+      const { provider, status } = await updateProvider(editingId, form)
+      if (!provider && status === 422) {
+        setShowSaveAnywayConfirm(true)
+        return
+      }
+      result = provider
     }
 
+    if (result) {
+      setEditingId(null)
+      setForm(emptyForm())
+    }
+  }
+
+  const handleSaveAnyway = async () => {
+    setShowSaveAnywayConfirm(false)
+    let result: Provider | null = null
+    if (editingId === 'new') {
+      const { provider } = await createProvider(form, { skipHealthCheck: true })
+      result = provider
+    } else if (editingId) {
+      const { provider } = await updateProvider(editingId, form, { skipHealthCheck: true })
+      result = provider
+    }
     if (result) {
       setEditingId(null)
       setForm(emptyForm())
@@ -415,6 +443,16 @@ export default function ProviderSection() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={showSaveAnywayConfirm}
+        title={t('providers.saveAnywayTitle')}
+        message={t('providers.saveAnywayMessage')}
+        confirmLabel={t('providers.saveAnywayConfirm')}
+        cancelLabel={t('actions.cancel')}
+        onConfirm={handleSaveAnyway}
+        onCancel={() => setShowSaveAnywayConfirm(false)}
+      />
 
       {/* Delete confirmation */}
       {showDeleteConfirm && (
