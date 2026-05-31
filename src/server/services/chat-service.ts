@@ -123,6 +123,9 @@ export class ChatService {
         const sdkSession = await this.sdkClient.getSessionInfo(id, { dir: workspace.folderPath });
         if (sdkSession) {
           const session = this.mapSdkSessionInfo(sdkSession, workspaceId);
+          // Preserve providerId from local DB — the SDK doesn't know about providers
+          const localSession = workspaceStore.getLocalSession(id);
+          session.providerId = localSession?.providerId;
           workspaceStore.syncSdkSession(session);
           return session;
         }
