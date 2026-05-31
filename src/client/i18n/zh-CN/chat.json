@@ -106,5 +106,6 @@
   "startSession": "开始会话",
   "startSessionConfirm": "开始名为 \"{{name}}\" 的新会话？",
   "goToSession": "前往会话",
-  "deleteTodo": "删除待办"
+  "deleteTodo": "删除待办",
+  "autoApproved": "自动批准"
 }

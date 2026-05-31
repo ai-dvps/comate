@@ -66,6 +66,7 @@ export default function VirtualizedMessageList({
   const totalMessageCount = useChatStore((s) => s.totalMessageCount[sessionId] || 0)
   const isLoadingOlder = useChatStore((s) => s.isLoadingOlderMessages[sessionId] || false)
   const isCompacting = useChatStore((s) => s.isCompacting[sessionId] || false)
+  const autoApprovedTools = useChatStore((s) => s.autoApprovedTools[sessionId])
   const fetchOlderMessages = useChatStore((s) => s.fetchOlderMessages)
   const parentRef = useRef<HTMLDivElement>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -280,6 +281,7 @@ export default function VirtualizedMessageList({
                   resultMap,
                   onOpenDrawer,
                   sessionId,
+                  autoApprovedTools,
                 )}
               </div>
             )
@@ -311,6 +313,7 @@ function renderViewItem(
   resultMap: Map<string, Extract<import('./ChatMessageRenderer').RenderablePart, { type: 'tool_result' }>>,
   onOpenDrawer: (parentToolUseId: string) => void,
   sessionId: string,
+  autoApprovedTools?: Record<string, 'auto' | 'readonly'>,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     if (item.event.kind === 'slash-command') {
@@ -355,6 +358,7 @@ function renderViewItem(
       resultMap={resultMap}
       onOpenDrawer={onOpenDrawer}
       sessionId={sessionId}
+      autoApprovedTools={autoApprovedTools}
     />
   )
 }

@@ -52,6 +52,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] || [])
+  const autoApprovedTools = useChatStore((s) => s.autoApprovedTools[sessionId])
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
   const visibleMessages = useMemo(
     () => messages.filter((m) => !isToolResultOnly(m)),
@@ -106,7 +107,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
   return (
     <Conversation>
       <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)}`}>
-        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId))}
+        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId, autoApprovedTools))}
         <CompactingIndicator sessionId={sessionId} />
       </ConversationContent>
       <ConversationScrollButton />
@@ -119,6 +120,7 @@ function renderViewItem(
   resultMap: Map<string, Extract<import('./ChatMessageRenderer').RenderablePart, { type: 'tool_result' }>>,
   onOpenDrawer: (parentToolUseId: string) => void,
   sessionId: string,
+  autoApprovedTools?: Record<string, 'auto' | 'readonly'>,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     if (item.event.kind === 'slash-command') {
@@ -163,6 +165,7 @@ function renderViewItem(
       resultMap={resultMap}
       onOpenDrawer={onOpenDrawer}
       sessionId={sessionId}
+      autoApprovedTools={autoApprovedTools}
     />
   )
 }

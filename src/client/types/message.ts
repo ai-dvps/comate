@@ -139,6 +139,7 @@ export type SseEvent =
     }
   | { type: 'pending_question'; requestId: string; questions: QuestionPayload[] }
   | { type: 'approval_resolved'; requestId: string }
+  | { type: 'auto_approval'; toolUseId: string; toolName: string; mode: 'auto' | 'readonly' }
   | { type: 'interrupted'; messageId: string | null }
   | { type: 'error_note'; text: string }
   | { type: 'server_restarted'; serverNonce: string }
