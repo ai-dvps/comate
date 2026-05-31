@@ -8,7 +8,7 @@ import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
 import SubagentDrawer from './SubagentDrawer'
 import TaskPanel from './TaskPanel'
-import TokenUsageBar from './TokenUsageBar'
+import StatusBar from './StatusBar'
 
 interface ChatPanelProps {
   workspaceId: string
@@ -338,9 +338,9 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             )}
           </div>
 
-          {/* Token Usage Bar */}
+          {/* Status Bar */}
           {activeSessionId && (
-            <TokenUsageBar sessionId={activeSessionId} workspaceId={workspaceId} />
+            <StatusBar sessionId={activeSessionId} workspaceId={workspaceId} />
           )}
         </div>
 
