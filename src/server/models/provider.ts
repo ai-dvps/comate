@@ -27,6 +27,7 @@ export interface CreateProviderInput {
   subagentModel?: string;
   effortLevel?: string;
   customEnvVars?: Record<string, string>;
+  skipHealthCheck?: boolean;
 }
 
 export interface UpdateProviderInput {
@@ -41,4 +42,5 @@ export interface UpdateProviderInput {
   subagentModel?: string;
   effortLevel?: string;
   customEnvVars?: Record<string, string>;
+  skipHealthCheck?: boolean;
 }

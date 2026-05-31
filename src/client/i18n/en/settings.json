@@ -63,6 +63,7 @@
     "saveAnywayTitle": "Health Check Failed",
     "saveAnywayMessage": "The provider endpoint could not be reached. Save the provider anyway?",
     "saveAnywayConfirm": "Save anyway",
+    "checkingHealth": "Checking health...",
     "delete": "Delete",
     "defaultBadge": "Default",
     "healthy": "Healthy",
