@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Folder, GitBranch } from 'lucide-react'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { useProviderStore } from '../stores/provider-store'
 import { getContextWindowForModel } from '../utils/model-context'
 
 interface TokenUsageBarProps {
@@ -23,8 +24,12 @@ export default function TokenUsageBar({
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === workspaceId),
   )
-  const modelName =
-    (workspace?.settings?.model as string) || 'claude-sonnet-4-6'
+  const session = useChatStore((s) =>
+    s.sessions[workspaceId]?.find((ses) => ses.id === sessionId),
+  )
+  const providers = useProviderStore((s) => s.providers)
+  const activeProvider = providers.find((p) => p.id === session?.providerId)
+  const modelName = activeProvider?.model || activeProvider?.name || 'claude-sonnet-4-6'
 
   const contextWindow = getContextWindowForModel(modelName, modelUsage)
 
