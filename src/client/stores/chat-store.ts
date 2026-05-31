@@ -1068,6 +1068,17 @@ function handleSseEvent(
         const withMessage = addSystemMessage(state, sessionId, 'Conversation compacted')
         const messages = withMessage.messages?.[sessionId] || state.messages[sessionId] || []
         const lastMessage = messages[messages.length - 1]
+        const newLastTurnUsage = { ...state.lastTurnUsage }
+        delete newLastTurnUsage[sessionId]
+        const resetSessionUsage = {
+          ...state.sessionUsage,
+          [sessionId]: {
+            cumulativeInput: 0,
+            cumulativeOutput: 0,
+            cumulativeCacheRead: 0,
+            cumulativeCacheWrite: 0,
+          },
+        }
         if (lastMessage && lastMessage.role === 'system') {
           return {
             ...withMessage,
@@ -1079,12 +1090,16 @@ function handleSseEvent(
             },
             isCompacting: { ...state.isCompacting, [sessionId]: false },
             compactingStartTime: { ...state.compactingStartTime, [sessionId]: 0 },
+            lastTurnUsage: newLastTurnUsage,
+            sessionUsage: resetSessionUsage,
           }
         }
         return {
           ...withMessage,
           isCompacting: { ...state.isCompacting, [sessionId]: false },
           compactingStartTime: { ...state.compactingStartTime, [sessionId]: 0 },
+          lastTurnUsage: newLastTurnUsage,
+          sessionUsage: resetSessionUsage,
         }
       })
       return
