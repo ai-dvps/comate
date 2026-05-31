@@ -113,12 +113,7 @@ export default function TokenUsageBar({
           <>
             {/* Cumulative */}
             <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-              {t('tokenUsage.session')}: {fmt(cumulative.cumulativeInput)} /{' '}
-              {fmt(cumulative.cumulativeOutput)}
-              {cumulative.cumulativeCacheRead > 0 &&
-                ` / ${fmt(cumulative.cumulativeCacheRead)}`}
-              {cumulative.cumulativeCacheWrite > 0 &&
-                ` / ${fmt(cumulative.cumulativeCacheWrite)}`}
+              {t('tokenUsage.session')}: in {fmt(cumulative.cumulativeInput)} / out {fmt(cumulative.cumulativeOutput)}
             </span>
 
             {/* Context fill */}
