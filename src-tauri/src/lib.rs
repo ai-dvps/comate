@@ -43,6 +43,30 @@ fn perform_shutdown(app_handle: &AppHandle) {
         return;
     }
 
+    // Request graceful shutdown from the Node sidecar before force-killing
+    let port_opt = {
+        let state = app_handle.state::<AppState>();
+        state.api_port.lock().ok().and_then(|guard| *guard)
+    };
+    if let Some(port) = port_opt {
+        let shutdown_url = format!("http://127.0.0.1:{}/shutdown", port);
+        tauri::async_runtime::spawn(async move {
+            let client = match reqwest::Client::builder()
+                .timeout(Duration::from_secs(1))
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("Failed to build shutdown HTTP client: {}", e);
+                    return;
+                }
+            };
+            let _ = client.get(&shutdown_url).send().await;
+        });
+        // Give Node time to clean up before force-killing
+        std::thread::sleep(Duration::from_secs(2));
+    }
+
     if let Ok(mut child_lock) = state.sidecar_child.lock() {
         if let Some(child) = child_lock.take() {
             if let Err(e) = child.kill() {
