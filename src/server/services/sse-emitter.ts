@@ -252,6 +252,10 @@ export class SseEmitter {
     this.send({ type: 'approval_resolved', requestId });
   }
 
+  emitAutoApproval(toolUseId: string, toolName: string, mode: 'auto' | 'readonly'): void {
+    this.send({ type: 'auto_approval', toolUseId, toolName, mode });
+  }
+
   emitInterrupted(messageId: string | null): void {
     this.send({ type: 'interrupted', messageId });
   }

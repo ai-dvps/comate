@@ -106,5 +106,6 @@
   "startSession": "Start session",
   "startSessionConfirm": "Start a new session named \"{{name}}\"?",
   "goToSession": "Go to session",
-  "deleteTodo": "Delete todo"
+  "deleteTodo": "Delete todo",
+  "autoApproved": "Auto-approved"
 }

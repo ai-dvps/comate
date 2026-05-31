@@ -236,11 +236,13 @@ export class SessionRuntime {
       // Check approval mode (after AskUserQuestion guard — questions always require user input)
       if (this.approvalMode === 'auto') {
         diagLog(`[Runtime ${this.sessionId}] auto-approve tool=${toolName} requestId=${requestId}`);
+        this.emitter.emitAutoApproval(requestId, toolName, 'auto');
         return { behavior: 'allow', updatedInput: input };
       }
 
       if (this.approvalMode === 'readonly' && READONLY_TOOLS.includes(toolName)) {
         diagLog(`[Runtime ${this.sessionId}] readonly-auto-approve tool=${toolName} requestId=${requestId}`);
+        this.emitter.emitAutoApproval(requestId, toolName, 'readonly');
         return { behavior: 'allow', updatedInput: input };
       }
 

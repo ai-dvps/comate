@@ -151,6 +151,7 @@ interface ChatState {
   unreadCompletions: Record<string, boolean>
   tasks: Record<string, TaskItem[]>
   pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
+  autoApprovedTools: Record<string, Record<string, 'auto' | 'readonly'>>
   windowCap: number
   totalMessageCount: Record<string, number>
   isLoadingOlderMessages: Record<string, boolean>
@@ -1484,6 +1485,21 @@ function handleSseEvent(
       })
       return
     }
+    case 'auto_approval': {
+      const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
+      const mode = data.mode === 'auto' || data.mode === 'readonly' ? data.mode : 'auto'
+      if (!toolUseId) return
+      set((state) => {
+        const sessionTools = state.autoApprovedTools[sessionId] || {}
+        return {
+          autoApprovedTools: {
+            ...state.autoApprovedTools,
+            [sessionId]: { ...sessionTools, [toolUseId]: mode },
+          },
+        }
+      })
+      return
+    }
     case 'heartbeat':
       return
     case 'system_init':
@@ -1727,6 +1743,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unreadCompletions: {},
   tasks: {},
   pendingTaskCreates: {},
+  autoApprovedTools: {},
   windowCap: DEFAULT_WINDOW_CAP,
   totalMessageCount: {},
   isLoadingOlderMessages: {},
@@ -2064,6 +2081,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newLastTurnUsage[sessionId]
       const newSessionUsage = { ...state.sessionUsage }
       delete newSessionUsage[sessionId]
+      const newAutoApprovedTools = { ...state.autoApprovedTools }
+      delete newAutoApprovedTools[sessionId]
       return {
         messages: newMessages,
         subagents: newSubagents,
@@ -2071,6 +2090,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingTaskCreates: newPendingTaskCreates,
         lastTurnUsage: newLastTurnUsage,
         sessionUsage: newSessionUsage,
+        autoApprovedTools: newAutoApprovedTools,
       }
     })
   },

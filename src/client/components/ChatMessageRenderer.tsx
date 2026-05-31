@@ -178,6 +178,7 @@ export interface ChatMessageRendererProps {
   resultMap: Map<string, Extract<RenderablePart, { type: 'tool_result' }>>
   onOpenDrawer: (parentToolUseId: string) => void
   sessionId: string
+  autoApprovedTools?: Record<string, 'auto' | 'readonly'>
 }
 
 /* ------------------------------------------------------------------ */
@@ -189,6 +190,7 @@ export default function ChatMessageRenderer({
   resultMap,
   onOpenDrawer,
   sessionId,
+  autoApprovedTools,
 }: ChatMessageRendererProps) {
   if (message.role === 'system') {
     // Compact boundary is handled externally; generic system messages
@@ -266,12 +268,14 @@ export default function ChatMessageRenderer({
             const isStreaming = state === 'input-streaming'
             const streamingJson = part.inputJsonStream ?? ''
             const summary = summarizeToolInput(part.input)
+            const autoApproved = autoApprovedTools?.[part.toolUseId]
             return (
               <Tool key={partKey}>
                 <ToolHeader
                   state={state}
                   summary={summary}
                   type={`tool-${part.toolName}`}
+                  autoApproved={autoApproved}
                 />
                 <ToolContent>
                   {isStreaming && streamingJson.length > 0 ? (

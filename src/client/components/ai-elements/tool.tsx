@@ -17,11 +17,14 @@ import {
   CheckCircleIcon,
   CircleIcon,
   ClockIcon,
+  ShieldAlert,
+  Shield,
   WrenchIcon,
   XCircleIcon,
 } from 'lucide-react'
 import type { ComponentProps, ReactNode } from 'react'
 import { isValidElement } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { ToolPart, ToolState } from '../../types/message'
 import { Badge } from '../ui/badge'
@@ -46,6 +49,7 @@ export type ToolHeaderProps = {
   title?: string
   summary?: string
   className?: string
+  autoApproved?: 'auto' | 'readonly'
 } & (
   | { type: string; state: ToolState; toolName?: never }
   | { type: 'dynamic-tool'; state: ToolState; toolName: string }
@@ -80,8 +84,10 @@ export const ToolHeader = ({
   type,
   state,
   toolName,
+  autoApproved,
   ...props
 }: ToolHeaderProps) => {
+  const { t } = useTranslation('chat')
   const derivedName =
     type === 'dynamic-tool' ? toolName : type.split('-').slice(1).join('-')
 
@@ -110,6 +116,23 @@ export const ToolHeader = ({
           </span>
         )}
         {getStatusBadge(state)}
+        {autoApproved && (
+          <span
+            className={cn(
+              'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[10px] font-medium',
+              autoApproved === 'auto'
+                ? 'bg-red-500/20 text-red-400'
+                : 'bg-amber-500/20 text-amber-400',
+            )}
+          >
+            {autoApproved === 'auto' ? (
+              <ShieldAlert className="w-2.5 h-2.5" />
+            ) : (
+              <Shield className="w-2.5 h-2.5" />
+            )}
+            {t('autoApproved')}
+          </span>
+        )}
       </div>
     </div>
   )
