@@ -37,6 +37,7 @@ export default function TokenUsageBar({
 
   const totalTokens = hasData
     ? cumulative.cumulativeInput +
+      cumulative.cumulativeOutput +
       cumulative.cumulativeCacheRead +
       cumulative.cumulativeCacheWrite
     : 0
