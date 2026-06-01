@@ -617,7 +617,7 @@ export class ChatService {
       settings: { env: settingsEnv },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: provider.model || undefined,
-      includePartialMessages: true,
+      includePartialMessages: false,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {
         const trimmed = data.trim();

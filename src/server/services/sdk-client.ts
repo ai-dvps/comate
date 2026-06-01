@@ -50,7 +50,7 @@ export class SdkClient {
       prompt: input,
       options: {
         ...options,
-        includePartialMessages: true,
+        includePartialMessages: false,
         toolConfig: {
           askUserQuestion: { previewFormat: 'html' },
         },
