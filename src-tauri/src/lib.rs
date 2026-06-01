@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -17,12 +17,52 @@ struct AppState {
     is_shutting_down: AtomicBool,
     bot_status_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     session_count_item: Mutex<Option<MenuItem<tauri::Wry>>>,
+    badge_count: AtomicU32,
 }
 
 #[tauri::command]
 fn get_api_port(state: State<'_, AppState>) -> Result<u16, String> {
     let port = state.api_port.lock().map_err(|e| e.to_string())?;
     port.ok_or_else(|| "API port not yet discovered".to_string())
+}
+
+#[tauri::command]
+fn update_badge_state(app_handle: AppHandle, count: u32) -> Result<(), String> {
+    let state = app_handle.state::<AppState>();
+    state.badge_count.store(count, Ordering::SeqCst);
+
+    #[cfg(target_os = "macos")]
+    {
+        app_handle
+            .set_badge_count(count)
+            .map_err(|e| format!("Failed to set badge count: {}", e))?;
+
+        if let Some(window) = app_handle.get_webview_window("main") {
+            let is_visible = window.is_visible().unwrap_or(true);
+            if !is_visible {
+                let policy = if count > 0 {
+                    tauri::ActivationPolicy::Regular
+                } else {
+                    tauri::ActivationPolicy::Accessory
+                };
+                let _ = app_handle.set_activation_policy(policy);
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(window) = app_handle.get_webview_window("main") {
+            let attention_type = if count > 0 {
+                Some(tauri::UserAttentionType::Informational)
+            } else {
+                None
+            };
+            let _ = window.request_user_attention(attention_type);
+        }
+    }
+
+    Ok(())
 }
 
 // Verified OS-level kill matrix for `perform_shutdown` reuse (R16):
@@ -169,13 +209,14 @@ pub fn run() {
             is_shutting_down: AtomicBool::new(false),
             bot_status_item: Mutex::new(None),
             session_count_item: Mutex::new(None),
+            badge_count: AtomicU32::new(0),
         })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
-        .invoke_handler(tauri::generate_handler![get_api_port])
+        .invoke_handler(tauri::generate_handler![get_api_port, update_badge_state])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -365,7 +406,11 @@ pub fn run() {
                 let _ = window.hide();
                 #[cfg(target_os = "macos")]
                 {
-                    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    let state = app_handle.state::<AppState>();
+                    let badge_count = state.badge_count.load(Ordering::SeqCst);
+                    if badge_count == 0 {
+                        let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    }
                 }
             }
             tauri::WindowEvent::Destroyed => {
