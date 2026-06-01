@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import i18next from 'i18next';
 
+export const MAX_TODO_TEXT_LENGTH = 2000;
+
 export type TodoStatus = 'pending' | 'done' | 'discard' | 'did-but-need-verify';
 
 export interface Todo {
@@ -72,6 +74,10 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   createTodo: async (workspaceId: string, text: string) => {
     const trimmedText = text.trim();
     if (!trimmedText) return null;
+    if (trimmedText.length > MAX_TODO_TEXT_LENGTH) {
+      console.error('Todo text exceeds maximum length');
+      return null;
+    }
 
     const optimisticTodo: Todo = {
       id: `temp-${Date.now()}`,
@@ -139,6 +145,11 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
 
     if (!workspaceId || !oldTodo) return null;
+
+    if (patch.text !== undefined && patch.text.trim().length > MAX_TODO_TEXT_LENGTH) {
+      console.error('Todo text exceeds maximum length');
+      return null;
+    }
 
     const optimisticTodo: Todo = { ...oldTodo, ...patch, updatedAt: new Date().toISOString() };
 
