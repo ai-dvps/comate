@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTodoStore, type Todo, type TodoStatus } from '../stores/todo-store';
 import { useChatStore } from '../stores/chat-store';
+import { useAppSettings } from '../hooks/use-app-settings';
+import { shouldSubmitOnEnter } from '../lib/keyboard';
 import {
   Search,
   Plus,
@@ -48,6 +50,7 @@ const statusConfig: Record<TodoStatus, { label: string; icon: typeof Circle; col
 
 export default function TodoList({ workspaceId, onSessionNavigate }: TodoListProps) {
   const { t } = useTranslation('chat');
+  const { useModifierToSubmit } = useAppSettings();
   const [searchQuery, setSearchQuery] = useState('');
   const [quickAddText, setQuickAddText] = useState('');
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
@@ -276,7 +279,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                         value={editTitle}
                         onChange={(e) => setEditTitle(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
+                          if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
                             e.preventDefault();
                             commitEdit(todo.id);
                           }
@@ -342,7 +345,9 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
             value={quickAddText}
             onChange={(e) => setQuickAddText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') handleQuickAdd();
+              if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
+                handleQuickAdd();
+              }
             }}
             placeholder={t('newTodoPlaceholder', { defaultValue: 'Add a todo...' })}
             className="flex-1 px-3 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"

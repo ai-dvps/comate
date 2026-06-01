@@ -2,6 +2,8 @@ import type { TFunction } from 'i18next'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
+import { useAppSettings } from '../hooks/use-app-settings'
+import { shouldSubmitOnEnter } from '../lib/keyboard'
 import { MessageSquare, Plus, Pencil, Shield, ShieldAlert } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
@@ -42,6 +44,7 @@ interface SessionListProps {
 
 export default function SessionList({ workspaceId }: SessionListProps) {
   const { t } = useTranslation('chat')
+  const { useModifierToSubmit } = useAppSettings()
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
@@ -121,7 +124,9 @@ export default function SessionList({ workspaceId }: SessionListProps) {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreate()
+                if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
+                  handleCreate()
+                }
                 if (e.key === 'Escape') {
                   setShowCreate(false)
                   setNewName('')
@@ -205,7 +210,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                         value={editingName}
                         onChange={(e) => setEditingName(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
+                          if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
                             e.preventDefault()
                             commitEdit(session.id)
                           }

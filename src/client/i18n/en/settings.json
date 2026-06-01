@@ -15,6 +15,8 @@
     "messageWindowCapHint": "Max messages kept in memory per session (50–1000). Older messages are pruned but can be re-fetched by scrolling up.",
     "reopenLastWorkspace": "Reopen last workspace on launch",
     "reopenLastWorkspaceHint": "Automatically restore the last active workspace when the app starts.",
+    "useModifierToSubmit": "Use Ctrl/Cmd + Enter to send",
+    "useModifierToSubmitHint": "When enabled, press Ctrl+Enter (Windows) or Cmd+Enter (Mac) to submit. Press Enter alone to insert a new line.",
     "pathConfigTitle": "Claude Code PATH",
     "pathConfigHint": "Directories added here are prepended to the PATH passed to Claude Code.",
     "pathConfigResolvedPath": "Resolved PATH",

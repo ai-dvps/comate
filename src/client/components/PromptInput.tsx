@@ -7,6 +7,8 @@ import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
+import { useAppSettings } from '../hooks/use-app-settings'
+import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import ProviderSelector from './ProviderSelector'
 
@@ -74,6 +76,7 @@ export default function PromptInput({
   wecomUser,
 }: PromptInputProps) {
   const { t } = useTranslation('chat')
+  const { useModifierToSubmit } = useAppSettings()
   const input = useChatStore((s) =>
     sessionId ? s.drafts[sessionId] ?? '' : '',
   )
@@ -285,7 +288,7 @@ export default function PromptInput({
       }
     }
 
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
       e.preventDefault()
       handleSend()
     }
@@ -552,14 +555,21 @@ export default function PromptInput({
                   </PopoverContent>
                 </Popover>
               ) : (
-                <button
-                  onClick={handleSend}
-                  disabled={!canSend}
-                  className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  title={t('send')}
-                >
-                  <Send className="w-4 h-4" />
-                </button>
+                <>
+                  {useModifierToSubmit && (
+                    <span className="text-[10px] text-text-tertiary select-none hidden sm:inline">
+                      {/Mac|iPod|iPhone|iPad/.test(navigator.platform) ? 'Cmd+Enter' : 'Ctrl+Enter'}
+                    </span>
+                  )}
+                  <button
+                    onClick={handleSend}
+                    disabled={!canSend}
+                    className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={t('send')}
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </>
               )}
             </div>
           </>

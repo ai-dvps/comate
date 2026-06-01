@@ -6,6 +6,7 @@ type FontSizePreset = 'small' | 'medium' | 'large'
 interface AppSettings {
   defaultModel: string
   reopenLastWorkspace: boolean
+  useModifierToSubmit: boolean
   language: string
   chatFontSize: FontSizePreset
   uiFontSize: FontSizePreset
@@ -28,6 +29,7 @@ function getInitialSettings(): AppSettings {
       return {
         defaultModel: typeof parsed.defaultModel === 'string' ? parsed.defaultModel : '',
         reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
+        useModifierToSubmit: typeof parsed.useModifierToSubmit === 'boolean' ? parsed.useModifierToSubmit : true,
         language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : i18n.language,
         chatFontSize: isValidFontSize(parsed.chatFontSize) ? parsed.chatFontSize : 'small',
         uiFontSize: isValidFontSize(parsed.uiFontSize) ? parsed.uiFontSize : 'medium',
@@ -36,7 +38,7 @@ function getInitialSettings(): AppSettings {
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium' }
+  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium' }
 }
 
 function saveSettings(settings: AppSettings) {
@@ -97,14 +99,24 @@ export function useAppSettings() {
     })
   }, [])
 
+  const setUseModifierToSubmit = useCallback((useModifierToSubmit: boolean) => {
+    setSettings((prev) => {
+      const next = { ...prev, useModifierToSubmit }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
   return {
     defaultModel: settings.defaultModel,
     reopenLastWorkspace: settings.reopenLastWorkspace,
+    useModifierToSubmit: settings.useModifierToSubmit,
     language: settings.language,
     chatFontSize: settings.chatFontSize,
     uiFontSize: settings.uiFontSize,
     setDefaultModel,
     setReopenLastWorkspace,
+    setUseModifierToSubmit,
     setLanguage,
     setChatFontSize,
     setUiFontSize,
