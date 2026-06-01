@@ -48,6 +48,7 @@ export class SseEmitter {
   private seenStreamPartIndexes = new Set<number>();
   private finalizedMessageIds = new Set<string>();
   private eventIndex = 0;
+  private nextPartIndex = 0;
   private onEvent?: (id: number, event: SseEvent) => void;
 
   constructor(res: Response | null = null, onEvent?: (id: number, event: SseEvent) => void) {
@@ -66,6 +67,7 @@ export class SseEmitter {
     this.seenStreamPartIndexes.clear();
     this.finalizedMessageIds.clear();
     this.eventIndex = 0;
+    this.nextPartIndex = 0;
     this.activeSubagents.clear();
   }
 
@@ -338,6 +340,7 @@ export class SseEmitter {
         this.assistantStartEmitted = false;
         this.blockStates.clear();
         this.seenStreamPartIndexes.clear();
+        this.nextPartIndex = 0;
       }
       return;
     }
@@ -485,6 +488,7 @@ export class SseEmitter {
     if (messageId && messageId !== this.currentMessageId) {
       this.currentMessageId = messageId;
       this.assistantStartEmitted = false;
+      this.nextPartIndex = 0;
     }
     this.ensureAssistantStart();
 
@@ -494,7 +498,7 @@ export class SseEmitter {
           this.closeStreamedBlock(block, index);
           return;
         }
-        this.emitDedupRecovery(block, index);
+        this.emitDedupRecovery(block, this.nextPartIndex++);
       });
     }
 
