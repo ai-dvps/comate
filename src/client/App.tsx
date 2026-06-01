@@ -17,11 +17,13 @@ import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
 import { isMacOS } from './lib/platform'
+import { useBadgeSync } from './lib/use-badge-sync'
 import { cn } from './components/ui/utils'
 
 function App() {
   const { t } = useTranslation('common')
   useTheme()
+  useBadgeSync()
   const { uiFontSize } = useAppSettings()
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
