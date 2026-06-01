@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTodoStore, type Todo, type TodoStatus } from '../stores/todo-store';
 import { useChatStore } from '../stores/chat-store';
@@ -58,6 +58,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; todoId: string } | null>(null);
   const [statusMenuTodoId, setStatusMenuTodoId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const todos = useTodoStore((s) => s.todosByWorkspace[workspaceId] || []);
   const isLoading = useTodoStore((s) => s.isLoading[workspaceId]);
@@ -102,6 +103,13 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
       document.removeEventListener('mousedown', handleClick);
     };
   }, [editingTodoId]);
+
+  useLayoutEffect(() => {
+    const ta = editTextareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  }, [editTitle]);
 
   const handleQuickAdd = async () => {
     const text = quickAddText.trim();
@@ -274,8 +282,8 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                     {/* Text */}
                     {isEditing ? (
                       <textarea
+                        ref={editTextareaRef}
                         autoFocus
-                        rows={4}
                         value={editTitle}
                         onChange={(e) => setEditTitle(e.target.value)}
                         onKeyDown={(e) => {
@@ -289,6 +297,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                           }
                         }}
                         className="w-full px-2 py-0.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary resize-none"
+                        style={{ minHeight: '44px' }}
                       />
                     ) : (
                       <p
