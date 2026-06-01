@@ -69,7 +69,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
 
-  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace } = useAppSettings()
+  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit } = useAppSettings()
   const windowCap = useChatStore((s) => s.windowCap)
   const setWindowCap = useChatStore((s) => s.setWindowCap)
 
@@ -82,6 +82,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   // App-level form state
   const [appModel, setAppModel] = useState(defaultModel)
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
+  const [appModifierSubmit, setAppModifierSubmit] = useState(useModifierToSubmit)
   const [windowCapInput, setWindowCapInput] = useState(String(windowCap))
 
   // Workspace form state (keyed by workspace id)
@@ -91,6 +92,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const snapshotRef = useRef({
     appModel: defaultModel,
     appReopen: reopenLastWorkspace,
+    appModifierSubmit: useModifierToSubmit,
     appWindowCap: windowCap,
     workspaceState: {} as Record<string, WorkspaceFormState>,
   })
@@ -110,17 +112,19 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     snapshotRef.current = {
       appModel: defaultModel,
       appReopen: reopenLastWorkspace,
+      appModifierSubmit: useModifierToSubmit,
       appWindowCap: windowCap,
       workspaceState: JSON.parse(JSON.stringify(initial)),
     }
     setAppModel(defaultModel)
     setAppReopen(reopenLastWorkspace)
+    setAppModifierSubmit(useModifierToSubmit)
     setWindowCapInput(String(windowCap))
 
     if (workspaces.length > 0) {
       setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, defaultModel, reopenLastWorkspace, activeWorkspaceId, windowCap])
+  }, [workspaces, defaultModel, reopenLastWorkspace, useModifierToSubmit, activeWorkspaceId, windowCap])
 
   useEffect(() => {
     setWindowCapInput(String(windowCap))
@@ -143,9 +147,10 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const isDirty = useCallback(() => {
     if (appModel !== snapshotRef.current.appModel) return true
     if (appReopen !== snapshotRef.current.appReopen) return true
+    if (appModifierSubmit !== snapshotRef.current.appModifierSubmit) return true
     if (windowCap !== snapshotRef.current.appWindowCap) return true
     return JSON.stringify(workspaceState) !== JSON.stringify(snapshotRef.current.workspaceState)
-  }, [appModel, appReopen, windowCap, workspaceState])
+  }, [appModel, appReopen, appModifierSubmit, windowCap, workspaceState])
 
   const handleClose = useCallback(() => {
     if (isDirty()) {
@@ -177,6 +182,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     // Save app settings
     setDefaultModel(appModel)
     setReopenLastWorkspace(appReopen)
+    setUseModifierToSubmit(appModifierSubmit)
     const parsedCap = parseInt(windowCapInput, 10)
     if (!isNaN(parsedCap)) {
       setWindowCap(parsedCap)
@@ -211,6 +217,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     snapshotRef.current = {
       appModel,
       appReopen,
+      appModifierSubmit,
       appWindowCap: windowCap,
       workspaceState: JSON.parse(JSON.stringify(workspaceState)),
     }
@@ -228,6 +235,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     // Reset to snapshot
     setAppModel(snapshotRef.current.appModel)
     setAppReopen(snapshotRef.current.appReopen)
+    setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
     setWindowCapInput(String(snapshotRef.current.appWindowCap))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
     onClose()
@@ -236,6 +244,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const handleDiscard = () => {
     setAppModel(snapshotRef.current.appModel)
     setAppReopen(snapshotRef.current.appReopen)
+    setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
     setWindowCapInput(String(snapshotRef.current.appWindowCap))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
     setShowUnsavedDialog(false)
@@ -308,6 +317,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 onDefaultModelChange={setAppModel}
                 reopenLastWorkspace={appReopen}
                 onReopenLastWorkspaceChange={setAppReopen}
+                useModifierToSubmit={appModifierSubmit}
+                onUseModifierToSubmitChange={setAppModifierSubmit}
                 windowCap={windowCapInput}
                 onWindowCapChange={setWindowCapInput}
                 onWindowCapCommit={(val) => {
@@ -412,6 +423,8 @@ function GeneralTab({
   onDefaultModelChange,
   reopenLastWorkspace,
   onReopenLastWorkspaceChange,
+  useModifierToSubmit,
+  onUseModifierToSubmitChange,
   windowCap,
   onWindowCapChange,
   onWindowCapCommit,
@@ -420,6 +433,8 @@ function GeneralTab({
   onDefaultModelChange: (v: string) => void
   reopenLastWorkspace: boolean
   onReopenLastWorkspaceChange: (v: boolean) => void
+  useModifierToSubmit: boolean
+  onUseModifierToSubmitChange: (v: boolean) => void
   windowCap: string
   onWindowCapChange: (v: string) => void
   onWindowCapCommit: (v: string) => void
@@ -487,6 +502,29 @@ function GeneralTab({
             <span
               className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
                 reopenLastWorkspace ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between py-3 border-t border-border/50">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary">
+              {t('general.useModifierToSubmit')}
+            </label>
+            <p className="text-[10px] text-text-tertiary mt-0.5">
+              {t('general.useModifierToSubmitHint')}
+            </p>
+          </div>
+          <button
+            onClick={() => onUseModifierToSubmitChange(!useModifierToSubmit)}
+            className={`relative w-9 h-5 rounded-full transition-colors ${
+              useModifierToSubmit ? 'bg-accent' : 'bg-border'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                useModifierToSubmit ? 'translate-x-4' : 'translate-x-0'
               }`}
             />
           </button>
