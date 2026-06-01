@@ -28,8 +28,8 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    if (input.text.trim().length > 500) {
-      res.status(400).json({ error: 'text must be 500 characters or less' });
+    if (input.text.trim().length > 2000) {
+      res.status(400).json({ error: 'text must be 2000 characters or less' });
       return;
     }
 
@@ -52,8 +52,8 @@ router.put('/:todoId', async (req, res) => {
       return;
     }
 
-    if (input.text && input.text.trim().length > 500) {
-      res.status(400).json({ error: 'text must be 500 characters or less' });
+    if (input.text && input.text.trim().length > 2000) {
+      res.status(400).json({ error: 'text must be 2000 characters or less' });
       return;
     }
 
