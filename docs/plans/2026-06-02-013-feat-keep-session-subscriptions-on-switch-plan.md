@@ -1,7 +1,7 @@
 ---
 title: Keep Session Subscriptions Alive on Switch
 type: feat
-status: active
+status: completed
 date: 2026-06-02
 origin: docs/brainstorms/2026-06-02-keep-session-subscriptions-on-switch-requirements.md
 ---
