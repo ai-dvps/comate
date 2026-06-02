@@ -59,6 +59,7 @@ export class SessionRuntime {
   private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
   private onSubscribed?: () => void;
   private onUnsubscribed?: () => void;
+  private onActivity?: () => void;
   private approvalMode: ApprovalMode = 'manual';
 
   static open(
@@ -70,6 +71,7 @@ export class SessionRuntime {
     botEventHandler?: (id: number, event: SseEvent) => void,
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
+    onActivity?: () => void,
   ): SessionRuntime {
     const input = new PushableIterator<SDKUserMessage>();
     const runtime = new SessionRuntime(
@@ -81,6 +83,7 @@ export class SessionRuntime {
       sdkClient,
       onSubscribed,
       onUnsubscribed,
+      onActivity,
     );
     if (botEventHandler) {
       runtime.botEventHandlers.add(botEventHandler);
@@ -119,6 +122,7 @@ export class SessionRuntime {
     sdkClient: SdkClient,
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
+    onActivity?: () => void,
   ) {
     diagLog(`[Runtime ${sessionId}] constructed`);
     this.sessionId = sessionId;
@@ -129,6 +133,7 @@ export class SessionRuntime {
     this.sdkClient = sdkClient;
     this.onSubscribed = onSubscribed;
     this.onUnsubscribed = onUnsubscribed;
+    this.onActivity = onActivity;
     this.emitter = new SseEmitter(null, (id, event) => {
       if (event.type === 'assistant_start') {
         this.currentMessageStartId = String(id);
@@ -165,6 +170,7 @@ export class SessionRuntime {
     try {
       for await (const msg of messages) {
         if (this.closed) break;
+        this.onActivity?.();
         this.emitter.handle(msg);
       }
     } catch (err) {
@@ -344,6 +350,7 @@ export class SessionRuntime {
       }
     }
     this.onSubscribed?.();
+    this.onActivity?.();
   }
 
   unsubscribe(res?: Response): void {
@@ -380,6 +387,7 @@ export class SessionRuntime {
       parent_tool_use_id: null,
     };
     this.input.push(msg);
+    this.onActivity?.();
   }
 
   resolveApproval(requestId: string, result: PermissionResult): void {
