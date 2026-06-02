@@ -21,7 +21,7 @@ import { diagLog } from './utils/diag-logger.js';
 import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
 import { getStorageDir } from './storage/data-dir.js';
 import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
-import { initializeResolvedShellPath } from './utils/resolve-shell-path.js';
+import { initializeResolvedShellEnv } from './utils/resolve-shell-env.js';
 
 function getDirname(): string {
   try {
@@ -115,9 +115,9 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Start shell PATH resolution early so it's ready before first SDK spawn
-initializeResolvedShellPath().catch((err) => {
-  console.error('Failed to initialize resolved shell path:', err);
+// Start shell environment capture early so it's ready before first SDK spawn
+initializeResolvedShellEnv().catch((err) => {
+  console.error('Failed to initialize resolved shell env:', err);
 });
 
 const server = app.listen(PORT, () => {
