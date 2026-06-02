@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { loadClaudeSettings, resolveClaudeConfigDir } from './claude-settings.js';
 import { getResolvedShellPath } from './resolve-shell-path.js';
+import { getResolvedShellEnv } from './resolve-shell-env.js';
 import { loadCustomPaths } from './path-config.js';
 import { sidecarLog } from './sidecar-logger.js';
 
@@ -10,7 +11,8 @@ export function buildClaudeEnv(
   env: Record<string, string | undefined>;
   sources: Record<string, 'process' | 'settings'>;
 } {
-  const env: Record<string, string | undefined> = { ...process.env };
+  const shellEnv = getResolvedShellEnv();
+  const env: Record<string, string | undefined> = shellEnv ? { ...shellEnv } : { ...process.env };
   const sources: Record<string, 'process' | 'settings'> = {};
   const claudeConfigDir = resolveClaudeConfigDir();
   if (!env.CLAUDE_CONFIG_DIR) {
