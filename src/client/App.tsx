@@ -200,19 +200,6 @@ function App() {
 
   return (
     <div className={`h-screen flex flex-col bg-bg text-text-primary ${fontSizeClass(uiFontSize)} overflow-x-hidden`}>
-      {/* Provider Error Banner */}
-      {!providerCheck.ok && !providerCheck.checking && (
-        <div className="flex-shrink-0 bg-destructive/10 border-b border-destructive/20 px-4 py-2 flex items-center justify-between gap-3">
-          <span className="text-xs text-destructive">{providerCheck.error}</span>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="px-3 py-1 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors flex-shrink-0"
-          >
-            {t('provider.configure')}
-          </button>
-        </div>
-      )}
-
       {/* Top Bar */}
       <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50 relative z-30">
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>
@@ -234,7 +221,20 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Provider Error Banner */}
+        {!providerCheck.ok && !providerCheck.checking && (
+          <div className="absolute top-0 left-0 right-0 z-20 bg-destructive/10 border-b border-destructive/20 px-4 py-2 flex items-center justify-between gap-3">
+            <span className="text-xs text-destructive">{providerCheck.error}</span>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="px-3 py-1 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors flex-shrink-0"
+            >
+              {t('provider.configure')}
+            </button>
+          </div>
+        )}
+
         <Sidebar
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
