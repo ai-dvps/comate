@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { AlertCircle } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useResizableWidth } from './hooks/use-resizable-width'
@@ -222,13 +223,14 @@ function App() {
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Provider Error Banner */}
+        {/* Provider Error Toast */}
         {!providerCheck.ok && !providerCheck.checking && (
-          <div className="absolute top-0 left-0 right-0 z-20 bg-destructive/10 border-b border-destructive/20 px-4 py-2 flex items-center justify-between gap-3">
-            <span className="text-xs text-destructive">{providerCheck.error}</span>
+          <div className="absolute top-2 right-2 z-20 bg-surface border border-border rounded-lg shadow-lg px-3 py-2 flex items-center gap-2 max-w-xs">
+            <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />
+            <span className="text-xs text-text-primary flex-1">{providerCheck.error}</span>
             <button
               onClick={() => setShowSettings(true)}
-              className="px-3 py-1 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors flex-shrink-0"
+              className="px-2 py-1 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors flex-shrink-0"
             >
               {t('provider.configure')}
             </button>
