@@ -15,6 +15,7 @@ import {
   Circle,
   ExternalLink,
 } from 'lucide-react';
+import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
 interface TodoListProps {
   workspaceId: string;
@@ -245,17 +246,24 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
               >
                 <div className="flex items-start gap-2">
                   {/* Status indicator */}
-                  <button
-                    onClick={() => setStatusMenuTodoId(statusMenuTodoId === todo.id ? null : todo.id)}
-                    className={`mt-0.5 p-0.5 rounded flex-shrink-0 ${status.bg} ${status.color} hover:opacity-80 transition-opacity`}
-                    title={status.label}
+                  <Popover
+                    open={statusMenuTodoId === todo.id}
+                    onOpenChange={(open) => setStatusMenuTodoId(open ? todo.id : null)}
                   >
-                    <StatusIcon className="w-3.5 h-3.5" />
-                  </button>
-
-                  {/* Status dropdown */}
-                  {statusMenuTodoId === todo.id && (
-                    <div className="absolute z-50 mt-5 ml-0 min-w-[120px] bg-surface-active border border-border rounded-lg shadow-lg py-1">
+                    <PopoverTrigger asChild>
+                      <button
+                        className={`mt-0.5 p-0.5 rounded flex-shrink-0 ${status.bg} ${status.color} hover:opacity-80 transition-opacity`}
+                        title={status.label}
+                      >
+                        <StatusIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      side="bottom"
+                      align="start"
+                      sideOffset={4}
+                      className="bg-surface-active border border-border rounded-lg shadow-lg py-1 z-50 min-w-[120px]"
+                    >
                       {(Object.keys(statusConfig) as TodoStatus[]).map((s) => {
                         const cfg = statusConfig[s];
                         const Icon = cfg.icon;
@@ -275,8 +283,8 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                           </button>
                         );
                       })}
-                    </div>
-                  )}
+                    </PopoverContent>
+                  </Popover>
 
                   <div className="flex-1 min-w-0">
                     {/* Text */}
