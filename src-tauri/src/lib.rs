@@ -103,11 +103,15 @@ fn cleanup_sidecar(app_handle: &AppHandle, grace_period: Duration) {
         std::thread::sleep(grace_period);
     }
 
-    if let Ok(mut child_lock) = state.sidecar_child.lock() {
-        if let Some(child) = child_lock.take() {
-            if let Err(e) = child.kill() {
-                log::error!("Failed to kill sidecar: {}", e);
-            }
+    let child_opt = state
+        .sidecar_child
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take());
+
+    if let Some(child) = child_opt {
+        if let Err(e) = child.kill() {
+            log::error!("Failed to kill sidecar: {}", e);
         }
     }
 }
