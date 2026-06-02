@@ -248,7 +248,7 @@ function ApprovalView({
 
   return (
     <div>
-      <div className="mb-3">
+      <div className="mb-3 max-h-[60vh] overflow-y-auto">
         {hasCustomRenderer && showMore ? (
           <div className="bg-bg rounded px-2 py-1.5">
             {renderer!(item.input) ?? <StructuredFallback data={item.input} />}
@@ -680,7 +680,7 @@ function QuestionView({
           </div>
         </div>
       ) : (
-        <div className="mb-3">{questionContent}</div>
+        <div className="mb-3 max-h-[60vh] overflow-y-auto">{questionContent}</div>
       )}
 
       <div className="flex items-center gap-2">
