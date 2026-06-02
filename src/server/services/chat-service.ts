@@ -23,7 +23,15 @@ export interface MessageStream {
   wasDraft: boolean;
 }
 
-const RUNTIME_IDLE_GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
+let RUNTIME_IDLE_GRACE_PERIOD_MS = 10 * 60 * 1000; // 10 minutes
+
+export function __setIdleGracePeriodForTesting(ms: number): void {
+  RUNTIME_IDLE_GRACE_PERIOD_MS = ms;
+}
+
+export function __restoreIdleGracePeriod(): void {
+  RUNTIME_IDLE_GRACE_PERIOD_MS = 10 * 60 * 1000;
+}
 
 export class ChatService {
   private sdkClient = new SdkClient();
@@ -392,9 +400,11 @@ export class ChatService {
         this.sdkClient,
         botEventHandler,
         () => this.cancelIdleClose(sessionId),
+        () => {},
         () => this.scheduleIdleClose(sessionId),
       );
       this.runtimes.set(sessionId, runtime);
+      this.scheduleIdleClose(sessionId);
 
       // Set initial approval mode from session data
       if (!isBotSession && session.approvalMode) {
