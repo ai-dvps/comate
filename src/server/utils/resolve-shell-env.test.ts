@@ -2,6 +2,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
+import { homedir } from 'node:os';
 import type { ChildProcess } from 'node:child_process';
 import {
   initializeResolvedShellEnv,
@@ -231,8 +232,25 @@ describe('resolve-shell-env', { concurrency: false }, () => {
     const command = (capturedArgs![1] as string[])[1];
     assert.ok(command.includes('export NVM_DIR="/home/user/.nvm"'));
     assert.ok(command.includes('nvm.sh'));
-    assert.ok(command.includes('nvm use'));
+    assert.ok(command.includes('nvm use;'));
     assert.ok(command.endsWith('; env -0'));
+  });
+
+  it('spawns shell from the user home directory', async () => {
+    __setNvmDirForTesting('/home/user/.nvm');
+
+    let capturedOpts: Record<string, unknown> | undefined;
+    const trackingSpawn = (_cmd: unknown, _args: unknown, opts: Record<string, unknown>): ChildProcess => {
+      capturedOpts = opts;
+      return createMockSpawn('PATH=/bin\0', 0)() as ChildProcess;
+    };
+
+    __setSpawnForTesting(trackingSpawn as unknown as typeof import('child_process').spawn);
+
+    await initializeResolvedShellEnv();
+
+    assert.ok(capturedOpts);
+    assert.strictEqual(capturedOpts!.cwd, homedir());
   });
 
   it('user-configured shellInitCommand takes precedence over nvm auto-detection', async () => {

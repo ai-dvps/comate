@@ -92,6 +92,7 @@ async function spawnShellForEnv(shell: string): Promise<Record<string, string> |
       const proc = _spawn(shell, ['-ilc', command], {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: buildSpawnEnv(),
+        cwd: homedir(),
       });
 
       let stdout = '';
