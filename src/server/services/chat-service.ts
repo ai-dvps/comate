@@ -126,6 +126,8 @@ export class ChatService {
           // Preserve providerId from local DB — the SDK doesn't know about providers
           const localSession = workspaceStore.getLocalSession(id);
           session.providerId = localSession?.providerId;
+          session.isWip = localSession?.isWip;
+          session.approvalMode = localSession?.approvalMode;
           workspaceStore.syncSdkSession(session);
           return session;
         }
@@ -199,6 +201,8 @@ export class ChatService {
     if (sdkSession) {
       const session = this.mapSdkSessionInfo(sdkSession, workspaceId);
       workspaceStore.syncSdkSession(session);
+      const localSession = workspaceStore.getLocalSession(id);
+      session.isWip = localSession?.isWip;
       return session;
     }
     return workspaceStore.getLocalSession(id);
