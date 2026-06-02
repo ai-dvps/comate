@@ -82,7 +82,31 @@
       "Bash(magick --version)",
       "Bash(rm -f src/server/models/provider.ts src/server/routes/providers.ts src/server/services/provider-detection.ts && git merge worktree-feat-llm-provider-management --no-edit)",
       "Bash(npx eslint *)",
-      "Bash(ls /Users/shunyun/.claude/plugins/cache/compound-engineering-plugin/compound-engineering/3.8.4/skills/ce-plan/references/)"
+      "Bash(ls /Users/shunyun/.claude/plugins/cache/compound-engineering-plugin/compound-engineering/3.8.4/skills/ce-plan/references/)",
+      "Bash(rm -f /var/folders/k7/pc5f89s97b5gjnhyvmbvjqxh0000gn/T//ce-pr-body.cbG47f)",
+      "Bash(npx tsx *)",
+      "Bash(mkdir -p docs/brainstorms && ls docs/)",
+      "Bash(cat ~/.claude/settings.json 2>/dev/null | head -50 || echo \"No global settings.json\")",
+      "Bash(find /Users/shunyun/WebstormProjects/claude-code/src -name \"*querySource*\" -o -name \"*query_source*\" 2>/dev/null)",
+      "Bash(find /Users/shunyun/WebstormProjects/claude-code -name \"querySource*\" -o -name \"query_source*\" 2>/dev/null | head -20)",
+      "Bash(ls -la docs/brainstorms/ 2>/dev/null || mkdir -p docs/brainstorms/)",
+      "Bash(cargo check *)",
+      "Bash(rm -f \"/var/folders/k7/pc5f89s97b5gjnhyvmbvjqxh0000gn/T//ce-pr-body.vVuoke\")",
+      "Bash(find /Users/shunyun/WebstormProjects/claude-code -maxdepth 2 -name \"*.json\" -o -name \"*.toml\" -o -name \"Makefile\" -o -name \"*.mk\" | head -30)",
+      "Bash(ls -la /Users/shunyun/WebstormProjects/ | head -20)",
+      "Bash(grep -n -A 5 \"set_badge_count\" /Users/shunyun/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/webview/webview_window.rs)",
+      "Bash(grep -n -A 10 \"request_user_attention\" /Users/shunyun/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.2/src/window/mod.rs | head -40)",
+      "Bash(mkdir -p docs/brainstorms)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(cargo test *)",
+      "Bash(cat > *)",
+      "Bash(grep -n -A5 -B2 'nvm' ~/.zshrc 2>/dev/null || echo \"No .zshrc found or no nvm references\")",
+      "Bash(zsh -ilc 'echo \"=== nvm function ===\"; type nvm 2>/dev/null || echo \"nvm not a function\"; echo \"=== node path ===\"; which node 2>/dev/null || echo \"node not found\"; echo \"=== node version ===\"; node -v 2>/dev/null || echo \"node not executable\"; echo \"=== PATH node entries ===\"; echo \"$PATH\" | tr \":\" \"\\\\n\" | grep node')",
+      "Bash(zsh -ilc 'export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\\\. \"$NVM_DIR/nvm.sh\"; nvm use default; node -v')",
+      "Bash(zsh -ilc 'export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\\\. \"$NVM_DIR/nvm.sh\"; nvm use; node -v')",
+      "Bash(zsh -ilc 'export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\\\. \"$NVM_DIR/nvm.sh\"; nvm use; env -0')",
+      "Bash(zsh -ilc 'export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\\\. \"$NVM_DIR/nvm.sh\"; nvm use; which aidx')",
+      "Bash(grep -n \"resolve-shell-env\" \"/Users/shunyun/Library/Application Support/com.comate.app/logs/sidecar.log\" | tail -20)"
     ]
   }
 }

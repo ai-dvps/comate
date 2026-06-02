@@ -7,7 +7,7 @@ import { diagLog, diagWarn } from '../utils/diag-logger'
 
 export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
 
-const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout> }>()
+const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout>; workspaceId: string }>()
 const lastEventId = new Map<string, string>()
 const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
 
@@ -1739,6 +1739,7 @@ function subscribeToSession(
 
     sessionSubscriptions.set(sessionId, {
       close: thisClose,
+      workspaceId,
     })
     console.log(`[SSE ${sessionId}] subscription stored, close=${thisClose.name || 'anonymous'}`)
   }
@@ -1920,15 +1921,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setActiveSession: (workspaceId: string, sessionId: string) => {
-    const prevSessionId = get().activeSessionIds[workspaceId]
-    if (prevSessionId && prevSessionId !== sessionId) {
-      const sub = sessionSubscriptions.get(prevSessionId)
-      if (sub) {
-        sub.close()
-      }
-      sessionSubscriptions.delete(prevSessionId)
-    }
-
     set((state) => {
       const nextUnread = { ...state.unreadCompletions }
       if (sessionId) delete nextUnread[sessionId]
@@ -2020,10 +2012,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   cleanupWorkspace: (workspaceId: string) => {
-    const sessionId = get().activeSessionIds[workspaceId]
-    if (sessionId) {
-      const sub = sessionSubscriptions.get(sessionId)
-      if (sub) {
+    for (const [sessionId, sub] of sessionSubscriptions) {
+      if (sub.workspaceId === workspaceId) {
         sub.close()
         sessionSubscriptions.delete(sessionId)
       }
