@@ -70,6 +70,12 @@
   "requestFailed": "Request failed",
   "failedToUpdateApprovalMode": "Failed to update approval mode",
   "failedToUpdateSession": "Failed to update session",
+  "contextMenu": {
+    "revealInFinder": "Reveal in Finder",
+    "revealInExplorer": "Reveal in Explorer",
+    "revealInFileManager": "Reveal in File Manager",
+    "copyFullPath": "Copy full path"
+  },
   "provider": {
     "noProviderConfigured": "No LLM provider configured. Go to Settings → Providers to add one.",
     "configure": "Configure Provider"
