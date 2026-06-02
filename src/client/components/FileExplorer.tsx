@@ -130,12 +130,12 @@ interface FileExplorerProps {
 
 function getRevealLabel(): string {
   if (typeof navigator !== 'undefined' && /Win/i.test(navigator.platform)) {
-    return 'revealInExplorer'
+    return 'contextMenu.revealInExplorer'
   }
   if (typeof navigator !== 'undefined' && /Linux/i.test(navigator.platform)) {
-    return 'revealInFileManager'
+    return 'contextMenu.revealInFileManager'
   }
-  return 'revealInFinder'
+  return 'contextMenu.revealInFinder'
 }
 
 export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExplorerProps) {
@@ -365,7 +365,7 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
             onClick={handleCopyPath}
             className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
           >
-            {t('copyFullPath')}
+            {t('contextMenu.copyFullPath')}
           </button>
         </div>
       )}
