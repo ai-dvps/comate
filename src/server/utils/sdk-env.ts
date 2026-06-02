@@ -1,5 +1,5 @@
 import { existsSync } from 'fs';
-import { loadClaudeSettings, resolveClaudeConfigDir } from './claude-settings.js';
+import { resolveClaudeConfigDir } from './claude-settings.js';
 import { getResolvedShellPath } from './resolve-shell-path.js';
 import { getResolvedShellEnv } from './resolve-shell-env.js';
 import { loadCustomPaths } from './path-config.js';

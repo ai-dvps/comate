@@ -5,6 +5,7 @@ import { sidecarLog } from './sidecar-logger.js';
 const TIMEOUT_MS = 5000;
 
 let cachedEnv: Record<string, string> | null | undefined = undefined;
+let _spawn: typeof spawn = spawn;
 
 function getDefaultShell(): string | null {
   const shell = process.env.SHELL;
@@ -33,16 +34,15 @@ async function spawnShellForEnv(shell: string): Promise<Record<string, string> |
     let settled = false;
     let timeout: NodeJS.Timeout | undefined;
 
-    const finish = (result: Record<string, string> | null) => {
+    const finish = () => {
       if (settled) return false;
       settled = true;
       if (timeout) clearTimeout(timeout);
-      resolve(result);
       return true;
     };
 
     try {
-      const proc = spawn(shell, ['-ilc', 'env -0'], {
+      const proc = _spawn(shell, ['-ilc', 'env -0'], {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: process.env,
       });
@@ -58,7 +58,7 @@ async function spawnShellForEnv(shell: string): Promise<Record<string, string> |
       });
 
       proc.on('close', (code) => {
-        if (!finish(null)) return;
+        if (!finish()) return;
         if (code !== 0) {
           sidecarLog(`[resolve-shell-env] shell ${shell} exited with code ${code}, stderr: ${stderr.trim()}`);
           resolve(null);
@@ -70,19 +70,19 @@ async function spawnShellForEnv(shell: string): Promise<Record<string, string> |
       });
 
       proc.on('error', (err) => {
-        if (!finish(null)) return;
+        if (!finish()) return;
         sidecarLog(`[resolve-shell-env] failed to spawn ${shell}: ${err.message}`);
         resolve(null);
       });
 
       timeout = setTimeout(() => {
-        if (!finish(null)) return;
+        if (!finish()) return;
         sidecarLog(`[resolve-shell-env] shell ${shell} timed out after ${TIMEOUT_MS}ms`);
         proc.kill('SIGKILL');
         resolve(null);
       }, TIMEOUT_MS);
     } catch (err) {
-      if (!finish(null)) return;
+      if (!finish()) return;
       sidecarLog(`[resolve-shell-env] exception spawning ${shell}: ${err}`);
       resolve(null);
     }
@@ -128,4 +128,19 @@ export function getResolvedShellEnv(): Record<string, string> | null {
     return null;
   }
   return cachedEnv;
+}
+
+/** Reset the internal cache. Exposed only for tests. */
+export function __resetCache(): void {
+  cachedEnv = undefined;
+}
+
+/** Override spawn for testing. Exposed only for tests. */
+export function __setSpawnForTesting(spawnImpl: typeof spawn): void {
+  _spawn = spawnImpl;
+}
+
+/** Restore default spawn. Exposed only for tests. */
+export function __restoreSpawn(): void {
+  _spawn = spawn;
 }

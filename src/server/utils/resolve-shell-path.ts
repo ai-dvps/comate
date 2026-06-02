@@ -4,8 +4,6 @@ import path from 'path';
 import { sidecarLog } from './sidecar-logger.js';
 import { initializeResolvedShellEnv, getResolvedShellEnv } from './resolve-shell-env.js';
 
-const TIMEOUT_MS = 5000;
-
 interface ResolvedPath {
   path: string;
   source: 'shell' | 'fallback' | 'none';
@@ -47,7 +45,7 @@ function getFallbackDirectories(): string[] {
   return dirs.filter((d) => existsSync(d));
 }
 
-async function resolveFallbackPath(): Promise<ResolvedPath> {
+function resolveFallbackPath(): ResolvedPath {
   if (process.platform === 'win32') {
     const basePath = process.env.PATH || '';
     const fallbackDirs = getFallbackDirectories();
@@ -88,25 +86,5 @@ export function getResolvedShellPath(): ResolvedPath {
   }
 
   // Synchronous fallback when shell env is unavailable (Windows, or capture failed)
-  if (process.platform === 'win32') {
-    const basePath = process.env.PATH || '';
-    const fallbackDirs = getFallbackDirectories();
-    const existingDirs = basePath.split(';').map((d) => d.trim().toLowerCase());
-    const newDirs = fallbackDirs.filter(
-      (d) => !existingDirs.includes(d.trim().toLowerCase()),
-    );
-    if (newDirs.length > 0) {
-      const enriched = newDirs.join(';') + (basePath ? ';' + basePath : '');
-      return { path: enriched, source: 'fallback', shellDirs: null, fallbackDirs: newDirs };
-    }
-    return { path: basePath, source: 'none', shellDirs: null, fallbackDirs: null };
-  }
-
-  const fallbackDirs = getFallbackDirectories();
-  if (fallbackDirs.length > 0) {
-    const fallbackPath = fallbackDirs.join(':');
-    return { path: fallbackPath, source: 'fallback', shellDirs: null, fallbackDirs };
-  }
-
-  return { path: '', source: 'none', shellDirs: null, fallbackDirs: null };
+  return resolveFallbackPath();
 }
