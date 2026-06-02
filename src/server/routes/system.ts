@@ -3,7 +3,7 @@ import path from 'path';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { chatService } from '../services/chat-service.js';
 import { getResolvedShellPath } from '../utils/resolve-shell-path.js';
-import { loadCustomPaths, saveCustomPaths } from '../utils/path-config.js';
+import { loadCustomPaths, saveCustomPaths, loadShellInitCommand, saveShellInitCommand } from '../utils/path-config.js';
 
 const router = Router();
 
@@ -29,9 +29,11 @@ router.get('/path', (_req, res) => {
   try {
     const resolved = getResolvedShellPath();
     const customPaths = loadCustomPaths();
+    const shellInitCommand = loadShellInitCommand();
     res.json({
       resolvedPath: resolved.path,
       customPaths,
+      shellInitCommand,
       sources: {
         shell: resolved.shellDirs,
         fallback: resolved.fallbackDirs,
@@ -47,32 +49,45 @@ router.get('/path', (_req, res) => {
 // Accepts custom paths, validates them, persists, and returns updated state.
 router.post('/path', (req, res) => {
   try {
-    const { customPaths } = req.body;
-    if (!Array.isArray(customPaths)) {
-      res.status(400).json({ error: 'customPaths must be an array' });
-      return;
+    const { customPaths, shellInitCommand } = req.body;
+
+    if (customPaths !== undefined) {
+      if (!Array.isArray(customPaths)) {
+        res.status(400).json({ error: 'customPaths must be an array' });
+        return;
+      }
+      const invalid = customPaths.filter(
+        (p) => typeof p !== 'string' || p.trim().length === 0 || !path.isAbsolute(p.trim()),
+      );
+      if (invalid.length > 0) {
+        res.status(400).json({ error: 'Each path must be a non-empty absolute path', invalid });
+        return;
+      }
+      const normalized = customPaths.map((p: string) => p.trim());
+      saveCustomPaths(normalized);
     }
-    const invalid = customPaths.filter(
-      (p) => typeof p !== 'string' || p.trim().length === 0 || !path.isAbsolute(p.trim()),
-    );
-    if (invalid.length > 0) {
-      res.status(400).json({ error: 'Each path must be a non-empty absolute path', invalid });
-      return;
+
+    if (shellInitCommand !== undefined) {
+      if (typeof shellInitCommand !== 'string') {
+        res.status(400).json({ error: 'shellInitCommand must be a string' });
+        return;
+      }
+      saveShellInitCommand(shellInitCommand.trim() || undefined);
     }
-    const normalized = customPaths.map((p: string) => p.trim());
-    saveCustomPaths(normalized);
+
     const resolved = getResolvedShellPath();
     res.json({
       resolvedPath: resolved.path,
-      customPaths: normalized,
+      customPaths: loadCustomPaths(),
+      shellInitCommand: loadShellInitCommand(),
       sources: {
         shell: resolved.shellDirs,
         fallback: resolved.fallbackDirs,
       },
     });
   } catch (error) {
-    console.error('Failed to save custom paths:', error);
-    res.status(500).json({ error: 'Failed to save custom paths' });
+    console.error('Failed to save PATH config:', error);
+    res.status(500).json({ error: 'Failed to save PATH config' });
   }
 });
 

@@ -1,11 +1,17 @@
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
+import { homedir } from 'os';
+import path from 'path';
 import { sidecarLog } from './sidecar-logger.js';
+import { loadShellInitCommand } from './path-config.js';
 
 const TIMEOUT_MS = 5000;
 
 let cachedEnv: Record<string, string> | null | undefined = undefined;
 let _spawn: typeof spawn = spawn;
+
+let _testingShellInitCommand: string | undefined | null = null;
+let _testingNvmDir: string | undefined | null = null;
 
 function getDefaultShell(): string | null {
   const shell = process.env.SHELL;
@@ -29,7 +35,48 @@ function parseEnvOutput(stdout: string): Record<string, string> {
   return result;
 }
 
+function tryDetectNvm(): string | undefined {
+  if (_testingNvmDir !== null) {
+    return _testingNvmDir;
+  }
+  const candidates: string[] = [];
+  if (process.env.NVM_DIR) {
+    candidates.push(process.env.NVM_DIR);
+  }
+  candidates.push(path.join(homedir(), '.nvm'));
+
+  for (const dir of candidates) {
+    if (existsSync(path.join(dir, 'nvm.sh'))) {
+      return dir;
+    }
+  }
+  return undefined;
+}
+
+function buildShellCommand(): string {
+  const userCommand = _testingShellInitCommand !== null ? _testingShellInitCommand : loadShellInitCommand();
+  if (userCommand) {
+    return `${userCommand}; env -0`;
+  }
+
+  const nvmDir = tryDetectNvm();
+  if (nvmDir) {
+    return `export NVM_DIR="${nvmDir}" && [ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"; nvm use; env -0`;
+  }
+
+  return 'env -0';
+}
+
+function buildSpawnEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.npm_config_prefix;
+  return env;
+}
+
 async function spawnShellForEnv(shell: string): Promise<Record<string, string> | null> {
+  const command = buildShellCommand();
+  sidecarLog(`[resolve-shell-env] spawning ${shell} with command: ${command}`);
+
   return new Promise((resolve) => {
     let settled = false;
     let timeout: NodeJS.Timeout | undefined;
@@ -42,9 +89,9 @@ async function spawnShellForEnv(shell: string): Promise<Record<string, string> |
     };
 
     try {
-      const proc = _spawn(shell, ['-ilc', 'env -0'], {
+      const proc = _spawn(shell, ['-ilc', command], {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: process.env,
+        env: buildSpawnEnv(),
       });
 
       let stdout = '';
@@ -59,13 +106,23 @@ async function spawnShellForEnv(shell: string): Promise<Record<string, string> |
 
       proc.on('close', (code) => {
         if (!finish()) return;
+        if (stderr.trim().length > 0) {
+          sidecarLog(`[resolve-shell-env] shell ${shell} stderr: ${stderr.trim()}`);
+        }
         if (code !== 0) {
-          sidecarLog(`[resolve-shell-env] shell ${shell} exited with code ${code}, stderr: ${stderr.trim()}`);
+          sidecarLog(`[resolve-shell-env] shell ${shell} exited with code ${code}`);
           resolve(null);
           return;
         }
         const parsed = parseEnvOutput(stdout);
         sidecarLog(`[resolve-shell-env] captured ${Object.keys(parsed).length} vars from ${shell}`);
+        const nodePath = parsed.PATH?.split(':').find((p) => p.includes('node') && p.includes('bin'));
+        if (nodePath) {
+          sidecarLog(`[resolve-shell-env] detected node in PATH: ${nodePath}`);
+        }
+        if (parsed.NODE_PATH) {
+          sidecarLog(`[resolve-shell-env] NODE_PATH=${parsed.NODE_PATH}`);
+        }
         resolve(parsed);
       });
 
@@ -143,4 +200,24 @@ export function __setSpawnForTesting(spawnImpl: typeof spawn): void {
 /** Restore default spawn. Exposed only for tests. */
 export function __restoreSpawn(): void {
   _spawn = spawn;
+}
+
+/** Override shell init command for testing. Exposed only for tests. */
+export function __setShellInitCommandForTesting(command: string | undefined): void {
+  _testingShellInitCommand = command;
+}
+
+/** Restore shell init command override. Exposed only for tests. */
+export function __restoreShellInitCommand(): void {
+  _testingShellInitCommand = null;
+}
+
+/** Override nvm directory for testing. Exposed only for tests. */
+export function __setNvmDirForTesting(dir: string | undefined): void {
+  _testingNvmDir = dir;
+}
+
+/** Restore nvm directory override. Exposed only for tests. */
+export function __restoreNvmDir(): void {
+  _testingNvmDir = null;
 }

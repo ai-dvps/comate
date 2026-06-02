@@ -9,6 +9,10 @@ import {
   __resetCache,
   __setSpawnForTesting,
   __restoreSpawn,
+  __setShellInitCommandForTesting,
+  __restoreShellInitCommand,
+  __setNvmDirForTesting,
+  __restoreNvmDir,
 } from './resolve-shell-env.js';
 
 describe('resolve-shell-env', { concurrency: false }, () => {
@@ -19,6 +23,8 @@ describe('resolve-shell-env', { concurrency: false }, () => {
   afterEach(() => {
     __resetCache();
     __restoreSpawn();
+    __restoreShellInitCommand();
+    __restoreNvmDir();
   });
 
   function createMockSpawn(stdoutData: string, exitCode = 0, delay = 0) {
@@ -171,5 +177,81 @@ describe('resolve-shell-env', { concurrency: false }, () => {
         Object.defineProperty(process, 'platform', originalPlatform);
       }
     }
+  });
+
+  it('uses plain env -0 when no init command and no nvm', async () => {
+    __setNvmDirForTesting(undefined);
+
+    let capturedArgs: unknown[] | undefined;
+    const trackingSpawn = (...args: unknown[]): ChildProcess => {
+      capturedArgs = args;
+      return createMockSpawn('PATH=/bin\0', 0)() as ChildProcess;
+    };
+
+    __setSpawnForTesting(trackingSpawn as unknown as typeof import('child_process').spawn);
+
+    await initializeResolvedShellEnv();
+
+    assert.ok(capturedArgs);
+    assert.strictEqual((capturedArgs![1] as string[])[1], 'env -0');
+  });
+
+  it('prepends user-configured shellInitCommand before env -0', async () => {
+    __setShellInitCommandForTesting('echo setup');
+
+    let capturedArgs: unknown[] | undefined;
+    const trackingSpawn = (...args: unknown[]): ChildProcess => {
+      capturedArgs = args;
+      return createMockSpawn('PATH=/bin\0', 0)() as ChildProcess;
+    };
+
+    __setSpawnForTesting(trackingSpawn as unknown as typeof import('child_process').spawn);
+
+    await initializeResolvedShellEnv();
+
+    assert.ok(capturedArgs);
+    const command = (capturedArgs![1] as string[])[1];
+    assert.ok(command.startsWith('echo setup; env -0'));
+  });
+
+  it('prepends nvm activation when nvm dir is detected', async () => {
+    __setNvmDirForTesting('/home/user/.nvm');
+
+    let capturedArgs: unknown[] | undefined;
+    const trackingSpawn = (...args: unknown[]): ChildProcess => {
+      capturedArgs = args;
+      return createMockSpawn('PATH=/bin\0', 0)() as ChildProcess;
+    };
+
+    __setSpawnForTesting(trackingSpawn as unknown as typeof import('child_process').spawn);
+
+    await initializeResolvedShellEnv();
+
+    assert.ok(capturedArgs);
+    const command = (capturedArgs![1] as string[])[1];
+    assert.ok(command.includes('export NVM_DIR="/home/user/.nvm"'));
+    assert.ok(command.includes('nvm.sh'));
+    assert.ok(command.includes('nvm use'));
+    assert.ok(command.endsWith('; env -0'));
+  });
+
+  it('user-configured shellInitCommand takes precedence over nvm auto-detection', async () => {
+    __setShellInitCommandForTesting('source /custom/init.sh');
+    __setNvmDirForTesting('/home/user/.nvm');
+
+    let capturedArgs: unknown[] | undefined;
+    const trackingSpawn = (...args: unknown[]): ChildProcess => {
+      capturedArgs = args;
+      return createMockSpawn('PATH=/bin\0', 0)() as ChildProcess;
+    };
+
+    __setSpawnForTesting(trackingSpawn as unknown as typeof import('child_process').spawn);
+
+    await initializeResolvedShellEnv();
+
+    assert.ok(capturedArgs);
+    const command = (capturedArgs![1] as string[])[1];
+    assert.ok(command.startsWith('source /custom/init.sh; env -0'));
+    assert.ok(!command.includes('NVM_DIR'));
   });
 });
