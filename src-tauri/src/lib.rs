@@ -66,15 +66,10 @@ fn update_badge_state(app_handle: AppHandle, count: u32) -> Result<(), String> {
     Ok(())
 }
 
-// Verified OS-level kill matrix for `perform_shutdown` reuse (R16):
-// - macOS Cmd-Q / Quit menu / Activity Monitor Force Quit -> Tauri emits
-//   WindowEvent::Destroyed on the main window before exit -> shutdown runs.
-// - Windows close button (already routed through CloseRequested below) and
-//   Task Manager "End Task" -> Destroyed fires; shutdown runs.
-// - Linux SIGTERM/SIGINT to the Tauri PID -> Destroyed fires; shutdown runs.
-// `is_shutting_down` guards against double-entry when tray Quit calls
-// `app_handle.exit(0)` (which itself raises Destroyed on some platforms).
-fn perform_shutdown(app_handle: &AppHandle) {
+// `is_shutting_down` guards against double-entry when multiple quit events
+// fire in quick succession (e.g. tray Quit calls `app_handle.exit(0)`, which
+// raises both `WindowEvent::Destroyed` and `RunEvent::Exit`).
+fn cleanup_sidecar(app_handle: &AppHandle, grace_period: Duration) {
     let state = app_handle.state::<AppState>();
     if state
         .is_shutting_down
@@ -102,10 +97,10 @@ fn perform_shutdown(app_handle: &AppHandle) {
                     return;
                 }
             };
-            let _ = client.get(&shutdown_url).send().await;
+            let _ = client.post(&shutdown_url).send().await;
         });
         // Give Node time to clean up before force-killing
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(grace_period);
     }
 
     if let Ok(mut child_lock) = state.sidecar_child.lock() {
@@ -115,7 +110,15 @@ fn perform_shutdown(app_handle: &AppHandle) {
             }
         }
     }
+}
+
+fn perform_shutdown(app_handle: &AppHandle) {
+    cleanup_sidecar(app_handle, Duration::from_secs(2));
     app_handle.exit(0);
+}
+
+fn perform_fast_shutdown(app_handle: &AppHandle) {
+    cleanup_sidecar(app_handle, Duration::from_millis(500));
 }
 
 fn show_main_window(app_handle: &AppHandle) {
@@ -419,6 +422,12 @@ pub fn run() {
             }
             _ => {}
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::Exit => {
+                perform_fast_shutdown(app_handle);
+            }
+            _ => {}
+        });
 }
