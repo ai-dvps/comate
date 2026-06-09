@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useFiles } from '../stores/files-store'
+import { invoke } from '@tauri-apps/api/core'
 import { ChevronRight, Folder, FileCode, FileJson, FileText, File, Loader2, X } from 'lucide-react'
 
 interface FileNode {
@@ -30,10 +31,11 @@ interface TreeNodeProps {
   workspaceId: string
   onFileClick: (path: string, name: string) => void
   onFileDoubleClick?: (path: string, name: string) => void
+  onContextMenu?: (e: React.MouseEvent, nodePath: string, nodeType: 'file' | 'folder') => void
   level: number
 }
 
-function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, level }: TreeNodeProps) {
+function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, onContextMenu, level }: TreeNodeProps) {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
@@ -67,6 +69,7 @@ function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, lev
         <div
           className="flex items-center gap-1.5 py-1 px-2 hover:bg-surface-hover rounded-lg cursor-pointer group text-xs"
           onClick={toggleExpand}
+          onContextMenu={(e) => onContextMenu?.(e, nodePath, 'folder')}
           style={{ paddingLeft: `${level * 12 + 8}px` }}
         >
           <ChevronRight
@@ -94,6 +97,7 @@ function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, lev
                   workspaceId={workspaceId}
                   onFileClick={onFileClick}
                   onFileDoubleClick={onFileDoubleClick}
+                  onContextMenu={onContextMenu}
                   level={level + 1}
                 />
               ))
@@ -109,6 +113,7 @@ function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, lev
       className="flex items-center gap-1.5 py-1 px-2 hover:bg-surface-hover rounded-lg cursor-pointer text-xs"
       onClick={() => onFileClick(nodePath, node.name)}
       onDoubleClick={() => onFileDoubleClick?.(nodePath, node.name)}
+      onContextMenu={(e) => onContextMenu?.(e, nodePath, 'file')}
       style={{ paddingLeft: `${level * 12 + 8}px` }}
     >
       <span className="w-3 flex-shrink-0" />
@@ -123,14 +128,26 @@ interface FileExplorerProps {
   onFileDoubleClick?: (path: string, name: string) => void
 }
 
+function getRevealLabel(): string {
+  if (typeof navigator !== 'undefined' && /Win/i.test(navigator.platform)) {
+    return 'contextMenu.revealInExplorer'
+  }
+  if (typeof navigator !== 'undefined' && /Linux/i.test(navigator.platform)) {
+    return 'contextMenu.revealInFileManager'
+  }
+  return 'contextMenu.revealInFinder'
+}
+
 export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExplorerProps) {
   const { t } = useTranslation('common')
-  const { activeWorkspaceId } = useWorkspaceStore()
+  const { activeWorkspaceId, workspaces } = useWorkspaceStore()
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const { results, loading: searchLoading, error: searchError, search, clear } = useFiles(activeWorkspaceId ?? '')
   const [searchQuery, setSearchQuery] = useState('')
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
   const [treeLoading, setTreeLoading] = useState(false)
   const [treeError, setTreeError] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; itemPath: string; itemType: 'file' | 'folder' } | null>(null)
   const prevWorkspaceIdRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -186,6 +203,55 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
   )
 
   const isSearching = searchQuery.trim().length > 0
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const handleClick = () => setContextMenu(null)
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null)
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [contextMenu])
+
+  const resolveAbsolutePath = (relativePath: string): string => {
+    if (!activeWorkspace?.folderPath) return relativePath
+    const base = activeWorkspace.folderPath.replace(/\\/g, '/')
+    const relative = relativePath.startsWith('/') ? relativePath.slice(1) : relativePath
+    return `${base}/${relative}`
+  }
+
+  const handleContextMenu = (e: React.MouseEvent, itemPath: string, itemType: 'file' | 'folder') => {
+    e.preventDefault()
+    if (!activeWorkspace?.folderPath) return
+    setContextMenu({ x: e.clientX, y: e.clientY, itemPath, itemType })
+  }
+
+  const handleReveal = async () => {
+    if (!contextMenu) return
+    const absolutePath = resolveAbsolutePath(contextMenu.itemPath)
+    setContextMenu(null)
+    try {
+      await invoke('reveal_in_file_manager', { path: absolutePath, itemType: contextMenu.itemType })
+    } catch (err) {
+      console.error('Failed to reveal file:', err)
+    }
+  }
+
+  const handleCopyPath = async () => {
+    if (!contextMenu) return
+    const absolutePath = resolveAbsolutePath(contextMenu.itemPath)
+    setContextMenu(null)
+    try {
+      await navigator.clipboard.writeText(absolutePath)
+    } catch (err) {
+      console.error('Failed to copy path:', err)
+    }
+  }
 
   if (!activeWorkspaceId) {
     return (
@@ -246,6 +312,7 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
                   key={entry.path}
                   className="flex items-center gap-2 px-3 py-1.5 hover:bg-surface-hover rounded-lg cursor-pointer text-xs"
                   onClick={() => onFileClick(entry.path, basename)}
+                  onContextMenu={(e) => handleContextMenu(e, entry.path, 'file')}
                 >
                   {getFileIcon(basename)}
                   <span className="truncate text-text-secondary">{entry.path}</span>
@@ -272,12 +339,36 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
                 workspaceId={activeWorkspaceId}
                 onFileClick={onFileClick}
                 onFileDoubleClick={onFileDoubleClick}
+                onContextMenu={handleContextMenu}
                 level={0}
               />
             ))}
           </>
         )}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 min-w-[180px] bg-surface-active border border-border rounded-lg shadow-lg py-1"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={handleReveal}
+            className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+          >
+            {t(getRevealLabel())}
+          </button>
+          <button
+            onClick={handleCopyPath}
+            className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+          >
+            {t('contextMenu.copyFullPath')}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

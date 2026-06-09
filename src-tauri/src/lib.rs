@@ -66,6 +66,47 @@ fn update_badge_state(app_handle: AppHandle, count: u32) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn reveal_in_file_manager(path: String, _item_type: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to reveal file: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if _item_type == "file" {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", &path))
+                .spawn()
+                .map_err(|e| format!("Failed to reveal file: {}", e))?;
+        } else {
+            std::process::Command::new("explorer")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("Failed to reveal folder: {}", e))?;
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let parent = std::path::Path::new(&path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        std::process::Command::new("xdg-open")
+            .arg(&parent)
+            .spawn()
+            .map_err(|e| format!("Failed to reveal file: {}", e))?;
+    }
+
+    Ok(())
+}
+
 // `is_shutting_down` guards against double-entry when multiple quit events
 // fire in quick succession (e.g. tray Quit calls `app_handle.exit(0)`, which
 // raises both `WindowEvent::Destroyed` and `RunEvent::Exit`).
@@ -224,7 +265,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
-        .invoke_handler(tauri::generate_handler![get_api_port, update_badge_state])
+        .invoke_handler(tauri::generate_handler![get_api_port, update_badge_state, reveal_in_file_manager])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
