@@ -6,4 +6,4 @@ export interface CachedCommandList {
   partialReason?: string;
 }
 
-export type CommandSource = 'project' | 'skill' | 'personal';
+export type CommandSource = 'project' | 'skill' | 'plugin' | 'personal';

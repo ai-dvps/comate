@@ -14,6 +14,7 @@ import cliInstallRoutes from './routes/cli-install.js';
 import systemRoutes from './routes/system.js';
 import todoRoutes from './routes/todos.js';
 import providerRoutes from './routes/providers.js';
+import pluginRoutes from './routes/plugins.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { chatService } from './services/chat-service.js';
@@ -52,6 +53,7 @@ app.use('/api/wecom', wecomBridgeRoutes);
 app.use('/api/cli', cliInstallRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/providers', providerRoutes);
+app.use('/api/plugins', pluginRoutes);
 
 // Health checks
 app.get('/api/health', (_req, res) => {

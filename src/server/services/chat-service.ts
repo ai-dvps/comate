@@ -16,6 +16,8 @@ import { sidecarLog } from '../utils/sidecar-logger.js';
 import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.js';
+import { pluginSettingsService } from './plugin-settings-service.js';
+import { existsSync, readFileSync } from 'fs';
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
@@ -532,6 +534,110 @@ export class ChatService {
     return null;
   }
 
+  private isCommandOnPath(command: string): boolean {
+    if (path.isAbsolute(command)) {
+      return existsSync(command);
+    }
+    const pathEnv = process.env.PATH || '';
+    const pathDirs = pathEnv.split(process.platform === 'win32' ? ';' : ':');
+    const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+    for (const dir of pathDirs) {
+      for (const ext of extensions) {
+        const fullPath = path.join(dir, command + ext);
+        if (existsSync(fullPath)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private loadPluginMcpServers(
+    workspacePath: string,
+  ): Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig> {
+    const result: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig> = {};
+
+    try {
+      // Get enabled plugins from all three scopes
+      // Order matters: local takes precedence over project over user
+      const userPlugins = pluginSettingsService.getInstalledPlugins('user');
+      const projectPlugins = pluginSettingsService.getInstalledPlugins('project', workspacePath);
+      const localPlugins = pluginSettingsService.getInstalledPlugins('local', workspacePath);
+      const enabledPlugins = [
+        ...localPlugins.filter((p) => p.enabled),
+        ...projectPlugins.filter((p) => p.enabled),
+        ...userPlugins.filter((p) => p.enabled),
+      ];
+      const seenPlugins = new Set<string>();
+
+      for (const plugin of enabledPlugins) {
+        if (seenPlugins.has(plugin.id)) continue;
+        seenPlugins.add(plugin.id);
+
+        const cachePath = pluginSettingsService.resolvePluginCachePath(plugin.id);
+        const mcpPath = path.join(cachePath, '.mcp.json');
+        const altMcpPath = path.join(cachePath, '.claude-plugin', '.mcp.json');
+
+        for (const mcpFile of [mcpPath, altMcpPath]) {
+          if (!existsSync(mcpFile)) continue;
+
+          try {
+            const content = readFileSync(mcpFile, 'utf-8');
+            const parsed = JSON.parse(content) as Record<string, unknown>;
+            const servers = parsed.mcpServers as Record<
+              string,
+              { type?: string; command: string; args?: string[]; env?: Record<string, string> }
+            >;
+
+            if (!servers || typeof servers !== 'object') continue;
+
+            for (const [name, config] of Object.entries(servers)) {
+              if (!config || typeof config !== 'object') continue;
+              if (!config.command) continue;
+
+              // Resolve ${CLAUDE_PLUGIN_ROOT} placeholder
+              const resolvedCommand = config.command.replace(
+                /\$\{CLAUDE_PLUGIN_ROOT\}/g,
+                cachePath,
+              );
+              const resolvedArgs = (config.args || []).map((arg) =>
+                arg.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, cachePath),
+              );
+              const resolvedEnv: Record<string, string> = {};
+              if (config.env) {
+                for (const [key, value] of Object.entries(config.env)) {
+                  resolvedEnv[key] = value.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, cachePath);
+                }
+              }
+
+              // Validate that the command binary exists (absolute path or on PATH)
+              const binaryExists = this.isCommandOnPath(resolvedCommand);
+              if (!binaryExists) {
+                sidecarLog(`[ChatService] MCP server binary not found for plugin ${plugin.id}: ${resolvedCommand}`);
+                continue;
+              }
+
+              result[name] = {
+                type: (config.type as 'stdio') || 'stdio',
+                command: resolvedCommand,
+                args: resolvedArgs,
+                ...(Object.keys(resolvedEnv).length > 0 ? { env: resolvedEnv } : {}),
+              };
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            sidecarLog(`[ChatService] Failed to parse .mcp.json for plugin ${plugin.id}: ${message}`);
+          }
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sidecarLog(`[ChatService] Plugin MCP discovery failed: ${message}`);
+    }
+
+    return result;
+  }
+
   private buildSdkOptions(
     workspace: Workspace,
     session: ChatSession,
@@ -616,6 +722,19 @@ export class ChatService {
         command: mcp.command,
         args: mcp.args,
       };
+    }
+
+    // Merge plugin MCP servers (workspace-defined servers override plugin-defined)
+    try {
+      const pluginMcpServers = this.loadPluginMcpServers(workspace.folderPath);
+      for (const [name, config] of Object.entries(pluginMcpServers)) {
+        if (!mcpServers[name]) {
+          mcpServers[name] = config;
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sidecarLog(`[ChatService.buildSdkOptions] Plugin MCP merge failed: ${message}`);
     }
 
     const claudePath = resolveSdkBinary();

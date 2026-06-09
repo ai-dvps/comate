@@ -182,5 +182,7 @@ By tracking whether the subscription that just finished was still the active one
 ## Related Issues
 
 - `docs/plans/2026-05-19-007-fix-approval-panel-sync-plan.md` — Predecessor plan that established auto-reconnect for errors and silent drops; this fix plugs the clean-exit gap.
-- `docs/plans/2026-05-21-001-fix-sse-subscription-race-condition-plan.md` — Complementary server-side fix that made `unsubscribe` safe from race conditions.
+- `docs/solutions/integration-issues/sse-subscription-race-condition-2026-05-21.md` — Server-side race condition where stale `close` events wipe the active subscriber response.
+- `docs/solutions/integration-issues/sse-heartbeat-read-timeout-recovery-2026-05-24.md` — Heartbeat implementation that prevents silent proxy drops and fixes timeout-driven retry.
+- `docs/solutions/integration-issues/sse-stream-resume-on-reconnect-2026-05-18.md` — Message state preservation and server-side replay for session switches and page refreshes.
 - `docs/plans/2026-05-18-003-fix-auto-trigger-streaming-after-send-plan.md` — Same code surface (`subscribeToSession` loop exit), different defect (stale map entry cleanup).
