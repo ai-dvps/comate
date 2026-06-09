@@ -1028,9 +1028,9 @@ function WorkspaceTabShell({
               {activeSection === 'wecom' && (
                 <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
               )}
-              {activeSection === 'skills' && <ComingSoonPlaceholder />}
-              {activeSection === 'mcp' && <ComingSoonPlaceholder />}
-              {activeSection === 'hooks' && <ComingSoonPlaceholder />}
+              {activeSection === 'skills' && <PluginRedirectPlaceholder type="skills" />}
+              {activeSection === 'mcp' && <PluginRedirectPlaceholder type="mcp" />}
+              {activeSection === 'hooks' && <PluginRedirectPlaceholder type="hooks" />}
             </div>
           )}
         </div>
@@ -1290,13 +1290,13 @@ function WeComBotSection({
   )
 }
 
-function ComingSoonPlaceholder() {
+function PluginRedirectPlaceholder({ type }: { type: 'skills' | 'mcp' | 'hooks' }) {
   const { t } = useTranslation('settings')
   return (
     <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
       <div className="space-y-1">
-        <h3 className="text-sm font-medium text-text-primary">{t('placeholder.comingSoon')}</h3>
-        <p className="text-xs text-text-secondary max-w-sm">{t('placeholder.contact')}</p>
+        <h3 className="text-sm font-medium text-text-primary">{t(`placeholder.${type}Title`)}</h3>
+        <p className="text-xs text-text-secondary max-w-sm">{t('placeholder.pluginRedirect')}</p>
       </div>
     </div>
   )

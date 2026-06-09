@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { watch, type FSWatcher } from 'chokidar';
 import type { Workspace } from '../models/workspace.js';
 import type { CachedCommandList, CommandSource } from '../types/commands.js';
@@ -17,6 +18,7 @@ import { sidecarLog } from '../utils/sidecar-logger.js';
 import { buildClaudeEnv, getPathEnvKey } from '../utils/sdk-env.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { pluginSettingsService } from './plugin-settings-service.js';
 
 interface FsCommandEntry {
   filePath: string;
@@ -34,6 +36,7 @@ interface WorkspaceCommandsState {
 const SOURCE_PRIORITY: Record<CommandSource, number> = {
   project: 0,
   skill: 1,
+  plugin: 1,
   personal: 2,
 };
 
@@ -101,14 +104,15 @@ export class CommandsService {
     const skillsDir = path.join(workspace.folderPath, '.claude/skills');
     const personalDir = path.join(os.homedir(), '.claude/commands');
 
-    const [projectEntries, skillEntries, personalEntries] = await Promise.all([
+    const [projectEntries, skillEntries, personalEntries, pluginEntries] = await Promise.all([
       loadCommandsDir(projectDir, 'project'),
       loadSkillsDir(skillsDir),
       loadCommandsDir(personalDir, 'personal'),
+      this.loadPluginEntries(workspace.folderPath),
     ]);
 
     const fsCommandsByPath = new Map<string, FsCommandEntry>();
-    for (const entry of [...projectEntries, ...skillEntries, ...personalEntries]) {
+    for (const entry of [...projectEntries, ...skillEntries, ...personalEntries, ...pluginEntries]) {
       fsCommandsByPath.set(entry.filePath, entry);
     }
 
@@ -119,7 +123,8 @@ export class CommandsService {
       partialReason,
     };
 
-    this.attachWatcher(workspace.folderPath, [projectDir, skillsDir]);
+    const pluginDirs = pluginEntries.map((e) => path.dirname(e.filePath));
+    this.attachWatcher(workspace.folderPath, [projectDir, skillsDir, ...pluginDirs]);
 
     return state;
   }
@@ -209,6 +214,66 @@ export class CommandsService {
     for (const key of [...state.fsCommandsByPath.keys()]) {
       if (key.startsWith(prefix)) state.fsCommandsByPath.delete(key);
     }
+  }
+
+  private async loadPluginEntries(workspacePath: string): Promise<FsCommandEntry[]> {
+    const entries: FsCommandEntry[] = [];
+    const seenPlugins = new Set<string>();
+
+    try {
+      // Get enabled plugins from all three scopes
+      // Order matters: local takes precedence over project over user
+      const userPlugins = pluginSettingsService.getInstalledPlugins('user');
+      const projectPlugins = pluginSettingsService.getInstalledPlugins('project', workspacePath);
+      const localPlugins = pluginSettingsService.getInstalledPlugins('local', workspacePath);
+
+      const enabledPlugins = [
+        ...localPlugins.filter((p) => p.enabled),
+        ...projectPlugins.filter((p) => p.enabled),
+        ...userPlugins.filter((p) => p.enabled),
+      ];
+
+      for (const plugin of enabledPlugins) {
+        if (seenPlugins.has(plugin.id)) continue;
+        seenPlugins.add(plugin.id);
+
+        const cachePath = pluginSettingsService.resolvePluginCachePath(plugin.id);
+        const manifest = pluginSettingsService.readPluginManifest(plugin.id);
+        if (!manifest) {
+          console.warn(`[commands] Plugin ${plugin.id} has no valid manifest, skipping`);
+          continue;
+        }
+
+        const pluginCommandsDir = path.join(cachePath, '.claude-plugin', 'commands');
+        const pluginSkillsDir = path.join(cachePath, '.claude-plugin', 'skills');
+        const altCommandsDir = path.join(cachePath, 'commands');
+        const altSkillsDir = path.join(cachePath, 'skills');
+
+        const [commandDtos, skillDtos] = await Promise.all([
+          parseCommandsDir(existsSync(pluginCommandsDir) ? pluginCommandsDir : altCommandsDir),
+          parseSkillsDir(existsSync(pluginSkillsDir) ? pluginSkillsDir : altSkillsDir),
+        ]);
+
+        for (const dto of commandDtos) {
+          const filePath = path.join(
+            existsSync(pluginCommandsDir) ? pluginCommandsDir : altCommandsDir,
+            `${dto.name}.md`,
+          );
+          entries.push({ filePath, source: 'plugin', dto });
+        }
+
+        for (const dto of skillDtos) {
+          const skillDir = existsSync(pluginSkillsDir) ? pluginSkillsDir : altSkillsDir;
+          const filePath = path.join(skillDir, dto.name, 'SKILL.md');
+          entries.push({ filePath, source: 'plugin', dto });
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[commands] Plugin discovery failed: ${message}`);
+    }
+
+    return entries;
   }
 
   private buildSdkOptions(workspace: Workspace): Options {
@@ -314,12 +379,17 @@ async function loadSkillsDir(dir: string): Promise<FsCommandEntry[]> {
 function sourceForPath(filePath: string, workspaceFolder: string): CommandSource | null {
   const commandsRoot = path.join(workspaceFolder, '.claude/commands') + path.sep;
   const skillsRoot = path.join(workspaceFolder, '.claude/skills') + path.sep;
+  const pluginCacheRoot = path.join(os.homedir(), '.claude/plugins/cache') + path.sep;
   if (filePath.startsWith(commandsRoot)) {
     const base = path.basename(filePath);
     return base.endsWith('.md') ? 'project' : null;
   }
   if (filePath.startsWith(skillsRoot)) {
     return path.basename(filePath) === 'SKILL.md' ? 'skill' : null;
+  }
+  if (filePath.startsWith(pluginCacheRoot)) {
+    const base = path.basename(filePath);
+    return base.endsWith('.md') ? 'plugin' : null;
   }
   return null;
 }
