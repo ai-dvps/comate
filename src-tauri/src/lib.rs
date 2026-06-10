@@ -33,12 +33,11 @@ fn update_badge_state(app_handle: AppHandle, count: u32) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        if let Some(window) = app_handle.get_webview_window("main") {
-            let badge = if count > 0 { Some(count as i64) } else { None };
-            window
-                .set_badge_count(badge)
-                .map_err(|e| format!("Failed to set badge count: {}", e))?;
+        app_handle
+            .set_badge_count(count)
+            .map_err(|e| format!("Failed to set badge count: {}", e))?;
 
+        if let Some(window) = app_handle.get_webview_window("main") {
             let is_visible = window.is_visible().unwrap_or(true);
             if !is_visible {
                 let policy = if count > 0 {
@@ -107,6 +106,12 @@ fn reveal_in_file_manager(path: String, _item_type: String) -> Result<(), String
     Ok(())
 }
 
+// Verified OS-level kill matrix for `perform_shutdown` reuse (R16):
+// - macOS Cmd-Q / Quit menu / Activity Monitor Force Quit -> Tauri emits
+//   WindowEvent::Destroyed on the main window before exit -> shutdown runs.
+// - Windows close button (already routed through CloseRequested below) and
+//   Task Manager "End Task" -> Destroyed fires; shutdown runs.
+// - Linux SIGTERM/SIGINT to the Tauri PID -> Destroyed fires; shutdown runs.
 // `is_shutting_down` guards against double-entry when multiple quit events
 // fire in quick succession (e.g. tray Quit calls `app_handle.exit(0)`, which
 // raises both `WindowEvent::Destroyed` and `RunEvent::Exit`).
