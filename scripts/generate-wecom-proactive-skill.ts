@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
 
-const mdPath = join(rootDir, 'src', 'server', 'assets', 'enqueue-wecom-proactive-message.md');
+const mdPath = join(rootDir, 'src', 'server', 'assets', 'send-wecom-proactive-msg.md');
 const tsPath = join(rootDir, 'src', 'server', 'assets', 'wecom-proactive-skill.ts');
 
 const mdContent = readFileSync(mdPath, 'utf-8');
