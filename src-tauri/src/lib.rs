@@ -33,11 +33,12 @@ fn update_badge_state(app_handle: AppHandle, count: u32) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        app_handle
-            .set_badge_count(count)
-            .map_err(|e| format!("Failed to set badge count: {}", e))?;
-
         if let Some(window) = app_handle.get_webview_window("main") {
+            let badge = if count > 0 { Some(count as i64) } else { None };
+            window
+                .set_badge_count(badge)
+                .map_err(|e| format!("Failed to set badge count: {}", e))?;
+
             let is_visible = window.is_visible().unwrap_or(true);
             if !is_visible {
                 let policy = if count > 0 {
