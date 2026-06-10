@@ -7,6 +7,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import type { SseEvent } from '../types/message.js';
 import { SKILL_MD } from '../assets/wecom-skill.js';
+import { PROACTIVE_SKILL_MD } from '../assets/wecom-proactive-skill.js';
 import { debounce } from '../utils/debounce.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
@@ -431,7 +432,6 @@ export class WeComBotService {
 
   private async writeSkillFiles(workspace: Workspace): Promise<void> {
     const claudeDir = path.join(workspace.folderPath, '.claude');
-    const skillsDir = path.join(claudeDir, 'skills', 'send-wecom-message');
 
     const resolvedClaudeDir = path.resolve(claudeDir);
     const resolvedBase = path.resolve(workspace.folderPath);
@@ -439,21 +439,36 @@ export class WeComBotService {
       throw new Error('Skill file path is outside workspace directory');
     }
 
-    fs.mkdirSync(skillsDir, { recursive: true });
-    fs.writeFileSync(path.join(skillsDir, 'SKILL.md'), SKILL_MD, 'utf-8');
+    const sendSkillDir = path.join(claudeDir, 'skills', 'send-wecom-message');
+    fs.mkdirSync(sendSkillDir, { recursive: true });
+    fs.writeFileSync(path.join(sendSkillDir, 'SKILL.md'), SKILL_MD, 'utf-8');
+
+    const enqueueSkillDir = path.join(claudeDir, 'skills', 'enqueue-wecom-proactive-message');
+    fs.mkdirSync(enqueueSkillDir, { recursive: true });
+    fs.writeFileSync(path.join(enqueueSkillDir, 'SKILL.md'), PROACTIVE_SKILL_MD, 'utf-8');
   }
 
   private async removeSkillFiles(workspaceId: string): Promise<void> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) return;
 
-    const skillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-message', 'SKILL.md');
     const resolvedBase = path.resolve(workspace.folderPath);
-    const resolvedFile = path.resolve(skillFile);
-    if (!resolvedFile.startsWith(resolvedBase)) return;
-    if (fs.existsSync(skillFile)) {
+
+    const sendSkillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-message', 'SKILL.md');
+    const resolvedSendFile = path.resolve(sendSkillFile);
+    if (resolvedSendFile.startsWith(resolvedBase) && fs.existsSync(sendSkillFile)) {
       try {
-        fs.unlinkSync(skillFile);
+        fs.unlinkSync(sendSkillFile);
+      } catch {
+        // ignore
+      }
+    }
+
+    const enqueueSkillFile = path.join(workspace.folderPath, '.claude', 'skills', 'enqueue-wecom-proactive-message', 'SKILL.md');
+    const resolvedEnqueueFile = path.resolve(enqueueSkillFile);
+    if (resolvedEnqueueFile.startsWith(resolvedBase) && fs.existsSync(enqueueSkillFile)) {
+      try {
+        fs.unlinkSync(enqueueSkillFile);
       } catch {
         // ignore
       }
