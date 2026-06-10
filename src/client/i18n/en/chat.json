@@ -107,5 +107,14 @@
   "startSessionConfirm": "Start a new session named \"{{name}}\"?",
   "goToSession": "Go to session",
   "deleteTodo": "Delete todo",
-  "autoApproved": "Auto-approved"
+  "autoApproved": "Auto-approved",
+  "allStatuses": "All statuses",
+  "loadingQueue": "Loading queue...",
+  "noQueueEntries": "No proactive messages in queue.",
+  "noEntriesForFilter": "No entries match the selected filter.",
+  "retryCount": "Retry {{count}}",
+  "retry": "Retry",
+  "failedToFetchQueue": "Failed to fetch queue entries",
+  "failedToRetryEntry": "Failed to retry entry",
+  "failedToDeleteEntry": "Failed to delete entry"
 }

@@ -380,6 +380,16 @@ export class SessionRuntime {
     return this.closed;
   }
 
+  isProcessingTurn(): boolean {
+    return this.currentMessageStartId !== undefined || this.pendingApprovals.size > 0;
+  }
+
+  cancelIdleClose(): void {
+    // In the current architecture ChatService passes cancelIdleClose as onSubscribed;
+    // invoking it here prevents the idle-close timer from firing while we dispatch.
+    this.onSubscribed?.();
+  }
+
   pushMessage(content: string): void {
     const msg: SDKUserMessage = {
       type: 'user',

@@ -10,6 +10,7 @@ import chatRoutes from './routes/chat.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
 import gitStatusRoutes from './routes/git-status.js';
 import wecomBridgeRoutes from './routes/wecom-bridge.js';
+import wecomQueueRoutes from './routes/wecom-queue.js';
 import cliInstallRoutes from './routes/cli-install.js';
 import systemRoutes from './routes/system.js';
 import todoRoutes from './routes/todos.js';
@@ -17,6 +18,8 @@ import providerRoutes from './routes/providers.js';
 import pluginRoutes from './routes/plugins.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
+import { wecomQueueWorker } from './services/wecom-queue-worker.js';
+import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { chatService } from './services/chat-service.js';
 import { diagLog } from './utils/diag-logger.js';
 import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
@@ -49,6 +52,7 @@ app.use('/api/workspaces/:id/commands', workspaceCommandsRoutes);
 app.use('/api/workspaces/:id/git-ref', gitStatusRoutes);
 app.use('/api/workspaces/:id', chatRoutes);
 app.use('/api/workspaces/:id/todos', todoRoutes);
+app.use('/api/workspaces/:id/wecom-queue', wecomQueueRoutes);
 app.use('/api/wecom', wecomBridgeRoutes);
 app.use('/api/cli', cliInstallRoutes);
 app.use('/api/system', systemRoutes);
@@ -140,8 +144,21 @@ const server = app.listen(PORT, () => {
     console.error('Failed to initialize WeCom bot service:', err);
   });
 
+  // Wire resolver to renamer before initializing
+  wecomUserResolver.setOnMappingStored(async (workspaceId, encryptedUserId) => {
+    await wecomSessionRenamer.renameSessionsForUser(workspaceId, encryptedUserId);
+  });
+
   // Initialize WeCom user ID resolver background flush
   wecomUserResolver.initialize();
+
+  // Initialize WeCom proactive message queue worker
+  wecomQueueWorker.initialize();
+
+  // Backfill existing WeCom session names
+  wecomSessionRenamer.backfillExistingSessions().catch((err) => {
+    console.error('Failed to backfill WeCom session names:', err);
+  });
 
   // Initialize log cleanup — run once at startup, then periodically
   runLogCleanup();
@@ -172,6 +189,7 @@ async function shutdown(signal: string): Promise<void> {
     logCleanupTimer = null;
   }
   wecomBotService.disconnectAll();
+  await wecomQueueWorker.shutdown();
   await wecomUserResolver.shutdown();
   await chatService.closeAllRuntimes();
   server.close(() => {

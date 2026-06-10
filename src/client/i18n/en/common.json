@@ -10,6 +10,7 @@
     "sessions": "Sessions",
     "todos": "Todos",
     "files": "Files",
+    "queue": "Queue",
     "noWorkspace": "Open a workspace to view sessions"
   },
   "status": {

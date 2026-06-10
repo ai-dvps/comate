@@ -131,3 +131,85 @@ describe('session-runtime activity callback', { concurrency: false }, () => {
     assert.strictEqual(activityCalls, 1);
   });
 });
+
+describe('session-runtime idle state', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(messages: SDKMessage[] = []): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+
+    const messageGen = (async function* () {
+      for (const msg of messages) {
+        yield msg;
+      }
+    })();
+
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: messageGen,
+      }),
+    } as unknown as SdkClient;
+  }
+
+  it('fresh runtime is not processing a turn', () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+  });
+
+  it('runtime with currentMessageStartId is processing a turn', () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    (runtime as unknown as { currentMessageStartId?: string }).currentMessageStartId = 'msg-1';
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+  });
+
+  it('runtime with pending approvals is processing a turn', () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    // Inject a pending approval directly
+    const pendingApprovals = (runtime as unknown as { pendingApprovals: Map<string, unknown> }).pendingApprovals;
+    pendingApprovals.set('req-1', { resolve: () => {}, input: {}, type: 'approval' });
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+  });
+
+  it('runtime is not processing after both indicators clear', () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    (runtime as unknown as { currentMessageStartId?: string }).currentMessageStartId = 'msg-1';
+    const pendingApprovals = (runtime as unknown as { pendingApprovals: Map<string, unknown> }).pendingApprovals;
+    pendingApprovals.set('req-1', { resolve: () => {}, input: {}, type: 'approval' });
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+
+    (runtime as unknown as { currentMessageStartId?: string }).currentMessageStartId = undefined;
+    pendingApprovals.clear();
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+  });
+
+  it('cancelIdleClose invokes onSubscribed callback', () => {
+    let subscribedCalls = 0;
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      undefined,
+      () => {
+        subscribedCalls++;
+      },
+      undefined,
+      undefined,
+    );
+    assert.strictEqual(subscribedCalls, 0);
+    runtime.cancelIdleClose();
+    assert.strictEqual(subscribedCalls, 1);
+  });
+});

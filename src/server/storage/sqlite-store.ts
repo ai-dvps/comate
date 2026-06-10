@@ -6,6 +6,7 @@ import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../m
 import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
+import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
 import { getStorageDir } from './data-dir.js';
 import { getNativeBindingPath } from './native-binding.js';
 
@@ -57,7 +58,7 @@ export class SqliteStore {
         sessionId TEXT NOT NULL,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL,
-        PRIMARY KEY (workspaceId, wecomUserId)
+        PRIMARY KEY (workspaceId, wecomUserId, sessionId)
       )
     `);
 
@@ -143,11 +144,31 @@ export class SqliteStore {
       )
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS wecom_proactive_messages (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        sender_session_id TEXT NOT NULL,
+        recipient_encrypted_user_id TEXT NOT NULL,
+        recipient_plaintext_user_id TEXT NOT NULL,
+        message_content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        delivered_at TEXT,
+        claimed_at TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
     this.migrateTodoDetailColumn();
     this.migrateMappingTable();
+    this.migrateWecomUserSessions();
     this.migrateFromLegacy();
     this.migrateDraftSessions();
     this.migrateSessionMetadataToSessions();
+    this.backfillWeComSessionSource();
   }
 
   private migrateTodoDetailColumn(): void {
@@ -203,6 +224,52 @@ export class SqliteStore {
       console.log('[SqliteStore] Migrated wecom_user_id_mappings to global schema');
     } catch (err) {
       console.error('[SqliteStore] Failed to migrate wecom_user_id_mappings:', err);
+    }
+  }
+
+  private migrateWecomUserSessions(): void {
+    // Check if the old single-session-per-user schema is still in place
+    const indexInfo = this.db.prepare("PRAGMA index_list(wecom_user_sessions)").all() as Array<{ name: string; unique: number }>;
+    const hasOldUniqueIndex = indexInfo.some(
+      (idx) => idx.name === 'sqlite_autoindex_wecom_user_sessions_1' && idx.unique === 1
+    );
+    if (!hasOldUniqueIndex) return;
+
+    try {
+      this.db.exec(`
+        ALTER TABLE wecom_user_sessions RENAME TO wecom_user_sessions_old;
+        CREATE TABLE wecom_user_sessions (
+          workspaceId TEXT NOT NULL,
+          wecomUserId TEXT NOT NULL,
+          sessionId TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          PRIMARY KEY (workspaceId, wecomUserId, sessionId)
+        );
+        INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt)
+        SELECT workspaceId, wecomUserId, sessionId, createdAt, updatedAt
+        FROM wecom_user_sessions_old;
+        DROP TABLE wecom_user_sessions_old;
+      `);
+      console.log('[SqliteStore] Migrated wecom_user_sessions to multi-session schema');
+    } catch (err) {
+      console.error('[SqliteStore] Failed to migrate wecom_user_sessions:', err);
+    }
+  }
+
+  private backfillWeComSessionSource(): void {
+    try {
+      const result = this.db.prepare(`
+        UPDATE sessions
+        SET source = 'wecom'
+        WHERE source IS NULL
+          AND id IN (SELECT sessionId FROM wecom_user_sessions)
+      `).run();
+      if (result.changes > 0) {
+        console.log(`[SqliteStore] Backfilled source='wecom' for ${result.changes} sessions`);
+      }
+    } catch (err) {
+      console.error('[SqliteStore] Failed to backfill WeCom session source:', err);
     }
   }
 
@@ -430,6 +497,7 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM wecom_user_sessions WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
+      this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
     }
     return result.changes > 0;
   }
@@ -438,7 +506,7 @@ export class SqliteStore {
 
   getWecomSession(workspaceId: string, wecomUserId: string): string | null {
     const row = this.db
-      .prepare('SELECT sessionId FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ?')
+      .prepare('SELECT sessionId FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ? ORDER BY createdAt DESC LIMIT 1')
       .get(workspaceId, wecomUserId) as { sessionId: string } | undefined;
     return row?.sessionId ?? null;
   }
@@ -449,9 +517,6 @@ export class SqliteStore {
       .prepare(`
         INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt)
         VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(workspaceId, wecomUserId) DO UPDATE SET
-          sessionId = excluded.sessionId,
-          updatedAt = excluded.updatedAt
       `)
       .run(workspaceId, wecomUserId, sessionId, now, now);
   }
@@ -463,11 +528,48 @@ export class SqliteStore {
     return rows;
   }
 
+  listWecomSessionsByUser(workspaceId: string, wecomUserId: string): Array<{ sessionId: string; createdAt: string }> {
+    const rows = this.db
+      .prepare('SELECT sessionId, createdAt FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ? ORDER BY createdAt ASC')
+      .all(workspaceId, wecomUserId) as Array<{ sessionId: string; createdAt: string }>;
+    return rows;
+  }
+
   getWecomUserIdBySession(workspaceId: string, sessionId: string): string | null {
     const row = this.db
       .prepare('SELECT wecomUserId FROM wecom_user_sessions WHERE workspaceId = ? AND sessionId = ?')
       .get(workspaceId, sessionId) as { wecomUserId: string } | undefined;
     return row?.wecomUserId ?? null;
+  }
+
+  listWecomSessionsForBackfill(): Array<{
+    workspaceId: string;
+    wecomUserId: string;
+    sessionId: string;
+    createdAt: string;
+  }> {
+    const rows = this.db
+      .prepare(`
+        SELECT
+          wus.workspaceId,
+          wus.wecomUserId,
+          wus.sessionId,
+          wus.createdAt
+        FROM wecom_user_sessions wus
+        JOIN sessions s ON s.id = wus.sessionId
+        JOIN wecom_user_id_mappings m ON m.encryptedUserId = wus.wecomUserId
+        WHERE s.source = 'wecom'
+          AND s.name = wus.wecomUserId
+          AND s.custom_title IS NULL
+        ORDER BY wus.workspaceId, wus.wecomUserId, wus.createdAt ASC
+      `)
+      .all() as Array<{
+        workspaceId: string;
+        wecomUserId: string;
+        sessionId: string;
+        createdAt: string;
+      }>;
+    return rows;
   }
 
   // WeCom user ID mapping (encrypted -> plaintext), global across workspaces
@@ -477,6 +579,13 @@ export class SqliteStore {
       .prepare('SELECT plaintextUserId FROM wecom_user_id_mappings WHERE encryptedUserId = ?')
       .get(encryptedUserId) as { plaintextUserId: string } | undefined;
     return row?.plaintextUserId ?? null;
+  }
+
+  getEncryptedUserIdByPlaintext(plaintextUserId: string): string | null {
+    const row = this.db
+      .prepare('SELECT encryptedUserId FROM wecom_user_id_mappings WHERE plaintextUserId = ?')
+      .get(plaintextUserId) as { encryptedUserId: string } | undefined;
+    return row?.encryptedUserId ?? null;
   }
 
   setWecomUserMapping(encryptedUserId: string, plaintextUserId: string): void {
@@ -573,7 +682,13 @@ export class SqliteStore {
     return row ? parseSessionRow(row) : null;
   }
 
-  createLocalSession(workspaceId: string, name: string, approvalMode?: string, providerId?: string): ChatSession {
+  createLocalSession(
+    workspaceId: string,
+    name: string,
+    approvalMode?: string,
+    providerId?: string,
+    source?: 'gui' | 'wecom',
+  ): ChatSession {
     const now = new Date().toISOString();
     const mode = approvalMode ?? 'manual';
     const session: ChatSession = {
@@ -581,14 +696,15 @@ export class SqliteStore {
       workspaceId,
       name,
       isDraft: true,
+      source,
       approvalMode: mode as ChatSession['approvalMode'],
       createdAt: now,
       updatedAt: now,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, approval_mode, provider_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, mode, providerId ?? null, session.createdAt, session.updatedAt);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, source, approval_mode, provider_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, source ?? null, mode, providerId ?? null, session.createdAt, session.updatedAt);
     return session;
   }
 
@@ -880,6 +996,121 @@ export class SqliteStore {
     `).run(new Date().toISOString(), sessionId);
     return result.changes > 0;
   }
+
+  // WeCom proactive message queue CRUD
+
+  enqueueProactiveMessage(workspaceId: string, input: CreateProactiveMessageInput): WeComProactiveMessage {
+    const now = new Date().toISOString();
+    const message: WeComProactiveMessage = {
+      id: uuidv4(),
+      workspaceId,
+      senderSessionId: input.senderSessionId,
+      recipientEncryptedUserId: input.recipientEncryptedUserId,
+      recipientPlaintextUserId: input.recipientPlaintextUserId,
+      messageContent: input.messageContent,
+      status: 'pending',
+      errorReason: null,
+      createdAt: now,
+      updatedAt: now,
+      deliveredAt: null,
+      claimedAt: null,
+      retryCount: 0,
+    };
+    this.db.prepare(`
+      INSERT INTO wecom_proactive_messages (
+        id, workspace_id, sender_session_id, recipient_encrypted_user_id, recipient_plaintext_user_id,
+        message_content, status, error_reason, created_at, updated_at, delivered_at, claimed_at, retry_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      message.id,
+      message.workspaceId,
+      message.senderSessionId,
+      message.recipientEncryptedUserId,
+      message.recipientPlaintextUserId,
+      message.messageContent,
+      message.status,
+      message.errorReason,
+      message.createdAt,
+      message.updatedAt,
+      message.deliveredAt,
+      message.claimedAt,
+      message.retryCount
+    );
+    return message;
+  }
+
+  listProactiveMessages(workspaceId: string, statusFilter?: ProactiveMessageStatus): WeComProactiveMessage[] {
+    const sql = statusFilter
+      ? 'SELECT * FROM wecom_proactive_messages WHERE workspace_id = ? AND status = ? ORDER BY created_at ASC'
+      : 'SELECT * FROM wecom_proactive_messages WHERE workspace_id = ? ORDER BY created_at ASC';
+    const rows = statusFilter
+      ? (this.db.prepare(sql).all(workspaceId, statusFilter) as RawProactiveMessageRow[])
+      : (this.db.prepare(sql).all(workspaceId) as RawProactiveMessageRow[]);
+    return rows.map(parseProactiveMessageRow);
+  }
+
+  getProactiveMessage(id: string): WeComProactiveMessage | null {
+    const row = this.db.prepare('SELECT * FROM wecom_proactive_messages WHERE id = ?').get(id) as RawProactiveMessageRow | undefined;
+    return row ? parseProactiveMessageRow(row) : null;
+  }
+
+  claimNextPendingMessage(workspaceId: string): WeComProactiveMessage | null {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE wecom_proactive_messages
+      SET status = 'delivering', claimed_at = ?, updated_at = ?
+      WHERE id = (
+        SELECT id FROM wecom_proactive_messages
+        WHERE workspace_id = ? AND status = 'pending'
+        ORDER BY created_at ASC
+        LIMIT 1
+      )
+      RETURNING *
+    `).get(now, now, workspaceId) as RawProactiveMessageRow | undefined;
+    return result ? parseProactiveMessageRow(result) : null;
+  }
+
+  updateProactiveMessage(id: string, input: UpdateProactiveMessageInput): WeComProactiveMessage | null {
+    const existing = this.getProactiveMessage(id);
+    if (!existing) return null;
+
+    const sets: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.status !== undefined) {
+      sets.push('status = ?');
+      values.push(input.status);
+    }
+    if (input.errorReason !== undefined) {
+      sets.push('error_reason = ?');
+      values.push(input.errorReason);
+    }
+    if (input.deliveredAt !== undefined) {
+      sets.push('delivered_at = ?');
+      values.push(input.deliveredAt);
+    }
+    if (input.claimedAt !== undefined) {
+      sets.push('claimed_at = ?');
+      values.push(input.claimedAt);
+    }
+    if (input.retryCount !== undefined) {
+      sets.push('retry_count = ?');
+      values.push(input.retryCount);
+    }
+    if (sets.length === 0) return existing;
+
+    sets.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    this.db.prepare(`UPDATE wecom_proactive_messages SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return this.getProactiveMessage(id);
+  }
+
+  deleteProactiveMessage(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM wecom_proactive_messages WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
 }
 
 interface RawWorkspaceRow {
@@ -1001,6 +1232,40 @@ function parseProviderRow(row: RawProviderRow): Provider {
       : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+interface RawProactiveMessageRow {
+  id: string;
+  workspace_id: string;
+  sender_session_id: string;
+  recipient_encrypted_user_id: string;
+  recipient_plaintext_user_id: string;
+  message_content: string;
+  status: string;
+  error_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  delivered_at: string | null;
+  claimed_at: string | null;
+  retry_count: number;
+}
+
+function parseProactiveMessageRow(row: RawProactiveMessageRow): WeComProactiveMessage {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    senderSessionId: row.sender_session_id,
+    recipientEncryptedUserId: row.recipient_encrypted_user_id,
+    recipientPlaintextUserId: row.recipient_plaintext_user_id,
+    messageContent: row.message_content,
+    status: row.status as ProactiveMessageStatus,
+    errorReason: row.error_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    deliveredAt: row.delivered_at,
+    claimedAt: row.claimed_at,
+    retryCount: row.retry_count,
   };
 }
 

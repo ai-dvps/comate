@@ -10,6 +10,7 @@
     "sessions": "会话",
     "todos": "待办",
     "files": "文件",
+    "queue": "队列",
     "noWorkspace": "打开工作区以查看会话"
   },
   "status": {
