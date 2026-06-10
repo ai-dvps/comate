@@ -25,6 +25,8 @@ import ChatMessageRenderer, {
   CompactBoundary,
 } from './ChatMessageRenderer'
 
+const EMPTY_ARRAY: [] = []
+
 interface VirtualizedMessageListProps {
   sessionId: string
   workspaceId: string
@@ -62,7 +64,7 @@ export default function VirtualizedMessageList({
 }: VirtualizedMessageListProps) {
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
-  const messages = useChatStore((s) => s.messages[sessionId] || [])
+  const messages = useChatStore((s) => s.messages[sessionId] ?? EMPTY_ARRAY)
   const totalMessageCount = useChatStore((s) => s.totalMessageCount[sessionId] || 0)
   const isLoadingOlder = useChatStore((s) => s.isLoadingOlderMessages[sessionId] || false)
   const isCompacting = useChatStore((s) => s.isCompacting[sessionId] || false)
@@ -274,6 +276,7 @@ export default function VirtualizedMessageList({
                   left: '0.75rem',
                   right: '0.75rem',
                   transform: `translateY(${virtualItem.start}px)`,
+                  contain: 'paint layout',
                 }}
               >
                 {renderViewItem(

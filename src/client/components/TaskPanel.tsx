@@ -16,6 +16,8 @@ import { useAppSettings } from '../hooks/use-app-settings'
 import { fontSizeClass } from '../lib/font-size'
 import { cn } from './ui/utils'
 
+const EMPTY_ARRAY: [] = []
+
 interface TaskPanelProps {
   sessionId: string
 }
@@ -88,7 +90,7 @@ function TaskRow({ task }: { task: TaskItem }) {
 }
 
 export default function TaskPanel({ sessionId }: TaskPanelProps) {
-  const tasks = useChatStore((s) => s.tasks[sessionId] || [])
+  const tasks = useChatStore((s) => s.tasks[sessionId] ?? EMPTY_ARRAY)
   const { chatFontSize } = useAppSettings()
   const [expanded, setExpanded] = useState(false)
 

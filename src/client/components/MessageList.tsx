@@ -29,6 +29,8 @@ import ChatMessageRenderer, {
 } from './ChatMessageRenderer'
 import CompactingIndicator from './CompactingIndicator'
 
+const EMPTY_ARRAY: [] = []
+
 const VIRTUALIZATION_THRESHOLD = 50
 
 interface MessageListProps {
@@ -51,7 +53,7 @@ function isToolResultOnly(msg: ChatMessage): boolean {
 export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVisible = true }: MessageListProps) {
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
-  const messages = useChatStore((s) => s.messages[sessionId] || [])
+  const messages = useChatStore((s) => s.messages[sessionId] ?? EMPTY_ARRAY)
   const autoApprovedTools = useChatStore((s) => s.autoApprovedTools[sessionId])
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
   const visibleMessages = useMemo(

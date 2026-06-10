@@ -12,6 +12,8 @@ import {
   Send,
 } from 'lucide-react';
 
+const EMPTY_ARRAY: [] = [];
+
 interface WeComQueuePanelProps {
   workspaceId: string;
 }
@@ -48,7 +50,7 @@ export default function WeComQueuePanel({ workspaceId }: WeComQueuePanelProps) {
   const [isRetrying, setIsRetrying] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState<Set<string>>(new Set());
 
-  const entries = useWeComQueueStore((s) => s.entriesByWorkspace[workspaceId] || []);
+  const entries = useWeComQueueStore((s) => s.entriesByWorkspace[workspaceId] ?? EMPTY_ARRAY);
   const isLoading = useWeComQueueStore((s) => s.isLoading[workspaceId]);
   const error = useWeComQueueStore((s) => s.error[workspaceId]);
   const statusFilter = useWeComQueueStore((s) => s.statusFilter);
