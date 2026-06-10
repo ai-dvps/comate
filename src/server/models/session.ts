@@ -24,6 +24,7 @@ export interface CreateSessionInput {
   name: string;
   approvalMode?: ApprovalMode;
   providerId?: string;
+  source?: 'gui' | 'wecom';
 }
 
 export interface UpdateSessionInput {

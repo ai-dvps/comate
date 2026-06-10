@@ -122,7 +122,7 @@ export class ChatService {
   }
 
   async createSession(input: CreateSessionInput): Promise<ChatSession> {
-    return workspaceStore.createLocalSession(input.workspaceId, input.name, input.approvalMode, input.providerId);
+    return workspaceStore.createLocalSession(input.workspaceId, input.name, input.approvalMode, input.providerId, input.source);
   }
 
   async getSession(id: string, workspaceId: string): Promise<ChatSession | null> {

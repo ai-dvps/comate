@@ -107,5 +107,14 @@
   "startSessionConfirm": "开始名为 \"{{name}}\" 的新会话？",
   "goToSession": "前往会话",
   "deleteTodo": "删除待办",
-  "autoApproved": "自动批准"
+  "autoApproved": "自动批准",
+  "allStatuses": "全部状态",
+  "loadingQueue": "正在加载队列...",
+  "noQueueEntries": "队列中没有主动消息。",
+  "noEntriesForFilter": "没有匹配所选筛选条件的条目。",
+  "retryCount": "重试 {{count}}",
+  "retry": "重试",
+  "failedToFetchQueue": "获取队列条目失败",
+  "failedToRetryEntry": "重试条目失败",
+  "failedToDeleteEntry": "删除条目失败"
 }

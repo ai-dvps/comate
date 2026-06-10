@@ -34,6 +34,12 @@ function tid(id: string): string {
   return id.length > 8 ? `${id.slice(0, 8)}...` : id;
 }
 
+export type OnMappingStoredCallback = (
+  workspaceId: string,
+  encryptedUserId: string,
+  plaintextUserId: string,
+) => void | Promise<void>;
+
 export class WeComUserIdResolver {
   private tokenCache = new Map<string, TokenCacheEntry>();
   private tokenRefreshInFlight = new Map<string, Promise<string>>();
@@ -42,6 +48,7 @@ export class WeComUserIdResolver {
   private flushTimer: NodeJS.Timeout | null = null;
   private shuttingDown = false;
   private lastFlushAt?: number;
+  private onMappingStored?: OnMappingStoredCallback;
 
   initialize(): void {
     if (this.flushTimer) return;
@@ -118,6 +125,10 @@ export class WeComUserIdResolver {
     }
   }
 
+  setOnMappingStored(callback: OnMappingStoredCallback): void {
+    this.onMappingStored = callback;
+  }
+
   /**
    * Track that a WeCom user has sent a message to a workspace.
    * This is a synchronous, fire-and-forget operation.
@@ -163,6 +174,7 @@ export class WeComUserIdResolver {
     workspaceStore.setWecomUserMapping(mapping.encryptedUserId, mapping.plaintextUserId);
     this.removeFromQueue(workspaceId, encryptedUserId);
     resolverLog(`[WeComUserIdResolver] Immediate resolve success workspace=${workspaceId} user=${tid(encryptedUserId)} -> ${tid(mapping.plaintextUserId)} elapsed=${Date.now() - start}ms`);
+    this.notifyMappingStored(workspaceId, mapping.encryptedUserId, mapping.plaintextUserId);
     return mapping.plaintextUserId;
   }
 
@@ -256,6 +268,7 @@ export class WeComUserIdResolver {
     for (const mapping of result.mappings) {
       workspaceStore.setWecomUserMapping(mapping.encryptedUserId, mapping.plaintextUserId);
       this.removeFromQueue(workspaceId, mapping.encryptedUserId);
+      this.notifyMappingStored(workspaceId, mapping.encryptedUserId, mapping.plaintextUserId);
     }
 
     // Handle failures with retry backoff
@@ -402,6 +415,20 @@ export class WeComUserIdResolver {
 
     resolverLog(`[WeComUserIdResolver] Batch API result success=${mappings.length} failed=${failedIds.length} elapsed=${Date.now() - apiStart}ms`);
     return { mappings, failedIds };
+  }
+
+  private notifyMappingStored(workspaceId: string, encryptedUserId: string, plaintextUserId: string): void {
+    if (!this.onMappingStored) return;
+    try {
+      const result = this.onMappingStored(workspaceId, encryptedUserId, plaintextUserId);
+      if (result instanceof Promise) {
+        result.catch((err) => {
+          resolverError('[WeComUserIdResolver] onMappingStored callback failed:', this.redactedError(err));
+        });
+      }
+    } catch (err) {
+      resolverError('[WeComUserIdResolver] onMappingStored callback failed:', this.redactedError(err));
+    }
   }
 
   private redactedError(err: unknown): unknown {

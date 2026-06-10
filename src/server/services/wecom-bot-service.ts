@@ -9,6 +9,7 @@ import type { SseEvent } from '../types/message.js';
 import { SKILL_MD } from '../assets/wecom-skill.js';
 import { debounce } from '../utils/debounce.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
+import { wecomSessionRenamer } from './wecom-session-renamer.js';
 
 interface BotConnection {
   client: WSClient;
@@ -173,9 +174,18 @@ export class WeComBotService {
       const session = await chatService.createSession({
         workspaceId,
         name: wecomUserId,
+        source: 'wecom',
       });
       sessionId = session.id;
       workspaceStore.setWecomSession(workspaceId, wecomUserId, sessionId);
+
+      // If the plaintext ID is already known, trigger rename for all sessions of this user
+      const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
+      if (plaintextUserId) {
+        wecomSessionRenamer.renameSessionsForUser(workspaceId, wecomUserId).catch((err) => {
+          console.error('[WeComBotService] Failed to rename sessions after creation:', err);
+        });
+      }
     }
 
     const conn = this.connections.get(workspaceId);
