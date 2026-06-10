@@ -8,7 +8,9 @@ import { URL } from 'node:url';
 const CONTEXT_FILE_NAME = '.claude/wecom-context.json';
 
 function printUsage(): void {
-  console.error('Usage: wecom msg send --to-user <id> --message <text> [--msg-type text|markdown]');
+  console.error('Usage:');
+  console.error('  wecom msg send --to-user <id> --message <text> [--msg-type text|markdown]');
+  console.error('  wecom queue enqueue --to-user <id> --message <text>');
 }
 
 function findContextFile(startDir: string): string | null {
@@ -28,6 +30,7 @@ function findContextFile(startDir: string): string | null {
 }
 
 interface ContextFile {
+  workspaceId?: string;
   botId: string;
   serverUrl: string;
 }
@@ -82,19 +85,12 @@ function postJson(url: string, body: unknown): Promise<{ status: number; body: s
   });
 }
 
-async function main(): Promise<number> {
-  const args = process.argv.slice(2);
-
-  if (args.length < 2 || args[0] !== 'msg' || args[1] !== 'send') {
-    printUsage();
-    return 1;
-  }
-
+async function runMsgSend(args: string[]): Promise<number> {
   let toUser: string | null = null;
   let message: string | null = null;
   let msgType: 'text' | 'markdown' = 'text';
 
-  for (let i = 2; i < args.length; i++) {
+  for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--to-user' && i + 1 < args.length) {
       toUser = args[++i];
@@ -168,6 +164,133 @@ async function main(): Promise<number> {
     );
     return 3;
   }
+}
+
+async function runQueueEnqueue(args: string[]): Promise<number> {
+  let toUser: string | null = null;
+  let message: string | null = null;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--to-user' && i + 1 < args.length) {
+      toUser = args[++i];
+    } else if (arg === '--message' && i + 1 < args.length) {
+      message = args[++i];
+    } else {
+      console.error(`Unknown argument: ${arg}`);
+      printUsage();
+      return 1;
+    }
+  }
+
+  if (!toUser || !message) {
+    console.error('--to-user and --message are required');
+    printUsage();
+    return 1;
+  }
+
+  const contextFilePath = findContextFile(process.cwd());
+  if (!contextFilePath) {
+    console.error(
+      `No WeCom bot context file found. Searched upward from ${process.cwd()} for ${CONTEXT_FILE_NAME}.`
+    );
+    console.error('Make sure a WeCom bot is enabled for this workspace.');
+    return 2;
+  }
+
+  let context: ContextFile;
+  try {
+    context = readContextFile(contextFilePath);
+  } catch (err) {
+    console.error('Failed to read context file:', err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+
+  if (!context.workspaceId) {
+    console.error('This workspace\'s WeCom context file is missing workspaceId.');
+    console.error('Please reconnect the WeCom bot for this workspace to update the context file.');
+    return 1;
+  }
+
+  const endpointUrl = `${context.serverUrl}/api/workspaces/${context.workspaceId}/wecom-queue`;
+
+  try {
+    const response = await postJson(endpointUrl, { toUser, message });
+
+    if (response.status === 202) {
+      try {
+        const parsed = JSON.parse(response.body) as { id?: string; status?: string };
+        if (parsed.id) {
+          console.log(`Queued proactive message (id=${parsed.id}, status=${parsed.status || 'pending'})`);
+        }
+      } catch {
+        // Ignore parse error; success is already confirmed by status code
+      }
+      return 0;
+    }
+
+    if (response.status === 400) {
+      try {
+        const parsed = JSON.parse(response.body) as { error?: string; message?: string };
+        const code = parsed.error;
+        if (code === 'recipient_not_resolved') {
+          console.error(`Failed to enqueue: recipient user ID has not been decrypted yet. The recipient must send at least one message to the bot first.`);
+          return 3;
+        }
+        if (code === 'recipient_no_session') {
+          console.error(`Failed to enqueue: recipient has no active session in this workspace.`);
+          return 3;
+        }
+        console.error(`Failed to enqueue: ${parsed.message || code || 'Bad request'}`);
+        return 3;
+      } catch {
+        console.error(`Failed to enqueue: HTTP 400: ${response.body}`);
+        return 3;
+      }
+    }
+
+    let errorMessage: string;
+    try {
+      const parsed = JSON.parse(response.body) as { error?: string; message?: string };
+      errorMessage = parsed.message || parsed.error || `HTTP ${response.status}`;
+    } catch {
+      errorMessage = `HTTP ${response.status}: ${response.body}`;
+    }
+
+    console.error(`Failed to enqueue: ${errorMessage}`);
+    return 3;
+  } catch (err) {
+    console.error(
+      'Failed to enqueue:',
+      err instanceof Error ? err.message : String(err)
+    );
+    return 3;
+  }
+}
+
+async function main(): Promise<number> {
+  const args = process.argv.slice(2);
+
+  if (args.length < 2) {
+    printUsage();
+    return 1;
+  }
+
+  const command = args[0];
+  const subcommand = args[1];
+  const remainingArgs = args.slice(2);
+
+  if (command === 'msg' && subcommand === 'send') {
+    return runMsgSend(remainingArgs);
+  }
+
+  if (command === 'queue' && subcommand === 'enqueue') {
+    return runQueueEnqueue(remainingArgs);
+  }
+
+  console.error(`Unknown command: ${command} ${subcommand}`);
+  printUsage();
+  return 1;
 }
 
 main()
