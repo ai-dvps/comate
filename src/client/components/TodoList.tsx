@@ -59,7 +59,6 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; todoId: string } | null>(null);
-  const [statusMenuTodoId, setStatusMenuTodoId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -248,13 +247,10 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
               >
                 <div className="flex items-start gap-2">
                   {/* Status indicator */}
-                  <Popover
-                    open={statusMenuTodoId === todo.id}
-                    onOpenChange={(open) => setStatusMenuTodoId(open ? todo.id : null)}
-                  >
+                  <Popover>
                     <PopoverTrigger asChild>
                       <button
-                        className={`mt-0.5 p-0.5 rounded flex-shrink-0 ${status.bg} ${status.color} hover:opacity-80 transition-opacity`}
+                        className={`mt-0.5 p-0.5 rounded flex-shrink-0 ${status.bg} ${status.color} hover:opacity-80 transition-opacity cursor-pointer`}
                         title={status.label}
                       >
                         <StatusIcon className="w-3.5 h-3.5" />
@@ -264,7 +260,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                       side="bottom"
                       align="start"
                       sideOffset={4}
-                      className="bg-surface-active border border-border rounded-lg shadow-lg py-1 z-50 min-w-[120px]"
+                      className="min-w-[120px] p-0 bg-surface-active border border-border rounded-lg shadow-lg z-50 py-1"
                     >
                       {(Object.keys(statusConfig) as TodoStatus[]).map((s) => {
                         const cfg = statusConfig[s];
@@ -272,10 +268,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                         return (
                           <button
                             key={s}
-                            onClick={() => {
-                              changeStatus(todo.id, s);
-                              setStatusMenuTodoId(null);
-                            }}
+                            onClick={() => changeStatus(todo.id, s)}
                             className={`w-full px-3 py-1.5 text-left text-xs flex items-center gap-2 hover:bg-surface-hover transition-colors ${
                               todo.status === s ? 'text-text-primary font-medium' : 'text-text-secondary'
                             }`}
