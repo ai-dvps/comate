@@ -389,7 +389,7 @@ export class WeComBotService {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    const content = JSON.stringify({ botId, serverUrl: this.serverUrl }, null, 2);
+    const content = JSON.stringify({ workspaceId: workspace.id, botId, serverUrl: this.serverUrl }, null, 2);
     fs.writeFileSync(filePath, content, 'utf-8');
   }
 
