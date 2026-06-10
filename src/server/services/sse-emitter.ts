@@ -404,6 +404,7 @@ export class SseEmitter {
 
       const deltaType = delta.type;
       if (deltaType === 'text_delta' && typeof delta.text === 'string') {
+        diagLog(`[SseEmitter] text_delta len=${delta.text.length} msg=${this.currentMessageId} idx=${index}`);
         this.send({
           type: 'text_delta',
           messageId: this.currentMessageId,

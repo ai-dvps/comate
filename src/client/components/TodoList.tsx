@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
 
+const EMPTY_ARRAY: [] = [];
+
 interface TodoListProps {
   workspaceId: string;
   onSessionNavigate?: () => void;
@@ -61,7 +63,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
   const searchInputRef = useRef<HTMLInputElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const todos = useTodoStore((s) => s.todosByWorkspace[workspaceId] || []);
+  const todos = useTodoStore((s) => s.todosByWorkspace[workspaceId] ?? EMPTY_ARRAY);
   const isLoading = useTodoStore((s) => s.isLoading[workspaceId]);
   const fetchTodos = useTodoStore((s) => s.fetchTodos);
   const createTodo = useTodoStore((s) => s.createTodo);

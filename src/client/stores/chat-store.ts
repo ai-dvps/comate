@@ -782,6 +782,12 @@ function handleSseEvent(
       const partIndex = typeof data.partIndex === 'number' ? data.partIndex : -1
       const text = typeof data.text === 'string' ? data.text : ''
       if (!messageId || partIndex < 0 || !text) return
+      const t0 = performance.now()
+      const last = (window as unknown as { __lastTextDelta?: number }).__lastTextDelta
+      console.log(
+        `[chat-store] text_delta len=${text.length} msg=${messageId.slice(-6)} idx=${partIndex} sinceLast=${last ? (t0 - last).toFixed(1) : 'N/A'}ms`
+      )
+      ;(window as unknown as { __lastTextDelta?: number }).__lastTextDelta = t0
       set((state) =>
         updateAssistantPart(state, sessionId, messageId, partIndex, (existing) => {
           if (existing && existing.type === 'text') {
@@ -1544,6 +1550,19 @@ function normalizeSdkStatus(status: string): TaskItem['status'] {
   }
 }
 
+// Events that can be batched — deltas are high-frequency during streaming
+// and benefit from RAF-aligned flushing.
+const BATCHABLE_EVENTS = new Set([
+  'text_delta',
+  'thinking_delta',
+  'tool_input_delta',
+])
+
+interface BufferedEvent {
+  event: string
+  data: unknown
+}
+
 function subscribeToSession(
   set: SseSetter,
   _get: SseGetter,
@@ -1575,9 +1594,42 @@ function subscribeToSession(
     let readTimeout: ReturnType<typeof setTimeout> | undefined
     let abortedIntentionally = false
 
+    // Delta batching state (per connection)
+    const deltaBuffer: BufferedEvent[] = []
+    let flushRafId: number | null = null
+
+    const flushDeltas = () => {
+      if (flushRafId !== null) {
+        cancelAnimationFrame(flushRafId)
+        flushRafId = null
+      }
+      if (deltaBuffer.length === 0) return
+      const batch = deltaBuffer.splice(0, deltaBuffer.length)
+      for (const { event, data } of batch) {
+        try {
+          handleSseEvent(set, sessionId, event, data)
+        } catch (err) {
+          console.error('SSE batched event handler error:', err)
+        }
+      }
+    }
+
+    const scheduleFlush = () => {
+      if (flushRafId !== null) return
+      flushRafId = requestAnimationFrame(() => {
+        flushRafId = null
+        flushDeltas()
+      })
+    }
+
     const thisClose = () => {
       console.log(`[SSE ${sessionId}] thisClose called`)
       abortedIntentionally = true
+      if (flushRafId !== null) {
+        cancelAnimationFrame(flushRafId)
+        flushRafId = null
+      }
+      flushDeltas()
       if (retryTimer) {
         clearTimeout(retryTimer)
         retryTimer = undefined
@@ -1627,7 +1679,15 @@ function subscribeToSession(
               isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
             }))
             try {
-              handleSseEvent(set, sessionId, event.event, event.data)
+              if (BATCHABLE_EVENTS.has(event.event)) {
+                deltaBuffer.push({ event: event.event, data: event.data })
+                scheduleFlush()
+              } else {
+                // Non-delta events flush pending deltas immediately so
+                // approvals, questions, and done events are not delayed.
+                flushDeltas()
+                handleSseEvent(set, sessionId, event.event, event.data)
+              }
             } catch (err) {
               console.error('SSE event handler error:', err)
               set((state) =>
@@ -1647,6 +1707,7 @@ function subscribeToSession(
             clearTimeout(readTimeout)
             readTimeout = undefined
           }
+          flushDeltas()
           const current = sessionSubscriptions.get(sessionId)
           if (current?.close === thisClose) {
             sessionSubscriptions.delete(sessionId)

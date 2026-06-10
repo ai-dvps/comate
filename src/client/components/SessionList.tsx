@@ -9,6 +9,8 @@ import PluginSettingsPage from './PluginSettingsPage'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
 
+const EMPTY_ARRAY: [] = []
+
 function formatRelativeDate(dateStr: string, t: TFunction): string {
   const date = new Date(dateStr)
   const now = new Date()
@@ -54,7 +56,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
   const [showPluginSettings, setShowPluginSettings] = useState(false)
 
-  const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
+  const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const messages = useChatStore((s) => s.messages)
   const sessionStatus = useChatStore((s) => s.sessionStatus)

@@ -10,19 +10,21 @@ import SubagentDrawer from './SubagentDrawer'
 import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
 
+const EMPTY_ARRAY: [] = []
+
 interface ChatPanelProps {
   workspaceId: string
 }
 
 export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const { t } = useTranslation('chat')
-  const sessions = useChatStore((s) => s.sessions[workspaceId] || [])
+  const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
   const isLoadingMessages = useChatStore((s) => s.isLoadingMessages[activeSessionId || ''])
-  const approvalQueue = useChatStore((s) => s.approvalQueue[activeSessionId || ''] || [])
-  const cachedMessages = useChatStore((s) => s.messages[activeSessionId || ''] || [])
-  const domCache = useChatStore((s) => s.domCache[workspaceId] || [])
+  const approvalQueue = useChatStore((s) => s.approvalQueue[activeSessionId || ''] ?? EMPTY_ARRAY)
+  const cachedMessages = useChatStore((s) => s.messages[activeSessionId || ''] ?? EMPTY_ARRAY)
+  const domCache = useChatStore((s) => s.domCache[workspaceId] ?? EMPTY_ARRAY)
   const fetchSessions = useChatStore((s) => s.fetchSessions)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const loadMessages = useChatStore((s) => s.loadMessages)
