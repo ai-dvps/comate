@@ -443,9 +443,9 @@ export class WeComBotService {
     fs.mkdirSync(sendSkillDir, { recursive: true });
     fs.writeFileSync(path.join(sendSkillDir, 'SKILL.md'), SKILL_MD, 'utf-8');
 
-    const enqueueSkillDir = path.join(claudeDir, 'skills', 'enqueue-wecom-proactive-message');
-    fs.mkdirSync(enqueueSkillDir, { recursive: true });
-    fs.writeFileSync(path.join(enqueueSkillDir, 'SKILL.md'), PROACTIVE_SKILL_MD, 'utf-8');
+    const proactiveSkillDir = path.join(claudeDir, 'skills', 'send-wecom-proactive-msg');
+    fs.mkdirSync(proactiveSkillDir, { recursive: true });
+    fs.writeFileSync(path.join(proactiveSkillDir, 'SKILL.md'), PROACTIVE_SKILL_MD, 'utf-8');
   }
 
   private async removeSkillFiles(workspaceId: string): Promise<void> {
@@ -464,11 +464,11 @@ export class WeComBotService {
       }
     }
 
-    const enqueueSkillFile = path.join(workspace.folderPath, '.claude', 'skills', 'enqueue-wecom-proactive-message', 'SKILL.md');
-    const resolvedEnqueueFile = path.resolve(enqueueSkillFile);
-    if (resolvedEnqueueFile.startsWith(resolvedBase) && fs.existsSync(enqueueSkillFile)) {
+    const proactiveSkillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-proactive-msg', 'SKILL.md');
+    const resolvedProactiveFile = path.resolve(proactiveSkillFile);
+    if (resolvedProactiveFile.startsWith(resolvedBase) && fs.existsSync(proactiveSkillFile)) {
       try {
-        fs.unlinkSync(enqueueSkillFile);
+        fs.unlinkSync(proactiveSkillFile);
       } catch {
         // ignore
       }
