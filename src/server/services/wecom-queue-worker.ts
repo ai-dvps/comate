@@ -175,7 +175,7 @@ export class WeComQueueWorker {
 }
 
 export function formatProactiveDirective(entry: WeComProactiveMessage): string {
-  return `[Proactive Send] Recipient: ${entry.recipientPlaintextUserId}\nOriginal request: ${entry.messageContent}`;
+  return `Send a WeCom message to ${entry.recipientPlaintextUserId}: ${entry.messageContent}`;
 }
 
 export const wecomQueueWorker = new WeComQueueWorker();
