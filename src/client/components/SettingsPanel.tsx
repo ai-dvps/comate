@@ -444,7 +444,6 @@ function GeneralTab({
   return (
     <div className="p-6 max-w-xl">
       <div className="space-y-5">
-        <WeComCliSection />
         <PathConfigSection />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
@@ -832,99 +831,6 @@ function PathConfigSection() {
 
           <p className="text-[10px] text-text-tertiary">{t('general.pathConfigRefreshHint')}</p>
         </>
-      )}
-    </div>
-  )
-}
-
-function WeComCliSection() {
-  const { t } = useTranslation('settings')
-  const [status, setStatus] = useState<{ installed: boolean; path?: string; error?: string } | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  const fetchStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/cli/status')
-      if (!res.ok) return
-      const data = await res.json()
-      setStatus(data)
-    } catch {
-      setStatus({ installed: false, error: t('wecomCli.checkError') })
-    }
-  }, [t])
-
-  useEffect(() => {
-    fetchStatus()
-  }, [fetchStatus])
-
-  const handleInstall = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/cli/install', { method: 'POST' })
-      const data = await res.json()
-      setStatus(data)
-    } catch {
-      setStatus({ installed: false, error: t('wecomCli.installError') })
-    }
-    setLoading(false)
-  }
-
-  const handleUninstall = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/cli/uninstall', { method: 'POST' })
-      const data = await res.json()
-      setStatus(data)
-    } catch {
-      setStatus({ installed: false, error: t('wecomCli.uninstallError') })
-    }
-    setLoading(false)
-  }
-
-  const isInstalled = status?.installed
-
-  return (
-    <div className="py-3 border-b border-border/50">
-      <div className="flex items-center justify-between">
-        <div>
-          <label className="block text-xs font-medium text-text-secondary">{t('wecomCli.title')}</label>
-          <p className="text-[10px] text-text-tertiary mt-0.5">
-            {t('wecomCli.hint')}
-          </p>
-        </div>
-        {isInstalled ? (
-          <button
-            onClick={handleUninstall}
-            disabled={loading}
-            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
-          >
-            {loading ? t('wecomCli.uninstalling') : t('wecomCli.uninstall')}
-          </button>
-        ) : (
-          <button
-            onClick={handleInstall}
-            disabled={loading}
-            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent hover:bg-accent-hover text-accent-foreground transition-colors disabled:opacity-50"
-          >
-            {loading ? t('wecomCli.installing') : t('wecomCli.install')}
-          </button>
-        )}
-      </div>
-
-      {status?.error && (
-        <p className="text-[11px] text-destructive mt-2">{status.error}</p>
-      )}
-
-      {isInstalled && status?.path && (
-        <p className="text-[11px] text-success mt-2">
-          {t('wecomCli.installedAt')} <code className="font-mono bg-surface-hover px-1 rounded">{status.path}</code>
-        </p>
-      )}
-
-      {isInstalled && (
-        <p className="text-[10px] text-text-tertiary mt-1.5">
-          {t('wecomCli.pathHint')}
-        </p>
       )}
     </div>
   )
