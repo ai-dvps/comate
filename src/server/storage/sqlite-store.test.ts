@@ -12,8 +12,9 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
     store = new SqliteStore();
     // Access internal db for direct state verification
     db = (store as unknown as { db: Database.Database }).db;
-    // Clean table before each test
+    // Clean tables before each test
     db.prepare('DELETE FROM wecom_proactive_messages').run();
+    db.prepare('DELETE FROM wecom_user_sessions').run();
   });
 
   function createMessageInput(overrides: Partial<{
@@ -187,5 +188,28 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
     assert.strictEqual(updated.status, 'pending');
     assert.strictEqual(updated.errorReason, null);
     assert.strictEqual(updated.retryCount, 2);
+  });
+
+  it('getWecomUserIdBySession returns correct userId for existing mapping', () => {
+    db.prepare(
+      'INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)'
+    ).run('ws-1', 'user-alice', 'session-123', new Date().toISOString(), new Date().toISOString());
+
+    const userId = store.getWecomUserIdBySession('ws-1', 'session-123');
+    assert.strictEqual(userId, 'user-alice');
+  });
+
+  it('getWecomUserIdBySession returns null for unknown sessionId', () => {
+    const userId = store.getWecomUserIdBySession('ws-1', 'unknown-session');
+    assert.strictEqual(userId, null);
+  });
+
+  it('getWecomUserIdBySession returns null when session exists in different workspace', () => {
+    db.prepare(
+      'INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)'
+    ).run('ws-1', 'user-alice', 'session-123', new Date().toISOString(), new Date().toISOString());
+
+    const userId = store.getWecomUserIdBySession('ws-2', 'session-123');
+    assert.strictEqual(userId, null);
   });
 });
