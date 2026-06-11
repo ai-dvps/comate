@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { existsSync } from 'fs';
+import { spawnSync } from 'child_process';
 import { sidecarLog } from './sidecar-logger.js';
 import { normalizeWindowsPath } from './normalize-windows-path.js';
 
@@ -13,52 +14,84 @@ function tryPath(label: string, filePath: string): string | undefined {
   return undefined;
 }
 
+function findInPath(command: string): string | undefined {
+  const cmd = process.platform === 'win32' ? 'where' : 'command';
+  const args = process.platform === 'win32' ? [command] : ['-v', command];
+  const result = spawnSync(cmd, args, { encoding: 'utf-8', shell: true });
+  const lines = result.stdout?.trim().split('\n') || [];
+  for (const line of lines) {
+    const p = line.trim();
+    if (p && existsSync(p)) {
+      return p;
+    }
+  }
+  return undefined;
+}
+
 /**
- * Resolve the path to the wecom CLI bundled with the application.
+ * Resolve the path to the wecom CLI binary.
  *
- * Tries multiple strategies to work in dev mode (tsx from source tree),
- * production (node from dist/), and in the pkg-bundled sidecar binary.
+ * Strategy 1: Check if `wecom` is available in PATH (npm global install).
+ * Strategy 2: Find the built CLI in the application bundle.
  */
 export function resolveWecomCliPath(): string | undefined {
-  // Strategy 1: resolve relative to this module (dev + production from dist/)
+  // Strategy 1: npm global install
+  const globalPath = findInPath('wecom');
+  if (globalPath) {
+    return globalPath;
+  }
+
+  // Strategy 2: resolve relative to this module (dev + production from dist/)
   try {
     const currentFile = fileURLToPath(import.meta.url);
     const projectRoot = path.resolve(path.dirname(currentFile), '../../..');
-    const found = tryPath('Strategy 1 (source tree)', path.join(projectRoot, 'packages', 'wecom-cli', 'dist', 'index.js'));
+    const found = tryPath(
+      'Strategy 2 (source tree)',
+      path.join(projectRoot, 'packages', 'wecom-cli', 'dist', 'index.js'),
+    );
     if (found) return found;
   } catch (err) {
-    sidecarLog(`[resolveWecomCliPath] Strategy 1 error: ${err}`);
+    sidecarLog(`[resolveWecomCliPath] Strategy 2 error: ${err}`);
   }
 
-  // Strategy 2: CWD-relative fallbacks (dev mode, server run from project root)
+  // Strategy 3: CWD-relative fallbacks
   const cwdPaths = [
     path.resolve('packages/wecom-cli/dist/index.js'),
     path.resolve('../packages/wecom-cli/dist/index.js'),
   ];
   for (const p of cwdPaths) {
-    const found = tryPath('Strategy 2 (CWD)', p);
+    const found = tryPath('Strategy 3 (CWD)', p);
     if (found) return found;
   }
 
-  // Strategy 3: look next to the executable (pkg-bundled sidecar)
-  const nextToExec = path.join(path.dirname(process.execPath), 'wecom-send.js');
-  const found3 = tryPath('Strategy 3 (next to exec)', nextToExec);
-  if (found3) return found3;
+  sidecarLog(`[resolveWecomCliPath] No strategy succeeded, returning undefined`);
+  return undefined;
+}
 
-  // Strategy 4: Tauri resource directory (production builds and tauri:dev)
-  const resourceDir = process.env.TAURI_RESOURCE_DIR;
-  if (resourceDir) {
-    // Tauri resource_dir may return the resources root directly, or the parent dir
-    const resourcePaths = [
-      path.join(resourceDir, 'wecom-send.js'),
-      path.join(resourceDir, 'resources', 'wecom-send.js'),
-    ];
-    for (const p of resourcePaths) {
-      const found = tryPath('Strategy 4 (Tauri resources)', p);
-      if (found) return found;
+/**
+ * Resolve the wecom-cli package directory for npm global install.
+ */
+export function resolveWecomCliPackageDir(): string | undefined {
+  // Strategy 1: resolve relative to this module
+  try {
+    const currentFile = fileURLToPath(import.meta.url);
+    const projectRoot = path.resolve(path.dirname(currentFile), '../../..');
+    const pkgDir = path.join(projectRoot, 'packages', 'wecom-cli');
+    if (existsSync(path.join(pkgDir, 'package.json'))) {
+      return pkgDir;
+    }
+  } catch (err) {
+    sidecarLog(`[resolveWecomCliPackageDir] Strategy 1 error: ${err}`);
+  }
+
+  // Strategy 2: CWD-relative
+  const cwdPaths = [path.resolve('packages/wecom-cli'), path.resolve('../packages/wecom-cli')];
+  for (const p of cwdPaths) {
+    if (existsSync(path.join(p, 'package.json'))) {
+      return p;
     }
   }
 
-  sidecarLog(`[resolveWecomCliPath] No strategy succeeded, returning undefined`);
+  sidecarLog(`[resolveWecomCliPackageDir] No strategy succeeded, returning undefined`);
   return undefined;
 }
