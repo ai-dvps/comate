@@ -3,12 +3,10 @@ import { execute } from '@oclif/core';
 import { basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import MsgSend from './commands/msg/send.js';
-import QueueEnqueue from './commands/queue/enqueue.js';
+import Send from './commands/send.js';
 
 export const COMMANDS: Record<string, unknown> = {
-  'msg:send': MsgSend,
-  'queue:enqueue': QueueEnqueue,
+  send: Send,
 };
 
 const __filename = fileURLToPath(import.meta.url);
