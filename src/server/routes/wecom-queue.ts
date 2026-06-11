@@ -3,48 +3,6 @@ import { store } from '../storage/sqlite-store.js';
 
 const router = Router({ mergeParams: true });
 
-// POST /api/workspaces/:id/wecom-queue — Enqueue a proactive message
-router.post('/', async (req, res) => {
-  try {
-    const workspaceId = (req.params as { id: string }).id;
-    const { toUser, message } = req.body as { toUser?: string; message?: string };
-
-    if (!toUser || typeof toUser !== 'string' || toUser.trim().length === 0) {
-      res.status(400).json({ error: 'recipient_not_resolved', message: 'toUser is required' });
-      return;
-    }
-    if (!message || typeof message !== 'string' || message.trim().length === 0) {
-      res.status(400).json({ error: 'message_required', message: 'message is required' });
-      return;
-    }
-
-    const encryptedUserId = store.getEncryptedUserIdByPlaintext(toUser.trim());
-    if (!encryptedUserId) {
-      res.status(400).json({ error: 'recipient_not_resolved', message: 'WeCom user ID has not been decrypted yet' });
-      return;
-    }
-
-    const sessionId = store.getWecomSession(workspaceId, encryptedUserId);
-    if (!sessionId) {
-      res.status(400).json({ error: 'recipient_no_session', message: 'Recipient has no session in this workspace' });
-      return;
-    }
-
-    const entry = store.enqueueProactiveMessage(workspaceId, {
-      senderSessionId: sessionId,
-      recipientEncryptedUserId: encryptedUserId,
-      recipientPlaintextUserId: toUser.trim(),
-      messageContent: message.trim(),
-    });
-
-    res.status(202).json({ id: entry.id, status: entry.status });
-  } catch (error) {
-    console.error('Failed to enqueue proactive message:', error);
-    const message = error instanceof Error ? error.message : 'Failed to enqueue message';
-    res.status(500).json({ error: 'enqueue_failed', message });
-  }
-});
-
 // GET /api/workspaces/:id/wecom-queue — List queue entries
 router.get('/', async (req, res) => {
   try {

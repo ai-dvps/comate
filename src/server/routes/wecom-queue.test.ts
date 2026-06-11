@@ -4,18 +4,12 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import type { WeComProactiveMessage } from '../models/wecom-proactive-message.js';
 
 describe('wecom-queue routes', { concurrency: false }, () => {
-  let originalGetEncryptedUserIdByPlaintext: typeof workspaceStore.getEncryptedUserIdByPlaintext;
-  let originalGetWecomSession: typeof workspaceStore.getWecomSession;
-  let originalEnqueueProactiveMessage: typeof workspaceStore.enqueueProactiveMessage;
   let originalListProactiveMessages: typeof workspaceStore.listProactiveMessages;
   let originalGetProactiveMessage: typeof workspaceStore.getProactiveMessage;
   let originalUpdateProactiveMessage: typeof workspaceStore.updateProactiveMessage;
   let originalDeleteProactiveMessage: typeof workspaceStore.deleteProactiveMessage;
 
   beforeEach(() => {
-    originalGetEncryptedUserIdByPlaintext = workspaceStore.getEncryptedUserIdByPlaintext.bind(workspaceStore);
-    originalGetWecomSession = workspaceStore.getWecomSession.bind(workspaceStore);
-    originalEnqueueProactiveMessage = workspaceStore.enqueueProactiveMessage.bind(workspaceStore);
     originalListProactiveMessages = workspaceStore.listProactiveMessages.bind(workspaceStore);
     originalGetProactiveMessage = workspaceStore.getProactiveMessage.bind(workspaceStore);
     originalUpdateProactiveMessage = workspaceStore.updateProactiveMessage.bind(workspaceStore);
@@ -23,9 +17,6 @@ describe('wecom-queue routes', { concurrency: false }, () => {
   });
 
   afterEach(() => {
-    workspaceStore.getEncryptedUserIdByPlaintext = originalGetEncryptedUserIdByPlaintext;
-    workspaceStore.getWecomSession = originalGetWecomSession;
-    workspaceStore.enqueueProactiveMessage = originalEnqueueProactiveMessage;
     workspaceStore.listProactiveMessages = originalListProactiveMessages;
     workspaceStore.getProactiveMessage = originalGetProactiveMessage;
     workspaceStore.updateProactiveMessage = originalUpdateProactiveMessage;
@@ -74,49 +65,6 @@ describe('wecom-queue routes', { concurrency: false }, () => {
     }
     return handlers;
   }
-
-  it('enqueue returns 202 with valid recipient and session', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-b';
-    workspaceStore.getWecomSession = () => 'session-b';
-    workspaceStore.enqueueProactiveMessage = () =>
-      ({ id: 'msg-1', status: 'pending' } as WeComProactiveMessage);
-
-    const req = { params: { id: 'ws-1' }, body: { toUser: 'user-b', message: 'hello' } };
-    const res = createMockRes();
-
-    await handlers['/'].post(req, res);
-
-    assert.strictEqual(res.statusCode, 202);
-    assert.strictEqual((res.jsonBody as { id: string }).id, 'msg-1');
-  });
-
-  it('enqueue returns 400 when recipient not resolved', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getEncryptedUserIdByPlaintext = () => null;
-
-    const req = { params: { id: 'ws-1' }, body: { toUser: 'user-b', message: 'hello' } };
-    const res = createMockRes();
-
-    await handlers['/'].post(req, res);
-
-    assert.strictEqual(res.statusCode, 400);
-    assert.strictEqual((res.jsonBody as { error: string }).error, 'recipient_not_resolved');
-  });
-
-  it('enqueue returns 400 when recipient has no session', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-b';
-    workspaceStore.getWecomSession = () => null;
-
-    const req = { params: { id: 'ws-1' }, body: { toUser: 'user-b', message: 'hello' } };
-    const res = createMockRes();
-
-    await handlers['/'].post(req, res);
-
-    assert.strictEqual(res.statusCode, 400);
-    assert.strictEqual((res.jsonBody as { error: string }).error, 'recipient_no_session');
-  });
 
   it('list returns entries for workspace', async () => {
     const handlers = await importRouteHandlers();
