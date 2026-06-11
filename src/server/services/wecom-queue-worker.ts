@@ -1,6 +1,6 @@
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
-import type { WeComProactiveMessage, ProactiveMessageStatus } from '../models/wecom-proactive-message.js';
+import type { WeComProactiveMessage } from '../models/wecom-proactive-message.js';
 
 const POLL_INTERVAL_MS = 5_000;
 const GRACE_PERIOD_MS = 30_000;
@@ -175,7 +175,7 @@ export class WeComQueueWorker {
 }
 
 export function formatProactiveDirective(entry: WeComProactiveMessage): string {
-  return `[Proactive Send] Recipient: ${entry.recipientPlaintextUserId}\nOriginal request: ${entry.messageContent}`;
+  return `Send a WeCom message to ${entry.recipientPlaintextUserId}: ${entry.messageContent}`;
 }
 
 export const wecomQueueWorker = new WeComQueueWorker();

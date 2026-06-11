@@ -105,13 +105,6 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const currentApproval = approvalQueue[0] || null
   const approvalQueueLength = approvalQueue.length
 
-  // DIAGNOSTIC: log render and approval state
-  console.log('[ChatPanel] render', { activeSessionId, approvalQueueLength, currentRequestId: currentApproval?.requestId ?? null })
-
-  useEffect(() => {
-    console.log('[ChatPanel] currentApproval changed:', currentApproval?.requestId ?? null)
-  }, [currentApproval])
-
   const handleSend = (content: string) => {
     if (!activeSessionId) return
     sendMessage(workspaceId, activeSessionId, content)

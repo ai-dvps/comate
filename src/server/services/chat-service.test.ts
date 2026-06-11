@@ -85,7 +85,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
   ): SessionRuntime {
     const mock = {
       isClosed: () => false,
-      getStatus: () => ({ pendingCount: 0, workspaceId: 'ws-1' }),
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
       close: () => Promise.resolve(),
       subscribe: () => {
         callbacks.onSubscribed?.();
@@ -224,6 +224,29 @@ describe('chat-service idle-close', { concurrency: false }, () => {
 
     assert.strictEqual(seen.size, 5, 'each onActivity should create a new timeout');
     assert.strictEqual(timeouts.size, 1, 'only one timeout should be tracked in the map');
+  });
+
+  it('reports pending and processing status for workspace runtimes', async () => {
+    setupStoreMocks();
+
+    SessionRuntime.open = () => ({
+      ...createMockRuntime(),
+      getStatus: () => ({
+        pendingCount: 2,
+        isProcessing: true,
+        workspaceId: 'ws-1',
+      }),
+    } as unknown as SessionRuntime);
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+
+    assert.deepStrictEqual(service.getSessionsStatus('ws-1'), {
+      s1: {
+        pendingCount: 2,
+        isProcessing: true,
+      },
+    });
+    assert.deepStrictEqual(service.getSessionsStatus('other-ws'), {});
   });
 
   it('onSubscribed cancels idle timer', async () => {

@@ -13,7 +13,7 @@
     "build": "npm run generate:skills && tsc -b && vite build && npm run build:cli",
     "build:server": "npm run generate:skills && tsc -p tsconfig.server.json",
     "build:cli": "npm run build -w packages/wecom-cli",
-    "generate:skills": "tsx scripts/generate-wecom-skill.ts && tsx scripts/generate-wecom-proactive-skill.ts",
+    "generate:skills": "tsx scripts/generate-wecom-skill.ts",
     "build:sidecar": "tsx scripts/build-sidecar.ts",
     "start": "node dist/server/index.js",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
