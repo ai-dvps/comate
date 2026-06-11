@@ -1,34 +1,36 @@
 import { Router } from 'express';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+
+const execAsync = promisify(exec);
 
 const router = Router({ mergeParams: true });
 
-function getGitRef(folderPath: string): string | null {
+async function getGitRef(folderPath: string): Promise<string | null> {
   const opts = {
     cwd: folderPath,
-    stdio: 'pipe' as const,
     timeout: 5000,
     encoding: 'utf-8' as const,
   };
 
   try {
-    const branch = execSync('git symbolic-ref --short HEAD', opts).trim();
-    if (branch) return branch;
+    const { stdout: branch } = await execAsync('git symbolic-ref --short HEAD', opts);
+    if (branch.trim()) return branch.trim();
   } catch {
     // not on a branch
   }
 
   try {
-    const tag = execSync('git describe --tags --exact-match', opts).trim();
-    if (tag) return tag;
+    const { stdout: tag } = await execAsync('git describe --tags --exact-match', opts);
+    if (tag.trim()) return tag.trim();
   } catch {
     // not on an exact tag
   }
 
   try {
-    const sha = execSync('git rev-parse --short HEAD', opts).trim();
-    if (sha) return sha;
+    const { stdout: sha } = await execAsync('git rev-parse --short HEAD', opts);
+    if (sha.trim()) return sha.trim();
   } catch {
     // not a git repo or git unavailable
   }
@@ -48,7 +50,7 @@ router.get('/', async (req, res) => {
       return;
     }
 
-    const ref = getGitRef(workspace.folderPath);
+    const ref = await getGitRef(workspace.folderPath);
     res.json({ ref });
   } catch (error) {
     console.error('Failed to get git ref:', error);

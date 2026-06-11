@@ -2,8 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { existsSync, unlinkSync } from 'fs';
+
+const execAsync = promisify(exec);
 import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
@@ -73,7 +76,7 @@ app.post('/api/log', express.json({ limit: '1mb' }), (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/health/claude', (_req, res) => {
+app.get('/api/health/claude', async (_req, res) => {
   const binaryPath = resolveSdkBinary();
   if (!binaryPath) {
     res.status(503).json({
@@ -85,7 +88,7 @@ app.get('/api/health/claude', (_req, res) => {
   }
 
   try {
-    execSync(`"${binaryPath}" --version`, { stdio: 'pipe', timeout: 5000 });
+    await execAsync(`"${binaryPath}" --version`, { timeout: 5000 });
     res.json({ ok: true });
   } catch (err) {
     res.status(503).json({

@@ -1,6 +1,7 @@
 import AiBot from '@wecom/aibot-node-sdk';
 import type { WSClient, WsFrame, TextMessage } from '@wecom/aibot-node-sdk';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
@@ -387,11 +388,13 @@ export class WeComBotService {
     if (!resolvedDir.startsWith(resolvedBase)) {
       throw new Error('Context file path is outside workspace directory');
     }
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    try {
+      await fsPromises.mkdir(dir, { recursive: true });
+    } catch {
+      // ignore
     }
     const content = JSON.stringify({ workspaceId: workspace.id, botId, serverUrl: this.serverUrl }, null, 2);
-    fs.writeFileSync(filePath, content, 'utf-8');
+    await fsPromises.writeFile(filePath, content, 'utf-8');
   }
 
   private async removeContextFile(workspaceId: string): Promise<void> {
@@ -403,8 +406,10 @@ export class WeComBotService {
     if (!resolvedFile.startsWith(resolvedBase)) {
       return;
     }
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    try {
+      await fsPromises.unlink(filePath);
+    } catch {
+      // ignore
     }
   }
 
@@ -417,11 +422,18 @@ export class WeComBotService {
       if (!resolvedFile.startsWith(resolvedBase)) {
         continue;
       }
-      if (!fs.existsSync(filePath)) continue;
+      let exists = false;
+      try {
+        await fsPromises.access(filePath);
+        exists = true;
+      } catch {
+        continue;
+      }
+      if (!exists) continue;
       const botId = ws.settings.wecomBotId;
       if (!botId || !this.botIdToWorkspaceId.has(botId)) {
         try {
-          fs.unlinkSync(filePath);
+          await fsPromises.unlink(filePath);
           console.log(`Cleaned up stale WeCom context file for workspace ${ws.id}`);
         } catch (err) {
           console.warn(`Failed to clean up stale context file for workspace ${ws.id}:`, err);
@@ -440,12 +452,12 @@ export class WeComBotService {
     }
 
     const sendSkillDir = path.join(claudeDir, 'skills', 'send-wecom-message');
-    fs.mkdirSync(sendSkillDir, { recursive: true });
-    fs.writeFileSync(path.join(sendSkillDir, 'SKILL.md'), SKILL_MD, 'utf-8');
+    await fsPromises.mkdir(sendSkillDir, { recursive: true });
+    await fsPromises.writeFile(path.join(sendSkillDir, 'SKILL.md'), SKILL_MD, 'utf-8');
 
     const proactiveSkillDir = path.join(claudeDir, 'skills', 'send-wecom-proactive-msg');
-    fs.mkdirSync(proactiveSkillDir, { recursive: true });
-    fs.writeFileSync(path.join(proactiveSkillDir, 'SKILL.md'), PROACTIVE_SKILL_MD, 'utf-8');
+    await fsPromises.mkdir(proactiveSkillDir, { recursive: true });
+    await fsPromises.writeFile(path.join(proactiveSkillDir, 'SKILL.md'), PROACTIVE_SKILL_MD, 'utf-8');
   }
 
   private async removeSkillFiles(workspaceId: string): Promise<void> {
@@ -456,9 +468,9 @@ export class WeComBotService {
 
     const sendSkillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-message', 'SKILL.md');
     const resolvedSendFile = path.resolve(sendSkillFile);
-    if (resolvedSendFile.startsWith(resolvedBase) && fs.existsSync(sendSkillFile)) {
+    if (resolvedSendFile.startsWith(resolvedBase)) {
       try {
-        fs.unlinkSync(sendSkillFile);
+        await fsPromises.unlink(sendSkillFile);
       } catch {
         // ignore
       }
@@ -466,9 +478,9 @@ export class WeComBotService {
 
     const proactiveSkillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-proactive-msg', 'SKILL.md');
     const resolvedProactiveFile = path.resolve(proactiveSkillFile);
-    if (resolvedProactiveFile.startsWith(resolvedBase) && fs.existsSync(proactiveSkillFile)) {
+    if (resolvedProactiveFile.startsWith(resolvedBase)) {
       try {
-        fs.unlinkSync(proactiveSkillFile);
+        await fsPromises.unlink(proactiveSkillFile);
       } catch {
         // ignore
       }
