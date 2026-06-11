@@ -17,7 +17,7 @@ void execute({
     root: __dirname,
     pjson: {
       name: '@webank/wecom',
-      version: '0.0.2',
+      version: '0.1.0',
       oclif: {
         bin: 'wecom',
         commands: {

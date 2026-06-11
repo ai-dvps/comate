@@ -24,12 +24,21 @@ If `wecom` is not in PATH, use `npx wecom` or the full path from `WECOM_CLI_PATH
 </quick_start>
 
 <workflow>
-1. **Determine intent**: Is the user asking to send immediately or draft first?
-2. **Extract recipient**: Identify the target user ID from the user's request
-3. **Build the message**:
+1. **Verify CLI version**: Before any send operation, check the installed CLI version:
+   ```bash
+   wecom --version
+   ```
+   Expected: `0.1.0` or higher. If the version is lower, advise the user to update:
+   ```bash
+   npm install -g @webank/wecom@latest
+   ```
+   If `wecom` is not found, check `npx wecom --version` or `${WECOM_CLI_PATH} --version`.
+2. **Determine intent**: Is the user asking to send immediately or draft first?
+3. **Extract recipient**: Identify the target user ID from the user's request
+4. **Build the message**:
    - If the user provides a message, use it as-is
    - If drafting, help format the message and confirm before sending
-4. **Detect markdown**: If the message contains any of these patterns, use `--msg-type markdown`:
+5. **Detect markdown**: If the message contains any of these patterns, use `--msg-type markdown`:
    - `**bold**`, `*italic*`, `~~strikethrough~~`
    - `` `code` `` or ``` code blocks ```
    - `- list items` or `1. numbered lists`
@@ -37,15 +46,15 @@ If `wecom` is not in PATH, use `npx wecom` or the full path from `WECOM_CLI_PATH
    - `> quotes`
    - `# headings`
    - Tables with `|` separators
-5. **Get session ID**: Use `${CLAUDE_SESSION_ID}` for the current session
-6. **Execute the command**:
+6. **Get session ID**: Use `${CLAUDE_SESSION_ID}` for the current session
+7. **Execute the command**:
    ```bash
    wecom send --to-user <USERID> --message "<MESSAGE>" [--msg-type markdown] --session-id ${CLAUDE_SESSION_ID}
    ```
    If `wecom` is not available in PATH, try:
    - `npx wecom send ...`
    - `${WECOM_CLI_PATH} send ...`
-7. **Report result**: Show the command executed and the outcome
+8. **Report result**: Show the command executed and the outcome
 </workflow>
 
 <examples>
