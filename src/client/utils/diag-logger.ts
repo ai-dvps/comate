@@ -5,6 +5,9 @@ try {
   clientId = 'unknown'
 }
 
+let logPostInFlight = false
+const LOG_POST_TIMEOUT_MS = 2000
+
 function send(level: string, ...args: unknown[]): void {
   const message = args.map(String).join(' ')
   // Also echo to browser console
@@ -15,14 +18,25 @@ function send(level: string, ...args: unknown[]): void {
   } else {
     console.log(message)
   }
-  // Fire-and-forget POST to server log sink
+
+  if (level === 'log' || logPostInFlight) return
+
+  logPostInFlight = true
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), LOG_POST_TIMEOUT_MS)
   fetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ level, message: `[${clientId}] ${message}` }),
-  }).catch(() => {
-    // Ignore network errors — we're logging about network errors
+    signal: controller.signal,
   })
+    .catch(() => {
+      // Ignore network errors — we're logging about network errors
+    })
+    .finally(() => {
+      clearTimeout(timeout)
+      logPostInFlight = false
+    })
 }
 
 export function diagLog(...args: unknown[]): void {
