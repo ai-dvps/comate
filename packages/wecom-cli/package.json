@@ -11,8 +11,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/index.js --banner:js='#!/usr/bin/env node'",
-    "test": "node --test dist/test/**/*.test.js"
+    "build": "node build.js",
+    "test": "node --test test/**/*.test.js"
   },
   "oclif": {
     "commands": {
