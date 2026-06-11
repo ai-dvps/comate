@@ -236,7 +236,10 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     {getIconForPath(entry.path)}
-                    <span className="text-sm text-text-primary truncate">
+                    <span
+                      className="text-sm text-text-primary truncate"
+                      title={entry.path}
+                    >
                       {entry.path}
                     </span>
                   </div>
