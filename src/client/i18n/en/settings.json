@@ -154,19 +154,6 @@
     "lastSeen": "Last seen",
     "botSessionNote": "Bot sessions have full tool auto-approval. Save changes to connect or disconnect."
   },
-  "wecomCli": {
-    "title": "WeCom CLI",
-    "hint": "Make the wecom command available in your terminal.",
-    "install": "Install",
-    "uninstall": "Uninstall",
-    "installing": "Installing...",
-    "uninstalling": "Uninstall...",
-    "installedAt": "Installed at",
-    "pathHint": "Make sure ~/.local/bin is on your PATH. You may need to restart your terminal or run hash -r for the shell to discover the command.",
-    "checkError": "Failed to check status",
-    "installError": "Install request failed",
-    "uninstallError": "Uninstall request failed"
-  },
   "unsavedDialog": {
     "title": "Unsaved changes",
     "message": "You have unsaved changes. Save them before closing?",

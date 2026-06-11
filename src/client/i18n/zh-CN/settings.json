@@ -154,19 +154,6 @@
     "lastSeen": "最近出现",
     "botSessionNote": "机器人会话具有完整的工具自动审批功能。保存更改以连接或断开。"
   },
-  "wecomCli": {
-    "title": "企业微信 CLI",
-    "hint": "在终端中使 wecom 命令可用。",
-    "install": "安装",
-    "uninstall": "卸载",
-    "installing": "正在安装...",
-    "uninstalling": "正在卸载...",
-    "installedAt": "安装于",
-    "pathHint": "请确保 ~/.local/bin 在您的 PATH 中。您可能需要重启终端或运行 hash -r 以使 shell 发现该命令。",
-    "checkError": "检查状态失败",
-    "installError": "安装请求失败",
-    "uninstallError": "卸载请求失败"
-  },
   "unsavedDialog": {
     "title": "有未保存的更改",
     "message": "您有未保存的更改。关闭前是否保存？",
