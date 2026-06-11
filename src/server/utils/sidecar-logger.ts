@@ -3,6 +3,7 @@ import path from 'path';
 import { getLogsDir } from './log-cleanup.js';
 
 const logFile = path.join(getLogsDir(), 'sidecar.log');
+const mirrorToConsole = process.env.COMATE_SIDECAR !== '1';
 
 if (!existsSync(path.dirname(logFile))) {
   try {
@@ -14,7 +15,9 @@ if (!existsSync(path.dirname(logFile))) {
 
 const stream = createWriteStream(logFile, { flags: 'a' });
 stream.on('error', (err) => {
-  console.error('[sidecar-logger] stream error:', err.message);
+  if (mirrorToConsole) {
+    console.error('[sidecar-logger] stream error:', err.message);
+  }
 });
 
 function timestamp(): string {
@@ -25,7 +28,9 @@ function timestamp(): string {
 
 export function sidecarLog(...args: unknown[]): void {
   const line = `[${timestamp()}] ${args.map(String).join(' ')}`;
-  console.log(line);
+  if (mirrorToConsole) {
+    console.log(line);
+  }
   if (stream.writable) {
     stream.write(line + '\n');
   }
@@ -33,7 +38,9 @@ export function sidecarLog(...args: unknown[]): void {
 
 export function sidecarError(...args: unknown[]): void {
   const line = `[${timestamp()}] [ERROR] ${args.map(String).join(' ')}`;
-  console.error(line);
+  if (mirrorToConsole) {
+    console.error(line);
+  }
   if (stream.writable) {
     stream.write(line + '\n');
   }
