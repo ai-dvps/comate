@@ -14,6 +14,7 @@ import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useProviderStore } from './stores/provider-store'
+import { useChatStore } from './stores/chat-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
@@ -32,6 +33,10 @@ function App() {
   const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces)
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
+  const activeWorkspaceSessionId = useChatStore((s) =>
+    activeWorkspaceId ? s.activeSessionIds[activeWorkspaceId] : undefined
+  )
+  const setActiveSession = useChatStore((s) => s.setActiveSession)
   const [openFiles, setOpenFiles] = useState<ViewedFile[]>([])
   const [activeFilePath, setActiveFilePath] = useState('')
   const [showSettings, setShowSettings] = useState(false)
@@ -156,6 +161,11 @@ function App() {
     setOpenFiles([])
     setActiveFilePath('')
   }, [activeWorkspaceId])
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !activeWorkspaceSessionId) return
+    setActiveSession(activeWorkspaceId, activeWorkspaceSessionId)
+  }, [activeWorkspaceId, activeWorkspaceSessionId, setActiveSession])
 
   const { width: sidebarWidth, setWidth: setSidebarWidth } = useSidebarWidth()
   const { width: filePanelWidth, setWidth: setFilePanelWidth } = useResizableWidth({

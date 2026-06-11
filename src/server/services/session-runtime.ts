@@ -372,9 +372,10 @@ export class SessionRuntime {
     }
   }
 
-  getStatus(): { pendingCount: number; workspaceId: string } {
+  getStatus(): { pendingCount: number; isProcessing: boolean; workspaceId: string } {
     return {
       pendingCount: this.pendingApprovals.size,
+      isProcessing: this.isProcessingTurn(),
       workspaceId: this.workspaceId,
     };
   }

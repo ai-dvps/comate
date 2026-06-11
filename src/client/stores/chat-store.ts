@@ -11,6 +11,24 @@ const sessionSubscriptions = new Map<string, { close: () => void; timer?: Return
 const lastEventId = new Map<string, string>()
 const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
 
+function closeSessionSubscriptions(exceptSessionId?: string): void {
+  for (const [sessionId, sub] of sessionSubscriptions) {
+    if (sessionId !== exceptSessionId) {
+      sub.close()
+      sessionSubscriptions.delete(sessionId)
+    }
+  }
+}
+
+function closeWorkspaceSessionSubscriptions(workspaceId: string): void {
+  for (const [sessionId, sub] of sessionSubscriptions) {
+    if (sub.workspaceId === workspaceId) {
+      sub.close()
+      sessionSubscriptions.delete(sessionId)
+    }
+  }
+}
+
 function startBackgroundPolling(
   set: SseSetter,
   workspaceId: string,
@@ -25,19 +43,38 @@ function startBackgroundPolling(
       .then(async (res) => {
         if (!res.ok) return
         const data = (await res.json()) as {
-          statuses?: Record<string, { pendingCount: number }>
+          statuses?: Record<string, { pendingCount: number; isProcessing?: boolean }>
         }
         const statuses = data.statuses ?? {}
         set((state) => {
           const next = { ...state.sessionStatus }
+          const nextStreaming = { ...state.isStreaming }
+          for (const session of state.sessions[workspaceId] ?? []) {
+            if (
+              !sessionSubscriptions.has(session.id) &&
+              !Object.prototype.hasOwnProperty.call(statuses, session.id)
+            ) {
+              delete next[session.id]
+              if (nextStreaming[session.id]) {
+                nextStreaming[session.id] = false
+              }
+            }
+          }
           for (const [sid, st] of Object.entries(statuses)) {
-            if (st.pendingCount === 0) {
+            if (st.pendingCount === 0 && !st.isProcessing) {
               delete next[sid]
             } else {
               next[sid] = st
             }
+            if (!sessionSubscriptions.has(sid)) {
+              if (st.isProcessing) {
+                nextStreaming[sid] = true
+              } else if (nextStreaming[sid]) {
+                nextStreaming[sid] = false
+              }
+            }
           }
-          return { sessionStatus: next }
+          return { sessionStatus: next, isStreaming: nextStreaming }
         })
       })
       .catch((err) => {
@@ -147,7 +184,7 @@ interface ChatState {
   pendingSend: Record<string, { workspaceId: string; content: string } | undefined>
   drafts: Record<string, string>
   subagents: Record<string, SubagentState[]>
-  sessionStatus: Record<string, { pendingCount: number }>
+  sessionStatus: Record<string, { pendingCount: number; isProcessing?: boolean }>
   unreadCompletions: Record<string, boolean>
   tasks: Record<string, TaskItem[]>
   pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
@@ -607,11 +644,7 @@ function addSystemMessage(
 }
 
 function hasPendingItem(state: ChatState, sessionId: string, requestId: string): boolean {
-  const found = (state.approvalQueue[sessionId] || []).some((item) => item.requestId === requestId)
-  if (found) {
-    console.log(`[ChatStore] hasPendingItem found duplicate requestId=${requestId} for session=${sessionId}`)
-  }
-  return found
+  return (state.approvalQueue[sessionId] || []).some((item) => item.requestId === requestId)
 }
 
 function findSubagent(
@@ -730,7 +763,6 @@ function handleSseEvent(
   event: string,
   raw: unknown,
 ): void {
-  diagLog(`[Client] handleSseEvent session=${sessionId} event=${event}`)
   const data =
     raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
 
@@ -782,12 +814,6 @@ function handleSseEvent(
       const partIndex = typeof data.partIndex === 'number' ? data.partIndex : -1
       const text = typeof data.text === 'string' ? data.text : ''
       if (!messageId || partIndex < 0 || !text) return
-      const t0 = performance.now()
-      const last = (window as unknown as { __lastTextDelta?: number }).__lastTextDelta
-      console.log(
-        `[chat-store] text_delta len=${text.length} msg=${messageId.slice(-6)} idx=${partIndex} sinceLast=${last ? (t0 - last).toFixed(1) : 'N/A'}ms`
-      )
-      ;(window as unknown as { __lastTextDelta?: number }).__lastTextDelta = t0
       set((state) =>
         updateAssistantPart(state, sessionId, messageId, partIndex, (existing) => {
           if (existing && existing.type === 'text') {
@@ -1192,12 +1218,10 @@ function handleSseEvent(
       const toolName = typeof data.toolName === 'string' ? data.toolName : ''
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       diagLog(`[Client] pending_approval requestId=${requestId} toolName=${toolName}`)
-      console.log(`[ChatStore] pending_approval requestId=${requestId} toolName=${toolName}`)
       if (!requestId) return
       set((state) => {
         if (hasPendingItem(state, sessionId, requestId)) {
           diagLog(`[Client] pending_approval duplicate, ignored`)
-          console.log(`[ChatStore] pending_approval duplicate ignored requestId=${requestId}`)
           return {}
         }
         const queue = [
@@ -1214,7 +1238,6 @@ function handleSseEvent(
           },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
-        console.log(`[ChatStore] approvalQueue ADDED for ${sessionId}: length=${queue.length}, requestId=${requestId}`)
         return {
           approvalQueue: {
             ...state.approvalQueue,
@@ -1228,12 +1251,10 @@ function handleSseEvent(
       const requestId = typeof data.requestId === 'string' ? data.requestId : ''
       const questions = Array.isArray(data.questions) ? data.questions : []
       diagLog(`[Client] pending_question requestId=${requestId} questions=${questions.length}`)
-      console.log(`[ChatStore] pending_question requestId=${requestId} questions=${questions.length}`)
       if (!requestId) return
       set((state) => {
         if (hasPendingItem(state, sessionId, requestId)) {
           diagLog(`[Client] pending_question duplicate, ignored`)
-          console.log(`[ChatStore] pending_question duplicate ignored requestId=${requestId}`)
           return {}
         }
         const queue = [
@@ -1241,7 +1262,6 @@ function handleSseEvent(
           { requestId, questions },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
-        console.log(`[ChatStore] approvalQueue ADDED for ${sessionId}: length=${queue.length}, requestId=${requestId}`)
         return {
           approvalQueue: {
             ...state.approvalQueue,
@@ -1254,13 +1274,11 @@ function handleSseEvent(
     case 'approval_resolved': {
       const requestId = typeof data.requestId === 'string' ? data.requestId : ''
       diagLog(`[Client] approval_resolved requestId=${requestId}`)
-      console.log(`[ChatStore] approval_resolved requestId=${requestId}`)
       if (!requestId) return
       set((state) => {
         const queue = state.approvalQueue[sessionId] || []
         const nextQueue = queue.filter((item) => item.requestId !== requestId)
         diagLog(`[Client] approvalQueue resolved for ${sessionId}: ${queue.length} -> ${nextQueue.length}`)
-        console.log(`[ChatStore] approvalQueue REMOVED for ${sessionId}: ${queue.length} -> ${nextQueue.length}, requestId=${requestId}`)
         const updates: Partial<ChatState> = {
           approvalQueue: { ...state.approvalQueue, [sessionId]: nextQueue },
         }
@@ -1569,6 +1587,8 @@ function subscribeToSession(
   workspaceId: string,
   sessionId: string,
 ): void {
+  closeSessionSubscriptions(sessionId)
+
   const existing = sessionSubscriptions.get(sessionId)
   if (existing) {
     existing.close()
@@ -1588,7 +1608,6 @@ function subscribeToSession(
     }
 
     diagLog(`[SSE ${sessionId}] subscribing (lastId=${lastId ?? 'none'})`)
-    console.log(`[SSE ${sessionId}] connect() called, attempt=${attempt}, existingSub=${!!sessionSubscriptions.get(sessionId)}`)
 
     const abortController = new AbortController()
     let readTimeout: ReturnType<typeof setTimeout> | undefined
@@ -1623,7 +1642,6 @@ function subscribeToSession(
     }
 
     const thisClose = () => {
-      console.log(`[SSE ${sessionId}] thisClose called`)
       abortedIntentionally = true
       if (flushRafId !== null) {
         cancelAnimationFrame(flushRafId)
@@ -1665,7 +1683,6 @@ function subscribeToSession(
         if (!res.body) throw new Error(i18next.t('common:noResponseBody', 'No response body'))
 
         diagLog(`[SSE ${sessionId}] stream opened`)
-        console.log(`[SSE ${sessionId}] stream opened`)
         let wasActiveAtCleanClose = false
         try {
           for await (const event of parseSSEStream(res.body)) {
@@ -1700,7 +1717,6 @@ function subscribeToSession(
             }
           }
           diagWarn(`[SSE ${sessionId}] stream ended cleanly`)
-          console.log(`[SSE ${sessionId}] stream ended cleanly`)
           wasActiveAtCleanClose = sessionSubscriptions.get(sessionId)?.close === thisClose
         } finally {
           if (readTimeout) {
@@ -1712,7 +1728,6 @@ function subscribeToSession(
           if (current?.close === thisClose) {
             sessionSubscriptions.delete(sessionId)
             diagLog(`[SSE ${sessionId}] subscription removed (clean close)`)
-            console.log(`[SSE ${sessionId}] subscription removed (clean close)`)
           }
         }
         if (wasActiveAtCleanClose) {
@@ -1734,7 +1749,6 @@ function subscribeToSession(
           const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay)
           attempt++
           diagLog(`[SSE ${sessionId}] retrying after clean close in ${delay}ms`)
-          console.log(`[SSE ${sessionId}] retrying after clean close in ${delay}ms, attempt=${attempt}`)
           retryTimer = setTimeout(connect, delay)
         }
       })
@@ -1750,7 +1764,6 @@ function subscribeToSession(
         if (err.name === 'AbortError') {
           if (abortedIntentionally) {
             diagLog(`[SSE ${sessionId}] subscription aborted intentionally`)
-            console.log(`[SSE ${sessionId}] subscription aborted intentionally`)
             return
           }
           // Timeout-driven abort — fall through to retry logic
@@ -1794,7 +1807,6 @@ function subscribeToSession(
         diagLog(
           `[SSE ${sessionId}] retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`,
         )
-        console.log(`[SSE ${sessionId}] retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`)
         retryTimer = setTimeout(connect, delay)
       })
 
@@ -1802,7 +1814,6 @@ function subscribeToSession(
       close: thisClose,
       workspaceId,
     })
-    console.log(`[SSE ${sessionId}] subscription stored, close=${thisClose.name || 'anonymous'}`)
   }
 
   connect()
@@ -1865,6 +1876,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       if (!res.ok) throw new Error(i18next.t('common:failedToCreateSession', 'Failed to create session'))
       const session: ChatSession = await res.json()
+      closeSessionSubscriptions(session.id)
       set((state) => {
         const nextUnread = { ...state.unreadCompletions }
         delete nextUnread[session.id]
@@ -1890,6 +1902,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addSession: (workspaceId: string, session: ChatSession) => {
+    closeSessionSubscriptions(session.id)
     set((state) => {
       const nextUnread = { ...state.unreadCompletions }
       delete nextUnread[session.id]
@@ -1982,6 +1995,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setActiveSession: (workspaceId: string, sessionId: string) => {
+    closeSessionSubscriptions(sessionId)
     set((state) => {
       const nextUnread = { ...state.unreadCompletions }
       if (sessionId) delete nextUnread[sessionId]
@@ -2073,12 +2087,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   cleanupWorkspace: (workspaceId: string) => {
-    for (const [sessionId, sub] of sessionSubscriptions) {
-      if (sub.workspaceId === workspaceId) {
-        sub.close()
-        sessionSubscriptions.delete(sessionId)
-      }
-    }
+    closeWorkspaceSessionSubscriptions(workspaceId)
     const poll = workspacePollIntervals.get(workspaceId)
     if (poll) {
       clearInterval(poll)
