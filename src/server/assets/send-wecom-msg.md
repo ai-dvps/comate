@@ -33,6 +33,10 @@ If `wecom` is not in PATH, use `npx wecom` or the full path from `WECOM_CLI_PATH
    npm install -g @webank/wecom@latest
    ```
    If `wecom` is not found, check `npx wecom --version` or `${WECOM_CLI_PATH} --version`.
+   If the CLI is not installed at all, advise the user to install it:
+   ```bash
+   npm install -g @webank/wecom
+   ```
 2. **Determine intent**: Is the user asking to send immediately or draft first?
 3. **Extract recipient**: Identify the target user ID from the user's request
 4. **Build the message**:
