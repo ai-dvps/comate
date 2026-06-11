@@ -89,7 +89,7 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     const mockRuntime = {
       isProcessingTurn: () => false,
       cancelIdleClose: () => {},
-      pushMessage: (content: string) => {},
+      pushMessage: () => {},
     } as unknown as SessionRuntime;
 
     chatService.getRuntimeIfExists = () => undefined;
@@ -100,11 +100,10 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     setupHappyPathMocks();
     mockMessages.push(createMockMessage());
 
-    let pushedMessage = '';
     const mockRuntime = {
       isProcessingTurn: () => false,
       cancelIdleClose: () => {},
-      pushMessage: (content: string) => { pushedMessage = content; },
+      pushMessage: () => {},
     } as unknown as SessionRuntime;
 
     chatService.getOrCreateRuntime = async () => mockRuntime;
@@ -238,14 +237,13 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     assert.ok(mockMessages[0].errorReason?.includes('runtime creation failed'));
   });
 
-  it('formatProactiveDirective includes recipient and message', () => {
+  it('formatProactiveDirective returns natural-language prompt with recipient and message', () => {
     const msg = createMockMessage({
       recipientPlaintextUserId: 'user-b',
       messageContent: 'please upload the file',
     });
     const directive = formatProactiveDirective(msg);
-    assert.ok(directive.includes('[Proactive Send]'));
-    assert.ok(directive.includes('user-b'));
-    assert.ok(directive.includes('please upload the file'));
+    assert.ok(directive.includes('Send a WeCom message to user-b: please upload the file'));
+    assert.ok(!directive.includes('[Proactive Send]'));
   });
 });

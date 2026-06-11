@@ -480,12 +480,15 @@ export class ChatService {
     this.idleTimeouts.clear();
   }
 
-  getSessionsStatus(workspaceId: string): Record<string, { pendingCount: number }> {
-    const statuses: Record<string, { pendingCount: number }> = {};
+  getSessionsStatus(workspaceId: string): Record<string, { pendingCount: number; isProcessing: boolean }> {
+    const statuses: Record<string, { pendingCount: number; isProcessing: boolean }> = {};
     for (const [sessionId, runtime] of this.runtimes) {
       const status = runtime.getStatus();
       if (status.workspaceId === workspaceId) {
-        statuses[sessionId] = { pendingCount: status.pendingCount };
+        statuses[sessionId] = {
+          pendingCount: status.pendingCount,
+          isProcessing: status.isProcessing,
+        };
       }
     }
     return statuses;

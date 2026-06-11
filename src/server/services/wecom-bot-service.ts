@@ -1,6 +1,5 @@
 import AiBot from '@wecom/aibot-node-sdk';
 import type { WSClient, WsFrame, TextMessage } from '@wecom/aibot-node-sdk';
-import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import type { Workspace } from '../models/workspace.js';
@@ -8,7 +7,6 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import type { SseEvent } from '../types/message.js';
 import { SKILL_MD } from '../assets/wecom-skill.js';
-import { PROACTIVE_SKILL_MD } from '../assets/wecom-proactive-skill.js';
 import { debounce } from '../utils/debounce.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
@@ -384,6 +382,23 @@ export class WeComBotService {
     });
   }
 
+  async sendDirectMessage(
+    workspaceId: string,
+    toUser: string,
+    message: string,
+  ): Promise<void> {
+    const conn = this.connections.get(workspaceId);
+    if (!conn || conn.status !== 'connected') {
+      throw new Error(`Bot for workspace ${workspaceId} is not connected`);
+    }
+    // NOTE: The WeCom SDK's sendMessage only supports markdown for proactive sends.
+    // We always send markdown regardless of the requested msgType.
+    await conn.client.sendMessage(toUser, {
+      msgtype: 'markdown',
+      markdown: { content: message },
+    });
+  }
+
   private getContextFilePath(workspace: Workspace): string {
     return path.join(workspace.folderPath, '.claude', 'wecom-context.json');
   }
@@ -460,13 +475,9 @@ export class WeComBotService {
       throw new Error('Skill file path is outside workspace directory');
     }
 
-    const sendSkillDir = path.join(claudeDir, 'skills', 'send-wecom-message');
-    await fsPromises.mkdir(sendSkillDir, { recursive: true });
-    await fsPromises.writeFile(path.join(sendSkillDir, 'SKILL.md'), SKILL_MD, 'utf-8');
-
-    const proactiveSkillDir = path.join(claudeDir, 'skills', 'send-wecom-proactive-msg');
-    await fsPromises.mkdir(proactiveSkillDir, { recursive: true });
-    await fsPromises.writeFile(path.join(proactiveSkillDir, 'SKILL.md'), PROACTIVE_SKILL_MD, 'utf-8');
+    const skillDir = path.join(claudeDir, 'skills', 'send-wecom-msg');
+    await fsPromises.mkdir(skillDir, { recursive: true });
+    await fsPromises.writeFile(path.join(skillDir, 'SKILL.md'), SKILL_MD, 'utf-8');
   }
 
   private async removeSkillFiles(workspaceId: string): Promise<void> {
@@ -475,21 +486,11 @@ export class WeComBotService {
 
     const resolvedBase = path.resolve(workspace.folderPath);
 
-    const sendSkillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-message', 'SKILL.md');
-    const resolvedSendFile = path.resolve(sendSkillFile);
-    if (resolvedSendFile.startsWith(resolvedBase)) {
+    const skillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-msg', 'SKILL.md');
+    const resolvedSkillFile = path.resolve(skillFile);
+    if (resolvedSkillFile.startsWith(resolvedBase)) {
       try {
-        await fsPromises.unlink(sendSkillFile);
-      } catch {
-        // ignore
-      }
-    }
-
-    const proactiveSkillFile = path.join(workspace.folderPath, '.claude', 'skills', 'send-wecom-proactive-msg', 'SKILL.md');
-    const resolvedProactiveFile = path.resolve(proactiveSkillFile);
-    if (resolvedProactiveFile.startsWith(resolvedBase)) {
-      try {
-        await fsPromises.unlink(proactiveSkillFile);
+        await fsPromises.unlink(skillFile);
       } catch {
         // ignore
       }
