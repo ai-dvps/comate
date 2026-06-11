@@ -405,7 +405,7 @@ pub fn run() {
                     match event {
                         CommandEvent::Stdout(line) => {
                             let line = String::from_utf8_lossy(&line);
-                            log::info!("Sidecar stdout: {}", line.trim());
+                            let trimmed = line.trim();
                             if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
                                 if msg.get("type").and_then(|t| t.as_str()) == Some("ready") {
                                     if let Some(port) = msg.get("port").and_then(|p| p.as_u64()) {
@@ -414,9 +414,12 @@ pub fn run() {
                                             *port_lock = Some(port as u16);
                                         }
                                         log::info!("Sidecar ready on port {}", port);
-                                        break;
+                                        continue;
                                     }
                                 }
+                            }
+                            if cfg!(debug_assertions) {
+                                log::info!("Sidecar stdout: {}", trimmed);
                             }
                         }
                         CommandEvent::Stderr(line) => {
