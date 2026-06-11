@@ -36,6 +36,8 @@ export class SqliteStore {
     ensureDirSync();
     const options = getDatabaseOptions();
     this.db = new Database(DB_FILE, options);
+    this.db.exec('PRAGMA journal_mode = WAL');
+    this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workspaces (
         id TEXT PRIMARY KEY,

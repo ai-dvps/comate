@@ -1,10 +1,11 @@
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'fs';
+import { createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'fs';
 import path from 'path';
 import { getLogsDir } from './log-cleanup.js';
 
 const logsDir = getLogsDir();
 const logFile = path.join(logsDir, 'wecom-resolver.log');
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB
+const ROTATION_CHECK_INTERVAL = 100; // Check rotation every 100 writes
 
 function ensureDir(): void {
   if (!existsSync(logsDir)) {
@@ -12,18 +13,25 @@ function ensureDir(): void {
   }
 }
 
+let currentLogFile = logFile;
+let writeCount = 0;
+
 function rotateIfNeeded(): void {
+  writeCount++;
+  if (writeCount % ROTATION_CHECK_INTERVAL !== 0) return;
+
   try {
-    if (!existsSync(logFile)) return;
-    const stats = statSync(logFile);
+    if (!existsSync(currentLogFile)) return;
+    const stats = statSync(currentLogFile);
     if (stats.size > MAX_LOG_SIZE) {
       const rotated = `${logFile}.1`;
       if (existsSync(rotated)) {
         // Simple rotation: drop the old .1
-        // In a production system you might want a chain (.1 -> .2, etc.)
-        // For diagnostic logging, one backup is enough.
       }
-      renameSync(logFile, rotated);
+      renameSync(currentLogFile, rotated);
+      // Recreate the write stream on the new file
+      currentLogFile = logFile;
+      stream = createWriteStream(currentLogFile, { flags: 'a' });
     }
   } catch {
     // Ignore rotation errors; keep appending
@@ -35,6 +43,8 @@ function timestamp(): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${String(now.getMilliseconds()).padStart(3, '0')}`;
 }
+
+let stream = createWriteStream(currentLogFile, { flags: 'a' });
 
 function write(level: string, ...args: unknown[]): void {
   ensureDir();
@@ -49,10 +59,8 @@ function write(level: string, ...args: unknown[]): void {
     }
     return String(a);
   }).join(' ')}`;
-  try {
-    appendFileSync(logFile, line + '\n');
-  } catch {
-    // Silently ignore write failures to avoid disrupting resolver operations
+  if (stream.writable) {
+    stream.write(line + '\n');
   }
 }
 
