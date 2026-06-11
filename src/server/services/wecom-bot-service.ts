@@ -301,56 +301,65 @@ export class WeComBotService {
       });
     };
 
-    const handler = (id: number, event: SseEvent) => {
-      if (streamFinalized) return;
+    const handler = Object.assign(
+      (id: number, event: SseEvent) => {
+        if (streamFinalized) return;
 
-      if (event.type === 'assistant_start') {
-        collecting = true;
-        clearPlaceholder();
-        if (responseText && !responseText.endsWith('\n\n')) {
-          responseText += '\n\n';
-        }
-      } else if (collecting && event.type === 'text_delta') {
-        stopAnimation();
-        clearPlaceholder();
-        responseText += event.text;
-        flushStream();
-      } else if (collecting && event.type === 'thinking_start') {
-        setPlaceholder('\n\n收到，正在处理中.', true);
-      } else if (collecting && event.type === 'tool_use_start') {
-        clearPlaceholder();
-        setPlaceholder(`\n\n🔧 ${event.toolName}...`, false);
-      } else if (event.type === 'tool_result') {
-        clearPlaceholder();
-      } else if (event.type === 'subagent_start') {
-        clearPlaceholder();
-        setPlaceholder(`\n\n🤖 ${event.description ?? 'Running subagent'}...`, false);
-      } else if (event.type === 'subagent_done') {
-        clearPlaceholder();
-      } else if (collecting && event.type === 'assistant_done') {
-        collecting = false;
-        stopAnimation();
-        if (currentPlaceholder && currentPlaceholder.includes('收到，正在处理中')) {
+        if (event.type === 'assistant_start') {
+          collecting = true;
           clearPlaceholder();
+          if (responseText && !responseText.endsWith('\n\n')) {
+            responseText += '\n\n';
+          }
+        } else if (collecting && event.type === 'text_delta') {
+          stopAnimation();
+          clearPlaceholder();
+          responseText += event.text;
+          flushStream();
+        } else if (collecting && event.type === 'thinking_start') {
+          setPlaceholder('\n\n收到，正在处理中.', true);
+        } else if (collecting && event.type === 'tool_use_start') {
+          clearPlaceholder();
+          setPlaceholder(`\n\n🔧 ${event.toolName}...`, false);
+        } else if (event.type === 'tool_result') {
+          clearPlaceholder();
+        } else if (event.type === 'subagent_start') {
+          clearPlaceholder();
+          setPlaceholder(`\n\n🤖 ${event.description ?? 'Running subagent'}...`, false);
+        } else if (event.type === 'subagent_done') {
+          clearPlaceholder();
+        } else if (collecting && event.type === 'assistant_done') {
+          collecting = false;
+          stopAnimation();
+          if (currentPlaceholder && currentPlaceholder.includes('收到，正在处理中')) {
+            clearPlaceholder();
+          }
+          flushStream.flush();
+        } else if (event.type === 'error_note') {
+          clearPlaceholder();
+          if (event.text) {
+            responseText += `\n\n⚠️ ${event.text}`;
+          }
+          finalizeStream();
+        } else if (event.type === 'result') {
+          clearPlaceholder();
+          if (event.isError) {
+            responseText += '\n\n⚠️ 处理失败，请稍后重试。';
+          }
+          finalizeStream();
+        } else if (event.type === 'interrupted') {
+          clearPlaceholder();
+          finalizeStream();
         }
-        flushStream.flush();
-      } else if (event.type === 'error_note') {
-        clearPlaceholder();
-        if (event.text) {
-          responseText += `\n\n⚠️ ${event.text}`;
-        }
-        finalizeStream();
-      } else if (event.type === 'result') {
-        clearPlaceholder();
-        if (event.isError) {
-          responseText += '\n\n⚠️ 处理失败，请稍后重试。';
-        }
-        finalizeStream();
-      } else if (event.type === 'interrupted') {
-        clearPlaceholder();
-        finalizeStream();
-      }
-    };
+      },
+      {
+        cleanup: () => {
+          stopAnimation();
+          stopPlaceholderAnimation();
+          flushStream.abort();
+        },
+      },
+    );
 
     const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
     runtime.pushMessage(content);

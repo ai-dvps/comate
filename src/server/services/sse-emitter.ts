@@ -307,7 +307,10 @@ export class SseEmitter {
 
   private send(event: SseEvent): void {
     const id = this.eventIndex++;
-    diagLog(`[SseEmitter] send event ${id} type=${event.type} hasRes=${!!this.res}`);
+    // Only log non-high-frequency events to avoid I/O backpressure
+    if (event.type !== 'text_delta' && event.type !== 'thinking_delta' && event.type !== 'tool_input_delta' && event.type !== 'heartbeat') {
+      diagLog(`[SseEmitter] send event ${id} type=${event.type} hasRes=${!!this.res}`);
+    }
     const payload = SseEmitter.formatSsePayload(id, event);
     if (this.res) {
       const ok = this.res.write(payload);
@@ -341,6 +344,10 @@ export class SseEmitter {
         this.blockStates.clear();
         this.seenStreamPartIndexes.clear();
         this.nextPartIndex = 0;
+        // Prevent unbounded growth of message-id history across long sessions
+        if (this.finalizedMessageIds.size > 1000) {
+          this.finalizedMessageIds.clear();
+        }
       }
       return;
     }
