@@ -1,6 +1,5 @@
 import AiBot from '@wecom/aibot-node-sdk';
 import type { WSClient, WsFrame, TextMessage } from '@wecom/aibot-node-sdk';
-import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import type { Workspace } from '../models/workspace.js';
@@ -387,7 +386,6 @@ export class WeComBotService {
     workspaceId: string,
     toUser: string,
     message: string,
-    _msgType: 'text' | 'markdown' = 'markdown'
   ): Promise<void> {
     const conn = this.connections.get(workspaceId);
     if (!conn || conn.status !== 'connected') {

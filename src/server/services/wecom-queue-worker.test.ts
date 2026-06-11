@@ -89,7 +89,7 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     const mockRuntime = {
       isProcessingTurn: () => false,
       cancelIdleClose: () => {},
-      pushMessage: (content: string) => {},
+      pushMessage: () => {},
     } as unknown as SessionRuntime;
 
     chatService.getRuntimeIfExists = () => undefined;
@@ -100,11 +100,10 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     setupHappyPathMocks();
     mockMessages.push(createMockMessage());
 
-    let pushedMessage = '';
     const mockRuntime = {
       isProcessingTurn: () => false,
       cancelIdleClose: () => {},
-      pushMessage: (content: string) => { pushedMessage = content; },
+      pushMessage: () => {},
     } as unknown as SessionRuntime;
 
     chatService.getOrCreateRuntime = async () => mockRuntime;
