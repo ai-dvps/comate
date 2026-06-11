@@ -1,20 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { copyFileSync, mkdirSync, existsSync, unlinkSync, chmodSync } from 'node:fs';
-import { resolveWecomCliPath } from './resolve-wecom-cli.js';
-
-function getTargetDir(): string {
-  if (process.platform === 'win32') {
-    return path.join(process.env.USERPROFILE || process.env.HOME || '', '.local', 'bin');
-  }
-  return path.join(process.env.HOME || '', '.local', 'bin');
-}
-
-function getTargetPath(): string {
-  const dir = getTargetDir();
-  const name = process.platform === 'win32' ? 'wecom.exe' : 'wecom';
-  return path.join(dir, name);
-}
+import { spawnSync } from 'node:child_process';
+import { resolveWecomCliPackageDir } from './resolve-wecom-cli.js';
 
 export interface InstallResult {
   installed: boolean;
@@ -23,31 +8,33 @@ export interface InstallResult {
 }
 
 export function checkWecomCliInstallation(): InstallResult {
-  const target = getTargetPath();
-  if (existsSync(target)) {
-    return { installed: true, path: target };
+  const result = spawnSync('wecom', ['--version'], { encoding: 'utf-8' });
+  if (result.status === 0) {
+    return { installed: true, path: 'wecom' };
   }
   return { installed: false };
 }
 
 export function installWecomCli(): InstallResult {
-  const source = resolveWecomCliPath();
-  if (!source) {
-    return { installed: false, error: 'CLI not found in application bundle' };
+  const packageDir = resolveWecomCliPackageDir();
+  if (!packageDir) {
+    return { installed: false, error: 'CLI package not found in application bundle' };
   }
 
-  const targetDir = getTargetDir();
-  const target = getTargetPath();
-
   try {
-    mkdirSync(targetDir, { recursive: true });
-    copyFileSync(source, target);
+    const result = spawnSync('npm', ['install', '-g', packageDir], {
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
 
-    if (process.platform !== 'win32') {
-      chmodSync(target, 0o755);
+    if (result.status !== 0) {
+      return {
+        installed: false,
+        error: result.stderr || `npm install exited with code ${result.status}`,
+      };
     }
 
-    return { installed: true, path: target };
+    return { installed: true, path: 'wecom' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { installed: false, error: message };
@@ -55,14 +42,12 @@ export function installWecomCli(): InstallResult {
 }
 
 export function uninstallWecomCli(): InstallResult {
-  const target = getTargetPath();
-  if (existsSync(target)) {
-    try {
-      unlinkSync(target);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { installed: true, path: target, error: message };
-    }
+  const result = spawnSync('npm', ['uninstall', '-g', '@webank/wecom'], {
+    encoding: 'utf-8',
+    stdio: 'pipe',
+  });
+  if (result.status === 0) {
+    return { installed: false };
   }
-  return { installed: false };
+  return { installed: true, error: result.stderr || 'npm uninstall failed' };
 }
