@@ -101,6 +101,9 @@ export class SessionRuntime {
   }
 
   clearBotEventHandlers(): void {
+    for (const handler of this.botEventHandlers) {
+      (handler as { cleanup?: () => void }).cleanup?.();
+    }
     this.botEventHandlers.clear();
   }
 
@@ -466,5 +469,13 @@ export class SessionRuntime {
     }
     await this.messageLoopPromise.catch(() => {});
     this.unsubscribe();
+    // Resolve any dangling pending approvals so their Promises don't leak
+    for (const [requestId, pending] of this.pendingApprovals) {
+      pending.resolve({
+        behavior: 'deny',
+        message: `Session closed while waiting for approval: ${requestId}`,
+      });
+    }
+    this.pendingApprovals.clear();
   }
 }

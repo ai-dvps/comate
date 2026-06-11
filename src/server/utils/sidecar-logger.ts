@@ -13,6 +13,9 @@ if (!existsSync(path.dirname(logFile))) {
 }
 
 const stream = createWriteStream(logFile, { flags: 'a' });
+stream.on('error', (err) => {
+  console.error('[sidecar-logger] stream error:', err.message);
+});
 
 function timestamp(): string {
   const now = new Date();

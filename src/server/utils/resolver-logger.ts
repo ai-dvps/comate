@@ -29,9 +29,13 @@ function rotateIfNeeded(): void {
         // Simple rotation: drop the old .1
       }
       renameSync(currentLogFile, rotated);
-      // Recreate the write stream on the new file
+      // Destroy old stream to prevent fd leak, then recreate
+      stream.destroy();
       currentLogFile = logFile;
       stream = createWriteStream(currentLogFile, { flags: 'a' });
+      stream.on('error', (err) => {
+        console.error('[resolver-logger] stream error:', err.message);
+      });
     }
   } catch {
     // Ignore rotation errors; keep appending
@@ -45,6 +49,9 @@ function timestamp(): string {
 }
 
 let stream = createWriteStream(currentLogFile, { flags: 'a' });
+stream.on('error', (err) => {
+  console.error('[resolver-logger] stream error:', err.message);
+});
 
 function write(level: string, ...args: unknown[]): void {
   ensureDir();
