@@ -11,7 +11,18 @@
     "dist"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/index.js"
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/index.js --banner:js='#!/usr/bin/env node'",
+    "test": "node --test dist/test/**/*.test.js"
+  },
+  "oclif": {
+    "commands": {
+      "strategy": "explicit",
+      "target": "./dist/index.js",
+      "identifier": "COMMANDS"
+    }
+  },
+  "dependencies": {
+    "@oclif/core": "^4.2.10"
   },
   "devDependencies": {
     "esbuild": "^0.28.0"
