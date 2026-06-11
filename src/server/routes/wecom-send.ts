@@ -8,7 +8,7 @@ const router = Router({ mergeParams: true });
 router.post('/', async (req, res) => {
   try {
     const workspaceId = (req.params as { workspaceId: string }).workspaceId;
-    const { sessionId, toUser, message, msgType } = req.body as {
+    const { sessionId, toUser, message } = req.body as {
       sessionId?: string;
       toUser?: string;
       message?: string;
@@ -35,7 +35,7 @@ router.post('/', async (req, res) => {
       const status = wecomBotService.getStatus(workspaceId);
       if (status === 'connected') {
         try {
-          await wecomBotService.sendDirectMessage(workspaceId, toUser.trim(), message.trim(), msgType);
+          await wecomBotService.sendDirectMessage(workspaceId, toUser.trim(), message.trim());
           res.status(200).json({ method: 'direct', sent: true });
           return;
         } catch (error) {

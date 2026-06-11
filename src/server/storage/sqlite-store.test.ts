@@ -2,7 +2,6 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import Database from 'better-sqlite3';
 import { SqliteStore } from './sqlite-store.js';
-import type { WeComProactiveMessage, ProactiveMessageStatus } from '../models/wecom-proactive-message.js';
 
 describe('SqliteStore proactive messages', { concurrency: false }, () => {
   let store: SqliteStore;

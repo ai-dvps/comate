@@ -13,7 +13,6 @@ describe('wecom-send routes', { concurrency: false }, () => {
     workspaceId: string,
     toUser: string,
     message: string,
-    msgType?: 'text' | 'markdown'
   ) => Promise<void>;
 
   beforeEach(async () => {
@@ -87,12 +86,11 @@ describe('wecom-send routes', { concurrency: false }, () => {
     let sendCalled = false;
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     wecomBotService.getStatus = () => 'connected';
-    wecomBotService.sendDirectMessage = async (wsId, toUser, message, msgType) => {
+    wecomBotService.sendDirectMessage = async (wsId, toUser, message) => {
       sendCalled = true;
       assert.strictEqual(wsId, 'ws-1');
       assert.strictEqual(toUser, 'alice');
       assert.strictEqual(message, 'hello');
-      assert.strictEqual(msgType, 'text');
     };
 
     const req = {
