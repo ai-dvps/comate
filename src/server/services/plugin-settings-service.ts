@@ -7,8 +7,11 @@ import {
   resolveWorkspaceClaudeSettingsPath,
   resolveLocalClaudeSettingsPath,
   resolveGlobalClaudeSettingsPath,
+  readInstalledPluginsJson,
   type PluginSettings,
   type PluginStateEntry,
+  type InstalledPluginsFile,
+  type InstalledPluginEntry,
 } from '../utils/claude-settings.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 
@@ -27,6 +30,12 @@ export interface InstalledPlugin {
   enabled: boolean;
   installedAt: string;
   updatedAt?: string;
+  /** CLI's qualified key: "plugin@marketplace" */
+  qualifiedId?: string;
+  /** CLI's versioned cache path, e.g. cache/marketplace/plugin/version/ */
+  installPath?: string;
+  /** Git commit SHA from CLI */
+  gitCommitSha?: string;
 }
 
 export interface PluginManifest {
@@ -38,6 +47,9 @@ export interface PluginManifest {
   keywords?: string[];
   source?: string;
 }
+
+/** Map of qualifiedId -> single CLI entry matching the given scope */
+type CliPluginMap = Map<string, InstalledPluginEntry>;
 
 export class PluginSettingsService {
   private cacheDir: string | null = null;
@@ -57,10 +69,23 @@ export class PluginSettingsService {
   }
 
   /**
-   * Resolve the cache path for a specific plugin.
+   * Resolve the cache path for a specific plugin (flat format).
    */
   resolvePluginCachePath(pluginId: string): string {
     return join(this.resolvePluginCacheDir(), pluginId);
+  }
+
+  /**
+   * Resolve the CLI-compatible versioned cache path for a plugin.
+   * Format: ~/.claude/plugins/cache/{marketplace}/{plugin}/{version}/
+   * Matches CLI's getVersionedCachePath from pluginLoader.ts.
+   */
+  resolveVersionedCachePath(pluginId: string, marketplace: string, version: string): string {
+    const cacheDir = this.resolvePluginCacheDir();
+    const sanitizedMarketplace = marketplace.replace(/[^a-zA-Z0-9\-_]/g, '-');
+    const sanitizedPlugin = pluginId.replace(/[^a-zA-Z0-9\-_]/g, '-');
+    const sanitizedVersion = version.replace(/[^a-zA-Z0-9\-_.]/g, '-');
+    return join(cacheDir, sanitizedMarketplace, sanitizedPlugin, sanitizedVersion);
   }
 
   /**
@@ -79,31 +104,144 @@ export class PluginSettingsService {
     return resolveLocalClaudeSettingsPath(workspacePath);
   }
 
+  // ---------------------------------------------------------------------------
+  // CLI installed_plugins.json helpers
+  // ---------------------------------------------------------------------------
+
   /**
-   * Get all installed plugins for a scope.
+   * Build a map of qualifiedId -> CLI entry for entries matching the given scope.
+   * For project/local scopes, also matches projectPath.
    */
-  getInstalledPlugins(scope: PluginScope, workspacePath?: string): InstalledPlugin[] {
-    const settingsPath = this.resolveSettingsPath(scope, workspacePath);
-    const settings = readPluginSettings(settingsPath);
-    return Object.entries(settings.pluginManager.plugins).map(([id, entry]) => ({
-      id,
-      ...entry,
-    }));
+  private buildCliPluginsMap(
+    cliData: InstalledPluginsFile,
+    scope: PluginScope,
+    workspacePath?: string,
+  ): CliPluginMap {
+    const map: CliPluginMap = new Map();
+    for (const [qualifiedId, entries] of Object.entries(cliData.plugins)) {
+      for (const entry of entries) {
+        if (entry.scope !== scope) continue;
+        if ((scope === 'project' || scope === 'local') && entry.projectPath && workspacePath) {
+          if (entry.projectPath !== workspacePath) continue;
+        }
+        map.set(qualifiedId, entry);
+      }
+    }
+    return map;
   }
 
   /**
-   * Get a single installed plugin by ID.
+   * Find the CLI qualified key for a plugin given its bare ID and source.
+   * E.g. bareId="compound-engineering", source="compound-engineering-plugin"
+   *      -> "compound-engineering@compound-engineering-plugin"
+   */
+  private findCliKeyForPlugin(
+    bareId: string,
+    source: string,
+    cliData: InstalledPluginsFile,
+  ): string | null {
+    // Direct match: bareId@source
+    const directKey = `${bareId}@${source}`;
+    if (cliData.plugins[directKey]) return directKey;
+
+    // Fuzzy match: search for any key where the name part matches
+    for (const key of Object.keys(cliData.plugins)) {
+      const atIndex = key.lastIndexOf('@');
+      const name = atIndex > 0 ? key.slice(0, atIndex) : key;
+      if (name === bareId) return key;
+    }
+
+    return null;
+  }
+
+  /**
+   * Build a merged view of installed plugins for a given scope.
+   * Priority: installed_plugins.json > settings.json.
+   * The CLI file is the source of truth for version and installPath.
+   * settings.json is the source of truth for enabled state.
+   */
+  private getMergedInstalledPlugins(
+    scope: PluginScope,
+    workspacePath?: string,
+  ): InstalledPlugin[] {
+    // Step 1: Read from settings.json
+    const settingsPath = this.resolveSettingsPath(scope, workspacePath);
+    const settings = readPluginSettings(settingsPath);
+    const settingsPlugins = settings.pluginManager.plugins;
+
+    // Step 2: Read from installed_plugins.json
+    const cliData = readInstalledPluginsJson();
+    const cliPluginsMap = this.buildCliPluginsMap(cliData, scope, workspacePath);
+
+    // Step 3: Merge
+    const result: InstalledPlugin[] = [];
+    const seen = new Set<string>();
+
+    // First pass: plugins in settings.json, enriched with CLI data
+    for (const [id, entry] of Object.entries(settingsPlugins)) {
+      seen.add(id);
+      const cliKey = this.findCliKeyForPlugin(id, entry.source, cliData);
+      const cliEntry = cliKey ? cliPluginsMap.get(cliKey) : undefined;
+
+      result.push({
+        id,
+        version: cliEntry?.version || entry.version,
+        source: entry.source,
+        enabled: entry.enabled,
+        installedAt: cliEntry?.installedAt || entry.installedAt,
+        updatedAt: cliEntry?.lastUpdated || entry.updatedAt,
+        qualifiedId: cliKey ?? undefined,
+        installPath: cliEntry?.installPath,
+        gitCommitSha: cliEntry?.gitCommitSha,
+      });
+    }
+
+    // Second pass: plugins only in installed_plugins.json (CLI-installed, not in our settings)
+    for (const [qualifiedId, cliEntry] of cliPluginsMap) {
+      const atIndex = qualifiedId.lastIndexOf('@');
+      const bareId = atIndex > 0 ? qualifiedId.slice(0, atIndex) : qualifiedId;
+      if (seen.has(bareId)) continue;
+      seen.add(bareId);
+
+      const marketplace = atIndex > 0 ? qualifiedId.slice(atIndex + 1) : 'unknown';
+
+      result.push({
+        id: bareId,
+        version: cliEntry.version || '0.0.0',
+        source: marketplace,
+        enabled: true, // CLI doesn't track enabled state per-scope in installed_plugins.json
+        installedAt: cliEntry.installedAt || new Date().toISOString(),
+        updatedAt: cliEntry.lastUpdated,
+        qualifiedId,
+        installPath: cliEntry.installPath,
+        gitCommitSha: cliEntry.gitCommitSha,
+      });
+    }
+
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get all installed plugins for a scope (merged from both sources).
+   */
+  getInstalledPlugins(scope: PluginScope, workspacePath?: string): InstalledPlugin[] {
+    return this.getMergedInstalledPlugins(scope, workspacePath);
+  }
+
+  /**
+   * Get a single installed plugin by ID (merged from both sources).
    */
   getInstalledPlugin(
     scope: PluginScope,
     pluginId: string,
     workspacePath?: string,
   ): InstalledPlugin | null {
-    const settingsPath = this.resolveSettingsPath(scope, workspacePath);
-    const settings = readPluginSettings(settingsPath);
-    const entry = settings.pluginManager.plugins[pluginId];
-    if (!entry) return null;
-    return { id: pluginId, ...entry };
+    const all = this.getMergedInstalledPlugins(scope, workspacePath);
+    return all.find((p) => p.id === pluginId) ?? null;
   }
 
   /**
@@ -297,34 +435,48 @@ export class PluginSettingsService {
 
   /**
    * Read plugin.json manifest from the cache directory.
+   * If an installPath is provided (from installed_plugins.json), prefer that path.
    */
-  readPluginManifest(pluginId: string): PluginManifest | null {
+  readPluginManifest(pluginId: string, preferredPath?: string): PluginManifest | null {
+    // If we have a specific install path from installed_plugins.json, try it first
+    if (preferredPath) {
+      const manifest = this.readManifestFromPath(preferredPath);
+      if (manifest) return manifest;
+    }
+
+    // Fall back to scanning all cache paths
     const cachePaths = this.resolveAllPluginCachePaths(pluginId);
 
     for (const cachePath of cachePaths) {
-      const manifestPath = join(cachePath, '.claude-plugin', 'plugin.json');
-      const altManifestPath = join(cachePath, 'plugin.json');
+      const manifest = this.readManifestFromPath(cachePath);
+      if (manifest) return manifest;
+    }
+    return null;
+  }
 
-      for (const p of [manifestPath, altManifestPath]) {
-        try {
-          const content = readFileSync(p, 'utf-8');
-          const parsed = JSON.parse(content) as Record<string, unknown>;
-          if (typeof parsed.name === 'string') {
-            return {
-              name: parsed.name,
-              displayName: typeof parsed.displayName === 'string' ? parsed.displayName : undefined,
-              description: typeof parsed.description === 'string' ? parsed.description : undefined,
-              version: typeof parsed.version === 'string' ? parsed.version : '0.0.0',
-              author: typeof parsed.author === 'string' ? parsed.author : undefined,
-              keywords: Array.isArray(parsed.keywords)
-                ? (parsed.keywords as unknown[]).filter((v): v is string => typeof v === 'string')
-                : undefined,
-              source: typeof parsed.source === 'string' ? parsed.source : undefined,
-            };
-          }
-        } catch {
-          // Try next path
+  private readManifestFromPath(dirPath: string): PluginManifest | null {
+    const manifestPath = join(dirPath, '.claude-plugin', 'plugin.json');
+    const altManifestPath = join(dirPath, 'plugin.json');
+
+    for (const p of [manifestPath, altManifestPath]) {
+      try {
+        const content = readFileSync(p, 'utf-8');
+        const parsed = JSON.parse(content) as Record<string, unknown>;
+        if (typeof parsed.name === 'string') {
+          return {
+            name: parsed.name,
+            displayName: typeof parsed.displayName === 'string' ? parsed.displayName : undefined,
+            description: typeof parsed.description === 'string' ? parsed.description : undefined,
+            version: typeof parsed.version === 'string' ? parsed.version : '0.0.0',
+            author: typeof parsed.author === 'string' ? parsed.author : undefined,
+            keywords: Array.isArray(parsed.keywords)
+              ? (parsed.keywords as unknown[]).filter((v): v is string => typeof v === 'string')
+              : undefined,
+            source: typeof parsed.source === 'string' ? parsed.source : undefined,
+          };
         }
+      } catch {
+        // Try next path
       }
     }
     return null;

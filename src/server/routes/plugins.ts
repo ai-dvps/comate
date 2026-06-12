@@ -5,7 +5,11 @@ import { pluginSettingsService, assertPluginScope } from '../services/plugin-set
 import { marketplaceService } from '../services/marketplace-service.js';
 import { PluginDownloader } from '../utils/plugin-downloader.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
-import { readPluginSettings, resolveGlobalClaudeSettingsPath } from '../utils/claude-settings.js';
+import {
+  readPluginSettings,
+  resolveGlobalClaudeSettingsPath,
+  updateInstalledPluginsEntry,
+} from '../utils/claude-settings.js';
 import type { PluginScope } from '../services/plugin-settings-service.js';
 import type { MarketplaceRegistry } from '../services/marketplace-service.js';
 
@@ -77,6 +81,7 @@ router.get('/installed', async (req, res) => {
     const workspaceId = req.query.workspaceId as string | undefined;
     const workspacePath = await getWorkspacePath(workspaceId);
 
+    // getInstalledPlugins now reads from merged model (installed_plugins.json + settings.json)
     const userPlugins = pluginSettingsService.getInstalledPlugins('user');
     const projectPlugins = workspacePath
       ? pluginSettingsService.getInstalledPlugins('project', workspacePath)
@@ -114,7 +119,8 @@ router.get('/installed', async (req, res) => {
         if (seen.has(p.id)) continue;
         seen.add(p.id);
 
-        const manifest = pluginSettingsService.readPluginManifest(p.id);
+        // Pass installPath (from installed_plugins.json) so manifest is read from the right location
+        const manifest = pluginSettingsService.readPluginManifest(p.id, p.installPath);
         const { source, ...rest } = p;
         all.push({
           ...rest,
@@ -188,29 +194,45 @@ router.post('/install', async (req, res) => {
       return;
     }
 
-    // Download plugin if not cached
-    const cacheDir = pluginSettingsService.resolvePluginCacheDir();
-    const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
-
+    // Resolve marketplace info for the plugin
+    let marketplaceName: string | undefined;
     let downloadResult;
+
     const isLocalPath = existsSync(source) && statSync(source).isDirectory();
     if (isLocalPath) {
+      const cacheDir = pluginSettingsService.resolvePluginCacheDir();
+      const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
       downloadResult = await downloader.downloadLocal(pluginId, source);
     } else if (source.startsWith('http') || source.endsWith('.git') || source.includes('@')) {
+      const cacheDir = pluginSettingsService.resolvePluginCacheDir();
+      const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
       downloadResult = await downloader.downloadFromUrl(pluginId, source);
     } else {
-      // Treat as marketplace plugin — try to resolve from marketplace first
+      // Treat as marketplace plugin — resolve from marketplace
       const customRegistries = loadCustomMarketplaces();
       const { plugins } = await marketplaceService.fetchMarketplaces(customRegistries);
       const marketPlugin = plugins.find((p) => p.id === pluginId);
+      marketplaceName = marketPlugin?.sourceMarketplace;
+
       if (marketPlugin?.sourceType === 'local' && marketPlugin.sourceUrl) {
+        const cacheDir = pluginSettingsService.resolvePluginCacheDir();
+        const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
         downloadResult = await downloader.downloadLocal(pluginId, marketPlugin.sourceUrl);
       } else if (marketPlugin?.sourceUrl && marketPlugin.pluginSourcePath) {
-        // Plugin lives in a subdirectory of a git repo (e.g. marketplace repo)
-        downloadResult = await downloader.downloadGitSubdirectory(
-          pluginId, marketPlugin.sourceUrl, marketPlugin.pluginSourcePath,
+        // Plugin lives in a subdirectory of a git repo — download to versioned cache path
+        const manifest = { version: marketPlugin.version || '0.0.0' };
+        const versionedPath = pluginSettingsService.resolveVersionedCachePath(
+          pluginId,
+          marketplaceName || 'unknown',
+          manifest.version,
+        );
+        const downloader = new PluginDownloader({ cacheDir: pluginSettingsService.resolvePluginCacheDir(), timeoutMs: DEFAULT_TIMEOUT_MS });
+        downloadResult = await downloader.downloadToVersionedPath(
+          pluginId, versionedPath, marketPlugin.sourceUrl, marketPlugin.pluginSourcePath,
         );
       } else if (marketPlugin?.sourceUrl) {
+        const cacheDir = pluginSettingsService.resolvePluginCacheDir();
+        const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
         downloadResult = await downloader.downloadFromUrl(pluginId, marketPlugin.sourceUrl);
       } else {
         res.status(422).json({ error: `Cannot resolve source for plugin ${pluginId}` });
@@ -218,17 +240,27 @@ router.post('/install', async (req, res) => {
       }
     }
 
-    if (!downloadResult.success) {
-      res.status(422).json({ error: downloadResult.error || 'Download failed' });
+    if (!downloadResult?.success) {
+      res.status(422).json({ error: downloadResult?.error || 'Download failed' });
       return;
     }
 
-    // Read manifest for version
-    const manifest = pluginSettingsService.readPluginManifest(pluginId);
+    // Read manifest for version from the download location
+    const manifest = pluginSettingsService.readPluginManifest(pluginId, downloadResult.cachePath);
     const version = manifest?.version || '0.0.0';
+    const effectiveMarketplace = marketplaceName || source;
 
-    // Write to settings
-    const installed = pluginSettingsService.addPlugin(scope, pluginId, version, source, workspacePath);
+    // Write to settings.json
+    const installed = pluginSettingsService.addPlugin(scope, pluginId, version, effectiveMarketplace, workspacePath);
+
+    // Also write to installed_plugins.json (CLI format)
+    const qualifiedId = `${pluginId}@${effectiveMarketplace}`;
+    updateInstalledPluginsEntry(qualifiedId, {
+      scope,
+      installPath: downloadResult.cachePath,
+      version,
+      projectPath: scope !== 'user' ? workspacePath : undefined,
+    });
 
     sidecarLog(`[Plugins API] Installed ${pluginId}@${version} to ${scope}`);
     res.status(201).json({ plugin: { ...installed, scope } });
@@ -308,40 +340,51 @@ router.post('/update', async (req, res) => {
       return;
     }
 
+    // Get installed plugin via merged model (reads installed_plugins.json)
     const installed = pluginSettingsService.getInstalledPlugin(scope, pluginId, workspacePath);
     if (!installed) {
       res.status(404).json({ error: 'Plugin not found' });
       return;
     }
 
-    // Enrich version from cached manifest (same as /updates endpoint does)
-    // so that a partially-failed previous update (settings ahead of cache)
-    // doesn't block the re-download.
-    const manifest = pluginSettingsService.readPluginManifest(pluginId);
-    const installedVersion = manifest?.version || installed.version;
+    // Use the version from merged model (prefers installed_plugins.json)
+    const installedVersion = installed.version;
+
+    // Use qualified ID for precise marketplace lookup if available
+    const lookupId = installed.qualifiedId || pluginId;
 
     // Find update in marketplace
     const customRegistries = loadCustomMarketplaces();
-    const update = await marketplaceService.checkForUpdate(pluginId, installedVersion, customRegistries);
+    const update = await marketplaceService.checkForUpdate(lookupId, installedVersion, customRegistries);
     if (!update || !update.sourceUrl) {
       res.status(422).json({ error: 'No update available or source not resolvable' });
       return;
     }
 
-    // Download new version
-    const cacheDir = pluginSettingsService.resolvePluginCacheDir();
-    const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
+    // Download to versioned cache path
+    const marketplace = update.sourceMarketplace || installed.source || 'unknown';
+    const downloader = new PluginDownloader({ cacheDir: pluginSettingsService.resolvePluginCacheDir(), timeoutMs: DEFAULT_TIMEOUT_MS });
 
     let downloadResult;
+    let versionForPath = update.version;
+
     if (update.sourceType === 'local') {
       downloadResult = await downloader.downloadLocal(pluginId, update.sourceUrl);
     } else if (update.pluginSourcePath) {
-      // Plugin lives in a subdirectory of a git repo (e.g. marketplace repo)
-      downloadResult = await downloader.downloadGitSubdirectory(
-        pluginId, update.sourceUrl, update.pluginSourcePath,
+      // Plugin in subdirectory of git repo — use versioned cache path
+      const versionedPath = pluginSettingsService.resolveVersionedCachePath(
+        pluginId, marketplace, versionForPath,
+      );
+      downloadResult = await downloader.downloadToVersionedPath(
+        pluginId, versionedPath, update.sourceUrl, update.pluginSourcePath,
       );
     } else {
-      downloadResult = await downloader.downloadFromUrl(pluginId, update.sourceUrl);
+      const versionedPath = pluginSettingsService.resolveVersionedCachePath(
+        pluginId, marketplace, versionForPath,
+      );
+      downloadResult = await downloader.downloadToVersionedPath(
+        pluginId, versionedPath, update.sourceUrl,
+      );
     }
 
     if (!downloadResult.success) {
@@ -349,14 +392,21 @@ router.post('/update', async (req, res) => {
       return;
     }
 
-    // Read the actual version from the downloaded manifest (not the marketplace-reported version)
-    // to ensure settings reflect what's truly on disk. This prevents version mismatches
-    // when the marketplace listing and the actual plugin.json differ.
-    const downloadedManifest = pluginSettingsService.readPluginManifest(pluginId);
+    // Read the actual version from the downloaded manifest
+    const downloadedManifest = pluginSettingsService.readPluginManifest(pluginId, downloadResult.cachePath);
     const actualVersion = downloadedManifest?.version || update.version;
 
-    // Update settings with the actual version
+    // Update settings.json
     pluginSettingsService.updatePluginVersion(scope, pluginId, actualVersion, workspacePath);
+
+    // Update installed_plugins.json (CLI format)
+    const qualifiedId = installed.qualifiedId || `${pluginId}@${marketplace}`;
+    updateInstalledPluginsEntry(qualifiedId, {
+      scope,
+      installPath: downloadResult.cachePath,
+      version: actualVersion,
+      projectPath: scope !== 'user' ? workspacePath : undefined,
+    });
 
     sidecarLog(`[Plugins API] Updated ${pluginId} to ${actualVersion}`);
     res.json({ ok: true, version: actualVersion });
@@ -417,6 +467,7 @@ router.get('/updates', async (req, res) => {
     const workspaceId = req.query.workspaceId as string | undefined;
     const workspacePath = await getWorkspacePath(workspaceId);
 
+    // Use merged model (reads installed_plugins.json for real versions)
     const userPlugins = pluginSettingsService.getInstalledPlugins('user');
     const projectPlugins = workspacePath
       ? pluginSettingsService.getInstalledPlugins('project', workspacePath)
@@ -427,17 +478,14 @@ router.get('/updates', async (req, res) => {
 
     // Deduplicate by plugin ID — local takes precedence, then project, then user
     const seen = new Set<string>();
-    const allInstalled: Array<{ id: string; version: string }> = [];
+    const allInstalled: Array<{ id: string; version: string; qualifiedId?: string }> = [];
     for (const p of [...localPlugins, ...projectPlugins, ...userPlugins]) {
       if (seen.has(p.id)) continue;
       seen.add(p.id);
-
-      // Enrich version from cached manifest (same as /installed endpoint does)
-      // so CLI-installed plugins with '0.0.0' in settings get their real version.
-      const manifest = pluginSettingsService.readPluginManifest(p.id);
       allInstalled.push({
         id: p.id,
-        version: manifest?.version || p.version,
+        version: p.version,
+        qualifiedId: p.qualifiedId,
       });
     }
 
@@ -446,7 +494,9 @@ router.get('/updates', async (req, res) => {
     const customRegistries = loadCustomMarketplaces();
 
     for (const plugin of allInstalled) {
-      const update = await marketplaceService.checkForUpdate(plugin.id, plugin.version, customRegistries);
+      // Use qualified ID for precise marketplace lookup
+      const lookupId = plugin.qualifiedId || plugin.id;
+      const update = await marketplaceService.checkForUpdate(lookupId, plugin.version, customRegistries);
       if (update) {
         updates.push({
           id: plugin.id,
