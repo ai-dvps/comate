@@ -7,10 +7,10 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
-import { createStreamReply } from './wecom-stream-reply.js';
+import { createStreamReply, type StreamReplyConnection } from './wecom-stream-reply.js';
 import { saveMediaFile } from './wecom-file-storage.js';
 
-export interface BotConnection {
+export interface BotConnection extends StreamReplyConnection {
   client: WSClient;
   workspaceId: string;
   botId: string;

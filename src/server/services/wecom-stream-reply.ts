@@ -2,7 +2,7 @@ import type { WsFrame } from '@wecom/aibot-node-sdk';
 import type { SseEvent } from '../types/message.js';
 import { debounce } from '../utils/debounce.js';
 
-interface StreamReplyConnection {
+export interface StreamReplyConnection {
   client: {
     replyStream: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<void>;
     replyStreamNonBlocking: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<void>;
