@@ -205,15 +205,29 @@ export class WeComBotService {
 
     try {
       // Voice messages only have a text transcription (no download URL)
-      if (msgtype === 'voice' && frame.body.voice?.content) {
-        const voiceContent = frame.body.voice.content;
+      if (msgtype === 'voice') {
+        const voiceContent = frame.body.voice?.content;
+        if (!voiceContent) {
+          // Voice message with no transcription — notify user
+          await conn.client.sendMessage(wecomUserId, {
+            msgtype: 'markdown',
+            markdown: { content: '⚠️ 语音消息无法识别，请重试。' },
+          });
+          return;
+        }
 
         // Look up or create session
         const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
         if (!sessionId) return;
 
-        const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
-        const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
+        const streamReply = createStreamReply(conn, frame, sessionId, wecomUserId);
+        let runtime;
+        try {
+          runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, streamReply.handler);
+        } catch (err) {
+          streamReply.handler.cleanup();
+          throw err;
+        }
 
         const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
         runtime.pushMessage(prompt);
@@ -244,8 +258,14 @@ export class WeComBotService {
       const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
       if (!sessionId) return;
 
-      const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
-      const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
+      const streamReply = createStreamReply(conn, frame, sessionId, wecomUserId);
+      let runtime;
+      try {
+        runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, streamReply.handler);
+      } catch (err) {
+        streamReply.handler.cleanup();
+        throw err;
+      }
 
       const prompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
       runtime.pushMessage(prompt);

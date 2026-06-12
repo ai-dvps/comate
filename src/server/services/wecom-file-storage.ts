@@ -20,16 +20,17 @@ export async function saveMediaFile(
   const targetDir = path.join(workspaceFolderPath, userFolderName);
   const resolvedWorkspacePath = path.resolve(workspaceFolderPath);
 
-  // Validate target directory is within workspace
+  // Validate target directory is within workspace (use separator to prevent prefix bypass)
   const resolvedDir = path.resolve(targetDir);
-  if (!resolvedDir.startsWith(resolvedWorkspacePath)) {
+  if (resolvedDir !== resolvedWorkspacePath && !resolvedDir.startsWith(resolvedWorkspacePath + path.sep)) {
     throw new Error(`Target directory "${targetDir}" is outside the workspace`);
   }
 
-  // Resolve and validate the target file path
-  const targetFilePath = path.join(targetDir, filename);
+  // Sanitize filename: strip directory components to prevent subdirectory creation
+  const safeFilename = path.basename(filename);
+  const targetFilePath = path.join(targetDir, safeFilename);
   const resolvedFilePath = path.resolve(targetFilePath);
-  if (!resolvedFilePath.startsWith(resolvedWorkspacePath)) {
+  if (resolvedFilePath !== resolvedWorkspacePath && !resolvedFilePath.startsWith(resolvedWorkspacePath + path.sep)) {
     throw new Error(`Target file path "${targetFilePath}" is outside the workspace`);
   }
 
@@ -42,14 +43,14 @@ export async function saveMediaFile(
     await fsPromises.access(resolvedFilePath);
     // File exists — add timestamp suffix before the last extension
     const timestamp = formatTimestamp(new Date());
-    const lastDotIndex = filename.lastIndexOf('.');
+    const lastDotIndex = safeFilename.lastIndexOf('.');
     let newFilename: string;
     if (lastDotIndex > 0) {
-      const base = filename.substring(0, lastDotIndex);
-      const ext = filename.substring(lastDotIndex);
+      const base = safeFilename.substring(0, lastDotIndex);
+      const ext = safeFilename.substring(lastDotIndex);
       newFilename = `${base}-${timestamp}${ext}`;
     } else {
-      newFilename = `${filename}-${timestamp}`;
+      newFilename = `${safeFilename}-${timestamp}`;
     }
     finalFilePath = path.resolve(path.join(resolvedDir, newFilename));
   } catch {
