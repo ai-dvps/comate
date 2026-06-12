@@ -28,9 +28,12 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    const callerUserId = store.getWecomUserIdBySession(workspaceId, sessionId);
+    const callerUserIdEncrypted = store.getWecomUserIdBySession(workspaceId, sessionId);
+    const callerUserId = callerUserIdEncrypted ? store.getWecomUserMapping(callerUserIdEncrypted) : null;
 
-    // Same user + bot connected → direct send
+    // Same user + bot connected → direct send. On direct-send failure (including bot
+    // not connected), surface the error instead of silently re-enqueueing, which would
+    // create an infinite loop.
     if (callerUserId === toUser.trim()) {
       const status = wecomBotService.getStatus(workspaceId);
       if (status === 'connected') {
@@ -39,10 +42,18 @@ router.post('/', async (req, res) => {
           res.status(200).json({ method: 'direct', sent: true });
           return;
         } catch (error) {
-          console.error(`[WeComSend] Direct send failed for workspace ${workspaceId}, falling back to queue:`, error);
-          // Fall through to enqueue
+          console.error(`[WeComSend] Direct send failed for workspace ${workspaceId}:`, error);
+          const message = error instanceof Error ? error.message : 'Direct send failed';
+          res.status(500).json({ error: 'direct_send_failed', message });
+          return;
         }
       }
+
+      res.status(503).json({
+        error: 'bot_not_connected',
+        message: 'WeCom bot is not connected for this workspace. Please reconnect the bot and retry.',
+      });
+      return;
     }
 
     // Different user, unmapped session, or bot not connected → enqueue
