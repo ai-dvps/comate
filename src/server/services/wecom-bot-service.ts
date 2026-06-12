@@ -1,19 +1,20 @@
 import AiBot from '@wecom/aibot-node-sdk';
-import type { WSClient, WsFrame, TextMessage } from '@wecom/aibot-node-sdk';
+import type { WSClient, WsFrame, TextMessage, FileMessage, ImageMessage, VoiceMessage, VideoMessage, BaseMessage } from '@wecom/aibot-node-sdk';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
-import type { SseEvent } from '../types/message.js';
-import { debounce } from '../utils/debounce.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
+import { createStreamReply } from './wecom-stream-reply.js';
+import { saveMediaFile } from './wecom-file-storage.js';
 
-interface BotConnection {
+export interface BotConnection {
   client: WSClient;
   workspaceId: string;
   botId: string;
+  folderPath: string;
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
 }
 
@@ -57,6 +58,7 @@ export class WeComBotService {
       client,
       workspaceId: workspace.id,
       botId,
+      folderPath: workspace.folderPath,
       status: 'connecting',
     };
 
@@ -83,6 +85,30 @@ export class WeComBotService {
     client.on('message.text', (frame: WsFrame<TextMessage>) => {
       this.handleTextMessage(workspace.id, frame).catch((err) => {
         console.error('Failed to handle WeCom text message:', err);
+      });
+    });
+
+    client.on('message.file', (frame: WsFrame<FileMessage>) => {
+      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom file message:', err);
+      });
+    });
+
+    client.on('message.image', (frame: WsFrame<ImageMessage>) => {
+      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom image message:', err);
+      });
+    });
+
+    client.on('message.voice', (frame: WsFrame<VoiceMessage>) => {
+      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom voice message:', err);
+      });
+    });
+
+    client.on('message.video', (frame: WsFrame<VideoMessage>) => {
+      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom video message:', err);
       });
     });
 
@@ -153,10 +179,144 @@ export class WeComBotService {
     // Track that this user has interacted with this workspace
     wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
 
+    const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
+    if (!sessionId) return;
+
+    const conn = this.connections.get(workspaceId);
+    if (!conn) return;
+
+    const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
+
+    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
+    runtime.pushMessage(content);
+  }
+
+  private async handleMediaMessage(workspaceId: string, frame: WsFrame<BaseMessage>): Promise<void> {
+    if (!frame.body) return;
+    const wecomUserId = frame.body.from.userid;
+    const msgtype = frame.body.msgtype;
+
+    // Fire-and-forget: queue unseen user IDs for batch resolution
+    wecomUserResolver.resolveOnMessage(workspaceId, wecomUserId).catch(() => {});
+    wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
+
+    const conn = this.connections.get(workspaceId);
+    if (!conn) return;
+
+    try {
+      // Voice messages only have a text transcription (no download URL)
+      if (msgtype === 'voice') {
+        const voiceContent = frame.body.voice?.content;
+        if (!voiceContent) {
+          // Voice message with no transcription — notify user
+          await conn.client.sendMessage(wecomUserId, {
+            msgtype: 'markdown',
+            markdown: { content: '⚠️ 语音消息无法识别，请重试。' },
+          });
+          return;
+        }
+
+        // Look up or create session
+        const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
+        if (!sessionId) return;
+
+        const streamReply = createStreamReply(conn, frame, sessionId, wecomUserId);
+        let runtime;
+        try {
+          runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, streamReply.handler);
+        } catch (err) {
+          streamReply.handler.cleanup();
+          throw err;
+        }
+
+        const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
+        runtime.pushMessage(prompt);
+        return;
+      }
+
+      // Downloadable media: file, image, video
+      const mediaInfo = this.extractMediaInfo(frame.body);
+      if (!mediaInfo) {
+        console.warn(`[WeComBotService] No downloadable media found in ${msgtype} message from ${wecomUserId}`);
+        return;
+      }
+
+      const { url, aesKey } = mediaInfo;
+      const { buffer, filename: sdkFilename } = await conn.client.downloadFile(url, aesKey);
+
+      // Determine filename with fallback
+      const filename = sdkFilename ?? this.generateFallbackFilename(msgtype);
+
+      // Determine user folder name
+      const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
+      const userFolderName = plaintextUserId ?? wecomUserId;
+
+      // Save file to workspace
+      const relativePath = await saveMediaFile(conn.folderPath, userFolderName, buffer, filename);
+
+      // Look up or create session
+      const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
+      if (!sessionId) return;
+
+      const streamReply = createStreamReply(conn, frame, sessionId, wecomUserId);
+      let runtime;
+      try {
+        runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, streamReply.handler);
+      } catch (err) {
+        streamReply.handler.cleanup();
+        throw err;
+      }
+
+      const defaultFilePrompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
+      const prompt = await this.resolveFilePrompt(workspaceId, relativePath, defaultFilePrompt);
+      runtime.pushMessage(prompt);
+    } catch (err) {
+      console.error(`[WeComBotService] Failed to handle ${msgtype} message from ${wecomUserId}:`, err);
+      // Reply to the WeCom user with a failure message
+      try {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '⚠️ 文件处理失败，请稍后重试。' },
+        });
+      } catch (sendErr) {
+        console.error('[WeComBotService] Failed to send error reply:', sendErr);
+      }
+    }
+  }
+
+  private extractMediaInfo(body: BaseMessage): { url: string; aesKey?: string } | null {
+    if (body.file?.url) return { url: body.file.url, aesKey: body.file.aeskey };
+    if (body.image?.url) return { url: body.image.url, aesKey: body.image.aeskey };
+    if (body.video?.url) return { url: body.video.url, aesKey: body.video.aeskey };
+    return null;
+  }
+
+  private generateFallbackFilename(msgtype: string): string {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '-').slice(0, 19);
+    const extMap: Record<string, string> = {
+      image: 'png',
+      video: 'mp4',
+      file: 'bin',
+    };
+    const ext = extMap[msgtype] ?? 'bin';
+    return `${msgtype}_${timestamp}.${ext}`;
+  }
+
+  private async resolveFilePrompt(
+    workspaceId: string,
+    relativePath: string,
+    defaultPrompt: string,
+  ): Promise<string> {
+    const workspace = await workspaceStore.get(workspaceId);
+    const template = workspace?.settings?.wecomFilePromptTemplate?.trim();
+    if (!template) return defaultPrompt;
+    return template.replace(/\$file_name\$/g, relativePath);
+  }
+
+  private async getOrCreateSession(workspaceId: string, wecomUserId: string): Promise<string | null> {
     let sessionId = workspaceStore.getWecomSession(workspaceId, wecomUserId);
 
     if (sessionId) {
-      // Verify the session still exists
       const session = await chatService.getSession(sessionId, workspaceId);
       if (!session) {
         sessionId = null;
@@ -172,7 +332,6 @@ export class WeComBotService {
       sessionId = session.id;
       workspaceStore.setWecomSession(workspaceId, wecomUserId, sessionId);
 
-      // If the plaintext ID is already known, trigger rename for all sessions of this user
       const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
       if (plaintextUserId) {
         wecomSessionRenamer.renameSessionsForUser(workspaceId, wecomUserId).catch((err) => {
@@ -181,179 +340,7 @@ export class WeComBotService {
       }
     }
 
-    const conn = this.connections.get(workspaceId);
-    if (!conn) return;
-
-    const streamId = `${sessionId}-${Date.now()}`;
-
-    let responseText = '';
-    let collecting = false;
-    let streamFinalized = false;
-    let animationInterval: NodeJS.Timeout | null = null;
-    let currentPlaceholder: string | null = null;
-    let placeholderAnimationInterval: NodeJS.Timeout | null = null;
-
-    const stopAnimation = () => {
-      if (animationInterval) {
-        clearInterval(animationInterval);
-        animationInterval = null;
-      }
-    };
-
-    const stopPlaceholderAnimation = () => {
-      if (placeholderAnimationInterval) {
-        clearInterval(placeholderAnimationInterval);
-        placeholderAnimationInterval = null;
-      }
-    };
-
-    const clearPlaceholder = () => {
-      stopPlaceholderAnimation();
-      if (currentPlaceholder) {
-        if (responseText.endsWith(currentPlaceholder)) {
-          responseText = responseText.slice(0, -currentPlaceholder.length);
-        } else {
-          const idx = responseText.lastIndexOf(currentPlaceholder);
-          if (idx >= 0) {
-            responseText = responseText.slice(0, idx) + responseText.slice(idx + currentPlaceholder.length);
-          }
-        }
-        currentPlaceholder = null;
-      }
-    };
-
-    // Start a cycling placeholder animation until the first token arrives
-    let dotCount = 0;
-    const sendAnimationFrame = () => {
-      dotCount = (dotCount + 1) % 3;
-      const text = `收到，正在处理中${'.'.repeat(dotCount + 1)}`;
-      conn.client.replyStreamNonBlocking(frame, streamId, text, false).catch((err) => {
-        console.error('Failed to send WeCom animation frame:', err);
-      });
-    };
-
-    conn.client.replyStream(frame, streamId, '收到，正在处理中.', false).catch((err) => {
-      console.error('Failed to send WeCom processing placeholder:', err);
-    });
-    animationInterval = setInterval(sendAnimationFrame, 600);
-
-    const flushStream = debounce(() => {
-      if (!responseText) return;
-      conn!.client.replyStreamNonBlocking(frame, streamId, responseText).catch((err) => {
-        console.error('Failed to send WeCom stream frame:', err);
-      });
-    }, 150);
-
-    const setPlaceholder = (text: string, animate: boolean = false) => {
-      clearPlaceholder();
-      currentPlaceholder = text;
-      responseText += text;
-      flushStream.flush();
-      if (animate) {
-        const baseText = text.replace(/\.*$/, '');
-        let dotCount = 0;
-        const myPlaceholder = text;
-        placeholderAnimationInterval = setInterval(() => {
-          if (currentPlaceholder !== myPlaceholder) return;
-          dotCount = (dotCount + 1) % 3;
-          const newPlaceholder = `${baseText}${'.'.repeat(dotCount + 1)}`;
-          if (responseText.endsWith(currentPlaceholder)) {
-            responseText = responseText.slice(0, -currentPlaceholder.length) + newPlaceholder;
-          } else {
-            const idx = responseText.lastIndexOf(currentPlaceholder);
-            if (idx < 0) return;
-            responseText = responseText.slice(0, idx) + newPlaceholder + responseText.slice(idx + currentPlaceholder.length);
-          }
-          currentPlaceholder = newPlaceholder;
-          conn!.client.replyStreamNonBlocking(frame, streamId, responseText).catch((err) => {
-            console.error('Failed to send WeCom placeholder animation frame:', err);
-          });
-        }, 600);
-      }
-    };
-
-    const finalizeStream = () => {
-      streamFinalized = true;
-      collecting = false;
-      stopAnimation();
-      stopPlaceholderAnimation();
-      flushStream.abort();
-
-      conn!.client.replyStream(frame, streamId, responseText, true).catch((err) => {
-        console.error('Failed to send WeCom stream final frame:', err);
-        if (responseText.trim()) {
-          conn!.client.sendMessage(wecomUserId, {
-            msgtype: 'markdown',
-            markdown: { content: responseText },
-          }).catch((fallbackErr) => {
-            console.error('Failed to send WeCom fallback response:', fallbackErr);
-          });
-        }
-      });
-    };
-
-    const handler = Object.assign(
-      (id: number, event: SseEvent) => {
-        if (streamFinalized) return;
-
-        if (event.type === 'assistant_start') {
-          collecting = true;
-          clearPlaceholder();
-          if (responseText && !responseText.endsWith('\n\n')) {
-            responseText += '\n\n';
-          }
-        } else if (collecting && event.type === 'text_delta') {
-          stopAnimation();
-          clearPlaceholder();
-          responseText += event.text;
-          flushStream();
-        } else if (collecting && event.type === 'thinking_start') {
-          setPlaceholder('\n\n收到，正在处理中.', true);
-        } else if (collecting && event.type === 'tool_use_start') {
-          clearPlaceholder();
-          setPlaceholder(`\n\n🔧 ${event.toolName}...`, false);
-        } else if (event.type === 'tool_result') {
-          clearPlaceholder();
-        } else if (event.type === 'subagent_start') {
-          clearPlaceholder();
-          setPlaceholder(`\n\n🤖 ${event.description ?? 'Running subagent'}...`, false);
-        } else if (event.type === 'subagent_done') {
-          clearPlaceholder();
-        } else if (collecting && event.type === 'assistant_done') {
-          collecting = false;
-          stopAnimation();
-          if (currentPlaceholder && currentPlaceholder.includes('收到，正在处理中')) {
-            clearPlaceholder();
-          }
-          flushStream.flush();
-        } else if (event.type === 'error_note') {
-          clearPlaceholder();
-          if (event.text) {
-            responseText += `\n\n⚠️ ${event.text}`;
-          }
-          finalizeStream();
-        } else if (event.type === 'result') {
-          clearPlaceholder();
-          if (event.isError) {
-            responseText += '\n\n⚠️ 处理失败，请稍后重试。';
-          }
-          finalizeStream();
-        } else if (event.type === 'interrupted') {
-          clearPlaceholder();
-          finalizeStream();
-        }
-      },
-      {
-        cleanup: () => {
-          stopAnimation();
-          stopPlaceholderAnimation();
-          flushStream.abort();
-        },
-      },
-    );
-
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
-    runtime.pushMessage(content);
+    return sessionId;
   }
 
   getWorkspaceIdByBotId(botId: string): string | undefined {

@@ -15,6 +15,8 @@ export interface MarketplacePlugin {
   sourceUrl?: string;
   sourceType?: 'git' | 'zip' | 'local';
   builtIn?: boolean;
+  /** Relative path to the plugin within the marketplace repo (e.g. "./plugins/compound-engineering") */
+  pluginSourcePath?: string;
 }
 
 export interface MarketplaceRegistry {
@@ -290,6 +292,7 @@ export class MarketplaceService {
       sourceUrl,
       sourceType,
       builtIn,
+      pluginSourcePath: typeof item.source === 'string' ? item.source : undefined,
     };
   }
 
@@ -462,9 +465,81 @@ export class MarketplaceService {
     const match = plugins.find((p) => p.id === pluginId);
     if (!match) return null;
 
-    if (this.compareVersions(match.version, currentVersion) > 0) {
+    // If the marketplace listing lacked a version (defaults to '0.0.0'),
+    // try to resolve the real version from the plugin's manifest in the source repo.
+    let latestVersion = match.version;
+    if (latestVersion === '0.0.0' && match.pluginSourcePath) {
+      const resolvedVersion = await this.resolvePluginVersionFromSource(match);
+      if (resolvedVersion) {
+        latestVersion = resolvedVersion;
+        // Update the match so callers see the real version
+        match.version = resolvedVersion;
+      }
+    }
+
+    if (this.compareVersions(latestVersion, currentVersion) > 0) {
       return match;
     }
+    return null;
+  }
+
+  /**
+   * Resolve the latest version of a plugin by reading its plugin.json from the source.
+   * For GitHub repos: fetches the manifest from raw.githubusercontent.com.
+   * For local paths: reads the manifest from disk.
+   */
+  private async resolvePluginVersionFromSource(plugin: MarketplacePlugin): Promise<string | null> {
+    const sourcePath = plugin.pluginSourcePath;
+    if (!sourcePath) return null;
+
+    try {
+      if (plugin.sourceType === 'local' && plugin.sourceUrl) {
+        // Local marketplace — sourceUrl is already resolved to the plugin directory
+        // (e.g. /path/to/marketplace/plugins/my-plugin), so read plugin.json directly.
+        const manifestPath = join(plugin.sourceUrl, '.claude-plugin', 'plugin.json');
+        if (existsSync(manifestPath)) {
+          const content = readFileSync(manifestPath, 'utf-8');
+          const manifest = JSON.parse(content) as { version?: string };
+          if (typeof manifest.version === 'string' && manifest.version !== '0.0.0') {
+            sidecarLog(`[MarketplaceService] Resolved version for ${plugin.id} from local source: ${manifest.version}`);
+            return manifest.version;
+          }
+        }
+      } else if (plugin.sourceUrl) {
+        // GitHub repo — extract repo from sourceUrl, construct path to plugin.json
+        const relativePath = sourcePath.replace(/^\.\//, '');
+        const manifestPath = `${relativePath}/.claude-plugin/plugin.json`;
+        const repoMatch = plugin.sourceUrl.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+        if (repoMatch) {
+          const repo = repoMatch[1];
+          for (const branch of ['main', 'master']) {
+            const url = `https://raw.githubusercontent.com/${repo}/${branch}/${manifestPath}`;
+            try {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 10000);
+              const response = await fetch(url, {
+                headers: { Accept: 'application/json' },
+                signal: controller.signal,
+              });
+              clearTimeout(timeout);
+
+              if (response.ok) {
+                const manifest = (await response.json()) as { version?: string };
+                if (typeof manifest.version === 'string' && manifest.version !== '0.0.0') {
+                  sidecarLog(`[MarketplaceService] Resolved version for ${plugin.id} from GitHub: ${manifest.version}`);
+                  return manifest.version;
+                }
+              }
+            } catch {
+              // Try next branch
+            }
+          }
+        }
+      }
+    } catch (err) {
+      sidecarLog(`[MarketplaceService] Failed to resolve version for ${plugin.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     return null;
   }
 }

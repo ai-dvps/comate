@@ -5,6 +5,7 @@ export interface WorkspaceSettings {
   wecomBotName?: string;
   wecomCorpId?: string;
   wecomCorpSecret?: string;
+  wecomFilePromptTemplate?: string;
 }
 
 export interface Skill {
