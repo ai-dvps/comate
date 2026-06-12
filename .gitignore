@@ -16,5 +16,4 @@ src-tauri/binaries/*
 !src-tauri/binaries/.gitkeep
 src-tauri/resources/*
 !src-tauri/resources/.gitkeep
-src/server/assets/wecom-skill.ts
 *.tsbuildinfo

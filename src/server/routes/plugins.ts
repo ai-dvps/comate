@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { existsSync, statSync } from 'fs';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { pluginSettingsService, assertPluginScope } from '../services/plugin-settings-service.js';
 import { marketplaceService } from '../services/marketplace-service.js';
@@ -135,22 +136,8 @@ router.get('/installed', async (req, res) => {
 router.get('/marketplace', async (req, res) => {
   try {
     const query = req.query.query as string | undefined;
-
-    // First, try to load from Claude Code's cached marketplace data on disk.
-    // This gives exact parity with what Claude Code CLI sees.
-    let result = marketplaceService.loadCachedMarketplaces();
-
-    // If no cached marketplaces found, fall back to fetching from network
-    // using custom registries from settings.json extraKnownMarketplaces.
-    if (result.plugins.length === 0 && result.errors.length === 0) {
-      sidecarLog('[Plugins API] No cached marketplaces found, falling back to network fetch');
-      const customRegistries = loadCustomMarketplaces();
-      result = await marketplaceService.fetchMarketplaces(customRegistries, query);
-    } else if (query) {
-      // Apply search filter if we loaded from cache
-      result.plugins = marketplaceService.filterPlugins(result.plugins, query);
-    }
-
+    const customRegistries = loadCustomMarketplaces();
+    const result = await marketplaceService.fetchAllMarketplaces(customRegistries, query);
     res.json({ plugins: result.plugins, errors: result.errors });
   } catch (error) {
     console.error('Failed to fetch marketplace:', error);
@@ -201,13 +188,18 @@ router.post('/install', async (req, res) => {
     const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
 
     let downloadResult;
-    if (source.startsWith('http') || source.endsWith('.git') || source.includes('@')) {
+    const isLocalPath = existsSync(source) && statSync(source).isDirectory();
+    if (isLocalPath) {
+      downloadResult = await downloader.downloadLocal(pluginId, source);
+    } else if (source.startsWith('http') || source.endsWith('.git') || source.includes('@')) {
       downloadResult = await downloader.downloadFromUrl(pluginId, source);
     } else {
       // Treat as marketplace plugin — try to resolve from marketplace first
       const { plugins } = await marketplaceService.fetchMarketplaces();
       const marketPlugin = plugins.find((p) => p.id === pluginId);
-      if (marketPlugin?.sourceUrl) {
+      if (marketPlugin?.sourceType === 'local' && marketPlugin.sourceUrl) {
+        downloadResult = await downloader.downloadLocal(pluginId, marketPlugin.sourceUrl);
+      } else if (marketPlugin?.sourceUrl) {
         downloadResult = await downloader.downloadFromUrl(pluginId, marketPlugin.sourceUrl);
       } else {
         res.status(422).json({ error: `Cannot resolve source for plugin ${pluginId}` });
@@ -321,7 +313,10 @@ router.post('/update', async (req, res) => {
     // Download new version
     const cacheDir = pluginSettingsService.resolvePluginCacheDir();
     const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
-    const downloadResult = await downloader.downloadFromUrl(pluginId, update.sourceUrl);
+    const downloadResult =
+      update.sourceType === 'local'
+        ? await downloader.downloadLocal(pluginId, update.sourceUrl)
+        : await downloader.downloadFromUrl(pluginId, update.sourceUrl);
 
     if (!downloadResult.success) {
       res.status(422).json({ error: downloadResult.error || 'Download failed' });

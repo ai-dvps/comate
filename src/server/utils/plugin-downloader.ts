@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { createWriteStream, mkdirSync, existsSync, rmSync } from 'fs';
+import { createWriteStream, mkdirSync, existsSync, rmSync, cpSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { pipeline } from 'stream/promises';
@@ -159,6 +159,51 @@ export class PluginDownloader {
     }
 
     return this.downloadZip(pluginId, url);
+  }
+
+  /**
+   * Copy a plugin from a local directory into the cache.
+   */
+  async downloadLocal(
+    pluginId: string,
+    localPath: string,
+  ): Promise<DownloadResult> {
+    const cachePath = join(this.cacheDir, pluginId);
+
+    try {
+      if (!existsSync(localPath) || !statSync(localPath).isDirectory()) {
+        return {
+          success: false,
+          cachePath,
+          error: `Local plugin path does not exist or is not a directory: ${localPath}`,
+        };
+      }
+
+      // Remove existing cache if present (for updates)
+      if (existsSync(cachePath)) {
+        rmSync(cachePath, { recursive: true, force: true });
+      }
+
+      // Validate manifest before copying
+      const manifestValid = await this.validateManifest(localPath);
+      if (!manifestValid) {
+        return {
+          success: false,
+          cachePath,
+          error: `Local plugin is missing a valid plugin.json manifest`,
+        };
+      }
+
+      mkdirSync(this.cacheDir, { recursive: true });
+      cpSync(localPath, cachePath, { recursive: true, dereference: true });
+
+      sidecarLog(`[PluginDownloader] Copied ${pluginId} from ${localPath} to ${cachePath}`);
+      return { success: true, cachePath };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sidecarLog(`[PluginDownloader] Local copy failed for ${pluginId}: ${message}`);
+      return { success: false, cachePath, error: message };
+    }
   }
 
   private async runGitClone(

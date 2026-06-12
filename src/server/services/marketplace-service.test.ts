@@ -1,5 +1,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
 import { MarketplaceService } from './marketplace-service.js';
 
 describe('marketplace-service', { concurrency: false }, () => {
@@ -220,6 +223,51 @@ describe('marketplace-service', { concurrency: false }, () => {
       }
     });
 
+    it('fetches local directory marketplace.json format', async () => {
+      const tmpRoot = mkdtempSync(join(tmpdir(), 'marketplace-'));
+      mkdirSync(join(tmpRoot, '.claude-plugin'), { recursive: true });
+      mkdirSync(join(tmpRoot, 'plugins', 'wecom'), { recursive: true });
+      writeFileSync(
+        join(tmpRoot, '.claude-plugin', 'marketplace.json'),
+        JSON.stringify({
+          name: 'local-test',
+          owner: { name: 'Test' },
+          plugins: [
+            {
+              name: 'wecom',
+              description: 'Send WeCom messages',
+              version: '0.1.0',
+              source: './plugins/wecom',
+            },
+          ],
+        }),
+      );
+
+      try {
+        const result = await service.fetchMarketplaces([
+          { name: 'Local Test', localPath: tmpRoot },
+        ]);
+        assert.strictEqual(result.plugins.length, 1);
+        const plugin = result.plugins[0];
+        assert.strictEqual(plugin.id, 'wecom');
+        assert.strictEqual(plugin.sourceMarketplace, 'Local Test');
+        assert.strictEqual(plugin.sourceType, 'local');
+        assert.strictEqual(plugin.sourceUrl, resolve(tmpRoot, './plugins/wecom'));
+      } finally {
+        // node:test will clean up the temp directory on process exit
+      }
+    });
+
+    it('reports errors for missing local marketplace.json', async () => {
+      const tmpRoot = mkdtempSync(join(tmpdir(), 'marketplace-missing-'));
+      const result = await service.fetchMarketplaces([
+        { name: 'Missing Local', localPath: tmpRoot },
+      ]);
+      assert.strictEqual(result.plugins.length, 0);
+      assert.ok(result.errors.some((e) => e.marketplace === 'Missing Local'));
+      assert.ok(result.errors.some((e) => e.error.includes('marketplace.json not found')));
+    });
+
     it('falls back to master branch when main branch marketplace.json is missing', async () => {
       const originalFetch = global.fetch;
       global.fetch = async (url) => {
@@ -247,6 +295,122 @@ describe('marketplace-service', { concurrency: false }, () => {
         assert.strictEqual(result.plugins.length, 1);
         assert.strictEqual(result.plugins[0].id, 'fallback-plugin');
       } finally {
+        global.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe('fetchBuiltInMarketplaces', () => {
+    it('returns plugins from registered built-in marketplaces', async () => {
+      const tmpRoot = mkdtempSync(join(tmpdir(), 'builtin-marketplace-'));
+      mkdirSync(join(tmpRoot, '.claude-plugin'), { recursive: true });
+      mkdirSync(join(tmpRoot, 'plugins', 'wecom'), { recursive: true });
+      writeFileSync(
+        join(tmpRoot, '.claude-plugin', 'marketplace.json'),
+        JSON.stringify({
+          name: 'comate-built-in',
+          plugins: [
+            {
+              name: 'wecom',
+              description: 'Send WeCom messages',
+              version: '0.1.0',
+              source: './plugins/wecom',
+            },
+          ],
+        }),
+      );
+
+      service.registerBuiltInMarketplace({ name: 'comate-built-in', localPath: tmpRoot });
+
+      const result = await service.fetchBuiltInMarketplaces();
+      assert.strictEqual(result.plugins.length, 1);
+      assert.strictEqual(result.plugins[0].id, 'wecom');
+      assert.strictEqual(result.plugins[0].sourceMarketplace, 'comate-built-in');
+      assert.strictEqual(result.plugins[0].builtIn, true);
+    });
+
+    it('returns empty result when no built-in marketplaces are registered', async () => {
+      const result = await service.fetchBuiltInMarketplaces();
+      assert.strictEqual(result.plugins.length, 0);
+      assert.strictEqual(result.errors.length, 0);
+    });
+  });
+
+  describe('fetchAllMarketplaces', () => {
+    it('merges built-in marketplaces with cached marketplaces', async () => {
+      const originalHome = process.env.HOME;
+      const homeRoot = mkdtempSync(join(tmpdir(), 'claude-home-'));
+      process.env.HOME = homeRoot;
+
+      const cachedMarketplaceDir = mkdtempSync(join(tmpdir(), 'cached-marketplace-'));
+      writeFileSync(
+        join(cachedMarketplaceDir, 'marketplace.json'),
+        JSON.stringify({
+          name: 'cached-mp',
+          plugins: [{ name: 'cached-plugin', version: '1.0.0' }],
+        }),
+      );
+
+      mkdirSync(join(homeRoot, '.claude', 'plugins'), { recursive: true });
+      writeFileSync(
+        join(homeRoot, '.claude', 'plugins', 'known_marketplaces.json'),
+        JSON.stringify({
+          'cached-mp': {
+            source: { source: 'file' },
+            installLocation: join(cachedMarketplaceDir, 'marketplace.json'),
+          },
+        }),
+      );
+
+      const builtInRoot = mkdtempSync(join(tmpdir(), 'builtin-marketplace-'));
+      mkdirSync(join(builtInRoot, '.claude-plugin'), { recursive: true });
+      mkdirSync(join(builtInRoot, 'plugins', 'wecom'), { recursive: true });
+      writeFileSync(
+        join(builtInRoot, '.claude-plugin', 'marketplace.json'),
+        JSON.stringify({
+          name: 'comate-built-in',
+          plugins: [
+            {
+              name: 'wecom',
+              description: 'Send WeCom messages',
+              version: '0.1.0',
+              source: './plugins/wecom',
+            },
+          ],
+        }),
+      );
+
+      service.registerBuiltInMarketplace({ name: 'comate-built-in', localPath: builtInRoot });
+
+      try {
+        const result = await service.fetchAllMarketplaces([], undefined);
+        assert.strictEqual(result.plugins.length, 2);
+        assert.ok(result.plugins.find((p) => p.id === 'cached-plugin'));
+        assert.ok(result.plugins.find((p) => p.id === 'wecom' && p.builtIn));
+      } finally {
+        process.env.HOME = originalHome;
+      }
+    });
+
+    it('falls back to network registries when no cached marketplaces exist', async () => {
+      const originalHome = process.env.HOME;
+      const homeRoot = mkdtempSync(join(tmpdir(), 'claude-home-empty-'));
+      process.env.HOME = homeRoot;
+
+      const originalFetch = global.fetch;
+      global.fetch = async () =>
+        ({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => [{ name: 'network-plugin', version: '1.0.0' }],
+        }) as Response;
+
+      try {
+        const result = await service.fetchAllMarketplaces([], undefined);
+        assert.ok(result.plugins.find((p) => p.id === 'network-plugin'));
+      } finally {
+        process.env.HOME = originalHome;
         global.fetch = originalFetch;
       }
     });

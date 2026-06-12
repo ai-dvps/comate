@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import { readKnownMarketplacesFile } from '../utils/claude-settings.js';
 
@@ -13,13 +13,21 @@ export interface MarketplacePlugin {
   keywords?: string[];
   sourceMarketplace: string;
   sourceUrl?: string;
-  sourceType?: 'git' | 'zip';
+  sourceType?: 'git' | 'zip' | 'local';
+  builtIn?: boolean;
 }
 
 export interface MarketplaceRegistry {
   name: string;
-  url: string;
+  url?: string;
   githubRepo?: string;
+  localPath?: string;
+  builtIn?: boolean;
+}
+
+export interface BuiltInMarketplace {
+  name: string;
+  localPath: string;
 }
 
 export interface MarketplaceFetchResult {
@@ -50,6 +58,37 @@ export class MarketplaceService {
   private defaultRegistries: MarketplaceRegistry[] = [
     { name: 'Claude Code Marketplace', url: 'https://code.claude.com/api/plugins' },
   ];
+  private builtInRegistries: MarketplaceRegistry[] = [];
+
+  /**
+   * Register a built-in marketplace that cannot be removed by users.
+   */
+  registerBuiltInMarketplace(registry: Omit<MarketplaceRegistry, 'builtIn'>): void {
+    this.builtInRegistries.push({ ...registry, builtIn: true });
+  }
+
+  /**
+   * Return the list of registered built-in marketplaces.
+   */
+  getBuiltInMarketplaces(): MarketplaceRegistry[] {
+    return [...this.builtInRegistries];
+  }
+
+  /**
+   * Fetch plugins from a single registry.
+   */
+  private async fetchRegistryPlugins(registry: MarketplaceRegistry): Promise<MarketplacePlugin[]> {
+    if (registry.localPath) {
+      return this.fetchLocalMarketplace(registry.localPath, registry.name, registry.builtIn);
+    }
+    if (registry.githubRepo) {
+      return this.fetchGitHubMarketplace(registry.githubRepo, registry.name, registry.builtIn);
+    }
+    if (registry.url) {
+      return this.fetchRegistry(registry);
+    }
+    throw new Error('Marketplace registry has no url, githubRepo, or localPath');
+  }
 
   /**
    * Fetch plugins from all configured marketplaces.
@@ -58,19 +97,14 @@ export class MarketplaceService {
     customRegistries: MarketplaceRegistry[] = [],
     query?: string,
   ): Promise<MarketplaceFetchResult> {
-    const registries = [...this.defaultRegistries, ...customRegistries];
+    const registries = [...this.defaultRegistries, ...this.builtInRegistries, ...customRegistries];
     const allPlugins: MarketplacePlugin[] = [];
     const errors: { marketplace: string; error: string }[] = [];
 
     await Promise.all(
       registries.map(async (registry) => {
         try {
-          let plugins: MarketplacePlugin[];
-          if (registry.githubRepo) {
-            plugins = await this.fetchGitHubMarketplace(registry.githubRepo, registry.name);
-          } else {
-            plugins = await this.fetchRegistry(registry);
-          }
+          const plugins = await this.fetchRegistryPlugins(registry);
           allPlugins.push(...plugins);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -90,13 +124,61 @@ export class MarketplaceService {
   }
 
   /**
+   * Fetch plugins from registered built-in marketplaces only.
+   */
+  async fetchBuiltInMarketplaces(query?: string): Promise<MarketplaceFetchResult> {
+    const allPlugins: MarketplacePlugin[] = [];
+    const errors: { marketplace: string; error: string }[] = [];
+
+    await Promise.all(
+      this.builtInRegistries.map(async (registry) => {
+        try {
+          const plugins = await this.fetchRegistryPlugins(registry);
+          allPlugins.push(...plugins);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          sidecarLog(`[MarketplaceService] Failed to fetch built-in ${registry.name}: ${message}`);
+          errors.push({ marketplace: registry.name, error: message });
+        }
+      }),
+    );
+
+    const deduped = this.deduplicatePlugins(allPlugins);
+    const filtered = query ? this.filterPlugins(deduped, query) : deduped;
+    return { plugins: filtered, errors };
+  }
+
+  /**
+   * Load cached marketplaces from disk and always merge built-in marketplaces.
+   * Falls back to network/custom registries when no cached marketplaces exist.
+   */
+  async fetchAllMarketplaces(
+    customRegistries: MarketplaceRegistry[] = [],
+    query?: string,
+  ): Promise<MarketplaceFetchResult> {
+    const cached = this.loadCachedMarketplaces();
+
+    // No cache on disk: use the live fetch path (default + built-in + custom registries).
+    if (cached.plugins.length === 0 && cached.errors.length === 0) {
+      return this.fetchMarketplaces(customRegistries, query);
+    }
+
+    // Cache present: merge built-in marketplaces so they are always visible.
+    const builtIn = await this.fetchBuiltInMarketplaces();
+    const merged = this.deduplicatePlugins([...cached.plugins, ...builtIn.plugins]);
+    const filtered = query ? this.filterPlugins(merged, query) : merged;
+
+    return { plugins: filtered, errors: [...cached.errors, ...builtIn.errors] };
+  }
+
+  /**
    * Fetch a single JSON registry.
    */
   private async fetchRegistry(registry: MarketplaceRegistry): Promise<MarketplacePlugin[]> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(registry.url, {
+    const response = await fetch(registry.url!, {
       headers: { Accept: 'application/json' },
       signal: controller.signal,
     });
@@ -107,7 +189,7 @@ export class MarketplaceService {
     }
 
     const data = (await response.json()) as unknown;
-    const plugins = this.parseRegistryResponse(data, registry.name);
+    const plugins = this.parseRegistryResponse(data, registry.name, registry.builtIn);
     sidecarLog(`[MarketplaceService] Fetched ${plugins.length} plugins from ${registry.name}`);
     return plugins;
   }
@@ -115,7 +197,11 @@ export class MarketplaceService {
   /**
    * Fetch a GitHub repo-based marketplace by reading .claude-plugin/marketplace.json
    */
-  private async fetchGitHubMarketplace(repo: string, marketplaceName: string): Promise<MarketplacePlugin[]> {
+  private async fetchGitHubMarketplace(
+    repo: string,
+    marketplaceName: string,
+    builtIn?: boolean,
+  ): Promise<MarketplacePlugin[]> {
     const branches = ['main', 'master'];
     let lastError: Error | undefined;
 
@@ -140,7 +226,7 @@ export class MarketplaceService {
         }
 
         const data = (await response.json()) as unknown;
-        const plugins = this.parseMarketplaceJson(data, repo, marketplaceName);
+        const plugins = this.parseMarketplaceJson(data, repo, marketplaceName, 'github', builtIn);
         sidecarLog(`[MarketplaceService] Fetched ${plugins.length} plugins from GitHub repo ${repo}`);
         return plugins;
       } catch (err) {
@@ -156,22 +242,50 @@ export class MarketplaceService {
   }
 
   /**
+   * Fetch a local-directory marketplace by reading .claude-plugin/marketplace.json
+   */
+  private async fetchLocalMarketplace(
+    localPath: string,
+    marketplaceName: string,
+    builtIn?: boolean,
+  ): Promise<MarketplacePlugin[]> {
+    const marketplaceFile = join(localPath, '.claude-plugin', 'marketplace.json');
+    if (!existsSync(marketplaceFile)) {
+      throw new Error(`marketplace.json not found at ${marketplaceFile}`);
+    }
+
+    const content = readFileSync(marketplaceFile, 'utf-8');
+    const data = JSON.parse(content) as unknown;
+    const plugins = this.parseMarketplaceJson(data, localPath, marketplaceName, 'local', builtIn);
+    sidecarLog(`[MarketplaceService] Fetched ${plugins.length} plugins from local marketplace ${marketplaceName}`);
+    return plugins;
+  }
+
+  /**
    * Parse a Claude Code marketplace.json file.
    */
-  private parseMarketplaceJson(data: unknown, repo: string, marketplaceName: string): MarketplacePlugin[] {
+  private parseMarketplaceJson(
+    data: unknown,
+    source: string,
+    marketplaceName: string,
+    sourceKind: 'github' | 'local' = 'github',
+    builtIn?: boolean,
+  ): MarketplacePlugin[] {
     if (!data || typeof data !== 'object') return [];
     const mp = data as ClaudeMarketplaceJson;
     const items = Array.isArray(mp.plugins) ? mp.plugins : [];
 
     return items
-      .map((item) => this.normalizeMarketplaceEntry(item, repo, marketplaceName))
+      .map((item) => this.normalizeMarketplaceEntry(item, source, marketplaceName, sourceKind, builtIn))
       .filter((p): p is MarketplacePlugin => p !== null);
   }
 
   private normalizeMarketplaceEntry(
     item: ClaudeMarketplacePluginEntry,
-    repo: string,
+    source: string,
     marketplaceName: string,
+    sourceKind: 'github' | 'local' = 'github',
+    builtIn?: boolean,
   ): MarketplacePlugin | null {
     if (!item || typeof item !== 'object') return null;
 
@@ -189,11 +303,20 @@ export class MarketplaceService {
       author = a.name ?? undefined;
     }
 
-    // Construct sourceUrl from repo + relative source path
+    // Construct sourceUrl from repo + relative source path, or local absolute path
     let sourceUrl: string | undefined;
-    if (typeof item.source === 'string') {
+    const sourceType: MarketplacePlugin['sourceType'] = sourceKind === 'local' ? 'local' : 'git';
+    if (sourceKind === 'local') {
+      if (typeof item.source === 'string' && item.source.startsWith('./')) {
+        sourceUrl = resolve(source, item.source);
+      } else if (typeof item.source === 'string') {
+        sourceUrl = resolve(source, item.source);
+      } else if (typeof item.homepage === 'string') {
+        sourceUrl = item.homepage;
+      }
+    } else if (typeof item.source === 'string') {
       // source is like "./plugins/compound-engineering" — point to the full repo for cloning
-      sourceUrl = `https://github.com/${repo}.git`;
+      sourceUrl = `https://github.com/${source}.git`;
     } else if (typeof item.homepage === 'string') {
       sourceUrl = item.homepage;
     }
@@ -210,14 +333,15 @@ export class MarketplaceService {
         : undefined,
       sourceMarketplace: marketplaceName,
       sourceUrl,
-      sourceType: 'git',
+      sourceType,
+      builtIn,
     };
   }
 
   /**
    * Parse registry response. Accepts both array and { plugins: [...] } shapes.
    */
-  private parseRegistryResponse(data: unknown, marketplaceName: string): MarketplacePlugin[] {
+  private parseRegistryResponse(data: unknown, marketplaceName: string, builtIn?: boolean): MarketplacePlugin[] {
     let items: unknown[];
 
     if (Array.isArray(data)) {
@@ -230,11 +354,11 @@ export class MarketplaceService {
     }
 
     return items
-      .map((item) => this.normalizePluginEntry(item, marketplaceName))
+      .map((item) => this.normalizePluginEntry(item, marketplaceName, builtIn))
       .filter((p): p is MarketplacePlugin => p !== null);
   }
 
-  private normalizePluginEntry(item: unknown, marketplaceName: string): MarketplacePlugin | null {
+  private normalizePluginEntry(item: unknown, marketplaceName: string, builtIn?: boolean): MarketplacePlugin | null {
     if (!item || typeof item !== 'object') return null;
     const obj = item as Record<string, unknown>;
 
@@ -255,11 +379,12 @@ export class MarketplaceService {
         : undefined,
       sourceMarketplace: marketplaceName,
       sourceUrl: typeof obj.sourceUrl === 'string' ? obj.sourceUrl : undefined,
-      sourceType: obj.sourceType === 'git' || obj.sourceType === 'zip' ? obj.sourceType : undefined,
+      sourceType: obj.sourceType === 'git' || obj.sourceType === 'zip' || obj.sourceType === 'local' ? obj.sourceType : undefined,
+      builtIn,
     };
   }
 
-  private deduplicatePlugins(plugins: MarketplacePlugin[]): MarketplacePlugin[] {
+  deduplicatePlugins(plugins: MarketplacePlugin[]): MarketplacePlugin[] {
     const byId = new Map<string, MarketplacePlugin>();
 
     for (const plugin of plugins) {

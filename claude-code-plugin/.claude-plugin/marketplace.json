@@ -1,0 +1,15 @@
+{
+  "name": "comate-built-in",
+  "description": "Built-in marketplace for Comate plugins",
+  "owner": {
+    "name": "Comate"
+  },
+  "plugins": [
+    {
+      "name": "wecom",
+      "source": "./plugins/wecom",
+      "description": "Send WeCom messages via the wecom CLI",
+      "version": "0.1.0"
+    }
+  ]
+}

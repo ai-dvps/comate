@@ -19,6 +19,7 @@ import systemRoutes from './routes/system.js';
 import todoRoutes from './routes/todos.js';
 import providerRoutes from './routes/providers.js';
 import pluginRoutes from './routes/plugins.js';
+import { marketplaceService } from './services/marketplace-service.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
@@ -44,6 +45,44 @@ const __dirname = getDirname();
 const app = express();
 const PORT = process.env.PORT || 3000;
 let logCleanupTimer: NodeJS.Timeout | null = null;
+
+function resolveBuiltInMarketplacePath(): string | undefined {
+  if (process.env.TAURI_RESOURCE_DIR) {
+    const marketplacePath = path.join(process.env.TAURI_RESOURCE_DIR, 'claude-code-plugin');
+    if (existsSync(marketplacePath)) {
+      return marketplacePath;
+    }
+  }
+
+  // Development / unpackaged fallback: resolve from repo root next to src/server or dist/server
+  const repoRootCandidates = [
+    path.join(__dirname, '..', '..', 'claude-code-plugin'),
+    path.join(__dirname, '..', '..', '..', 'claude-code-plugin'),
+  ];
+  for (const candidate of repoRootCandidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+function registerBuiltInMarketplace(): void {
+  const marketplacePath = resolveBuiltInMarketplacePath();
+  if (!marketplacePath) {
+    diagLog('[Marketplace] Built-in marketplace folder not found; skipping registration');
+    return;
+  }
+
+  marketplaceService.registerBuiltInMarketplace({
+    name: 'comate-built-in',
+    localPath: marketplacePath,
+  });
+  diagLog(`[Marketplace] Registered built-in marketplace from ${marketplacePath}`);
+}
+
+registerBuiltInMarketplace();
 
 app.use(cors());
 app.use(express.json());
