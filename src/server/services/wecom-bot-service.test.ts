@@ -15,6 +15,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
   let origGetWecomSession: typeof workspaceStore.getWecomSession;
   let origSetWecomSession: typeof workspaceStore.setWecomSession;
   let origGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
+  let origGet: typeof workspaceStore.get;
   let origGetSession: typeof chatService.getSession;
   let origCreateSession: typeof chatService.createSession;
   let origGetOrCreateRuntime: typeof chatService.getOrCreateRuntime;
@@ -32,6 +33,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     origGetWecomSession = workspaceStore.getWecomSession.bind(workspaceStore);
     origSetWecomSession = workspaceStore.setWecomSession.bind(workspaceStore);
     origGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
+    origGet = workspaceStore.get.bind(workspaceStore);
     origGetSession = chatService.getSession.bind(chatService);
     origCreateSession = chatService.createSession.bind(chatService);
     origGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
@@ -40,6 +42,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     workspaceStore.getWecomSession = () => null;
     workspaceStore.setWecomSession = () => {};
     workspaceStore.getWecomUserMapping = () => null;
+    workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as any);
 
     // Default: session creation returns a fake session
     chatService.getSession = async () => ({ id: 'sess-1', workspaceId: 'ws-1' } as any);
@@ -55,6 +58,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     workspaceStore.getWecomSession = origGetWecomSession;
     workspaceStore.setWecomSession = origSetWecomSession;
     workspaceStore.getWecomUserMapping = origGetWecomUserMapping;
+    workspaceStore.get = origGet;
     chatService.getSession = origGetSession;
     chatService.createSession = origCreateSession;
     chatService.getOrCreateRuntime = origGetOrCreateRuntime;
@@ -269,5 +273,65 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
 
     assert.ok(sessionCreated);
     assert.strictEqual(pushedMessages.length, 1);
+  });
+
+  it('uses custom file prompt template with $file_name$ substitution', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    workspaceStore.get = async () => ({
+      id: 'ws-1',
+      settings: { wecomFilePromptTemplate: 'Please summarize the file $file_name$' },
+    } as any);
+
+    const frame = makeFrame('file', {
+      file: { url: 'https://example.com/file', aeskey: 'key123' },
+    });
+
+    await (service as any).handleMediaMessage('ws-1', frame);
+
+    assert.strictEqual(pushedMessages.length, 1);
+    assert.strictEqual(pushedMessages[0], 'Please summarize the file enc-user-1/report.pdf');
+  });
+
+  it('falls back to default prompt when template is empty', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    workspaceStore.get = async () => ({
+      id: 'ws-1',
+      settings: { wecomFilePromptTemplate: '' },
+    } as any);
+
+    const frame = makeFrame('file', {
+      file: { url: 'https://example.com/file', aeskey: 'key123' },
+    });
+
+    await (service as any).handleMediaMessage('ws-1', frame);
+
+    assert.strictEqual(pushedMessages.length, 1);
+    assert.ok(pushedMessages[0].includes('a file named @enc-user-1/report.pdf'));
+    assert.ok(pushedMessages[0].includes('skill'));
+  });
+
+  it('does not apply file prompt template to voice messages', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    workspaceStore.get = async () => ({
+      id: 'ws-1',
+      settings: { wecomFilePromptTemplate: 'Please summarize the file $file_name$' },
+    } as any);
+
+    const frame = makeFrame('voice', {
+      voice: { content: '你好世界' },
+    });
+
+    await (service as any).handleMediaMessage('ws-1', frame);
+
+    // Voice prompt should NOT use the file template
+    assert.strictEqual(pushedMessages.length, 1);
+    assert.ok(pushedMessages[0].includes('voice message'));
+    assert.ok(!pushedMessages[0].includes('$file_name$'));
   });
 });
