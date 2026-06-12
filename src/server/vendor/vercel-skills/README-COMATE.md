@@ -24,32 +24,36 @@ CLI `bin`, so the source has to be vendored to get a programmable API.
 ## Vendored subset policy
 
 The **entire upstream tree** is mirrored here for license and sync hygiene,
-but Comate's adapter (`src/server/services/skills/`) imports only the curated
-subset needed for the Skills page:
+but Comate's adapter (`src/server/services/skills/`) imports **nothing** from
+this directory at runtime. All needed functions are reimplemented in the
+adapter, with this directory serving as a **spec reference only**.
 
-**Imported as-is** (pure modules with no `@clack/prompts`, `picocolors`,
-`telemetry.ts`, `detect-agent.ts`, or `agents.ts` deps):
+**Why not import as-is?** Even pure upstream modules use `.ts` extension
+imports (`'./types.ts'`) that require `allowImportingTsExtensions: true` —
+incompatible with our tsc emit config. Adding that flag would break the
+existing build, so the boundary is "vendor = spec reference, never import."
 
-- `src/local-lock.ts` — project-scope lock file (version 1)
-- `src/skills.ts` — SKILL.md container-path discovery
-- `src/source-parser.ts` — URL/source parsing
-- `src/frontmatter.ts`, `src/sanitize.ts`, `src/types.ts`, `src/constants.ts`
-- `src/plugin-manifest.ts` — referenced transitively by skills.ts
+**Adapter reimplementations** (in `src/server/services/skills/`):
 
-**Reimplemented in the adapter** (NOT imported from upstream — they pull in
-clack/prompts, picocolors, telemetry, agent-detection, or `simple-git`):
+- `find.ts` → `search.ts` (`searchSkillsAPI`, no telemetry, no readline)
+- `source-parser.ts` → `source-resolver.ts` (`parseSource` + path sandboxing)
+- `local-lock.ts` + `skill-lock.ts` → `skill-lock-adapter.ts` (schema parse
+  + path resolution; atomic write lives in `utils/skills-lock.ts`)
+- `installer.ts` → `installer.ts` (`sanitizeName`, copy-only install,
+  `lstat`-before-write to detect legacy symlinks)
+- `skills.ts` → `skills-discovery.ts` (SKILL.md container-path discovery)
+- `frontmatter.ts` → `frontmatter.ts` (uses our root-level `yaml` dep)
+- `sanitize.ts` → `sanitize.ts` (verbatim port)
+- `git.ts` → `git-adapter.ts` (uses Comate's `spawn`-based pattern from
+  `utils/plugin-downloader.ts`, NOT `simple-git`)
+- `agents.ts` + `detect-agent.ts` → `claude-code-paths.ts` (hardcoded
+  `.claude/skills/` and `~/.claude/skills/` — drops 70+ agent definitions)
+- `types.ts` → `types.ts` (Comate-owned type definitions)
 
-- `find.ts` → `services/skills/search.ts` (searchSkillsAPI, no telemetry)
-- `installer.ts` → `services/skills/installer.ts` (hardcoded Claude Code paths)
-- `skill-lock.ts` → `services/skills/skill-lock-adapter.ts` (strip picocolors,
-  `execSync` GitHub tree SHA, `gh auth token`, and `blob.ts` dynamic import)
-- `git.ts` → `services/skills/git-adapter.ts` (uses Comate's `spawn`-based
-  `runGitClone`, NOT `simple-git` which is not a Comate dependency)
+**Never reached** (carried in the tree but unreachable from the adapter):
 
-**Never imported** (carried in the tree but unreachable from the adapter):
-
-- `agents.ts`, `detect-agent.ts`, `add.ts`, `cli.ts`, `init.ts`, `install.ts`,
-  `sync.ts`, `list.ts`, `remove.ts`, `telemetry.ts`, `prompts/`, `providers/`
+- `add.ts`, `cli.ts`, `init.ts`, `install.ts`, `sync.ts`, `list.ts`,
+  `remove.ts`, `use.ts`, `telemetry.ts`, `prompts/`, `providers/`
 - `bin/`, `scripts/`, `tests/` — build/test infra, not needed at runtime
 
 ## How to sync
@@ -74,7 +78,7 @@ After the pull:
 2. **Re-run the adapter build-time check:**
    ```bash
    npm run build:sidecar
-   grep -rE 'add-skill\.vercel\.sh|@clack/prompts|picocolors' dist/sidecar/
+   grep -rE 'add-skill\.vercel\.sh|@clack/prompts|picocolors|simple-git' dist/sidecar/
    ```
    The grep must return zero matches.
 3. **Update the pinned SHA in this file** and in `/LICENSES/vercel-skills-MIT.txt`.
