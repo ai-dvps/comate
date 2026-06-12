@@ -1,5 +1,5 @@
 import AiBot from '@wecom/aibot-node-sdk';
-import type { WSClient, WsFrame, TextMessage } from '@wecom/aibot-node-sdk';
+import type { WSClient, WsFrame, TextMessage, FileMessage, ImageMessage, VoiceMessage, VideoMessage, BaseMessage } from '@wecom/aibot-node-sdk';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import type { Workspace } from '../models/workspace.js';
@@ -8,6 +8,7 @@ import { chatService } from './chat-service.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
 import { createStreamReply } from './wecom-stream-reply.js';
+import { saveMediaFile } from './wecom-file-storage.js';
 
 export interface BotConnection {
   client: WSClient;
@@ -87,6 +88,30 @@ export class WeComBotService {
       });
     });
 
+    client.on('message.file', (frame: WsFrame<FileMessage>) => {
+      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom file message:', err);
+      });
+    });
+
+    client.on('message.image', (frame: WsFrame<ImageMessage>) => {
+      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom image message:', err);
+      });
+    });
+
+    client.on('message.voice', (frame: WsFrame<VoiceMessage>) => {
+      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom voice message:', err);
+      });
+    });
+
+    client.on('message.video', (frame: WsFrame<VideoMessage>) => {
+      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom video message:', err);
+      });
+    });
+
     client.connect();
   }
 
@@ -154,10 +179,112 @@ export class WeComBotService {
     // Track that this user has interacted with this workspace
     wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
 
+    const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
+    if (!sessionId) return;
+
+    const conn = this.connections.get(workspaceId);
+    if (!conn) return;
+
+    const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
+
+    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
+    runtime.pushMessage(content);
+  }
+
+  private async handleMediaMessage(workspaceId: string, frame: WsFrame<BaseMessage>): Promise<void> {
+    if (!frame.body) return;
+    const wecomUserId = frame.body.from.userid;
+    const msgtype = frame.body.msgtype;
+
+    // Fire-and-forget: queue unseen user IDs for batch resolution
+    wecomUserResolver.resolveOnMessage(workspaceId, wecomUserId).catch(() => {});
+    wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
+
+    const conn = this.connections.get(workspaceId);
+    if (!conn) return;
+
+    try {
+      // Voice messages only have a text transcription (no download URL)
+      if (msgtype === 'voice' && frame.body.voice?.content) {
+        const voiceContent = frame.body.voice.content;
+
+        // Look up or create session
+        const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
+        if (!sessionId) return;
+
+        const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
+        const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
+
+        const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
+        runtime.pushMessage(prompt);
+        return;
+      }
+
+      // Downloadable media: file, image, video
+      const mediaInfo = this.extractMediaInfo(frame.body);
+      if (!mediaInfo) {
+        console.warn(`[WeComBotService] No downloadable media found in ${msgtype} message from ${wecomUserId}`);
+        return;
+      }
+
+      const { url, aesKey } = mediaInfo;
+      const { buffer, filename: sdkFilename } = await conn.client.downloadFile(url, aesKey);
+
+      // Determine filename with fallback
+      const filename = sdkFilename ?? this.generateFallbackFilename(msgtype);
+
+      // Determine user folder name
+      const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
+      const userFolderName = plaintextUserId ?? wecomUserId;
+
+      // Save file to workspace
+      const relativePath = await saveMediaFile(conn.folderPath, userFolderName, buffer, filename);
+
+      // Look up or create session
+      const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
+      if (!sessionId) return;
+
+      const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
+      const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
+
+      const prompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
+      runtime.pushMessage(prompt);
+    } catch (err) {
+      console.error(`[WeComBotService] Failed to handle ${msgtype} message from ${wecomUserId}:`, err);
+      // Reply to the WeCom user with a failure message
+      try {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '⚠️ 文件处理失败，请稍后重试。' },
+        });
+      } catch (sendErr) {
+        console.error('[WeComBotService] Failed to send error reply:', sendErr);
+      }
+    }
+  }
+
+  private extractMediaInfo(body: BaseMessage): { url: string; aesKey?: string } | null {
+    if (body.file?.url) return { url: body.file.url, aesKey: body.file.aeskey };
+    if (body.image?.url) return { url: body.image.url, aesKey: body.image.aeskey };
+    if (body.video?.url) return { url: body.video.url, aesKey: body.video.aeskey };
+    return null;
+  }
+
+  private generateFallbackFilename(msgtype: string): string {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '-').slice(0, 19);
+    const extMap: Record<string, string> = {
+      image: 'png',
+      video: 'mp4',
+      file: 'bin',
+    };
+    const ext = extMap[msgtype] ?? 'bin';
+    return `${msgtype}_${timestamp}.${ext}`;
+  }
+
+  private async getOrCreateSession(workspaceId: string, wecomUserId: string): Promise<string | null> {
     let sessionId = workspaceStore.getWecomSession(workspaceId, wecomUserId);
 
     if (sessionId) {
-      // Verify the session still exists
       const session = await chatService.getSession(sessionId, workspaceId);
       if (!session) {
         sessionId = null;
@@ -173,7 +300,6 @@ export class WeComBotService {
       sessionId = session.id;
       workspaceStore.setWecomSession(workspaceId, wecomUserId, sessionId);
 
-      // If the plaintext ID is already known, trigger rename for all sessions of this user
       const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
       if (plaintextUserId) {
         wecomSessionRenamer.renameSessionsForUser(workspaceId, wecomUserId).catch((err) => {
@@ -182,13 +308,7 @@ export class WeComBotService {
       }
     }
 
-    const conn = this.connections.get(workspaceId);
-    if (!conn) return;
-
-    const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
-
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
-    runtime.pushMessage(content);
+    return sessionId;
   }
 
   getWorkspaceIdByBotId(botId: string): string | undefined {
