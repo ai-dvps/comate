@@ -271,7 +271,8 @@
     "noSkillsFound": "No skills found in this source",
     "selectSkills": "Select skills ({{count}} found)",
     "selectScope": "Select scope",
-    "reinstall": "Reinstall"
+    "reinstall": "Reinstall",
+    "openFromSettings": "Open Skills page"
   },
   "common": {
     "unknownError": "Unknown error",
