@@ -208,7 +208,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
     return plugins
   }, [marketplacePlugins, selectedMarketplaces, selectedKeywords, marketplaceFilter, getInstalledScopes])
 
-  // Group by marketplace
+  // Group by marketplace; pin built-in marketplaces to the top so they stay visible
   const groupedPlugins = useMemo(() => {
     const groups: Record<string, typeof filteredPlugins> = {}
     filteredPlugins.forEach((plugin) => {
@@ -216,7 +216,12 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
       if (!groups[key]) groups[key] = []
       groups[key].push(plugin)
     })
-    return Object.entries(groups).sort((a, b) => b[1].length - a[1].length)
+    return Object.entries(groups).sort((a, b) => {
+      const aBuiltIn = a[1].some((p) => p.builtIn) ? 1 : 0
+      const bBuiltIn = b[1].some((p) => p.builtIn) ? 1 : 0
+      if (aBuiltIn !== bBuiltIn) return bBuiltIn - aBuiltIn
+      return b[1].length - a[1].length
+    })
   }, [filteredPlugins, t])
 
   const totalPlugins = filteredPlugins.length
@@ -442,7 +447,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
       {!isLoading && totalPlugins > 0 && (
         <div className="space-y-6">
           {groupedPlugins.map(([marketplaceName, plugins]) => {
-            const isExpanded = expandedSections[marketplaceName]
+            const isExpanded = expandedSections[marketplaceName] ?? plugins.length <= PLUGINS_PER_SECTION
             const displayedPlugins = isExpanded
               ? plugins
               : plugins.slice(0, PLUGINS_PER_SECTION)
