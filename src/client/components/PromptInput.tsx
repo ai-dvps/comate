@@ -477,20 +477,20 @@ export default function PromptInput({
                 placeholder={t('placeholder')}
                 disabled={disabled || isStreaming || isRestarting}
                 rows={1}
-                className="w-full bg-transparent border-0 px-4 py-3 pr-24 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
+                className="w-full bg-transparent border-0 px-4 py-3 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
                 style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
               />
               {showGhost && argumentHint && (
                 <div
                   aria-hidden
-                  className="absolute inset-0 px-4 py-3 pr-24 pointer-events-none whitespace-pre-wrap break-words"
+                  className="absolute inset-0 px-4 py-3 pointer-events-none whitespace-pre-wrap break-words"
                 >
                   <span className="invisible">{input}</span>
                   <span className="text-text-tertiary">{argumentHint}</span>
                 </div>
               )}
             </div>
-            <div className="absolute right-2 bottom-2 flex items-center gap-1">
+            <div className="flex items-center justify-end px-2 pb-2 pt-1 gap-1">
               {showClear && (
                 <button
                   onClick={handleClear}
