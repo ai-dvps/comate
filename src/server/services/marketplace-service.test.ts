@@ -300,44 +300,8 @@ describe('marketplace-service', { concurrency: false }, () => {
     });
   });
 
-  describe('fetchBuiltInMarketplaces', () => {
-    it('returns plugins from registered built-in marketplaces', async () => {
-      const tmpRoot = mkdtempSync(join(tmpdir(), 'builtin-marketplace-'));
-      mkdirSync(join(tmpRoot, '.claude-plugin'), { recursive: true });
-      mkdirSync(join(tmpRoot, 'plugins', 'wecom'), { recursive: true });
-      writeFileSync(
-        join(tmpRoot, '.claude-plugin', 'marketplace.json'),
-        JSON.stringify({
-          name: 'comate-built-in',
-          plugins: [
-            {
-              name: 'wecom',
-              description: 'Send WeCom messages',
-              version: '0.1.0',
-              source: './plugins/wecom',
-            },
-          ],
-        }),
-      );
-
-      service.registerBuiltInMarketplace({ name: 'comate-built-in', localPath: tmpRoot });
-
-      const result = await service.fetchBuiltInMarketplaces();
-      assert.strictEqual(result.plugins.length, 1);
-      assert.strictEqual(result.plugins[0].id, 'wecom');
-      assert.strictEqual(result.plugins[0].sourceMarketplace, 'comate-built-in');
-      assert.strictEqual(result.plugins[0].builtIn, true);
-    });
-
-    it('returns empty result when no built-in marketplaces are registered', async () => {
-      const result = await service.fetchBuiltInMarketplaces();
-      assert.strictEqual(result.plugins.length, 0);
-      assert.strictEqual(result.errors.length, 0);
-    });
-  });
-
   describe('fetchAllMarketplaces', () => {
-    it('merges built-in marketplaces with cached marketplaces', async () => {
+    it('merges custom registries with cached marketplaces', async () => {
       const originalHome = process.env.HOME;
       const homeRoot = mkdtempSync(join(tmpdir(), 'claude-home-'));
       process.env.HOME = homeRoot;
@@ -362,11 +326,11 @@ describe('marketplace-service', { concurrency: false }, () => {
         }),
       );
 
-      const builtInRoot = mkdtempSync(join(tmpdir(), 'builtin-marketplace-'));
-      mkdirSync(join(builtInRoot, '.claude-plugin'), { recursive: true });
-      mkdirSync(join(builtInRoot, 'plugins', 'wecom'), { recursive: true });
+      const customRoot = mkdtempSync(join(tmpdir(), 'custom-marketplace-'));
+      mkdirSync(join(customRoot, '.claude-plugin'), { recursive: true });
+      mkdirSync(join(customRoot, 'plugins', 'wecom'), { recursive: true });
       writeFileSync(
-        join(builtInRoot, '.claude-plugin', 'marketplace.json'),
+        join(customRoot, '.claude-plugin', 'marketplace.json'),
         JSON.stringify({
           name: 'comate-built-in',
           plugins: [
@@ -380,13 +344,14 @@ describe('marketplace-service', { concurrency: false }, () => {
         }),
       );
 
-      service.registerBuiltInMarketplace({ name: 'comate-built-in', localPath: builtInRoot });
-
       try {
-        const result = await service.fetchAllMarketplaces([], undefined);
+        const result = await service.fetchAllMarketplaces(
+          [{ name: 'comate-built-in', localPath: customRoot }],
+          undefined,
+        );
         assert.strictEqual(result.plugins.length, 2);
         assert.ok(result.plugins.find((p) => p.id === 'cached-plugin'));
-        assert.ok(result.plugins.find((p) => p.id === 'wecom' && p.builtIn));
+        assert.ok(result.plugins.find((p) => p.id === 'wecom'));
       } finally {
         process.env.HOME = originalHome;
       }

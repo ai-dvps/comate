@@ -29,6 +29,11 @@ function loadCustomMarketplaces(): MarketplaceRegistry[] {
           url: `https://github.com/${marketplace.source.repo}`,
           githubRepo: marketplace.source.repo,
         });
+      } else if (marketplace.source.source === 'directory' && marketplace.source.path) {
+        registries.push({
+          name: marketplaceName,
+          localPath: marketplace.source.path,
+        });
       }
     }
 
@@ -195,7 +200,8 @@ router.post('/install', async (req, res) => {
       downloadResult = await downloader.downloadFromUrl(pluginId, source);
     } else {
       // Treat as marketplace plugin — try to resolve from marketplace first
-      const { plugins } = await marketplaceService.fetchMarketplaces();
+      const customRegistries = loadCustomMarketplaces();
+      const { plugins } = await marketplaceService.fetchMarketplaces(customRegistries);
       const marketPlugin = plugins.find((p) => p.id === pluginId);
       if (marketPlugin?.sourceType === 'local' && marketPlugin.sourceUrl) {
         downloadResult = await downloader.downloadLocal(pluginId, marketPlugin.sourceUrl);
@@ -304,7 +310,8 @@ router.post('/update', async (req, res) => {
     }
 
     // Find update in marketplace
-    const update = await marketplaceService.checkForUpdate(pluginId, installed.version);
+    const customRegistries = loadCustomMarketplaces();
+    const update = await marketplaceService.checkForUpdate(pluginId, installed.version, customRegistries);
     if (!update || !update.sourceUrl) {
       res.status(422).json({ error: 'No update available or source not resolvable' });
       return;
@@ -404,8 +411,10 @@ router.get('/updates', async (req, res) => {
 
     const updates: { id: string; currentVersion: string; newVersion: string }[] = [];
 
+    const customRegistries = loadCustomMarketplaces();
+
     for (const plugin of allInstalled) {
-      const update = await marketplaceService.checkForUpdate(plugin.id, plugin.version);
+      const update = await marketplaceService.checkForUpdate(plugin.id, plugin.version, customRegistries);
       if (update) {
         updates.push({
           id: plugin.id,

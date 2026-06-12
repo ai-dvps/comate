@@ -31,7 +31,7 @@ interface ModalState {
   open: boolean
   pluginId: string
   pluginName: string
-  sourceUrl: string
+  source: string
 }
 
 const ScopeBadge = ({ scope }: { scope: import('../stores/plugin-store').PluginScope }) => {
@@ -61,7 +61,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
     open: false,
     pluginId: '',
     pluginName: '',
-    sourceUrl: '',
+    source: '',
   })
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -130,10 +130,10 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
     [installedPlugins]
   )
 
-  const handleInstall = (pluginId: string, pluginName: string, sourceUrl: string) => {
+  const handleInstall = (pluginId: string, pluginName: string, source: string) => {
     const installed = installedPlugins.some((p) => p.id === pluginId)
     if (installed) return
-    setModal({ open: true, pluginId, pluginName, sourceUrl })
+    setModal({ open: true, pluginId, pluginName, source })
   }
 
   const handleUninstall = async (pluginId: string) => {
@@ -148,7 +148,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
   const handleDirectInstall = () => {
     if (!directUrl.trim()) return
     const pluginId = directUrl.split('/').pop()?.replace('.git', '') || 'direct-plugin'
-    setModal({ open: true, pluginId, pluginName: pluginId, sourceUrl: directUrl.trim() })
+    setModal({ open: true, pluginId, pluginName: pluginId, source: directUrl.trim() })
   }
 
   const handleModalSuccess = async () => {
@@ -523,7 +523,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
                                 handleInstall(
                                   plugin.id,
                                   plugin.displayName || plugin.name,
-                                  plugin.sourceUrl || `https://code.claude.com/plugins/${plugin.id}`
+                                  plugin.sourceMarketplace || '',
                                 )
                               }
                               disabled={isSaving}
@@ -574,7 +574,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
       <ScopePickerModal
         pluginId={modal.pluginId}
         pluginName={modal.pluginName}
-        sourceUrl={modal.sourceUrl}
+        source={modal.source}
         isOpen={modal.open}
         onClose={() => setModal((m) => ({ ...m, open: false }))}
         onSuccess={handleModalSuccess}

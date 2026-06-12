@@ -19,7 +19,6 @@ import systemRoutes from './routes/system.js';
 import todoRoutes from './routes/todos.js';
 import providerRoutes from './routes/providers.js';
 import pluginRoutes from './routes/plugins.js';
-import { marketplaceService } from './services/marketplace-service.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
@@ -31,6 +30,7 @@ import { getStorageDir } from './storage/data-dir.js';
 import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
 import { initializeResolvedShellEnv } from './utils/resolve-shell-env.js';
 import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketplace-path.js';
+import { addExtraKnownMarketplace } from './utils/claude-settings.js';
 
 function getDirname(): string {
   try {
@@ -47,21 +47,28 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let logCleanupTimer: NodeJS.Timeout | null = null;
 
-function registerBuiltInMarketplace(): void {
+function ensureComateBuiltInMarketplace(): void {
   const marketplacePath = resolveBuiltInMarketplacePath();
   if (!marketplacePath) {
     diagLog('[Marketplace] Built-in marketplace folder not found; skipping registration');
     return;
   }
 
-  marketplaceService.registerBuiltInMarketplace({
-    name: 'comate-built-in',
-    localPath: marketplacePath,
-  });
-  diagLog(`[Marketplace] Registered built-in marketplace from ${marketplacePath}`);
+  try {
+    addExtraKnownMarketplace('comate-built-in', {
+      source: {
+        source: 'directory',
+        path: marketplacePath,
+      },
+    });
+    diagLog(`[Marketplace] Registered comate-built-in marketplace in ~/.claude/settings.json from ${marketplacePath}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    diagLog(`[Marketplace] Failed to register comate-built-in marketplace: ${message}`);
+  }
 }
 
-registerBuiltInMarketplace();
+ensureComateBuiltInMarketplace();
 
 app.use(cors());
 app.use(express.json());

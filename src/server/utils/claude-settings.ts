@@ -90,12 +90,21 @@ export interface PluginManagerSettings {
   plugins: Record<string, PluginStateEntry>;
 }
 
-export interface KnownMarketplace {
+export interface GitHubKnownMarketplace {
   source: {
-    source: string;
+    source: 'github';
     repo: string;
   };
 }
+
+export interface DirectoryKnownMarketplace {
+  source: {
+    source: 'directory';
+    path: string;
+  };
+}
+
+export type KnownMarketplace = GitHubKnownMarketplace | DirectoryKnownMarketplace;
 
 export interface PluginSettings {
   enabledPlugins: string[];
@@ -178,11 +187,20 @@ export function readPluginSettings(settingsPath: string): PluginSettings {
       if (value && typeof value === 'object') {
         const mk = value as Record<string, unknown>;
         const sourceObj = getObject(mk.source);
-        if (typeof sourceObj.source === 'string' && typeof sourceObj.repo === 'string') {
+        const sourceType = typeof sourceObj.source === 'string' ? sourceObj.source : undefined;
+
+        if (sourceType === 'github' && typeof sourceObj.repo === 'string') {
           extraKnownMarketplaces[key] = {
             source: {
-              source: sourceObj.source,
+              source: 'github',
               repo: sourceObj.repo,
+            },
+          };
+        } else if (sourceType === 'directory' && typeof sourceObj.path === 'string') {
+          extraKnownMarketplaces[key] = {
+            source: {
+              source: 'directory',
+              path: sourceObj.path,
             },
           };
         }
@@ -271,6 +289,80 @@ export function writePluginSettings(
     }
   } catch (err) {
     // Attempt to restore backup on failure
+    try {
+      if (existsSync(backupPath) && !existsSync(settingsPath)) {
+        renameSync(backupPath, settingsPath);
+      }
+    } catch {
+      // ignore restore error
+    }
+    throw err;
+  }
+}
+
+/**
+ * Add or update a single entry in the user's global extraKnownMarketplaces.
+ * Performs a non-destructive merge: existing keys (including other marketplaces,
+ * enabledPlugins, pluginManager, etc.) are preserved. The file is only rewritten
+ * when the requested entry is missing or its value differs.
+ */
+export function addExtraKnownMarketplace(name: string, marketplace: KnownMarketplace): void {
+  const { settingsPath } = resolveGlobalClaudeSettingsPath();
+
+  let existing: Record<string, unknown> = {};
+  try {
+    const content = readFileSync(settingsPath, 'utf-8');
+    existing = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    // File missing or corrupted — start fresh
+  }
+
+  const extraKnownMarketplaces = getObject(existing.extraKnownMarketplaces);
+  const currentEntry = extraKnownMarketplaces[name];
+  if (currentEntry && typeof currentEntry === 'object') {
+    const currentSource = getObject((currentEntry as Record<string, unknown>).source);
+    if (
+      currentSource.source === marketplace.source.source &&
+      ((marketplace.source.source === 'github' &&
+        currentSource.repo === marketplace.source.repo) ||
+        (marketplace.source.source === 'directory' &&
+          currentSource.path === marketplace.source.path))
+    ) {
+      return;
+    }
+  }
+
+  const merged: Record<string, unknown> = {
+    ...existing,
+    extraKnownMarketplaces: {
+      ...extraKnownMarketplaces,
+      [name]: marketplace,
+    },
+  };
+
+  const dir = dirname(settingsPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  // Atomic write via temp file + rename, with backup restore on failure
+  const tempPath = `${settingsPath}.tmp`;
+  const backupPath = `${settingsPath}.bak`;
+  try {
+    writeFileSync(tempPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+    if (existsSync(settingsPath)) {
+      renameSync(settingsPath, backupPath);
+    }
+    renameSync(tempPath, settingsPath);
+    if (existsSync(backupPath)) {
+      try {
+        unlinkSync(backupPath);
+      } catch {
+        // ignore cleanup error
+      }
+    }
+    sidecarLog(`[addExtraKnownMarketplace] Registered ${name} in ${settingsPath}`);
+  } catch (err) {
     try {
       if (existsSync(backupPath) && !existsSync(settingsPath)) {
         renameSync(backupPath, settingsPath);
