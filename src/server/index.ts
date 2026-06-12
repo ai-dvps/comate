@@ -30,6 +30,7 @@ import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
 import { getStorageDir } from './storage/data-dir.js';
 import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
 import { initializeResolvedShellEnv } from './utils/resolve-shell-env.js';
+import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketplace-path.js';
 
 function getDirname(): string {
   try {
@@ -45,28 +46,6 @@ const __dirname = getDirname();
 const app = express();
 const PORT = process.env.PORT || 3000;
 let logCleanupTimer: NodeJS.Timeout | null = null;
-
-function resolveBuiltInMarketplacePath(): string | undefined {
-  if (process.env.TAURI_RESOURCE_DIR) {
-    const marketplacePath = path.join(process.env.TAURI_RESOURCE_DIR, 'claude-code-plugin');
-    if (existsSync(marketplacePath)) {
-      return marketplacePath;
-    }
-  }
-
-  // Development / unpackaged fallback: resolve from repo root next to src/server or dist/server
-  const repoRootCandidates = [
-    path.join(__dirname, '..', '..', 'claude-code-plugin'),
-    path.join(__dirname, '..', '..', '..', 'claude-code-plugin'),
-  ];
-  for (const candidate of repoRootCandidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return undefined;
-}
 
 function registerBuiltInMarketplace(): void {
   const marketplacePath = resolveBuiltInMarketplacePath();
