@@ -25,11 +25,6 @@ export interface MarketplaceRegistry {
   builtIn?: boolean;
 }
 
-export interface BuiltInMarketplace {
-  name: string;
-  localPath: string;
-}
-
 export interface MarketplaceFetchResult {
   plugins: MarketplacePlugin[];
   errors: { marketplace: string; error: string }[];
@@ -58,21 +53,6 @@ export class MarketplaceService {
   private defaultRegistries: MarketplaceRegistry[] = [
     { name: 'Claude Code Marketplace', url: 'https://code.claude.com/api/plugins' },
   ];
-  private builtInRegistries: MarketplaceRegistry[] = [];
-
-  /**
-   * Register a built-in marketplace that cannot be removed by users.
-   */
-  registerBuiltInMarketplace(registry: Omit<MarketplaceRegistry, 'builtIn'>): void {
-    this.builtInRegistries.push({ ...registry, builtIn: true });
-  }
-
-  /**
-   * Return the list of registered built-in marketplaces.
-   */
-  getBuiltInMarketplaces(): MarketplaceRegistry[] {
-    return [...this.builtInRegistries];
-  }
 
   /**
    * Fetch plugins from a single registry.
@@ -97,7 +77,7 @@ export class MarketplaceService {
     customRegistries: MarketplaceRegistry[] = [],
     query?: string,
   ): Promise<MarketplaceFetchResult> {
-    const registries = [...this.defaultRegistries, ...this.builtInRegistries, ...customRegistries];
+    const registries = [...this.defaultRegistries, ...customRegistries];
     const allPlugins: MarketplacePlugin[] = [];
     const errors: { marketplace: string; error: string }[] = [];
 
@@ -124,32 +104,7 @@ export class MarketplaceService {
   }
 
   /**
-   * Fetch plugins from registered built-in marketplaces only.
-   */
-  async fetchBuiltInMarketplaces(query?: string): Promise<MarketplaceFetchResult> {
-    const allPlugins: MarketplacePlugin[] = [];
-    const errors: { marketplace: string; error: string }[] = [];
-
-    await Promise.all(
-      this.builtInRegistries.map(async (registry) => {
-        try {
-          const plugins = await this.fetchRegistryPlugins(registry);
-          allPlugins.push(...plugins);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          sidecarLog(`[MarketplaceService] Failed to fetch built-in ${registry.name}: ${message}`);
-          errors.push({ marketplace: registry.name, error: message });
-        }
-      }),
-    );
-
-    const deduped = this.deduplicatePlugins(allPlugins);
-    const filtered = query ? this.filterPlugins(deduped, query) : deduped;
-    return { plugins: filtered, errors };
-  }
-
-  /**
-   * Load cached marketplaces from disk and always merge built-in marketplaces.
+   * Load cached marketplaces from disk and always merge custom registries.
    * Falls back to network/custom registries when no cached marketplaces exist.
    */
   async fetchAllMarketplaces(
@@ -157,18 +112,18 @@ export class MarketplaceService {
     query?: string,
   ): Promise<MarketplaceFetchResult> {
     const cached = this.loadCachedMarketplaces();
+    const custom = await this.fetchMarketplaces(customRegistries);
 
-    // No cache on disk: use the live fetch path (default + built-in + custom registries).
+    // No cache on disk: use the live fetch path (default + custom registries).
     if (cached.plugins.length === 0 && cached.errors.length === 0) {
-      return this.fetchMarketplaces(customRegistries, query);
+      return custom;
     }
 
-    // Cache present: merge built-in marketplaces so they are always visible.
-    const builtIn = await this.fetchBuiltInMarketplaces();
-    const merged = this.deduplicatePlugins([...cached.plugins, ...builtIn.plugins]);
+    // Cache present: still merge custom registries so they are always visible.
+    const merged = this.deduplicatePlugins([...cached.plugins, ...custom.plugins]);
     const filtered = query ? this.filterPlugins(merged, query) : merged;
 
-    return { plugins: filtered, errors: [...cached.errors, ...builtIn.errors] };
+    return { plugins: filtered, errors: [...cached.errors, ...custom.errors] };
   }
 
   /**

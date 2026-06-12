@@ -6,7 +6,7 @@ import { usePluginStore, type PluginScope } from '../stores/plugin-store'
 interface ScopePickerModalProps {
   pluginId: string
   pluginName: string
-  sourceUrl: string
+  source: string
   isOpen: boolean
   onClose: () => void
   onSuccess: () => void
@@ -18,7 +18,7 @@ type Phase = 'choosing' | 'installing' | 'result'
 export default function ScopePickerModal({
   pluginId,
   pluginName,
-  sourceUrl,
+  source,
   isOpen,
   onClose,
   onSuccess,
@@ -56,14 +56,14 @@ export default function ScopePickerModal({
     setPhase('installing')
     setError(null)
 
-    const ok = await installPlugin(pluginId, sourceUrl, selectedScope, workspaceId)
+    const ok = await installPlugin(pluginId, source, selectedScope, workspaceId)
     if (ok) {
       setPhase('result')
     } else {
       setError(t('plugins.installFailed', 'Failed to install plugin'))
       setPhase('result')
     }
-  }, [selectedScope, pluginId, sourceUrl, workspaceId, installPlugin, t])
+  }, [selectedScope, pluginId, source, workspaceId, installPlugin, t])
 
   const handleRetry = () => {
     setPhase('choosing')
