@@ -152,7 +152,15 @@
     "userPending": "待解析",
     "firstSeen": "首次出现",
     "lastSeen": "最近出现",
-    "botSessionNote": "机器人会话具有完整的工具自动审批功能。保存更改以连接或断开。"
+    "botSessionNote": "机器人会话具有完整的工具自动审批功能。保存更改以连接或断开。",
+    "tabs": {
+      "connection": "连接",
+      "users": "用户",
+      "prompts": "提示词"
+    },
+    "filePromptTemplate": "文件提示词模板",
+    "filePromptTemplatePlaceholder": "a file named @$file_name$ uploaded by user, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.",
+    "filePromptTemplateHint": "收到文件、图片或视频时推送给 Claude 的提示词。使用 $file_name$ 作为文件路径占位符。留空则使用默认行为。"
   },
   "unsavedDialog": {
     "title": "有未保存的更改",
