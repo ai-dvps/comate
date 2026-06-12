@@ -205,6 +205,11 @@ router.post('/install', async (req, res) => {
       const marketPlugin = plugins.find((p) => p.id === pluginId);
       if (marketPlugin?.sourceType === 'local' && marketPlugin.sourceUrl) {
         downloadResult = await downloader.downloadLocal(pluginId, marketPlugin.sourceUrl);
+      } else if (marketPlugin?.sourceUrl && marketPlugin.pluginSourcePath) {
+        // Plugin lives in a subdirectory of a git repo (e.g. marketplace repo)
+        downloadResult = await downloader.downloadGitSubdirectory(
+          pluginId, marketPlugin.sourceUrl, marketPlugin.pluginSourcePath,
+        );
       } else if (marketPlugin?.sourceUrl) {
         downloadResult = await downloader.downloadFromUrl(pluginId, marketPlugin.sourceUrl);
       } else {
@@ -320,10 +325,18 @@ router.post('/update', async (req, res) => {
     // Download new version
     const cacheDir = pluginSettingsService.resolvePluginCacheDir();
     const downloader = new PluginDownloader({ cacheDir, timeoutMs: DEFAULT_TIMEOUT_MS });
-    const downloadResult =
-      update.sourceType === 'local'
-        ? await downloader.downloadLocal(pluginId, update.sourceUrl)
-        : await downloader.downloadFromUrl(pluginId, update.sourceUrl);
+
+    let downloadResult;
+    if (update.sourceType === 'local') {
+      downloadResult = await downloader.downloadLocal(pluginId, update.sourceUrl);
+    } else if (update.pluginSourcePath) {
+      // Plugin lives in a subdirectory of a git repo (e.g. marketplace repo)
+      downloadResult = await downloader.downloadGitSubdirectory(
+        pluginId, update.sourceUrl, update.pluginSourcePath,
+      );
+    } else {
+      downloadResult = await downloader.downloadFromUrl(pluginId, update.sourceUrl);
+    }
 
     if (!downloadResult.success) {
       res.status(422).json({ error: downloadResult.error || 'Download failed' });
