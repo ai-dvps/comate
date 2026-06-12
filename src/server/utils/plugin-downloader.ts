@@ -82,6 +82,75 @@ export class PluginDownloader {
   }
 
   /**
+   * Download a plugin that lives in a subdirectory of a git repository.
+   * Clones the whole repo to a temp location, extracts the subdirectory,
+   * validates its manifest, and copies it to the cache.
+   */
+  async downloadGitSubdirectory(
+    pluginId: string,
+    gitUrl: string,
+    subdirectory: string,
+    ref?: string,
+  ): Promise<DownloadResult> {
+    const cachePath = join(this.cacheDir, pluginId);
+    const tempRepoPath = `${cachePath}.repo-${Date.now()}`;
+
+    try {
+      // Remove existing cache if present
+      if (existsSync(cachePath)) {
+        rmSync(cachePath, { recursive: true, force: true });
+      }
+
+      // Clone the whole repo
+      await this.runGitClone(gitUrl, tempRepoPath, ref);
+
+      // Resolve the plugin subdirectory within the repo
+      const normalizedSubdir = subdirectory.replace(/^\.\//, '');
+      const pluginSourcePath = join(tempRepoPath, normalizedSubdir);
+
+      if (!existsSync(pluginSourcePath)) {
+        rmSync(tempRepoPath, { recursive: true, force: true });
+        return {
+          success: false,
+          cachePath,
+          error: `Plugin subdirectory "${normalizedSubdir}" not found in repository`,
+        };
+      }
+
+      // Validate manifest in the subdirectory
+      const manifestValid = await this.validateManifest(pluginSourcePath);
+      if (!manifestValid) {
+        rmSync(tempRepoPath, { recursive: true, force: true });
+        return {
+          success: false,
+          cachePath,
+          error: `Downloaded plugin is missing a valid plugin.json manifest`,
+        };
+      }
+
+      // Copy only the plugin subdirectory to the cache
+      mkdirSync(this.cacheDir, { recursive: true });
+      cpSync(pluginSourcePath, cachePath, { recursive: true, dereference: true });
+
+      sidecarLog(`[PluginDownloader] Downloaded ${pluginId} from ${gitUrl} (subdir: ${normalizedSubdir}) to ${cachePath}`);
+      return { success: true, cachePath };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sidecarLog(`[PluginDownloader] Git subdirectory download failed for ${pluginId}: ${message}`);
+      return { success: false, cachePath, error: message };
+    } finally {
+      // Always clean up the full repo clone
+      try {
+        if (existsSync(tempRepoPath)) {
+          rmSync(tempRepoPath, { recursive: true, force: true });
+        }
+      } catch {
+        // ignore cleanup error
+      }
+    }
+  }
+
+  /**
    * Download a plugin from a zip archive URL.
    */
   async downloadZip(
