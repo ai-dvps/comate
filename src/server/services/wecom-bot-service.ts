@@ -267,7 +267,8 @@ export class WeComBotService {
         throw err;
       }
 
-      const prompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
+      const defaultFilePrompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
+      const prompt = await this.resolveFilePrompt(workspaceId, relativePath, defaultFilePrompt);
       runtime.pushMessage(prompt);
     } catch (err) {
       console.error(`[WeComBotService] Failed to handle ${msgtype} message from ${wecomUserId}:`, err);
@@ -299,6 +300,17 @@ export class WeComBotService {
     };
     const ext = extMap[msgtype] ?? 'bin';
     return `${msgtype}_${timestamp}.${ext}`;
+  }
+
+  private async resolveFilePrompt(
+    workspaceId: string,
+    relativePath: string,
+    defaultPrompt: string,
+  ): Promise<string> {
+    const workspace = await workspaceStore.get(workspaceId);
+    const template = workspace?.settings?.wecomFilePromptTemplate?.trim();
+    if (!template) return defaultPrompt;
+    return template.replace(/\$file_name\$/g, relativePath);
   }
 
   private async getOrCreateSession(workspaceId: string, wecomUserId: string): Promise<string | null> {
