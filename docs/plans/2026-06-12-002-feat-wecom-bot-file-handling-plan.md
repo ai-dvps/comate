@@ -1,7 +1,7 @@
 ---
 title: "feat: WeCom Bot File and Media Handling"
 type: feat
-status: active
+status: completed
 date: 2026-06-12
 origin: docs/brainstorms/2026-06-12-wecom-bot-file-handling-requirements.md
 ---
