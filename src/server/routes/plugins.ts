@@ -343,11 +343,17 @@ router.post('/update', async (req, res) => {
       return;
     }
 
-    // Update settings with new version
-    pluginSettingsService.updatePluginVersion(scope, pluginId, update.version, workspacePath);
+    // Read the actual version from the downloaded manifest (not the marketplace-reported version)
+    // to ensure settings reflect what's truly on disk. This prevents version mismatches
+    // when the marketplace listing and the actual plugin.json differ.
+    const downloadedManifest = pluginSettingsService.readPluginManifest(pluginId);
+    const actualVersion = downloadedManifest?.version || update.version;
 
-    sidecarLog(`[Plugins API] Updated ${pluginId} to ${update.version}`);
-    res.json({ ok: true, version: update.version });
+    // Update settings with the actual version
+    pluginSettingsService.updatePluginVersion(scope, pluginId, actualVersion, workspacePath);
+
+    sidecarLog(`[Plugins API] Updated ${pluginId} to ${actualVersion}`);
+    res.json({ ok: true, version: actualVersion });
   } catch (error) {
     console.error('Failed to update plugin:', error);
     res.status(500).json({ error: 'Failed to update plugin' });
