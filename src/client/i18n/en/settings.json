@@ -152,7 +152,15 @@
     "userPending": "Pending resolution",
     "firstSeen": "First seen",
     "lastSeen": "Last seen",
-    "botSessionNote": "Bot sessions have full tool auto-approval. Save changes to connect or disconnect."
+    "botSessionNote": "Bot sessions have full tool auto-approval. Save changes to connect or disconnect.",
+    "tabs": {
+      "connection": "Connection",
+      "users": "Users",
+      "prompts": "Prompts"
+    },
+    "filePromptTemplate": "File Prompt Template",
+    "filePromptTemplatePlaceholder": "a file named @$file_name$ uploaded by user, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.",
+    "filePromptTemplateHint": "Prompt pushed to Claude when a file, image, or video is received. Use $file_name$ as placeholder for the file path. Leave empty for default behavior."
   },
   "unsavedDialog": {
     "title": "Unsaved changes",
