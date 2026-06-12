@@ -102,6 +102,131 @@ describe('marketplace-service', { concurrency: false }, () => {
         global.fetch = originalFetch;
       }
     });
+
+    it('resolves version from GitHub plugin manifest when marketplace listing lacks version', async () => {
+      const originalFetch = global.fetch;
+      let fetchCount = 0;
+      global.fetch = async (url) => {
+        const urlStr = String(url);
+        fetchCount++;
+        // First fetch: marketplace listing (GitHub raw URL for marketplace.json)
+        if (urlStr.includes('/main/.claude-plugin/marketplace.json') || urlStr.includes('/master/.claude-plugin/marketplace.json')) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: async () => ({
+              plugins: [
+                {
+                  name: 'my-plugin',
+                  description: 'A plugin without version in listing',
+                  source: './plugins/my-plugin',
+                  // No version field!
+                },
+              ],
+            }),
+          } as Response;
+        }
+        // Second fetch: resolving plugin.json from source path
+        if (urlStr.includes('/main/plugins/my-plugin/.claude-plugin/plugin.json')) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: async () => ({
+              name: 'my-plugin',
+              version: '3.5.0',
+            }),
+          } as Response;
+        }
+        return { ok: false, status: 404, statusText: 'Not Found' } as Response;
+      };
+
+      try {
+        const update = await service.checkForUpdate('my-plugin', '3.0.0', [
+          { name: 'Test', githubRepo: 'owner/repo' },
+        ]);
+        assert.ok(update, 'Should detect update when manifest resolves a newer version');
+        assert.strictEqual(update!.version, '3.5.0');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('resolves version from local plugin manifest when marketplace listing lacks version', async () => {
+      const tmpRoot = mkdtempSync(join(tmpdir(), 'marketplace-resolve-'));
+      mkdirSync(join(tmpRoot, '.claude-plugin'), { recursive: true });
+      mkdirSync(join(tmpRoot, 'plugins', 'my-plugin', '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(tmpRoot, '.claude-plugin', 'marketplace.json'),
+        JSON.stringify({
+          plugins: [
+            {
+              name: 'my-plugin',
+              description: 'Local plugin without version in listing',
+              source: './plugins/my-plugin',
+              // No version field!
+            },
+          ],
+        }),
+      );
+      // Write the plugin manifest with a real version
+      writeFileSync(
+        join(tmpRoot, 'plugins', 'my-plugin', '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'my-plugin', version: '4.2.0' }),
+      );
+
+      try {
+        const update = await service.checkForUpdate('my-plugin', '3.0.0', [
+          { name: 'Local Test', localPath: tmpRoot },
+        ]);
+        assert.ok(update, 'Should detect update when local manifest resolves a newer version');
+        assert.strictEqual(update!.version, '4.2.0');
+      } finally {
+        // Cleanup handled by OS
+      }
+    });
+
+    it('returns null when both marketplace and manifest versions are 0.0.0', async () => {
+      const originalFetch = global.fetch;
+      global.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/main/.claude-plugin/marketplace.json') || urlStr.includes('/master/.claude-plugin/marketplace.json')) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: async () => ({
+              plugins: [
+                {
+                  name: 'mystery-plugin',
+                  source: './plugins/mystery',
+                },
+              ],
+            }),
+          } as Response;
+        }
+        // plugin.json also has no meaningful version
+        if (urlStr.includes('/main/plugins/mystery/.claude-plugin/plugin.json')) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: async () => ({ name: 'mystery-plugin', version: '0.0.0' }),
+          } as Response;
+        }
+        return { ok: false, status: 404, statusText: 'Not Found' } as Response;
+      };
+
+      try {
+        const update = await service.checkForUpdate('mystery-plugin', '0.0.0', [
+          { name: 'Test', githubRepo: 'owner/repo' },
+        ]);
+        assert.strictEqual(update, null, 'Should not show update when resolved version is also 0.0.0');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 
   describe('fetchMarketplaces', () => {
