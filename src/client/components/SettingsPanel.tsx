@@ -7,6 +7,7 @@ import { useAppSettings } from '../hooks/use-app-settings'
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
 import ProviderSection from './ProviderSection'
+import SkillsPage from './SkillsPage'
 import {
   X,
   Eye,
@@ -853,6 +854,7 @@ function WorkspaceTabShell({
 }) {
   const { t } = useTranslation('settings')
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('basic')
+  const [showSkillsPage, setShowSkillsPage] = useState(false)
 
   // Reset to Basic Info when switching workspaces
   useEffect(() => {
@@ -934,13 +936,22 @@ function WorkspaceTabShell({
               {activeSection === 'wecom' && (
                 <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
               )}
-              {activeSection === 'skills' && <PluginRedirectPlaceholder type="skills" />}
+              {activeSection === 'skills' && (
+                <SkillsRedirectCard onOpen={() => setShowSkillsPage(true)} />
+              )}
               {activeSection === 'mcp' && <PluginRedirectPlaceholder type="mcp" />}
               {activeSection === 'hooks' && <PluginRedirectPlaceholder type="hooks" />}
             </div>
           )}
         </div>
       </div>
+
+      {showSkillsPage && selectedWorkspaceId && (
+        <SkillsPage
+          workspaceId={selectedWorkspaceId}
+          onClose={() => setShowSkillsPage(false)}
+        />
+      )}
     </div>
   )
 }
@@ -1258,6 +1269,31 @@ function PluginRedirectPlaceholder({ type }: { type: 'skills' | 'mcp' | 'hooks' 
         <h3 className="text-sm font-medium text-text-primary">{t(`placeholder.${type}Title`)}</h3>
         <p className="text-xs text-text-secondary max-w-sm">{t('placeholder.pluginRedirect')}</p>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Card shown in the workspace-settings Skills tab. The new Skills page is a
+ * top-level surface, so this card is a launcher — clicking Open mounts the
+ * SkillsPage overlay (with the active workspace context).
+ */
+function SkillsRedirectCard({ onOpen }: { onOpen: () => void }) {
+  const { t } = useTranslation('settings')
+  return (
+    <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
+      <div className="space-y-1">
+        <h3 className="text-sm font-medium text-text-primary">{t('placeholder.skillsTitle')}</h3>
+        <p className="text-xs text-text-secondary max-w-sm">
+          {t('placeholder.skillsRedirect', 'The Skills page is now available as a top-level surface in the session list. Click below to open it for this workspace.')}
+        </p>
+      </div>
+      <button
+        onClick={onOpen}
+        className="px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
+      >
+        {t('skills.openFromSettings', 'Open Skills page')}
+      </button>
     </div>
   )
 }

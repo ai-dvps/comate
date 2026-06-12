@@ -271,7 +271,8 @@
     "noSkillsFound": "此来源中未找到技能",
     "selectSkills": "选择技能（找到 {{count}} 个）",
     "selectScope": "选择范围",
-    "reinstall": "重新安装"
+    "reinstall": "重新安装",
+    "openFromSettings": "打开技能页面"
   },
   "common": {
     "unknownError": "未知错误",
