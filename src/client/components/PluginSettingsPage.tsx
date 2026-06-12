@@ -133,8 +133,7 @@ export default function PluginSettingsPage({ workspaceId, onClose }: PluginSetti
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col">
-      <div className="h-11 pointer-events-none" />
+    <div className="fixed top-11 inset-x-0 bottom-0 z-50 flex flex-col">
       <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
         <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onClose} />
         <div className="relative w-full h-full max-h-[90vh] max-w-[90vw] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">

@@ -273,10 +273,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const isWorkspaceTab = activeTab === 'workspace'
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col">
-      {/* Title bar safe zone */}
-      <div className="h-11 pointer-events-none" />
-
+    <div className="fixed top-11 inset-x-0 bottom-0 z-50 flex flex-col">
       {/* Modal area */}
       <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
         {/* Backdrop */}
@@ -375,7 +372,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
       {/* Unsaved Changes Dialog */}
       {showUnsavedDialog && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+        <div className="fixed top-11 inset-x-0 bottom-0 z-[60] flex items-center justify-center">
           <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" />
           <div className="relative bg-surface border border-border rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
             <div className="flex items-start gap-3">
