@@ -441,3 +441,169 @@ export function resolveGlobalClaudeSettingsPath(): {
 } {
   return resolveClaudeSettingsPath();
 }
+
+// ---------------------------------------------------------------------------
+// installed_plugins.json reader/writer (CLI V2 format)
+// ---------------------------------------------------------------------------
+
+export interface InstalledPluginEntry {
+  scope: string;
+  projectPath?: string;
+  installPath: string;
+  version?: string;
+  installedAt?: string;
+  lastUpdated?: string;
+  gitCommitSha?: string;
+}
+
+export interface InstalledPluginsFile {
+  version: number;
+  plugins: Record<string, InstalledPluginEntry[]>;
+}
+
+/**
+ * Resolve the path to installed_plugins.json.
+ * Located at ~/.claude/plugins/installed_plugins.json
+ */
+export function resolveInstalledPluginsPath(): string {
+  const { settingsPath } = resolveGlobalClaudeSettingsPath();
+  return join(dirname(settingsPath), 'plugins', 'installed_plugins.json');
+}
+
+/**
+ * Read and parse installed_plugins.json (CLI V2 format).
+ * Returns an empty V2 structure if the file does not exist or is corrupt.
+ * NEVER throws.
+ */
+export function readInstalledPluginsJson(): InstalledPluginsFile {
+  const filePath = resolveInstalledPluginsPath();
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const version = typeof parsed.version === 'number' ? parsed.version : 1;
+
+    if (version === 2 && parsed.plugins && typeof parsed.plugins === 'object') {
+      const plugins: Record<string, InstalledPluginEntry[]> = {};
+      const rawPlugins = parsed.plugins as Record<string, unknown>;
+      for (const [key, value] of Object.entries(rawPlugins)) {
+        if (Array.isArray(value)) {
+          plugins[key] = value
+            .filter((v): v is Record<string, unknown> => v != null && typeof v === 'object')
+            .map((entry) => ({
+              scope: typeof entry.scope === 'string' ? entry.scope : 'user',
+              projectPath: typeof entry.projectPath === 'string' ? entry.projectPath : undefined,
+              installPath: typeof entry.installPath === 'string' ? entry.installPath : '',
+              version: typeof entry.version === 'string' ? entry.version : undefined,
+              installedAt: typeof entry.installedAt === 'string' ? entry.installedAt : undefined,
+              lastUpdated: typeof entry.lastUpdated === 'string' ? entry.lastUpdated : undefined,
+              gitCommitSha: typeof entry.gitCommitSha === 'string' ? entry.gitCommitSha : undefined,
+            }));
+        }
+      }
+      return { version: 2, plugins };
+    }
+
+    // V1 format: each plugin maps to a single object, not an array
+    if (parsed.plugins && typeof parsed.plugins === 'object') {
+      const plugins: Record<string, InstalledPluginEntry[]> = {};
+      const rawPlugins = parsed.plugins as Record<string, unknown>;
+      for (const [key, value] of Object.entries(rawPlugins)) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          const entry = value as Record<string, unknown>;
+          plugins[key] = [{
+            scope: typeof entry.scope === 'string' ? entry.scope : 'user',
+            projectPath: typeof entry.projectPath === 'string' ? entry.projectPath : undefined,
+            installPath: typeof entry.installPath === 'string' ? entry.installPath : '',
+            version: typeof entry.version === 'string' ? entry.version : undefined,
+            installedAt: typeof entry.installedAt === 'string' ? entry.installedAt : undefined,
+            lastUpdated: typeof entry.lastUpdated === 'string' ? entry.lastUpdated : undefined,
+            gitCommitSha: typeof entry.gitCommitSha === 'string' ? entry.gitCommitSha : undefined,
+          }];
+        }
+      }
+      return { version: 2, plugins };
+    }
+
+    return { version: 2, plugins: {} };
+  } catch {
+    return { version: 2, plugins: {} };
+  }
+}
+
+/**
+ * Write installed_plugins.json atomically (temp + rename + backup).
+ * Preserves any keys not in the provided data.
+ */
+export function writeInstalledPluginsJson(data: InstalledPluginsFile): void {
+  const filePath = resolveInstalledPluginsPath();
+  const dir = dirname(filePath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  const tempPath = `${filePath}.tmp`;
+  const backupPath = `${filePath}.bak`;
+  try {
+    writeFileSync(tempPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+    if (existsSync(filePath)) {
+      renameSync(filePath, backupPath);
+    }
+    renameSync(tempPath, filePath);
+    if (existsSync(backupPath)) {
+      try { unlinkSync(backupPath); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    try {
+      if (existsSync(backupPath) && !existsSync(filePath)) {
+        renameSync(backupPath, filePath);
+      }
+    } catch { /* ignore restore error */ }
+    throw err;
+  }
+}
+
+/**
+ * Update a single plugin entry in installed_plugins.json.
+ * Finds by qualifiedId + scope + projectPath, updates installPath/version/lastUpdated.
+ * If the entry doesn't exist, adds it.
+ */
+export function updateInstalledPluginsEntry(
+  qualifiedId: string,
+  update: {
+    scope: string;
+    installPath: string;
+    version: string;
+    projectPath?: string;
+    gitCommitSha?: string;
+  },
+): void {
+  const data = readInstalledPluginsJson();
+  if (!data.plugins[qualifiedId]) {
+    data.plugins[qualifiedId] = [];
+  }
+
+  const existing = data.plugins[qualifiedId].find(
+    (e) => e.scope === update.scope && e.projectPath === update.projectPath,
+  );
+
+  if (existing) {
+    existing.installPath = update.installPath;
+    existing.version = update.version;
+    existing.lastUpdated = new Date().toISOString();
+    if (update.gitCommitSha !== undefined) {
+      existing.gitCommitSha = update.gitCommitSha;
+    }
+  } else {
+    data.plugins[qualifiedId].push({
+      scope: update.scope,
+      projectPath: update.projectPath,
+      installPath: update.installPath,
+      version: update.version,
+      installedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      gitCommitSha: update.gitCommitSha,
+    });
+  }
+
+  writeInstalledPluginsJson(data);
+}

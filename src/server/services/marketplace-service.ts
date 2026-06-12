@@ -451,6 +451,8 @@ export class MarketplaceService {
 
   /**
    * Check if a newer version is available for an installed plugin.
+   * Supports both bare plugin IDs ("my-plugin") and qualified IDs ("my-plugin@marketplace").
+   * When a qualified ID is provided, only searches that specific marketplace.
    */
   async checkForUpdate(
     pluginId: string,
@@ -462,7 +464,17 @@ export class MarketplaceService {
       sidecarLog(`[MarketplaceService] Update check had ${errors.length} registry errors`);
     }
 
-    const match = plugins.find((p) => p.id === pluginId);
+    // Parse qualified ID: "plugin@marketplace" -> { name, marketplace }
+    const atIndex = pluginId.lastIndexOf('@');
+    const bareName = atIndex > 0 ? pluginId.slice(0, atIndex) : pluginId;
+    const marketplace = atIndex > 0 ? pluginId.slice(atIndex + 1) : undefined;
+
+    // If marketplace is specified, search only that marketplace
+    const candidates = marketplace
+      ? plugins.filter((p) => p.id === bareName && p.sourceMarketplace === marketplace)
+      : plugins.filter((p) => p.id === bareName);
+
+    const match = candidates[0] ?? null;
     if (!match) return null;
 
     // If the marketplace listing lacked a version (defaults to '0.0.0'),

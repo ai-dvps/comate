@@ -151,6 +151,92 @@ export class PluginDownloader {
   }
 
   /**
+   * Download a plugin to a specific versioned cache path.
+   * Used by the update flow to write to CLI-compatible cache/{marketplace}/{plugin}/{version}/.
+   * The caller is responsible for determining the correct target path.
+   */
+  async downloadToVersionedPath(
+    pluginId: string,
+    targetPath: string,
+    sourceUrl: string,
+    subdirectory?: string,
+  ): Promise<DownloadResult> {
+    const tempRepoPath = `${targetPath}.repo-${Date.now()}`;
+
+    try {
+      // Ensure parent directories exist
+      mkdirSync(targetPath, { recursive: true });
+
+      if (subdirectory) {
+        // Clone the whole repo, extract the subdirectory
+        await this.runGitClone(sourceUrl, tempRepoPath);
+
+        const normalizedSubdir = subdirectory.replace(/^\.\//, '');
+        const pluginSourcePath = join(tempRepoPath, normalizedSubdir);
+
+        if (!existsSync(pluginSourcePath)) {
+          return {
+            success: false,
+            cachePath: targetPath,
+            error: `Plugin subdirectory "${normalizedSubdir}" not found in repository`,
+          };
+        }
+
+        const manifestValid = await this.validateManifest(pluginSourcePath);
+        if (!manifestValid) {
+          return {
+            success: false,
+            cachePath: targetPath,
+            error: `Downloaded plugin is missing a valid plugin.json manifest`,
+          };
+        }
+
+        // Copy only the plugin subdirectory to the target path
+        // Remove target first if it exists (e.g. empty dir from mkdirSync)
+        if (existsSync(targetPath)) {
+          rmSync(targetPath, { recursive: true, force: true });
+        }
+        cpSync(pluginSourcePath, targetPath, { recursive: true, dereference: true });
+      } else {
+        // Clone directly
+        await this.runGitClone(sourceUrl, tempRepoPath);
+
+        const manifestValid = await this.validateManifest(tempRepoPath);
+        if (!manifestValid) {
+          return {
+            success: false,
+            cachePath: targetPath,
+            error: `Downloaded plugin is missing a valid plugin.json manifest`,
+          };
+        }
+
+        // Remove target and rename temp to target
+        if (existsSync(targetPath)) {
+          rmSync(targetPath, { recursive: true, force: true });
+        }
+        const { renameSync } = await import('fs');
+        renameSync(tempRepoPath, targetPath);
+      }
+
+      sidecarLog(`[PluginDownloader] Downloaded ${pluginId} to versioned path ${targetPath}`);
+      return { success: true, cachePath: targetPath };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sidecarLog(`[PluginDownloader] Versioned download failed for ${pluginId}: ${message}`);
+      return { success: false, cachePath: targetPath, error: message };
+    } finally {
+      // Always clean up the temp repo clone
+      try {
+        if (existsSync(tempRepoPath)) {
+          rmSync(tempRepoPath, { recursive: true, force: true });
+        }
+      } catch {
+        // ignore cleanup error
+      }
+    }
+  }
+
+  /**
    * Download a plugin from a zip archive URL.
    */
   async downloadZip(
