@@ -406,7 +406,14 @@ router.get('/updates', async (req, res) => {
     for (const p of [...localPlugins, ...projectPlugins, ...userPlugins]) {
       if (seen.has(p.id)) continue;
       seen.add(p.id);
-      allInstalled.push(p);
+
+      // Enrich version from cached manifest (same as /installed endpoint does)
+      // so CLI-installed plugins with '0.0.0' in settings get their real version.
+      const manifest = pluginSettingsService.readPluginManifest(p.id);
+      allInstalled.push({
+        id: p.id,
+        version: manifest?.version || p.version,
+      });
     }
 
     const updates: { id: string; currentVersion: string; newVersion: string }[] = [];
