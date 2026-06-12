@@ -4,9 +4,9 @@ import { debounce } from '../utils/debounce.js';
 
 export interface StreamReplyConnection {
   client: {
-    replyStream: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<void>;
-    replyStreamNonBlocking: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<void>;
-    sendMessage: (userId: string, body: any) => Promise<void>;
+    replyStream: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<unknown>;
+    replyStreamNonBlocking: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<unknown>;
+    sendMessage: (userId: string, body: any) => Promise<unknown>;
   };
 }
 
