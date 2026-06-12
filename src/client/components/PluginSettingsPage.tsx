@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { usePluginStore } from '../stores/plugin-store'
 import PluginMarketplaceTab from './PluginMarketplaceTab'
@@ -16,6 +16,9 @@ import {
   Globe,
   FolderOpen,
   User,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react'
 
 interface PluginSettingsPageProps {
@@ -30,24 +33,44 @@ export default function PluginSettingsPage({ workspaceId, onClose }: PluginSetti
   const [activeTab, setActiveTab] = useState<PluginTab>('installed')
   const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null)
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null)
+  // Tracks which plugin just successfully updated, for the brief success display
+  const [recentlyUpdatedId, setRecentlyUpdatedId] = useState<string | null>(null)
+  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const {
     installedPlugins,
     updates,
     isSaving,
     error,
+    updatingPluginId,
+    updateError,
+    failedUpdatePluginId,
+    lastUpdatedVersion,
     fetchInstalledPlugins,
     uninstallPlugin,
     updatePlugin,
     setPluginEnabled,
     checkUpdates,
     clearError,
+    clearUpdateError,
+    clearUpdateState,
   } = usePluginStore()
 
   useEffect(() => {
     fetchInstalledPlugins(workspaceId)
     checkUpdates(workspaceId)
   }, [fetchInstalledPlugins, checkUpdates, workspaceId])
+
+  // Cleanup on unmount: clear any in-flight update state and pending success timeout
+  useEffect(() => {
+    return () => {
+      clearUpdateState()
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current)
+        successTimeoutRef.current = null
+      }
+    }
+  }, [clearUpdateState])
 
   const handleUninstall = async (pluginId: string, scope: import('../stores/plugin-store').PluginScope) => {
     const ok = await uninstallPlugin(pluginId, scope, workspaceId, true)
@@ -58,11 +81,27 @@ export default function PluginSettingsPage({ workspaceId, onClose }: PluginSetti
   }
 
   const handleUpdate = async (pluginId: string, scope: import('../stores/plugin-store').PluginScope) => {
-    const ok = await updatePlugin(pluginId, scope, workspaceId)
-    if (ok) {
+    // Clear any previous success display
+    if (successTimeoutRef.current) {
+      clearTimeout(successTimeoutRef.current)
+      successTimeoutRef.current = null
+    }
+    setRecentlyUpdatedId(null)
+
+    const newVersion = await updatePlugin(pluginId, scope, workspaceId)
+    if (newVersion !== null) {
+      // Success — show brief success indicator
+      setRecentlyUpdatedId(pluginId)
       await fetchInstalledPlugins(workspaceId)
       await checkUpdates(workspaceId)
+
+      // Auto-clear success after 2 seconds
+      successTimeoutRef.current = setTimeout(() => {
+        setRecentlyUpdatedId(null)
+        successTimeoutRef.current = null
+      }, 2000)
     }
+    // On failure, updateError is set in the store; the inline error UI reads it directly
   }
 
   const handleToggle = async (pluginId: string, scope: import('../stores/plugin-store').PluginScope, enabled: boolean) => {
@@ -191,19 +230,54 @@ export default function PluginSettingsPage({ workspaceId, onClose }: PluginSetti
                           </div>
 
                           <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {/* Update button / status */}
                             {update && (
-                              <button
-                                onClick={() => handleUpdate(plugin.id, plugin.scope)}
-                                disabled={isSaving}
-                                className="p-1.5 rounded-lg hover:bg-surface-hover text-accent transition-colors disabled:opacity-50"
-                                title={t('plugins.update')}
-                              >
-                                <RefreshCw className="w-3.5 h-3.5" />
-                              </button>
+                              <>
+                                {updatingPluginId === plugin.id ? (
+                                  // Updating — show spinner
+                                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-accent/5">
+                                    <Loader2 className="w-3.5 h-3.5 text-accent animate-spin" />
+                                    <span className="text-[11px] text-accent font-medium">{t('plugins.updating', 'Updating...')}</span>
+                                  </div>
+                                ) : recentlyUpdatedId === plugin.id ? (
+                                  // Just updated — show success
+                                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-500/10">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                    <span className="text-[11px] text-emerald-500 font-medium">
+                                      {t('plugins.updatedTo', 'Updated to {{version}}', { version: lastUpdatedVersion || update.newVersion })}
+                                    </span>
+                                  </div>
+                                ) : updateError && failedUpdatePluginId === plugin.id ? (
+                                  // Error — show inline error with retry (only for this plugin, after a failed attempt)
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-destructive/10">
+                                      <AlertCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
+                                      <span className="text-[11px] text-destructive">{updateError}</span>
+                                    </div>
+                                    <button
+                                      onClick={() => { clearUpdateError(); handleUpdate(plugin.id, plugin.scope) }}
+                                      className="p-1.5 rounded-lg hover:bg-surface-hover text-accent transition-colors"
+                                      title={t('plugins.retry', 'Retry')}
+                                    >
+                                      <RefreshCw className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  // Default — show update button
+                                  <button
+                                    onClick={() => handleUpdate(plugin.id, plugin.scope)}
+                                    disabled={updatingPluginId !== null}
+                                    className="p-1.5 rounded-lg hover:bg-surface-hover text-accent transition-colors disabled:opacity-50"
+                                    title={t('plugins.update')}
+                                  >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </>
                             )}
                             <button
                               onClick={() => handleToggle(plugin.id, plugin.scope, !plugin.enabled)}
-                              disabled={isSaving}
+                              disabled={isSaving || updatingPluginId === plugin.id}
                               className="p-1.5 rounded-lg hover:bg-surface-hover transition-colors disabled:opacity-50"
                               title={plugin.enabled ? t('plugins.disable') : t('plugins.enable')}
                             >
@@ -225,7 +299,7 @@ export default function PluginSettingsPage({ workspaceId, onClose }: PluginSetti
                             </button>
                             <button
                               onClick={() => setConfirmUninstall(`${plugin.id}-${plugin.scope}`)}
-                              disabled={isSaving}
+                              disabled={isSaving || updatingPluginId === plugin.id}
                               className="p-1.5 rounded-lg hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors disabled:opacity-50"
                               title={t('plugins.uninstall')}
                             >

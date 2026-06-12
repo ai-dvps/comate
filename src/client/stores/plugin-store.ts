@@ -37,6 +37,14 @@ interface PluginState {
   isLoading: boolean
   isSaving: boolean
   error: string | null
+  /** ID of the plugin currently being updated, or null if no update is in progress */
+  updatingPluginId: string | null
+  /** Per-plugin error from the most recent update attempt */
+  updateError: string | null
+  /** ID of the plugin that failed to update, so the error can be shown inline on that plugin's row */
+  failedUpdatePluginId: string | null
+  /** The version string returned by the server on the last successful update */
+  lastUpdatedVersion: string | null
   marketplaceQuery: string
   selectedMarketplaces: string[]
   selectedKeywords: string[]
@@ -46,7 +54,7 @@ interface PluginState {
   fetchMarketplacePlugins: (query?: string) => Promise<void>
   installPlugin: (pluginId: string, source: string, scope: PluginScope, workspaceId?: string) => Promise<boolean>
   uninstallPlugin: (pluginId: string, scope: PluginScope, workspaceId?: string, purgeData?: boolean) => Promise<boolean>
-  updatePlugin: (pluginId: string, scope: PluginScope, workspaceId?: string) => Promise<boolean>
+  updatePlugin: (pluginId: string, scope: PluginScope, workspaceId?: string) => Promise<string | null>
   setPluginEnabled: (pluginId: string, scope: PluginScope, enabled: boolean, workspaceId?: string) => Promise<boolean>
   checkUpdates: (workspaceId?: string) => Promise<void>
   setMarketplaceQuery: (query: string) => void
@@ -57,6 +65,8 @@ interface PluginState {
   toggleSection: (marketplace: string) => void
   resetFilters: () => void
   clearError: () => void
+  clearUpdateError: () => void
+  clearUpdateState: () => void
 }
 
 const API_BASE = '/api/plugins'
@@ -68,6 +78,10 @@ export const usePluginStore = create<PluginState>((set) => ({
   isLoading: false,
   isSaving: false,
   error: null,
+  updatingPluginId: null,
+  updateError: null,
+  failedUpdatePluginId: null,
+  lastUpdatedVersion: null,
   marketplaceQuery: '',
   selectedMarketplaces: [],
   selectedKeywords: [],
@@ -152,7 +166,7 @@ export const usePluginStore = create<PluginState>((set) => ({
   },
 
   updatePlugin: async (pluginId, scope, workspaceId) => {
-    set({ isSaving: true, error: null })
+    set({ updatingPluginId: pluginId, updateError: null, failedUpdatePluginId: null, lastUpdatedVersion: null, error: null })
     try {
       const body: Record<string, unknown> = { pluginId, scope }
       if (workspaceId) body.workspaceId = workspaceId
@@ -163,20 +177,30 @@ export const usePluginStore = create<PluginState>((set) => ({
       })
       const data = await res.json()
       if (!res.ok) {
-        set({ error: data.error || i18next.t('settings:plugins.updateFailed', 'Failed to update plugin'), isSaving: false })
-        return false
+        set({
+          updatingPluginId: null,
+          updateError: data.error || i18next.t('settings:plugins.updateFailed', 'Failed to update plugin'),
+          failedUpdatePluginId: pluginId,
+        })
+        return null
       }
+      const newVersion = data.version || ''
       set((state) => ({
         installedPlugins: state.installedPlugins.map((p) =>
-          p.id === pluginId && p.scope === scope ? { ...p, version: data.version || p.version } : p
+          p.id === pluginId && p.scope === scope ? { ...p, version: newVersion || p.version } : p
         ),
         updates: state.updates.filter((u) => u.id !== pluginId),
-        isSaving: false,
+        updatingPluginId: null,
+        lastUpdatedVersion: newVersion,
       }))
-      return true
+      return newVersion
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isSaving: false })
-      return false
+      set({
+        updatingPluginId: null,
+        updateError: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'),
+        failedUpdatePluginId: pluginId,
+      })
+      return null
     }
   },
 
@@ -269,4 +293,6 @@ export const usePluginStore = create<PluginState>((set) => ({
       marketplaceQuery: '',
     }),
   clearError: () => set({ error: null }),
+  clearUpdateError: () => set({ updateError: null, failedUpdatePluginId: null }),
+  clearUpdateState: () => set({ updatingPluginId: null, updateError: null, failedUpdatePluginId: null, lastUpdatedVersion: null }),
 }))
