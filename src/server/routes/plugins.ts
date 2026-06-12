@@ -314,9 +314,15 @@ router.post('/update', async (req, res) => {
       return;
     }
 
+    // Enrich version from cached manifest (same as /updates endpoint does)
+    // so that a partially-failed previous update (settings ahead of cache)
+    // doesn't block the re-download.
+    const manifest = pluginSettingsService.readPluginManifest(pluginId);
+    const installedVersion = manifest?.version || installed.version;
+
     // Find update in marketplace
     const customRegistries = loadCustomMarketplaces();
-    const update = await marketplaceService.checkForUpdate(pluginId, installed.version, customRegistries);
+    const update = await marketplaceService.checkForUpdate(pluginId, installedVersion, customRegistries);
     if (!update || !update.sourceUrl) {
       res.status(422).json({ error: 'No update available or source not resolvable' });
       return;
