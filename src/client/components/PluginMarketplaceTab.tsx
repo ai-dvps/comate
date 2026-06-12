@@ -93,7 +93,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
   // Fetch marketplace on mount
   useEffect(() => {
     fetchMarketplacePlugins(marketplaceQuery)
-  }, [fetchMarketplacePlugins])
+  }, [fetchMarketplacePlugins, marketplaceQuery])
 
   // Debounced search
   const handleSearchChange = useCallback(
@@ -158,12 +158,16 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
 
   // Compute all unique marketplace sources
   const marketplaceSources = useMemo(() => {
-    const sources = new Map<string, number>()
+    const sources = new Map<string, { count: number; builtIn: boolean }>()
     marketplacePlugins.forEach((p) => {
       const name = p.sourceMarketplace || t('plugins.unknownMarketplace')
-      sources.set(name, (sources.get(name) || 0) + 1)
+      const existing = sources.get(name)
+      sources.set(name, {
+        count: (existing?.count || 0) + 1,
+        builtIn: existing?.builtIn || !!p.builtIn,
+      })
     })
-    return Array.from(sources.entries()).sort((a, b) => b[1] - a[1])
+    return Array.from(sources.entries()).sort((a, b) => b[1].count - a[1].count)
   }, [marketplacePlugins, t])
 
   // Compute all unique keywords
@@ -299,7 +303,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
             >
               {t('plugins.allMarketplaces')}
             </button>
-            {marketplaceSources.map(([name, count]) => {
+            {marketplaceSources.map(([name, { count, builtIn }]) => {
               const isActive = selectedMarketplaces.includes(name)
               return (
                 <button
@@ -313,6 +317,11 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
                 >
                   <Store className="w-3 h-3" />
                   {name}
+                  {builtIn && (
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-accent/10 text-accent">
+                      {t('plugins.builtIn')}
+                    </span>
+                  )}
                   <span className="text-text-tertiary">({count})</span>
                 </button>
               )
@@ -438,6 +447,7 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
               ? plugins
               : plugins.slice(0, PLUGINS_PER_SECTION)
             const hasMore = plugins.length > PLUGINS_PER_SECTION
+            const isBuiltIn = plugins.some((p) => p.builtIn)
 
             return (
               <div key={marketplaceName}>
@@ -448,6 +458,11 @@ export default function PluginMarketplaceTab({ workspaceId }: PluginMarketplaceT
                   <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider flex items-center gap-2">
                     <Store className="w-3.5 h-3.5" />
                     {marketplaceName}
+                    {isBuiltIn && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent normal-case">
+                        {t('plugins.builtIn')}
+                      </span>
+                    )}
                     <span className="text-[10px] font-normal text-text-tertiary normal-case">
                       ({plugins.length})
                     </span>

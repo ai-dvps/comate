@@ -199,6 +199,7 @@
     "unknownMarketplace": "Other Marketplace",
     "marketplacesTitle": "Marketplaces",
     "allMarketplaces": "All marketplaces",
+    "builtIn": "Built-in",
     "keywordsTitle": "Categories",
     "pluginsFound": "{{count}} plugins across {{marketplaces}} marketplaces",
     "showAll": "Show all ({{count}})",

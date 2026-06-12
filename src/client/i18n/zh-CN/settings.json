@@ -199,6 +199,7 @@
     "unknownMarketplace": "其他市场",
     "marketplacesTitle": "市场",
     "allMarketplaces": "全部市场",
+    "builtIn": "内置",
     "keywordsTitle": "分类",
     "pluginsFound": "{{count}} 个插件，来自 {{marketplaces}} 个市场",
     "showAll": "显示全部 ({{count}})",

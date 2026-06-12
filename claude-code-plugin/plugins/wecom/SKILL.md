@@ -17,7 +17,7 @@ wecom send --to-user USERID --message "Hello from the team" --session-id ${CLAUD
 Send a markdown message:
 
 ```bash
-wecom send --to-user USERID --message "**Bold** and \`code\`" --msg-type markdown --session-id ${CLAUDE_SESSION_ID}
+wecom send --to-user USERID --message "**Bold** and `code`" --msg-type markdown --session-id ${CLAUDE_SESSION_ID}
 ```
 
 If `wecom` is not in PATH, use `npx wecom` or the full path from `WECOM_CLI_PATH`.

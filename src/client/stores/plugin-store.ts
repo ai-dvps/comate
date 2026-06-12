@@ -11,7 +11,8 @@ export interface Plugin {
   keywords?: string[]
   sourceMarketplace?: string
   sourceUrl?: string
-  sourceType?: 'git' | 'zip'
+  sourceType?: 'git' | 'zip' | 'local'
+  builtIn?: boolean
 }
 
 export type PluginScope = 'user' | 'project' | 'local'

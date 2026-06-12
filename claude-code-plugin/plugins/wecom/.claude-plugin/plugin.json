@@ -1,0 +1,5 @@
+{
+  "name": "wecom",
+  "description": "Send WeCom messages via the wecom CLI",
+  "version": "0.1.0"
+}

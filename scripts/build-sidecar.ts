@@ -1,5 +1,13 @@
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, copyFileSync, rmSync, readFileSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  copyFileSync,
+  cpSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+} from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -236,6 +244,20 @@ async function build() {
   const nativeModuleDest = join(resourcesDir, 'better_sqlite3.node');
   copyFileSync(nativeModuleSource, nativeModuleDest);
   console.log(`Copied to ${nativeModuleDest}`);
+
+  // 9. Copy built-in Claude Code marketplace to src-tauri/resources/
+  console.log('\n--- Copying built-in Claude Code marketplace ---');
+  const marketplaceSource = join(rootDir, 'claude-code-plugin');
+  const marketplaceDest = join(resourcesDir, 'claude-code-plugin');
+  if (existsSync(marketplaceSource)) {
+    if (existsSync(marketplaceDest)) {
+      rmSync(marketplaceDest, { recursive: true, force: true });
+    }
+    cpSync(marketplaceSource, marketplaceDest, { recursive: true, force: true });
+    console.log(`Copied to ${marketplaceDest}`);
+  } else {
+    console.warn(`Warning: Built-in marketplace not found at ${marketplaceSource}`);
+  }
 
   console.log('\n=== Sidecar build complete ===');
 }

@@ -52,6 +52,7 @@ Tauri CLI is installed automatically as a devDependency via `npm install`. You d
 | `src/server/services/` | Business logic and AI session management |
 | `src/server/storage/` | SQLite database layer |
 | `src-tauri/` | Rust Tauri desktop shell |
+| `claude-code-plugin/` | Built-in local plugin marketplace (shipped with the app bundle) |
 | `packages/wecom-cli/` | WeChat Work (WeCom) CLI tool |
 | `scripts/` | Build scripts and code generation |
 
@@ -64,6 +65,10 @@ npm run release
 ```
 
 This bundles the sidecar server and builds the Tauri application. Output artifacts land in `src-tauri/target/release/bundle/`.
+
+## WeCom Plugin
+
+The WeCom send skill is distributed as a built-in Claude Code plugin in `claude-code-plugin/plugins/wecom/`. After installing the `wecom` plugin from the built-in marketplace, users can invoke it with `/wecom:send-wecom-msg`. The plugin content can be updated independently of the app release by editing `claude-code-plugin/plugins/wecom/SKILL.md`.
 
 ## Contributing
 
