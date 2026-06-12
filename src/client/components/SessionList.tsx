@@ -4,8 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
-import { MessageSquare, Plus, Pencil, Shield, ShieldAlert, Puzzle } from 'lucide-react'
+import { MessageSquare, Plus, Pencil, Shield, ShieldAlert, Puzzle, BookOpen } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
+import SkillsPage from './SkillsPage'
 import StatusIndicator from './StatusIndicator'
 import { deriveSessionState } from '../lib/session-status'
 
@@ -55,6 +56,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [editingName, setEditingName] = useState('')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
   const [showPluginSettings, setShowPluginSettings] = useState(false)
+  const [showSkillsPage, setShowSkillsPage] = useState(false)
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
@@ -300,14 +302,22 @@ export default function SessionList({ workspaceId }: SessionListProps) {
         )}
       </div>
 
-      {/* Plugin Settings Toolbar */}
-      <div className="p-2 border-t border-border/50 flex-shrink-0">
+      {/* Plugin + Skills Settings Toolbar */}
+      <div className="p-2 border-t border-border/50 flex-shrink-0 flex gap-2">
         <button
           onClick={() => setShowPluginSettings(true)}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-bg border border-border hover:border-border-hover rounded-lg text-xs text-text-secondary hover:text-text-primary transition-colors"
+          className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-bg border border-border hover:border-border-hover rounded-lg text-xs text-text-secondary hover:text-text-primary transition-colors"
         >
           <Puzzle className="w-3.5 h-3.5" />
           {ts('plugins.title')}
+        </button>
+        <button
+          onClick={() => setShowSkillsPage(true)}
+          className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-bg border border-border hover:border-border-hover rounded-lg text-xs text-text-secondary hover:text-text-primary transition-colors"
+          title={ts('skills.toolbarButton')}
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          {ts('skills.toolbarButton')}
         </button>
       </div>
 
@@ -342,6 +352,14 @@ export default function SessionList({ workspaceId }: SessionListProps) {
         <PluginSettingsPage
           workspaceId={workspaceId}
           onClose={() => setShowPluginSettings(false)}
+        />
+      )}
+
+      {/* Skills Page */}
+      {showSkillsPage && (
+        <SkillsPage
+          workspaceId={workspaceId}
+          onClose={() => setShowSkillsPage(false)}
         />
       )}
     </div>
