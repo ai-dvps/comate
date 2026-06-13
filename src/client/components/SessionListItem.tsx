@@ -30,7 +30,6 @@ function getSessionTimestamp(session: ChatSession, t: TFunction): string {
 
 export interface SessionListItemProps {
   session: ChatSession
-  variant: 'list' | 'pinned'
   displayName: string
   isActive: boolean
   isStreaming: boolean
@@ -51,7 +50,6 @@ export interface SessionListItemProps {
 
 export default function SessionListItem({
   session,
-  variant,
   displayName,
   isActive,
   isStreaming,
@@ -69,7 +67,6 @@ export default function SessionListItem({
   onActivate,
   t,
 }: SessionListItemProps) {
-  const isPinned = variant === 'pinned'
   const rowState = deriveSessionState({
     isStreaming,
     pendingCount,
@@ -77,28 +74,14 @@ export default function SessionListItem({
     isActive,
   })
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      onActivate(session.id)
-    }
-  }
-
   return (
     <div
       key={session.id}
       onClick={() => onActivate(session.id)}
       onContextMenu={(e) => onContextMenu(e, session.id)}
-      onKeyDown={isPinned ? handleKeyDown : undefined}
-      tabIndex={isPinned ? 0 : undefined}
-      role={isPinned ? 'button' : undefined}
-      aria-label={isPinned ? `Active session: ${displayName}` : undefined}
       className={cn(
-        'session-item px-3 py-2.5 cursor-pointer group transition-all',
-        isPinned
-          ? 'bg-surface-active border-b border-border/50 border-l-2 border-accent focus:outline-none focus:bg-surface-active'
-          : 'mx-2 rounded-lg',
-        !isPinned && (isActive ? 'bg-surface-active' : 'hover:bg-surface-hover'),
+        'session-item px-3 py-2.5 cursor-pointer group transition-all mx-2 rounded-lg',
+        isActive ? 'bg-surface-active' : 'hover:bg-surface-hover',
       )}
     >
       <div className="flex items-start gap-2">
@@ -146,8 +129,7 @@ export default function SessionListItem({
                     onStartEdit(session)
                   }}
                   className={cn(
-                    'p-0.5 rounded hover:bg-surface-hover text-text-tertiary hover:text-text-secondary transition-opacity',
-                    isPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                    'p-0.5 rounded hover:bg-surface-hover text-text-tertiary hover:text-text-secondary transition-opacity opacity-0 group-hover:opacity-100',
                   )}
                   title={t('renameSession')}
                 >

@@ -4,6 +4,7 @@ import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import { getSessionDisplayName, matchesSessionQuery } from '../lib/session-filter'
+import { compareSessionActivity } from '../lib/session-sort'
 import { Plus, Puzzle, BookOpen, Search, X } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
@@ -31,11 +32,11 @@ export default function SessionList({ workspaceId }: SessionListProps) {
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
-  const activeSession = sessions.find((s) => s.id === activeSessionId)
   const messages = useChatStore((s) => s.messages)
   const sessionStatus = useChatStore((s) => s.sessionStatus)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const unreadCompletions = useChatStore((s) => s.unreadCompletions)
+  const lastActivityAt = useChatStore((s) => s.lastActivityAt)
   const isLoading = useChatStore((s) => s.isLoadingSessions[workspaceId])
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const createSession = useChatStore((s) => s.createSession)
@@ -43,12 +44,15 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const toggleSessionWip = useChatStore((s) => s.toggleSessionWip)
 
   const trimmedQuery = searchQuery.trim()
-  const activeMatches = activeSession ? matchesSessionQuery(activeSession, trimmedQuery) : false
-  const filteredSessions = useMemo(
-    () => sessions.filter((session) => session.id !== activeSessionId && matchesSessionQuery(session, trimmedQuery)),
-    [sessions, activeSessionId, trimmedQuery],
+  const sortedSessions = useMemo(
+    () => [...sessions].sort((a, b) => compareSessionActivity(a, b, lastActivityAt)),
+    [sessions, lastActivityAt],
   )
-  const matchCount = (activeMatches ? 1 : 0) + filteredSessions.length
+  const filteredSessions = useMemo(
+    () => sortedSessions.filter((session) => matchesSessionQuery(session, trimmedQuery)),
+    [sortedSessions, trimmedQuery],
+  )
+  const matchCount = filteredSessions.length
 
   const handleCreate = async () => {
     const name = newName.trim() || t('newSessionDefaultName', { count: sessions.length + 1 })
@@ -100,8 +104,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     }
   }, [contextMenu])
 
-  // Cancel any in-flight rename when the active session changes so the input
-  // does not follow a stale session into the pinned header.
+  // Cancel any in-flight rename when the active session changes so the rename
+  // input does not follow a stale session.
   useEffect(() => {
     setEditingSessionId(null)
     setEditingName('')
@@ -227,30 +231,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
         </div>
       </div>
 
-      {/* Pinned Active Session Header */}
-      {activeSession && activeMatches && (
-        <SessionListItem
-          session={activeSession}
-          variant="pinned"
-          displayName={getSessionDisplayName(activeSession)}
-          isActive
-          isStreaming={!!isStreaming[activeSession.id]}
-          pendingCount={sessionStatus[activeSession.id]?.pendingCount ?? 0}
-          unread={!!unreadCompletions[activeSession.id]}
-          preview={getPreview(activeSession.id)}
-          editingSessionId={editingSessionId}
-          editingName={editingName}
-          useModifierToSubmit={useModifierToSubmit}
-          onStartEdit={startEdit}
-          onCommitEdit={commitEdit}
-          onCancelEdit={cancelEdit}
-          onSetEditingName={setEditingName}
-          onContextMenu={handleContextMenu}
-          onActivate={handleActivate}
-          t={t}
-        />
-      )}
-
       {/* Session List */}
       <div className="flex-1 overflow-y-auto py-1">
         {isLoading && sessions.length === 0 ? (
@@ -268,9 +248,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             <SessionListItem
               key={session.id}
               session={session}
-              variant="list"
               displayName={getSessionDisplayName(session)}
-              isActive={false}
+              isActive={session.id === activeSessionId}
               isStreaming={!!isStreaming[session.id]}
               pendingCount={sessionStatus[session.id]?.pendingCount ?? 0}
               unread={!!unreadCompletions[session.id]}
