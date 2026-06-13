@@ -97,7 +97,11 @@
     "session": "累计",
     "context": "上下文"
   },
-  "searchTodos": "搜索待办...",
+  "searchSessions": "搜索会话...",
+  "clearSearch": "清除搜索",
+  "noMatchingSessions": "没有匹配的会话。",
+  "matchingSessionCount_one": "{{count}} 个会话匹配",
+  "matchingSessionCount_other": "{{count}} 个会话匹配",
   "loadingTodos": "正在加载待办...",
   "noSearchResults": "没有匹配的待办。",
   "noTodos": "还没有待办。",
