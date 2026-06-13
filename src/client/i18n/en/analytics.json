@@ -8,6 +8,8 @@
   "dailyAvgTokens": "Daily avg tokens",
   "estimated": "Estimated",
   "estimatedCost": "Estimated Cost",
+  "fetchFailedGlobal": "Failed to load global analytics",
+  "fetchFailedWorkspace": "Failed to load workspace analytics",
   "fullCoverageNote": "All tokens priced.",
   "input": "Input",
   "legend": {
@@ -29,6 +31,7 @@
     "share": "Share",
     "tokens": "Tokens"
   },
+  "workspaceNotFound": "Workspace not found",
   "tools": {
     "bash": "Terminal",
     "edit": "Edit File",

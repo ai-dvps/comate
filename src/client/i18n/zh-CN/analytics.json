@@ -8,6 +8,8 @@
   "dailyAvgTokens": "日均 token",
   "estimated": "估算",
   "estimatedCost": "估算费用",
+  "fetchFailedGlobal": "加载全局分析数据失败",
+  "fetchFailedWorkspace": "加载工作区分析数据失败",
   "fullCoverageNote": "全部 token 均有定价。",
   "input": "输入",
   "legend": {
@@ -29,6 +31,7 @@
     "share": "占比",
     "tokens": "Token"
   },
+  "workspaceNotFound": "工作区不存在",
   "tools": {
     "bash": "终端",
     "edit": "编辑文件",
