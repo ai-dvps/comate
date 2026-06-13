@@ -120,11 +120,11 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
   const progressPercent = total > 0 ? (completedCount / total) * 100 : 0
 
   return (
-    <div className="relative flex-shrink-0 border-b border-border/30 bg-bg z-20">
+    <div className="relative flex-shrink-0 border-b border-border/30 bg-accent/8 z-20">
       {/* Collapsed bar */}
       <button
         onClick={toggle}
-        className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-hover/50 transition-colors"
+        className="w-full flex items-center gap-3 px-4 py-2 hover:bg-accent/12 transition-colors"
       >
         <ListTodo className="size-4 text-text-tertiary shrink-0" />
         <div className="flex-1 min-w-0">
@@ -155,7 +155,7 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
 
       {/* Expanded popup panel */}
       {expanded && (
-        <div className={`absolute top-full left-0 right-0 border-b border-x border-border/30 rounded-b-lg bg-bg shadow-lg max-h-64 overflow-y-auto ${fontSizeClass(chatFontSize)}`}>
+        <div className={`absolute top-full left-0 right-0 border-b border-x border-border/30 rounded-b-lg bg-accent/8 shadow-lg max-h-64 overflow-y-auto ${fontSizeClass(chatFontSize)}`}>
           <div className="max-w-3xl mx-auto w-full">
             {tasks.length === 0 ? (
               <div className="px-4 py-3 text-text-tertiary">
