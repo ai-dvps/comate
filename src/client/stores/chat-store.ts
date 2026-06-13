@@ -203,7 +203,7 @@ interface ChatState {
   domCache: Record<string, string[]>
   isRestartingRuntime: Record<string, boolean>
 
-  fetchSessions: (workspaceId: string) => Promise<void>
+  fetchSessions: (workspaceId: string) => Promise<{ ok: boolean; error?: string }>
   touchDomCache: (workspaceId: string, sessionId: string) => string | null
   getDomCache: (workspaceId: string) => string[]
   createSession: (workspaceId: string, name: string, approvalMode?: ApprovalMode, providerId?: string) => Promise<void>
@@ -1859,10 +1859,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isRestartingRuntime: {},
 
   fetchSessions: async (workspaceId: string) => {
+    set((state) => ({ isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: true } }))
     try {
-      set((state) => ({ isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: true } }))
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`)
-      if (!res.ok) throw new Error(i18next.t('common:failedToFetchSessions', 'Failed to fetch sessions'))
+      if (!res.ok) {
+        return { ok: false, error: i18next.t('common:failedToFetchSessions', 'Failed to fetch sessions') }
+      }
       const data = await res.json()
       const fetchedSessions: ChatSession[] = data.sessions || []
       set((state) => {
@@ -1878,13 +1880,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return {
           sessions: { ...state.sessions, [workspaceId]: fetchedSessions },
-          isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: false },
           lastActivityAt: nextLastActivityAt,
         }
       })
       startBackgroundPolling(set, workspaceId)
+      return { ok: true }
     } catch (err) {
       console.error('Failed to fetch sessions:', err)
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error'),
+      }
+    } finally {
       set((state) => ({ isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: false } }))
     }
   },
