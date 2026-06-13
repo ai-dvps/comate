@@ -12,6 +12,7 @@ import SettingsPanel from './components/SettingsPanel'
 import FilePanel, { ViewedFile } from './components/FilePanel'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
+import ToastContainer from './components/ToastContainer'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useProviderStore } from './stores/provider-store'
 import { useChatStore } from './stores/chat-store'
@@ -314,6 +315,8 @@ function App() {
           onClose={() => setShowCreateModal(false)}
         />
       )}
+
+      <ToastContainer />
     </div>
   )
 }
