@@ -1,6 +1,7 @@
 {
   "appName": "Claude Code",
   "header": {
+    "analytics": "Analytics",
     "createWorkspace": "Create workspace",
     "toggleTheme": "Toggle theme",
     "settings": "Settings",

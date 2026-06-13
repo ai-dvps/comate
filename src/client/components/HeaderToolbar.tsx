@@ -1,15 +1,17 @@
 import { useTranslation } from 'react-i18next'
-import { Plus, Settings, Sun, Moon } from 'lucide-react'
+import { BarChart3, Plus, Settings, Sun, Moon } from 'lucide-react'
 import { useTheme } from '../hooks/use-theme'
 
 interface HeaderToolbarProps {
   onCreateWorkspace: () => void
   onOpenSettings: () => void
+  onOpenAnalytics: () => void
 }
 
 export default function HeaderToolbar({
   onCreateWorkspace,
   onOpenSettings,
+  onOpenAnalytics,
 }: HeaderToolbarProps) {
   const { t } = useTranslation('common')
   const { theme, toggleTheme } = useTheme()
@@ -22,6 +24,14 @@ export default function HeaderToolbar({
         title={t('header.createWorkspace')}
       >
         <Plus className="w-4 h-4" />
+      </button>
+
+      <button
+        onClick={onOpenAnalytics}
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        title={t('header.analytics')}
+      >
+        <BarChart3 className="w-4 h-4" />
       </button>
 
       <button
