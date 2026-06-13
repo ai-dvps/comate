@@ -97,7 +97,11 @@
     "session": "Session",
     "context": "Context"
   },
-  "searchTodos": "Search todos...",
+  "searchSessions": "Search sessions...",
+  "clearSearch": "Clear search",
+  "noMatchingSessions": "No sessions match your search.",
+  "matchingSessionCount_one": "{{count}} session matches",
+  "matchingSessionCount_other": "{{count}} sessions match",
   "loadingTodos": "Loading todos...",
   "noSearchResults": "No todos match your search.",
   "noTodos": "No todos yet.",
