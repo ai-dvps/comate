@@ -6,7 +6,7 @@ import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../mod
 import type { Workspace } from '../models/workspace.js';
 import type { Provider } from '../models/provider.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import type { ChatMessage, TaskItem } from '../types/message.js';
+import type { ChatMessage, TaskItem, SseEvent } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
 import { SessionRuntime } from './session-runtime.js';
@@ -36,18 +36,22 @@ export function __restoreIdleGracePeriod(): void {
 }
 
 export class ChatService {
-  private sdkClient = new SdkClient();
+  private sdkClient: SdkClient;
   private runtimes = new Map<string, SessionRuntime>();
   private creatingRuntimes = new Map<string, Promise<SessionRuntime>>();
   private idleTimeouts = new Map<string, NodeJS.Timeout>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+  constructor(sdkClient?: SdkClient) {
+    this.sdkClient = sdkClient ?? new SdkClient();
+  }
 
   getActiveSessionCount(): number {
     return this.runtimes.size;
   }
 
   /** Diagnostic: test-run the Claude binary in the workspace cwd to capture stderr. */
-  private async testClaudeBinary(claudePath: string | undefined, cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
+  protected async testClaudeBinary(claudePath: string | undefined, cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
     if (!claudePath) {
       sidecarLog('[ChatService.testClaudeBinary] no binary path, skipping test');
       return;
@@ -478,6 +482,27 @@ export class ChatService {
     );
     this.runtimes.clear();
     this.idleTimeouts.clear();
+  }
+
+  async pushMessage(
+    sessionId: string,
+    workspaceId: string,
+    message: string,
+    isBotSession?: boolean,
+    botEventHandler?: (id: number, event: SseEvent) => void,
+  ): Promise<void> {
+    const runtime = await this.getOrCreateRuntime(sessionId, workspaceId, isBotSession, botEventHandler);
+
+    // Promote a draft session to a real SDK session on first message. The SDK
+    // creates the persistent session when this message is pushed, so clear the
+    // draft flag now so future renames go through sdkClient.renameSession instead
+    // of only updating the local SQLite row.
+    const localSession = workspaceStore.getLocalSession(sessionId);
+    if (localSession?.isDraft) {
+      workspaceStore.clearDraftFlag(sessionId);
+    }
+
+    runtime.pushMessage(message);
   }
 
   getSessionsStatus(workspaceId: string): Record<string, { pendingCount: number; isProcessing: boolean }> {
