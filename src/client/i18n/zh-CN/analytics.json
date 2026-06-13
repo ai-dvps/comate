@@ -1,0 +1,53 @@
+{
+  "activeDays": "活跃天数",
+  "cacheCreation": "缓存写入",
+  "cacheRead": "缓存读取",
+  "calendarTotal": "总计: {{count}} 条消息",
+  "coverageHelp": "估算费用由 token 数量乘以模型定价计算得出。无已知定价的模型对应的 token 将不计入费用，并通过覆盖率指示器反映。",
+  "dailyAvgMessages": "日均消息",
+  "dailyAvgTokens": "日均 token",
+  "estimated": "估算",
+  "estimatedCost": "估算费用",
+  "fullCoverageNote": "全部 token 均有定价。",
+  "input": "输入",
+  "legend": {
+    "less": "少",
+    "more": "多"
+  },
+  "noActivity": "暂无活动数据",
+  "noData": "暂无数据",
+  "noToolData": "暂无工具使用数据",
+  "output": "输出",
+  "partialCoverageNote": "部分 token 已排除（定价未知）。",
+  "pricingCoverage": "定价覆盖率",
+  "providerMeta": "{{sessions}} 个会话",
+  "subtitle": "来自会话记录的汇总统计",
+  "title": "分析",
+  "tooltip": {
+    "messages": "消息",
+    "sessions": "会话",
+    "share": "占比",
+    "tokens": "Token"
+  },
+  "tools": {
+    "bash": "终端",
+    "edit": "编辑文件",
+    "exitPlanMode": "退出计划模式",
+    "glob": "查找文件",
+    "grep": "搜索文本",
+    "ls": "浏览目录",
+    "multiEdit": "批量编辑",
+    "notebookEdit": "编辑笔记本",
+    "notebookRead": "读取笔记本",
+    "read": "读取文件",
+    "task": "执行任务",
+    "todoRead": "读取待办",
+    "todoWrite": "写入待办",
+    "webFetch": "网页抓取",
+    "webSearch": "网页搜索",
+    "write": "创建文件"
+  },
+  "totalTokenUsage": "Token 总量",
+  "totalUsage": "总用量",
+  "weekdayNamesShort": ["日", "一", "二", "三", "四", "五", "六"]
+}

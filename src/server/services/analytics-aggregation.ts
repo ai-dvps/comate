@@ -21,6 +21,15 @@ import type {
 } from '../storage/analytics-cache.js';
 import { inferProviderId } from './analytics-pricing.js';
 
+// Re-export the cache-layer types that appear in summary shapes so consumers
+// (notably the client components) have a single import surface.
+export type {
+  DailyStatEntry,
+  HeatmapCell,
+  ModelUsageEntry,
+  ToolUsageEntry,
+} from '../storage/analytics-cache.js';
+
 export interface WorkspaceStatsSummary {
   workspaceId: string;
   workspaceName: string;
