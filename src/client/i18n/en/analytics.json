@@ -1,5 +1,7 @@
 {
   "activeDays": "active days",
+  "activityHeatmap": "Activity Heatmap",
+  "avgDuration": "Avg Duration",
   "cacheCreation": "Cache Creation",
   "cacheRead": "Cache Read",
   "calendarTotal": "Total: {{count}} messages",
@@ -16,22 +18,30 @@
     "less": "Less",
     "more": "More"
   },
+  "loadError": "Failed to load analytics",
+  "loading": "Loading analytics…",
+  "modelDistribution": "Model Distribution",
+  "mostUsedTools": "Most Used Tools",
   "noActivity": "No activity data available",
   "noData": "No data available",
   "noToolData": "No tool usage data available",
+  "noWorkspaces": "No workspaces yet",
   "output": "Output",
   "partialCoverageNote": "Some tokens excluded (unknown pricing).",
   "pricingCoverage": "Pricing coverage",
+  "providerDistribution": "Provider Distribution",
   "providerMeta": "{{sessions}} sessions",
+  "recentActivityTrend": "Recent Activity Trend",
   "subtitle": "Aggregated statistics from session transcripts",
   "title": "Analytics",
+  "titleGlobal": "Global Analytics",
+  "titleWorkspace": "Workspace Analytics",
   "tooltip": {
     "messages": "Messages",
     "sessions": "Sessions",
     "share": "Share",
     "tokens": "Tokens"
   },
-  "workspaceNotFound": "Workspace not found",
   "tools": {
     "bash": "Terminal",
     "edit": "Edit File",
@@ -50,7 +60,17 @@
     "webSearch": "Web Search",
     "write": "Create File"
   },
+  "toolsUsed": "Tools Used",
+  "topWorkspaceMeta": "{{sessions}} sessions · {{messages}} messages",
+  "topWorkspaces": "Top Workspaces",
+  "tokenTypeDistribution": "Token Type Distribution",
+  "totalDuration": "Total Duration",
+  "totalMessages": "Total Messages",
+  "totalSessions": "Total Sessions",
   "totalTokenUsage": "Total Tokens",
+  "totalTokens": "Total Tokens",
   "totalUsage": "Total Usage",
-  "weekdayNamesShort": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  "weekdayNamesShort": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+  "workspace": "Workspace",
+  "workspaceNotFound": "Workspace not found"
 }
