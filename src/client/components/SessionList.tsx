@@ -1,45 +1,22 @@
-import type { TFunction } from 'i18next'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
+import type { ChatSession } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
-import { MessageSquare, Plus, Pencil, Shield, ShieldAlert, Puzzle, BookOpen } from 'lucide-react'
+import { Plus, Puzzle, BookOpen } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
-import StatusIndicator from './StatusIndicator'
-import { deriveSessionState } from '../lib/session-status'
+import SessionListItem from './SessionListItem'
 
 const EMPTY_ARRAY: [] = []
 
-function formatRelativeDate(dateStr: string, t: TFunction): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  const diffHours = Math.floor(diffMs / 3600000)
-  const diffDays = Math.floor(diffMs / 86400000)
-
-  if (diffMins < 1) return t('time.justNow')
-  if (diffMins < 60) return t('time.minAgo', { count: diffMins })
-  if (diffHours < 24) return t('time.hourAgo', { count: diffHours })
-  if (diffDays < 7) return t('time.dayAgo', { count: diffDays })
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-function getSessionDisplayName(session: import('../stores/chat-store').ChatSession): string {
+function getSessionDisplayName(session: ChatSession): string {
   const name = session.customTitle || session.summary || session.name
   if (session.source === 'wecom' && name.startsWith('WeCom: ')) {
     return name.slice(7)
   }
   return name
-}
-
-function getSessionTimestamp(session: import('../stores/chat-store').ChatSession, t: TFunction): string {
-  if (session.lastModified) {
-    return formatRelativeDate(new Date(session.lastModified).toISOString(), t)
-  }
-  return formatRelativeDate(session.updatedAt, t)
 }
 
 interface SessionListProps {
@@ -60,6 +37,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
+  const activeSession = sessions.find((s) => s.id === activeSessionId)
   const messages = useChatStore((s) => s.messages)
   const sessionStatus = useChatStore((s) => s.sessionStatus)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -120,6 +98,22 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     }
   }, [contextMenu])
 
+  // Cancel any in-flight rename when the active session changes so the input
+  // does not follow a stale session into the pinned header.
+  useEffect(() => {
+    setEditingSessionId(null)
+    setEditingName('')
+  }, [activeSessionId])
+
+  const handleContextMenu = (e: React.MouseEvent, sessionId: string) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, sessionId })
+  }
+
+  const handleActivate = (sessionId: string) => {
+    setActiveSession(workspaceId, sessionId)
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* New Session Button */}
@@ -171,6 +165,30 @@ export default function SessionList({ workspaceId }: SessionListProps) {
         )}
       </div>
 
+      {/* Pinned Active Session Header */}
+      {activeSession && (
+        <SessionListItem
+          session={activeSession}
+          variant="pinned"
+          displayName={getSessionDisplayName(activeSession)}
+          isActive
+          isStreaming={!!isStreaming[activeSession.id]}
+          pendingCount={sessionStatus[activeSession.id]?.pendingCount ?? 0}
+          unread={!!unreadCompletions[activeSession.id]}
+          preview={getPreview(activeSession.id)}
+          editingSessionId={editingSessionId}
+          editingName={editingName}
+          useModifierToSubmit={useModifierToSubmit}
+          onStartEdit={startEdit}
+          onCommitEdit={commitEdit}
+          onCancelEdit={cancelEdit}
+          onSetEditingName={setEditingName}
+          onContextMenu={handleContextMenu}
+          onActivate={handleActivate}
+          t={t}
+        />
+      )}
+
       {/* Session List */}
       <div className="flex-1 overflow-y-auto py-1">
         {isLoading && sessions.length === 0 ? (
@@ -182,123 +200,31 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             {t('createSessionPrompt')}
           </div>
         ) : (
-          sessions.map((session) => {
-            const rowState = deriveSessionState({
-              isStreaming: !!isStreaming[session.id],
-              pendingCount: sessionStatus[session.id]?.pendingCount ?? 0,
-              unread: !!unreadCompletions[session.id],
-              isActive: session.id === activeSessionId,
-            })
-            return (
-            <div
-              key={session.id}
-              onClick={() => setActiveSession(workspaceId, session.id)}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                setContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id })
-              }}
-              className={`session-item mx-2 px-3 py-2.5 rounded-lg cursor-pointer group transition-all ${
-                session.id === activeSessionId
-                  ? 'bg-surface-active'
-                  : 'hover:bg-surface-hover'
-              }`}
-            >
-              <div className="flex items-start gap-2">
-                <MessageSquare
-                  className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${
-                    session.id === activeSessionId ? 'text-accent' : 'text-text-tertiary'
-                  }`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    {editingSessionId === session.id ? (
-                      <input
-                        autoFocus
-                        value={editingName}
-                        onChange={(e) => setEditingName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
-                            e.preventDefault()
-                            commitEdit(session.id)
-                          }
-                          if (e.key === 'Escape') {
-                            e.preventDefault()
-                            cancelEdit()
-                          }
-                        }}
-                        onBlur={() => cancelEdit()}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex-1 min-w-0 px-2 py-0.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary"
-                      />
-                    ) : (
-                      <>
-                        <p
-                          className={`text-xs truncate ${
-                            session.id === activeSessionId
-                              ? 'text-text-primary font-medium'
-                              : 'text-text-secondary'
-                          }`}
-                        >
-                          {getSessionDisplayName(session)}
-                        </p>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            startEdit(session)
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-hover text-text-tertiary hover:text-text-secondary transition-opacity"
-                          title={t('renameSession')}
-                        >
-                          <Pencil className="w-3 h-3" />
-                        </button>
-                      </>
-                    )}
-                    {session.isDraft && (
-                      <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
-                        {t('draft')}
-                      </span>
-                    )}
-                    {session.source === 'wecom' && (
-                      <img
-                        src="/wecom-icon.svg"
-                        alt="WeCom"
-                        className="w-3 h-3 flex-shrink-0"
-                        title={t('wecomBotSession')}
-                      />
-                    )}
-                    {rowState !== 'idle' && <StatusIndicator state={rowState} />}
-                  </div>
-                  <p className="text-[11px] text-text-tertiary truncate mt-0.5">
-                    {getPreview(session.id)}
-                  </p>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {session.isWip && (
-                      <span className="px-1 py-0.5 text-[9px] bg-purple-500/20 text-purple-400 rounded">
-                        {t('wip')}
-                      </span>
-                    )}
-                    {session.approvalMode && session.approvalMode !== 'manual' && (
-                      <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px] rounded ${
-                        session.approvalMode === 'auto'
-                          ? 'bg-red-500/20 text-red-400'
-                          : 'bg-amber-500/20 text-amber-400'
-                      }`}>
-                        {session.approvalMode === 'auto' ? (
-                          <ShieldAlert className="w-2.5 h-2.5" />
-                        ) : (
-                          <Shield className="w-2.5 h-2.5" />
-                        )}
-                        {t(`approvalMode.${session.approvalMode}`)}
-                      </span>
-                    )}
-                    <span className="text-[10px] text-text-tertiary/60">
-                      {getSessionTimestamp(session, t)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )})
+          sessions
+            .filter((session) => session.id !== activeSessionId)
+            .map((session) => (
+              <SessionListItem
+                key={session.id}
+                session={session}
+                variant="list"
+                displayName={getSessionDisplayName(session)}
+                isActive={false}
+                isStreaming={!!isStreaming[session.id]}
+                pendingCount={sessionStatus[session.id]?.pendingCount ?? 0}
+                unread={!!unreadCompletions[session.id]}
+                preview={getPreview(session.id)}
+                editingSessionId={editingSessionId}
+                editingName={editingName}
+                useModifierToSubmit={useModifierToSubmit}
+                onStartEdit={startEdit}
+                onCommitEdit={commitEdit}
+                onCancelEdit={cancelEdit}
+                onSetEditingName={setEditingName}
+                onContextMenu={handleContextMenu}
+                onActivate={handleActivate}
+                t={t}
+              />
+            ))
         )}
       </div>
 
