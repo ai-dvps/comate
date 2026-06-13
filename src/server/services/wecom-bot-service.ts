@@ -187,8 +187,7 @@ export class WeComBotService {
 
     const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
 
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, handler);
-    runtime.pushMessage(content);
+    await chatService.pushMessage(sessionId, workspaceId, content, true, handler);
   }
 
   private async handleMediaMessage(workspaceId: string, frame: WsFrame<BaseMessage>): Promise<void> {
@@ -221,16 +220,13 @@ export class WeComBotService {
         if (!sessionId) return;
 
         const streamReply = createStreamReply(conn, frame, sessionId, wecomUserId);
-        let runtime;
+        const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
         try {
-          runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, streamReply.handler);
+          await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply.handler);
         } catch (err) {
           streamReply.handler.cleanup();
           throw err;
         }
-
-        const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
-        runtime.pushMessage(prompt);
         return;
       }
 
@@ -259,17 +255,14 @@ export class WeComBotService {
       if (!sessionId) return;
 
       const streamReply = createStreamReply(conn, frame, sessionId, wecomUserId);
-      let runtime;
+      const defaultFilePrompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
+      const prompt = await this.resolveFilePrompt(workspaceId, relativePath, defaultFilePrompt);
       try {
-        runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId, true, streamReply.handler);
+        await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply.handler);
       } catch (err) {
         streamReply.handler.cleanup();
         throw err;
       }
-
-      const defaultFilePrompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
-      const prompt = await this.resolveFilePrompt(workspaceId, relativePath, defaultFilePrompt);
-      runtime.pushMessage(prompt);
     } catch (err) {
       console.error(`[WeComBotService] Failed to handle ${msgtype} message from ${wecomUserId}:`, err);
       // Reply to the WeCom user with a failure message

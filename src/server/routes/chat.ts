@@ -237,8 +237,7 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
 
   try {
     diagLog(`[Route] POST message to ${sessionId}`);
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
-    runtime.pushMessage(message);
+    await chatService.pushMessage(sessionId, workspaceId, message);
     res.json({ ok: true, debug: `[Route] POST message to ${sessionId}` });
   } catch (error) {
     console.error('Failed to push message:', error);
