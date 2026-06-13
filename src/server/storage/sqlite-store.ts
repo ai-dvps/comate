@@ -9,6 +9,7 @@ import type { Provider, CreateProviderInput, UpdateProviderInput } from '../mode
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
 import { getStorageDir } from './data-dir.js';
 import { getNativeBindingPath } from './native-binding.js';
+import { ensureAnalyticsCacheSchema, AnalyticsCache } from './analytics-cache.js';
 
 const STORAGE_DIR = getStorageDir();
 const DB_FILE = join(STORAGE_DIR, 'data.db');
@@ -31,6 +32,7 @@ function getDatabaseOptions(): Database.Options | undefined {
 
 export class SqliteStore {
   private db: Database.Database;
+  private analyticsCache?: AnalyticsCache;
 
   constructor() {
     ensureDirSync();
@@ -164,6 +166,8 @@ export class SqliteStore {
       )
     `);
 
+    ensureAnalyticsCacheSchema(this.db);
+
     this.migrateTodoDetailColumn();
     this.migrateMappingTable();
     this.migrateWecomUserSessions();
@@ -171,6 +175,17 @@ export class SqliteStore {
     this.migrateDraftSessions();
     this.migrateSessionMetadataToSessions();
     this.backfillWeComSessionSource();
+  }
+
+  /**
+   * Per-session analytics cache, lazily constructed on the store's own
+   * connection. See src/server/storage/analytics-cache.ts.
+   */
+  getAnalyticsCache(): AnalyticsCache {
+    if (!this.analyticsCache) {
+      this.analyticsCache = new AnalyticsCache(this.db);
+    }
+    return this.analyticsCache;
   }
 
   private migrateTodoDetailColumn(): void {
