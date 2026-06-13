@@ -5,10 +5,12 @@ import LanguageDetector from 'i18next-browser-languagedetector'
 import enCommon from './en/common.json'
 import enSettings from './en/settings.json'
 import enChat from './en/chat.json'
+import enAnalytics from './en/analytics.json'
 
 import zhCNCommon from './zh-CN/common.json'
 import zhCNSettings from './zh-CN/settings.json'
 import zhCNChat from './zh-CN/chat.json'
+import zhCNAnalytics from './zh-CN/analytics.json'
 
 i18n
   .use(LanguageDetector)
@@ -19,11 +21,13 @@ i18n
         common: enCommon,
         settings: enSettings,
         chat: enChat,
+        analytics: enAnalytics,
       },
       'zh-CN': {
         common: zhCNCommon,
         settings: zhCNSettings,
         chat: zhCNChat,
+        analytics: zhCNAnalytics,
       },
     },
     fallbackLng: 'en',

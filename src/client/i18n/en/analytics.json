@@ -1,0 +1,53 @@
+{
+  "activeDays": "active days",
+  "cacheCreation": "Cache Creation",
+  "cacheRead": "Cache Read",
+  "calendarTotal": "Total: {{count}} messages",
+  "coverageHelp": "Estimated cost is computed from token counts × model pricing. Tokens whose model has no known pricing are excluded from cost and reflected in the coverage indicator.",
+  "dailyAvgMessages": "Daily avg messages",
+  "dailyAvgTokens": "Daily avg tokens",
+  "estimated": "Estimated",
+  "estimatedCost": "Estimated Cost",
+  "fullCoverageNote": "All tokens priced.",
+  "input": "Input",
+  "legend": {
+    "less": "Less",
+    "more": "More"
+  },
+  "noActivity": "No activity data available",
+  "noData": "No data available",
+  "noToolData": "No tool usage data available",
+  "output": "Output",
+  "partialCoverageNote": "Some tokens excluded (unknown pricing).",
+  "pricingCoverage": "Pricing coverage",
+  "providerMeta": "{{sessions}} sessions",
+  "subtitle": "Aggregated statistics from session transcripts",
+  "title": "Analytics",
+  "tooltip": {
+    "messages": "Messages",
+    "sessions": "Sessions",
+    "share": "Share",
+    "tokens": "Tokens"
+  },
+  "tools": {
+    "bash": "Terminal",
+    "edit": "Edit File",
+    "exitPlanMode": "Exit Plan Mode",
+    "glob": "Find Files",
+    "grep": "Search Text",
+    "ls": "Browse Directory",
+    "multiEdit": "Multi Edit",
+    "notebookEdit": "Edit Notebook",
+    "notebookRead": "Read Notebook",
+    "read": "Read File",
+    "task": "Execute Task",
+    "todoRead": "Read Todos",
+    "todoWrite": "Write Todos",
+    "webFetch": "Web Fetch",
+    "webSearch": "Web Search",
+    "write": "Create File"
+  },
+  "totalTokenUsage": "Total Tokens",
+  "totalUsage": "Total Usage",
+  "weekdayNamesShort": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+}
