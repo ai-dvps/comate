@@ -116,6 +116,7 @@ export default function SessionListItem({
                 value={editingName}
                 onChange={(e) => onSetEditingName(e.target.value)}
                 onKeyDown={(e) => {
+                  e.stopPropagation()
                   if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
                     e.preventDefault()
                     onCommitEdit(session.id)
