@@ -5,10 +5,13 @@ import { useAppSettings } from '../hooks/use-app-settings'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import { getSessionDisplayName, matchesSessionQuery } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
-import { Plus, Puzzle, BookOpen, Search, X } from 'lucide-react'
+import { Plus, Puzzle, BookOpen, Search, X, RefreshCw } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
+import { Button } from './ui/button'
+import { cn } from './ui/utils'
+import { useToastStore } from '../stores/toast-store'
 
 const EMPTY_ARRAY: [] = []
 
@@ -42,6 +45,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const createSession = useChatStore((s) => s.createSession)
   const renameSession = useChatStore((s) => s.renameSession)
   const toggleSessionWip = useChatStore((s) => s.toggleSessionWip)
+  const fetchSessions = useChatStore((s) => s.fetchSessions)
+  const addToast = useToastStore((s) => s.addToast)
 
   const trimmedQuery = searchQuery.trim()
   const sortedSessions = useMemo(
@@ -149,12 +154,22 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     searchInputRef.current?.focus()
   }
 
+  const handleRefresh = async () => {
+    setSearchQuery('')
+    const result = await fetchSessions(workspaceId)
+    if (!result.ok) {
+      addToast({ severity: 'error', message: result.error ?? t('refreshFailed') })
+    }
+  }
+
   const searchDisabled = isLoading && sessions.length === 0
 
   return (
     <div className="flex flex-col h-full">
       {/* New Session Button + Search */}
       <div className="p-3 space-y-2">
+        <div className="flex gap-2 items-start">
+        <div className="flex-1 min-w-0">
         {showCreate ? (
           <div className="space-y-2">
             <input
@@ -200,6 +215,17 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             {t('newSession')}
           </button>
         )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleRefresh}
+          disabled={isLoading}
+          aria-label={t('refreshSessions')}
+        >
+          <RefreshCw className={cn('w-3.5 h-3.5', isLoading && 'animate-spin')} />
+        </Button>
+        </div>
 
         {/* Search */}
         <div className="relative" role="search">

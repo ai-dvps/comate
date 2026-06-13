@@ -98,6 +98,7 @@
     "context": "上下文"
   },
   "searchSessions": "搜索会话...",
+  "refreshSessions": "刷新会话",
   "clearSearch": "清除搜索",
   "noMatchingSessions": "没有匹配的会话。",
   "matchingSessionCount_one": "{{count}} 个会话匹配",

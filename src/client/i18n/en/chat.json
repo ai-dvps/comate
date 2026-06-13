@@ -98,6 +98,7 @@
     "context": "Context"
   },
   "searchSessions": "Search sessions...",
+  "refreshSessions": "Refresh sessions",
   "clearSearch": "Clear search",
   "noMatchingSessions": "No sessions match your search.",
   "matchingSessionCount_one": "{{count}} session matches",
