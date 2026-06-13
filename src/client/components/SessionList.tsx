@@ -1,23 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
-import type { ChatSession } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
-import { Plus, Puzzle, BookOpen } from 'lucide-react'
+import { getSessionDisplayName, matchesSessionQuery } from '../lib/session-filter'
+import { Plus, Puzzle, BookOpen, Search, X } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
 
 const EMPTY_ARRAY: [] = []
-
-function getSessionDisplayName(session: ChatSession): string {
-  const name = session.customTitle || session.summary || session.name
-  if (session.source === 'wecom' && name.startsWith('WeCom: ')) {
-    return name.slice(7)
-  }
-  return name
-}
 
 interface SessionListProps {
   workspaceId: string
@@ -34,6 +26,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
   const [showPluginSettings, setShowPluginSettings] = useState(false)
   const [showSkillsPage, setShowSkillsPage] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
@@ -47,6 +41,14 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const createSession = useChatStore((s) => s.createSession)
   const renameSession = useChatStore((s) => s.renameSession)
   const toggleSessionWip = useChatStore((s) => s.toggleSessionWip)
+
+  const trimmedQuery = searchQuery.trim()
+  const activeMatches = activeSession ? matchesSessionQuery(activeSession, trimmedQuery) : false
+  const filteredSessions = useMemo(
+    () => sessions.filter((session) => session.id !== activeSessionId && matchesSessionQuery(session, trimmedQuery)),
+    [sessions, activeSessionId, trimmedQuery],
+  )
+  const matchCount = (activeMatches ? 1 : 0) + filteredSessions.length
 
   const handleCreate = async () => {
     const name = newName.trim() || t('newSessionDefaultName', { count: sessions.length + 1 })
@@ -105,6 +107,11 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     setEditingName('')
   }, [activeSessionId])
 
+  // Reset search when switching workspaces.
+  useEffect(() => {
+    setSearchQuery('')
+  }, [workspaceId])
+
   const handleContextMenu = (e: React.MouseEvent, sessionId: string) => {
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY, sessionId })
@@ -114,10 +121,36 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     setActiveSession(workspaceId, sessionId)
   }
 
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      if (searchQuery) {
+        setSearchQuery('')
+      } else {
+        searchInputRef.current?.blur()
+      }
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+    }
+  }
+
+  const handleSearchFocus = () => {
+    // Cancel any in-flight rename so two text inputs don't compete for attention.
+    setEditingSessionId(null)
+    setEditingName('')
+  }
+
+  const clearSearch = () => {
+    setSearchQuery('')
+    searchInputRef.current?.focus()
+  }
+
+  const searchDisabled = isLoading && sessions.length === 0
+
   return (
     <div className="flex flex-col h-full">
-      {/* New Session Button */}
-      <div className="p-3">
+      {/* New Session Button + Search */}
+      <div className="p-3 space-y-2">
         {showCreate ? (
           <div className="space-y-2">
             <input
@@ -163,10 +196,39 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             {t('newSession')}
           </button>
         )}
+
+        {/* Search */}
+        <div className="relative" role="search">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <Search className="w-3.5 h-3.5 text-text-tertiary" />
+          </div>
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            onFocus={handleSearchFocus}
+            placeholder={t('searchSessions')}
+            aria-label={t('searchSessions')}
+            disabled={searchDisabled}
+            className="w-full pl-8 pr-7 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          {trimmedQuery && (
+            <button
+              type="button"
+              onClick={clearSearch}
+              aria-label={t('clearSearch')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Pinned Active Session Header */}
-      {activeSession && (
+      {activeSession && activeMatches && (
         <SessionListItem
           session={activeSession}
           variant="pinned"
@@ -199,33 +261,38 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             <br />
             {t('createSessionPrompt')}
           </div>
+        ) : trimmedQuery && matchCount === 0 ? (
+          <div className="px-4 py-3 text-xs text-text-tertiary text-center">{t('noMatchingSessions')}</div>
         ) : (
-          sessions
-            .filter((session) => session.id !== activeSessionId)
-            .map((session) => (
-              <SessionListItem
-                key={session.id}
-                session={session}
-                variant="list"
-                displayName={getSessionDisplayName(session)}
-                isActive={false}
-                isStreaming={!!isStreaming[session.id]}
-                pendingCount={sessionStatus[session.id]?.pendingCount ?? 0}
-                unread={!!unreadCompletions[session.id]}
-                preview={getPreview(session.id)}
-                editingSessionId={editingSessionId}
-                editingName={editingName}
-                useModifierToSubmit={useModifierToSubmit}
-                onStartEdit={startEdit}
-                onCommitEdit={commitEdit}
-                onCancelEdit={cancelEdit}
-                onSetEditingName={setEditingName}
-                onContextMenu={handleContextMenu}
-                onActivate={handleActivate}
-                t={t}
-              />
-            ))
+          filteredSessions.map((session) => (
+            <SessionListItem
+              key={session.id}
+              session={session}
+              variant="list"
+              displayName={getSessionDisplayName(session)}
+              isActive={false}
+              isStreaming={!!isStreaming[session.id]}
+              pendingCount={sessionStatus[session.id]?.pendingCount ?? 0}
+              unread={!!unreadCompletions[session.id]}
+              preview={getPreview(session.id)}
+              editingSessionId={editingSessionId}
+              editingName={editingName}
+              useModifierToSubmit={useModifierToSubmit}
+              onStartEdit={startEdit}
+              onCommitEdit={commitEdit}
+              onCancelEdit={cancelEdit}
+              onSetEditingName={setEditingName}
+              onContextMenu={handleContextMenu}
+              onActivate={handleActivate}
+              t={t}
+            />
+          ))
         )}
+      </div>
+
+      {/* Live region for filtered result count */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {trimmedQuery ? t('matchingSessionCount', { count: matchCount }) : ''}
       </div>
 
       {/* Plugin + Skills Settings Toolbar */}
