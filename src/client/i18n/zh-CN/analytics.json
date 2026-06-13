@@ -1,5 +1,7 @@
 {
   "activeDays": "活跃天数",
+  "activityHeatmap": "活动热力图",
+  "avgDuration": "平均时长",
   "cacheCreation": "缓存写入",
   "cacheRead": "缓存读取",
   "calendarTotal": "总计: {{count}} 条消息",
@@ -16,22 +18,30 @@
     "less": "少",
     "more": "多"
   },
+  "loadError": "加载分析数据失败",
+  "loading": "正在加载分析数据…",
+  "modelDistribution": "模型分布",
+  "mostUsedTools": "常用工具",
   "noActivity": "暂无活动数据",
   "noData": "暂无数据",
   "noToolData": "暂无工具使用数据",
+  "noWorkspaces": "暂无工作区",
   "output": "输出",
   "partialCoverageNote": "部分 token 已排除（定价未知）。",
   "pricingCoverage": "定价覆盖率",
+  "providerDistribution": "提供商分布",
   "providerMeta": "{{sessions}} 个会话",
+  "recentActivityTrend": "近期活动趋势",
   "subtitle": "来自会话记录的汇总统计",
   "title": "分析",
+  "titleGlobal": "全局分析",
+  "titleWorkspace": "工作区分析",
   "tooltip": {
     "messages": "消息",
     "sessions": "会话",
     "share": "占比",
     "tokens": "Token"
   },
-  "workspaceNotFound": "工作区不存在",
   "tools": {
     "bash": "终端",
     "edit": "编辑文件",
@@ -50,7 +60,17 @@
     "webSearch": "网页搜索",
     "write": "创建文件"
   },
+  "toolsUsed": "已用工具",
+  "topWorkspaceMeta": "{{sessions}} 个会话 · {{messages}} 条消息",
+  "topWorkspaces": "活跃工作区",
+  "tokenTypeDistribution": "Token 类型分布",
+  "totalDuration": "总时长",
+  "totalMessages": "消息总数",
+  "totalSessions": "会话总数",
   "totalTokenUsage": "Token 总量",
+  "totalTokens": "Token 总量",
   "totalUsage": "总用量",
-  "weekdayNamesShort": ["日", "一", "二", "三", "四", "五", "六"]
+  "weekdayNamesShort": ["日", "一", "二", "三", "四", "五", "六"],
+  "workspace": "工作区",
+  "workspaceNotFound": "工作区不存在"
 }

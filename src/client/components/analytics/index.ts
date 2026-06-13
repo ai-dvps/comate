@@ -8,14 +8,18 @@
  */
 
 export { ActivityHeatmap } from './ActivityHeatmap.js'
+export { AnalyticsEmptyState } from './AnalyticsEmptyState.js'
 export { CostBreakdownCard } from './CostBreakdownCard.js'
 export { DailyTrendChart } from './DailyTrendChart.js'
+export { GlobalStatsView } from './GlobalStatsView.js'
 export { MetricCard } from './MetricCard.js'
 export { ProviderDistributionChart } from './ProviderDistributionChart.js'
 export { SectionCard } from './SectionCard.js'
 export { TokenDistributionChart } from './TokenDistributionChart.js'
 export type { TokenDistribution } from './TokenDistributionChart.js'
 export { ToolUsageChart } from './ToolUsageChart.js'
+export { WorkspaceSelector } from './WorkspaceSelector.js'
+export { WorkspaceStatsView } from './WorkspaceStatsView.js'
 
 export type {
   MetricCardProps,
