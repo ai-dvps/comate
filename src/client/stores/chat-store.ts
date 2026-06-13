@@ -49,6 +49,7 @@ function startBackgroundPolling(
         set((state) => {
           const next = { ...state.sessionStatus }
           const nextStreaming = { ...state.isStreaming }
+          const nextLastActivityAt = { ...state.lastActivityAt }
           for (const session of state.sessions[workspaceId] ?? []) {
             if (
               !sessionSubscriptions.has(session.id) &&
@@ -61,10 +62,14 @@ function startBackgroundPolling(
             }
           }
           for (const [sid, st] of Object.entries(statuses)) {
+            const prevPending = state.sessionStatus[sid]?.pendingCount ?? 0
             if (st.pendingCount === 0 && !st.isProcessing) {
               delete next[sid]
             } else {
               next[sid] = st
+            }
+            if (st.pendingCount > 0 && prevPending === 0) {
+              nextLastActivityAt[sid] = Date.now()
             }
             if (!sessionSubscriptions.has(sid)) {
               if (st.isProcessing) {
@@ -74,7 +79,7 @@ function startBackgroundPolling(
               }
             }
           }
-          return { sessionStatus: next, isStreaming: nextStreaming }
+          return { sessionStatus: next, isStreaming: nextStreaming, lastActivityAt: nextLastActivityAt }
         })
       })
       .catch((err) => {
@@ -186,6 +191,7 @@ interface ChatState {
   subagents: Record<string, SubagentState[]>
   sessionStatus: Record<string, { pendingCount: number; isProcessing?: boolean }>
   unreadCompletions: Record<string, boolean>
+  lastActivityAt: Record<string, number>
   tasks: Record<string, TaskItem[]>
   pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
   autoApprovedTools: Record<string, Record<string, 'auto' | 'readonly'>>
@@ -800,6 +806,7 @@ function handleSseEvent(
             ...state.totalMessageCount,
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
+          lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
         }
         if (state.isCompacting[sessionId]) {
           updates.isCompacting = { ...state.isCompacting, [sessionId]: false }
@@ -1243,6 +1250,7 @@ function handleSseEvent(
             ...state.approvalQueue,
             [sessionId]: queue,
           },
+          lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
         }
       })
       return
@@ -1267,6 +1275,7 @@ function handleSseEvent(
             ...state.approvalQueue,
             [sessionId]: queue,
           },
+          lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
         }
       })
       return
@@ -1326,6 +1335,7 @@ function handleSseEvent(
       set((state) => {
         const next: Partial<ChatState> = {
           isStreaming: { ...state.isStreaming, [sessionId]: false },
+          lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
         }
         if (!isSessionActive(state, sessionId)) {
           next.unreadCompletions = {
@@ -1836,6 +1846,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   subagents: {},
   sessionStatus: {},
   unreadCompletions: {},
+  lastActivityAt: {},
   tasks: {},
   pendingTaskCreates: {},
   autoApprovedTools: {},
@@ -1853,10 +1864,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`)
       if (!res.ok) throw new Error(i18next.t('common:failedToFetchSessions', 'Failed to fetch sessions'))
       const data = await res.json()
-      set((state) => ({
-        sessions: { ...state.sessions, [workspaceId]: data.sessions || [] },
-        isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: false },
-      }))
+      const fetchedSessions: ChatSession[] = data.sessions || []
+      set((state) => {
+        const nextLastActivityAt = { ...state.lastActivityAt }
+        for (const session of fetchedSessions) {
+          nextLastActivityAt[session.id] =
+            session.lastModified ?? (Date.parse(session.updatedAt) || Date.now())
+        }
+        for (const id of Object.keys(nextLastActivityAt)) {
+          if (!fetchedSessions.some((s) => s.id === id)) {
+            delete nextLastActivityAt[id]
+          }
+        }
+        return {
+          sessions: { ...state.sessions, [workspaceId]: fetchedSessions },
+          isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: false },
+          lastActivityAt: nextLastActivityAt,
+        }
+      })
       startBackgroundPolling(set, workspaceId)
     } catch (err) {
       console.error('Failed to fetch sessions:', err)
@@ -1894,6 +1919,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
           unreadCompletions: nextUnread,
           domCache: { ...state.domCache, [workspaceId]: nextCache },
+          lastActivityAt: { ...state.lastActivityAt, [session.id]: Date.now() },
         }
       })
     } catch (err) {
@@ -1920,6 +1946,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
         unreadCompletions: nextUnread,
         domCache: { ...state.domCache, [workspaceId]: nextCache },
+        lastActivityAt: { ...state.lastActivityAt, [session.id]: Date.now() },
       }
     })
   },
@@ -2135,6 +2162,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...state.totalMessageCount,
           [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
         },
+        lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
       }
     })
 
