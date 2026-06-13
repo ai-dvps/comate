@@ -38,6 +38,18 @@ export interface DailyStatEntry {
   durationMs: number;
 }
 
+/**
+ * One cell of the 7-day × 24-hour activity heatmap, accumulated per session
+ * at extraction time and merged during rollup. `dayOfWeek` is 0-6 (Sun-Sat),
+ * `hour` is 0-23, both in the timestamp's local interpretation.
+ */
+export interface HeatmapCell {
+  dayOfWeek: number;
+  hour: number;
+  tokens: number;
+  messages: number;
+}
+
 export interface SessionAnalyticsRow {
   sessionId: string;
   workspaceId: string;
@@ -58,6 +70,7 @@ export interface SessionAnalyticsRow {
   modelUsage: ModelUsageEntry[];
   toolUsage: ToolUsageEntry[];
   dailyStats: DailyStatEntry[];
+  heatmap: HeatmapCell[];
 }
 
 const SCHEMA = `
@@ -80,7 +93,8 @@ const SCHEMA = `
     has_compaction INTEGER NOT NULL DEFAULT 0,
     model_usage TEXT NOT NULL DEFAULT '[]',
     tool_usage TEXT NOT NULL DEFAULT '[]',
-    daily_stats TEXT NOT NULL DEFAULT '[]'
+    daily_stats TEXT NOT NULL DEFAULT '[]',
+    heatmap TEXT NOT NULL DEFAULT '[]'
   )
 `;
 
@@ -102,13 +116,13 @@ const UPSERT_SQL = `
     total_tokens, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
     estimated_cost_usd, cost_coverage_percent, duration_ms, message_count,
     first_message_ts, last_message_ts, has_compaction,
-    model_usage, tool_usage, daily_stats
+    model_usage, tool_usage, daily_stats, heatmap
   ) VALUES (
     @sessionId, @workspaceId, @transcriptMtime, @extractedAt,
     @totalTokens, @inputTokens, @outputTokens, @cacheReadTokens, @cacheCreationTokens,
     @estimatedCostUsd, @costCoveragePercent, @durationMs, @messageCount,
     @firstMessageTs, @lastMessageTs, @hasCompaction,
-    @modelUsage, @toolUsage, @dailyStats
+    @modelUsage, @toolUsage, @dailyStats, @heatmap
   )
   ON CONFLICT(session_id) DO UPDATE SET
     workspace_id = excluded.workspace_id,
@@ -128,7 +142,8 @@ const UPSERT_SQL = `
     has_compaction = excluded.has_compaction,
     model_usage = excluded.model_usage,
     tool_usage = excluded.tool_usage,
-    daily_stats = excluded.daily_stats
+    daily_stats = excluded.daily_stats,
+    heatmap = excluded.heatmap
 `;
 
 interface RawAnalyticsRow {
@@ -151,6 +166,7 @@ interface RawAnalyticsRow {
   model_usage: string;
   tool_usage: string;
   daily_stats: string;
+  heatmap: string;
 }
 
 function parseRow(row: RawAnalyticsRow): SessionAnalyticsRow {
@@ -174,6 +190,7 @@ function parseRow(row: RawAnalyticsRow): SessionAnalyticsRow {
     modelUsage: safeParseArray<ModelUsageEntry>(row.model_usage),
     toolUsage: safeParseArray<ToolUsageEntry>(row.tool_usage),
     dailyStats: safeParseArray<DailyStatEntry>(row.daily_stats),
+    heatmap: safeParseArray<HeatmapCell>(row.heatmap),
   };
 }
 
@@ -212,6 +229,7 @@ export class AnalyticsCache {
       modelUsage: JSON.stringify(row.modelUsage),
       toolUsage: JSON.stringify(row.toolUsage),
       dailyStats: JSON.stringify(row.dailyStats),
+      heatmap: JSON.stringify(row.heatmap),
     });
   }
 

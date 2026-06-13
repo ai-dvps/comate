@@ -40,6 +40,7 @@ function makeRow(overrides: Partial<SessionAnalyticsRow> = {}): SessionAnalytics
     ],
     toolUsage: [{ tool: 'Read', count: 3 }],
     dailyStats: [{ date: '2026-06-13', tokens: 100, messages: 2, durationMs: 5_000 }],
+    heatmap: [{ dayOfWeek: 5, hour: 14, tokens: 100, messages: 2 }],
     ...overrides,
   };
 }
@@ -77,6 +78,9 @@ describe('AnalyticsCache', () => {
     assert.deepEqual(got!.toolUsage, [{ tool: 'Read', count: 3 }]);
     assert.deepEqual(got!.dailyStats, [
       { date: '2026-06-13', tokens: 100, messages: 2, durationMs: 5_000 },
+    ]);
+    assert.deepEqual(got!.heatmap, [
+      { dayOfWeek: 5, hour: 14, tokens: 100, messages: 2 },
     ]);
   });
 
@@ -151,6 +155,7 @@ describe('AnalyticsCache', () => {
         modelUsage: [],
         toolUsage: [],
         dailyStats: [],
+        heatmap: [],
       }),
     );
     const got = cache.get('sess-1');
@@ -159,5 +164,6 @@ describe('AnalyticsCache', () => {
     assert.equal(got!.lastMessageTs, null);
     assert.deepEqual(got!.modelUsage, []);
     assert.deepEqual(got!.dailyStats, []);
+    assert.deepEqual(got!.heatmap, []);
   });
 });

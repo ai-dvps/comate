@@ -20,6 +20,7 @@ import todoRoutes from './routes/todos.js';
 import providerRoutes from './routes/providers.js';
 import pluginRoutes from './routes/plugins.js';
 import skillRoutes from './routes/skills.js';
+import analyticsRoutes from './routes/analytics.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
@@ -88,6 +89,7 @@ app.use('/api/system', systemRoutes);
 app.use('/api/providers', providerRoutes);
 app.use('/api/plugins', pluginRoutes);
 app.use('/api/skills', skillRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Health checks
 app.get('/api/health', (_req, res) => {
