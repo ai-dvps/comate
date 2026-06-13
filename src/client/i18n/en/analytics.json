@@ -32,6 +32,8 @@
   "providerDistribution": "Provider Distribution",
   "providerMeta": "{{sessions}} sessions",
   "recentActivityTrend": "Recent Activity Trend",
+  "refresh": "Refresh",
+  "retry": "Retry",
   "subtitle": "Aggregated statistics from session transcripts",
   "title": "Analytics",
   "titleGlobal": "Global Analytics",

@@ -32,6 +32,8 @@
   "providerDistribution": "提供商分布",
   "providerMeta": "{{sessions}} 个会话",
   "recentActivityTrend": "近期活动趋势",
+  "refresh": "刷新",
+  "retry": "重试",
   "subtitle": "来自会话记录的汇总统计",
   "title": "分析",
   "titleGlobal": "全局分析",
