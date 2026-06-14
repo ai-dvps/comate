@@ -11,10 +11,12 @@ import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { useSentPrompts } from '../hooks/useSentPrompts'
 import { useTextareaMetrics } from '../hooks/useTextareaMetrics'
+import { useNgramCompletion } from '../hooks/useNgramCompletion'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import ProviderSelector from './ProviderSelector'
 import MarkdownOverlay from './MarkdownOverlay'
+import PromptGhostText from './PromptGhostText'
 
 interface RefreshMeta {
   lastRefreshedAt: Date | null
@@ -86,6 +88,7 @@ export default function PromptInput({
   )
   const setDraft = useChatStore((s) => s.setDraft)
   const history = useSentPrompts(sessionId || undefined)
+  const { suggest, train } = useNgramCompletion(sessionId || undefined)
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerSource, setPickerSource] = useState<'slash' | 'button'>('slash')
@@ -104,6 +107,9 @@ export default function PromptInput({
   const [historyCursor, setHistoryCursor] = useState<number | null>(null)
   const [historyPickerOpen, setHistoryPickerOpen] = useState(false)
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
+  const [completionSuggestion, setCompletionSuggestion] = useState<string | null>(
+    null,
+  )
   const originalDraftRef = useRef('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const overlayRef = useRef<HTMLPreElement>(null)
@@ -131,6 +137,7 @@ export default function PromptInput({
     setArgumentHint(null)
     setLastInsertedCommand(null)
     setHistoryCursor(null)
+    setCompletionSuggestion(null)
     originalDraftRef.current = ''
   }, [sessionId])
 
@@ -251,6 +258,7 @@ export default function PromptInput({
     setLastInsertedCommand(null)
     setSlashTriggerStart(null)
     setHistoryCursor(null)
+    setCompletionSuggestion(null)
     originalDraftRef.current = ''
   }
 
@@ -259,6 +267,7 @@ export default function PromptInput({
     if (!prompt) return
     setDraft(sessionId, prompt)
     prevInputRef.current = prompt
+    setCompletionSuggestion(null)
     requestAnimationFrame(() => {
       const ta = textareaRef.current
       if (!ta) return
@@ -271,6 +280,7 @@ export default function PromptInput({
     const draft = originalDraftRef.current
     setDraft(sessionId, draft)
     prevInputRef.current = draft
+    setCompletionSuggestion(null)
     requestAnimationFrame(() => {
       const ta = textareaRef.current
       if (!ta) return
@@ -285,6 +295,7 @@ export default function PromptInput({
     const trimmed = input.trim()
     if (!trimmed || disabled || isStreaming || isRestarting || !hasSession) return
     onSend(trimmed)
+    train(trimmed)
     resetInput()
     textareaRef.current?.focus()
   }
@@ -423,6 +434,46 @@ export default function PromptInput({
       }
     }
 
+    // Completion accept / dismiss when no picker is open.
+    if (
+      completionSuggestion &&
+      !pickerOpen &&
+      !filePickerOpen &&
+      !historyPickerOpen
+    ) {
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        const ta = textareaRef.current
+        if (ta) {
+          const start = ta.selectionStart
+          const end = ta.selectionEnd
+          const before = input.slice(0, start)
+          const after = input.slice(end)
+          const next = before + completionSuggestion + after
+          setDraft(sessionId, next)
+          prevInputRef.current = next
+          const pos = start + completionSuggestion.length
+          requestAnimationFrame(() => {
+            ta.focus()
+            ta.setSelectionRange(pos, pos)
+          })
+        }
+        setCompletionSuggestion(null)
+        return
+      }
+      if (
+        e.key === 'Escape' ||
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowRight'
+      ) {
+        setCompletionSuggestion(null)
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          return
+        }
+      }
+    }
+
     if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
       e.preventDefault()
       handleSend()
@@ -435,6 +486,7 @@ export default function PromptInput({
     prevInputRef.current = inserted
     setLastInsertedCommand(inserted)
     setArgumentHint(command.argumentHint ?? null)
+    setCompletionSuggestion(null)
     setPickerOpen(false)
     setSlashTriggerStart(null)
     requestAnimationFrame(() => {
@@ -455,6 +507,7 @@ export default function PromptInput({
     const next = before + inserted + after
     setDraft(sessionId, next)
     prevInputRef.current = next
+    setCompletionSuggestion(null)
     setFilePickerOpen(false)
     setFileTriggerStart(null)
     requestAnimationFrame(() => {
@@ -469,6 +522,7 @@ export default function PromptInput({
     prevInputRef.current = selectedPrompt
     setHistoryPickerOpen(false)
     setHistoryCursor(null)
+    setCompletionSuggestion(null)
     originalDraftRef.current = ''
     requestAnimationFrame(() => {
       const ta = textareaRef.current
@@ -523,6 +577,38 @@ export default function PromptInput({
   const canSend = input.trim().length > 0 && hasSession && !isStreaming && !isRestarting && !disabled
   const showClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
+
+  useEffect(() => {
+    if (
+      !input ||
+      !sessionId ||
+      pickerOpen ||
+      filePickerOpen ||
+      historyPickerOpen ||
+      isStreaming ||
+      isRestarting ||
+      showGhost
+    ) {
+      setCompletionSuggestion(null)
+      return
+    }
+    const timer = setTimeout(() => {
+      const suggestion = suggest(input)
+      setCompletionSuggestion(suggestion)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [
+    input,
+    sessionId,
+    pickerOpen,
+    filePickerOpen,
+    historyPickerOpen,
+    isStreaming,
+    isRestarting,
+    showGhost,
+    suggest,
+  ])
+
   const commandsDisabled = disabled || isStreaming || isRestarting
   const filesDisabled = disabled || isStreaming || isRestarting || !workspaceId
   const historyDisabled = disabled || isStreaming || isRestarting || !hasSession
@@ -699,15 +785,12 @@ export default function PromptInput({
                 className="relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
                 style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
               />
-              {showGhost && argumentHint && (
-                <div
-                  aria-hidden
-                  className="absolute inset-0 z-20 px-4 py-3 pointer-events-none whitespace-pre-wrap break-words"
-                >
-                  <span className="invisible">{input}</span>
-                  <span className="text-text-tertiary">{argumentHint}</span>
-                </div>
-              )}
+              <PromptGhostText
+                input={input}
+                argumentHint={argumentHint}
+                lastInsertedCommand={lastInsertedCommand}
+                completionSuggestion={completionSuggestion}
+              />
             </div>
             <div className="flex items-center justify-end px-2 pb-2 pt-1 gap-1">
               {showClear && (
