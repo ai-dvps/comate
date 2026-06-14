@@ -107,3 +107,21 @@ const CHART_COLORS = [
 export function colorForIndex(index: number): string {
   return CHART_COLORS[index % CHART_COLORS.length]!
 }
+
+/**
+ * Medal emoji for a top-N rank (0-indexed). Returns the medal for ranks 1–3
+ * and `null` for ranks ≥ 4, so callers can fall back to a numeric badge.
+ * Mirrors the reference app's `getRankMedal` for visual parity.
+ */
+export function getRankMedal(index: number): string | null {
+  switch (index) {
+    case 0:
+      return '🥇'
+    case 1:
+      return '🥈'
+    case 2:
+      return '🥉'
+    default:
+      return null
+  }
+}
