@@ -303,6 +303,19 @@ export default function PromptInput({
 
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
 
+  // Clear stuck IME composition state when the textarea becomes non-editable.
+  // If the textarea is disabled mid-composition (e.g., streaming starts), the
+  // browser cancels the composition but does not reliably fire compositionend,
+  // leaving isComposingRef and overlayHidden stuck true — which blocks typing
+  // and hides the overlay after the textarea re-enables.
+  const textareaDisabled = disabled || isStreaming || isRestarting
+  useEffect(() => {
+    if (textareaDisabled) {
+      isComposingRef.current = false
+      setOverlayHidden(false)
+    }
+  }, [textareaDisabled])
+
   const handleSend = () => {
     const trimmed = input.trim()
     if (!trimmed || disabled || isStreaming || isRestarting || !hasSession) return

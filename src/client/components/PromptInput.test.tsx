@@ -392,6 +392,32 @@ describe('PromptInput', () => {
     expect(textarea).toHaveValue('explain the')
   })
 
+  it('recovers typing after composition is interrupted by streaming', () => {
+    // Regression guard: if IME composition starts and the textarea is disabled
+    // mid-composition (streaming begins), the browser cancels the composition
+    // without firing compositionend. Without clearing the stuck composition
+    // state, the textarea re-enables into a state where onChange is gated by
+    // isComposingRef and the overlay stays hidden — the user can't type.
+    //
+    // Note: jsdom's reconciliation differs from real browsers here, so this
+    // test mainly documents the contract. The reset effect in the component
+    // is what guarantees recovery in a real browser.
+    const { rerender } = renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    fireEvent.compositionStart(textarea)
+
+    // Streaming starts → textarea disabled → composition cancelled without end.
+    rerender(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+    // Streaming ends → textarea re-enabled.
+    rerender(<PromptInput {...DEFAULT_PROPS} />)
+
+    // After the cycle, typing must update the draft (not stay blocked).
+    const textareaAfter = screen.getByRole('textbox')
+    fireEvent.change(textareaAfter, { target: { value: 'hello', selectionStart: 5 } })
+    expect(chatStoreMock.getState().drafts['session-1']).toBe('hello')
+  })
+
   it('does not show completion while an argument hint is active', async () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const textarea = screen.getByRole('textbox')
