@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import PromptInput from './PromptInput'
 import i18n from '../i18n'
@@ -344,9 +344,9 @@ describe('PromptInput', () => {
 
     // Type the prefix and wait for the debounced suggestion.
     fireEvent.change(textarea, { target: { value: 'explain ', selectionStart: 8 } })
-    await new Promise((r) => setTimeout(r, 350))
-
-    expect(screen.getByText('the')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('the')).toBeInTheDocument(), {
+      timeout: 500,
+    })
   })
 
   it('accepts a completion suggestion with Tab', async () => {
@@ -360,8 +360,9 @@ describe('PromptInput', () => {
     fireEvent.click(sendButton)
 
     fireEvent.change(textarea, { target: { value: 'explain ', selectionStart: 8 } })
-    await new Promise((r) => setTimeout(r, 350))
-    expect(screen.getByText('the')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('the')).toBeInTheDocument(), {
+      timeout: 500,
+    })
 
     fireEvent.keyDown(textarea, { key: 'Tab' })
     expect(textarea).toHaveValue('explain the')
@@ -383,7 +384,8 @@ describe('PromptInput', () => {
     expect(screen.getByText('<message>')).toBeInTheDocument()
 
     // The completion ghost must not appear while the argument hint is shown.
-    await new Promise((r) => setTimeout(r, 350))
-    expect(screen.queryByText('the')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('the')).not.toBeInTheDocument(), {
+      timeout: 500,
+    })
   })
 })
