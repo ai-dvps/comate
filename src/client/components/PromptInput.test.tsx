@@ -69,7 +69,7 @@ vi.mock('../stores/chat-store', () => ({
 vi.mock('../stores/commands-store', () => ({
   useCommands: () => ({
     commands: [
-      { name: 'commit', description: 'Commit changes' },
+      { name: 'commit', description: 'Commit changes', argumentHint: '<message>' },
       { name: 'compact', description: 'Compact session' },
       { name: 'explain', description: 'Explain code' },
     ],
@@ -329,5 +329,61 @@ describe('PromptInput', () => {
 
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
     expect(textarea).toHaveValue('')
+  })
+
+  it('shows a completion suggestion after training on sent prompts', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+    const sendButton = screen.getByTitle('Send')
+
+    // Train the model by sending the same prompt twice.
+    fireEvent.change(textarea, { target: { value: 'explain the function', selectionStart: 20 } })
+    fireEvent.click(sendButton)
+    fireEvent.change(textarea, { target: { value: 'explain the function', selectionStart: 20 } })
+    fireEvent.click(sendButton)
+
+    // Type the prefix and wait for the debounced suggestion.
+    fireEvent.change(textarea, { target: { value: 'explain ', selectionStart: 8 } })
+    await new Promise((r) => setTimeout(r, 350))
+
+    expect(screen.getByText('the')).toBeInTheDocument()
+  })
+
+  it('accepts a completion suggestion with Tab', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+    const sendButton = screen.getByTitle('Send')
+
+    fireEvent.change(textarea, { target: { value: 'explain the function', selectionStart: 20 } })
+    fireEvent.click(sendButton)
+    fireEvent.change(textarea, { target: { value: 'explain the function', selectionStart: 20 } })
+    fireEvent.click(sendButton)
+
+    fireEvent.change(textarea, { target: { value: 'explain ', selectionStart: 8 } })
+    await new Promise((r) => setTimeout(r, 350))
+    expect(screen.getByText('the')).toBeInTheDocument()
+
+    fireEvent.keyDown(textarea, { key: 'Tab' })
+    expect(textarea).toHaveValue('explain the')
+  })
+
+  it('does not show completion while an argument hint is active', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+    const sendButton = screen.getByTitle('Send')
+
+    fireEvent.change(textarea, { target: { value: 'explain the function', selectionStart: 20 } })
+    fireEvent.click(sendButton)
+    fireEvent.change(textarea, { target: { value: 'explain the function', selectionStart: 20 } })
+    fireEvent.click(sendButton)
+
+    // Select a command that produces an argument hint.
+    fireEvent.change(textarea, { target: { value: '/', selectionStart: 1 } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(screen.getByText('<message>')).toBeInTheDocument()
+
+    // The completion ghost must not appear while the argument hint is shown.
+    await new Promise((r) => setTimeout(r, 350))
+    expect(screen.queryByText('the')).not.toBeInTheDocument()
   })
 })
