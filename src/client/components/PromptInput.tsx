@@ -198,8 +198,14 @@ export default function PromptInput({
       }
     }
 
-    // Detect @ trigger only when no workspace picker is open
-    if (!filePickerOpen && (!pickerOpen || pickerSource !== 'slash')) {
+    // Detect @ trigger only when no workspace picker is open and input is not
+    // disabled by streaming/restarting.
+    if (
+      !isStreaming &&
+      !isRestarting &&
+      !filePickerOpen &&
+      (!pickerOpen || pickerSource !== 'slash')
+    ) {
       // @ as first character of empty input
       if (value === '@' && prev === '') {
         setFileTriggerStart(0)
@@ -224,8 +230,14 @@ export default function PromptInput({
       }
     }
 
-    // Detect / trigger only when no workspace picker is open
-    if (!filePickerOpen && (!pickerOpen || pickerSource !== 'slash')) {
+    // Detect / trigger only when no workspace picker is open and input is not
+    // disabled by streaming/restarting.
+    if (
+      !isStreaming &&
+      !isRestarting &&
+      !filePickerOpen &&
+      (!pickerOpen || pickerSource !== 'slash')
+    ) {
       // / as first character of empty input
       if (value === '/' && prev === '') {
         setSlashTriggerStart(0)
