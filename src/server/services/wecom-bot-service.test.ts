@@ -334,4 +334,66 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     assert.ok(pushedMessages[0].includes('voice message'));
     assert.ok(!pushedMessages[0].includes('$file_name$'));
   });
+
+  it('skips stream reply when Reply category is denied (R11/AE6: bot runs but cannot reply)', async () => {
+    const conn = createMockConnection();
+    let replyStreamCallCount = 0;
+    conn.client.replyStream = async () => { replyStreamCallCount += 1; };
+    conn.client.replyStreamNonBlocking = async () => { replyStreamCallCount += 1; };
+    injectConnection(conn);
+
+    // Policy denies Reply — bot will process but cannot respond
+    workspaceStore.get = async () => ({
+      id: 'ws-1',
+      settings: {
+        wecomBotEnabled: true,
+        wecomToolPermissions: {
+          posture: 'custom',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'deny',
+            shell: 'deny',
+            network: 'deny',
+            subagents: 'deny',
+            reply: 'deny',
+          },
+        },
+      },
+    } as any);
+
+    const frame = makeFrame('file', {
+      file: { url: 'https://example.com/file', aeskey: 'key123' },
+    });
+
+    await (service as any).handleMediaMessage('ws-1', frame);
+
+    // Agent still runs (pushMessage called)
+    assert.strictEqual(pushedMessages.length, 1);
+    // But no reply stream frames are sent (no placeholder, no animation, no leak)
+    assert.strictEqual(replyStreamCallCount, 0, 'Reply-deny must skip createStreamReply entirely');
+  });
+
+  it('creates stream reply normally when Reply is allowed (default)', async () => {
+    const conn = createMockConnection();
+    let replyStreamCallCount = 0;
+    conn.client.replyStream = async () => { replyStreamCallCount += 1; };
+    injectConnection(conn);
+
+    // Default policy (no explicit wecomToolPermissions, bot enabled) → allow-all → Reply allowed
+    workspaceStore.get = async () => ({
+      id: 'ws-1',
+      settings: { wecomBotEnabled: true },
+    } as any);
+
+    const frame = makeFrame('file', {
+      file: { url: 'https://example.com/file', aeskey: 'key123' },
+    });
+
+    await (service as any).handleMediaMessage('ws-1', frame);
+
+    // Agent runs
+    assert.strictEqual(pushedMessages.length, 1);
+    // Stream reply IS created (placeholder frame is sent)
+    assert.ok(replyStreamCallCount > 0, 'Reply-allow must construct the stream reply');
+  });
 });

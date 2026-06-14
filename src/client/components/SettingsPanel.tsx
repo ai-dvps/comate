@@ -6,8 +6,27 @@ import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
+import type { ToolPermissionPolicy } from '../types/wecom-permissions'
+import { SAFE_PRESET } from '../types/wecom-permissions'
 import ProviderSection from './ProviderSection'
 import SkillsPage from './SkillsPage'
+import { PermissionsSubTab } from './PermissionsSubTab'
+
+/** Returns true if every category is denied and no override allows Reply. Triggers the save-time warning. */
+function isAllDeniedIncludingReply(policy: ToolPermissionPolicy): boolean {
+  const all = Object.values(policy.categoryDefaults)
+  if (!all.every((v) => v === 'deny')) return false
+  // No override allows Reply (the sentinel tool name is set on the server side;
+  // on the client we check for any 'allow' override that could unlock reply).
+  // Since Reply's tool name is server-side only, treat the reply category default
+  // itself as the source of truth — if reply default is 'deny' AND no allow
+  // override exists anywhere, the bot is effectively silenced.
+  if (policy.overrides) {
+    const anyAllow = Object.values(policy.overrides).some((v) => v === 'allow')
+    if (anyAllow) return false
+  }
+  return policy.categoryDefaults.reply === 'deny'
+}
 import {
   X,
   Eye,
@@ -43,6 +62,7 @@ interface WorkspaceFormState {
   wecomCorpId: string
   wecomCorpSecret: string
   wecomFilePromptTemplate: string
+  wecomToolPermissions: ToolPermissionPolicy | undefined
 }
 
 function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
@@ -63,6 +83,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     wecomCorpId: (workspace.settings?.wecomCorpId as string) || '',
     wecomCorpSecret: (workspace.settings?.wecomCorpSecret as string) || '',
     wecomFilePromptTemplate: (workspace.settings?.wecomFilePromptTemplate as string) || '',
+    wecomToolPermissions: workspace.settings?.wecomToolPermissions as ToolPermissionPolicy | undefined,
   }
 }
 
@@ -81,6 +102,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [isSaving, setIsSaving] = useState(false)
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
   const [pendingClose, setPendingClose] = useState(false)
+  const [showAllDeniedConfirm, setShowAllDeniedConfirm] = useState(false)
 
   // App-level form state
   const [appModel, setAppModel] = useState(defaultModel)
@@ -179,7 +201,18 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleClose, showUnsavedDialog])
 
-  const handleSave = async () => {
+  const handleSave = async (opts?: { bypassAllDeniedCheck?: boolean }) => {
+    // Save-time warning: if the workspace's policy denies every category
+    // including Reply, the bot becomes a silent failure (R11/AE6). Confirm
+    // before persisting so the admin can't accidentally lock the bot out.
+    if (!opts?.bypassAllDeniedCheck && selectedWorkspaceId && workspaceState[selectedWorkspaceId]) {
+      const ws = workspaceState[selectedWorkspaceId]
+      if (ws.wecomToolPermissions && isAllDeniedIncludingReply(ws.wecomToolPermissions)) {
+        setShowAllDeniedConfirm(true)
+        return
+      }
+    }
+
     setIsSaving(true)
 
     // Save app settings
@@ -206,6 +239,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           wecomCorpId: ws.wecomCorpId || undefined,
           wecomCorpSecret: ws.wecomCorpSecret || undefined,
           wecomFilePromptTemplate: ws.wecomFilePromptTemplate || undefined,
+          wecomToolPermissions: ws.wecomToolPermissions,
         },
         skills: ws.skills,
         mcpServers: ws.mcpServers.map((m) => ({
@@ -342,6 +376,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 onSelectWorkspace={setSelectedWorkspaceId}
                 workspaceState={selectedWorkspaceId ? workspaceState[selectedWorkspaceId] : null}
                 onUpdateWorkspace={updateSelectedWorkspace}
+                onSave={handleSave}
               />
             )}
           </div>
@@ -359,7 +394,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 {t('actions.cancel')}
               </button>
               <button
-                onClick={handleSave}
+                onClick={() => handleSave()}
                 disabled={isSaving || !isDirty()}
                 className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
               >
@@ -402,12 +437,57 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 {t('unsavedDialog.discard')}
               </button>
               <button
-                onClick={handleSave}
+                onClick={() => handleSave()}
                 disabled={isSaving}
                 className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
               >
                 <Save className="w-3.5 h-3.5" />
                 {isSaving ? t('unsavedDialog.saving') : t('actions.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* All-Denied-Including-Reply Confirmation Dialog (R11/AE6) */}
+      {showAllDeniedConfirm && (
+        <div
+          className="fixed top-11 inset-x-0 bottom-0 z-[61] flex items-center justify-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="all-denied-dialog-title"
+        >
+          <div
+            className="absolute inset-0 bg-overlay/60 backdrop-blur-sm"
+            onClick={() => setShowAllDeniedConfirm(false)}
+          />
+          <div className="relative bg-surface border border-border rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 id="all-denied-dialog-title" className="text-sm font-medium text-text-primary">
+                  {t('wecom.saveWarning.title')}
+                </h3>
+                <p className="text-xs text-text-secondary mt-1">{t('wecom.saveWarning.body')}</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                autoFocus
+                onClick={() => setShowAllDeniedConfirm(false)}
+                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
+              >
+                {t('wecom.saveWarning.cancel')}
+              </button>
+              <button
+                onClick={() => {
+                  setShowAllDeniedConfirm(false)
+                  handleSave({ bypassAllDeniedCheck: true })
+                }}
+                disabled={isSaving}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-destructive hover:bg-destructive/90 disabled:opacity-50 text-destructive-foreground rounded-lg transition-colors"
+              >
+                {t('wecom.saveWarning.saveAnyway')}
               </button>
             </div>
           </div>
@@ -845,12 +925,14 @@ function WorkspaceTabShell({
   onSelectWorkspace,
   workspaceState,
   onUpdateWorkspace,
+  onSave,
 }: {
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
   workspaceState: WorkspaceFormState | null
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
+  onSave: () => Promise<void>
 }) {
   const { t } = useTranslation('settings')
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('basic')
@@ -934,7 +1016,7 @@ function WorkspaceTabShell({
                 <BasicInfoSection state={workspaceState} onUpdate={onUpdateWorkspace} />
               )}
               {activeSection === 'wecom' && (
-                <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
+                <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} onSave={onSave} />
               )}
               {activeSection === 'skills' && (
                 <SkillsRedirectCard onOpen={() => setShowSkillsPage(true)} />
@@ -1001,16 +1083,18 @@ interface WeComWorkspaceUser {
   lastSeenAt: string
 }
 
-type WeComSubTab = 'connection' | 'users' | 'prompts'
+type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions'
 
 function WeComBotSection({
   state,
   onUpdate,
   workspaceId,
+  onSave,
 }: {
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
   workspaceId: string
+  onSave: () => Promise<void>
 }) {
   const { t } = useTranslation('settings')
   const [activeSubTab, setActiveSubTab] = useState<WeComSubTab>('connection')
@@ -1072,6 +1156,7 @@ function WeComBotSection({
     { id: 'connection', label: t('wecom.tabs.connection') },
     { id: 'users', label: t('wecom.tabs.users') },
     { id: 'prompts', label: t('wecom.tabs.prompts') },
+    { id: 'permissions', label: t('wecom.tabs.permissions') },
   ]
 
   return (
@@ -1256,6 +1341,20 @@ function WeComBotSection({
             </p>
           </div>
         </div>
+      )}
+
+      {/* Permissions tab */}
+      {activeSubTab === 'permissions' && (
+        <PermissionsSubTab
+          policy={state.wecomToolPermissions}
+          onUpdate={(next) => onUpdate({ wecomToolPermissions: next })}
+          workspaceId={workspaceId}
+          needsUpgradePrompt={!state.wecomToolPermissions && state.wecomBotEnabled}
+          onApplySafePreset={async () => {
+            onUpdate({ wecomToolPermissions: SAFE_PRESET })
+            await onSave()
+          }}
+        />
       )}
     </div>
   )

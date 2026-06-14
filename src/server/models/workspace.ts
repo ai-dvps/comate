@@ -6,6 +6,8 @@ export interface WorkspaceSettings {
   wecomCorpId?: string;
   wecomCorpSecret?: string;
   wecomFilePromptTemplate?: string;
+  /** Tool permission policy for WeCom bot sessions. When unset, the policy resolves to allow-all (grandfathered if bot enabled, default otherwise). */
+  wecomToolPermissions?: import('../services/tool-permission-policy.js').ToolPermissionPolicy;
 }
 
 export interface Skill {
