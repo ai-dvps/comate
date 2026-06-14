@@ -3,7 +3,7 @@ import { store } from '../storage/sqlite-store.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 import { chatService } from '../services/chat-service.js';
-import { SAFE_PRESET, resolveEffectivePolicy } from '../services/tool-permission-policy.js';
+import { SAFE_PRESET } from '../services/tool-permission-policy.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
 const router = Router();

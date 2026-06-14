@@ -15,6 +15,8 @@
     "build:cli": "npm run build -w packages/wecom-cli",
     "build:sidecar": "tsx scripts/build-sidecar.ts",
     "start": "node dist/server/index.js",
+    "test:client": "vitest run",
+    "test:client:watch": "vitest",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -60,6 +62,9 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/adm-zip": "^0.5.8",
     "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.17",
@@ -78,10 +83,12 @@
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.7",
+    "jsdom": "^25.0.1",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
     "tsx": "^4.11.2",
     "typescript": "^5.4.5",
-    "vite": "^5.2.13"
+    "vite": "^5.2.13",
+    "vitest": "^2.1.9"
   }
 }
