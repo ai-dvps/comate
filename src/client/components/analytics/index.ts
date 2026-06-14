@@ -35,6 +35,7 @@ export {
   formatDuration,
   formatNumber,
   getHeatColor,
+  getRankMedal,
   metricColor,
   providerDisplayName,
 } from './analytics-utils.js'

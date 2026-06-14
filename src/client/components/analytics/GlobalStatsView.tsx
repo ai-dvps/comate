@@ -23,6 +23,7 @@ import {
   formatCurrency,
   formatDuration,
   formatNumber,
+  getRankMedal,
 } from './index.js'
 import type { GlobalStatsSummary } from '@server/services/analytics-aggregation.js'
 
@@ -137,46 +138,54 @@ export const GlobalStatsView: React.FC<GlobalStatsViewProps> = ({ summary }) => 
         {summary.topWorkspaces.length > 0 && (
           <SectionCard title={t('topWorkspaces')} icon={BarChart3} colorVariant="purple">
             <div className="space-y-2">
-              {summary.topWorkspaces.slice(0, 8).map((ws, index) => (
-                <div
-                  key={ws.workspaceId}
-                  className={cn(
-                    'flex items-center justify-between p-2.5 rounded-lg',
-                    'bg-surface-hover/30 hover:bg-surface-hover/50 transition-colors',
-                  )}
-                >
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center text-[12px] font-bold bg-surface-active text-text-tertiary">
-                      {index + 1}
+              {summary.topWorkspaces.slice(0, 8).map((ws, index) => {
+                const medal = getRankMedal(index)
+                return (
+                  <div
+                    key={ws.workspaceId}
+                    className={cn(
+                      'flex items-center justify-between p-2.5 rounded-lg',
+                      'bg-surface-hover/30 hover:bg-surface-hover/50 transition-colors',
+                    )}
+                  >
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div
+                        className={cn(
+                          'w-6 h-6 rounded-md flex items-center justify-center text-[12px] font-bold',
+                          medal ? 'text-base' : 'bg-surface-active text-text-tertiary',
+                        )}
+                      >
+                        {medal ?? index + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="block w-full text-[12px] font-medium text-text-primary truncate text-left cursor-default"
+                            >
+                              {ws.workspaceName}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>{ws.workspaceName}</TooltipContent>
+                        </Tooltip>
+                        <p className="text-[12px] text-text-tertiary">
+                          {t('topWorkspaceMeta', {
+                            sessions: ws.sessions,
+                            messages: ws.messages,
+                          })}
+                        </p>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className="block w-full text-[12px] font-medium text-text-primary truncate text-left cursor-default"
-                          >
-                            {ws.workspaceName}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>{ws.workspaceName}</TooltipContent>
-                      </Tooltip>
-                      <p className="text-[12px] text-text-tertiary">
-                        {t('topWorkspaceMeta', {
-                          sessions: ws.sessions,
-                          messages: ws.messages,
-                        })}
+                    <div className="text-right">
+                      <p className="font-mono text-[12px] font-bold text-text-primary">
+                        {formatNumber(ws.tokens)}
                       </p>
+                      <p className="text-[12px] text-text-tertiary">{t('tooltip.tokens')}</p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-mono text-[12px] font-bold text-text-primary">
-                      {formatNumber(ws.tokens)}
-                    </p>
-                    <p className="text-[12px] text-text-tertiary">{t('tooltip.tokens')}</p>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </SectionCard>
         )}
