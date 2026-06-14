@@ -17,6 +17,7 @@ import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.js';
 import { pluginSettingsService } from './plugin-settings-service.js';
+import { evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { existsSync, readFileSync } from 'fs';
 
 export interface MessageStream {
@@ -814,10 +815,32 @@ export class ChatService {
     };
 
     if (isBotSession) {
+      // Resolve the workspace's tool permission policy once at runtime creation.
+      // The policy is snapshotted for the lifetime of this cached runtime; policy
+      // changes apply to the next runtime open, not mid-conversation. See
+      // docs/brainstorms/2026-06-14-wecom-bot-tool-permissions-requirements.md
+      // and plan KTD "Policy changes apply to the next bot session".
+      const resolved = resolveEffectivePolicy(workspace);
+      const policy = resolved.policy;
       options.canUseTool = async (
-        _toolName: string,
+        toolName: string,
         input: Record<string, unknown>,
-      ) => ({ behavior: 'allow', updatedInput: input });
+      ) => {
+        const decision = evaluateToolPermission(policy, toolName);
+        // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
+        // without a category fit). Fall through to today's allow-all behavior
+        // per R10. The brainstorm explicitly defers MCP and Skills gating.
+        if (decision === 'deny') {
+          // Generic denial message — do NOT name the capability. Inbound WeCom
+          // messages are an untrusted channel; naming the denied capability
+          // would let an attacker probe the policy by mapping denials.
+          return {
+            behavior: 'deny' as const,
+            message: "I can't do that in this workspace.",
+          };
+        }
+        return { behavior: 'allow' as const, updatedInput: input };
+      };
     }
 
     if (session.isDraft) {
