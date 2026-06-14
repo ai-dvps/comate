@@ -13,6 +13,8 @@
     "defaultModelHint": "Leave empty to use the system default model.",
     "messageWindowCap": "Message Window Cap",
     "messageWindowCapHint": "Max messages kept in memory per session (50–1000). Older messages are pruned but can be re-fetched by scrolling up.",
+    "archiveThresholdDays": "Archive Threshold (days)",
+    "archiveThresholdDaysHint": "Sessions inactive for longer than this are automatically archived. The default is 14 days. Changes apply on the next session list load.",
     "reopenLastWorkspace": "Reopen last workspace on launch",
     "reopenLastWorkspaceHint": "Automatically restore the last active workspace when the app starts.",
     "useModifierToSubmit": "Use Ctrl/Cmd + Enter to send",

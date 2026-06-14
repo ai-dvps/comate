@@ -99,6 +99,7 @@ export class SqliteStore {
         name TEXT NOT NULL,
         is_draft INTEGER NOT NULL DEFAULT 1,
         is_wip INTEGER NOT NULL DEFAULT 0,
+        is_archived INTEGER NOT NULL DEFAULT 0,
         source TEXT,
         approval_mode TEXT,
         created_at TEXT NOT NULL,
@@ -120,6 +121,11 @@ export class SqliteStore {
     // Migration: add provider_id column to existing sessions table
     if (!sessionColumns.some(col => col.name === 'provider_id')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
+    }
+
+    // Migration: add is_archived column to existing sessions table
+    if (!sessionColumns.some(col => col.name === 'is_archived')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
     }
 
     this.db.exec(`
@@ -719,13 +725,13 @@ export class SqliteStore {
       updatedAt: now,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, source, approval_mode, provider_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, source ?? null, mode, providerId ?? null, session.createdAt, session.updatedAt);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, providerId ?? null, session.createdAt, session.updatedAt);
     return session;
   }
 
-  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; approvalMode?: string; providerId?: string | null }): ChatSession | null {
+  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null }): ChatSession | null {
     const existing = this.getLocalSession(id);
     if (!existing) return null;
 
@@ -738,6 +744,10 @@ export class SqliteStore {
     if (input.isWip !== undefined) {
       sets.push('is_wip = ?');
       values.push(input.isWip ? 1 : 0);
+    }
+    if (input.isArchived !== undefined) {
+      sets.push('is_archived = ?');
+      values.push(input.isArchived ? 1 : 0);
     }
     if (input.approvalMode !== undefined) {
       sets.push('approval_mode = ?');
@@ -778,8 +788,8 @@ export class SqliteStore {
 
   syncSdkSession(session: ChatSession): void {
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, source, provider_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         is_draft = excluded.is_draft,
@@ -797,6 +807,7 @@ export class SqliteStore {
       session.name,
       session.isDraft ? 1 : 0,
       session.isWip ? 1 : 0,
+      0,
       session.source ?? null,
       session.providerId ?? null,
       session.createdAt,
@@ -1164,6 +1175,7 @@ interface RawSessionRow {
   name: string;
   is_draft: number;
   is_wip: number;
+  is_archived: number;
   source: string | null;
   approval_mode: string | null;
   provider_id: string | null;
@@ -1183,6 +1195,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     name: row.name,
     isDraft: row.is_draft === 1,
     isWip: row.is_wip === 1,
+    isArchived: row.is_archived === 1,
     source: (row.source as 'gui' | 'wecom') ?? undefined,
     approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
     providerId: row.provider_id ?? undefined,

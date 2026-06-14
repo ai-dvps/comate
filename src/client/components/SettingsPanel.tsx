@@ -93,7 +93,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
 
-  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit } = useAppSettings()
+  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays } = useAppSettings()
   const windowCap = useChatStore((s) => s.windowCap)
   const setWindowCap = useChatStore((s) => s.setWindowCap)
 
@@ -109,6 +109,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
   const [appModifierSubmit, setAppModifierSubmit] = useState(useModifierToSubmit)
   const [windowCapInput, setWindowCapInput] = useState(String(windowCap))
+  const [archiveThresholdDaysInput, setArchiveThresholdDaysInput] = useState(String(archiveThresholdDays))
 
   // Workspace form state (keyed by workspace id)
   const [workspaceState, setWorkspaceState] = useState<Record<string, WorkspaceFormState>>({})
@@ -119,6 +120,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     appReopen: reopenLastWorkspace,
     appModifierSubmit: useModifierToSubmit,
     appWindowCap: windowCap,
+    appArchiveThresholdDays: archiveThresholdDays,
     workspaceState: {} as Record<string, WorkspaceFormState>,
   })
 
@@ -139,21 +141,27 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appReopen: reopenLastWorkspace,
       appModifierSubmit: useModifierToSubmit,
       appWindowCap: windowCap,
+      appArchiveThresholdDays: archiveThresholdDays,
       workspaceState: JSON.parse(JSON.stringify(initial)),
     }
     setAppModel(defaultModel)
     setAppReopen(reopenLastWorkspace)
     setAppModifierSubmit(useModifierToSubmit)
     setWindowCapInput(String(windowCap))
+    setArchiveThresholdDaysInput(String(archiveThresholdDays))
 
     if (workspaces.length > 0) {
       setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, defaultModel, reopenLastWorkspace, useModifierToSubmit, activeWorkspaceId, windowCap])
+  }, [workspaces, defaultModel, reopenLastWorkspace, useModifierToSubmit, activeWorkspaceId, windowCap, archiveThresholdDays])
 
   useEffect(() => {
     setWindowCapInput(String(windowCap))
   }, [windowCap])
+
+  useEffect(() => {
+    setArchiveThresholdDaysInput(String(archiveThresholdDays))
+  }, [archiveThresholdDays])
 
   // Guard: reset activeTab if it holds a removed value (hot-reload / stale state)
   useEffect(() => {
@@ -174,8 +182,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     if (appReopen !== snapshotRef.current.appReopen) return true
     if (appModifierSubmit !== snapshotRef.current.appModifierSubmit) return true
     if (windowCap !== snapshotRef.current.appWindowCap) return true
+    if (archiveThresholdDays !== snapshotRef.current.appArchiveThresholdDays) return true
     return JSON.stringify(workspaceState) !== JSON.stringify(snapshotRef.current.workspaceState)
-  }, [appModel, appReopen, appModifierSubmit, windowCap, workspaceState])
+  }, [appModel, appReopen, appModifierSubmit, windowCap, archiveThresholdDays, workspaceState])
 
   const handleClose = useCallback(() => {
     if (isDirty()) {
@@ -223,6 +232,13 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     if (!isNaN(parsedCap)) {
       setWindowCap(parsedCap)
     }
+    const parsedArchiveThreshold = parseInt(archiveThresholdDaysInput, 10)
+    const nextArchiveThresholdDays = !isNaN(parsedArchiveThreshold) && parsedArchiveThreshold > 0
+      ? parsedArchiveThreshold
+      : archiveThresholdDays
+    if (nextArchiveThresholdDays !== archiveThresholdDays) {
+      setArchiveThresholdDays(nextArchiveThresholdDays)
+    }
 
     // Save workspace settings for selected workspace
     if (selectedWorkspaceId && workspaceState[selectedWorkspaceId]) {
@@ -257,6 +273,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appReopen,
       appModifierSubmit,
       appWindowCap: windowCap,
+      appArchiveThresholdDays: nextArchiveThresholdDays,
       workspaceState: JSON.parse(JSON.stringify(workspaceState)),
     }
 
@@ -275,6 +292,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppReopen(snapshotRef.current.appReopen)
     setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
     setWindowCapInput(String(snapshotRef.current.appWindowCap))
+    setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
     onClose()
   }
@@ -284,6 +302,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppReopen(snapshotRef.current.appReopen)
     setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
     setWindowCapInput(String(snapshotRef.current.appWindowCap))
+    setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
     setShowUnsavedDialog(false)
     setPendingClose(false)
@@ -360,6 +379,14 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                   const parsed = parseInt(val, 10)
                   if (!isNaN(parsed)) {
                     setWindowCap(parsed)
+                  }
+                }}
+                archiveThresholdDays={archiveThresholdDaysInput}
+                onArchiveThresholdDaysChange={setArchiveThresholdDaysInput}
+                onArchiveThresholdDaysCommit={(val) => {
+                  const parsed = parseInt(val, 10)
+                  if (!isNaN(parsed) && parsed > 0) {
+                    setArchiveThresholdDays(parsed)
                   }
                 }}
               />
@@ -509,6 +536,9 @@ function GeneralTab({
   windowCap,
   onWindowCapChange,
   onWindowCapCommit,
+  archiveThresholdDays,
+  onArchiveThresholdDaysChange,
+  onArchiveThresholdDaysCommit,
 }: {
   defaultModel: string
   onDefaultModelChange: (v: string) => void
@@ -519,6 +549,9 @@ function GeneralTab({
   windowCap: string
   onWindowCapChange: (v: string) => void
   onWindowCapCommit: (v: string) => void
+  archiveThresholdDays: string
+  onArchiveThresholdDaysChange: (v: string) => void
+  onArchiveThresholdDaysCommit: (v: string) => void
 }) {
   const { t } = useTranslation('settings')
 
@@ -561,6 +594,28 @@ function GeneralTab({
           />
           <p className="text-[10px] text-text-tertiary mt-1">
             {t('general.messageWindowCapHint')}
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">
+            {t('general.archiveThresholdDays')}
+          </label>
+          <input
+            type="number"
+            min={1}
+            value={archiveThresholdDays}
+            onChange={(e) => onArchiveThresholdDaysChange(e.target.value)}
+            onBlur={() => onArchiveThresholdDaysCommit(archiveThresholdDays)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                onArchiveThresholdDaysCommit(archiveThresholdDays)
+              }
+            }}
+            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">
+            {t('general.archiveThresholdDaysHint')}
           </p>
         </div>
 

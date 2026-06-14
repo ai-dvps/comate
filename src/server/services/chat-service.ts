@@ -93,7 +93,7 @@ export class ChatService {
 
   // Session management
 
-  async listSessions(workspaceId: string): Promise<ChatSession[]> {
+  async listSessions(workspaceId: string, options: { archiveThresholdDays?: number } = {}): Promise<ChatSession[]> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -123,6 +123,22 @@ export class ChatService {
       }
     }
 
+    // Auto-archive stale non-WIP sessions when a threshold is provided
+    const thresholdDays = options.archiveThresholdDays;
+    if (typeof thresholdDays === 'number' && thresholdDays > 0) {
+      const thresholdMs = thresholdDays * 86400_000;
+      const now = Date.now();
+      for (const session of allSessions) {
+        if (session.isArchived || session.isWip) continue;
+        const lastActive = session.lastModified ?? Date.parse(session.updatedAt);
+        if (typeof lastActive !== 'number' || isNaN(lastActive)) continue;
+        if (now - lastActive > thresholdMs) {
+          workspaceStore.updateLocalSession(session.id, { isArchived: true });
+          session.isArchived = true;
+        }
+      }
+    }
+
     return allSessions;
   }
 
@@ -138,10 +154,11 @@ export class ChatService {
         const sdkSession = await this.sdkClient.getSessionInfo(id, { dir: workspace.folderPath });
         if (sdkSession) {
           const session = this.mapSdkSessionInfo(sdkSession, workspaceId);
-          // Preserve providerId from local DB — the SDK doesn't know about providers
+          // Preserve providerId and local-only booleans from local DB — the SDK doesn't know about them
           const localSession = workspaceStore.getLocalSession(id);
           session.providerId = localSession?.providerId;
           session.isWip = localSession?.isWip;
+          session.isArchived = localSession?.isArchived;
           session.approvalMode = localSession?.approvalMode;
           workspaceStore.syncSdkSession(session);
           return session;
@@ -161,6 +178,11 @@ export class ChatService {
       workspaceStore.setSessionMetadata(id, input.isWip);
     }
 
+    // Persist isArchived to DB (applies to both drafts and SDK sessions)
+    if (input.isArchived !== undefined) {
+      workspaceStore.updateLocalSession(id, { isArchived: input.isArchived });
+    }
+
     // Check local DB for current provider before update
     const localSession = workspaceStore.getLocalSession(id);
     const previousProviderId = localSession?.providerId;
@@ -169,6 +191,7 @@ export class ChatService {
       const draftInput: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
       if (input.name !== undefined) draftInput.name = input.name;
       if (input.providerId !== undefined) draftInput.providerId = input.providerId;
+      if (input.isArchived !== undefined) draftInput.isArchived = input.isArchived;
       const updated = workspaceStore.updateLocalSession(id, draftInput);
 
       // Close runtime if provider changed so next message creates a fresh one
@@ -195,9 +218,12 @@ export class ChatService {
       await this.sdkClient.renameSession(id, input.name, { dir: workspace.folderPath });
     }
 
-    // Also update local DB for providerId change on non-draft sessions
-    if (input.providerId !== undefined) {
-      workspaceStore.updateLocalSession(id, { providerId: input.providerId });
+    // Also update local DB for providerId and isArchived changes on non-draft sessions
+    const localUpdates: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
+    if (input.providerId !== undefined) localUpdates.providerId = input.providerId;
+    if (input.isArchived !== undefined) localUpdates.isArchived = input.isArchived;
+    if (Object.keys(localUpdates).length > 0) {
+      workspaceStore.updateLocalSession(id, localUpdates);
     }
 
     // Close runtime if provider changed so next message creates a fresh one
@@ -218,6 +244,9 @@ export class ChatService {
       workspaceStore.syncSdkSession(session);
       const localSession = workspaceStore.getLocalSession(id);
       session.isWip = localSession?.isWip;
+      session.isArchived = localSession?.isArchived;
+      session.approvalMode = localSession?.approvalMode;
+      session.providerId = localSession?.providerId;
       return session;
     }
     return workspaceStore.getLocalSession(id);

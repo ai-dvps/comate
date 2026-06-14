@@ -10,22 +10,28 @@ interface AppSettings {
   language: string
   chatFontSize: FontSizePreset
   uiFontSize: FontSizePreset
+  archiveThresholdDays: number
 }
 
 const STORAGE_KEY = 'app-settings'
 
 const SUPPORTED_LANGUAGES = ['en', 'zh-CN']
 const FONT_SIZE_PRESETS: FontSizePreset[] = ['small', 'medium', 'large']
+const DEFAULT_ARCHIVE_THRESHOLD_DAYS = 14
 
 function isValidFontSize(value: unknown): value is FontSizePreset {
   return typeof value === 'string' && FONT_SIZE_PRESETS.includes(value as FontSizePreset)
 }
 
-function getInitialSettings(): AppSettings {
+export function getInitialSettings(): AppSettings {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
       const parsed = JSON.parse(stored) as Partial<AppSettings>
+      const archiveThresholdDays =
+        typeof parsed.archiveThresholdDays === 'number' && parsed.archiveThresholdDays > 0
+          ? parsed.archiveThresholdDays
+          : DEFAULT_ARCHIVE_THRESHOLD_DAYS
       return {
         defaultModel: typeof parsed.defaultModel === 'string' ? parsed.defaultModel : '',
         reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
@@ -33,12 +39,13 @@ function getInitialSettings(): AppSettings {
         language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : i18n.language,
         chatFontSize: isValidFontSize(parsed.chatFontSize) ? parsed.chatFontSize : 'small',
         uiFontSize: isValidFontSize(parsed.uiFontSize) ? parsed.uiFontSize : 'medium',
+        archiveThresholdDays,
       }
     }
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium' }
+  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium', archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS }
 }
 
 function saveSettings(settings: AppSettings) {
@@ -107,6 +114,14 @@ export function useAppSettings() {
     })
   }, [])
 
+  const setArchiveThresholdDays = useCallback((archiveThresholdDays: number) => {
+    setSettings((prev) => {
+      const next = { ...prev, archiveThresholdDays }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
   return {
     defaultModel: settings.defaultModel,
     reopenLastWorkspace: settings.reopenLastWorkspace,
@@ -114,11 +129,13 @@ export function useAppSettings() {
     language: settings.language,
     chatFontSize: settings.chatFontSize,
     uiFontSize: settings.uiFontSize,
+    archiveThresholdDays: settings.archiveThresholdDays,
     setDefaultModel,
     setReopenLastWorkspace,
     setUseModifierToSubmit,
     setLanguage,
     setChatFontSize,
     setUiFontSize,
+    setArchiveThresholdDays,
   }
 }

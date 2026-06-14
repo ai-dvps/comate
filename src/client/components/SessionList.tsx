@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
-import { getSessionDisplayName, matchesSessionQuery } from '../lib/session-filter'
+import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from '../lib/session-filter'
+import type { SessionStatusFilter } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
 import { Plus, Puzzle, BookOpen, Search, X, RefreshCw } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
@@ -11,6 +12,7 @@ import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
 import { Button } from './ui/button'
 import { cn } from './ui/utils'
+import SessionStatusFilterControl from './SessionStatusFilterControl'
 import { useToastStore } from '../stores/toast-store'
 
 const EMPTY_ARRAY: [] = []
@@ -31,6 +33,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [showPluginSettings, setShowPluginSettings] = useState(false)
   const [showSkillsPage, setShowSkillsPage] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<SessionStatusFilter>('active')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
@@ -45,6 +48,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const createSession = useChatStore((s) => s.createSession)
   const renameSession = useChatStore((s) => s.renameSession)
   const toggleSessionWip = useChatStore((s) => s.toggleSessionWip)
+  const toggleSessionArchive = useChatStore((s) => s.toggleSessionArchive)
   const fetchSessions = useChatStore((s) => s.fetchSessions)
   const addToast = useToastStore((s) => s.addToast)
 
@@ -54,8 +58,10 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     [sessions, lastActivityAt],
   )
   const filteredSessions = useMemo(
-    () => sortedSessions.filter((session) => matchesSessionQuery(session, trimmedQuery)),
-    [sortedSessions, trimmedQuery],
+    () => sortedSessions
+      .filter((session) => matchesSessionStatus(session, statusFilter))
+      .filter((session) => matchesSessionQuery(session, trimmedQuery)),
+    [sortedSessions, trimmedQuery, statusFilter],
   )
   const matchCount = filteredSessions.length
 
@@ -116,9 +122,10 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     setEditingName('')
   }, [activeSessionId])
 
-  // Reset search when switching workspaces.
+  // Reset search and status filter when switching workspaces.
   useEffect(() => {
     setSearchQuery('')
+    setStatusFilter('active')
   }, [workspaceId])
 
   const handleContextMenu = (e: React.MouseEvent, sessionId: string) => {
@@ -227,33 +234,41 @@ export default function SessionList({ workspaceId }: SessionListProps) {
         </Button>
         </div>
 
-        {/* Search */}
-        <div className="relative" role="search">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
-            <Search className="w-3.5 h-3.5 text-text-tertiary" />
+        {/* Search + Status Filter */}
+        <div className="flex gap-2 items-center" role="search">
+          <div className="relative flex-1 min-w-0">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+              <Search className="w-3.5 h-3.5 text-text-tertiary" />
+            </div>
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              onFocus={handleSearchFocus}
+              placeholder={t('searchSessions')}
+              aria-label={t('searchSessions')}
+              disabled={searchDisabled}
+              className="w-full pl-8 pr-7 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            {trimmedQuery && (
+              <button
+                type="button"
+                onClick={clearSearch}
+                aria-label={t('clearSearch')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            onFocus={handleSearchFocus}
-            placeholder={t('searchSessions')}
-            aria-label={t('searchSessions')}
+          <SessionStatusFilterControl
+            value={statusFilter}
+            onChange={setStatusFilter}
             disabled={searchDisabled}
-            className="w-full pl-8 pr-7 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label={t('statusFilterLabel')}
           />
-          {trimmedQuery && (
-            <button
-              type="button"
-              onClick={clearSearch}
-              aria-label={t('clearSearch')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
         </div>
       </div>
 
@@ -267,8 +282,18 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             <br />
             {t('createSessionPrompt')}
           </div>
-        ) : trimmedQuery && matchCount === 0 ? (
-          <div className="px-4 py-3 text-xs text-text-tertiary text-center">{t('noMatchingSessions')}</div>
+        ) : matchCount === 0 ? (
+          <div className="px-4 py-3 text-xs text-text-tertiary text-center">
+            {trimmedQuery
+              ? t('noMatchingSessions')
+              : statusFilter === 'active'
+                ? t('noActiveSessions')
+                : statusFilter === 'archived'
+                  ? t('noArchivedSessions')
+                  : statusFilter === 'wip'
+                    ? t('noWipSessions')
+                    : t('noMatchingSessions')}
+          </div>
         ) : (
           filteredSessions.map((session) => (
             <SessionListItem
@@ -297,7 +322,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
 
       {/* Live region for filtered result count */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {trimmedQuery ? t('matchingSessionCount', { count: matchCount }) : ''}
+        {trimmedQuery || statusFilter !== 'active' ? t('matchingSessionCount', { count: matchCount }) : ''}
       </div>
 
       {/* Plugin + Skills Settings Toolbar */}
@@ -339,6 +364,15 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
               >
                 {session.isWip ? t('clearWip') : t('markAsWip')}
+              </button>
+              <button
+                onClick={() => {
+                  toggleSessionArchive(workspaceId, session.id, !session.isArchived)
+                  setContextMenu(null)
+                }}
+                className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+              >
+                {session.isArchived ? t('unarchive') : t('archive')}
               </button>
             </div>
           )
