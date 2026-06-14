@@ -13,6 +13,12 @@ function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>);
 }
 
+const DEFAULT_PROPS = {
+  workspaceId: 'ws-1',
+  needsUpgradePrompt: false,
+  onApplySafePreset: vi.fn(),
+};
+
 describe('PermissionsSubTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -21,7 +27,7 @@ describe('PermissionsSubTab', () => {
 
   it('renders all six categories', () => {
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     expect(screen.getByText('File Read')).toBeInTheDocument();
     expect(screen.getByText('File Write')).toBeInTheDocument();
@@ -33,7 +39,7 @@ describe('PermissionsSubTab', () => {
 
   it('renders posture selector with three options', () => {
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     expect(screen.getByRole('button', { name: /Allow all/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Safe$/i })).toBeInTheDocument();
@@ -42,7 +48,7 @@ describe('PermissionsSubTab', () => {
 
   it('clicking "Allow all" preset rewrites categoryDefaults to all allow and sets posture', () => {
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     fireEvent.click(screen.getByRole('button', { name: /Allow all/i }));
 
@@ -59,7 +65,7 @@ describe('PermissionsSubTab', () => {
 
   it('clicking "Safe" preset applies the safe defaults from R3 table', () => {
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={ALLOW_ALL_PRESET} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={ALLOW_ALL_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     fireEvent.click(screen.getByRole('button', { name: /^Safe$/i }));
 
@@ -76,7 +82,7 @@ describe('PermissionsSubTab', () => {
 
   it('manual category toggle flips posture to custom (R2 state-transition rule)', () => {
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     // Toggle File Write from deny to allow — should flip posture to custom
     const fileWriteCard = screen.getByText('File Write').closest('div.border')!;
@@ -94,7 +100,7 @@ describe('PermissionsSubTab', () => {
 
   it('expanding a category shows the tool list with override controls', () => {
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     // Shell category only contains Bash — expand it
     const shellCard = screen.getByText('Shell').closest('div.border')!;
@@ -107,7 +113,7 @@ describe('PermissionsSubTab', () => {
 
   it('clicking "Always allow" override on a denied-category tool emits an allow override', () => {
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     // Expand Shell (only contains Bash)
     const shellCard = screen.getByText('Shell').closest('div.border')!;
@@ -135,7 +141,7 @@ describe('PermissionsSubTab', () => {
       overrides: { Bash: 'allow' },
     };
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={policyWithOverride} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={policyWithOverride} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     const shellCard = screen.getByText('Shell').closest('div.border')!;
     fireEvent.click(shellCard.querySelector('button[aria-label="expand"]')!);
@@ -151,7 +157,7 @@ describe('PermissionsSubTab', () => {
 
   it('undefined policy is treated as allow-all for display', () => {
     const onUpdate = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={undefined} onUpdate={onUpdate} />);
+    renderWithI18n(<PermissionsSubTab policy={undefined} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     // No assertion failure means the component rendered without crashing
     // with undefined policy (which the grandfathered-default case uses).
@@ -159,7 +165,7 @@ describe('PermissionsSubTab', () => {
   });
 
   it('renders the policy-freeze hint below the posture selector', () => {
-    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={vi.fn()} />);
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={vi.fn()} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     expect(screen.getByText(/Changes apply to the next bot session/)).toBeInTheDocument();
   });
@@ -167,7 +173,7 @@ describe('PermissionsSubTab', () => {
   it('F4 flow: select preset → toggle one override → policy persists with both (integration)', () => {
     // Step 1: select Safe preset on an allow-all policy
     const onUpdate1 = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={ALLOW_ALL_PRESET} onUpdate={onUpdate1} />);
+    renderWithI18n(<PermissionsSubTab policy={ALLOW_ALL_PRESET} onUpdate={onUpdate1} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
     fireEvent.click(screen.getByRole('button', { name: /^Safe$/i }));
     const afterPreset = onUpdate1.mock.calls[0][0] as ToolPermissionPolicy;
     expect(afterPreset.posture).toBe('safe');
@@ -176,7 +182,7 @@ describe('PermissionsSubTab', () => {
     // Step 2: clean up and re-render with the new policy, then apply an override
     cleanup();
     const onUpdate2 = vi.fn();
-    renderWithI18n(<PermissionsSubTab policy={afterPreset} onUpdate={onUpdate2} />);
+    renderWithI18n(<PermissionsSubTab policy={afterPreset} onUpdate={onUpdate2} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     const shellCard = screen.getByText('Shell').closest('div.border')!;
     fireEvent.click(shellCard.querySelector('button[aria-label="expand"]')!);
@@ -187,5 +193,72 @@ describe('PermissionsSubTab', () => {
     expect(final.posture).toBe('custom');
     expect(final.categoryDefaults.shell).toBe('deny'); // safe default preserved
     expect(final.overrides?.Bash).toBe('allow'); // override applied
+  });
+
+  it('renders grandfathering banner when needsUpgradePrompt is true and not yet dismissed', () => {
+    localStorage.clear();
+    renderWithI18n(
+      <PermissionsSubTab
+        policy={undefined}
+        onUpdate={vi.fn()}
+        workspaceId="ws-banner-test"
+        needsUpgradePrompt={true}
+        onApplySafePreset={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/This workspace is running with full tool access/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Switch to Safe preset/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Dismiss/i })).toBeInTheDocument();
+  });
+
+  it('does not render grandfathering banner when needsUpgradePrompt is false', () => {
+    localStorage.clear();
+    renderWithI18n(
+      <PermissionsSubTab
+        policy={SAFE_PRESET}
+        onUpdate={vi.fn()}
+        workspaceId="ws-no-banner"
+        needsUpgradePrompt={false}
+        onApplySafePreset={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/This workspace is running with full tool access/i)).not.toBeInTheDocument();
+  });
+
+  it('dismiss button hides the grandfathering banner and persists to localStorage', () => {
+    localStorage.clear();
+    renderWithI18n(
+      <PermissionsSubTab
+        policy={undefined}
+        onUpdate={vi.fn()}
+        workspaceId="ws-dismiss-test"
+        needsUpgradePrompt={true}
+        onApplySafePreset={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/This workspace is running with full tool access/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Dismiss/i }));
+    expect(screen.queryByText(/This workspace is running with full tool access/i)).not.toBeInTheDocument();
+    expect(localStorage.getItem('wecom-permissions-prompt-shown:ws-dismiss-test')).toBe('true');
+  });
+
+  it('Switch to Safe preset CTA calls onApplySafePreset', () => {
+    localStorage.clear();
+    const onApply = vi.fn().mockResolvedValue(undefined);
+    renderWithI18n(
+      <PermissionsSubTab
+        policy={undefined}
+        onUpdate={vi.fn()}
+        workspaceId="ws-cta-test"
+        needsUpgradePrompt={true}
+        onApplySafePreset={onApply}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Switch to Safe preset/i }));
+    expect(onApply).toHaveBeenCalledTimes(1);
   });
 });
