@@ -3,9 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
-import { getSessionDisplayName, matchesSessionQuery } from '../lib/session-filter'
+import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from '../lib/session-filter'
+import type { SessionStatusFilter } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
-import { Plus, Puzzle, BookOpen, Search, X, RefreshCw } from 'lucide-react'
+import { Plus, Puzzle, BookOpen, Search, X, RefreshCw, Filter } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
@@ -31,7 +32,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [showPluginSettings, setShowPluginSettings] = useState(false)
   const [showSkillsPage, setShowSkillsPage] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [showArchived, setShowArchived] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<SessionStatusFilter>('active')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
@@ -57,9 +58,9 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   )
   const filteredSessions = useMemo(
     () => sortedSessions
-      .filter((session) => showArchived || !session.isArchived)
+      .filter((session) => matchesSessionStatus(session, statusFilter))
       .filter((session) => matchesSessionQuery(session, trimmedQuery)),
-    [sortedSessions, trimmedQuery, showArchived],
+    [sortedSessions, trimmedQuery, statusFilter],
   )
   const matchCount = filteredSessions.length
 
@@ -120,10 +121,10 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     setEditingName('')
   }, [activeSessionId])
 
-  // Reset search and archive filter when switching workspaces.
+  // Reset search and status filter when switching workspaces.
   useEffect(() => {
     setSearchQuery('')
-    setShowArchived(false)
+    setStatusFilter('active')
   }, [workspaceId])
 
   const handleContextMenu = (e: React.MouseEvent, sessionId: string) => {
@@ -232,44 +233,52 @@ export default function SessionList({ workspaceId }: SessionListProps) {
         </Button>
         </div>
 
-        {/* Search */}
-        <div className="relative" role="search">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
-            <Search className="w-3.5 h-3.5 text-text-tertiary" />
+        {/* Search + Status Filter */}
+        <div className="flex gap-2 items-center" role="search">
+          <div className="relative flex-1 min-w-0">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+              <Search className="w-3.5 h-3.5 text-text-tertiary" />
+            </div>
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              onFocus={handleSearchFocus}
+              placeholder={t('searchSessions')}
+              aria-label={t('searchSessions')}
+              disabled={searchDisabled}
+              className="w-full pl-8 pr-7 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            {trimmedQuery && (
+              <button
+                type="button"
+                onClick={clearSearch}
+                aria-label={t('clearSearch')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            onFocus={handleSearchFocus}
-            placeholder={t('searchSessions')}
-            aria-label={t('searchSessions')}
-            disabled={searchDisabled}
-            className="w-full pl-8 pr-7 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-          {trimmedQuery && (
-            <button
-              type="button"
-              onClick={clearSearch}
-              aria-label={t('clearSearch')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
+          <div className="relative">
+            <div className="absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none">
+              <Filter className="w-3 h-3 text-text-tertiary" />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as SessionStatusFilter)}
+              aria-label={t('statusFilterLabel')}
+              className="pl-7 pr-6 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary cursor-pointer"
             >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
+              <option value="all">{t('statusFilterAll')}</option>
+              <option value="active">{t('statusFilterActive')}</option>
+              <option value="archived">{t('statusFilterArchived')}</option>
+              <option value="wip">{t('statusFilterWip')}</option>
+            </select>
+          </div>
         </div>
-        {/* Show archived filter */}
-        <label className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(e) => setShowArchived(e.target.checked)}
-            className="rounded border-border text-accent focus:ring-accent"
-          />
-          {t('showArchived')}
-        </label>
       </div>
 
       {/* Session List */}
@@ -282,8 +291,18 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             <br />
             {t('createSessionPrompt')}
           </div>
-        ) : trimmedQuery && matchCount === 0 ? (
-          <div className="px-4 py-3 text-xs text-text-tertiary text-center">{t('noMatchingSessions')}</div>
+        ) : matchCount === 0 ? (
+          <div className="px-4 py-3 text-xs text-text-tertiary text-center">
+            {trimmedQuery
+              ? t('noMatchingSessions')
+              : statusFilter === 'active'
+                ? t('noActiveSessions')
+                : statusFilter === 'archived'
+                  ? t('noArchivedSessions')
+                  : statusFilter === 'wip'
+                    ? t('noWipSessions')
+                    : t('noMatchingSessions')}
+          </div>
         ) : (
           filteredSessions.map((session) => (
             <SessionListItem
@@ -312,7 +331,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
 
       {/* Live region for filtered result count */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {trimmedQuery ? t('matchingSessionCount', { count: matchCount }) : ''}
+        {trimmedQuery || statusFilter !== 'active' ? t('matchingSessionCount', { count: matchCount }) : ''}
       </div>
 
       {/* Plugin + Skills Settings Toolbar */}
