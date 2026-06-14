@@ -95,6 +95,7 @@ export default function PromptInput({
   )
   const [filePickerFilter, setFilePickerFilter] = useState('')
   const [fileTriggerStart, setFileTriggerStart] = useState<number | null>(null)
+  const [slashTriggerStart, setSlashTriggerStart] = useState<number | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
@@ -121,6 +122,7 @@ export default function PromptInput({
     setPickerOpen(false)
     setFilePickerOpen(false)
     setFileTriggerStart(null)
+    setSlashTriggerStart(null)
     setArgumentHint(null)
     setLastInsertedCommand(null)
   }, [sessionId])
@@ -157,12 +159,23 @@ export default function PromptInput({
     }
 
     if (pickerOpen && pickerSource === 'slash') {
-      if (value === '') {
-        setPickerOpen(false)
-      } else if (value.startsWith('/') && !/\s/.test(value)) {
-        setPickerFilter(value.slice(1))
-      } else {
-        setPickerOpen(false)
+      if (slashTriggerStart !== null) {
+        // Cursor moved before / or / was deleted
+        if (
+          cursorPos <= slashTriggerStart ||
+          value[slashTriggerStart] !== '/'
+        ) {
+          setPickerOpen(false)
+          setSlashTriggerStart(null)
+          return
+        }
+        const filterText = value.slice(slashTriggerStart + 1, cursorPos)
+        if (/\s/.test(filterText)) {
+          setPickerOpen(false)
+          setSlashTriggerStart(null)
+          return
+        }
+        setPickerFilter(filterText)
       }
     }
 
@@ -192,16 +205,30 @@ export default function PromptInput({
       }
     }
 
-    if (
-      !filePickerOpen &&
-      !pickerOpen &&
-      prev === '' &&
-      value.startsWith('/') &&
-      !/\s/.test(value)
-    ) {
-      setPickerSource('slash')
-      setPickerFilter(value.slice(1))
-      setPickerOpen(true)
+    // Detect / trigger only when no workspace picker is open
+    if (!filePickerOpen && (!pickerOpen || pickerSource !== 'slash')) {
+      // / as first character of empty input
+      if (value === '/' && prev === '') {
+        setSlashTriggerStart(0)
+        setPickerSource('slash')
+        setPickerFilter('')
+        setPickerOpen(true)
+        setFilePickerOpen(false)
+        return
+      }
+
+      // / preceded by whitespace mid-text
+      if (
+        cursorPos > 0 &&
+        value[cursorPos - 1] === '/' &&
+        (cursorPos === 1 || /\s/.test(value[cursorPos - 2]))
+      ) {
+        setSlashTriggerStart(cursorPos - 1)
+        setPickerSource('slash')
+        setPickerFilter('')
+        setPickerOpen(true)
+        setFilePickerOpen(false)
+      }
     }
   }
 
@@ -210,6 +237,7 @@ export default function PromptInput({
     prevInputRef.current = ''
     setArgumentHint(null)
     setLastInsertedCommand(null)
+    setSlashTriggerStart(null)
   }
 
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
@@ -224,8 +252,14 @@ export default function PromptInput({
 
   const handleClear = () => {
     resetInput()
-    if (pickerOpen) setPickerOpen(false)
-    if (filePickerOpen) setFilePickerOpen(false)
+    if (pickerOpen) {
+      setPickerOpen(false)
+      setSlashTriggerStart(null)
+    }
+    if (filePickerOpen) {
+      setFilePickerOpen(false)
+      setFileTriggerStart(null)
+    }
     textareaRef.current?.focus()
   }
 
@@ -279,11 +313,13 @@ export default function PromptInput({
       if (e.key === 'Escape') {
         e.preventDefault()
         setPickerOpen(false)
+        setSlashTriggerStart(null)
         return
       }
       if (e.key === 'Tab') {
         e.preventDefault()
         setPickerOpen(false)
+        setSlashTriggerStart(null)
         return
       }
     }
@@ -301,6 +337,7 @@ export default function PromptInput({
     setLastInsertedCommand(inserted)
     setArgumentHint(command.argumentHint ?? null)
     setPickerOpen(false)
+    setSlashTriggerStart(null)
     requestAnimationFrame(() => {
       const ta = textareaRef.current
       if (!ta) return
@@ -331,10 +368,12 @@ export default function PromptInput({
   const handleCommandsClick = () => {
     if (pickerOpen) {
       setPickerOpen(false)
+      setSlashTriggerStart(null)
       return
     }
     setFilePickerOpen(false)
     setFileTriggerStart(null)
+    setSlashTriggerStart(null)
     setPickerSource('button')
     setPickerFilter('')
     setPickerOpen(true)
@@ -411,7 +450,10 @@ export default function PromptInput({
                 ref={pickerHandleRef}
                 workspaceId={workspaceId}
                 open={pickerOpen}
-                onOpenChange={setPickerOpen}
+                onOpenChange={(open) => {
+                  setPickerOpen(open)
+                  if (!open) setSlashTriggerStart(null)
+                }}
                 onSelect={handleCommandSelect}
                 side="top"
                 align="start"
