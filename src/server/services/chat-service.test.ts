@@ -423,3 +423,225 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
     assert.strictEqual(handlers[0], handler);
   });
 });
+
+describe('chat-service canUseTool policy gating', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+  const originalGetLocalSession = workspaceStore.getLocalSession.bind(workspaceStore);
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+
+  class MockSdkClient extends SdkClient {
+    override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+      return {
+        sessionId: 's1',
+        summary: 'Test Session',
+        createdAt: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+      } as SDKSessionInfo;
+    }
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return [];
+    }
+    override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async renameSession(): Promise<void> {}
+  }
+
+  class TestChatService extends ChatService {
+    constructor() {
+      super(new MockSdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  beforeEach(() => {
+    service = new TestChatService();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+    SessionRuntime.open = originalOpen;
+    workspaceStore.get = originalGet;
+    workspaceStore.getLocalSession = originalGetLocalSession;
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+  });
+
+  function createMockRuntime(): SessionRuntime {
+    const mock = {
+      isClosed: () => false,
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      close: () => Promise.resolve(),
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: () => {},
+      resolveApproval: () => {},
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+    };
+    return mock as unknown as SessionRuntime;
+  }
+
+  async function captureBotCanUseTool(
+    workspaceSettingsOverrides: Record<string, unknown>,
+  ): Promise<NonNullable<Options['canUseTool']>> {
+    const mockWorkspace = createMockWorkspace('ws-1');
+    Object.assign(mockWorkspace.settings, workspaceSettingsOverrides);
+    workspaceStore.get = async () => mockWorkspace;
+    workspaceStore.getLocalSession = () => createMockSession('s1');
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', true);
+    assert.ok(capturedOptions?.canUseTool, 'canUseTool must be set for bot sessions');
+    return capturedOptions.canUseTool;
+  }
+
+  it('bot session with policy denying Shell: canUseTool returns deny for Bash with generic message', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const result = await canUseTool('Bash', { command: 'ls' });
+    assert.strictEqual(result.behavior, 'deny');
+    if (result.behavior === 'deny') {
+      assert.ok(!result.message.toLowerCase().includes('shell'), 'denial message must not leak capability name');
+      assert.ok(!result.message.toLowerCase().includes('bash'), 'denial message must not leak tool name');
+    }
+  });
+
+  it('bot session with policy allowing File Read: canUseTool returns allow for Read', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const result = await canUseTool('Read', { file_path: '/tmp/x' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('bot session: allow override on denied category inverts the decision', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'custom',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+        overrides: { Bash: 'allow' },
+      },
+    });
+
+    const result = await canUseTool('Bash', { command: 'ls' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('bot session: deny override on allowed category inverts the decision', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'custom',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+        },
+        overrides: { Edit: 'deny' },
+      },
+    });
+
+    const editResult = await canUseTool('Edit', { file_path: '/tmp/x' });
+    assert.strictEqual(editResult.behavior, 'deny');
+    const writeResult = await canUseTool('Write', { file_path: '/tmp/x' });
+    assert.strictEqual(writeResult.behavior, 'allow');
+  });
+
+  it('bot session: MCP tool falls through to allow (R10)', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const result = await canUseTool('mcp__myserver__tool', {});
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('bot session with no policy and bot enabled: grandfathered allow-all (R7)', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      // No wecomToolPermissions — grandfathered
+    });
+
+    const bashResult = await canUseTool('Bash', {});
+    assert.strictEqual(bashResult.behavior, 'allow');
+    const writeResult = await canUseTool('Write', {});
+    assert.strictEqual(writeResult.behavior, 'allow');
+  });
+
+  it('GUI session (isBotSession undefined): canUseTool is not set', async () => {
+    const mockWorkspace = createMockWorkspace('ws-1');
+    workspaceStore.get = async () => mockWorkspace;
+    workspaceStore.getLocalSession = () => createMockSession('s1');
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    // No isBotSession arg → GUI session
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    assert.ok(capturedOptions);
+    assert.strictEqual(capturedOptions!.canUseTool, undefined, 'GUI sessions must not have canUseTool set by this branch');
+  });
+});
