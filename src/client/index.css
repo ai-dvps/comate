@@ -194,8 +194,8 @@
   .md-overlay .token.bold {
     @apply font-semibold;
   }
-  .md-overlay .token.italic {
-    @apply italic;
+  .md-overlay .token[class~="italic"] {
+    font-style: italic;
   }
   .md-overlay .token.code {
     @apply font-mono text-[12px] bg-surface-hover px-1 py-0.5 rounded;
