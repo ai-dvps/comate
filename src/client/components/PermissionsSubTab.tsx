@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   ALLOW_ALL_PRESET,
@@ -11,12 +11,19 @@ import {
   type ToolPermissionPolicy,
   type ToolPosture,
 } from '../types/wecom-permissions';
+import { useWecomPermissionsPrompt } from '../hooks/use-wecom-permissions-prompt';
 
 interface PermissionsSubTabProps {
   /** Current policy. When undefined, the workspace has no explicit policy set (grandfathered or default). UI treats this as 'allow-all'. */
   policy: ToolPermissionPolicy | undefined;
   /** Called with the updated policy on every change. */
   onUpdate: (policy: ToolPermissionPolicy) => void;
+  /** Workspace ID — used to key the grandfathering prompt's localStorage state. */
+  workspaceId: string;
+  /** True when the workspace is bot-enabled with no explicit policy (the grandfathered case from R7/R8). */
+  needsUpgradePrompt: boolean;
+  /** Apply the safe preset AND immediately persist (used by the grandfathering banner's CTA). */
+  onApplySafePreset: () => Promise<void>;
 }
 
 /**
@@ -31,10 +38,28 @@ interface PermissionsSubTabProps {
  *  - Any manual toggle or override change flips posture to 'custom'. The
  *    selector never auto-snaps back to a named preset from Custom even if the
  *    toggles happen to match — return to a named preset requires explicit click.
+ *
+ * Grandfathering banner (R7/R8): when `needsUpgradePrompt` is true and the
+ * admin has not yet dismissed it for this workspace+browser, an info banner
+ * appears above the posture selector. "Switch to Safe preset" auto-saves
+ * (calls onApplySafePreset) so the banner does not leave the workspace in an
+ * inconsistent state if the admin closes settings without clicking Save.
+ * "Dismiss" calls markShown without changing policy.
  */
-export function PermissionsSubTab({ policy, onUpdate }: PermissionsSubTabProps) {
+export function PermissionsSubTab({
+  policy,
+  onUpdate,
+  workspaceId,
+  needsUpgradePrompt,
+  onApplySafePreset,
+}: PermissionsSubTabProps) {
   const { t } = useTranslation('settings');
   const [expandedCategories, setExpandedCategories] = useState<Set<ToolCategory>>(new Set());
+
+  const { shouldShow: shouldShowBanner, markShown } = useWecomPermissionsPrompt({
+    workspaceId,
+    needsUpgradePrompt,
+  });
 
   // Effective policy: treat undefined as allow-all for display purposes
   const effective: ToolPermissionPolicy = policy ?? ALLOW_ALL_PRESET;
@@ -89,6 +114,49 @@ export function PermissionsSubTab({ policy, onUpdate }: PermissionsSubTabProps) 
 
   return (
     <div className="space-y-4 pt-4">
+      {/* Grandfathering one-time banner (R7/R8) */}
+      {shouldShowBanner && (
+        <div className="border border-yellow-500/40 bg-yellow-500/10 rounded p-3 space-y-2" role="status">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium text-text-primary">
+                {t('wecom.banner.title')}
+              </div>
+              <div className="text-[11px] text-text-secondary mt-1">
+                {t('wecom.banner.body')}
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Auto-save: onApplySafePreset both updates form state and
+                    // persists. markShown is called first so that if the save
+                    // fails, the banner still disappears and the user can
+                    // retry by editing the policy directly.
+                    markShown();
+                    onApplySafePreset().catch(() => {
+                      // Save errors are surfaced via the existing error path;
+                      // the banner is already dismissed at this point.
+                    });
+                  }}
+                  className="px-3 py-1 text-[11px] font-medium bg-accent text-accent-foreground rounded hover:bg-accent-hover"
+                >
+                  {t('wecom.banner.switchToSafe')}
+                </button>
+                <button
+                  type="button"
+                  onClick={markShown}
+                  className="px-3 py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary"
+                >
+                  {t('wecom.banner.dismiss')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Posture selector */}
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-2">
