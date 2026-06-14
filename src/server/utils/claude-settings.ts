@@ -607,3 +607,44 @@ export function updateInstalledPluginsEntry(
 
   writeInstalledPluginsJson(data);
 }
+
+/**
+ * Remove a plugin entry from installed_plugins.json.
+ * Matches by bare plugin id + scope + projectPath (independent of qualified key formatting).
+ * Returns true if any entry was removed.
+ */
+export function removeInstalledPluginsEntry(
+  pluginId: string,
+  options: {
+    scope: string;
+    projectPath?: string;
+  },
+): boolean {
+  const data = readInstalledPluginsJson();
+  let changed = false;
+
+  for (const [qualifiedId, entries] of Object.entries(data.plugins)) {
+    const atIndex = qualifiedId.lastIndexOf('@');
+    const bareId = atIndex > 0 ? qualifiedId.slice(0, atIndex) : qualifiedId;
+    if (bareId !== pluginId) continue;
+
+    const remaining = entries.filter(
+      (e) => !(e.scope === options.scope && e.projectPath === options.projectPath),
+    );
+
+    if (remaining.length !== entries.length) {
+      if (remaining.length === 0) {
+        delete data.plugins[qualifiedId];
+      } else {
+        data.plugins[qualifiedId] = remaining;
+      }
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    writeInstalledPluginsJson(data);
+  }
+
+  return changed;
+}

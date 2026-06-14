@@ -4,6 +4,7 @@ import i18next from 'i18next'
 import type { ChatMessage, MessagePart, QuestionPayload, TaskItem } from '../types/message'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import { diagLog, diagWarn } from '../utils/diag-logger'
+import { getInitialSettings } from '../hooks/use-app-settings'
 
 export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
 
@@ -99,6 +100,7 @@ export interface ChatSession {
   name: string
   isDraft?: boolean
   isWip?: boolean
+  isArchived?: boolean
   source?: 'gui' | 'wecom'
   approvalMode?: ApprovalMode
   providerId?: string
@@ -210,6 +212,7 @@ interface ChatState {
   addSession: (workspaceId: string, session: ChatSession) => void
   renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
   toggleSessionWip: (workspaceId: string, sessionId: string, isWip: boolean) => Promise<void>
+  toggleSessionArchive: (workspaceId: string, sessionId: string, isArchived: boolean) => Promise<void>
   setActiveSession: (workspaceId: string, sessionId: string) => void
   loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
   sendMessage: (workspaceId: string, sessionId: string, content: string) => void
@@ -765,6 +768,7 @@ function updateSubagentToolUse(
 
 function handleSseEvent(
   set: SseSetter,
+  workspaceId: string,
   sessionId: string,
   event: string,
   raw: unknown,
@@ -806,7 +810,7 @@ function handleSseEvent(
             ...state.totalMessageCount,
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
-          lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
+          ...applyActivityUpdate(state, workspaceId, sessionId),
         }
         if (state.isCompacting[sessionId]) {
           updates.isCompacting = { ...state.isCompacting, [sessionId]: false }
@@ -1250,7 +1254,7 @@ function handleSseEvent(
             ...state.approvalQueue,
             [sessionId]: queue,
           },
-          lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
+          ...applyActivityUpdate(state, workspaceId, sessionId),
         }
       })
       return
@@ -1275,7 +1279,7 @@ function handleSseEvent(
             ...state.approvalQueue,
             [sessionId]: queue,
           },
-          lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
+          ...applyActivityUpdate(state, workspaceId, sessionId),
         }
       })
       return
@@ -1335,7 +1339,7 @@ function handleSseEvent(
       set((state) => {
         const next: Partial<ChatState> = {
           isStreaming: { ...state.isStreaming, [sessionId]: false },
-          lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
+          ...applyActivityUpdate(state, workspaceId, sessionId),
         }
         if (!isSessionActive(state, sessionId)) {
           next.unreadCompletions = {
@@ -1636,7 +1640,7 @@ function subscribeToSession(
       const batch = deltaBuffer.splice(0, deltaBuffer.length)
       for (const { event, data } of batch) {
         try {
-          handleSseEvent(set, sessionId, event, data)
+          handleSseEvent(set, workspaceId, sessionId, event, data)
         } catch (err) {
           console.error('SSE batched event handler error:', err)
         }
@@ -1713,7 +1717,7 @@ function subscribeToSession(
                 // Non-delta events flush pending deltas immediately so
                 // approvals, questions, and done events are not delayed.
                 flushDeltas()
-                handleSseEvent(set, sessionId, event.event, event.data)
+                handleSseEvent(set, workspaceId, sessionId, event.event, event.data)
               }
             } catch (err) {
               console.error('SSE event handler error:', err)
@@ -1829,6 +1833,34 @@ function subscribeToSession(
   connect()
 }
 
+function applyActivityUpdate(
+  state: ChatState,
+  workspaceId: string,
+  sessionId: string,
+): Partial<ChatState> {
+  const workspaceSessions = state.sessions[workspaceId] || []
+  const session = workspaceSessions.find((s) => s.id === sessionId)
+  const updates: Partial<ChatState> = {
+    lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
+  }
+  if (session?.isArchived) {
+    updates.sessions = {
+      ...state.sessions,
+      [workspaceId]: workspaceSessions.map((s) =>
+        s.id === sessionId ? { ...s, isArchived: false } : s,
+      ),
+    }
+    fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isArchived: false }),
+    }).catch((err) => {
+      console.warn('Failed to clear archived state on activity:', err)
+    })
+  }
+  return updates
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   sessions: {},
   messages: {},
@@ -1861,7 +1893,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   fetchSessions: async (workspaceId: string) => {
     set((state) => ({ isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: true } }))
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/sessions`)
+      const settings = getInitialSettings()
+      const threshold = settings.archiveThresholdDays
+      const url = new URL(`/api/workspaces/${workspaceId}/sessions`, window.location.origin)
+      if (typeof threshold === 'number' && threshold > 0) {
+        url.searchParams.set('archive_threshold_days', String(threshold))
+      }
+      const res = await fetch(url.pathname + url.search)
       if (!res.ok) {
         return { ok: false, error: i18next.t('common:failedToFetchSessions', 'Failed to fetch sessions') }
       }
@@ -1926,7 +1964,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
           unreadCompletions: nextUnread,
           domCache: { ...state.domCache, [workspaceId]: nextCache },
-          lastActivityAt: { ...state.lastActivityAt, [session.id]: Date.now() },
+          ...applyActivityUpdate(state, workspaceId, session.id),
         }
       })
     } catch (err) {
@@ -1953,7 +1991,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
         unreadCompletions: nextUnread,
         domCache: { ...state.domCache, [workspaceId]: nextCache },
-        lastActivityAt: { ...state.lastActivityAt, [session.id]: Date.now() },
+        ...applyActivityUpdate(state, workspaceId, session.id),
       }
     })
   },
@@ -2028,6 +2066,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  toggleSessionArchive: async (workspaceId: string, sessionId: string, isArchived: boolean) => {
+    try {
+      // Optimistic update
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, isArchived } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isArchived }),
+      })
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+      const updated: ChatSession = await res.json()
+      // Confirm state with server response
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, isArchived: updated.isArchived } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+    } catch (err) {
+      console.error('Failed to toggle session archive:', err)
+      // Revert optimistic update on error
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, isArchived: !isArchived } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+    }
+  },
+
   setActiveSession: (workspaceId: string, sessionId: string) => {
     closeSessionSubscriptions(sessionId)
     set((state) => {
@@ -2044,6 +2127,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
         unreadCompletions: nextUnread,
         domCache: { ...state.domCache, [workspaceId]: nextCache },
+        ...(sessionId ? applyActivityUpdate(state, workspaceId, sessionId) : {}),
       }
     })
     // Auto-subscribe when switching to a session (skip for bot sessions)
@@ -2169,7 +2253,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...state.totalMessageCount,
           [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
         },
-        lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
+        ...applyActivityUpdate(state, workspaceId, sessionId),
       }
     })
 

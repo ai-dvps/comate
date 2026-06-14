@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { getSessionDisplayName, matchesSessionQuery } from './session-filter'
+import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from './session-filter'
 import type { ChatSession } from '../stores/chat-store'
 
 function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
@@ -65,5 +65,42 @@ describe('matchesSessionQuery', () => {
 
     const bySummary = makeSession({ summary: 'Backend migration', name: 'Untitled' })
     assert.strictEqual(matchesSessionQuery(bySummary, 'migration'), true)
+  })
+})
+
+describe('matchesSessionStatus', () => {
+  it('active filter excludes archived sessions and includes non-archived sessions', () => {
+    const archived = makeSession({ isArchived: true })
+    const active = makeSession({ isArchived: false })
+    assert.strictEqual(matchesSessionStatus(archived, 'active'), false)
+    assert.strictEqual(matchesSessionStatus(active, 'active'), true)
+  })
+
+  it('archived filter includes sessions that are also wip', () => {
+    const archivedWip = makeSession({ isArchived: true, isWip: true })
+    assert.strictEqual(matchesSessionStatus(archivedWip, 'archived'), true)
+  })
+
+  it('wip filter includes wip sessions even if they are archived', () => {
+    const archivedWip = makeSession({ isArchived: true, isWip: true })
+    const plainWip = makeSession({ isArchived: false, isWip: true })
+    assert.strictEqual(matchesSessionStatus(archivedWip, 'wip'), true)
+    assert.strictEqual(matchesSessionStatus(plainWip, 'wip'), true)
+  })
+
+  it('all filter returns true for any session', () => {
+    assert.strictEqual(matchesSessionStatus(makeSession({ isArchived: true }), 'all'), true)
+    assert.strictEqual(matchesSessionStatus(makeSession({ isWip: true }), 'all'), true)
+    assert.strictEqual(matchesSessionStatus(makeSession({}), 'all'), true)
+  })
+
+  it('active filter includes wip sessions that are not archived', () => {
+    const wip = makeSession({ isWip: true, isArchived: false })
+    assert.strictEqual(matchesSessionStatus(wip, 'active'), true)
+  })
+
+  it('archived filter excludes non-archived sessions', () => {
+    const active = makeSession({ isArchived: false })
+    assert.strictEqual(matchesSessionStatus(active, 'archived'), false)
   })
 })

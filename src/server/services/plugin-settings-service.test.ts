@@ -4,6 +4,10 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, existsSync
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PluginSettingsService, assertPluginScope } from './plugin-settings-service.js';
+import {
+  writeInstalledPluginsJson,
+  readInstalledPluginsJson,
+} from '../utils/claude-settings.js';
 
 describe('plugin-settings-service', { concurrency: false }, () => {
   let tempDir: string;
@@ -67,6 +71,14 @@ describe('plugin-settings-service', { concurrency: false }, () => {
   function readLocalSettings(): Record<string, unknown> {
     const content = readFileSync(localSettingsPath, 'utf-8');
     return JSON.parse(content) as Record<string, unknown>;
+  }
+
+  function writeInstalledPlugins(content: Record<string, unknown>): void {
+    writeInstalledPluginsJson(content as { version: number; plugins: Record<string, unknown[]> });
+  }
+
+  function readInstalledPlugins(): { version: number; plugins: Record<string, unknown[]> } {
+    return readInstalledPluginsJson();
   }
 
   // --- Tests ---
@@ -356,6 +368,104 @@ describe('plugin-settings-service', { concurrency: false }, () => {
 
       service.removePlugin('user', 'formatter', undefined, { purgeData: true });
 
+      assert.strictEqual(existsSync(cachePath), false);
+    });
+
+    it('removes a plugin that only exists in installed_plugins.json (CLI-installed)', () => {
+      writeInstalledPlugins({
+        version: 2,
+        plugins: {
+          'warp@claude-plugins-official': [
+            { scope: 'user', installPath: '/tmp/cache/warp', version: '1.0.0', installedAt: '2026-06-01T00:00:00Z' },
+          ],
+        },
+      });
+
+      const result = service.removePlugin('user', 'warp');
+      assert.strictEqual(result, true);
+
+      const cli = readInstalledPlugins();
+      assert.deepStrictEqual(cli.plugins, {});
+    });
+
+    it('removes a plugin from both settings.json and installed_plugins.json', () => {
+      writeUserSettings({
+        pluginManager: {
+          plugins: {
+            warp: { version: '1.0.0', source: 'claude-plugins-official', enabled: true, installedAt: '2026-06-01T00:00:00Z' },
+          },
+        },
+      });
+      writeInstalledPlugins({
+        version: 2,
+        plugins: {
+          'warp@claude-plugins-official': [
+            { scope: 'user', installPath: '/tmp/cache/warp', version: '1.0.0', installedAt: '2026-06-01T00:00:00Z' },
+          ],
+        },
+      });
+
+      const result = service.removePlugin('user', 'warp');
+      assert.strictEqual(result, true);
+
+      const settings = readUserSettings();
+      const plugins = (settings.pluginManager as Record<string, unknown>).plugins as Record<string, unknown>;
+      assert.ok(!plugins.warp);
+
+      const cli = readInstalledPlugins();
+      assert.deepStrictEqual(cli.plugins, {});
+    });
+
+    it('removes a project-scoped plugin from installed_plugins.json matching projectPath', () => {
+      writeInstalledPlugins({
+        version: 2,
+        plugins: {
+          'warp@marketplace': [
+            { scope: 'project', projectPath: workspacePath, installPath: '/tmp/cache/warp', version: '1.0.0', installedAt: '2026-06-01T00:00:00Z' },
+          ],
+        },
+      });
+
+      const result = service.removePlugin('project', 'warp', workspacePath);
+      assert.strictEqual(result, true);
+
+      const cli = readInstalledPlugins();
+      assert.deepStrictEqual(cli.plugins, {});
+    });
+
+    it('returns false for project scope when installed_plugins.json entry has a different projectPath', () => {
+      writeInstalledPlugins({
+        version: 2,
+        plugins: {
+          'warp@marketplace': [
+            { scope: 'project', projectPath: '/some/other/path', installPath: '/tmp/cache/warp', version: '1.0.0', installedAt: '2026-06-01T00:00:00Z' },
+          ],
+        },
+      });
+
+      const result = service.removePlugin('project', 'warp', workspacePath);
+      assert.strictEqual(result, false);
+
+      const cli = readInstalledPlugins();
+      assert.strictEqual(Object.keys(cli.plugins).length, 1);
+    });
+
+    it('purges cache when uninstalling a CLI-only plugin', () => {
+      writeInstalledPlugins({
+        version: 2,
+        plugins: {
+          'warp@claude-plugins-official': [
+            { scope: 'user', installPath: '/tmp/cache/warp', version: '1.0.0', installedAt: '2026-06-01T00:00:00Z' },
+          ],
+        },
+      });
+
+      const cachePath = service.resolvePluginCachePath('warp');
+      mkdirSync(cachePath, { recursive: true });
+      assert.strictEqual(existsSync(cachePath), true);
+
+      const result = service.removePlugin('user', 'warp', undefined, { purgeData: true });
+      assert.strictEqual(result, true);
       assert.strictEqual(existsSync(cachePath), false);
     });
   });
