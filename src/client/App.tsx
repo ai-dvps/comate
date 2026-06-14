@@ -9,6 +9,7 @@ import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
+import AnalyticsPanel from './components/AnalyticsPanel'
 import FilePanel, { ViewedFile } from './components/FilePanel'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
@@ -41,6 +42,7 @@ function App() {
   const [openFiles, setOpenFiles] = useState<ViewedFile[]>([])
   const [activeFilePath, setActiveFilePath] = useState('')
   const [showSettings, setShowSettings] = useState(false)
+  const [showAnalytics, setShowAnalytics] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isMac, setIsMac] = useState(false)
   const [claudeCheck, setClaudeCheck] = useState<{ ok: boolean; checking: boolean; error?: string }>({
@@ -235,6 +237,7 @@ function App() {
           <HeaderToolbar
             onCreateWorkspace={() => setShowCreateModal(true)}
             onOpenSettings={() => setShowSettings(true)}
+            onOpenAnalytics={() => setShowAnalytics(true)}
           />
         </div>
       </header>
@@ -307,6 +310,12 @@ function App() {
       {showSettings && (
         <SettingsPanel
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {showAnalytics && (
+        <AnalyticsPanel
+          onClose={() => setShowAnalytics(false)}
         />
       )}
 
