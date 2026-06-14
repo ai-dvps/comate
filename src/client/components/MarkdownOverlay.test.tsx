@@ -41,6 +41,12 @@ describe('MarkdownOverlay', () => {
     expect(pre).toHaveStyle({ visibility: 'hidden' })
   })
 
+  it('uses the same sans-serif font stack as the prompt textarea', () => {
+    const { container } = renderOverlay('hello')
+    const pre = container.querySelector('pre')
+    expect(pre).toHaveClass('font-sans')
+  })
+
   it('renders an empty overlay for empty input', () => {
     const { container } = renderOverlay('')
     const pre = container.querySelector('pre')

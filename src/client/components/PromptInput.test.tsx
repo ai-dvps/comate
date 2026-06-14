@@ -238,6 +238,30 @@ describe('PromptInput', () => {
     expect(screen.getByText('/compact')).toBeInTheDocument()
   })
 
+  it('selects a slash command in an empty input', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    fireEvent.change(textarea, { target: { value: '/', selectionStart: 1 } })
+    expect(screen.getByText('/commit')).toBeInTheDocument()
+
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(textarea).toHaveValue('/commit ')
+  })
+
+  it('selects a slash command without clearing existing prefix text', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    fireEvent.change(textarea, { target: { value: 'fix ', selectionStart: 4 } })
+    fireEvent.change(textarea, { target: { value: 'fix /', selectionStart: 5 } })
+    fireEvent.change(textarea, { target: { value: 'fix /com', selectionStart: 8 } })
+    expect(screen.getByText('/commit')).toBeInTheDocument()
+
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(textarea).toHaveValue('fix /commit ')
+  })
+
   it('dismisses command picker on space, tab, or escape', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const textarea = screen.getByRole('textbox')

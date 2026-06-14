@@ -493,9 +493,26 @@ export default function PromptInput({
   }
 
   const handleCommandSelect = (command: SlashCommandDto) => {
+    const ta = textareaRef.current
+    const cursorPos = ta?.selectionStart ?? input.length
     const inserted = `/${command.name} `
-    setDraft(sessionId, inserted)
-    prevInputRef.current = inserted
+
+    let next: string
+    let pos: number
+    if (slashTriggerStart !== null) {
+      const before = input.slice(0, slashTriggerStart)
+      const after = input.slice(cursorPos)
+      next = before + inserted + after
+      pos = slashTriggerStart + inserted.length
+    } else {
+      const before = input.slice(0, cursorPos)
+      const after = input.slice(cursorPos)
+      next = before + inserted + after
+      pos = cursorPos + inserted.length
+    }
+
+    setDraft(sessionId, next)
+    prevInputRef.current = next
     setLastInsertedCommand(inserted)
     setArgumentHint(command.argumentHint ?? null)
     setCompletionSuggestion(null)
@@ -505,7 +522,7 @@ export default function PromptInput({
       const ta = textareaRef.current
       if (!ta) return
       ta.focus()
-      ta.setSelectionRange(inserted.length, inserted.length)
+      ta.setSelectionRange(pos, pos)
     })
   }
 
