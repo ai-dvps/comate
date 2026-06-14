@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { useCommands, type SlashCommandDto } from '../stores/commands-store'
+import { filterItems } from '../lib/picker-filter'
 
 export interface CommandPickerHandle {
   moveDown: () => void
@@ -88,9 +89,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
     }, [open, hideFilterInput, initialFilter])
 
     const filtered = useMemo(() => {
-      if (filter === '') return commands
-      const needle = filter.toLowerCase()
-      return commands.filter((c) => c.name.toLowerCase().startsWith(needle))
+      return filterItems(commands, filter, 'name')
     }, [commands, filter])
 
     useEffect(() => {

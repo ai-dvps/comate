@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
   useImperativeHandle,
   forwardRef,
 } from 'react'
@@ -10,6 +11,10 @@ import { useTranslation } from 'react-i18next'
 import { Loader2, FileCode, FileJson, FileText, File } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { useFiles } from '../stores/files-store'
+import { filterItems } from '../lib/picker-filter'
+import isGlob from 'is-glob'
+
+const GLOB_FETCH_LIMIT = 10000
 
 export interface FilePickerHandle {
   moveDown: () => void
@@ -65,10 +70,19 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
     },
     ref,
   ) {
-    const { results, loading, error, search } = useFiles(workspaceId)
+    const { results, loading, error, truncated, search } = useFiles(workspaceId)
     const { t } = useTranslation('common')
     const [filter, setFilter] = useState(initialFilter)
     const [activeIndex, setActiveIndex] = useState(0)
+
+    const isGlobMode = useMemo(
+      () => isGlob(filter.trim()) || filter.includes('?'),
+      [filter],
+    )
+    const displayedResults = useMemo(() => {
+      if (!isGlobMode) return results
+      return filterItems(results, filter, 'path')
+    }, [isGlobMode, results, filter])
 
     const filterInputRef = useRef<HTMLInputElement>(null)
     const listRef = useRef<HTMLDivElement>(null)
@@ -77,8 +91,12 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
 
     useEffect(() => {
       if (!open) return
-      search(filter)
-    }, [open, filter, search])
+      if (isGlobMode) {
+        search('', GLOB_FETCH_LIMIT)
+      } else {
+        search(filter)
+      }
+    }, [open, filter, isGlobMode, search])
 
     useEffect(() => {
       if (open) {
@@ -101,10 +119,10 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
     }, [open, hideFilterInput, initialFilter])
 
     useEffect(() => {
-      if (activeIndex >= results.length) {
-        setActiveIndex(results.length > 0 ? results.length - 1 : 0)
+      if (activeIndex >= displayedResults.length) {
+        setActiveIndex(displayedResults.length > 0 ? displayedResults.length - 1 : 0)
       }
-    }, [results, activeIndex])
+    }, [displayedResults, activeIndex])
 
     useEffect(() => {
       if (!open) return
@@ -114,41 +132,41 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
 
     const commit = useCallback(
       (index: number) => {
-        const entry = results[index]
+        const entry = displayedResults[index]
         if (!entry) return
         onSelect(entry.path)
         onOpenChange(false)
       },
-      [results, onSelect, onOpenChange],
+      [displayedResults, onSelect, onOpenChange],
     )
 
     useImperativeHandle(
       ref,
       () => ({
         moveDown: () => {
-          if (results.length === 0) return
-          setActiveIndex((i) => (i + 1) % results.length)
+          if (displayedResults.length === 0) return
+          setActiveIndex((i) => (i + 1) % displayedResults.length)
         },
         moveUp: () => {
-          if (results.length === 0) return
-          setActiveIndex((i) => (i - 1 + results.length) % results.length)
+          if (displayedResults.length === 0) return
+          setActiveIndex((i) => (i - 1 + displayedResults.length) % displayedResults.length)
         },
         commitActive: () => commit(activeIndex),
       }),
-      [results, activeIndex, commit],
+      [displayedResults, activeIndex, commit],
     )
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        if (results.length === 0) return
-        setActiveIndex((i) => (i + 1) % results.length)
+        if (displayedResults.length === 0) return
+        setActiveIndex((i) => (i + 1) % displayedResults.length)
         return
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        if (results.length === 0) return
-        setActiveIndex((i) => (i - 1 + results.length) % results.length)
+        if (displayedResults.length === 0) return
+        setActiveIndex((i) => (i - 1 + displayedResults.length) % displayedResults.length)
         return
       }
       if (e.key === 'Enter') {
@@ -168,10 +186,11 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
       }
     }
 
-    const showLoadingState = loading && results.length === 0
-    const showErrorState = !!error && results.length === 0
+    const showLoadingState = loading && displayedResults.length === 0
+    const showErrorState = !!error && displayedResults.length === 0
     const showEmpty =
-      !showLoadingState && !showErrorState && results.length === 0
+      !showLoadingState && !showErrorState && displayedResults.length === 0
+    const showGlobTruncated = isGlobMode && truncated && displayedResults.length > 0
 
     return (
       <Popover open={open} onOpenChange={onOpenChange}>
@@ -203,6 +222,11 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
             />
           )}
           <div ref={listRef} className="flex-1 overflow-y-auto mt-1">
+            {showGlobTruncated && (
+              <div className="text-[11px] text-text-tertiary px-2 py-1 mb-1 rounded bg-surface-hover">
+                {t('filePicker.partialFallback')}
+              </div>
+            )}
             {showLoadingState && (
               <div className="flex items-center gap-2 px-2 py-3 text-xs text-text-tertiary">
                 <Loader2 className="w-3 h-3 animate-spin" />
@@ -219,7 +243,7 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
             )}
             {!showLoadingState &&
               !showErrorState &&
-              results.map((entry, i) => (
+              displayedResults.map((entry, i) => (
                 <button
                   key={entry.path}
                   ref={(el) => {

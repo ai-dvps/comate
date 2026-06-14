@@ -55,7 +55,12 @@ const chatStoreMock = vi.hoisted(() => {
 vi.mock('../stores/chat-store', () => ({
   useChatStore: (selector?: (s: ReturnType<typeof chatStoreMock.getState>) => unknown) => {
     const [, forceRender] = React.useReducer((x: number) => x + 1, 0)
-    React.useEffect(() => chatStoreMock.subscribe(forceRender), [])
+    React.useEffect(() => {
+      const unsubscribe = chatStoreMock.subscribe(forceRender)
+      return () => {
+        unsubscribe()
+      }
+    }, [])
     const state = chatStoreMock.getState()
     return selector ? selector(state) : state
   },
