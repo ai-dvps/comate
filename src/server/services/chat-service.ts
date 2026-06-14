@@ -484,6 +484,33 @@ export class ChatService {
     this.idleTimeouts.clear();
   }
 
+  /**
+   * Close all cached runtimes belonging to a workspace. Called when the workspace
+   * is deleted so that idle bot runtimes do not keep answering inbound messages
+   * against a workspace whose settings row is gone.
+   */
+  async closeRuntimesForWorkspace(workspaceId: string): Promise<void> {
+    const targets: string[] = [];
+    for (const [sessionId, runtime] of this.runtimes.entries()) {
+      try {
+        if (runtime.getStatus().workspaceId === workspaceId) {
+          targets.push(sessionId);
+        }
+      } catch {
+        // ignore — getStatus can throw on closed runtimes; not relevant here
+      }
+    }
+    if (targets.length === 0) return;
+    sidecarLog(`[ChatService] closing ${targets.length} runtimes for deleted workspace ${workspaceId}`);
+    await Promise.all(
+      targets.map((sessionId) =>
+        this.closeRuntime(sessionId).catch((err) => {
+          console.error(`Failed to close runtime ${sessionId} during workspace deletion:`, err);
+        }),
+      ),
+    );
+  }
+
   async pushMessage(
     sessionId: string,
     workspaceId: string,
