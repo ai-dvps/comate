@@ -31,6 +31,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [showPluginSettings, setShowPluginSettings] = useState(false)
   const [showSkillsPage, setShowSkillsPage] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [showArchived, setShowArchived] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
@@ -45,6 +46,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const createSession = useChatStore((s) => s.createSession)
   const renameSession = useChatStore((s) => s.renameSession)
   const toggleSessionWip = useChatStore((s) => s.toggleSessionWip)
+  const toggleSessionArchive = useChatStore((s) => s.toggleSessionArchive)
   const fetchSessions = useChatStore((s) => s.fetchSessions)
   const addToast = useToastStore((s) => s.addToast)
 
@@ -54,8 +56,10 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     [sessions, lastActivityAt],
   )
   const filteredSessions = useMemo(
-    () => sortedSessions.filter((session) => matchesSessionQuery(session, trimmedQuery)),
-    [sortedSessions, trimmedQuery],
+    () => sortedSessions
+      .filter((session) => showArchived || !session.isArchived)
+      .filter((session) => matchesSessionQuery(session, trimmedQuery)),
+    [sortedSessions, trimmedQuery, showArchived],
   )
   const matchCount = filteredSessions.length
 
@@ -116,9 +120,10 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     setEditingName('')
   }, [activeSessionId])
 
-  // Reset search when switching workspaces.
+  // Reset search and archive filter when switching workspaces.
   useEffect(() => {
     setSearchQuery('')
+    setShowArchived(false)
   }, [workspaceId])
 
   const handleContextMenu = (e: React.MouseEvent, sessionId: string) => {
@@ -255,6 +260,16 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             </button>
           )}
         </div>
+        {/* Show archived filter */}
+        <label className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+            className="rounded border-border text-accent focus:ring-accent"
+          />
+          {t('showArchived')}
+        </label>
       </div>
 
       {/* Session List */}
@@ -339,6 +354,15 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
               >
                 {session.isWip ? t('clearWip') : t('markAsWip')}
+              </button>
+              <button
+                onClick={() => {
+                  toggleSessionArchive(workspaceId, session.id, !session.isArchived)
+                  setContextMenu(null)
+                }}
+                className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+              >
+                {session.isArchived ? t('unarchive') : t('archive')}
               </button>
             </div>
           )
