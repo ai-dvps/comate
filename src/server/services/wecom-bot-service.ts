@@ -7,8 +7,40 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
-import { createStreamReply } from './wecom-stream-reply.js';
+import { createStreamReply, type StreamReplyConnection, type StreamReplyResult } from './wecom-stream-reply.js';
 import { saveMediaFile } from './wecom-file-storage.js';
+import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
+
+/**
+ * Resolve the stream-reply handler for an inbound WeCom message, honoring the
+ * workspace's Reply-category permission.
+ *
+ * - If Reply is allowed (the default in SAFE_PRESET), constructs the stream
+ *   reply and returns it; the caller passes `result.handler` to pushMessage.
+ * - If Reply is denied, returns undefined. The caller still calls pushMessage
+ *   so the agent runs (per R11/AE6), but no reply is sent to WeCom — and
+ *   crucially, no placeholder frame leaks, and no Claude tokens are spent
+ *   producing text the user will never see (because the stream reply's
+ *   placeholder animation never fires).
+ *
+ * The workspace is read once per inbound message; if absent, defaults to
+ * allowing Reply (defensive — should not happen for bot-enabled workspaces).
+ */
+async function resolveStreamReplyIfNeeded<TFrame>(
+  workspaceId: string,
+  conn: StreamReplyConnection,
+  frame: WsFrame<TFrame>,
+  sessionId: string,
+  wecomUserId: string,
+): Promise<StreamReplyResult | undefined> {
+  const workspace = await workspaceStore.get(workspaceId);
+  if (!workspace) return undefined;
+  const policy = resolveEffectivePolicy(workspace).policy;
+  if (evaluateToolPermission(policy, REPLY_TOOL_NAME) === 'deny') {
+    return undefined;
+  }
+  return createStreamReply(conn, frame as WsFrame<unknown>, sessionId, wecomUserId);
+}
 
 export interface BotConnection {
   client: WSClient;
@@ -185,9 +217,9 @@ export class WeComBotService {
     const conn = this.connections.get(workspaceId);
     if (!conn) return;
 
-    const { handler } = createStreamReply(conn, frame, sessionId, wecomUserId);
+    const streamReply = await resolveStreamReplyIfNeeded(workspaceId, conn, frame, sessionId, wecomUserId);
 
-    await chatService.pushMessage(sessionId, workspaceId, content, true, handler);
+    await chatService.pushMessage(sessionId, workspaceId, content, true, streamReply?.handler);
   }
 
   private async handleMediaMessage(workspaceId: string, frame: WsFrame<BaseMessage>): Promise<void> {
@@ -219,12 +251,12 @@ export class WeComBotService {
         const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
         if (!sessionId) return;
 
-        const streamReply = createStreamReply(conn, frame, sessionId, wecomUserId);
+        const streamReply = await resolveStreamReplyIfNeeded(workspaceId, conn, frame, sessionId, wecomUserId);
         const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
         try {
-          await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply.handler);
+          await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply?.handler);
         } catch (err) {
-          streamReply.handler.cleanup();
+          streamReply?.handler.cleanup();
           throw err;
         }
         return;
@@ -254,13 +286,13 @@ export class WeComBotService {
       const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
       if (!sessionId) return;
 
-      const streamReply = createStreamReply(conn, frame, sessionId, wecomUserId);
+      const streamReply = await resolveStreamReplyIfNeeded(workspaceId, conn, frame, sessionId, wecomUserId);
       const defaultFilePrompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
       const prompt = await this.resolveFilePrompt(workspaceId, relativePath, defaultFilePrompt);
       try {
-        await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply.handler);
+        await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply?.handler);
       } catch (err) {
-        streamReply.handler.cleanup();
+        streamReply?.handler.cleanup();
         throw err;
       }
     } catch (err) {

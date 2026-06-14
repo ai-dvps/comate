@@ -152,15 +152,82 @@
     "userPending": "待解析",
     "firstSeen": "首次出现",
     "lastSeen": "最近出现",
-    "botSessionNote": "机器人会话具有完整的工具自动审批功能。保存更改以连接或断开。",
+    "botSessionNote": "机器人会话遵循此工作区的工具权限策略（见权限选项卡）。保存更改以连接或断开。",
     "tabs": {
       "connection": "连接",
       "users": "用户",
-      "prompts": "提示词"
+      "prompts": "提示词",
+      "permissions": "权限"
     },
     "filePromptTemplate": "文件提示词模板",
     "filePromptTemplatePlaceholder": "a file named @$file_name$ uploaded by user, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.",
-    "filePromptTemplateHint": "收到文件、图片或视频时推送给 Claude 的提示词。使用 $file_name$ 作为文件路径占位符。留空则使用默认行为。"
+    "filePromptTemplateHint": "收到文件、图片或视频时推送给 Claude 的提示词。使用 $file_name$ 作为文件路径占位符。留空则使用默认行为。",
+    "effectiveSummary": "当前策略：{{posture}} — {{allowed}} 项允许，{{denied}} 项拒绝{{overridesClause}}。",
+    "effectiveSummaryOverridesClause": "，{{count}} 项覆盖",
+    "freezeHint": "更改在下一次机器人会话生效，不影响正在进行的对话。",
+    "posture": {
+      "label": "策略",
+      "allowAll": "全部允许",
+      "allowAllDescription": "所有工具都被允许。这是当前的行为。",
+      "safe": "安全",
+      "safeDescription": "允许只读工具和回复功能；禁止写入、Shell、网络和子代理工具。",
+      "custom": "自定义",
+      "customDescription": "手动配置类别默认值和按工具覆盖。"
+    },
+    "category": {
+      "fileRead": {
+        "name": "文件读取",
+        "description": "读取文件和搜索内容。包括 Read、Glob、Grep。"
+      },
+      "fileWrite": {
+        "name": "文件写入",
+        "description": "修改文件和笔记本。包括 Edit、Write、NotebookEdit。"
+      },
+      "shell": {
+        "name": "Shell",
+        "description": "通过 Bash 运行 Shell 命令。"
+      },
+      "network": {
+        "name": "网络",
+        "description": "获取外部 URL 并执行网络搜索。包括 WebFetch、WebSearch。"
+      },
+      "subagents": {
+        "name": "子代理",
+        "description": "分发和管理后台代理及任务。包括 Agent 和 Task* 系列。"
+      },
+      "reply": {
+        "name": "回复",
+        "description": "向企业微信用户回发消息。禁用此选项会使机器人静默——代理仍会处理消息但无法回复。"
+      }
+    },
+    "defaultToggle": {
+      "allow": "允许",
+      "deny": "拒绝"
+    },
+    "override": {
+      "label": "此类别中的工具",
+      "inherit": "继承",
+      "alwaysAllow": "始终允许",
+      "alwaysDeny": "始终拒绝",
+      "inheritSuffix": "（继承类别默认值）"
+    },
+    "banner": {
+      "title": "此工作区当前以完整工具权限运行",
+      "body": "此机器人启用时工具权限尚不可配置。它当前允许所有工具调用。建议切换到安全策略，将机器人限制为只读操作和回复。",
+      "switchToSafe": "切换到安全策略",
+      "dismiss": "忽略"
+    },
+    "saveWarning": {
+      "title": "机器人将无法回复",
+      "body": "所有类别（包括回复）都被拒绝。机器人仍会处理入站消息但无法回复，Claude tokens 将被消耗而不产生任何用户可见的输出。",
+      "saveAnyway": "仍然保存",
+      "cancel": "取消"
+    },
+    "saveError": {
+      "message": "保存权限策略失败。请重试。",
+      "retry": "重试"
+    },
+    "mcpGapNote": "注意：MCP 工具和技能不受此策略限制。它们遵循当前的允许所有行为。这是已知的审计缺口，将在后续迭代中解决。"
   },
   "unsavedDialog": {
     "title": "有未保存的更改",
