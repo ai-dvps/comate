@@ -8,7 +8,7 @@ import {
   resolveLocalClaudeSettingsPath,
   resolveGlobalClaudeSettingsPath,
   readInstalledPluginsJson,
-  type PluginSettings,
+  removeInstalledPluginsEntry,
   type PluginStateEntry,
   type InstalledPluginsFile,
   type InstalledPluginEntry,
@@ -287,19 +287,29 @@ export class PluginSettingsService {
     const settingsPath = this.resolveSettingsPath(scope, workspacePath);
     const settings = readPluginSettings(settingsPath);
 
-    if (!settings.pluginManager.plugins[pluginId]) {
-      return false;
+    let removed = false;
+    if (settings.pluginManager.plugins[pluginId]) {
+      delete settings.pluginManager.plugins[pluginId];
+      writePluginSettings(settingsPath, settings);
+      removed = true;
     }
 
-    delete settings.pluginManager.plugins[pluginId];
-    writePluginSettings(settingsPath, settings);
+    const cliRemoved = removeInstalledPluginsEntry(pluginId, {
+      scope,
+      projectPath: workspacePath,
+    });
+    if (cliRemoved) {
+      removed = true;
+    }
 
-    if (options?.purgeData) {
+    if (removed && options?.purgeData) {
       this.purgePluginCache(pluginId);
     }
 
-    sidecarLog(`[PluginSettingsService] Removed plugin ${pluginId} from ${scope} settings`);
-    return true;
+    if (removed) {
+      sidecarLog(`[PluginSettingsService] Removed plugin ${pluginId} from ${scope} settings`);
+    }
+    return removed;
   }
 
   /**

@@ -6,6 +6,7 @@ export interface ChatSession {
   name: string;
   isDraft?: boolean;
   isWip?: boolean;
+  isArchived?: boolean;
   source?: 'gui' | 'wecom';
   approvalMode?: ApprovalMode;
   providerId?: string;
@@ -30,6 +31,7 @@ export interface CreateSessionInput {
 export interface UpdateSessionInput {
   name?: string;
   isWip?: boolean;
+  isArchived?: boolean;
   approvalMode?: ApprovalMode;
   providerId?: string;
 }
