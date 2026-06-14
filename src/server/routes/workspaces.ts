@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { wecomUserResolver } from '../services/wecom-user-resolver.js';
+import { chatService } from '../services/chat-service.js';
+import { SAFE_PRESET, resolveEffectivePolicy } from '../services/tool-permission-policy.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
 const router = Router();
@@ -54,6 +56,26 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const input = req.body as UpdateWorkspaceInput;
+
+    // Detect the wecomBotEnabled false→true transition. When a workspace newly
+    // enables the bot, apply the safe preset to its tool-permission policy if no
+    // policy is set yet. This satisfies R6/AE3 ("safe preset is applied
+    // automatically") regardless of whether the request originated from the UI
+    // or a non-UI caller (curl, scripts, future API consumers).
+    const prior = await store.get(req.params.id);
+    const wasEnabled = !!prior?.settings.wecomBotEnabled;
+    const willEnable = !!input.settings?.wecomBotEnabled;
+    const hasPolicy = !!(
+      input.settings?.wecomToolPermissions ||
+      prior?.settings.wecomToolPermissions
+    );
+    if (!wasEnabled && willEnable && !hasPolicy) {
+      input.settings = {
+        ...(input.settings || {}),
+        wecomToolPermissions: SAFE_PRESET,
+      };
+    }
+
     const workspace = await store.update(req.params.id, input);
     if (!workspace) {
       res.status(404).json({ error: 'Workspace not found' });
@@ -100,6 +122,11 @@ router.delete('/:id', async (req, res) => {
       res.status(404).json({ error: 'Workspace not found' });
       return;
     }
+
+    // Evict any cached bot runtimes for this workspace so they do not keep
+    // answering inbound messages against a workspace whose settings row is gone.
+    await chatService.closeRuntimesForWorkspace(req.params.id);
+
     res.status(204).send();
   } catch (error) {
     console.error('Failed to delete workspace:', error);
