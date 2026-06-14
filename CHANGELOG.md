@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] - 2026-06-14
+
+### Added
+
+- **Analytics dashboards** — global and workspace-level analytics views with chart components, top-3 rank medals, and an analytics modal accessible from the header.
+- **Toast system** — reusable toast container with severity styling, enter animation, and lifecycle management; surfaces failures (e.g., session list fetch errors) to the user.
+- **Session list refresh** — refresh button in the session list wired to the toast system.
+
+### Changed
+
+- **Session list ordering** — sessions now sort by activity recency (tracked via `lastActivityAt`), with the active session pinned to a dedicated header.
+- **Session list search** — title-based filtering with a client-side helper and unit tests.
+- **TaskPanel styling** — accent-tinted background with opaque layering for better readability against the chat column.
+
+### Fixed
+
+- **Session title persistence** — clearing the draft flag on the first message so renames persist correctly.
+- **Session rename input** — allow spaces in the active session rename input.
+
+### Internal
+
+- Added planning artifacts for analytics, session list, and toast features.
+
+[0.0.4]: https://github.com/ai-dvps/comate/releases/tag/v0.0.4
+
 ## [0.0.3] - 2026-06-13
 
 ### Added
