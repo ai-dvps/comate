@@ -35,6 +35,9 @@
     "noMatch": "没有匹配 `{{filter}}` 的命令",
     "noCommands": "没有可用命令"
   },
+  "filePicker": {
+    "partialFallback": "结果不完整 — 仅扫描了部分文件。"
+  },
   "copyContent": "复制内容",
   "close": "关闭",
   "clear": "清除",

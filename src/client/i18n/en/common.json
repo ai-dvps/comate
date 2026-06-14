@@ -35,6 +35,9 @@
     "noMatch": "No commands match `{{filter}}`",
     "noCommands": "No commands available"
   },
+  "filePicker": {
+    "partialFallback": "Results are partial — only some files were scanned."
+  },
   "copyContent": "Copy content",
   "close": "Close",
   "clear": "Clear",

@@ -1,16 +1,22 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User } from 'lucide-react'
+import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
+import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
+import { useSentPrompts } from '../hooks/useSentPrompts'
+import { useTextareaMetrics } from '../hooks/useTextareaMetrics'
+import { useNgramCompletion } from '../hooks/useNgramCompletion'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import ProviderSelector from './ProviderSelector'
+import MarkdownOverlay from './MarkdownOverlay'
+import PromptGhostText from './PromptGhostText'
 
 interface RefreshMeta {
   lastRefreshedAt: Date | null
@@ -81,6 +87,8 @@ export default function PromptInput({
     sessionId ? s.drafts[sessionId] ?? '' : '',
   )
   const setDraft = useChatStore((s) => s.setDraft)
+  const history = useSentPrompts(sessionId || undefined)
+  const { suggest, train } = useNgramCompletion(sessionId || undefined)
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerSource, setPickerSource] = useState<'slash' | 'button'>('slash')
@@ -95,23 +103,26 @@ export default function PromptInput({
   )
   const [filePickerFilter, setFilePickerFilter] = useState('')
   const [fileTriggerStart, setFileTriggerStart] = useState<number | null>(null)
+  const [slashTriggerStart, setSlashTriggerStart] = useState<number | null>(null)
+  const [historyCursor, setHistoryCursor] = useState<number | null>(null)
+  const [historyPickerOpen, setHistoryPickerOpen] = useState(false)
+  const [historyPickerFilter, setHistoryPickerFilter] = useState('')
+  const [completionSuggestion, setCompletionSuggestion] = useState<string | null>(
+    null,
+  )
+  const originalDraftRef = useRef('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const overlayRef = useRef<HTMLPreElement>(null)
+  const isComposingRef = useRef(false)
+  const [overlayHidden, setOverlayHidden] = useState(false)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
+  const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
   const prevInputRef = useRef('')
 
   const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
 
-  const adjustHeight = useCallback(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
-  }, [maxHeight])
-
-  useEffect(() => {
-    adjustHeight()
-  }, [input, adjustHeight])
+  useTextareaMetrics(textareaRef, overlayRef, maxHeight, input)
 
   useEffect(() => {
     prevInputRef.current = input
@@ -120,15 +131,25 @@ export default function PromptInput({
   useEffect(() => {
     setPickerOpen(false)
     setFilePickerOpen(false)
+    setHistoryPickerOpen(false)
     setFileTriggerStart(null)
+    setSlashTriggerStart(null)
     setArgumentHint(null)
     setLastInsertedCommand(null)
+    setHistoryCursor(null)
+    setCompletionSuggestion(null)
+    originalDraftRef.current = ''
   }, [sessionId])
 
   const handleInputChange = (value: string, cursorPos: number) => {
     const prev = prevInputRef.current
     prevInputRef.current = value
     setDraft(sessionId, value)
+
+    if (value === '' && historyCursor !== null) {
+      setHistoryCursor(null)
+      originalDraftRef.current = ''
+    }
 
     if (lastInsertedCommand && value !== lastInsertedCommand) {
       setArgumentHint(null)
@@ -157,17 +178,34 @@ export default function PromptInput({
     }
 
     if (pickerOpen && pickerSource === 'slash') {
-      if (value === '') {
-        setPickerOpen(false)
-      } else if (value.startsWith('/') && !/\s/.test(value)) {
-        setPickerFilter(value.slice(1))
-      } else {
-        setPickerOpen(false)
+      if (slashTriggerStart !== null) {
+        // Cursor moved before / or / was deleted
+        if (
+          cursorPos <= slashTriggerStart ||
+          value[slashTriggerStart] !== '/'
+        ) {
+          setPickerOpen(false)
+          setSlashTriggerStart(null)
+          return
+        }
+        const filterText = value.slice(slashTriggerStart + 1, cursorPos)
+        if (/\s/.test(filterText)) {
+          setPickerOpen(false)
+          setSlashTriggerStart(null)
+          return
+        }
+        setPickerFilter(filterText)
       }
     }
 
-    // Detect @ trigger only when no workspace picker is open
-    if (!filePickerOpen && (!pickerOpen || pickerSource !== 'slash')) {
+    // Detect @ trigger only when no workspace picker is open and input is not
+    // disabled by streaming/restarting.
+    if (
+      !isStreaming &&
+      !isRestarting &&
+      !filePickerOpen &&
+      (!pickerOpen || pickerSource !== 'slash')
+    ) {
       // @ as first character of empty input
       if (value === '@' && prev === '') {
         setFileTriggerStart(0)
@@ -192,16 +230,36 @@ export default function PromptInput({
       }
     }
 
+    // Detect / trigger only when no workspace picker is open and input is not
+    // disabled by streaming/restarting.
     if (
+      !isStreaming &&
+      !isRestarting &&
       !filePickerOpen &&
-      !pickerOpen &&
-      prev === '' &&
-      value.startsWith('/') &&
-      !/\s/.test(value)
+      (!pickerOpen || pickerSource !== 'slash')
     ) {
-      setPickerSource('slash')
-      setPickerFilter(value.slice(1))
-      setPickerOpen(true)
+      // / as first character of empty input
+      if (value === '/' && prev === '') {
+        setSlashTriggerStart(0)
+        setPickerSource('slash')
+        setPickerFilter('')
+        setPickerOpen(true)
+        setFilePickerOpen(false)
+        return
+      }
+
+      // / preceded by whitespace mid-text
+      if (
+        cursorPos > 0 &&
+        value[cursorPos - 1] === '/' &&
+        (cursorPos === 1 || /\s/.test(value[cursorPos - 2]))
+      ) {
+        setSlashTriggerStart(cursorPos - 1)
+        setPickerSource('slash')
+        setPickerFilter('')
+        setPickerOpen(true)
+        setFilePickerOpen(false)
+      }
     }
   }
 
@@ -210,6 +268,37 @@ export default function PromptInput({
     prevInputRef.current = ''
     setArgumentHint(null)
     setLastInsertedCommand(null)
+    setSlashTriggerStart(null)
+    setHistoryCursor(null)
+    setCompletionSuggestion(null)
+    originalDraftRef.current = ''
+  }
+
+  const applyHistory = (index: number) => {
+    const prompt = history[index]
+    if (!prompt) return
+    setDraft(sessionId, prompt)
+    prevInputRef.current = prompt
+    setCompletionSuggestion(null)
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(prompt.length, prompt.length)
+    })
+  }
+
+  const restoreOriginal = () => {
+    const draft = originalDraftRef.current
+    setDraft(sessionId, draft)
+    prevInputRef.current = draft
+    setCompletionSuggestion(null)
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(draft.length, draft.length)
+    })
   }
 
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
@@ -218,18 +307,47 @@ export default function PromptInput({
     const trimmed = input.trim()
     if (!trimmed || disabled || isStreaming || isRestarting || !hasSession) return
     onSend(trimmed)
+    train(trimmed)
     resetInput()
     textareaRef.current?.focus()
   }
 
   const handleClear = () => {
     resetInput()
-    if (pickerOpen) setPickerOpen(false)
-    if (filePickerOpen) setFilePickerOpen(false)
+    if (pickerOpen) {
+      setPickerOpen(false)
+      setSlashTriggerStart(null)
+    }
+    if (filePickerOpen) {
+      setFilePickerOpen(false)
+      setFileTriggerStart(null)
+    }
     textareaRef.current?.focus()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // History popup shortcut: Alt+H / Option+H
+    if (
+      e.altKey &&
+      e.key.toLowerCase() === 'h' &&
+      !isStreaming &&
+      !isRestarting &&
+      hasSession
+    ) {
+      e.preventDefault()
+      if (historyPickerOpen) {
+        setHistoryPickerOpen(false)
+      } else {
+        setPickerOpen(false)
+        setFilePickerOpen(false)
+        setFileTriggerStart(null)
+        setSlashTriggerStart(null)
+        setHistoryPickerFilter('')
+        setHistoryPickerOpen(true)
+      }
+      return
+    }
+
     if (filePickerOpen) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -279,12 +397,92 @@ export default function PromptInput({
       if (e.key === 'Escape') {
         e.preventDefault()
         setPickerOpen(false)
+        setSlashTriggerStart(null)
         return
       }
       if (e.key === 'Tab') {
         e.preventDefault()
         setPickerOpen(false)
+        setSlashTriggerStart(null)
         return
+      }
+    }
+
+    // History recall (terminal-style ArrowUp/Down) when no picker is open.
+    if (
+      (e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+      !pickerOpen &&
+      !filePickerOpen &&
+      !isStreaming &&
+      !isRestarting
+    ) {
+      if (e.key === 'ArrowUp') {
+        if (history.length === 0) return
+        e.preventDefault()
+        if (historyCursor === null) {
+          originalDraftRef.current = input
+          setHistoryCursor(0)
+          applyHistory(0)
+        } else if (historyCursor < history.length - 1) {
+          const next = historyCursor + 1
+          setHistoryCursor(next)
+          applyHistory(next)
+        }
+        return
+      }
+
+      if (e.key === 'ArrowDown') {
+        if (historyCursor === null) return
+        e.preventDefault()
+        if (historyCursor > 0) {
+          const next = historyCursor - 1
+          setHistoryCursor(next)
+          applyHistory(next)
+        } else {
+          restoreOriginal()
+          setHistoryCursor(null)
+        }
+        return
+      }
+    }
+
+    // Completion accept / dismiss when no picker is open.
+    if (
+      completionSuggestion &&
+      !pickerOpen &&
+      !filePickerOpen &&
+      !historyPickerOpen
+    ) {
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        const ta = textareaRef.current
+        if (ta) {
+          const start = ta.selectionStart
+          const end = ta.selectionEnd
+          const before = input.slice(0, start)
+          const after = input.slice(end)
+          const next = before + completionSuggestion + after
+          setDraft(sessionId, next)
+          prevInputRef.current = next
+          const pos = start + completionSuggestion.length
+          requestAnimationFrame(() => {
+            ta.focus()
+            ta.setSelectionRange(pos, pos)
+          })
+        }
+        setCompletionSuggestion(null)
+        return
+      }
+      if (
+        e.key === 'Escape' ||
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowRight'
+      ) {
+        setCompletionSuggestion(null)
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          return
+        }
       }
     }
 
@@ -295,17 +493,36 @@ export default function PromptInput({
   }
 
   const handleCommandSelect = (command: SlashCommandDto) => {
+    const ta = textareaRef.current
+    const cursorPos = ta?.selectionStart ?? input.length
     const inserted = `/${command.name} `
-    setDraft(sessionId, inserted)
-    prevInputRef.current = inserted
+
+    let next: string
+    let pos: number
+    if (slashTriggerStart !== null) {
+      const before = input.slice(0, slashTriggerStart)
+      const after = input.slice(cursorPos)
+      next = before + inserted + after
+      pos = slashTriggerStart + inserted.length
+    } else {
+      const before = input.slice(0, cursorPos)
+      const after = input.slice(cursorPos)
+      next = before + inserted + after
+      pos = cursorPos + inserted.length
+    }
+
+    setDraft(sessionId, next)
+    prevInputRef.current = next
     setLastInsertedCommand(inserted)
     setArgumentHint(command.argumentHint ?? null)
+    setCompletionSuggestion(null)
     setPickerOpen(false)
+    setSlashTriggerStart(null)
     requestAnimationFrame(() => {
       const ta = textareaRef.current
       if (!ta) return
       ta.focus()
-      ta.setSelectionRange(inserted.length, inserted.length)
+      ta.setSelectionRange(pos, pos)
     })
   }
 
@@ -319,6 +536,7 @@ export default function PromptInput({
     const next = before + inserted + after
     setDraft(sessionId, next)
     prevInputRef.current = next
+    setCompletionSuggestion(null)
     setFilePickerOpen(false)
     setFileTriggerStart(null)
     requestAnimationFrame(() => {
@@ -328,13 +546,31 @@ export default function PromptInput({
     })
   }
 
+  const handleHistorySelect = (selectedPrompt: string) => {
+    setDraft(sessionId, selectedPrompt)
+    prevInputRef.current = selectedPrompt
+    setHistoryPickerOpen(false)
+    setHistoryCursor(null)
+    setCompletionSuggestion(null)
+    originalDraftRef.current = ''
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(selectedPrompt.length, selectedPrompt.length)
+    })
+  }
+
   const handleCommandsClick = () => {
     if (pickerOpen) {
       setPickerOpen(false)
+      setSlashTriggerStart(null)
       return
     }
     setFilePickerOpen(false)
+    setHistoryPickerOpen(false)
     setFileTriggerStart(null)
+    setSlashTriggerStart(null)
     setPickerSource('button')
     setPickerFilter('')
     setPickerOpen(true)
@@ -347,17 +583,64 @@ export default function PromptInput({
       return
     }
     setPickerOpen(false)
+    setHistoryPickerOpen(false)
     setFilePickerSource('button')
     setFilePickerFilter('')
     setFileTriggerStart(null)
     setFilePickerOpen(true)
   }
 
+  const handleHistoryClick = () => {
+    if (historyPickerOpen) {
+      setHistoryPickerOpen(false)
+      return
+    }
+    setPickerOpen(false)
+    setFilePickerOpen(false)
+    setFileTriggerStart(null)
+    setSlashTriggerStart(null)
+    setHistoryPickerFilter('')
+    setHistoryPickerOpen(true)
+  }
+
   const canSend = input.trim().length > 0 && hasSession && !isStreaming && !isRestarting && !disabled
   const showClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
+
+  useEffect(() => {
+    if (
+      !input ||
+      !sessionId ||
+      pickerOpen ||
+      filePickerOpen ||
+      historyPickerOpen ||
+      isStreaming ||
+      isRestarting ||
+      showGhost
+    ) {
+      setCompletionSuggestion(null)
+      return
+    }
+    const timer = setTimeout(() => {
+      const suggestion = suggest(input)
+      setCompletionSuggestion(suggestion)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [
+    input,
+    sessionId,
+    pickerOpen,
+    filePickerOpen,
+    historyPickerOpen,
+    isStreaming,
+    isRestarting,
+    showGhost,
+    suggest,
+  ])
+
   const commandsDisabled = disabled || isStreaming || isRestarting
   const filesDisabled = disabled || isStreaming || isRestarting || !workspaceId
+  const historyDisabled = disabled || isStreaming || isRestarting || !hasSession
 
   return (
     <div className={`max-w-3xl mx-auto px-4 ${isBotSession ? 'py-2' : 'py-4'}`}>
@@ -411,7 +694,10 @@ export default function PromptInput({
                 ref={pickerHandleRef}
                 workspaceId={workspaceId}
                 open={pickerOpen}
-                onOpenChange={setPickerOpen}
+                onOpenChange={(open) => {
+                  setPickerOpen(open)
+                  if (!open) setSlashTriggerStart(null)
+                }}
                 onSelect={handleCommandSelect}
                 side="top"
                 align="start"
@@ -458,6 +744,30 @@ export default function PromptInput({
                   </button>
                 }
               />
+              <HistoryPicker
+                ref={historyPickerHandleRef}
+                sessionId={sessionId}
+                open={historyPickerOpen}
+                onOpenChange={(open) => {
+                  setHistoryPickerOpen(open)
+                }}
+                onSelect={handleHistorySelect}
+                side="top"
+                align="start"
+                initialFilter={historyPickerFilter}
+                anchor={
+                  <button
+                    type="button"
+                    onClick={handleHistoryClick}
+                    disabled={historyDisabled}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={`${t('history')} (${t('historyShortcutHint')})`}
+                  >
+                    <History className="w-3 h-3" />
+                    <span>{t('history')}</span>
+                  </button>
+                }
+              />
               <div className="flex-1" />
               {sessionId && !isBotSession && (
                 <>
@@ -466,29 +776,50 @@ export default function PromptInput({
                 </>
               )}
             </div>
-            <div className="relative">
+            <div className="relative md-input-container">
+              <MarkdownOverlay
+                ref={overlayRef}
+                value={input}
+                hidden={overlayHidden}
+              />
               <textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) =>
+                onChange={(e) => {
+                  if (isComposingRef.current) return
                   handleInputChange(e.target.value, e.target.selectionStart)
-                }
+                }}
+                onCompositionStart={() => {
+                  isComposingRef.current = true
+                  setOverlayHidden(true)
+                }}
+                onCompositionEnd={(e) => {
+                  isComposingRef.current = false
+                  setOverlayHidden(false)
+                  handleInputChange(
+                    e.currentTarget.value,
+                    e.currentTarget.selectionStart,
+                  )
+                }}
+                onScroll={(e) => {
+                  const overlay = overlayRef.current
+                  if (!overlay) return
+                  overlay.scrollTop = e.currentTarget.scrollTop
+                  overlay.scrollLeft = e.currentTarget.scrollLeft
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder={t('placeholder')}
                 disabled={disabled || isStreaming || isRestarting}
                 rows={1}
-                className="w-full bg-transparent border-0 px-4 py-3 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
+                className="relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
                 style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
               />
-              {showGhost && argumentHint && (
-                <div
-                  aria-hidden
-                  className="absolute inset-0 px-4 py-3 pointer-events-none whitespace-pre-wrap break-words"
-                >
-                  <span className="invisible">{input}</span>
-                  <span className="text-text-tertiary">{argumentHint}</span>
-                </div>
-              )}
+              <PromptGhostText
+                input={input}
+                argumentHint={argumentHint}
+                lastInsertedCommand={lastInsertedCommand}
+                completionSuggestion={completionSuggestion}
+              />
             </div>
             <div className="flex items-center justify-end px-2 pb-2 pt-1 gap-1">
               {showClear && (
