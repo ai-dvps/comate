@@ -25,6 +25,23 @@
     --color-warning: 35 90% 45%;
     --color-shimmer-base: 40 5% 40%;
     --color-shimmer-highlight: 40 15% 98%;
+
+    /* Analytics heatmap intensity (light) */
+    --color-heatmap-empty: 40 10% 90%;
+    --color-heatmap-low: 140 50% 75%;
+    --color-heatmap-medium: 140 60% 55%;
+    --color-heatmap-high: 140 70% 38%;
+
+    /* Analytics metric accents (light) */
+    --color-metric-blue: 210 80% 55%;
+    --color-metric-green: 140 65% 45%;
+    --color-metric-purple: 270 65% 58%;
+    --color-metric-amber: 35 90% 50%;
+    --color-metric-orange: 18 85% 55%;
+    --color-metric-pink: 330 75% 58%;
+    --color-metric-cyan: 190 75% 50%;
+    --color-metric-yellow: 50 90% 50%;
+    --color-metric-red: 0 75% 55%;
   }
 
   .dark {
@@ -49,6 +66,23 @@
     --color-warning: 35 90% 50%;
     --color-shimmer-base: 0 0% 64%;
     --color-shimmer-highlight: 0 0% 5%;
+
+    /* Analytics heatmap intensity (dark) */
+    --color-heatmap-empty: 0 0% 14%;
+    --color-heatmap-low: 140 40% 28%;
+    --color-heatmap-medium: 140 55% 42%;
+    --color-heatmap-high: 140 70% 55%;
+
+    /* Analytics metric accents (dark — slightly brighter for contrast) */
+    --color-metric-blue: 210 80% 65%;
+    --color-metric-green: 140 65% 55%;
+    --color-metric-purple: 270 65% 68%;
+    --color-metric-amber: 35 90% 60%;
+    --color-metric-orange: 18 85% 62%;
+    --color-metric-pink: 330 75% 68%;
+    --color-metric-cyan: 190 75% 60%;
+    --color-metric-yellow: 50 90% 60%;
+    --color-metric-red: 0 75% 65%;
   }
 
   * {

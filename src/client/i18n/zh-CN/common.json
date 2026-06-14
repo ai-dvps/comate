@@ -1,6 +1,7 @@
 {
   "appName": "Claude Code",
   "header": {
+    "analytics": "分析",
     "createWorkspace": "创建工作区",
     "toggleTheme": "切换主题",
     "settings": "设置",
