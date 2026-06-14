@@ -6,12 +6,13 @@ import { shouldSubmitOnEnter } from '../lib/keyboard'
 import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from '../lib/session-filter'
 import type { SessionStatusFilter } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
-import { Plus, Puzzle, BookOpen, Search, X, RefreshCw, Filter } from 'lucide-react'
+import { Plus, Puzzle, BookOpen, Search, X, RefreshCw } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
 import { Button } from './ui/button'
 import { cn } from './ui/utils'
+import SessionStatusFilterControl from './SessionStatusFilterControl'
 import { useToastStore } from '../stores/toast-store'
 
 const EMPTY_ARRAY: [] = []
@@ -262,22 +263,12 @@ export default function SessionList({ workspaceId }: SessionListProps) {
               </button>
             )}
           </div>
-          <div className="relative">
-            <div className="absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none">
-              <Filter className="w-3 h-3 text-text-tertiary" />
-            </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as SessionStatusFilter)}
-              aria-label={t('statusFilterLabel')}
-              className="pl-7 pr-6 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary cursor-pointer"
-            >
-              <option value="all">{t('statusFilterAll')}</option>
-              <option value="active">{t('statusFilterActive')}</option>
-              <option value="archived">{t('statusFilterArchived')}</option>
-              <option value="wip">{t('statusFilterWip')}</option>
-            </select>
-          </div>
+          <SessionStatusFilterControl
+            value={statusFilter}
+            onChange={setStatusFilter}
+            disabled={searchDisabled}
+            aria-label={t('statusFilterLabel')}
+          />
         </div>
       </div>
 
