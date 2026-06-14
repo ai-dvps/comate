@@ -14,3 +14,20 @@ export function matchesSessionQuery(session: ChatSession, query: string): boolea
   const displayName = getSessionDisplayName(session).toLowerCase()
   return displayName.includes(needle)
 }
+
+export type SessionStatusFilter = 'all' | 'active' | 'archived' | 'wip'
+
+export function matchesSessionStatus(session: ChatSession, status: SessionStatusFilter): boolean {
+  switch (status) {
+    case 'all':
+      return true
+    case 'active':
+      return !session.isArchived
+    case 'archived':
+      return !!session.isArchived
+    case 'wip':
+      return !!session.isWip
+    default:
+      return true
+  }
+}

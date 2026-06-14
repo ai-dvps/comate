@@ -159,6 +159,11 @@ export default function SessionListItem({
                 {t('wip')}
               </span>
             )}
+            {session.isArchived && (
+              <span className="px-1 py-0.5 text-[9px] bg-slate-500/20 text-slate-400 rounded">
+                {t('archived')}
+              </span>
+            )}
             {session.approvalMode && session.approvalMode !== 'manual' && (
               <span
                 className={cn(
