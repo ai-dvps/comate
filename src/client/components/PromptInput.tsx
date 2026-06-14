@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
@@ -10,9 +10,11 @@ import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { useSentPrompts } from '../hooks/useSentPrompts'
+import { useTextareaMetrics } from '../hooks/useTextareaMetrics'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import ProviderSelector from './ProviderSelector'
+import MarkdownOverlay from './MarkdownOverlay'
 
 interface RefreshMeta {
   lastRefreshedAt: Date | null
@@ -104,6 +106,9 @@ export default function PromptInput({
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
   const originalDraftRef = useRef('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const overlayRef = useRef<HTMLPreElement>(null)
+  const isComposingRef = useRef(false)
+  const [overlayHidden, setOverlayHidden] = useState(false)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
@@ -111,16 +116,7 @@ export default function PromptInput({
 
   const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
 
-  const adjustHeight = useCallback(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
-  }, [maxHeight])
-
-  useEffect(() => {
-    adjustHeight()
-  }, [input, adjustHeight])
+  useTextareaMetrics(textareaRef, overlayRef, maxHeight, input)
 
   useEffect(() => {
     prevInputRef.current = input
@@ -665,24 +661,48 @@ export default function PromptInput({
                 </>
               )}
             </div>
-            <div className="relative">
+            <div className="relative md-input-container">
+              <MarkdownOverlay
+                ref={overlayRef}
+                value={input}
+                hidden={overlayHidden}
+              />
               <textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) =>
+                onChange={(e) => {
+                  if (isComposingRef.current) return
                   handleInputChange(e.target.value, e.target.selectionStart)
-                }
+                }}
+                onCompositionStart={() => {
+                  isComposingRef.current = true
+                  setOverlayHidden(true)
+                }}
+                onCompositionEnd={(e) => {
+                  isComposingRef.current = false
+                  setOverlayHidden(false)
+                  handleInputChange(
+                    e.currentTarget.value,
+                    e.currentTarget.selectionStart,
+                  )
+                }}
+                onScroll={(e) => {
+                  const overlay = overlayRef.current
+                  if (!overlay) return
+                  overlay.scrollTop = e.currentTarget.scrollTop
+                  overlay.scrollLeft = e.currentTarget.scrollLeft
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder={t('placeholder')}
                 disabled={disabled || isStreaming || isRestarting}
                 rows={1}
-                className="w-full bg-transparent border-0 px-4 py-3 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
+                className="relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
                 style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
               />
               {showGhost && argumentHint && (
                 <div
                   aria-hidden
-                  className="absolute inset-0 px-4 py-3 pointer-events-none whitespace-pre-wrap break-words"
+                  className="absolute inset-0 z-20 px-4 py-3 pointer-events-none whitespace-pre-wrap break-words"
                 >
                   <span className="invisible">{input}</span>
                   <span className="text-text-tertiary">{argumentHint}</span>
