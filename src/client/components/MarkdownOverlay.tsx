@@ -108,7 +108,7 @@ const MarkdownOverlay = forwardRef<HTMLPreElement, MarkdownOverlayProps>(
       <pre
         ref={ref}
         aria-hidden
-        className="md-overlay absolute inset-0 px-4 py-3 text-text-primary whitespace-pre-wrap break-words overflow-y-auto overflow-x-hidden pointer-events-none z-0"
+        className="md-overlay absolute inset-0 px-4 py-3 text-text-primary font-sans whitespace-pre-wrap break-words overflow-y-auto overflow-x-hidden pointer-events-none z-0"
         style={{ visibility: hidden ? 'hidden' : 'visible' }}
         dangerouslySetInnerHTML={{ __html: html }}
       />
