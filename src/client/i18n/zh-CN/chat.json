@@ -121,5 +121,12 @@
   "retry": "重试",
   "failedToFetchQueue": "获取队列条目失败",
   "failedToRetryEntry": "重试条目失败",
-  "failedToDeleteEntry": "删除条目失败"
+  "failedToDeleteEntry": "删除条目失败",
+  "history": "历史",
+  "historySearchPlaceholder": "搜索历史...",
+  "historyEmpty": "还没有发送过的提示词。",
+  "historyNoMatch": "没有匹配 `{{filter}}` 的提示词",
+  "historyLineCount_one": "+{{count}} 行",
+  "historyLineCount_other": "+{{count}} 行",
+  "historyShortcutHint": "Alt+H"
 }
