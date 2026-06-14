@@ -19,12 +19,13 @@ interface FilesState {
   errorByWorkspace: Record<string, string | undefined>;
   truncatedByWorkspace: Record<string, boolean>;
 
-  search: (workspaceId: string, query: string) => void;
+  search: (workspaceId: string, query: string, limit?: number) => void;
   clearFilesForWorkspace: (workspaceId: string) => void;
 }
 
 const DEBOUNCE_MS = 120;
 const API_BASE = '/api';
+const DEFAULT_LIMIT = 200;
 
 interface PerWorkspaceState {
   debounceTimer?: ReturnType<typeof setTimeout>;
@@ -52,6 +53,7 @@ async function runSearch(
   ) => void,
   workspaceId: string,
   query: string,
+  limit: number = DEFAULT_LIMIT,
 ): Promise<void> {
   const ws = getWorkspaceState(workspaceId);
   ws.abortController?.abort();
@@ -65,7 +67,7 @@ async function runSearch(
   }));
 
   try {
-    const url = `${API_BASE}/workspaces/${workspaceId}/files/search?q=${encodeURIComponent(query)}&limit=200`;
+    const url = `${API_BASE}/workspaces/${workspaceId}/files/search?q=${encodeURIComponent(query)}&limit=${limit}`;
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }));
@@ -98,7 +100,7 @@ export const useFilesStore = create<FilesState>((set) => ({
   errorByWorkspace: {},
   truncatedByWorkspace: {},
 
-  search: (workspaceId: string, query: string) => {
+  search: (workspaceId: string, query: string, limit?: number) => {
     if (!workspaceId) return;
 
     const ws = getWorkspaceState(workspaceId);
@@ -106,7 +108,7 @@ export const useFilesStore = create<FilesState>((set) => ({
 
     ws.debounceTimer = setTimeout(() => {
       ws.debounceTimer = undefined;
-      void runSearch(set, workspaceId, query);
+      void runSearch(set, workspaceId, query, limit);
     }, DEBOUNCE_MS);
   },
 
@@ -142,7 +144,7 @@ export interface UseFilesResult {
   loading: boolean;
   error: string | undefined;
   truncated: boolean;
-  search: (query: string) => void;
+  search: (query: string, limit?: number) => void;
   clear: () => void;
 }
 
@@ -159,7 +161,7 @@ export function useFiles(workspaceId: string): UseFilesResult {
   const clearFiles = useFilesStore((s) => s.clearFilesForWorkspace);
 
   const search = useCallback(
-    (query: string) => searchFiles(workspaceId, query),
+    (query: string, limit?: number) => searchFiles(workspaceId, query, limit),
     [searchFiles, workspaceId],
   );
   const clear = useCallback(
