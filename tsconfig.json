@@ -15,12 +15,13 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    "types": ["vitest/globals", "@testing-library/jest-dom"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/client/*"],
       "@server/*": ["src/server/*"]
     }
   },
-  "include": ["src/client/**/*"],
+  "include": ["src/client/**/*", "vitest.setup.ts"],
   "references": [{ "path": "./tsconfig.server.json" }]
 }

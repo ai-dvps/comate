@@ -7,7 +7,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
-import { createStreamReply, type StreamReplyResult } from './wecom-stream-reply.js';
+import { createStreamReply, type StreamReplyConnection, type StreamReplyResult } from './wecom-stream-reply.js';
 import { saveMediaFile } from './wecom-file-storage.js';
 import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
 
@@ -26,10 +26,10 @@ import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from 
  * The workspace is read once per inbound message; if absent, defaults to
  * allowing Reply (defensive — should not happen for bot-enabled workspaces).
  */
-async function resolveStreamReplyIfNeeded(
+async function resolveStreamReplyIfNeeded<TFrame>(
   workspaceId: string,
-  conn: { client: unknown },
-  frame: WsFrame<any>,
+  conn: StreamReplyConnection,
+  frame: WsFrame<TFrame>,
   sessionId: string,
   wecomUserId: string,
 ): Promise<StreamReplyResult | undefined> {
@@ -39,7 +39,7 @@ async function resolveStreamReplyIfNeeded(
   if (evaluateToolPermission(policy, REPLY_TOOL_NAME) === 'deny') {
     return undefined;
   }
-  return createStreamReply(conn as any, frame, sessionId, wecomUserId);
+  return createStreamReply(conn, frame as WsFrame<unknown>, sessionId, wecomUserId);
 }
 
 export interface BotConnection {

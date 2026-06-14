@@ -6,8 +6,10 @@ import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
+import type { ToolPermissionPolicy } from '../types/wecom-permissions'
 import ProviderSection from './ProviderSection'
 import SkillsPage from './SkillsPage'
+import { PermissionsSubTab } from './PermissionsSubTab'
 import {
   X,
   Eye,
@@ -43,6 +45,7 @@ interface WorkspaceFormState {
   wecomCorpId: string
   wecomCorpSecret: string
   wecomFilePromptTemplate: string
+  wecomToolPermissions: ToolPermissionPolicy | undefined
 }
 
 function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
@@ -63,6 +66,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     wecomCorpId: (workspace.settings?.wecomCorpId as string) || '',
     wecomCorpSecret: (workspace.settings?.wecomCorpSecret as string) || '',
     wecomFilePromptTemplate: (workspace.settings?.wecomFilePromptTemplate as string) || '',
+    wecomToolPermissions: workspace.settings?.wecomToolPermissions as ToolPermissionPolicy | undefined,
   }
 }
 
@@ -206,6 +210,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           wecomCorpId: ws.wecomCorpId || undefined,
           wecomCorpSecret: ws.wecomCorpSecret || undefined,
           wecomFilePromptTemplate: ws.wecomFilePromptTemplate || undefined,
+          wecomToolPermissions: ws.wecomToolPermissions,
         },
         skills: ws.skills,
         mcpServers: ws.mcpServers.map((m) => ({
@@ -1001,7 +1006,7 @@ interface WeComWorkspaceUser {
   lastSeenAt: string
 }
 
-type WeComSubTab = 'connection' | 'users' | 'prompts'
+type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions'
 
 function WeComBotSection({
   state,
@@ -1072,6 +1077,7 @@ function WeComBotSection({
     { id: 'connection', label: t('wecom.tabs.connection') },
     { id: 'users', label: t('wecom.tabs.users') },
     { id: 'prompts', label: t('wecom.tabs.prompts') },
+    { id: 'permissions', label: t('wecom.tabs.permissions') },
   ]
 
   return (
@@ -1256,6 +1262,14 @@ function WeComBotSection({
             </p>
           </div>
         </div>
+      )}
+
+      {/* Permissions tab */}
+      {activeSubTab === 'permissions' && (
+        <PermissionsSubTab
+          policy={state.wecomToolPermissions}
+          onUpdate={(next) => onUpdate({ wecomToolPermissions: next })}
+        />
       )}
     </div>
   )

@@ -152,15 +152,82 @@
     "userPending": "Pending resolution",
     "firstSeen": "First seen",
     "lastSeen": "Last seen",
-    "botSessionNote": "Bot sessions have full tool auto-approval. Save changes to connect or disconnect.",
+    "botSessionNote": "Bot sessions follow this workspace's tool permission policy (see the Permissions tab). Save changes to connect or disconnect.",
     "tabs": {
       "connection": "Connection",
       "users": "Users",
-      "prompts": "Prompts"
+      "prompts": "Prompts",
+      "permissions": "Permissions"
     },
     "filePromptTemplate": "File Prompt Template",
     "filePromptTemplatePlaceholder": "a file named @$file_name$ uploaded by user, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.",
-    "filePromptTemplateHint": "Prompt pushed to Claude when a file, image, or video is received. Use $file_name$ as placeholder for the file path. Leave empty for default behavior."
+    "filePromptTemplateHint": "Prompt pushed to Claude when a file, image, or video is received. Use $file_name$ as placeholder for the file path. Leave empty for default behavior.",
+    "effectiveSummary": "Current policy: {{posture}} — {{allowed}} allowed, {{denied}} denied{{overridesClause}}.",
+    "effectiveSummaryOverridesClause": ", {{count}} override(s)",
+    "freezeHint": "Changes apply to the next bot session, not to active conversations.",
+    "posture": {
+      "label": "Posture",
+      "allowAll": "Allow all",
+      "allowAllDescription": "Every tool is permitted. This is today's behavior.",
+      "safe": "Safe",
+      "safeDescription": "Read-only tools and the Reply capability are allowed; write, shell, network, and sub-agent tools are denied.",
+      "custom": "Custom",
+      "customDescription": "Manual configuration of category defaults and per-tool overrides."
+    },
+    "category": {
+      "fileRead": {
+        "name": "File Read",
+        "description": "Read files and search contents. Includes Read, Glob, Grep."
+      },
+      "fileWrite": {
+        "name": "File Write",
+        "description": "Modify files and notebooks. Includes Edit, Write, NotebookEdit."
+      },
+      "shell": {
+        "name": "Shell",
+        "description": "Run shell commands via Bash."
+      },
+      "network": {
+        "name": "Network",
+        "description": "Fetch external URLs and run web searches. Includes WebFetch, WebSearch."
+      },
+      "subagents": {
+        "name": "Sub-agents",
+        "description": "Dispatch and manage background agents and tasks. Includes Agent and the Task* family."
+      },
+      "reply": {
+        "name": "Reply",
+        "description": "Send messages back to the WeCom user. Denying this silences the bot — the agent still processes messages but cannot respond."
+      }
+    },
+    "defaultToggle": {
+      "allow": "Allow",
+      "deny": "Deny"
+    },
+    "override": {
+      "label": "Tools in this category",
+      "inherit": "Inherit",
+      "alwaysAllow": "Always allow",
+      "alwaysDeny": "Always deny",
+      "inheritSuffix": "(inherits category default)"
+    },
+    "banner": {
+      "title": "This workspace is running with full tool access",
+      "body": "This bot was enabled before tool permissions were configurable. It currently allows every tool call. Consider switching to the Safe preset to limit the bot to read-only actions and replies.",
+      "switchToSafe": "Switch to Safe preset",
+      "dismiss": "Dismiss"
+    },
+    "saveWarning": {
+      "title": "The bot will be unable to respond",
+      "body": "Every category including Reply is denied. The bot will still process inbound messages but cannot reply, and Claude tokens will be spent without producing any user-visible output.",
+      "saveAnyway": "Save anyway",
+      "cancel": "Cancel"
+    },
+    "saveError": {
+      "message": "Failed to save permission policy. Please try again.",
+      "retry": "Retry"
+    },
+    "mcpGapNote": "Note: MCP tools and Skills are not gated by this policy. They follow today's allow-all behavior. This is a known audit gap that will be addressed in a future iteration."
   },
   "unsavedDialog": {
     "title": "Unsaved changes",
