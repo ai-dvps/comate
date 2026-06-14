@@ -120,6 +120,18 @@ describe('PromptInput', () => {
     }
   })
 
+  function seedHistory(sessionId: string, prompts: string[]) {
+    chatStoreMock.setMessages(
+      sessionId,
+      prompts.map((text, i) => ({
+        id: `m-${i}`,
+        role: 'user' as const,
+        parts: [{ type: 'text', text }],
+        timestamp: i + 1,
+      })),
+    )
+  }
+
   it('renders the textarea and toolbar buttons', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     expect(screen.getByPlaceholderText('Ask Claude anything about your code...')).toBeInTheDocument()
@@ -244,5 +256,78 @@ describe('PromptInput', () => {
     expect(screen.getByText('/commit')).toBeInTheDocument()
     fireEvent.change(textarea, { target: { value: '/c ', selectionStart: 3 } })
     expect(screen.queryByText('/commit')).not.toBeInTheDocument()
+  })
+
+  it('recalls the most recent prompt on ArrowUp with empty input', () => {
+    seedHistory('session-1', ['older prompt', 'most recent prompt'])
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('most recent prompt')
+  })
+
+  it('cycles through history with ArrowUp and ArrowDown', () => {
+    seedHistory('session-1', ['first', 'second', 'third'])
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('third')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('second')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('first')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue('second')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue('third')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue('')
+  })
+
+  it('restores the original draft when ArrowDown moves past the most recent entry', () => {
+    chatStoreMock.setDraft('session-1', 'original draft')
+    seedHistory('session-1', ['history prompt'])
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    expect(textarea).toHaveValue('original draft')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('history prompt')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue('original draft')
+  })
+
+  it('replaces an edited recalled draft when ArrowUp continues backward', () => {
+    seedHistory('session-1', ['older', 'newer'])
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('newer')
+
+    fireEvent.change(textarea, { target: { value: 'edited', selectionStart: 6 } })
+    expect(textarea).toHaveValue('edited')
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('older')
+  })
+
+  it('does not change draft on ArrowUp when there is no history', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('')
+  })
+
+  it('does not navigate history while streaming', () => {
+    seedHistory('session-1', ['history prompt'])
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+    const textarea = screen.getByRole('textbox')
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('')
   })
 })

@@ -8,6 +8,7 @@ import FilePicker, { type FilePickerHandle } from './FilePicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
+import { useSentPrompts } from '../hooks/useSentPrompts'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import ProviderSelector from './ProviderSelector'
@@ -81,6 +82,7 @@ export default function PromptInput({
     sessionId ? s.drafts[sessionId] ?? '' : '',
   )
   const setDraft = useChatStore((s) => s.setDraft)
+  const history = useSentPrompts(sessionId || undefined)
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerSource, setPickerSource] = useState<'slash' | 'button'>('slash')
@@ -96,6 +98,8 @@ export default function PromptInput({
   const [filePickerFilter, setFilePickerFilter] = useState('')
   const [fileTriggerStart, setFileTriggerStart] = useState<number | null>(null)
   const [slashTriggerStart, setSlashTriggerStart] = useState<number | null>(null)
+  const [historyCursor, setHistoryCursor] = useState<number | null>(null)
+  const originalDraftRef = useRef('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
@@ -125,12 +129,19 @@ export default function PromptInput({
     setSlashTriggerStart(null)
     setArgumentHint(null)
     setLastInsertedCommand(null)
+    setHistoryCursor(null)
+    originalDraftRef.current = ''
   }, [sessionId])
 
   const handleInputChange = (value: string, cursorPos: number) => {
     const prev = prevInputRef.current
     prevInputRef.current = value
     setDraft(sessionId, value)
+
+    if (value === '' && historyCursor !== null) {
+      setHistoryCursor(null)
+      originalDraftRef.current = ''
+    }
 
     if (lastInsertedCommand && value !== lastInsertedCommand) {
       setArgumentHint(null)
@@ -238,6 +249,33 @@ export default function PromptInput({
     setArgumentHint(null)
     setLastInsertedCommand(null)
     setSlashTriggerStart(null)
+    setHistoryCursor(null)
+    originalDraftRef.current = ''
+  }
+
+  const applyHistory = (index: number) => {
+    const prompt = history[index]
+    if (!prompt) return
+    setDraft(sessionId, prompt)
+    prevInputRef.current = prompt
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(prompt.length, prompt.length)
+    })
+  }
+
+  const restoreOriginal = () => {
+    const draft = originalDraftRef.current
+    setDraft(sessionId, draft)
+    prevInputRef.current = draft
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(draft.length, draft.length)
+    })
   }
 
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
@@ -320,6 +358,44 @@ export default function PromptInput({
         e.preventDefault()
         setPickerOpen(false)
         setSlashTriggerStart(null)
+        return
+      }
+    }
+
+    // History recall (terminal-style ArrowUp/Down) when no picker is open.
+    if (
+      (e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+      !pickerOpen &&
+      !filePickerOpen &&
+      !isStreaming &&
+      !isRestarting
+    ) {
+      if (e.key === 'ArrowUp') {
+        if (history.length === 0) return
+        e.preventDefault()
+        if (historyCursor === null) {
+          originalDraftRef.current = input
+          setHistoryCursor(0)
+          applyHistory(0)
+        } else if (historyCursor < history.length - 1) {
+          const next = historyCursor + 1
+          setHistoryCursor(next)
+          applyHistory(next)
+        }
+        return
+      }
+
+      if (e.key === 'ArrowDown') {
+        if (historyCursor === null) return
+        e.preventDefault()
+        if (historyCursor > 0) {
+          const next = historyCursor - 1
+          setHistoryCursor(next)
+          applyHistory(next)
+        } else {
+          restoreOriginal()
+          setHistoryCursor(null)
+        }
         return
       }
     }
