@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User } from 'lucide-react'
+import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
+import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
@@ -99,10 +100,13 @@ export default function PromptInput({
   const [fileTriggerStart, setFileTriggerStart] = useState<number | null>(null)
   const [slashTriggerStart, setSlashTriggerStart] = useState<number | null>(null)
   const [historyCursor, setHistoryCursor] = useState<number | null>(null)
+  const [historyPickerOpen, setHistoryPickerOpen] = useState(false)
+  const [historyPickerFilter, setHistoryPickerFilter] = useState('')
   const originalDraftRef = useRef('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
+  const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
   const prevInputRef = useRef('')
 
   const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
@@ -125,6 +129,7 @@ export default function PromptInput({
   useEffect(() => {
     setPickerOpen(false)
     setFilePickerOpen(false)
+    setHistoryPickerOpen(false)
     setFileTriggerStart(null)
     setSlashTriggerStart(null)
     setArgumentHint(null)
@@ -302,6 +307,28 @@ export default function PromptInput({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // History popup shortcut: Alt+H / Option+H
+    if (
+      e.altKey &&
+      e.key.toLowerCase() === 'h' &&
+      !isStreaming &&
+      !isRestarting &&
+      hasSession
+    ) {
+      e.preventDefault()
+      if (historyPickerOpen) {
+        setHistoryPickerOpen(false)
+      } else {
+        setPickerOpen(false)
+        setFilePickerOpen(false)
+        setFileTriggerStart(null)
+        setSlashTriggerStart(null)
+        setHistoryPickerFilter('')
+        setHistoryPickerOpen(true)
+      }
+      return
+    }
+
     if (filePickerOpen) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -441,6 +468,20 @@ export default function PromptInput({
     })
   }
 
+  const handleHistorySelect = (selectedPrompt: string) => {
+    setDraft(sessionId, selectedPrompt)
+    prevInputRef.current = selectedPrompt
+    setHistoryPickerOpen(false)
+    setHistoryCursor(null)
+    originalDraftRef.current = ''
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(selectedPrompt.length, selectedPrompt.length)
+    })
+  }
+
   const handleCommandsClick = () => {
     if (pickerOpen) {
       setPickerOpen(false)
@@ -448,6 +489,7 @@ export default function PromptInput({
       return
     }
     setFilePickerOpen(false)
+    setHistoryPickerOpen(false)
     setFileTriggerStart(null)
     setSlashTriggerStart(null)
     setPickerSource('button')
@@ -462,10 +504,24 @@ export default function PromptInput({
       return
     }
     setPickerOpen(false)
+    setHistoryPickerOpen(false)
     setFilePickerSource('button')
     setFilePickerFilter('')
     setFileTriggerStart(null)
     setFilePickerOpen(true)
+  }
+
+  const handleHistoryClick = () => {
+    if (historyPickerOpen) {
+      setHistoryPickerOpen(false)
+      return
+    }
+    setPickerOpen(false)
+    setFilePickerOpen(false)
+    setFileTriggerStart(null)
+    setSlashTriggerStart(null)
+    setHistoryPickerFilter('')
+    setHistoryPickerOpen(true)
   }
 
   const canSend = input.trim().length > 0 && hasSession && !isStreaming && !isRestarting && !disabled
@@ -473,6 +529,7 @@ export default function PromptInput({
   const showGhost = !!argumentHint && input === lastInsertedCommand
   const commandsDisabled = disabled || isStreaming || isRestarting
   const filesDisabled = disabled || isStreaming || isRestarting || !workspaceId
+  const historyDisabled = disabled || isStreaming || isRestarting || !hasSession
 
   return (
     <div className={`max-w-3xl mx-auto px-4 ${isBotSession ? 'py-2' : 'py-4'}`}>
@@ -573,6 +630,30 @@ export default function PromptInput({
                   >
                     <Paperclip className="w-3 h-3" />
                     <span>{t('files')}</span>
+                  </button>
+                }
+              />
+              <HistoryPicker
+                ref={historyPickerHandleRef}
+                sessionId={sessionId}
+                open={historyPickerOpen}
+                onOpenChange={(open) => {
+                  setHistoryPickerOpen(open)
+                }}
+                onSelect={handleHistorySelect}
+                side="top"
+                align="start"
+                initialFilter={historyPickerFilter}
+                anchor={
+                  <button
+                    type="button"
+                    onClick={handleHistoryClick}
+                    disabled={historyDisabled}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={`${t('history')} (${t('historyShortcutHint')})`}
+                  >
+                    <History className="w-3 h-3" />
+                    <span>{t('history')}</span>
                   </button>
                 }
               />

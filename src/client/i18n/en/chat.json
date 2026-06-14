@@ -121,5 +121,12 @@
   "retry": "Retry",
   "failedToFetchQueue": "Failed to fetch queue entries",
   "failedToRetryEntry": "Failed to retry entry",
-  "failedToDeleteEntry": "Failed to delete entry"
+  "failedToDeleteEntry": "Failed to delete entry",
+  "history": "History",
+  "historySearchPlaceholder": "Search history...",
+  "historyEmpty": "No sent prompts yet.",
+  "historyNoMatch": "No prompts match `{{filter}}`",
+  "historyLineCount_one": "+{{count}} more line",
+  "historyLineCount_other": "+{{count}} more lines",
+  "historyShortcutHint": "Alt+H"
 }
