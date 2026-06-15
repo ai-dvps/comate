@@ -11,6 +11,7 @@ import { SAFE_PRESET } from '../types/wecom-permissions'
 import ProviderSection from './ProviderSection'
 import SkillsPage from './SkillsPage'
 import { PermissionsSubTab } from './PermissionsSubTab'
+import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 
 /** Returns true if every category is denied and no override allows Reply. Triggers the save-time warning. */
 function isAllDeniedIncludingReply(policy: ToolPermissionPolicy): boolean {
@@ -92,6 +93,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const updateWorkspace = useWorkspaceStore((s) => s.updateWorkspace)
+  const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace)
+  const storeError = useWorkspaceStore((s) => s.error)
+  const isStoreLoading = useWorkspaceStore((s) => s.isLoading)
 
   const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays } = useAppSettings()
   const windowCap = useChatStore((s) => s.windowCap)
@@ -103,6 +107,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
   const [pendingClose, setPendingClose] = useState(false)
   const [showAllDeniedConfirm, setShowAllDeniedConfirm] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 
   // App-level form state
   const [appModel, setAppModel] = useState(defaultModel)
@@ -174,6 +179,21 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       setActiveTab('workspace')
     }
   }, [activeTab])
+
+  // Guard: keep selectedWorkspaceId in sync when the selected workspace is deleted.
+  useEffect(() => {
+    if (!selectedWorkspaceId) return
+    if (!workspaces.some((w) => w.id === selectedWorkspaceId)) {
+      const fallback = activeWorkspaceId || (workspaces.length > 0 ? workspaces[0].id : null)
+      setSelectedWorkspaceId(fallback)
+      // Clean up orphaned form state for the deleted workspace.
+      setWorkspaceState((prev) => {
+        const next = { ...prev }
+        delete next[selectedWorkspaceId]
+        return next
+      })
+    }
+  }, [workspaces, selectedWorkspaceId, activeWorkspaceId])
 
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
@@ -309,6 +329,20 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     onClose()
   }
 
+  const handleOpenDeleteDialog = () => {
+    setShowDeleteDialog(true)
+  }
+
+  const handleCancelDelete = () => {
+    setShowDeleteDialog(false)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!selectedWorkspaceId) return
+    await deleteWorkspace(selectedWorkspaceId)
+    setShowDeleteDialog(false)
+  }
+
   const updateSelectedWorkspace = (updates: Partial<WorkspaceFormState>) => {
     if (!selectedWorkspaceId) return
     setWorkspaceState((prev) => ({
@@ -404,6 +438,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 workspaceState={selectedWorkspaceId ? workspaceState[selectedWorkspaceId] : null}
                 onUpdateWorkspace={updateSelectedWorkspace}
                 onSave={handleSave}
+                onDelete={handleOpenDeleteDialog}
               />
             )}
           </div>
@@ -411,7 +446,11 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           {/* Footer */}
           <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0">
             <div className="text-[11px] text-text-tertiary">
-              {isDirty() && t('unsavedDialog.message')}
+              {storeError ? (
+                <span className="text-destructive">{storeError}</span>
+              ) : (
+                isDirty() && t('unsavedDialog.message')
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -519,6 +558,17 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Delete Workspace Dialog */}
+      {selectedWorkspace && (
+        <DeleteWorkspaceDialog
+          workspaceName={selectedWorkspace.name}
+          isOpen={showDeleteDialog}
+          isLoading={isStoreLoading}
+          onCancel={handleCancelDelete}
+          onConfirm={handleConfirmDelete}
+        />
       )}
     </div>
   )
@@ -981,6 +1031,7 @@ function WorkspaceTabShell({
   workspaceState,
   onUpdateWorkspace,
   onSave,
+  onDelete,
 }: {
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
@@ -988,6 +1039,7 @@ function WorkspaceTabShell({
   workspaceState: WorkspaceFormState | null
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
   onSave: () => Promise<void>
+  onDelete: () => void
 }) {
   const { t } = useTranslation('settings')
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('basic')
@@ -1068,7 +1120,7 @@ function WorkspaceTabShell({
           ) : (
             <div className="max-w-xl">
               {activeSection === 'basic' && (
-                <BasicInfoSection state={workspaceState} onUpdate={onUpdateWorkspace} />
+                <BasicInfoSection state={workspaceState} onUpdate={onUpdateWorkspace} onDelete={onDelete} />
               )}
               {activeSection === 'wecom' && (
                 <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} onSave={onSave} />
@@ -1096,9 +1148,11 @@ function WorkspaceTabShell({
 function BasicInfoSection({
   state,
   onUpdate,
+  onDelete,
 }: {
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
+  onDelete: () => void
 }) {
   const { t } = useTranslation('settings')
   return (
@@ -1126,6 +1180,22 @@ function BasicInfoSection({
           <code className="font-mono text-[11px] whitespace-pre-wrap break-all">{state.folderPath}</code>
         </div>
         <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
+      </div>
+
+      {/* Danger zone */}
+      <div className="pt-4 border-t border-border/50">
+        <h3 className="text-xs font-medium text-text-secondary mb-2 flex items-center gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
+          {t('deleteWorkspace.title')}
+        </h3>
+        <p className="text-[10px] text-text-tertiary mb-3">{t('deleteWorkspace.folderUntouched')}</p>
+        <button
+          onClick={onDelete}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-destructive/10 hover:bg-destructive/20 text-destructive border border-destructive/30 rounded-lg transition-colors"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          {t('deleteWorkspace.delete')}
+        </button>
       </div>
     </div>
   )
