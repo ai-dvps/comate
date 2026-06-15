@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
@@ -114,6 +114,7 @@ export default function PromptInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const overlayRef = useRef<HTMLPreElement>(null)
   const isComposingRef = useRef(false)
+  const pendingCursorPosRef = useRef<number | null>(null)
   const [overlayHidden, setOverlayHidden] = useState(false)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
@@ -126,6 +127,18 @@ export default function PromptInput({
 
   useEffect(() => {
     prevInputRef.current = input
+  }, [input])
+
+  // Restore the cursor position after a user-driven value change. React's
+  // controlled textarea reconciliation can reset the caret to the end when
+  // state updates arrive asynchronously or after IME composition, so we
+  // explicitly preserve the position that was reported by the input event.
+  useLayoutEffect(() => {
+    if (pendingCursorPosRef.current !== null && textareaRef.current) {
+      const pos = pendingCursorPosRef.current
+      pendingCursorPosRef.current = null
+      textareaRef.current.setSelectionRange(pos, pos)
+    }
   }, [input])
 
   useEffect(() => {
@@ -142,6 +155,7 @@ export default function PromptInput({
   }, [sessionId])
 
   const handleInputChange = (value: string, cursorPos: number) => {
+    pendingCursorPosRef.current = cursorPos
     const prev = prevInputRef.current
     prevInputRef.current = value
     setDraft(sessionId, value)
@@ -809,6 +823,7 @@ export default function PromptInput({
                 onCompositionEnd={(e) => {
                   isComposingRef.current = false
                   setOverlayHidden(false)
+                  pendingCursorPosRef.current = e.currentTarget.selectionStart
                   handleInputChange(
                     e.currentTarget.value,
                     e.currentTarget.selectionStart,
