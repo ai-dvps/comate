@@ -176,45 +176,6 @@
     @apply bg-surface text-text-primary font-semibold;
   }
 
-  /* PromptInput mirror-div markdown source highlighting */
-  .md-input-container textarea {
-    color: transparent;
-    caret-color: hsl(var(--color-text-primary));
-  }
-  .md-input-container textarea::selection {
-    background: hsl(var(--color-accent));
-    color: hsl(var(--color-accent-foreground));
-  }
-
-  .md-overlay .token.punctuation,
-  .md-overlay .token.list-punctuation,
-  .md-overlay .token.url .token.punctuation {
-    color: hsl(var(--color-text-tertiary));
-  }
-  .md-overlay .token.bold {
-    @apply font-semibold;
-  }
-  .md-overlay .token[class~="italic"] {
-    font-style: italic;
-  }
-  .md-overlay .token.code {
-    @apply font-mono text-[12px] bg-surface-hover px-1 py-0.5 rounded;
-  }
-  .md-overlay .token.strike {
-    @apply line-through;
-  }
-  .md-overlay .token.url {
-    @apply text-accent;
-  }
-  .md-overlay .token.title {
-    @apply text-text-primary font-semibold;
-  }
-  .md-overlay .token.hr {
-    @apply text-text-tertiary;
-  }
-  .md-overlay .token.blockquote {
-    @apply text-text-secondary italic;
-  }
 }
 
 @layer utilities {

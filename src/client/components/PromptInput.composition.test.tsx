@@ -137,7 +137,7 @@ describe('PromptInput composition', () => {
     )
   }
 
-  it('F9: recalls a markdown prompt, highlights via overlay, and accepts a completion with Tab', async () => {
+  it('F9: recalls a markdown prompt and accepts a completion with Tab', async () => {
     seedHistory('session-1', ['**bold** explain the function'])
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
 
@@ -155,11 +155,6 @@ describe('PromptInput composition', () => {
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
     expect(textarea).toHaveValue('**bold** explain the function')
 
-    // The mirror overlay renders the highlighted source.
-    const overlay = document.querySelector('.md-overlay')
-    expect(overlay).toBeInTheDocument()
-    expect(overlay?.textContent).toContain('bold')
-
     // Reset to a prefix that the trained model can complete.
     fireEvent.change(textarea, { target: { value: 'explain ', selectionStart: 8 } })
     await waitFor(() => expect(screen.getByText('the')).toBeInTheDocument(), {
@@ -170,7 +165,7 @@ describe('PromptInput composition', () => {
     expect(textarea).toHaveValue('explain the')
   })
 
-  it('R36: streaming pauses pickers, history navigation, and completion but keeps overlay', () => {
+  it('R36: streaming pauses pickers, history navigation, and completion', () => {
     seedHistory('session-1', ['history prompt'])
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
 
@@ -186,10 +181,6 @@ describe('PromptInput composition', () => {
     // History recall is disabled; the typed '@' value remains unchanged.
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
     expect(textarea).toHaveValue('@')
-
-    // Overlay still renders (read-only).
-    const overlay = document.querySelector('.md-overlay')
-    expect(overlay).toBeInTheDocument()
   })
 
   it('R37: plain Enter sends when useModifierToSubmit is false', () => {
@@ -259,7 +250,7 @@ describe('PromptInput composition', () => {
     expect(screen.queryByText('session one prompt')).not.toBeInTheDocument()
   })
 
-  it('AE13/AE14: all four features compose without crashing', async () => {
+  it('AE13/AE14: pickers, history recall, and completion compose without crashing', async () => {
     seedHistory('session-1', ['**bold** note', 'explain the function'])
     filesMock.results = [
       { path: 'src/main.ts' },
@@ -296,11 +287,7 @@ describe('PromptInput composition', () => {
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
     expect(textarea).toHaveValue('explain the function')
 
-    // Feature 3: overlay highlights markdown from recalled history.
-    const overlay = document.querySelector('.md-overlay')
-    expect(overlay).toBeInTheDocument()
-
-    // Feature 4: completion ghost appears after debounce.
+    // Feature 3: completion ghost appears after debounce.
     fireEvent.change(textarea, { target: { value: 'explain ', selectionStart: 8 } })
     await waitFor(() => expect(screen.getByText('the')).toBeInTheDocument(), {
       timeout: 500,
@@ -333,5 +320,32 @@ describe('PromptInput composition', () => {
 
     expect(textarea).toHaveValue('ab你cd')
     expect(setSelectionRange).toHaveBeenCalledWith(3, 3)
+  })
+
+  it('auto-resizes the textarea up to maxHeight', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+
+    const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
+
+    Object.defineProperty(textarea, 'scrollHeight', {
+      configurable: true,
+      value: maxHeight + 200,
+      writable: true,
+    })
+    fireEvent.change(textarea, {
+      target: { value: 'a very tall prompt', selectionStart: 18 },
+    })
+    expect(textarea.style.height).toBe(`${maxHeight}px`)
+
+    Object.defineProperty(textarea, 'scrollHeight', {
+      configurable: true,
+      value: 80,
+      writable: true,
+    })
+    fireEvent.change(textarea, {
+      target: { value: 'short', selectionStart: 5 },
+    })
+    expect(textarea.style.height).toBe('80px')
   })
 })
