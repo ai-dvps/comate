@@ -1,5 +1,10 @@
 import { create } from 'zustand';
 import i18next from 'i18next';
+import { useChatStore } from './chat-store';
+import { useFilesStore } from './files-store';
+import { useAnalyticsStore } from './analytics-store';
+import { useCommandsStore } from './commands-store';
+import { useWeComQueueStore } from './wecom-queue-store';
 
 export interface Workspace {
   id: string;
@@ -27,6 +32,7 @@ interface WorkspaceState {
   openWorkspace: (id: string) => void;
   closeWorkspace: (id: string) => void;
   updateWorkspace: (id: string, input: Partial<Omit<Workspace, 'id' | 'createdAt' | 'updatedAt'>>) => Promise<void>;
+  deleteWorkspace: (id: string) => Promise<void>;
   clearError: () => void;
 }
 
@@ -124,6 +130,41 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const updated = data.workspace as Workspace;
       set({
         workspaces: get().workspaces.map((w) => (w.id === id ? updated : w)),
+        isLoading: false,
+      });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isLoading: false });
+    }
+  },
+
+  deleteWorkspace: async (id) => {
+    set({ isLoading: true, error: null });
+    try {
+      const res = await fetch(`${API_BASE}/workspaces/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }));
+        throw new Error(data.error || i18next.t('common:failedToDeleteWorkspace', 'Failed to delete workspace'));
+      }
+
+      // Mirror closeWorkspace focus fallback after the workspace is gone.
+      const { openWorkspaceIds, activeWorkspaceId } = get();
+      const newOpenIds = openWorkspaceIds.filter((wsId) => wsId !== id);
+      let newActiveId = activeWorkspaceId;
+      if (activeWorkspaceId === id) {
+        newActiveId = newOpenIds.length > 0 ? newOpenIds[newOpenIds.length - 1] : null;
+      }
+
+      // Clean up workspace-scoped state in related stores.
+      useChatStore.getState().cleanupWorkspace(id);
+      useFilesStore.getState().clearFilesForWorkspace(id);
+      useAnalyticsStore.getState().clearWorkspace(id);
+      useCommandsStore.getState().clearCommandsForWorkspace(id);
+      useWeComQueueStore.getState().clearWorkspace(id);
+
+      set({
+        workspaces: get().workspaces.filter((w) => w.id !== id),
+        openWorkspaceIds: newOpenIds,
+        activeWorkspaceId: newActiveId,
         isLoading: false,
       });
     } catch (err) {

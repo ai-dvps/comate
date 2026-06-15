@@ -13,6 +13,7 @@ interface WeComQueueState {
   fetchEntries: (workspaceId: string) => Promise<void>;
   retryEntry: (workspaceId: string, entryId: string) => Promise<boolean>;
   deleteEntry: (workspaceId: string, entryId: string) => Promise<boolean>;
+  clearWorkspace: (workspaceId: string) => void;
   setStatusFilter: (filter: string | null) => void;
   getFilteredEntries: (workspaceId: string) => WeComProactiveMessage[];
 }
@@ -80,6 +81,23 @@ export const useWeComQueueStore = create<WeComQueueState>((set, get) => ({
       await get().fetchEntries(workspaceId);
       return false;
     }
+  },
+
+  clearWorkspace: (workspaceId: string) => {
+    if (!workspaceId) return;
+    set((state) => {
+      const nextEntries = { ...state.entriesByWorkspace };
+      const nextLoading = { ...state.isLoading };
+      const nextError = { ...state.error };
+      delete nextEntries[workspaceId];
+      delete nextLoading[workspaceId];
+      delete nextError[workspaceId];
+      return {
+        entriesByWorkspace: nextEntries,
+        isLoading: nextLoading,
+        error: nextError,
+      };
+    });
   },
 
   setStatusFilter: (filter: string | null) => {
