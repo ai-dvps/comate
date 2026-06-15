@@ -309,7 +309,7 @@ describe('PromptInput composition', () => {
 
   it('preserves cursor position after user input updates the value', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
-    const textarea = screen.getByRole('textbox')
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
     const setSelectionRange = vi.spyOn(textarea, 'setSelectionRange')
 
     // Simulate typing in the middle of existing text.
@@ -321,7 +321,7 @@ describe('PromptInput composition', () => {
 
   it('preserves cursor position after composition ends', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
-    const textarea = screen.getByRole('textbox')
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
     const setSelectionRange = vi.spyOn(textarea, 'setSelectionRange')
 
     fireEvent.change(textarea, { target: { value: 'abcd', selectionStart: 4 } })
