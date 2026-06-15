@@ -339,6 +339,15 @@ export default function PromptInput({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Recover from an IME composition that was abandoned without a
+    // compositionend event. This happens when the user switches IMEs
+    // (e.g., Chinese -> English) mid-composition, leaving isComposingRef
+    // stuck true and blocking all subsequent onChange updates.
+    if (!e.nativeEvent.isComposing && isComposingRef.current) {
+      isComposingRef.current = false
+      setOverlayHidden(false)
+    }
+
     // History popup shortcut: Alt+H / Option+H
     if (
       e.altKey &&
