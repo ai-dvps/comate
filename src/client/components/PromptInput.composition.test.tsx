@@ -306,4 +306,23 @@ describe('PromptInput composition', () => {
       timeout: 500,
     })
   })
+
+  it('recovers from IME composition state abandoned by IME switch', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox')
+
+    // Start a CJK composition.
+    fireEvent.compositionStart(textarea)
+    fireEvent.change(textarea, { target: { value: 'n', selectionStart: 1 } })
+    // During composition the controlled value should not update.
+    expect(textarea).toHaveValue('')
+
+    // Simulate switching IMEs mid-composition: the browser abandons the
+    // composition without firing compositionend, then a normal keydown arrives.
+    fireEvent.keyDown(textarea, { key: 'a', isComposing: false })
+    fireEvent.change(textarea, { target: { value: 'hello', selectionStart: 5 } })
+
+    // The input should recover and accept the new value.
+    expect(textarea).toHaveValue('hello')
+  })
 })
