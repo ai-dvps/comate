@@ -1,5 +1,10 @@
 import { create } from 'zustand';
 import i18next from 'i18next';
+import { useChatStore } from './chat-store';
+import { useFilesStore } from './files-store';
+import { useAnalyticsStore } from './analytics-store';
+import { useCommandsStore } from './commands-store';
+import { useWeComQueueStore } from './wecom-queue-store';
 
 export interface Workspace {
   id: string;
@@ -27,10 +32,26 @@ interface WorkspaceState {
   openWorkspace: (id: string) => void;
   closeWorkspace: (id: string) => void;
   updateWorkspace: (id: string, input: Partial<Omit<Workspace, 'id' | 'createdAt' | 'updatedAt'>>) => Promise<void>;
+  deleteWorkspace: (id: string) => Promise<void>;
   clearError: () => void;
 }
 
 const API_BASE = '/api';
+
+function computeFocusFallback(
+  openWorkspaceIds: string[],
+  activeWorkspaceId: string | null,
+  removedId: string,
+): { newOpenIds: string[]; newActiveId: string | null } {
+  const newOpenIds = openWorkspaceIds.filter((id) => id !== removedId);
+  const newActiveId =
+    activeWorkspaceId === removedId
+      ? newOpenIds.length > 0
+        ? newOpenIds[newOpenIds.length - 1]
+        : null
+      : activeWorkspaceId;
+  return { newOpenIds, newActiveId };
+}
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
@@ -94,14 +115,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closeWorkspace: (id) => {
     const { openWorkspaceIds, activeWorkspaceId } = get();
-    const newOpenIds = openWorkspaceIds.filter(wsId => wsId !== id);
-
-    let newActiveId = activeWorkspaceId;
-    if (activeWorkspaceId === id) {
-      // If closing the active workspace, focus another open one
-      newActiveId = newOpenIds.length > 0 ? newOpenIds[newOpenIds.length - 1] : null;
-    }
-
+    const { newOpenIds, newActiveId } = computeFocusFallback(
+      openWorkspaceIds,
+      activeWorkspaceId,
+      id,
+    );
     set({
       openWorkspaceIds: newOpenIds,
       activeWorkspaceId: newActiveId,
@@ -124,6 +142,39 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const updated = data.workspace as Workspace;
       set({
         workspaces: get().workspaces.map((w) => (w.id === id ? updated : w)),
+        isLoading: false,
+      });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isLoading: false });
+    }
+  },
+
+  deleteWorkspace: async (id) => {
+    set({ isLoading: true, error: null });
+    try {
+      const res = await fetch(`${API_BASE}/workspaces/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }));
+        throw new Error(data.error || i18next.t('common:failedToDeleteWorkspace', 'Failed to delete workspace'));
+      }
+
+      const { openWorkspaceIds, activeWorkspaceId } = get();
+      const { newOpenIds, newActiveId } = computeFocusFallback(
+        openWorkspaceIds,
+        activeWorkspaceId,
+        id,
+      );
+
+      useChatStore.getState().cleanupWorkspace(id);
+      useFilesStore.getState().clearFilesForWorkspace(id);
+      useAnalyticsStore.getState().clearWorkspace(id);
+      useCommandsStore.getState().clearCommandsForWorkspace(id);
+      useWeComQueueStore.getState().clearWorkspace(id);
+
+      set({
+        workspaces: get().workspaces.filter((w) => w.id !== id),
+        openWorkspaceIds: newOpenIds,
+        activeWorkspaceId: newActiveId,
         isLoading: false,
       });
     } catch (err) {

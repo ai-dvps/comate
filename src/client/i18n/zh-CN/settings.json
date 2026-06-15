@@ -389,5 +389,16 @@
     "confirmMessage": "此工作区有一个活动会话。关闭标签页将中断该会话。",
     "confirmButton": "仍要关闭",
     "cancelButton": "取消"
+  },
+  "deleteWorkspace": {
+    "title": "删除工作区？",
+    "warning": "此操作将永久删除工作区 \"{{workspaceName}}\" 及其所有会话。此操作无法撤销。",
+    "folderUntouched": "磁盘上的工作区文件夹不会被修改。",
+    "inputLabel": "输入工作区名称以确认",
+    "inputPlaceholder": "输入工作区名称",
+    "nameMismatch": "名称不匹配。",
+    "cancel": "取消",
+    "delete": "删除",
+    "deleting": "正在删除..."
   }
 }
