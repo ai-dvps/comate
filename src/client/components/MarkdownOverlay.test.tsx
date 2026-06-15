@@ -52,4 +52,22 @@ describe('MarkdownOverlay', () => {
     const pre = container.querySelector('pre')
     expect(pre?.textContent).toBe('​')
   })
+
+  it('flattens HTML-like tags to a single text run so cursor alignment is preserved', () => {
+    const { container } = renderOverlay('<text>')
+    const html = container.querySelector('pre')?.innerHTML ?? ''
+    expect(html).toBe('&lt;text&gt;<span>​</span>')
+  })
+
+  it('flattens closing HTML tags to a single text run', () => {
+    const { container } = renderOverlay('</text>')
+    const html = container.querySelector('pre')?.innerHTML ?? ''
+    expect(html).toBe('&lt;/text&gt;<span>​</span>')
+  })
+
+  it('flattens HTML comment tags to a single text run', () => {
+    const { container } = renderOverlay('<!-- comment -->')
+    const html = container.querySelector('pre')?.innerHTML ?? ''
+    expect(html).toBe('&lt;!-- comment --&gt;<span>​</span>')
+  })
 })
