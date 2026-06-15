@@ -38,6 +38,21 @@ interface WorkspaceState {
 
 const API_BASE = '/api';
 
+function computeFocusFallback(
+  openWorkspaceIds: string[],
+  activeWorkspaceId: string | null,
+  removedId: string,
+): { newOpenIds: string[]; newActiveId: string | null } {
+  const newOpenIds = openWorkspaceIds.filter((id) => id !== removedId);
+  const newActiveId =
+    activeWorkspaceId === removedId
+      ? newOpenIds.length > 0
+        ? newOpenIds[newOpenIds.length - 1]
+        : null
+      : activeWorkspaceId;
+  return { newOpenIds, newActiveId };
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   activeWorkspaceId: null,
@@ -100,14 +115,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closeWorkspace: (id) => {
     const { openWorkspaceIds, activeWorkspaceId } = get();
-    const newOpenIds = openWorkspaceIds.filter(wsId => wsId !== id);
-
-    let newActiveId = activeWorkspaceId;
-    if (activeWorkspaceId === id) {
-      // If closing the active workspace, focus another open one
-      newActiveId = newOpenIds.length > 0 ? newOpenIds[newOpenIds.length - 1] : null;
-    }
-
+    const { newOpenIds, newActiveId } = computeFocusFallback(
+      openWorkspaceIds,
+      activeWorkspaceId,
+      id,
+    );
     set({
       openWorkspaceIds: newOpenIds,
       activeWorkspaceId: newActiveId,
@@ -146,15 +158,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         throw new Error(data.error || i18next.t('common:failedToDeleteWorkspace', 'Failed to delete workspace'));
       }
 
-      // Mirror closeWorkspace focus fallback after the workspace is gone.
       const { openWorkspaceIds, activeWorkspaceId } = get();
-      const newOpenIds = openWorkspaceIds.filter((wsId) => wsId !== id);
-      let newActiveId = activeWorkspaceId;
-      if (activeWorkspaceId === id) {
-        newActiveId = newOpenIds.length > 0 ? newOpenIds[newOpenIds.length - 1] : null;
-      }
+      const { newOpenIds, newActiveId } = computeFocusFallback(
+        openWorkspaceIds,
+        activeWorkspaceId,
+        id,
+      );
 
-      // Clean up workspace-scoped state in related stores.
       useChatStore.getState().cleanupWorkspace(id);
       useFilesStore.getState().clearFilesForWorkspace(id);
       useAnalyticsStore.getState().clearWorkspace(id);
