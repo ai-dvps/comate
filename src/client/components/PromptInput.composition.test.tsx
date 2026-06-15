@@ -348,4 +348,23 @@ describe('PromptInput composition', () => {
     })
     expect(textarea.style.height).toBe('80px')
   })
+
+  it('recovers from a stuck IME composition state on the next keydown', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+
+    // Start an IME composition; intermediate changes are ignored.
+    fireEvent.compositionStart(textarea)
+    fireEvent.change(textarea, {
+      target: { value: 'pinyin input', selectionStart: 12 },
+    })
+    expect(textarea).toHaveValue('')
+
+    // Simulate the browser abandoning the composition without compositionend
+    // (e.g., switching IMEs). A plain keydown should reset the stuck ref so
+    // typing works again.
+    fireEvent.keyDown(textarea, { key: 'a', isComposing: false })
+    fireEvent.change(textarea, { target: { value: 'x', selectionStart: 1 } })
+    expect(textarea).toHaveValue('x')
+  })
 })
