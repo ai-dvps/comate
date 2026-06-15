@@ -1,5 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { SqliteStore } from './sqlite-store.js';
 
@@ -210,5 +211,110 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
 
     const userId = store.getWecomUserIdBySession('ws-2', 'session-123');
     assert.strictEqual(userId, null);
+  });
+});
+
+describe('SqliteStore workspace delete cascade', { concurrency: false }, () => {
+  let store: SqliteStore;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    store = new SqliteStore();
+    db = (store as unknown as { db: Database.Database }).db;
+    db.prepare('DELETE FROM session_analytics_cache').run();
+    db.prepare('DELETE FROM session_metadata').run();
+    db.prepare('DELETE FROM sessions').run();
+    db.prepare('DELETE FROM wecom_proactive_messages').run();
+    db.prepare('DELETE FROM wecom_user_sessions').run();
+    db.prepare('DELETE FROM todos').run();
+    db.prepare('DELETE FROM workspaces').run();
+  });
+
+  function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  function insertSession(workspaceId: string, id: string) {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO sessions (id, workspace_id, name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(id, workspaceId, 'Test session', now, now);
+  }
+
+  function insertSessionMetadata(sessionId: string) {
+    db.prepare('INSERT INTO session_metadata (session_id, is_wip) VALUES (?, ?)').run(sessionId, 1);
+  }
+
+  function insertAnalyticsCache(workspaceId: string, sessionId: string) {
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO session_analytics_cache (
+        session_id, workspace_id, transcript_mtime, extracted_at,
+        total_tokens, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+        estimated_cost_usd, cost_coverage_percent, duration_ms, message_count, has_compaction,
+        model_usage, tool_usage, daily_stats, heatmap
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      sessionId, workspaceId, now, now,
+      0, 0, 0, 0, 0,
+      0, 100, 0, 0, 0,
+      '[]', '[]', '[]', '[]'
+    );
+  }
+
+  it('deleting a workspace removes sessions, session_metadata, and analytics cache rows', async () => {
+    const ws = await createWorkspace('Cascade Sessions');
+    const sessionId = randomUUID();
+    insertSession(ws.id, sessionId);
+    insertSessionMetadata(sessionId);
+    insertAnalyticsCache(ws.id, sessionId);
+
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(ws.id).count, 1);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_metadata WHERE session_id = ?').get(sessionId).count, 1);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(ws.id).count, 1);
+
+    await store.delete(ws.id);
+
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(ws.id).count, 0);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_metadata WHERE session_id = ?').get(sessionId).count, 0);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(ws.id).count, 0);
+  });
+
+  it('deleting a non-existent workspace leaves sessions and cache untouched', async () => {
+    const ws = await createWorkspace('Untouched');
+    const sessionId = randomUUID();
+    insertSession(ws.id, sessionId);
+    insertSessionMetadata(sessionId);
+    insertAnalyticsCache(ws.id, sessionId);
+
+    const deleted = await store.delete('non-existent-id');
+    assert.strictEqual(deleted, false);
+
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(ws.id).count, 1);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_metadata WHERE session_id = ?').get(sessionId).count, 1);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(ws.id).count, 1);
+  });
+
+  it('deleting one workspace does not affect sessions in another workspace', async () => {
+    const wsA = await createWorkspace('Workspace A');
+    const wsB = await createWorkspace('Workspace B');
+    const sessionA = randomUUID();
+    const sessionB = randomUUID();
+
+    insertSession(wsA.id, sessionA);
+    insertSessionMetadata(sessionA);
+    insertAnalyticsCache(wsA.id, sessionA);
+
+    insertSession(wsB.id, sessionB);
+    insertSessionMetadata(sessionB);
+    insertAnalyticsCache(wsB.id, sessionB);
+
+    await store.delete(wsA.id);
+
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(wsA.id).count, 0);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(wsB.id).count, 1);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_metadata WHERE session_id = ?').get(sessionB).count, 1);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(wsB.id).count, 1);
   });
 });
