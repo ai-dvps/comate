@@ -521,6 +521,9 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
+      this.db.prepare('DELETE FROM session_metadata WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)').run(id);
+      this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id);
+      this.getAnalyticsCache().clearByWorkspace(id);
     }
     return result.changes > 0;
   }
