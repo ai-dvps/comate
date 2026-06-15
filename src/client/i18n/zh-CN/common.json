@@ -54,6 +54,7 @@
   "failedToFetchWorkspaces": "获取工作区失败",
   "failedToCreateWorkspace": "创建工作区失败",
   "failedToUpdateWorkspace": "更新工作区失败",
+  "failedToDeleteWorkspace": "删除工作区失败",
   "streamError": "流错误",
   "serverRestarted": "服务器已重启。后台工作可能已丢失。",
   "failedToSend": "发送失败",
