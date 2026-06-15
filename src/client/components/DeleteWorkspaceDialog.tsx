@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Trash2, AlertTriangle } from 'lucide-react'
 
@@ -6,6 +6,7 @@ interface DeleteWorkspaceDialogProps {
   workspaceName: string
   isOpen: boolean
   isLoading?: boolean
+  error?: string | null
   onCancel: () => void
   onConfirm: () => void
 }
@@ -14,6 +15,7 @@ export default function DeleteWorkspaceDialog({
   workspaceName,
   isOpen,
   isLoading = false,
+  error,
   onCancel,
   onConfirm,
 }: DeleteWorkspaceDialogProps) {
@@ -23,11 +25,6 @@ export default function DeleteWorkspaceDialog({
   const normalizedInput = inputValue.trim()
   const normalizedName = workspaceName.trim()
   const canConfirm = normalizedInput === normalizedName && !isLoading
-
-  const handleConfirm = useCallback(() => {
-    if (!canConfirm) return
-    onConfirm()
-  }, [canConfirm, onConfirm])
 
   useEffect(() => {
     if (!isOpen) {
@@ -40,13 +37,13 @@ export default function DeleteWorkspaceDialog({
         onCancel()
       } else if (e.key === 'Enter' && !e.shiftKey && canConfirm) {
         e.preventDefault()
-        handleConfirm()
+        onConfirm()
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onCancel, canConfirm, handleConfirm])
+  }, [isOpen, onCancel, canConfirm, onConfirm])
 
   if (!isOpen) return null
 
@@ -106,12 +103,18 @@ export default function DeleteWorkspaceDialog({
                 {t('deleteWorkspace.nameMismatch')}
               </p>
             )}
+            {error && (
+              <p className="text-xs text-destructive mt-1.5">
+                {error}
+              </p>
+            )}
           </div>
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border/50 flex-shrink-0">
           <button
+            type="button"
             onClick={onCancel}
             disabled={isLoading}
             className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
@@ -119,7 +122,8 @@ export default function DeleteWorkspaceDialog({
             {t('deleteWorkspace.cancel')}
           </button>
           <button
-            onClick={handleConfirm}
+            type="button"
+            onClick={() => { if (canConfirm) onConfirm() }}
             disabled={!canConfirm}
             className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-destructive hover:bg-destructive/90 disabled:opacity-50 text-white rounded-lg transition-colors"
           >

@@ -394,7 +394,6 @@
     "title": "Delete workspace?",
     "warning": "This will permanently delete the workspace \"{{workspaceName}}\" and all of its sessions. This action cannot be undone.",
     "folderUntouched": "The workspace folder on disk will not be modified.",
-    "confirmInstruction": "To confirm, type the workspace name below.",
     "inputLabel": "Type the workspace name to confirm",
     "inputPlaceholder": "Type the workspace name",
     "nameMismatch": "Name does not match.",

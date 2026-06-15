@@ -1,5 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import {
+  X,
+  Eye,
+  EyeOff,
+  Plus,
+  Trash2,
+  Save,
+  Sun,
+  Moon,
+  Monitor,
+  AlertTriangle,
+} from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { useTheme } from '../hooks/use-theme'
@@ -28,18 +40,6 @@ function isAllDeniedIncludingReply(policy: ToolPermissionPolicy): boolean {
   }
   return policy.categoryDefaults.reply === 'deny'
 }
-import {
-  X,
-  Eye,
-  EyeOff,
-  Plus,
-  Trash2,
-  Save,
-  Sun,
-  Moon,
-  Monitor,
-  AlertTriangle,
-} from 'lucide-react'
 
 interface SettingsPanelProps {
   onClose: () => void
@@ -340,7 +340,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const handleConfirmDelete = async () => {
     if (!selectedWorkspaceId) return
     await deleteWorkspace(selectedWorkspaceId)
-    setShowDeleteDialog(false)
+    if (!useWorkspaceStore.getState().error) {
+      setShowDeleteDialog(false)
+    }
   }
 
   const updateSelectedWorkspace = (updates: Partial<WorkspaceFormState>) => {
@@ -566,6 +568,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           workspaceName={selectedWorkspace.name}
           isOpen={showDeleteDialog}
           isLoading={isStoreLoading}
+          error={storeError}
           onCancel={handleCancelDelete}
           onConfirm={handleConfirmDelete}
         />

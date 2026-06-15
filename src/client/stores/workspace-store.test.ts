@@ -175,19 +175,25 @@ describe('useWorkspaceStore', () => {
     });
 
     useFilesStore.setState({
-      resultsByWorkspace: { [ws1.id]: [{ path: '/tmp/f.txt' }] },
+      resultsByWorkspace: { [ws1.id]: [{ path: '/tmp/f.txt' }], [ws2.id]: [{ path: '/tmp/ws2.txt' }] },
       loadingByWorkspace: {},
       errorByWorkspace: {},
       truncatedByWorkspace: {},
     });
     useAnalyticsStore.setState({
-      workspaceSummaries: { [ws1.id]: {} as ReturnType<typeof useAnalyticsStore.getState>['workspaceSummaries'][string] },
+      workspaceSummaries: {
+        [ws1.id]: {} as ReturnType<typeof useAnalyticsStore.getState>['workspaceSummaries'][string],
+        [ws2.id]: {} as ReturnType<typeof useAnalyticsStore.getState>['workspaceSummaries'][string],
+      },
     });
     useCommandsStore.setState({
-      commandsByWorkspace: { [ws1.id]: { commands: [], partial: false } },
+      commandsByWorkspace: {
+        [ws1.id]: { commands: [], partial: false },
+        [ws2.id]: { commands: [], partial: false },
+      },
     });
     useWeComQueueStore.setState({
-      entriesByWorkspace: { [ws1.id]: [] },
+      entriesByWorkspace: { [ws1.id]: [], [ws2.id]: [] },
     });
 
     await useWorkspaceStore.getState().deleteWorkspace(ws1.id);
@@ -197,8 +203,10 @@ describe('useWorkspaceStore', () => {
     assert.strictEqual(useCommandsStore.getState().commandsByWorkspace[ws1.id], undefined);
     assert.strictEqual(useWeComQueueStore.getState().entriesByWorkspace[ws1.id], undefined);
 
-    // Other workspace state should remain intact.
-    assert.ok(useFilesStore.getState().resultsByWorkspace[ws2.id] === undefined);
+    assert.deepStrictEqual(useFilesStore.getState().resultsByWorkspace[ws2.id], [{ path: '/tmp/ws2.txt' }]);
+    assert.ok(useAnalyticsStore.getState().workspaceSummaries[ws2.id]);
+    assert.ok(useCommandsStore.getState().commandsByWorkspace[ws2.id]);
+    assert.deepStrictEqual(useWeComQueueStore.getState().entriesByWorkspace[ws2.id], []);
 
     global.fetch = originalFetch;
   });
