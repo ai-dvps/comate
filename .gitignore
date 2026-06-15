@@ -17,3 +17,5 @@ src-tauri/binaries/*
 src-tauri/resources/*
 !src-tauri/resources/.gitkeep
 *.tsbuildinfo
+__screenshots__/
+*-test-results.json

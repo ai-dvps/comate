@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
@@ -15,6 +15,14 @@ import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import ProviderSelector from './ProviderSelector'
 import PromptGhostText from './PromptGhostText'
+import {
+  extractPlainText,
+  getCaretOffset,
+  replaceText,
+  setCaretOffset,
+  setContent,
+  supportsPlaintextOnly,
+} from '../lib/contenteditable'
 
 interface RefreshMeta {
   lastRefreshedAt: Date | null
@@ -85,8 +93,10 @@ export default function PromptInput({
     sessionId ? s.drafts[sessionId] ?? '' : '',
   )
   const setDraft = useChatStore((s) => s.setDraft)
+  const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
   const history = useSentPrompts(sessionId || undefined)
   const { suggest, train } = useNgramCompletion(sessionId || undefined)
+
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerSource, setPickerSource] = useState<'slash' | 'button'>('slash')
@@ -108,39 +118,38 @@ export default function PromptInput({
   const [completionSuggestion, setCompletionSuggestion] = useState<string | null>(
     null,
   )
+  const [isFocused, setIsFocused] = useState(false)
+
   const originalDraftRef = useRef('')
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editableRef = useRef<HTMLDivElement>(null)
   const isComposingRef = useRef(false)
-  const pendingCursorPosRef = useRef<number | null>(null)
+  const submitLockRef = useRef(false)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
   const prevInputRef = useRef('')
 
   const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
+  const editableEnabled = !disabled && !isStreaming && !isRestarting
+  const contentEditableMode = supportsPlaintextOnly() ? 'plaintext-only' : 'true'
+  const placeholder = t('placeholder')
+  const placeholderVisible = !input && !isFocused
 
-  // Auto-resize the textarea to fit its content without exceeding maxHeight.
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
-  }, [input, maxHeight])
+  // Sync external draft changes (session switch, history recall, picker insert)
+  // to the editable surface without disturbing active IME composition.
+  useEffect(() => {
+    const el = editableRef.current
+    if (!el || isComposingRef.current) return
+    const current = extractPlainText(el)
+    if (current === input) return
+    setContent(el, input)
+    if (document.activeElement === el) {
+      setCaretOffset(el, input.length)
+    }
+  }, [input])
 
   useEffect(() => {
     prevInputRef.current = input
-  }, [input])
-
-  // Restore the cursor position after a user-driven value change. React's
-  // controlled textarea reconciliation can reset the caret to the end when
-  // state updates arrive asynchronously or after IME composition, so we
-  // explicitly preserve the position that was reported by the input event.
-  useLayoutEffect(() => {
-    if (pendingCursorPosRef.current !== null && textareaRef.current) {
-      const pos = pendingCursorPosRef.current
-      pendingCursorPosRef.current = null
-      textareaRef.current.setSelectionRange(pos, pos)
-    }
   }, [input])
 
   useEffect(() => {
@@ -156,11 +165,23 @@ export default function PromptInput({
     originalDraftRef.current = ''
   }, [sessionId])
 
-  const handleInputChange = (value: string, cursorPos: number) => {
-    pendingCursorPosRef.current = cursorPos
+  // Clear stuck IME composition state when the surface becomes non-editable.
+  useEffect(() => {
+    if (!editableEnabled) {
+      isComposingRef.current = false
+    }
+  }, [editableEnabled])
+
+  const handleInputChange = (
+    value: string,
+    cursorPos: number,
+    options?: { skipInputSideEffects?: boolean },
+  ) => {
     const prev = prevInputRef.current
     prevInputRef.current = value
     setDraft(sessionId, value)
+
+    if (options?.skipInputSideEffects) return
 
     if (value === '' && historyCursor !== null) {
       setHistoryCursor(null)
@@ -214,7 +235,7 @@ export default function PromptInput({
       }
     }
 
-    // Detect @ trigger only when no workspace picker is open and input is not
+    // Detect @ trigger only when no picker is open and input is not
     // disabled by streaming/restarting.
     if (
       !isStreaming &&
@@ -297,10 +318,10 @@ export default function PromptInput({
     prevInputRef.current = prompt
     setCompletionSuggestion(null)
     requestAnimationFrame(() => {
-      const ta = textareaRef.current
-      if (!ta) return
-      ta.focus()
-      ta.setSelectionRange(prompt.length, prompt.length)
+      const el = editableRef.current
+      if (!el) return
+      el.focus()
+      setCaretOffset(el, prompt.length)
     })
   }
 
@@ -310,26 +331,12 @@ export default function PromptInput({
     prevInputRef.current = draft
     setCompletionSuggestion(null)
     requestAnimationFrame(() => {
-      const ta = textareaRef.current
-      if (!ta) return
-      ta.focus()
-      ta.setSelectionRange(draft.length, draft.length)
+      const el = editableRef.current
+      if (!el) return
+      el.focus()
+      setCaretOffset(el, draft.length)
     })
   }
-
-  const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
-
-  // Clear stuck IME composition state when the textarea becomes non-editable.
-  // If the textarea is disabled mid-composition (e.g., streaming starts), the
-  // browser cancels the composition but does not reliably fire compositionend,
-  // leaving isComposingRef stuck true — which blocks typing after the textarea
-  // re-enables.
-  const textareaDisabled = disabled || isStreaming || isRestarting
-  useEffect(() => {
-    if (textareaDisabled) {
-      isComposingRef.current = false
-    }
-  }, [textareaDisabled])
 
   const handleSend = () => {
     const trimmed = input.trim()
@@ -337,7 +344,7 @@ export default function PromptInput({
     onSend(trimmed)
     train(trimmed)
     resetInput()
-    textareaRef.current?.focus()
+    editableRef.current?.focus()
   }
 
   const handleClear = () => {
@@ -350,14 +357,81 @@ export default function PromptInput({
       setFilePickerOpen(false)
       setFileTriggerStart(null)
     }
-    textareaRef.current?.focus()
+    editableRef.current?.focus()
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleInput = () => {
+    const el = editableRef.current
+    if (!el) return
+    const value = extractPlainText(el)
+    const cursorPos = getCaretOffset(el)
+    handleInputChange(value, cursorPos, {
+      skipInputSideEffects: isComposingRef.current,
+    })
+  }
+
+  const handleCompositionStart = () => {
+    isComposingRef.current = true
+  }
+
+  const handleCompositionEnd = () => {
+    isComposingRef.current = false
+    const el = editableRef.current
+    if (!el) return
+    handleInputChange(extractPlainText(el), getCaretOffset(el))
+  }
+
+  const handleFocus = () => {
+    setIsFocused(true)
+  }
+
+  const handleBlur = () => {
+    setIsFocused(false)
+    const el = editableRef.current
+    if (!el || isComposingRef.current) return
+    const value = extractPlainText(el)
+    if (value !== input) {
+      handleInputChange(value, getCaretOffset(el))
+    }
+  }
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const text = e.clipboardData.getData('text/plain')
+    if (!text) return
+    const el = editableRef.current
+    if (!el) return
+    const offset = getCaretOffset(el)
+    replaceText(el, text, offset, offset)
+    handleInputChange(extractPlainText(el), getCaretOffset(el))
+  }
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const text = e.dataTransfer.getData('text/plain')
+    if (!text) return
+    const el = editableRef.current
+    if (!el) return
+    const offset = getCaretOffset(el)
+    replaceText(el, text, offset, offset)
+    handleInputChange(extractPlainText(el), getCaretOffset(el))
+  }
+
+  const handleBeforeInput = (e: React.FormEvent<HTMLDivElement>) => {
+    const inputType = (e.nativeEvent as InputEvent).inputType
+    if (inputType === 'insertFromPaste') {
+      e.preventDefault()
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const el = editableRef.current
+    if (!el) return
+
     // Recover from an IME composition that was abandoned without a
     // compositionend event. This happens when the user switches IMEs
     // (e.g., Chinese -> English) mid-composition, leaving isComposingRef
-    // stuck true and blocking all subsequent onChange updates.
+    // stuck true and blocking subsequent input processing.
     if (!e.nativeEvent.isComposing && isComposingRef.current) {
       isComposingRef.current = false
     }
@@ -491,21 +565,12 @@ export default function PromptInput({
     ) {
       if (e.key === 'Tab') {
         e.preventDefault()
-        const ta = textareaRef.current
-        if (ta) {
-          const start = ta.selectionStart
-          const end = ta.selectionEnd
-          const before = input.slice(0, start)
-          const after = input.slice(end)
-          const next = before + completionSuggestion + after
-          setDraft(sessionId, next)
-          prevInputRef.current = next
-          const pos = start + completionSuggestion.length
-          requestAnimationFrame(() => {
-            ta.focus()
-            ta.setSelectionRange(pos, pos)
-          })
-        }
+        const start = getCaretOffset(el)
+        const before = input.slice(0, start)
+        const after = input.slice(start)
+        const next = before + completionSuggestion + after
+        replaceText(el, next, 0, input.length)
+        handleInputChange(next, start + completionSuggestion.length)
         setCompletionSuggestion(null)
         return
       }
@@ -522,64 +587,54 @@ export default function PromptInput({
       }
     }
 
-    if (shouldSubmitOnEnter(e, useModifierToSubmit)) {
+    if (
+      !isComposingRef.current &&
+      shouldSubmitOnEnter(e, useModifierToSubmit)
+    ) {
       e.preventDefault()
+      if (submitLockRef.current) return
+      submitLockRef.current = true
       handleSend()
     }
   }
 
-  const handleCommandSelect = (command: SlashCommandDto) => {
-    const ta = textareaRef.current
-    const cursorPos = ta?.selectionStart ?? input.length
-    const inserted = `/${command.name} `
-
-    let next: string
-    let pos: number
-    if (slashTriggerStart !== null) {
-      const before = input.slice(0, slashTriggerStart)
-      const after = input.slice(cursorPos)
-      next = before + inserted + after
-      pos = slashTriggerStart + inserted.length
-    } else {
-      const before = input.slice(0, cursorPos)
-      const after = input.slice(cursorPos)
-      next = before + inserted + after
-      pos = cursorPos + inserted.length
+  const handleKeyUp = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter') {
+      submitLockRef.current = false
     }
+  }
 
-    setDraft(sessionId, next)
-    prevInputRef.current = next
+  const handleCommandSelect = (command: SlashCommandDto) => {
+    const el = editableRef.current
+    if (!el) return
+    const caret = getCaretOffset(el)
+    const inserted = `/${command.name} `
+    const start = slashTriggerStart ?? caret
+    replaceText(el, inserted, start, caret)
+    const value = extractPlainText(el)
+    const pos = getCaretOffset(el)
+    handleInputChange(value, pos)
     setLastInsertedCommand(inserted)
     setArgumentHint(command.argumentHint ?? null)
     setCompletionSuggestion(null)
     setPickerOpen(false)
     setSlashTriggerStart(null)
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current
-      if (!ta) return
-      ta.focus()
-      ta.setSelectionRange(pos, pos)
-    })
+    el.focus()
   }
 
   const handleFileSelect = (selectedPath: string) => {
-    const ta = textareaRef.current
-    if (!ta || fileTriggerStart === null) return
-    const cursorPos = ta.selectionStart
-    const before = input.slice(0, fileTriggerStart)
-    const after = input.slice(cursorPos)
+    const el = editableRef.current
+    if (!el || fileTriggerStart === null) return
+    const caret = getCaretOffset(el)
     const inserted = `@${selectedPath} `
-    const next = before + inserted + after
-    setDraft(sessionId, next)
-    prevInputRef.current = next
+    replaceText(el, inserted, fileTriggerStart, caret)
+    const value = extractPlainText(el)
+    const pos = getCaretOffset(el)
+    handleInputChange(value, pos)
     setCompletionSuggestion(null)
     setFilePickerOpen(false)
     setFileTriggerStart(null)
-    requestAnimationFrame(() => {
-      const pos = fileTriggerStart + inserted.length
-      ta.focus()
-      ta.setSelectionRange(pos, pos)
-    })
+    el.focus()
   }
 
   const handleHistorySelect = (selectedPrompt: string) => {
@@ -590,10 +645,10 @@ export default function PromptInput({
     setCompletionSuggestion(null)
     originalDraftRef.current = ''
     requestAnimationFrame(() => {
-      const ta = textareaRef.current
-      if (!ta) return
-      ta.focus()
-      ta.setSelectionRange(selectedPrompt.length, selectedPrompt.length)
+      const el = editableRef.current
+      if (!el) return
+      el.focus()
+      setCaretOffset(el, selectedPrompt.length)
     })
   }
 
@@ -813,29 +868,33 @@ export default function PromptInput({
               )}
             </div>
             <div className="relative">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => {
-                  if (isComposingRef.current) return
-                  handleInputChange(e.target.value, e.target.selectionStart)
-                }}
-                onCompositionStart={() => {
-                  isComposingRef.current = true
-                }}
-                onCompositionEnd={(e) => {
-                  isComposingRef.current = false
-                  pendingCursorPosRef.current = e.currentTarget.selectionStart
-                  handleInputChange(
-                    e.currentTarget.value,
-                    e.currentTarget.selectionStart,
-                  )
-                }}
+              {placeholderVisible && (
+                <div
+                  aria-hidden
+                  className="absolute inset-0 z-0 px-4 py-3 text-text-tertiary pointer-events-none select-none whitespace-pre-wrap break-words"
+                >
+                  {placeholder}
+                </div>
+              )}
+              <div
+                ref={editableRef}
+                role="textbox"
+                aria-multiline="true"
+                aria-placeholder={placeholder}
+                aria-disabled={!editableEnabled}
+                contentEditable={editableEnabled ? contentEditableMode : 'false'}
+                tabIndex={editableEnabled ? 0 : -1}
+                onInput={handleInput}
+                onCompositionStart={handleCompositionStart}
+                onCompositionEnd={handleCompositionEnd}
                 onKeyDown={handleKeyDown}
-                placeholder={t('placeholder')}
-                disabled={disabled || isStreaming || isRestarting}
-                rows={1}
-                className="relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words"
+                onKeyUp={handleKeyUp}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                onPaste={handlePaste}
+                onDrop={handleDrop}
+                onBeforeInput={handleBeforeInput}
+                className={`relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words ${!editableEnabled ? 'opacity-50' : ''}`}
                 style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
               />
               <PromptGhostText
