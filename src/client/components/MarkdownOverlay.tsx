@@ -24,6 +24,16 @@ function splitToken(text: string, prefix: string, suffix: string): string {
   return `${dimPunctuation(prefix)}${escapeHtml(inner)}${dimPunctuation(suffix)}`
 }
 
+const HTML_MARKUP_TYPES = new Set(['tag', 'comment', 'doctype', 'cdata', 'prolog'])
+
+function flattenTokenText(token: string | Prism.Token): string {
+  if (typeof token === 'string') return token
+  if (Array.isArray(token.content)) {
+    return token.content.map(flattenTokenText).join('')
+  }
+  return String(token.content)
+}
+
 function processToken(type: string, text: string): string {
   switch (type) {
     case 'code':
@@ -83,6 +93,10 @@ function renderTokens(tokens: Array<string | Prism.Token>): string {
         : typeof t.alias === 'string'
           ? t.alias
           : undefined
+
+      if (HTML_MARKUP_TYPES.has(type)) {
+        return escapeHtml(flattenTokenText(t))
+      }
 
       let inner: string
       if (Array.isArray(t.content)) {
