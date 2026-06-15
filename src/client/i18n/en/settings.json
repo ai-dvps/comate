@@ -389,5 +389,17 @@
     "confirmMessage": "This workspace has an active session. Closing the tab will stop it.",
     "confirmButton": "Close anyway",
     "cancelButton": "Cancel"
+  },
+  "deleteWorkspace": {
+    "title": "Delete workspace?",
+    "warning": "This will permanently delete the workspace \"{{workspaceName}}\" and all of its sessions. This action cannot be undone.",
+    "folderUntouched": "The workspace folder on disk will not be modified.",
+    "confirmInstruction": "To confirm, type the workspace name below.",
+    "inputLabel": "Type the workspace name to confirm",
+    "inputPlaceholder": "Type the workspace name",
+    "nameMismatch": "Name does not match.",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "deleting": "Deleting..."
   }
 }

@@ -54,6 +54,7 @@
   "failedToFetchWorkspaces": "Failed to fetch workspaces",
   "failedToCreateWorkspace": "Failed to create workspace",
   "failedToUpdateWorkspace": "Failed to update workspace",
+  "failedToDeleteWorkspace": "Failed to delete workspace",
   "streamError": "Stream error",
   "serverRestarted": "Server was restarted. Background work may have been lost.",
   "failedToSend": "Failed to send",
