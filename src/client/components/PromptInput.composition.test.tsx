@@ -306,4 +306,32 @@ describe('PromptInput composition', () => {
       timeout: 500,
     })
   })
+
+  it('preserves cursor position after user input updates the value', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    const setSelectionRange = vi.spyOn(textarea, 'setSelectionRange')
+
+    // Simulate typing in the middle of existing text.
+    fireEvent.change(textarea, { target: { value: 'abXcd', selectionStart: 3 } })
+
+    expect(textarea).toHaveValue('abXcd')
+    expect(setSelectionRange).toHaveBeenCalledWith(3, 3)
+  })
+
+  it('preserves cursor position after composition ends', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    const setSelectionRange = vi.spyOn(textarea, 'setSelectionRange')
+
+    fireEvent.change(textarea, { target: { value: 'abcd', selectionStart: 4 } })
+    fireEvent.compositionStart(textarea)
+    fireEvent.change(textarea, { target: { value: 'ab你cd', selectionStart: 3 } })
+    fireEvent.compositionEnd(textarea, {
+      target: { value: 'ab你cd', selectionStart: 3 },
+    })
+
+    expect(textarea).toHaveValue('ab你cd')
+    expect(setSelectionRange).toHaveBeenCalledWith(3, 3)
+  })
 })
