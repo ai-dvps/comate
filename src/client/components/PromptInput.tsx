@@ -10,12 +10,10 @@ import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { useSentPrompts } from '../hooks/useSentPrompts'
-import { useTextareaMetrics } from '../hooks/useTextareaMetrics'
 import { useNgramCompletion } from '../hooks/useNgramCompletion'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import ProviderSelector from './ProviderSelector'
-import MarkdownOverlay from './MarkdownOverlay'
 import PromptGhostText from './PromptGhostText'
 
 interface RefreshMeta {
@@ -112,10 +110,8 @@ export default function PromptInput({
   )
   const originalDraftRef = useRef('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const overlayRef = useRef<HTMLPreElement>(null)
   const isComposingRef = useRef(false)
   const pendingCursorPosRef = useRef<number | null>(null)
-  const [overlayHidden, setOverlayHidden] = useState(false)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
@@ -123,7 +119,13 @@ export default function PromptInput({
 
   const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
 
-  useTextareaMetrics(textareaRef, overlayRef, maxHeight, input)
+  // Auto-resize the textarea to fit its content without exceeding maxHeight.
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
+  }, [input, maxHeight])
 
   useEffect(() => {
     prevInputRef.current = input
@@ -320,13 +322,12 @@ export default function PromptInput({
   // Clear stuck IME composition state when the textarea becomes non-editable.
   // If the textarea is disabled mid-composition (e.g., streaming starts), the
   // browser cancels the composition but does not reliably fire compositionend,
-  // leaving isComposingRef and overlayHidden stuck true — which blocks typing
-  // and hides the overlay after the textarea re-enables.
+  // leaving isComposingRef stuck true — which blocks typing after the textarea
+  // re-enables.
   const textareaDisabled = disabled || isStreaming || isRestarting
   useEffect(() => {
     if (textareaDisabled) {
       isComposingRef.current = false
-      setOverlayHidden(false)
     }
   }, [textareaDisabled])
 
@@ -803,12 +804,7 @@ export default function PromptInput({
                 </>
               )}
             </div>
-            <div className="relative md-input-container">
-              <MarkdownOverlay
-                ref={overlayRef}
-                value={input}
-                hidden={overlayHidden}
-              />
+            <div className="relative">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -818,22 +814,14 @@ export default function PromptInput({
                 }}
                 onCompositionStart={() => {
                   isComposingRef.current = true
-                  setOverlayHidden(true)
                 }}
                 onCompositionEnd={(e) => {
                   isComposingRef.current = false
-                  setOverlayHidden(false)
                   pendingCursorPosRef.current = e.currentTarget.selectionStart
                   handleInputChange(
                     e.currentTarget.value,
                     e.currentTarget.selectionStart,
                   )
-                }}
-                onScroll={(e) => {
-                  const overlay = overlayRef.current
-                  if (!overlay) return
-                  overlay.scrollTop = e.currentTarget.scrollTop
-                  overlay.scrollLeft = e.currentTarget.scrollLeft
                 }}
                 onKeyDown={handleKeyDown}
                 placeholder={t('placeholder')}
