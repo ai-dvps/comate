@@ -246,23 +246,58 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(editableElement().textContent).toBe('@src/main.ts '))
   })
 
-  it('recalls history with ArrowUp and restores original with ArrowDown', async () => {
+  it('does not recall history with ArrowUp when input is empty', async () => {
     seedHistory(['first', 'second', 'third'])
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const input = editableLocator()
 
     await input.click()
     await userEvent.keyboard('{ArrowUp}')
-    await waitFor(() => expect(editableElement().textContent).toBe('third'))
-
-    await userEvent.keyboard('{ArrowUp}')
-    await waitFor(() => expect(editableElement().textContent).toBe('second'))
-
-    await userEvent.keyboard('{ArrowDown}')
-    await waitFor(() => expect(editableElement().textContent).toBe('third'))
-
-    await userEvent.keyboard('{ArrowDown}')
     await waitFor(() => expect(editableElement().textContent).toBe(''))
+  })
+
+  it('does not recall history with ArrowUp inside a multi-line draft', async () => {
+    seedHistory(['first', 'second', 'third'])
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('line one')
+    await userEvent.keyboard('{Shift>}{Enter}{/Shift}')
+    await userEvent.keyboard('line two')
+    await waitFor(() =>
+      expect(chatStoreMock.getState().drafts['session-1']).toContain('\n'),
+    )
+
+    // Move caret to the start of the second line so ArrowUp moves within the draft.
+    await userEvent.keyboard('{Home}')
+    await userEvent.keyboard('{ArrowUp}')
+
+    await waitFor(() =>
+      expect(chatStoreMock.getState().drafts['session-1']).toContain('\n'),
+    )
+    expect(DEFAULT_PROPS.onSend).not.toHaveBeenCalled()
+  })
+
+  it('opens history popup with Alt+H and commits a selection', async () => {
+    seedHistory(['first', 'second', 'third'])
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.click()
+    await userEvent.keyboard('{Alt>}h{/Alt}')
+    await waitFor(() => expect(screen.getByText('third')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
+
+    const filterInput = screen.getByPlaceholderText('Search history...')
+    await waitFor(() => expect(document.activeElement).toBe(filterInput))
+
+    await userEvent.keyboard('{ArrowDown}')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(editableElement().textContent).toBe('second'))
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText('Search history...')).not.toBeInTheDocument(),
+    )
   })
 
   it('shows and accepts a completion suggestion', async () => {
@@ -303,7 +338,7 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(el.textContent).toBe('plain text'))
   })
 
-  it('does not navigate history while streaming', async () => {
+  it('disables the input while streaming', async () => {
     seedHistory(['history prompt'])
     chatStoreMock.setDraft('session-1', '@')
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
