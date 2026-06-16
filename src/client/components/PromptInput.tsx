@@ -9,7 +9,6 @@ import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { useChatStore } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
-import { useSentPrompts } from '../hooks/useSentPrompts'
 import { useNgramCompletion } from '../hooks/useNgramCompletion'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
@@ -94,7 +93,6 @@ export default function PromptInput({
   )
   const setDraft = useChatStore((s) => s.setDraft)
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
-  const history = useSentPrompts(sessionId || undefined)
   const { suggest, train } = useNgramCompletion(sessionId || undefined)
 
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
@@ -112,7 +110,6 @@ export default function PromptInput({
   const [filePickerFilter, setFilePickerFilter] = useState('')
   const [fileTriggerStart, setFileTriggerStart] = useState<number | null>(null)
   const [slashTriggerStart, setSlashTriggerStart] = useState<number | null>(null)
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null)
   const [historyPickerOpen, setHistoryPickerOpen] = useState(false)
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
   const [completionSuggestion, setCompletionSuggestion] = useState<string | null>(
@@ -120,7 +117,6 @@ export default function PromptInput({
   )
   const [isFocused, setIsFocused] = useState(false)
 
-  const originalDraftRef = useRef('')
   const editableRef = useRef<HTMLDivElement>(null)
   const isComposingRef = useRef(false)
   const submitLockRef = useRef(false)
@@ -135,7 +131,7 @@ export default function PromptInput({
   const placeholder = t('placeholder')
   const placeholderVisible = !input && !isFocused
 
-  // Sync external draft changes (session switch, history recall, picker insert)
+  // Sync external draft changes (session switch, picker insert)
   // to the editable surface without disturbing active IME composition.
   useEffect(() => {
     const el = editableRef.current
@@ -160,9 +156,7 @@ export default function PromptInput({
     setSlashTriggerStart(null)
     setArgumentHint(null)
     setLastInsertedCommand(null)
-    setHistoryCursor(null)
     setCompletionSuggestion(null)
-    originalDraftRef.current = ''
   }, [sessionId])
 
   // Clear stuck IME composition state when the surface becomes non-editable.
@@ -182,11 +176,6 @@ export default function PromptInput({
     setDraft(sessionId, value)
 
     if (options?.skipInputSideEffects) return
-
-    if (value === '' && historyCursor !== null) {
-      setHistoryCursor(null)
-      originalDraftRef.current = ''
-    }
 
     if (lastInsertedCommand && value !== lastInsertedCommand) {
       setArgumentHint(null)
@@ -306,36 +295,7 @@ export default function PromptInput({
     setArgumentHint(null)
     setLastInsertedCommand(null)
     setSlashTriggerStart(null)
-    setHistoryCursor(null)
     setCompletionSuggestion(null)
-    originalDraftRef.current = ''
-  }
-
-  const applyHistory = (index: number) => {
-    const prompt = history[index]
-    if (!prompt) return
-    setDraft(sessionId, prompt)
-    prevInputRef.current = prompt
-    setCompletionSuggestion(null)
-    requestAnimationFrame(() => {
-      const el = editableRef.current
-      if (!el) return
-      el.focus()
-      setCaretOffset(el, prompt.length)
-    })
-  }
-
-  const restoreOriginal = () => {
-    const draft = originalDraftRef.current
-    setDraft(sessionId, draft)
-    prevInputRef.current = draft
-    setCompletionSuggestion(null)
-    requestAnimationFrame(() => {
-      const el = editableRef.current
-      if (!el) return
-      el.focus()
-      setCaretOffset(el, draft.length)
-    })
   }
 
   const handleSend = () => {
@@ -518,44 +478,6 @@ export default function PromptInput({
       }
     }
 
-    // History recall (terminal-style ArrowUp/Down) when no picker is open.
-    if (
-      (e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
-      !pickerOpen &&
-      !filePickerOpen &&
-      !isStreaming &&
-      !isRestarting
-    ) {
-      if (e.key === 'ArrowUp') {
-        if (history.length === 0) return
-        e.preventDefault()
-        if (historyCursor === null) {
-          originalDraftRef.current = input
-          setHistoryCursor(0)
-          applyHistory(0)
-        } else if (historyCursor < history.length - 1) {
-          const next = historyCursor + 1
-          setHistoryCursor(next)
-          applyHistory(next)
-        }
-        return
-      }
-
-      if (e.key === 'ArrowDown') {
-        if (historyCursor === null) return
-        e.preventDefault()
-        if (historyCursor > 0) {
-          const next = historyCursor - 1
-          setHistoryCursor(next)
-          applyHistory(next)
-        } else {
-          restoreOriginal()
-          setHistoryCursor(null)
-        }
-        return
-      }
-    }
-
     // Completion accept / dismiss when no picker is open.
     if (
       completionSuggestion &&
@@ -641,9 +563,7 @@ export default function PromptInput({
     setDraft(sessionId, selectedPrompt)
     prevInputRef.current = selectedPrompt
     setHistoryPickerOpen(false)
-    setHistoryCursor(null)
     setCompletionSuggestion(null)
-    originalDraftRef.current = ''
     requestAnimationFrame(() => {
       const el = editableRef.current
       if (!el) return
