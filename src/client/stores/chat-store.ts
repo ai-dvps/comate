@@ -509,7 +509,7 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
               const item: TaskItem = {
                 id: `todowrite-${index}`,
                 subject: todo.content,
-                status: todo.status as TaskItem['status'],
+                status: normalizeSdkStatus(todo.status),
                 activeForm: todo.activeForm,
               }
               tasks.push(item)
@@ -540,7 +540,7 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
             const existing = taskMap.get(input.taskId)
             if (existing) {
               if (input.status)
-                existing.status = input.status as TaskItem['status']
+                existing.status = normalizeSdkStatus(input.status)
               if (input.subject) existing.subject = input.subject
               if (input.description !== undefined)
                 existing.description = input.description
@@ -875,7 +875,7 @@ function handleSseEvent(
             const newTasks = todoInput.todos.map((todo, index) => ({
               id: `todowrite-${index}`,
               subject: todo.content,
-              status: todo.status as TaskItem['status'],
+              status: normalizeSdkStatus(todo.status),
               activeForm: todo.activeForm,
             }))
             updates.tasks = { ...state.tasks, [sessionId]: newTasks }
@@ -914,7 +914,7 @@ function handleSseEvent(
               if (task.id !== updateInput.taskId) return task
               return {
                 ...task,
-                ...(updateInput.status && { status: updateInput.status as TaskItem['status'] }),
+                ...(updateInput.status && { status: normalizeSdkStatus(updateInput.status) }),
                 ...(updateInput.subject && { subject: updateInput.subject }),
                 ...(updateInput.description !== undefined && { description: updateInput.description }),
                 ...(updateInput.activeForm !== undefined && { activeForm: updateInput.activeForm }),
