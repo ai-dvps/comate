@@ -130,4 +130,116 @@ describe('wecom cli', () => {
       assert(result.stderr.includes('Expected --msg-type='));
     });
   });
+
+  describe('doc topic', () => {
+    describe('help', () => {
+      it('doc topic help lists subcommands', () => {
+        const result = run(['doc', '--help']);
+        assert.strictEqual(result.status, 0);
+        assert(result.stdout.includes('get-doc-content'));
+        assert(result.stdout.includes('create-doc'));
+        assert(result.stdout.includes('smartsheet-get-sheet'));
+      });
+
+      it('get-doc-content --help shows flags', () => {
+        const result = run(['doc:get-doc-content', '--help']);
+        assert.strictEqual(result.status, 0);
+        assert(result.stdout.includes('--docid'));
+        assert(result.stdout.includes('--url'));
+        assert(result.stdout.includes('--type'));
+        assert(result.stdout.includes('--json'));
+      });
+
+      it('smartsheet-get-records --help shows flags', () => {
+        const result = run(['doc:smartsheet-get-records', '--help']);
+        assert.strictEqual(result.status, 0);
+        assert(result.stdout.includes('--docid'));
+        assert(result.stdout.includes('--sheet-id'));
+      });
+    });
+
+    describe('missing context file', () => {
+      it('exits 2 for doc subcommand', () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir);
+        assert.strictEqual(result.status, 2);
+        assert(result.stderr.includes('No WeCom bot context file found'));
+      });
+    });
+
+    describe('invalid context file', () => {
+      it('exits 1 for doc subcommand with malformed context', () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        mkdirSync(join(tmpDir, '.claude'));
+        writeFileSync(join(tmpDir, '.claude/wecom-context.json'), '{}');
+        const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir);
+        assert.strictEqual(result.status, 1);
+        assert(result.stderr.includes('Invalid context file format'));
+      });
+    });
+
+    describe('missing workspaceId', () => {
+      it('exits 1 for doc subcommand', () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        mkdirSync(join(tmpDir, '.claude'));
+        writeFileSync(
+          join(tmpDir, '.claude/wecom-context.json'),
+          JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' })
+        );
+        const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir);
+        assert.strictEqual(result.status, 1);
+        assert(result.stderr.includes('missing workspaceId'));
+      });
+    });
+
+    describe('missing required flags', () => {
+      it('exits 1 for smartsheet-get-sheet without --docid', () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        mkdirSync(join(tmpDir, '.claude'));
+        writeFileSync(
+          join(tmpDir, '.claude/wecom-context.json'),
+          JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
+        );
+        const result = run(['doc:smartsheet-get-sheet'], tmpDir);
+        assert.strictEqual(result.status, 1);
+        assert(result.stderr.includes('Missing required flag docid'));
+      });
+
+      it('exits 1 for auto-file helper without --data', () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        mkdirSync(join(tmpDir, '.claude'));
+        writeFileSync(
+          join(tmpDir, '.claude/wecom-context.json'),
+          JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
+        );
+        const result = run([
+          'doc:smartsheet-add-records-auto-file',
+          '--docid', 'DOCID',
+          '--sheet-id', 'SHEET',
+        ], tmpDir);
+        assert.strictEqual(result.status, 1);
+        assert(result.stderr.includes('Missing required flag data'));
+      });
+    });
+
+    describe('--json override', () => {
+      it('--json is accepted without required typed flags', () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        mkdirSync(join(tmpDir, '.claude'));
+        writeFileSync(
+          join(tmpDir, '.claude/wecom-context.json'),
+          JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
+        );
+        // --json provides the full body, so --docid is not required
+        // This will hit the server (which isn't running) and exit 4 (network failure)
+        const result = run([
+          'doc:get-doc-content',
+          '--json', '{"docid":"DOCID","type":2}',
+        ], tmpDir);
+        // Network failure → exit 4 since no server is listening
+        assert.strictEqual(result.status, 4);
+        assert(result.stderr.includes('Network error'));
+      });
+    });
+  });
 });
