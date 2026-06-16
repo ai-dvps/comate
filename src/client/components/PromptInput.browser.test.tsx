@@ -24,6 +24,7 @@ const chatStoreMock = vi.hoisted(() => {
   const state = {
     drafts: {} as Record<string, string>,
     messages: {} as Record<string, { id: string; role: 'user' | 'assistant' | 'system'; parts: { type: string; text?: string }[]; timestamp: number }[]>,
+    promptHistory: {} as Record<string, string[]>,
     isRestartingRuntime: {} as Record<string, boolean>,
     setDraft: vi.fn((sessionId: string, content: string) => {
       if (content === '') {
@@ -48,6 +49,10 @@ const chatStoreMock = vi.hoisted(() => {
     setDraft: state.setDraft,
     setMessages: (sessionId: string, messages: typeof state.messages[string]) => {
       state.messages[sessionId] = messages
+      notify()
+    },
+    setPromptHistory: (workspaceId: string, prompts: string[]) => {
+      state.promptHistory[workspaceId] = prompts
       notify()
     },
   }
@@ -118,6 +123,7 @@ describe('PromptInput browser', () => {
     cleanup()
     chatStoreMock.getState().drafts = {}
     chatStoreMock.getState().messages = {}
+    chatStoreMock.getState().promptHistory = {}
     filesMock.results = []
     filesMock.truncated = false
     appSettingsMock.useModifierToSubmit = false
@@ -126,16 +132,8 @@ describe('PromptInput browser', () => {
     }
   })
 
-  function seedHistory(sessionId: string, prompts: string[]) {
-    chatStoreMock.setMessages(
-      sessionId,
-      prompts.map((text, i) => ({
-        id: `m-${i}`,
-        role: 'user' as const,
-        parts: [{ type: 'text', text }],
-        timestamp: i + 1,
-      })),
-    )
+  function seedHistory(prompts: string[]) {
+    chatStoreMock.setPromptHistory(DEFAULT_PROPS.workspaceId, prompts)
   }
 
   function editableElement() {
@@ -249,7 +247,7 @@ describe('PromptInput browser', () => {
   })
 
   it('recalls history with ArrowUp and restores original with ArrowDown', async () => {
-    seedHistory('session-1', ['first', 'second', 'third'])
+    seedHistory(['first', 'second', 'third'])
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const input = editableLocator()
 
@@ -306,7 +304,7 @@ describe('PromptInput browser', () => {
   })
 
   it('does not navigate history while streaming', async () => {
-    seedHistory('session-1', ['history prompt'])
+    seedHistory(['history prompt'])
     chatStoreMock.setDraft('session-1', '@')
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
 

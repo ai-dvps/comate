@@ -32,7 +32,7 @@ describe('HistoryPicker', () => {
     renderWithI18n(
       <HistoryPicker
         ref={ref}
-        sessionId="session-1"
+        workspaceId="ws-1"
         open={true}
         onOpenChange={handleOpenChange}
         onSelect={handleSelect}

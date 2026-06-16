@@ -64,6 +64,7 @@ interface WorkspaceFormState {
   wecomCorpSecret: string
   wecomFilePromptTemplate: string
   wecomToolPermissions: ToolPermissionPolicy | undefined
+  promptHistoryRetentionDays: string
 }
 
 function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
@@ -85,6 +86,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     wecomCorpSecret: (workspace.settings?.wecomCorpSecret as string) || '',
     wecomFilePromptTemplate: (workspace.settings?.wecomFilePromptTemplate as string) || '',
     wecomToolPermissions: workspace.settings?.wecomToolPermissions as ToolPermissionPolicy | undefined,
+    promptHistoryRetentionDays: String(workspace.settings?.promptHistoryRetentionDays ?? 30),
   }
 }
 
@@ -263,6 +265,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     // Save workspace settings for selected workspace
     if (selectedWorkspaceId && workspaceState[selectedWorkspaceId]) {
       const ws = workspaceState[selectedWorkspaceId]
+      const parsedRetention = parseInt(ws.promptHistoryRetentionDays, 10)
+      const promptHistoryRetentionDays = !isNaN(parsedRetention) ? parsedRetention : 30
       await updateWorkspace(selectedWorkspaceId, {
         name: ws.name,
         description: ws.description,
@@ -276,6 +280,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           wecomCorpSecret: ws.wecomCorpSecret || undefined,
           wecomFilePromptTemplate: ws.wecomFilePromptTemplate || undefined,
           wecomToolPermissions: ws.wecomToolPermissions,
+          promptHistoryRetentionDays,
         },
         skills: ws.skills,
         mcpServers: ws.mcpServers.map((m) => ({
@@ -1183,6 +1188,18 @@ function BasicInfoSection({
           <code className="font-mono text-[11px] whitespace-pre-wrap break-all">{state.folderPath}</code>
         </div>
         <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.promptHistoryRetentionDays')}</label>
+        <input
+          type="number"
+          value={state.promptHistoryRetentionDays}
+          onChange={(e) => onUpdate({ promptHistoryRetentionDays: e.target.value })}
+          placeholder={t('workspace.promptHistoryRetentionDaysPlaceholder')}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+        />
+        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.promptHistoryRetentionDaysHint')}</p>
       </div>
 
       {/* Danger zone */}

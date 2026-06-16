@@ -129,6 +129,21 @@ export class SqliteStore {
     }
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_prompt_history (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_workspace_prompt_history_workspace_created
+        ON workspace_prompt_history (workspace_id, created_at DESC)
+    `);
+
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS providers (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
@@ -521,6 +536,7 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
+      this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM session_metadata WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)').run(id);
       this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id);
       this.getAnalyticsCache().clearByWorkspace(id);
@@ -1142,6 +1158,50 @@ export class SqliteStore {
     const result = this.db.prepare('DELETE FROM wecom_proactive_messages WHERE id = ?').run(id);
     return result.changes > 0;
   }
+
+  // Workspace prompt history
+
+  createPromptHistory(workspaceId: string, sessionId: string, prompt: string): WorkspacePromptHistoryEntry {
+    const now = new Date().toISOString();
+    const entry: WorkspacePromptHistoryEntry = {
+      id: uuidv4(),
+      workspaceId,
+      sessionId,
+      prompt: prompt.trim(),
+      createdAt: now,
+    };
+    this.db.prepare(`
+      INSERT INTO workspace_prompt_history (id, workspace_id, session_id, prompt, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(entry.id, entry.workspaceId, entry.sessionId, entry.prompt, entry.createdAt);
+    return entry;
+  }
+
+  listPromptHistory(workspaceId: string): WorkspacePromptHistoryEntry[] {
+    const rows = this.db
+      .prepare('SELECT * FROM workspace_prompt_history WHERE workspace_id = ? ORDER BY created_at ASC, rowid ASC')
+      .all(workspaceId) as RawPromptHistoryRow[];
+    return rows.map(parsePromptHistoryRow);
+  }
+
+  prunePromptHistory(workspaceId: string, retentionDays: number): number {
+    if (retentionDays <= 0) return 0;
+    const cutoffMs = Date.now() - retentionDays * 86400_000;
+    const cutoff = new Date(cutoffMs).toISOString();
+    const result = this.db.prepare(`
+      DELETE FROM workspace_prompt_history
+      WHERE workspace_id = ? AND created_at < ?
+    `).run(workspaceId, cutoff);
+    return result.changes as number;
+  }
+}
+
+export interface WorkspacePromptHistoryEntry {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  prompt: string;
+  createdAt: string;
 }
 
 interface RawWorkspaceRow {
@@ -1299,6 +1359,24 @@ function parseProactiveMessageRow(row: RawProactiveMessageRow): WeComProactiveMe
     deliveredAt: row.delivered_at,
     claimedAt: row.claimed_at,
     retryCount: row.retry_count,
+  };
+}
+
+interface RawPromptHistoryRow {
+  id: string;
+  workspace_id: string;
+  session_id: string;
+  prompt: string;
+  created_at: string;
+}
+
+function parsePromptHistoryRow(row: RawPromptHistoryRow): WorkspacePromptHistoryEntry {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    prompt: row.prompt,
+    createdAt: row.created_at,
   };
 }
 

@@ -8,6 +8,8 @@ export interface WorkspaceSettings {
   wecomFilePromptTemplate?: string;
   /** Tool permission policy for WeCom bot sessions. When unset, the policy resolves to allow-all (grandfathered if bot enabled, default otherwise). */
   wecomToolPermissions?: import('../services/tool-permission-policy.js').ToolPermissionPolicy;
+  /** Number of days to retain sent-prompt history for this workspace. Zero or negative disables pruning. */
+  promptHistoryRetentionDays?: number;
 }
 
 export interface Skill {
