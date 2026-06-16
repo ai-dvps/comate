@@ -23,6 +23,7 @@ import { SAFE_PRESET } from '../types/wecom-permissions'
 import ProviderSection from './ProviderSection'
 import SkillsPage from './SkillsPage'
 import { PermissionsSubTab } from './PermissionsSubTab'
+import WeComQueuePanel from './WeComQueuePanel'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 
 /** Returns true if every category is denied and no override allows Reply. Triggers the save-time warning. */
@@ -1126,7 +1127,7 @@ function WorkspaceTabShell({
               <p className="text-sm text-text-tertiary">{t('workspaceSwitcher.switchWorkspace')}</p>
             </div>
           ) : (
-            <div className="max-w-xl">
+            <>
               {activeSection === 'basic' && (
                 <BasicInfoSection state={workspaceState} onUpdate={onUpdateWorkspace} onDelete={onDelete} />
               )}
@@ -1138,7 +1139,7 @@ function WorkspaceTabShell({
               )}
               {activeSection === 'mcp' && <PluginRedirectPlaceholder type="mcp" />}
               {activeSection === 'hooks' && <PluginRedirectPlaceholder type="hooks" />}
-            </div>
+            </>
           )}
         </div>
       </div>
@@ -1164,7 +1165,7 @@ function BasicInfoSection({
 }) {
   const { t } = useTranslation('settings')
   return (
-    <div className="space-y-4">
+    <div className="max-w-xl space-y-4">
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.name')}</label>
         <input
@@ -1228,9 +1229,9 @@ interface WeComWorkspaceUser {
   lastSeenAt: string
 }
 
-type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions'
+type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions' | 'queue'
 
-function WeComBotSection({
+export function WeComBotSection({
   state,
   onUpdate,
   workspaceId,
@@ -1302,6 +1303,7 @@ function WeComBotSection({
     { id: 'users', label: t('wecom.tabs.users') },
     { id: 'prompts', label: t('wecom.tabs.prompts') },
     { id: 'permissions', label: t('wecom.tabs.permissions') },
+    { id: 'queue', label: t('wecom.tabs.queue') },
   ]
 
   return (
@@ -1325,7 +1327,7 @@ function WeComBotSection({
 
       {/* Connection tab */}
       {activeSubTab === 'connection' && (
-        <div className="space-y-4 pt-4">
+        <div className="max-w-xl space-y-4 pt-4">
           <div className="flex items-center justify-between py-2">
             <div>
               <label className="block text-xs font-medium text-text-secondary">
@@ -1431,7 +1433,7 @@ function WeComBotSection({
 
       {/* Users tab */}
       {activeSubTab === 'users' && (
-        <div className="pt-4">
+        <div className="max-w-xl pt-4">
           <h3 className="text-xs font-medium text-text-secondary mb-3">{t('wecom.usersTitle')}</h3>
           {users.length === 0 ? (
             <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
@@ -1469,7 +1471,7 @@ function WeComBotSection({
 
       {/* Prompts tab */}
       {activeSubTab === 'prompts' && (
-        <div className="space-y-4 pt-4">
+        <div className="max-w-xl space-y-4 pt-4">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">
               {t('wecom.filePromptTemplate')}
@@ -1490,16 +1492,23 @@ function WeComBotSection({
 
       {/* Permissions tab */}
       {activeSubTab === 'permissions' && (
-        <PermissionsSubTab
-          policy={state.wecomToolPermissions}
-          onUpdate={(next) => onUpdate({ wecomToolPermissions: next })}
-          workspaceId={workspaceId}
-          needsUpgradePrompt={!state.wecomToolPermissions && state.wecomBotEnabled}
-          onApplySafePreset={async () => {
-            onUpdate({ wecomToolPermissions: SAFE_PRESET })
-            await onSave()
-          }}
-        />
+        <div className="max-w-xl">
+          <PermissionsSubTab
+            policy={state.wecomToolPermissions}
+            onUpdate={(next) => onUpdate({ wecomToolPermissions: next })}
+            workspaceId={workspaceId}
+            needsUpgradePrompt={!state.wecomToolPermissions && state.wecomBotEnabled}
+            onApplySafePreset={async () => {
+              onUpdate({ wecomToolPermissions: SAFE_PRESET })
+              await onSave()
+            }}
+          />
+        </div>
+      )}
+
+      {/* Queue tab */}
+      {activeSubTab === 'queue' && (
+        <WeComQueuePanel workspaceId={workspaceId} botEnabled={state.wecomBotEnabled} />
       )}
     </div>
   )
@@ -1508,7 +1517,7 @@ function WeComBotSection({
 function PluginRedirectPlaceholder({ type }: { type: 'skills' | 'mcp' | 'hooks' }) {
   const { t } = useTranslation('settings')
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
+    <div className="max-w-xl flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
       <div className="space-y-1">
         <h3 className="text-sm font-medium text-text-primary">{t(`placeholder.${type}Title`)}</h3>
         <p className="text-xs text-text-secondary max-w-sm">{t('placeholder.pluginRedirect')}</p>
@@ -1525,7 +1534,7 @@ function PluginRedirectPlaceholder({ type }: { type: 'skills' | 'mcp' | 'hooks' 
 function SkillsRedirectCard({ onOpen }: { onOpen: () => void }) {
   const { t } = useTranslation('settings')
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
+    <div className="max-w-xl flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
       <div className="space-y-1">
         <h3 className="text-sm font-medium text-text-primary">{t('placeholder.skillsTitle')}</h3>
         <p className="text-xs text-text-secondary max-w-sm">
