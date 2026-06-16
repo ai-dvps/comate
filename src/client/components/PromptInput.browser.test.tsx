@@ -348,4 +348,82 @@ describe('PromptInput browser', () => {
     expect(el).toHaveAttribute('contenteditable', 'false')
     expect(el).toHaveAttribute('tabindex', '-1')
   })
+
+  it('undoes typed text with Cmd+Z', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('hello')
+    await waitFor(() => expect(editableElement().textContent).toBe('hello'))
+
+    await userEvent.keyboard('{Meta>}z{/Meta}')
+    await waitFor(() => expect(editableElement().textContent).toBe(''))
+  })
+
+  it('redoes with Cmd+Shift+Z after undo', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('hello')
+    await waitFor(() => expect(editableElement().textContent).toBe('hello'))
+
+    await userEvent.keyboard('{Meta>}z{/Meta}')
+    await waitFor(() => expect(editableElement().textContent).toBe(''))
+
+    await userEvent.keyboard('{Meta>}{Shift>}z{/Shift}{/Meta}')
+    await waitFor(() => expect(editableElement().textContent).toBe('hello'))
+  })
+
+  it('undoes a paste operation with Cmd+Z', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const el = editableElement()
+
+    await editableLocator().click()
+    const dt = new DataTransfer()
+    dt.setData('text/plain', 'pasted text')
+    const paste = new ClipboardEvent('paste', {
+      bubbles: true,
+      clipboardData: dt,
+    })
+    el.dispatchEvent(paste)
+
+    await waitFor(() => expect(el.textContent).toBe('pasted text'))
+
+    await userEvent.keyboard('{Meta>}z{/Meta}')
+    await waitFor(() => expect(el.textContent).toBe(''))
+  })
+
+  it('undoes a clear with Cmd+Z', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('keep me')
+    await waitFor(() => expect(editableElement().textContent).toBe('keep me'))
+
+    await userEvent.click(screen.getByTitle('Clear'))
+    await waitFor(() => expect(editableElement().textContent).toBe(''))
+
+    await userEvent.keyboard('{Meta>}z{/Meta}')
+    await waitFor(() => expect(editableElement().textContent).toBe('keep me'))
+  })
+
+  it('undoes typing in chunks separated by pauses', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('first')
+    await waitFor(() => expect(editableElement().textContent).toBe('first'))
+
+    // Wait for the typing group to commit (debounce is 500ms).
+    await new Promise((resolve) => setTimeout(resolve, 700))
+
+    await input.fill('first second')
+    await waitFor(() => expect(editableElement().textContent).toBe('first second'))
+
+    await userEvent.keyboard('{Meta>}z{/Meta}')
+    await waitFor(() => expect(editableElement().textContent).toBe('first'))
+
+    await userEvent.keyboard('{Meta>}z{/Meta}')
+    await waitFor(() => expect(editableElement().textContent).toBe(''))
+  })
 })

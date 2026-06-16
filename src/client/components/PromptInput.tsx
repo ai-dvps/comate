@@ -124,8 +124,52 @@ export default function PromptInput({
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
   const prevInputRef = useRef('')
+  const undoStackRef = useRef<Array<{ value: string; caret: number }>>([])
+  const redoStackRef = useRef<Array<{ value: string; caret: number }>>([])
+  const undoGroupOpenRef = useRef(false)
+  const undoGroupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (undoGroupTimerRef.current) {
+        clearTimeout(undoGroupTimerRef.current)
+      }
+    }
+  }, [])
 
   const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
+
+  const pushUndoState = (value: string, caret: number): void => {
+    const last = undoStackRef.current[undoStackRef.current.length - 1]
+    if (last && last.value === value && last.caret === caret) return
+    undoStackRef.current.push({ value, caret })
+    redoStackRef.current = []
+  }
+
+  const flushUndoGroup = (): void => {
+    undoGroupOpenRef.current = false
+    if (undoGroupTimerRef.current) {
+      clearTimeout(undoGroupTimerRef.current)
+      undoGroupTimerRef.current = null
+    }
+  }
+
+  const openUndoGroup = (): void => {
+    if (undoGroupOpenRef.current) return
+    const el = editableRef.current
+    if (!el) return
+    pushUndoState(input, getCaretOffset(el))
+    undoGroupOpenRef.current = true
+  }
+
+  const scheduleUndoGroupCommit = (): void => {
+    if (undoGroupTimerRef.current) {
+      clearTimeout(undoGroupTimerRef.current)
+    }
+    undoGroupTimerRef.current = setTimeout(() => {
+      flushUndoGroup()
+    }, 500)
+  }
   const editableEnabled = !disabled && !isStreaming && !isRestarting
   const contentEditableMode = supportsPlaintextOnly() ? 'plaintext-only' : 'true'
   const placeholder = t('placeholder')
@@ -157,6 +201,13 @@ export default function PromptInput({
     setArgumentHint(null)
     setLastInsertedCommand(null)
     setCompletionSuggestion(null)
+    undoStackRef.current = [{ value: input, caret: input.length }]
+    redoStackRef.current = []
+    undoGroupOpenRef.current = false
+    if (undoGroupTimerRef.current) {
+      clearTimeout(undoGroupTimerRef.current)
+      undoGroupTimerRef.current = null
+    }
   }, [sessionId])
 
   // Clear stuck IME composition state when the surface becomes non-editable.
@@ -308,6 +359,10 @@ export default function PromptInput({
   }
 
   const handleClear = () => {
+    const el = editableRef.current
+    if (el) {
+      pushUndoState(input, getCaretOffset(el))
+    }
     resetInput()
     if (pickerOpen) {
       setPickerOpen(false)
@@ -321,6 +376,12 @@ export default function PromptInput({
   }
 
   const handleInput = () => {
+    if (!isComposingRef.current && editableEnabled) {
+      if (!undoGroupOpenRef.current) {
+        openUndoGroup()
+      }
+      scheduleUndoGroupCommit()
+    }
     const el = editableRef.current
     if (!el) return
     const value = extractPlainText(el)
@@ -332,6 +393,10 @@ export default function PromptInput({
 
   const handleCompositionStart = () => {
     isComposingRef.current = true
+    const el = editableRef.current
+    if (!el) return
+    flushUndoGroup()
+    pushUndoState(input, getCaretOffset(el))
   }
 
   const handleCompositionEnd = () => {
@@ -362,6 +427,7 @@ export default function PromptInput({
     const el = editableRef.current
     if (!el) return
     const offset = getCaretOffset(el)
+    pushUndoState(input, offset)
     replaceText(el, text, offset, offset)
     handleInputChange(extractPlainText(el), getCaretOffset(el))
   }
@@ -373,14 +439,23 @@ export default function PromptInput({
     const el = editableRef.current
     if (!el) return
     const offset = getCaretOffset(el)
+    pushUndoState(input, offset)
     replaceText(el, text, offset, offset)
     handleInputChange(extractPlainText(el), getCaretOffset(el))
   }
 
   const handleBeforeInput = (e: React.FormEvent<HTMLDivElement>) => {
     const inputType = (e.nativeEvent as InputEvent).inputType
-    if (inputType === 'insertFromPaste') {
+    if (
+      inputType === 'insertFromPaste' ||
+      inputType === 'historyUndo' ||
+      inputType === 'historyRedo'
+    ) {
       e.preventDefault()
+      return
+    }
+    if (!isComposingRef.current && editableEnabled && !undoGroupOpenRef.current) {
+      openUndoGroup()
     }
   }
 
@@ -394,6 +469,40 @@ export default function PromptInput({
     // stuck true and blocking subsequent input processing.
     if (!e.nativeEvent.isComposing && isComposingRef.current) {
       isComposingRef.current = false
+    }
+
+    // Custom undo/redo for the contentEditable surface. The browser's native
+    // undo stack is unreliable here because React replaces the entire DOM on
+    // every draft change, so we maintain our own history.
+    const isUndo =
+      (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey
+    const isRedo =
+      ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'z') ||
+      ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y')
+    if (isUndo || isRedo) {
+      e.preventDefault()
+      if (isUndo) {
+        flushUndoGroup()
+        if (undoStackRef.current.length === 0) return
+        const current = { value: input, caret: getCaretOffset(el) }
+        const previous = undoStackRef.current.pop()!
+        redoStackRef.current.push(current)
+        undoGroupOpenRef.current = false
+        setDraft(sessionId, previous.value)
+        prevInputRef.current = previous.value
+        requestAnimationFrame(() => setCaretOffset(el, previous.caret))
+      } else {
+        flushUndoGroup()
+        if (redoStackRef.current.length === 0) return
+        const current = { value: input, caret: getCaretOffset(el) }
+        const next = redoStackRef.current.pop()!
+        undoStackRef.current.push(current)
+        undoGroupOpenRef.current = false
+        setDraft(sessionId, next.value)
+        prevInputRef.current = next.value
+        requestAnimationFrame(() => setCaretOffset(el, next.caret))
+      }
+      return
     }
 
     // History popup shortcut: Alt+H / Option+H
@@ -530,6 +639,7 @@ export default function PromptInput({
     const el = editableRef.current
     if (!el) return
     const caret = getCaretOffset(el)
+    pushUndoState(input, caret)
     const inserted = `/${command.name} `
     const start = slashTriggerStart ?? caret
     replaceText(el, inserted, start, caret)
@@ -548,6 +658,7 @@ export default function PromptInput({
     const el = editableRef.current
     if (!el || fileTriggerStart === null) return
     const caret = getCaretOffset(el)
+    pushUndoState(input, caret)
     const inserted = `@${selectedPath} `
     replaceText(el, inserted, fileTriggerStart, caret)
     const value = extractPlainText(el)
@@ -560,6 +671,10 @@ export default function PromptInput({
   }
 
   const handleHistorySelect = (selectedPrompt: string) => {
+    const el = editableRef.current
+    if (el) {
+      pushUndoState(input, getCaretOffset(el))
+    }
     setDraft(sessionId, selectedPrompt)
     prevInputRef.current = selectedPrompt
     setHistoryPickerOpen(false)
