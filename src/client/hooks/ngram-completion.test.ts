@@ -1,5 +1,15 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { TrigramCompletion, tokenize } from '../lib/ngram-completion'
+import { renderHook, act } from '@testing-library/react'
+import { useNgramCompletion } from './useNgramCompletion'
+
+const promptsMock = vi.hoisted(() => ({ value: [] as string[] }))
+
+vi.mock('./useSentPrompts', () => ({
+  useSentPrompts: (workspaceId: string | undefined) => {
+    return workspaceId ? promptsMock.value : []
+  },
+}))
 
 describe('tokenize', () => {
   it('splits Latin runs into word tokens', () => {
@@ -71,5 +81,48 @@ describe('TrigramCompletion', () => {
     model.train('explain the function')
     model.clear()
     expect(model.suggest('explain the ')).toBeNull()
+  })
+})
+
+describe('useNgramCompletion', () => {
+  beforeEach(() => {
+    promptsMock.value = []
+  })
+
+  it('returns no suggestion before training', () => {
+    promptsMock.value = []
+    const { result } = renderHook(() => useNgramCompletion('ws-1'))
+    expect(result.current.suggest('explain the ')).toBeNull()
+  })
+
+  it('suggests based on workspace prompt history', () => {
+    promptsMock.value = ['explain the function', 'explain the function']
+    const { result } = renderHook(() => useNgramCompletion('ws-1'))
+    expect(result.current.suggest('explain the ')).toBe('function')
+  })
+
+  it('trains incrementally via train()', () => {
+    promptsMock.value = []
+    const { result } = renderHook(() => useNgramCompletion('ws-1'))
+
+    act(() => {
+      result.current.train('explain the function')
+      result.current.train('explain the function')
+    })
+
+    expect(result.current.suggest('explain the ')).toBe('function')
+  })
+
+  it('clears when workspace changes', () => {
+    promptsMock.value = ['explain the function', 'explain the function']
+    const { result, rerender } = renderHook(
+      ({ workspaceId }: { workspaceId: string }) => useNgramCompletion(workspaceId),
+      { initialProps: { workspaceId: 'ws-1' } },
+    )
+    expect(result.current.suggest('explain the ')).toBe('function')
+
+    promptsMock.value = []
+    rerender({ workspaceId: 'ws-2' })
+    expect(result.current.suggest('explain the ')).toBeNull()
   })
 })

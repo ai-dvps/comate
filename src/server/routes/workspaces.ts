@@ -185,4 +185,65 @@ router.get('/:id/wecom/resolver-status', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/prompt-history
+// Returns the workspace's sent-prompt history, pruning entries older than the
+// configured retention threshold first.
+router.get('/:id/prompt-history', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const retentionDays = workspace.settings?.promptHistoryRetentionDays ?? 30;
+    if (retentionDays > 0) {
+      store.prunePromptHistory(req.params.id, retentionDays as number);
+    }
+
+    const prompts = store.listPromptHistory(req.params.id);
+    res.json({ prompts });
+  } catch (error) {
+    console.error('Failed to list prompt history:', error);
+    res.status(500).json({ error: 'Failed to list prompt history' });
+  }
+});
+
+// POST /api/workspaces/:id/prompt-history
+// Records a user-sent prompt in the workspace-scoped history log.
+router.post('/:id/prompt-history', async (req, res) => {
+  try {
+    const workspaceId = req.params.id;
+    const { sessionId, prompt } = req.body;
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      res.status(400).json({ error: 'sessionId is required' });
+      return;
+    }
+
+    if (!prompt || typeof prompt !== 'string') {
+      res.status(400).json({ error: 'prompt is required' });
+      return;
+    }
+
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      res.status(400).json({ error: 'prompt cannot be empty' });
+      return;
+    }
+
+    const workspace = await store.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const entry = store.createPromptHistory(workspaceId, sessionId, trimmed);
+    res.status(201).json(entry);
+  } catch (error) {
+    console.error('Failed to create prompt history:', error);
+    res.status(500).json({ error: 'Failed to create prompt history' });
+  }
+});
+
 export default router;

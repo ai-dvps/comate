@@ -179,6 +179,7 @@ interface PendingTaskCreate {
 interface ChatState {
   sessions: Record<string, ChatSession[]>
   messages: Record<string, ChatMessage[]>
+  promptHistory: Record<string, string[]>
   activeSessionIds: Record<string, string>
   isStreaming: Record<string, boolean>
   isCompacting: Record<string, boolean>
@@ -216,6 +217,8 @@ interface ChatState {
   setActiveSession: (workspaceId: string, sessionId: string) => void
   loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
   sendMessage: (workspaceId: string, sessionId: string, content: string) => void
+  fetchPromptHistory: (workspaceId: string) => Promise<void>
+  addPromptHistory: (workspaceId: string, sessionId: string, content: string) => void
   setDraft: (sessionId: string, content: string) => void
   clearMessages: (sessionId: string) => void
   resolveApproval: (
@@ -1864,6 +1867,7 @@ function applyActivityUpdate(
 export const useChatStore = create<ChatState>((set, get) => ({
   sessions: {},
   messages: {},
+  promptHistory: {},
   activeSessionIds: {},
   isStreaming: {},
   isCompacting: {},
@@ -1922,6 +1926,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       })
       startBackgroundPolling(set, workspaceId)
+      // Load workspace-scoped prompt history in parallel with session setup.
+      // Errors are logged but do not fail the overall session fetch.
+      get().fetchPromptHistory(workspaceId).catch((err) => {
+        console.error('Failed to fetch prompt history:', err)
+      })
       return { ok: true }
     } catch (err) {
       console.error('Failed to fetch sessions:', err)
@@ -2211,6 +2220,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       clearInterval(poll)
       workspacePollIntervals.delete(workspaceId)
     }
+    set((state) => {
+      const nextPromptHistory = { ...state.promptHistory }
+      delete nextPromptHistory[workspaceId]
+      return { promptHistory: nextPromptHistory }
+    })
   },
 
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {
@@ -2220,6 +2234,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       console.warn('[sendMessage] blocked: cannot send messages to bot sessions')
       return
     }
+
+    // Record user-sent prompt in workspace-scoped history.
+    get().addPromptHistory(workspaceId, sessionId, content)
 
     // Ensure subscription is open
     if (!sessionSubscriptions.has(sessionId)) {
@@ -2290,6 +2307,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
           `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
         ),
       )
+    })
+  },
+
+  fetchPromptHistory: async (workspaceId: string) => {
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/prompt-history`)
+      if (!res.ok) throw new Error(i18next.t('common:failedToFetchPromptHistory', 'Failed to fetch prompt history'))
+      const data = (await res.json()) as { prompts?: Array<{ prompt: string } > }
+      const prompts = (data.prompts || []).map((p) => p.prompt)
+      set((state) => ({
+        promptHistory: { ...state.promptHistory, [workspaceId]: prompts },
+      }))
+    } catch (err) {
+      console.error('Failed to fetch prompt history:', err)
+    }
+  },
+
+  addPromptHistory: (workspaceId: string, sessionId: string, content: string) => {
+    const trimmed = content.trim()
+    if (!trimmed) return
+
+    set((state) => {
+      const existing = state.promptHistory[workspaceId] || []
+      return {
+        promptHistory: {
+          ...state.promptHistory,
+          [workspaceId]: [...existing, trimmed],
+        },
+      }
+    })
+
+    fetch(`/api/workspaces/${workspaceId}/prompt-history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, prompt: trimmed }),
+    }).catch((err) => {
+      console.error('Failed to record prompt history:', err)
     })
   },
 

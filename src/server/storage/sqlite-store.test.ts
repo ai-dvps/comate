@@ -318,3 +318,88 @@ describe('SqliteStore workspace delete cascade', { concurrency: false }, () => {
     assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(wsB.id).count, 1);
   });
 });
+
+describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
+  let store: SqliteStore;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    store = new SqliteStore();
+    db = (store as unknown as { db: Database.Database }).db;
+    db.prepare('DELETE FROM workspace_prompt_history').run();
+    db.prepare('DELETE FROM workspaces').run();
+  });
+
+  async function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  it('createPromptHistory records a prompt and returns an entry', async () => {
+    const ws = await createWorkspace('History Test');
+    const entry = store.createPromptHistory(ws.id, 'session-1', 'hello world');
+
+    assert.strictEqual(entry.workspaceId, ws.id);
+    assert.strictEqual(entry.sessionId, 'session-1');
+    assert.strictEqual(entry.prompt, 'hello world');
+    assert.ok(entry.id);
+    assert.ok(entry.createdAt);
+  });
+
+  it('listPromptHistory returns prompts ordered oldest-first', async () => {
+    const ws = await createWorkspace('History Order');
+    store.createPromptHistory(ws.id, 'session-1', 'first');
+    store.createPromptHistory(ws.id, 'session-1', 'second');
+
+    const rows = store.listPromptHistory(ws.id);
+    assert.strictEqual(rows.length, 2);
+    assert.strictEqual(rows[0].prompt, 'first');
+    assert.strictEqual(rows[1].prompt, 'second');
+  });
+
+  it('listPromptHistory isolates workspaces', async () => {
+    const wsA = await createWorkspace('History A');
+    const wsB = await createWorkspace('History B');
+    store.createPromptHistory(wsA.id, 'session-a', 'a');
+    store.createPromptHistory(wsB.id, 'session-b', 'b');
+
+    assert.strictEqual(store.listPromptHistory(wsA.id).length, 1);
+    assert.strictEqual(store.listPromptHistory(wsA.id)[0].prompt, 'a');
+    assert.strictEqual(store.listPromptHistory(wsB.id).length, 1);
+    assert.strictEqual(store.listPromptHistory(wsB.id)[0].prompt, 'b');
+  });
+
+  it('prunePromptHistory removes entries older than retentionDays', async () => {
+    const ws = await createWorkspace('History Prune');
+    db.prepare(
+      'INSERT INTO workspace_prompt_history (id, workspace_id, session_id, prompt, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(randomUUID(), ws.id, 'session-1', 'old', new Date(Date.now() - 31 * 86400_000).toISOString());
+    db.prepare(
+      'INSERT INTO workspace_prompt_history (id, workspace_id, session_id, prompt, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(randomUUID(), ws.id, 'session-1', 'recent', new Date().toISOString());
+
+    const pruned = store.prunePromptHistory(ws.id, 30);
+    assert.strictEqual(pruned, 1);
+
+    const rows = store.listPromptHistory(ws.id);
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].prompt, 'recent');
+  });
+
+  it('prunePromptHistory returns 0 for non-positive retentionDays', async () => {
+    const ws = await createWorkspace('History No Prune');
+    store.createPromptHistory(ws.id, 'session-1', 'kept');
+
+    assert.strictEqual(store.prunePromptHistory(ws.id, 0), 0);
+    assert.strictEqual(store.prunePromptHistory(ws.id, -1), 0);
+    assert.strictEqual(store.listPromptHistory(ws.id).length, 1);
+  });
+
+  it('deleting a workspace cascades to prompt history', async () => {
+    const ws = await createWorkspace('History Cascade');
+    store.createPromptHistory(ws.id, 'session-1', 'goodbye');
+
+    await store.delete(ws.id);
+
+    assert.strictEqual(store.listPromptHistory(ws.id).length, 0);
+  });
+});

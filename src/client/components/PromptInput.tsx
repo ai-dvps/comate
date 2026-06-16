@@ -94,8 +94,8 @@ export default function PromptInput({
   )
   const setDraft = useChatStore((s) => s.setDraft)
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
-  const history = useSentPrompts(sessionId || undefined)
-  const { suggest, train } = useNgramCompletion(sessionId || undefined)
+  const history = useSentPrompts(workspaceId)
+  const { suggest, train } = useNgramCompletion(workspaceId)
 
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -837,7 +837,7 @@ export default function PromptInput({
               />
               <HistoryPicker
                 ref={historyPickerHandleRef}
-                sessionId={sessionId}
+                workspaceId={workspaceId}
                 open={historyPickerOpen}
                 onOpenChange={(open) => {
                   setHistoryPickerOpen(open)

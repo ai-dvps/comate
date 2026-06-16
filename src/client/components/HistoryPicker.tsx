@@ -21,7 +21,7 @@ export interface HistoryPickerHandle {
 }
 
 interface HistoryPickerProps {
-  sessionId: string
+  workspaceId: string
   open: boolean
   onOpenChange: (open: boolean) => void
   onSelect: (prompt: string) => void
@@ -45,7 +45,7 @@ function formatPromptPreview(text: string, t: TFunction) {
 const HistoryPicker = forwardRef<HistoryPickerHandle, HistoryPickerProps>(
   function HistoryPicker(
     {
-      sessionId,
+      workspaceId,
       open,
       onOpenChange,
       onSelect,
@@ -57,7 +57,7 @@ const HistoryPicker = forwardRef<HistoryPickerHandle, HistoryPickerProps>(
     ref,
   ) {
     const { t } = useTranslation('chat')
-    const prompts = useSentPrompts(sessionId)
+    const prompts = useSentPrompts(workspaceId)
     const rows = useMemo<HistoryRow[]>(
       () => prompts.map((text) => ({ text })),
       [prompts],

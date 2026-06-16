@@ -37,7 +37,7 @@ describe('picker handle parity', () => {
         />
         <HistoryPicker
           ref={historyRef}
-          sessionId="session-1"
+          workspaceId="ws-1"
           open={false}
           onOpenChange={() => {}}
           onSelect={() => {}}

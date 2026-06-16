@@ -106,7 +106,10 @@
     "name": "名称",
     "description": "描述",
     "folderPath": "文件夹路径",
-    "folderPathHint": "工作区文件夹无法更改，因为 Claude Code 会话历史绑定于此路径。更改将导致现有会话重置。"
+    "folderPathHint": "工作区文件夹无法更改，因为 Claude Code 会话历史绑定于此路径。更改将导致现有会话重置。",
+    "promptHistoryRetentionDays": "提示词历史保留（天）",
+    "promptHistoryRetentionDaysPlaceholder": "30",
+    "promptHistoryRetentionDaysHint": "此工作区保留已发送提示词历史的天数。设置为 0 或负数可禁用自动清理。更改将在下次加载历史时生效。"
   },
   "skills": {
     "addSkill": "添加技能",
