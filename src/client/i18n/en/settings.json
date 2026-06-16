@@ -162,7 +162,12 @@
       "connection": "Connection",
       "users": "Users",
       "prompts": "Prompts",
-      "permissions": "Permissions"
+      "permissions": "Permissions",
+      "queue": "Queue"
+    },
+    "queue": {
+      "disabledBannerTitle": "WeCom Bot is disabled",
+      "disabledBannerBody": "The queue shows historical proactive messages. New messages will not be delivered until the bot is re-enabled."
     },
     "filePromptTemplate": "File Prompt Template",
     "filePromptTemplatePlaceholder": "a file named @$file_name$ uploaded by user, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.",

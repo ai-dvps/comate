@@ -4,7 +4,6 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import SessionList from './SessionList'
 import FileExplorer from './FileExplorer'
 import TodoList from './TodoList'
-import WeComQueuePanel from './WeComQueuePanel'
 
 interface SidebarProps {
   width: number
@@ -13,7 +12,7 @@ interface SidebarProps {
   onFileDoubleClick?: (path: string, name: string) => void
 }
 
-type SidebarTab = 'sessions' | 'files' | 'todos' | 'queue'
+type SidebarTab = 'sessions' | 'files' | 'todos'
 
 const MIN_WIDTH = 200
 const MAX_WIDTH = 600
@@ -95,16 +94,6 @@ export default function Sidebar({
         >
           {t('sidebar.files')}
         </button>
-        <button
-          className={`flex-1 py-3 font-medium text-center transition-all ${
-            activeTab === 'queue'
-              ? 'text-text-primary border-b-2 border-accent'
-              : 'text-text-secondary hover:text-text-primary'
-          }`}
-          onClick={() => setActiveTab('queue')}
-        >
-          {t('sidebar.queue')}
-        </button>
       </div>
 
       {/* Tab Content */}
@@ -137,16 +126,6 @@ export default function Sidebar({
             onFileClick={onFileClick}
             onFileDoubleClick={onFileDoubleClick}
           />
-        )}
-        {activeTab === 'queue' && activeWorkspaceId && (
-          <WeComQueuePanel workspaceId={activeWorkspaceId} />
-        )}
-        {activeTab === 'queue' && !activeWorkspaceId && (
-          <div className="flex-1 flex items-center justify-center p-4">
-            <p className="text-text-tertiary text-center">
-              {t('sidebar.noWorkspace')}
-            </p>
-          </div>
         )}
       </div>
 

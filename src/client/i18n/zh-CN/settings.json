@@ -162,7 +162,12 @@
       "connection": "连接",
       "users": "用户",
       "prompts": "提示词",
-      "permissions": "权限"
+      "permissions": "权限",
+      "queue": "队列"
+    },
+    "queue": {
+      "disabledBannerTitle": "企业微信机器人已禁用",
+      "disabledBannerBody": "队列显示历史主动消息。重新启用机器人之前，新消息将不会被投递。"
     },
     "filePromptTemplate": "文件提示词模板",
     "filePromptTemplatePlaceholder": "a file named @$file_name$ uploaded by user, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.",

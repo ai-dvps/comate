@@ -9,6 +9,7 @@ import {
   XCircle,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   Send,
 } from 'lucide-react';
 
@@ -16,6 +17,7 @@ const EMPTY_ARRAY: [] = [];
 
 interface WeComQueuePanelProps {
   workspaceId: string;
+  botEnabled?: boolean;
 }
 
 const statusConfig: Record<ProactiveMessageStatus, { label: string; icon: typeof Clock; color: string; bg: string }> = {
@@ -45,8 +47,9 @@ const statusConfig: Record<ProactiveMessageStatus, { label: string; icon: typeof
   },
 };
 
-export default function WeComQueuePanel({ workspaceId }: WeComQueuePanelProps) {
+export default function WeComQueuePanel({ workspaceId, botEnabled }: WeComQueuePanelProps) {
   const { t } = useTranslation('chat');
+  const { t: ts } = useTranslation('settings');
   const [isRetrying, setIsRetrying] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState<Set<string>>(new Set());
 
@@ -127,6 +130,17 @@ export default function WeComQueuePanel({ workspaceId }: WeComQueuePanelProps) {
           <RefreshCw className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* Disabled bot banner */}
+      {botEnabled === false && (
+        <div className="mx-3 mb-2 px-3 py-2 text-xs bg-warning/10 text-warning rounded-lg flex items-start gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">{ts('wecom.queue.disabledBannerTitle')}</p>
+            <p className="text-warning/80">{ts('wecom.queue.disabledBannerBody')}</p>
+          </div>
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (
