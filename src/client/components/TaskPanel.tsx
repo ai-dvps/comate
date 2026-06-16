@@ -56,7 +56,7 @@ const statusConfig = {
 }
 
 function TaskRow({ task }: { task: TaskItem }) {
-  const config = statusConfig[task.status]
+  const config = statusConfig[task.status] ?? statusConfig.pending
   const Icon = config.icon
   const isDone = task.status === 'completed' || task.status === 'killed'
   const isActive = task.status === 'in_progress' || task.status === 'paused'
