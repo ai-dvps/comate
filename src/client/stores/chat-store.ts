@@ -1566,11 +1566,13 @@ function handleSseEvent(
   }
 }
 
-function normalizeSdkStatus(status: string): TaskItem['status'] {
+export function normalizeSdkStatus(status: string): TaskItem['status'] {
   switch (status) {
     case 'pending':
       return 'pending'
     case 'running':
+      return 'in_progress'
+    case 'in_progress':
       return 'in_progress'
     case 'completed':
       return 'completed'
