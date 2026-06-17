@@ -11,7 +11,11 @@ import {
   AlertCircle,
   AlertTriangle,
   Send,
+  ChevronDown,
+  Check,
 } from 'lucide-react';
+import { Popover, PopoverTrigger, PopoverContent } from './ui/popover';
+import { cn } from './ui/utils';
 
 const EMPTY_ARRAY: [] = [];
 
@@ -52,6 +56,7 @@ export default function WeComQueuePanel({ workspaceId, botEnabled }: WeComQueueP
   const { t: ts } = useTranslation('settings');
   const [isRetrying, setIsRetrying] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState<Set<string>>(new Set());
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const entries = useWeComQueueStore((s) => s.entriesByWorkspace[workspaceId] ?? EMPTY_ARRAY);
   const isLoading = useWeComQueueStore((s) => s.isLoading[workspaceId]);
@@ -106,22 +111,91 @@ export default function WeComQueuePanel({ workspaceId, botEnabled }: WeComQueueP
     return d.toLocaleString();
   };
 
+  const filterOptions: { value: string; label: string; icon: typeof Clock }[] = [
+    { value: '', label: t('allStatuses', { defaultValue: 'All statuses' }), icon: Clock },
+    ...(Object.keys(statusConfig) as ProactiveMessageStatus[]).map((s) => ({
+      value: s,
+      label: statusConfig[s].label,
+      icon: statusConfig[s].icon,
+    })),
+  ];
+
+  const activeFilter = filterOptions.find((o) => o.value === (statusFilter || '')) ?? filterOptions[0];
+  const ActiveFilterIcon = activeFilter.icon;
+
   return (
     <div className="flex flex-col h-full">
       {/* Header with filter */}
       <div className="p-3 pb-2 flex items-center gap-2">
-        <select
-          value={statusFilter || ''}
-          onChange={(e) => setStatusFilter(e.target.value || null)}
-          className="flex-1 px-3 py-2 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
-        >
-          <option value="">{t('allStatuses', { defaultValue: 'All statuses' })}</option>
-          {(Object.keys(statusConfig) as ProactiveMessageStatus[]).map((s) => (
-            <option key={s} value={s}>
-              {statusConfig[s].label}
-            </option>
-          ))}
-        </select>
+        <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                'flex-1 inline-flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-border bg-bg text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 active:scale-[0.97]',
+                filterOpen && 'bg-surface-active border-accent/40 text-text-primary',
+              )}
+            >
+              <span className="inline-flex items-center gap-2">
+                <ActiveFilterIcon className="w-3.5 h-3.5" />
+                <span className="text-xs">{activeFilter.label}</span>
+              </span>
+              <ChevronDown
+                className={cn(
+                  'w-3 h-3 opacity-60 transition-transform',
+                  filterOpen && 'rotate-180',
+                )}
+              />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="bottom"
+            align="start"
+            sideOffset={6}
+            collisionPadding={8}
+            className={cn(
+              'bg-surface-active border border-border rounded-lg shadow-lg p-1 z-50 min-w-[180px]',
+              'transition-all duration-150 ease-out',
+              'data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=open]:translate-y-0',
+              'data-[state=closed]:opacity-0 data-[state=closed]:scale-95 data-[state=closed]:translate-y-1',
+              'origin-(--radix-popover-content-transform-origin)',
+            )}
+          >
+            <div role="listbox" className="space-y-0.5">
+              {filterOptions.map((option) => {
+                const isActive = option.value === (statusFilter || '');
+                const Icon = option.icon;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={isActive}
+                    onClick={() => {
+                      setStatusFilter(option.value || null);
+                      setFilterOpen(false);
+                    }}
+                    className={cn(
+                      'w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors focus-visible:outline-none focus-visible:bg-surface-hover',
+                      isActive
+                        ? 'bg-accent/10 text-accent'
+                        : 'text-text-secondary hover:bg-surface-hover',
+                    )}
+                  >
+                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="flex-1 min-w-0 truncate">{option.label}</span>
+                    <Check
+                      className={cn(
+                        'w-3.5 h-3.5 flex-shrink-0 ml-auto',
+                        isActive ? 'opacity-100' : 'opacity-0',
+                      )}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          </PopoverContent>
+        </Popover>
         <button
           onClick={() => fetchEntries(workspaceId)}
           className="p-2 rounded-lg bg-bg border border-border hover:bg-surface-hover text-text-secondary transition-colors"
