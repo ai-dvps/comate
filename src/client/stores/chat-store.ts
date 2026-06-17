@@ -122,11 +122,13 @@ interface PendingApproval {
   title?: string
   description?: string
   suggestions?: PermissionUpdate[]
+  expiresAt?: number
 }
 
 interface PendingQuestion {
   requestId: string
   questions: QuestionPayload[]
+  expiresAt?: number
 }
 
 type PendingItem = PendingApproval | PendingQuestion
@@ -1238,6 +1240,7 @@ function handleSseEvent(
           diagLog(`[Client] pending_approval duplicate, ignored`)
           return {}
         }
+        const expiresAt = typeof data.expiresAt === 'number' && Number.isFinite(data.expiresAt) ? data.expiresAt : undefined
         const queue = [
           ...(state.approvalQueue[sessionId] || []),
           {
@@ -1249,6 +1252,7 @@ function handleSseEvent(
             title: typeof data.title === 'string' ? data.title : undefined,
             description: typeof data.description === 'string' ? data.description : undefined,
             suggestions: Array.isArray(data.suggestions) ? data.suggestions : undefined,
+            expiresAt,
           },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
@@ -1272,9 +1276,10 @@ function handleSseEvent(
           diagLog(`[Client] pending_question duplicate, ignored`)
           return {}
         }
+        const expiresAt = typeof data.expiresAt === 'number' && Number.isFinite(data.expiresAt) ? data.expiresAt : undefined
         const queue = [
           ...(state.approvalQueue[sessionId] || []),
-          { requestId, questions },
+          { requestId, questions, expiresAt },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
         return {

@@ -27,6 +27,39 @@ import { getToolRenderer, StructuredFallback } from './tool-renderers'
 export const CHAT_ABOUT_THIS_MESSAGE =
   'chatAboutThisMessage'
 
+function formatRemainingMs(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
+function Countdown({ expiresAt }: { expiresAt?: number }) {
+  const { t } = useTranslation('chat')
+  const [remaining, setRemaining] = useState(() =>
+    expiresAt ? Math.max(0, expiresAt - Date.now()) : 0,
+  )
+
+  useEffect(() => {
+    if (!expiresAt) return
+    setRemaining(Math.max(0, expiresAt - Date.now()))
+    const interval = setInterval(() => {
+      setRemaining(Math.max(0, expiresAt - Date.now()))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [expiresAt])
+
+  if (!expiresAt) return null
+  return (
+    <span
+      className="text-xs text-text-tertiary tabular-nums"
+      aria-label={t('approval.timeout', { time: formatRemainingMs(remaining) })}
+    >
+      {t('approval.timeout', { time: formatRemainingMs(remaining) })}
+    </span>
+  )
+}
+
 interface PendingApproval {
   requestId: string
   toolName: string
@@ -36,11 +69,13 @@ interface PendingApproval {
   title?: string
   description?: string
   suggestions?: PermissionUpdate[]
+  expiresAt?: number
 }
 
 interface PendingQuestion {
   requestId: string
   questions: QuestionPayload[]
+  expiresAt?: number
 }
 
 type PendingItem = PendingApproval | PendingQuestion
@@ -120,6 +155,9 @@ export default function ApprovalSurface({
             )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {pendingItem.expiresAt && (
+              <Countdown expiresAt={pendingItem.expiresAt} />
+            )}
             {positionLabel && (
               <span className="text-xs text-text-tertiary">
                 {positionLabel}

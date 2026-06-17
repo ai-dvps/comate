@@ -49,6 +49,8 @@ export class SessionRuntime {
       description?: string;
       suggestions?: PermissionUpdate[];
       questions?: QuestionPayload[];
+      expiresAt?: number;
+      timer?: NodeJS.Timeout;
     }
   >();
   private closed = false;
@@ -218,24 +220,31 @@ export class SessionRuntime {
 
       if (toolName === 'AskUserQuestion') {
         const questions = this.parseAskUserQuestion(input);
-        diagLog(`[Runtime ${this.sessionId}] emitPendingQuestion requestId=${requestId} questions=${questions.length}`);
-        this.emitter.emitPendingQuestion(requestId, questions);
+        const timeout = this.parseTimeout(input);
+        const timerInfo = timeout ? this.startTimeoutTimer(requestId, timeout) : undefined;
+        diagLog(`[Runtime ${this.sessionId}] emitPendingQuestion requestId=${requestId} questions=${questions.length} timeout=${timeout ?? 'none'}`);
+        this.emitter.emitPendingQuestion(requestId, questions, timerInfo?.expiresAt);
         return new Promise<PermissionResult>((resolve) => {
           this.pendingApprovals.set(requestId, {
             resolve,
             input,
             type: 'question',
             questions,
+            ...(timerInfo && { expiresAt: timerInfo.expiresAt, timer: timerInfo.timer }),
           });
 
           if (options.signal) {
             const onAbort = () => {
-              this.pendingApprovals.delete(requestId);
-              this.emitter.emitApprovalResolved(requestId);
-              resolve({
-                behavior: 'deny',
-                message: `Tool approval aborted by SDK: ${requestId}`,
-              });
+              const pending = this.pendingApprovals.get(requestId);
+              if (pending) {
+                this.clearPendingTimer(pending);
+                this.pendingApprovals.delete(requestId);
+                this.emitter.emitApprovalResolved(requestId);
+                resolve({
+                  behavior: 'deny',
+                  message: `Tool approval aborted by SDK: ${requestId}`,
+                });
+              }
             };
             options.signal.addEventListener('abort', onAbort, { once: true });
           }
@@ -256,6 +265,8 @@ export class SessionRuntime {
       }
 
       diagLog(`[Runtime ${this.sessionId}] emitPendingApproval requestId=${requestId} toolName=${toolName}`);
+      const timeout = this.parseTimeout(input);
+      const timerInfo = timeout ? this.startTimeoutTimer(requestId, timeout) : undefined;
       this.emitter.emitPendingApproval(
         requestId,
         toolName,
@@ -264,6 +275,7 @@ export class SessionRuntime {
         options.title,
         options.description,
         options.suggestions,
+        timerInfo?.expiresAt,
       );
 
       return new Promise<PermissionResult>((resolve) => {
@@ -276,16 +288,21 @@ export class SessionRuntime {
           title: options.title,
           description: options.description,
           suggestions: options.suggestions,
+          ...(timerInfo && { expiresAt: timerInfo.expiresAt, timer: timerInfo.timer }),
         });
 
         if (options.signal) {
           const onAbort = () => {
-            this.pendingApprovals.delete(requestId);
-            this.emitter.emitApprovalResolved(requestId);
-            resolve({
-              behavior: 'deny',
-              message: `Tool approval aborted by SDK: ${requestId}`,
-            });
+            const pending = this.pendingApprovals.get(requestId);
+            if (pending) {
+              this.clearPendingTimer(pending);
+              this.pendingApprovals.delete(requestId);
+              this.emitter.emitApprovalResolved(requestId);
+              resolve({
+                behavior: 'deny',
+                message: `Tool approval aborted by SDK: ${requestId}`,
+              });
+            }
           };
           options.signal.addEventListener('abort', onAbort, { once: true });
         }
@@ -322,6 +339,39 @@ export class SessionRuntime {
     });
   }
 
+  private parseTimeout(input: Record<string, unknown>): number | undefined {
+    const timeout = input.timeout;
+    if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
+      return undefined;
+    }
+    return timeout;
+  }
+
+  private startTimeoutTimer(requestId: string, timeout: number): { expiresAt: number; timer: NodeJS.Timeout } {
+    const expiresAt = Date.now() + timeout;
+    const timer = setTimeout(() => this.timeoutDeny(requestId), timeout);
+    return { expiresAt, timer };
+  }
+
+  private timeoutDeny(requestId: string): void {
+    const pending = this.pendingApprovals.get(requestId);
+    if (!pending) return;
+    diagLog(`[Runtime ${this.sessionId}] timeout deny requestId=${requestId}`);
+    this.pendingApprovals.delete(requestId);
+    this.emitter.emitApprovalResolved(requestId);
+    pending.resolve({
+      behavior: 'deny',
+      message: 'Request timed out waiting for user response.',
+    });
+  }
+
+  private clearPendingTimer(pending: { timer?: NodeJS.Timeout }): void {
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      pending.timer = undefined;
+    }
+  }
+
   subscribe(res: Response, lastEventId?: string): void {
     diagLog(`[Runtime ${this.sessionId}] subscribe (pending=${this.pendingApprovals.size}, lastEventId=${lastEventId ?? 'none'}, currentMessageStartId=${this.currentMessageStartId ?? 'none'})`);
     this.activeRes = res;
@@ -339,7 +389,7 @@ export class SessionRuntime {
     // always see the current state even if they missed the original event.
     for (const [requestId, pending] of this.pendingApprovals) {
       if (pending.type === 'question') {
-        this.emitter.emitPendingQuestion(requestId, pending.questions ?? []);
+        this.emitter.emitPendingQuestion(requestId, pending.questions ?? [], pending.expiresAt);
       } else {
         this.emitter.emitPendingApproval(
           requestId,
@@ -349,6 +399,7 @@ export class SessionRuntime {
           pending.title,
           pending.description,
           pending.suggestions,
+          pending.expiresAt,
         );
       }
     }
@@ -407,6 +458,7 @@ export class SessionRuntime {
   resolveApproval(requestId: string, result: PermissionResult): void {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) return;
+    this.clearPendingTimer(pending);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
 
@@ -472,6 +524,7 @@ export class SessionRuntime {
     this.unsubscribe();
     // Resolve any dangling pending approvals so their Promises don't leak
     for (const [requestId, pending] of this.pendingApprovals) {
+      this.clearPendingTimer(pending);
       pending.resolve({
         behavior: 'deny',
         message: `Session closed while waiting for approval: ${requestId}`,

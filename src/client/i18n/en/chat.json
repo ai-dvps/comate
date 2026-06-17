@@ -37,7 +37,8 @@
     "next": "Next",
     "confirm": "Confirm",
     "other": "Other",
-    "typeAnswer": "Type your answer..."
+    "typeAnswer": "Type your answer...",
+    "timeout": "Timeout in {{time}}"
   },
   "sessionNamePlaceholder": "Session name",
   "create": "Create",

@@ -231,6 +231,7 @@ export class SseEmitter {
     title?: string,
     description?: string,
     suggestions?: PermissionUpdate[],
+    expiresAt?: number,
   ): void {
     const inputSummary = this.summarizeInput(input);
     this.send({
@@ -243,11 +244,12 @@ export class SseEmitter {
       title,
       description,
       suggestions,
+      ...(expiresAt !== undefined && { expiresAt }),
     });
   }
 
-  emitPendingQuestion(requestId: string, questions: QuestionPayload[]): void {
-    this.send({ type: 'pending_question', requestId, questions });
+  emitPendingQuestion(requestId: string, questions: QuestionPayload[], expiresAt?: number): void {
+    this.send({ type: 'pending_question', requestId, questions, ...(expiresAt !== undefined && { expiresAt }) });
   }
 
   emitApprovalResolved(requestId: string): void {
