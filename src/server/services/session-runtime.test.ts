@@ -339,7 +339,7 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
   });
 
   it('ignores missing and invalid timeouts', async () => {
-    const events: Array<{ type: string; expiresAt?: number }> = [];
+    const events: Array<{ requestId: string; type: string; expiresAt?: number }> = [];
     runtime = SessionRuntime.open(
       's1',
       'ws1',
@@ -348,7 +348,11 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
       createMockSdkClient(),
       (_id, event) => {
         if (event.type === 'pending_approval') {
-          events.push({ type: event.type, expiresAt: (event as { expiresAt?: number }).expiresAt });
+          events.push({
+            requestId: (event as { requestId: string }).requestId,
+            type: event.type,
+            expiresAt: (event as { expiresAt?: number }).expiresAt,
+          });
         }
       },
     );
@@ -363,8 +367,9 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
         toolUseID,
       });
       await new Promise((r) => setTimeout(r, 10));
-      const event = events.find((e) => e.expiresAt === undefined);
-      assert.ok(event, `expected no expiresAt for timeout=${timeout}`);
+      const event = events.find((e) => e.requestId === toolUseID);
+      assert.ok(event, `expected pending event for timeout=${timeout}`);
+      assert.strictEqual(event.expiresAt, undefined, `expected no expiresAt for timeout=${timeout}`);
       runtime!.resolveApproval(toolUseID, { behavior: 'deny', message: 'done' });
       await promise;
     }
