@@ -136,8 +136,9 @@ export type SseEvent =
       title?: string
       description?: string
       suggestions?: PermissionUpdate[]
+      expiresAt?: number
     }
-  | { type: 'pending_question'; requestId: string; questions: QuestionPayload[] }
+  | { type: 'pending_question'; requestId: string; questions: QuestionPayload[]; expiresAt?: number }
   | { type: 'approval_resolved'; requestId: string }
   | { type: 'auto_approval'; toolUseId: string; toolName: string; mode: 'auto' | 'readonly' }
   | { type: 'interrupted'; messageId: string | null }
