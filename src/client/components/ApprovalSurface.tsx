@@ -155,7 +155,7 @@ export default function ApprovalSurface({
             )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {pendingItem.expiresAt && (
+            {pendingItem.expiresAt != null && (
               <Countdown expiresAt={pendingItem.expiresAt} />
             )}
             {positionLabel && (
