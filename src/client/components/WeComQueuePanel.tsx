@@ -132,7 +132,7 @@ export default function WeComQueuePanel({ workspaceId, botEnabled }: WeComQueueP
             <button
               type="button"
               className={cn(
-                'flex-1 inline-flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-border bg-bg text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 active:scale-[0.97]',
+                'flex-1 inline-flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-border bg-bg text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
                 filterOpen && 'bg-surface-active border-accent/40 text-text-primary',
               )}
             >
