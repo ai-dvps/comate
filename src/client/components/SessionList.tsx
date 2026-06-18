@@ -10,7 +10,6 @@ import { Plus, Puzzle, BookOpen, Search, X, RefreshCw } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
-import { Button } from './ui/button'
 import { cn } from './ui/utils'
 import SessionStatusFilterControl from './SessionStatusFilterControl'
 import { useToastStore } from '../stores/toast-store'
@@ -173,9 +172,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* New Session Button + Search */}
+      {/* New Session Button */}
       <div className="p-3 space-y-2">
-        <div className="flex gap-2 items-start">
         <div className="flex-1 min-w-0">
         {showCreate ? (
           <div className="space-y-2">
@@ -223,18 +221,8 @@ export default function SessionList({ workspaceId }: SessionListProps) {
           </button>
         )}
         </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={handleRefresh}
-          disabled={isLoading}
-          aria-label={t('refreshSessions')}
-        >
-          <RefreshCw className={cn('w-3.5 h-3.5', isLoading && 'animate-spin')} />
-        </Button>
-        </div>
 
-        {/* Search + Status Filter */}
+        {/* Search + Refresh + Status Filter */}
         <div className="flex gap-2 items-center" role="search">
           <div className="relative flex-1 min-w-0">
             <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
@@ -263,6 +251,17 @@ export default function SessionList({ workspaceId }: SessionListProps) {
               </button>
             )}
           </div>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isLoading}
+            aria-label={t('refreshSessions')}
+            className={cn(
+              'inline-flex items-center justify-center p-2 rounded-lg border border-border bg-bg text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.97]',
+            )}
+          >
+            <RefreshCw className={cn('w-3.5 h-3.5', isLoading && 'animate-spin')} />
+          </button>
           <SessionStatusFilterControl
             value={statusFilter}
             onChange={setStatusFilter}
