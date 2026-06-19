@@ -6,6 +6,7 @@ import {
   getSessionMessages,
   getSubagentMessages,
   renameSession,
+  forkSession,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   Query,
@@ -21,6 +22,8 @@ import type {
   SessionMutationOptions,
   SDKSessionInfo,
   SessionMessage,
+  ForkSessionOptions,
+  ForkSessionResult,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   InitializationResponse,
@@ -105,6 +108,13 @@ export class SdkClient {
     return renameSession(sessionId, title, options);
   }
 
+  async forkSession(
+    sessionId: string,
+    options?: ForkSessionOptions,
+  ): Promise<ForkSessionResult> {
+    return forkSession(sessionId, options);
+  }
+
   async fetchInitialization(options: Options): Promise<InitializationResponse> {
     const empty: AsyncIterable<SDKUserMessage> = {
       [Symbol.asyncIterator]() {
@@ -148,6 +158,8 @@ export {
   type GetSessionMessagesOptions,
   type GetSubagentMessagesOptions,
   type SessionMutationOptions,
+  type ForkSessionOptions,
+  type ForkSessionResult,
   type InitializationResponse,
   type SlashCommandDto,
 };

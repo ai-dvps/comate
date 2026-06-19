@@ -301,6 +301,9 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       return [];
     }
     override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
   }
 
   class TestChatService extends ChatService {
@@ -436,6 +439,10 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
   const originalGet = workspaceStore.get.bind(workspaceStore);
   const originalGetLocalSession = workspaceStore.getLocalSession.bind(workspaceStore);
   const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+  const originalGetWecomUserIdBySession = workspaceStore.getWecomUserIdBySession.bind(workspaceStore);
+  const originalGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
+  const originalListWecomWorkspaceUsers = workspaceStore.listWecomWorkspaceUsers.bind(workspaceStore);
+  const originalListWecomUserMappings = workspaceStore.listWecomUserMappings.bind(workspaceStore);
 
   class MockSdkClient extends SdkClient {
     override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
@@ -459,6 +466,9 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       return [];
     }
     override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
   }
 
   class TestChatService extends ChatService {
@@ -478,6 +488,10 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     workspaceStore.get = originalGet;
     workspaceStore.getLocalSession = originalGetLocalSession;
     workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+    workspaceStore.getWecomUserIdBySession = originalGetWecomUserIdBySession;
+    workspaceStore.getWecomUserMapping = originalGetWecomUserMapping;
+    workspaceStore.listWecomWorkspaceUsers = originalListWecomWorkspaceUsers;
+    workspaceStore.listWecomUserMappings = originalListWecomUserMappings;
   });
 
   function createMockRuntime(): SessionRuntime {
@@ -507,6 +521,16 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     workspaceStore.get = async () => mockWorkspace;
     workspaceStore.getLocalSession = () => createMockSession('s1');
     workspaceStore.getDefaultProvider = () => createMockProvider();
+    workspaceStore.getWecomUserIdBySession = () => 'wecom-user-1';
+    workspaceStore.getWecomUserMapping = () => 'user1';
+    workspaceStore.listWecomWorkspaceUsers = () => [];
+    workspaceStore.listWecomUserMappings = () => [];
+    if (!mockWorkspace.settings.wecomBotIsolation?.bashWhitelist) {
+      mockWorkspace.settings.wecomBotIsolation = {
+        ...(mockWorkspace.settings.wecomBotIsolation ?? {}),
+        bashWhitelist: [{ command: 'ls', args: [] }],
+      };
+    }
 
     let capturedOptions: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {
@@ -559,7 +583,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    const result = await canUseTool('Read', { file_path: '/tmp/x' });
+    const result = await canUseTool('Read', { file_path: '/tmp/test/user1/x' });
     assert.strictEqual(result.behavior, 'allow');
   });
 
@@ -603,7 +627,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
 
     const editResult = await canUseTool('Edit', { file_path: '/tmp/x' });
     assert.strictEqual(editResult.behavior, 'deny');
-    const writeResult = await canUseTool('Write', { file_path: '/tmp/x' });
+    const writeResult = await canUseTool('Write', { file_path: '/tmp/test/user1/x' });
     assert.strictEqual(writeResult.behavior, 'allow');
   });
 
@@ -633,9 +657,9 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       // No wecomToolPermissions — grandfathered
     });
 
-    const bashResult = await canUseTool('Bash', {});
+    const bashResult = await canUseTool('Bash', { command: 'ls' });
     assert.strictEqual(bashResult.behavior, 'allow');
-    const writeResult = await canUseTool('Write', {});
+    const writeResult = await canUseTool('Write', { file_path: '/tmp/test/user1/x' });
     assert.strictEqual(writeResult.behavior, 'allow');
   });
 
@@ -840,5 +864,137 @@ describe('chat-service loadMessages subagents', { concurrency: false }, () => {
     assert.strictEqual(result.subagents.length, 1);
     assert.strictEqual(result.subagents[0].parentToolUseId, 'tool-456');
     assert.strictEqual(result.subagents[0].description, 'Fallback agent');
+  });
+});
+
+describe('chat-service forkSession', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+
+  class TestChatService extends ChatService {
+    constructor(sdkClient?: SdkClient) {
+      super(sdkClient ?? new SdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  function setupStoreMocks() {
+    workspaceStore.get = async () => createMockWorkspace('ws-1');
+  }
+
+  beforeEach(() => {
+    setupStoreMocks();
+  });
+
+  afterEach(async () => {
+    await service?.closeAllRuntimes();
+    workspaceStore.get = originalGet;
+  });
+
+  it('forks a session and returns the new session id', async () => {
+    class ForkMockSdkClient extends SdkClient {
+      override async forkSession(
+        sessionId: string,
+        options?: { dir?: string },
+      ): Promise<{ sessionId: string }> {
+        assert.strictEqual(sessionId, 's1');
+        assert.strictEqual(options?.dir, '/tmp/test');
+        return { sessionId: 'fork-s1' };
+      }
+    }
+
+    service = new TestChatService(new ForkMockSdkClient());
+    const result = await service.forkSession('s1', 'ws-1');
+    assert.strictEqual(result.sessionId, 'fork-s1');
+  });
+
+  it('throws ChatError when workspace is not found', async () => {
+    workspaceStore.get = async () => undefined as unknown as Workspace;
+    service = new TestChatService();
+    await assert.rejects(
+      () => service.forkSession('s1', 'ws-1'),
+      (err: Error) => err instanceof Error && err.message === 'Workspace not found',
+    );
+  });
+});
+
+describe('chat-service getContextUsage', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+
+  class TestChatService extends ChatService {
+    constructor() {
+      super(new SdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  function createMockRuntimeWithUsage(
+    usage: { totalTokens: number; maxTokens: number; percentage: number; categories: { name: string; tokens: number }[] },
+  ): SessionRuntime {
+    return {
+      isClosed: () => false,
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      getContextUsage: async () => usage as unknown as import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse,
+      close: () => Promise.resolve(),
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: () => {},
+      resolveApproval: () => {},
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+    } as unknown as SessionRuntime;
+  }
+
+  beforeEach(() => {
+    workspaceStore.get = async () => createMockWorkspace('ws-1');
+    service = new TestChatService();
+  });
+
+  afterEach(async () => {
+    await service?.closeAllRuntimes();
+    workspaceStore.get = originalGet;
+  });
+
+  it('returns context usage for an active runtime', async () => {
+    const usage = {
+      totalTokens: 1000,
+      maxTokens: 200000,
+      percentage: 0.5,
+      categories: [{ name: 'Messages', tokens: 1000 }],
+    };
+    const runtime = createMockRuntimeWithUsage(usage);
+    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.set('s1', runtime);
+
+    const result = await service.getContextUsage('s1', 'ws-1');
+    assert.strictEqual(result.totalTokens, 1000);
+    assert.strictEqual(result.maxTokens, 200000);
+    assert.strictEqual(result.percentage, 0.5);
+  });
+
+  it('throws ChatError when no active runtime exists', async () => {
+    await assert.rejects(
+      () => service.getContextUsage('s1', 'ws-1'),
+      (err: Error) => err instanceof Error && err.message === 'Session is not active',
+    );
+  });
+
+  it('throws ChatError when runtime belongs to a different workspace', async () => {
+    const runtime = createMockRuntimeWithUsage({
+      totalTokens: 100,
+      maxTokens: 200000,
+      percentage: 0.1,
+      categories: [],
+    });
+    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.set('s1', runtime);
+
+    await assert.rejects(
+      () => service.getContextUsage('s1', 'ws-2'),
+      (err: Error) => err instanceof Error && err.message === 'Session is not active',
+    );
   });
 });

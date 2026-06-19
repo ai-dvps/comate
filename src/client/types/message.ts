@@ -23,6 +23,10 @@ export type MessagePart =
       input: unknown
       inputJsonStream?: string
       state: 'streaming' | 'complete'
+      meta?: {
+        displayName?: string
+        iconUrl?: string
+      }
     }
   | {
       type: 'tool_result'
@@ -44,6 +48,7 @@ export interface ChatMessage {
   timestamp: number
   isStreaming?: boolean
   isCompactBoundary?: boolean
+  subType?: string
 }
 
 /**
@@ -109,7 +114,7 @@ export interface SubagentState {
  * U4 owns the emitter rewrite; U5 owns the consumer.
  */
 export type SseEvent =
-  | { type: 'system_init'; model: string; tools: string[]; sessionId: string }
+  | { type: 'system_init'; model: string; tools: string[]; sessionId: string; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_start'; messageId: string }
   | { type: 'text_delta'; messageId: string; partIndex: number; text: string }
   | {
@@ -120,6 +125,14 @@ export type SseEvent =
       toolName: string
     }
   | { type: 'tool_use_done'; toolUseId: string; input: unknown }
+  | {
+      type: 'tool_use_meta'
+      toolUseId: string
+      meta: {
+        displayName?: string
+        iconUrl?: string
+      }
+    }
   | {
       type: 'tool_input_delta'
       messageId: string
@@ -145,8 +158,37 @@ export type SseEvent =
       errors?: unknown
       usage?: unknown
       modelUsage?: unknown
+      stopReason?: string | null
+      terminalReason?: string
+      origin?: string
     }
   | { type: 'error'; message: string }
+  | {
+      type: 'rate_limit'
+      errorCode?: string
+      canUserPurchaseCredits?: boolean
+      hasChargeableSavedPaymentMethod?: boolean
+      retryAfter?: number
+      rateLimitType?: string
+    }
+  | {
+      type: 'model_fallback'
+      trigger: string
+      direction: string
+      originalModel: string
+      fallbackModel: string
+      category?: string | null
+      explanation?: string | null
+      retractedMessageIds?: string[]
+      text?: string
+    }
+  | {
+      type: 'api_retry'
+      attempt: number
+      maxRetries: number
+      retryDelayMs: number
+      errorStatus: number | null
+    }
   | { type: 'done' }
   | { type: 'subscription_ack'; serverNonce: string; sessionId: string }
   | {
@@ -160,6 +202,7 @@ export type SseEvent =
       description?: string
       suggestions?: PermissionUpdate[]
       expiresAt?: number
+      denialReason?: 'safetyCheck' | 'asyncAgent' | string
     }
   | { type: 'pending_question'; requestId: string; questions: QuestionPayload[]; expiresAt?: number }
   | { type: 'approval_resolved'; requestId: string }

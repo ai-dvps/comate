@@ -56,6 +56,13 @@
   "failedToDeleteWorkspace": "Failed to delete workspace",
   "streamError": "Stream error",
   "serverRestarted": "Server was restarted. Background work may have been lost.",
+  "rateLimit": {
+    "throughput": "Rate limit reached. Please wait a moment and try again.",
+    "creditsRequired": "Credits required to continue.",
+    "creditsRequiredCanPurchase": "Credits required. Purchase credits to continue.",
+    "creditsRequiredAddPayment": "Credits required. Add a payment method to purchase credits."
+  },
+  "modelFallback": "Model fallback: {{originalModel}} → {{fallbackModel}}",
   "failedToSend": "Failed to send",
   "networkError": "Network error",
   "subscriptionFailed": "Subscription failed",
@@ -66,6 +73,7 @@
   "failedToFetchSessions": "Failed to fetch sessions",
   "failedToCreateSession": "Failed to create session",
   "failedToRenameSession": "Failed to rename session",
+  "failedToForkSession": "Failed to fork session",
   "failedToLoadMessages": "Failed to load messages",
   "failedToFetchOlderMessages": "Failed to fetch older messages",
   "failedToFetchCommands": "Failed to fetch commands",

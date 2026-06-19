@@ -1,6 +1,7 @@
 import WorkspaceFolderPath from './WorkspaceFolderPath'
 import WorkspaceGitBranch from './WorkspaceGitBranch'
 import SessionTokenUsage from './SessionTokenUsage'
+import ContextUsagePanel from './ContextUsagePanel'
 
 interface StatusBarProps {
   sessionId: string
@@ -26,6 +27,7 @@ export default function StatusBar({
           workspaceId={workspaceId}
           modelUsage={modelUsage}
         />
+        <ContextUsagePanel sessionId={sessionId} workspaceId={workspaceId} />
       </div>
     </div>
   )

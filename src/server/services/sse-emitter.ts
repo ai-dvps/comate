@@ -1,5 +1,5 @@
 import type { Response } from 'express';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sdk';
 
 import type { SseEvent, QuestionPayload } from '../types/message.js';
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
@@ -89,11 +89,24 @@ export class SseEmitter {
     switch (msg.type) {
       case 'system': {
         if (msg.subtype === 'init') {
+          const initMsg = msg as Record<string, unknown>;
+          const mcpServers = Array.isArray(initMsg.mcp_servers)
+            ? initMsg.mcp_servers
+                .map((s) => {
+                  const srv = s as Record<string, unknown>;
+                  return {
+                    name: typeof srv.name === 'string' ? srv.name : '',
+                    status: typeof srv.status === 'string' ? srv.status : '',
+                  };
+                })
+                .filter((s) => s.name)
+            : undefined;
           this.send({
             type: 'system_init',
             model: msg.model,
             tools: msg.tools,
             sessionId: msg.session_id,
+            ...(mcpServers && { mcpServers }),
           });
           return;
         }
@@ -167,6 +180,40 @@ export class SseEmitter {
           return;
         }
 
+        if (msg.subtype === 'model_refusal_fallback') {
+          const m = msg as unknown as Record<string, unknown>;
+          const category = m.api_refusal_category;
+          const explanation = m.api_refusal_explanation;
+          this.send({
+            type: 'model_fallback',
+            trigger: typeof m.trigger === 'string' ? m.trigger : '',
+            direction: typeof m.direction === 'string' ? m.direction : '',
+            originalModel: typeof m.original_model === 'string' ? m.original_model : '',
+            fallbackModel: typeof m.fallback_model === 'string' ? m.fallback_model : '',
+            ...(category === null || typeof category === 'string' ? { category } : {}),
+            ...(explanation === null || typeof explanation === 'string' ? { explanation } : {}),
+            ...(Array.isArray(m.retracted_message_uuids) && { retractedMessageIds: m.retracted_message_uuids }),
+            ...(typeof m.content === 'string' && { text: m.content }),
+          });
+          return;
+        }
+
+        if (msg.subtype === 'api_retry') {
+          const m = msg as unknown as Record<string, unknown>;
+          const attempt = typeof m.attempt === 'number' ? m.attempt : 0;
+          const maxRetries = typeof m.max_retries === 'number' ? m.max_retries : 0;
+          const retryDelayMs = typeof m.retry_delay_ms === 'number' ? m.retry_delay_ms : 0;
+          const errorStatus = typeof m.error_status === 'number' ? m.error_status : null;
+          this.send({
+            type: 'api_retry',
+            attempt,
+            maxRetries,
+            retryDelayMs,
+            errorStatus,
+          });
+          return;
+        }
+
         return;
       }
 
@@ -181,6 +228,15 @@ export class SseEmitter {
       case 'user':
         this.handleUser(msg);
         return;
+
+      case 'rate_limit_event': {
+        const event = msg as unknown as Record<string, unknown>;
+        const info = event.rate_limit_info as SDKRateLimitInfo | undefined;
+        if (info) {
+          this.emitRateLimit(info);
+        }
+        return;
+      }
 
       case 'result':
         if (
@@ -201,6 +257,18 @@ export class SseEmitter {
           errors: 'errors' in msg ? (msg as { errors?: unknown }).errors : undefined,
           usage: (msg as Record<string, unknown>).usage,
           modelUsage: (msg as Record<string, unknown>).modelUsage,
+          stopReason: (msg as Record<string, unknown>).stop_reason as
+            | string
+            | null
+            | undefined,
+          terminalReason:
+            typeof (msg as Record<string, unknown>).terminal_reason === 'string'
+              ? ((msg as Record<string, unknown>).terminal_reason as string)
+              : undefined,
+          origin:
+            typeof (msg as Record<string, unknown>).origin === 'string'
+              ? ((msg as Record<string, unknown>).origin as string)
+              : undefined,
         });
         return;
 
@@ -232,6 +300,7 @@ export class SseEmitter {
     description?: string,
     suggestions?: PermissionUpdate[],
     expiresAt?: number,
+    denialReason?: string,
   ): void {
     const inputSummary = this.summarizeInput(input);
     this.send({
@@ -245,6 +314,7 @@ export class SseEmitter {
       description,
       suggestions,
       ...(expiresAt !== undefined && { expiresAt }),
+      ...(denialReason !== undefined && { denialReason }),
     });
   }
 
@@ -266,6 +336,35 @@ export class SseEmitter {
 
   emitErrorNote(text: string): void {
     this.send({ type: 'error_note', text });
+  }
+
+  emitRateLimit(info: SDKRateLimitInfo): void {
+    const retryAfter = typeof info.resetsAt === 'number' ? info.resetsAt : undefined;
+    this.send({
+      type: 'rate_limit',
+      ...(info.errorCode && { errorCode: info.errorCode }),
+      ...(typeof info.canUserPurchaseCredits === 'boolean' && { canUserPurchaseCredits: info.canUserPurchaseCredits }),
+      ...(typeof info.hasChargeableSavedPaymentMethod === 'boolean' && { hasChargeableSavedPaymentMethod: info.hasChargeableSavedPaymentMethod }),
+      ...(retryAfter !== undefined && { retryAfter }),
+      ...(info.rateLimitType && { rateLimitType: info.rateLimitType }),
+    });
+    this.emitErrorNote(this.rateLimitMessage(info));
+  }
+
+  private rateLimitMessage(info: SDKRateLimitInfo): string {
+    if (info.errorCode === 'credits_required') {
+      if (info.hasChargeableSavedPaymentMethod) {
+        return 'Credits required. Purchase credits to continue.';
+      }
+      if (info.canUserPurchaseCredits) {
+        return 'Credits required. Add a payment method to purchase credits.';
+      }
+      return 'Credits required to continue.';
+    }
+    if (info.status === 'rejected') {
+      return 'Rate limit reached. Please wait a moment and try again.';
+    }
+    return 'Rate limit updated.';
   }
 
   emitServerRestarted(serverNonce: string): void {
@@ -384,6 +483,7 @@ export class SseEmitter {
             toolName,
           });
         }
+        this.emitToolMeta(toolUseId, this.extractToolMeta(block));
         if (toolName === 'Agent' && toolUseId) {
           this.startSubagent(toolUseId);
         }
@@ -502,12 +602,14 @@ export class SseEmitter {
     this.ensureAssistantStart();
 
     if (Array.isArray(content)) {
+      const messageMeta = ((msg.message as unknown) as Record<string, unknown>).tool_use_meta;
+      const metaArray = Array.isArray(messageMeta) ? messageMeta : undefined;
       content.forEach((block, index) => {
         if (this.seenStreamPartIndexes.has(index)) {
-          this.closeStreamedBlock(block, index);
+          this.closeStreamedBlock(block, index, metaArray?.[index] as Record<string, unknown> | undefined);
           return;
         }
-        this.emitDedupRecovery(block, this.nextPartIndex++);
+        this.emitDedupRecovery(block, this.nextPartIndex++, metaArray?.[index] as Record<string, unknown> | undefined);
       });
     }
 
@@ -520,7 +622,7 @@ export class SseEmitter {
     // SDKMessage at end of turn.
   }
 
-  private emitDedupRecovery(block: unknown, index: number): void {
+  private emitDedupRecovery(block: unknown, index: number, topLevelMeta?: Record<string, unknown>): void {
     if (!block || typeof block !== 'object' || !this.currentMessageId) return;
     const b = block as Record<string, unknown>;
     const blockType = b.type;
@@ -546,6 +648,7 @@ export class SseEmitter {
         toolUseId,
         toolName,
       });
+      this.emitToolMeta(toolUseId, this.extractToolMeta(topLevelMeta ?? b));
       this.send({ type: 'tool_use_done', toolUseId, input });
       if (toolName === 'Agent' && toolUseId) {
         this.startSubagent(toolUseId);
@@ -573,7 +676,7 @@ export class SseEmitter {
     }
   }
 
-  private closeStreamedBlock(block: unknown, index: number): void {
+  private closeStreamedBlock(block: unknown, index: number, topLevelMeta?: Record<string, unknown>): void {
     if (!block || typeof block !== 'object' || !this.currentMessageId) return;
     const state = this.blockStates.get(index);
     if (!state) return;
@@ -599,6 +702,7 @@ export class SseEmitter {
         toolUseId: state.toolUseId,
         input,
       });
+      this.emitToolMeta(state.toolUseId, this.extractToolMeta(topLevelMeta ?? b));
       this.blockStates.delete(index);
     }
     // text blocks need no synthesized done event in our protocol.
@@ -646,6 +750,26 @@ export class SseEmitter {
     } catch {
       return { _raw: buffer };
     }
+  }
+
+  private extractToolMeta(raw: unknown): { displayName?: string; iconUrl?: string } | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const obj = raw as Record<string, unknown>;
+    // `raw` may be the sidecar object itself (top-level array element) or a
+    // content block that carries the sidecar under a nested key.
+    const candidate =
+      (obj.tool_use_meta ?? obj._meta ?? obj.meta) || obj;
+    if (!candidate || typeof candidate !== 'object') return undefined;
+    const meta = candidate as Record<string, unknown>;
+    const displayName = typeof meta.display_name === 'string' ? meta.display_name : undefined;
+    const iconUrl = typeof meta.icon_url === 'string' ? meta.icon_url : undefined;
+    if (!displayName && !iconUrl) return undefined;
+    return { displayName, iconUrl };
+  }
+
+  private emitToolMeta(toolUseId: string, meta: { displayName?: string; iconUrl?: string } | undefined): void {
+    if (!meta) return;
+    this.send({ type: 'tool_use_meta', toolUseId, meta });
   }
 }
 

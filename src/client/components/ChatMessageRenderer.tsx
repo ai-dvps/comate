@@ -39,6 +39,10 @@ export type RenderablePart =
       input: unknown
       inputJsonStream?: string
       isStreaming: boolean
+      meta?: {
+        displayName?: string
+        iconUrl?: string
+      }
     }
   | {
       type: 'tool_result'
@@ -50,6 +54,7 @@ export type RenderablePart =
 export interface RenderableMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
+  subType?: string
   parts: RenderablePart[]
 }
 
@@ -61,6 +66,7 @@ export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
   return {
     id: msg.id,
     role: msg.role,
+    subType: msg.subType,
     parts: msg.parts.map((part): RenderablePart | null => {
       if (!part) return null
       switch (part.type) {
@@ -80,6 +86,7 @@ export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
             input: part.input,
             inputJsonStream: part.inputJsonStream,
             isStreaming: part.state === 'streaming',
+            meta: part.meta,
           }
         case 'tool_result':
           return {
@@ -283,9 +290,21 @@ export default function ChatMessageRenderer({
 
   if (message.role === 'system') {
     // Compact boundary is handled externally; generic system messages
-    // are rendered as a simple error-style banner.
+    // are rendered as a simple error-style banner. API retry notices are
+    // rendered as subtle inline text instead.
     const text = message.parts.find((p) => p.type === 'text')?.text ?? ''
     const ranges = getPartSearchRanges(searchMatches, currentMatch, message.id, 0)
+    if (message.subType === 'api_retry') {
+      return (
+        <div className="px-3 py-1 text-xs text-text-muted/70">
+          {ranges.length > 0 ? (
+            <HighlightText text={text} ranges={ranges} />
+          ) : (
+            text
+          )}
+        </div>
+      )
+    }
     return (
       <div
         className={cn(
@@ -398,6 +417,7 @@ export default function ChatMessageRenderer({
                   summary={summary}
                   type={`tool-${part.toolName}`}
                   autoApproved={autoApproved}
+                  meta={part.meta}
                 />
                 <ToolContent
                   forceExpanded={isCurrentInPart}
