@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { SessionRuntime } from './session-runtime.js';
 import type { SdkClient } from './sdk-client.js';
 import type { Query, SDKMessage, Options } from '@anthropic-ai/claude-agent-sdk';
+import type { SseEvent } from '../types/message.js';
 
 describe('session-runtime activity callback', { concurrency: false }, () => {
   let activityCalls: number;
@@ -502,5 +503,145 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
 
     runtime!.resolveApproval('tu-replay', { behavior: 'allow' });
     await promise;
+  });
+});
+
+describe('session-runtime reconnect warning', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(messages: SDKMessage[] = []): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+
+    const messageGen = (async function* () {
+      for (const msg of messages) {
+        yield msg;
+      }
+    })();
+
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: messageGen,
+      }),
+    } as unknown as SdkClient;
+  }
+
+  function createMockResponse(): import('express').Response {
+    return {
+      write: () => true,
+    } as unknown as import('express').Response;
+  }
+
+  function createCapturingResponse() {
+    const writes: string[] = [];
+    const res = {
+      write: (chunk: string) => {
+        writes.push(chunk);
+        return true;
+      },
+    } as unknown as import('express').Response;
+    return { res, writes };
+  }
+
+  function getRingBuffer(runtime: SessionRuntime) {
+    return (runtime as unknown as { ringBuffer: Array<{ id: string; event: SseEvent }> }).ringBuffer;
+  }
+
+  it('does not emit missed-output warning when ring buffer is empty', () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      (_id, event) => {
+        events.push(event);
+      },
+    );
+    runtime.subscribe(createMockResponse(), 'stale-event-id');
+    assert.strictEqual(events.filter((e) => e.type === 'error_note').length, 0);
+  });
+
+  it('emits missed-output warning and replays buffered events when lastEventId is stale', () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      (_id, event) => {
+        events.push(event);
+      },
+    );
+    const ringBuffer = getRingBuffer(runtime);
+    ringBuffer.push(
+      { id: '1', event: { type: 'text_delta', messageId: 'm1', partIndex: 0, text: 'hello' } },
+      { id: '2', event: { type: 'text_delta', messageId: 'm1', partIndex: 1, text: 'world' } },
+    );
+
+    const { res, writes } = createCapturingResponse();
+    runtime.subscribe(res, '-1');
+
+    assert.strictEqual(events.filter((e) => e.type === 'error_note').length, 1);
+    assert.ok(writes.some((w) => w.includes('id: 1')));
+    assert.ok(writes.some((w) => w.includes('id: 2')));
+  });
+
+  it('replays subsequent events without warning when lastEventId is found in ring buffer', () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      (_id, event) => {
+        events.push(event);
+      },
+    );
+    const ringBuffer = getRingBuffer(runtime);
+    ringBuffer.push(
+      { id: '1', event: { type: 'text_delta', messageId: 'm1', partIndex: 0, text: 'first' } },
+      { id: '2', event: { type: 'text_delta', messageId: 'm1', partIndex: 1, text: 'second' } },
+      { id: '3', event: { type: 'text_delta', messageId: 'm1', partIndex: 2, text: 'third' } },
+    );
+
+    const { res, writes } = createCapturingResponse();
+    runtime.subscribe(res, '1');
+
+    assert.strictEqual(events.filter((e) => e.type === 'error_note').length, 0);
+    assert.ok(writes.some((w) => w.includes('id: 2')));
+    assert.ok(writes.some((w) => w.includes('id: 3')));
+    assert.ok(writes[1].includes('id: 2'));
+    assert.ok(writes[2].includes('id: 3'));
+  });
+
+  it('does not emit warning when currentMessageStartId is set but ring buffer is empty', () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      (_id, event) => {
+        events.push(event);
+      },
+    );
+    (runtime as unknown as { currentMessageStartId?: string }).currentMessageStartId = 'start-id';
+    runtime.subscribe(createMockResponse());
+    assert.strictEqual(events.filter((e) => e.type === 'error_note').length, 0);
   });
 });
