@@ -19,7 +19,9 @@ import { useAppSettings } from '../hooks/use-app-settings'
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
 import type { ToolPermissionPolicy } from '../types/wecom-permissions'
+import type { WeComBotIsolationSettings } from '../types/wecom-isolation'
 import { SAFE_PRESET } from '../types/wecom-permissions'
+import { DEFAULT_ISOLATION_SETTINGS } from '../types/wecom-isolation'
 import ProviderSection from './ProviderSection'
 import SkillsPage from './SkillsPage'
 import { PermissionsSubTab } from './PermissionsSubTab'
@@ -65,6 +67,7 @@ interface WorkspaceFormState {
   wecomCorpSecret: string
   wecomFilePromptTemplate: string
   wecomToolPermissions: ToolPermissionPolicy | undefined
+  wecomBotIsolation: WeComBotIsolationSettings
   promptHistoryRetentionDays: string
 }
 
@@ -87,6 +90,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     wecomCorpSecret: (workspace.settings?.wecomCorpSecret as string) || '',
     wecomFilePromptTemplate: (workspace.settings?.wecomFilePromptTemplate as string) || '',
     wecomToolPermissions: workspace.settings?.wecomToolPermissions as ToolPermissionPolicy | undefined,
+    wecomBotIsolation: (workspace.settings?.wecomBotIsolation as WeComBotIsolationSettings | undefined) ?? { ...DEFAULT_ISOLATION_SETTINGS },
     promptHistoryRetentionDays: String(workspace.settings?.promptHistoryRetentionDays ?? 30),
   }
 }
@@ -281,6 +285,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           wecomCorpSecret: ws.wecomCorpSecret || undefined,
           wecomFilePromptTemplate: ws.wecomFilePromptTemplate || undefined,
           wecomToolPermissions: ws.wecomToolPermissions,
+          wecomBotIsolation: ws.wecomBotIsolation,
           promptHistoryRetentionDays,
         },
         skills: ws.skills,

@@ -1,3 +1,20 @@
+export interface BashWhitelistEntry {
+  command: string;
+  args: Array<string | { type: 'user_path' | 'shared_path' | 'any'; value?: string }>;
+  description?: string;
+}
+
+export interface WeComBotIsolationSettings {
+  /** Canonical WeCom user ids with the wider skill set. */
+  adminUserIds: string[];
+  /** Skills allowed to every bot user. */
+  defaultAllowedSkills: string[];
+  /** Additional skills allowed only to admin users. */
+  adminAllowedSkills: string[];
+  /** Allowed Bash commands and argument patterns. */
+  bashWhitelist: BashWhitelistEntry[];
+}
+
 export interface WorkspaceSettings {
   wecomBotId?: string;
   wecomBotSecret?: string;
@@ -8,6 +25,8 @@ export interface WorkspaceSettings {
   wecomFilePromptTemplate?: string;
   /** Tool permission policy for WeCom bot sessions. When unset, the policy resolves to allow-all (grandfathered if bot enabled, default otherwise). */
   wecomToolPermissions?: import('../services/tool-permission-policy.js').ToolPermissionPolicy;
+  /** Per-user isolation policy for WeCom bot sessions. When unset, bot sessions are not restricted by this feature (grandfathered allow-all). */
+  wecomBotIsolation?: WeComBotIsolationSettings;
   /** Number of days to retain sent-prompt history for this workspace. Zero or negative disables pruning. */
   promptHistoryRetentionDays?: number;
 }

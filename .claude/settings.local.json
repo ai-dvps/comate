@@ -168,7 +168,11 @@
       "Bash(ls /Users/shunyun/WebstormProjects/claude-code-history-viewer 2>&1 | head -20; echo \"---\"; ls /Users/shunyun/WebstormProjects/claude-code-history-viewer/src/components/AnalyticsDashboard 2>&1 | head -20)",
       "Bash(ls -d /Users/shunyun/.claude/projects/*/ 2>/dev/null | head -40)",
       "Bash(grep -l '\"subtype\":\"compact_boundary\"' /Users/shunyun/.claude/projects/*/*.jsonl 2>/dev/null | head -10)",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "Bash(ls -la /Users/shunyun/RustProjects/wecom-cli)",
+      "Bash(find /Users/shunyun/RustProjects/wecom-cli/src -type f -name \"*.rs\" | head -50)",
+      "Bash(wnpm publish *)",
+      "Bash(ls -la /Users/shunyun/workspace/)"
     ]
   }
 }
