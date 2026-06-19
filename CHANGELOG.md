@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.7] - 2026-06-20
+
+### Added
+
+- **Chat message search** — search bar, live highlights, scroll-to-match, and integration tests for finding messages in a session.
+- **Historical subagent transcripts** — load and display historical subagent transcripts from the SDK.
+- **SDK upgrade** — upgraded `@anthropic-ai/claude-agent-sdk` to 0.3.183 and adopted P0/P1 features.
+
+### Changed
+
+- **Session list polish** — refined context menu and New Session button styling/behavior.
+
+### Fixed
+
+- Restored SDK 0.2.x `tool_use`-based task compatibility layer (reverted its removal).
+
+### Internal
+
+- Added planning artifacts for chat message search.
+
+[0.0.7]: https://github.com/ai-dvps/comate/releases/tag/v0.0.7
+
 ## [0.0.6] - 2026-06-19
 
 ### Added
