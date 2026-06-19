@@ -142,5 +142,11 @@
   "historyNoMatch": "No prompts match `{{filter}}`",
   "historyLineCount_one": "+{{count}} more line",
   "historyLineCount_other": "+{{count}} more lines",
-  "historyShortcutHint": "Alt+H"
+  "historyShortcutHint": "Alt+H",
+  "messageSearchPlaceholder": "Find in conversation...",
+  "messageSearchNoMatches": "No matches",
+  "messageSearchPrevious": "Previous match",
+  "messageSearchNext": "Next match",
+  "messageSearchClose": "Close search",
+  "messageSearchClear": "Clear search"
 }

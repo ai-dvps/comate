@@ -142,5 +142,11 @@
   "historyNoMatch": "没有匹配 `{{filter}}` 的提示词",
   "historyLineCount_one": "+{{count}} 行",
   "historyLineCount_other": "+{{count}} 行",
-  "historyShortcutHint": "Alt+H"
+  "historyShortcutHint": "Alt+H",
+  "messageSearchPlaceholder": "在对话中查找...",
+  "messageSearchNoMatches": "无匹配结果",
+  "messageSearchPrevious": "上一个匹配项",
+  "messageSearchNext": "下一个匹配项",
+  "messageSearchClose": "关闭搜索",
+  "messageSearchClear": "清除搜索"
 }
