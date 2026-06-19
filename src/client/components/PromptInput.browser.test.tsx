@@ -147,7 +147,7 @@ describe('PromptInput browser', () => {
   it('renders the textbox and toolbar buttons', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     expect(screen.getByRole('textbox')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Commands/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Skills/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Files/i })).toBeInTheDocument()
   })
 
@@ -244,6 +244,58 @@ describe('PromptInput browser', () => {
 
     await userEvent.keyboard('{Enter}')
     await waitFor(() => expect(editableElement().textContent).toBe('@src/main.ts '))
+  })
+
+  it('inserts a file path when clicking a picker item after typing @', async () => {
+    filesMock.results = [
+      { path: 'src/main.ts' },
+      { path: 'src/util.ts' },
+    ]
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('check @')
+    await waitFor(() => expect(screen.getByText('src/main.ts')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
+
+    await userEvent.click(screen.getByText('src/main.ts'))
+    await waitFor(() => expect(editableElement().textContent).toBe('check @src/main.ts '))
+  })
+
+  it('inserts a file path when selecting from the Files button picker', async () => {
+    filesMock.results = [
+      { path: 'src/main.ts' },
+      { path: 'src/util.ts' },
+    ]
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    await userEvent.click(screen.getByRole('button', { name: /Files/i }))
+    await waitFor(() => expect(screen.getByText('src/main.ts')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
+
+    await userEvent.click(screen.getByText('src/main.ts'))
+    await waitFor(() => expect(editableElement().textContent).toBe('@src/main.ts '))
+  })
+
+  it('inserts a file path at the existing caret when using the Files button picker', async () => {
+    filesMock.results = [{ path: 'src/main.ts' }]
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('check ')
+    await userEvent.click(screen.getByRole('button', { name: /Files/i }))
+    await waitFor(() => expect(screen.getByText('src/main.ts')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
+
+    await userEvent.click(screen.getByText('src/main.ts'))
+    await waitFor(() =>
+      expect(editableElement().textContent).toBe('check @src/main.ts '),
+    )
   })
 
   it('does not recall history with ArrowUp when input is empty', async () => {

@@ -6,6 +6,7 @@
     "description": "Send a message to begin chatting with Claude"
   },
   "commands": "Commands",
+  "skills": "Skills",
   "files": "Files",
   "placeholder": "Ask Claude anything about your code...",
   "clear": "Clear",

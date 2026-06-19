@@ -128,6 +128,9 @@ export default function PromptInput({
   const redoStackRef = useRef<Array<{ value: string; caret: number }>>([])
   const undoGroupOpenRef = useRef(false)
   const undoGroupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Saved caret position when the editable surface loses focus, so pickers
+  // opened by toolbar buttons can still insert at the intended position.
+  const caretBeforeBlurRef = useRef<number | null>(null)
 
   useEffect(() => {
     return () => {
@@ -415,8 +418,10 @@ export default function PromptInput({
     const el = editableRef.current
     if (!el || isComposingRef.current) return
     const value = extractPlainText(el)
+    const caret = getCaretOffset(el)
+    caretBeforeBlurRef.current = caret
     if (value !== input) {
-      handleInputChange(value, getCaretOffset(el))
+      handleInputChange(value, caret)
     }
   }
 
@@ -656,17 +661,32 @@ export default function PromptInput({
 
   const handleFileSelect = (selectedPath: string) => {
     const el = editableRef.current
-    if (!el || fileTriggerStart === null) return
-    const caret = getCaretOffset(el)
-    pushUndoState(input, caret)
+    if (!el) return
+
+    let start: number
+    let end: number
+    if (fileTriggerStart !== null) {
+      // @ trigger: replace from '@' through the typed filter text.
+      start = fileTriggerStart
+      end = fileTriggerStart + 1 + filePickerFilter.length
+    } else {
+      // Button trigger: insert at the caret position saved on blur (focus
+      // moves to the toolbar button before the picker opens).
+      const caret = caretBeforeBlurRef.current ?? getCaretOffset(el)
+      start = caret
+      end = caret
+    }
+
+    pushUndoState(input, end)
     const inserted = `@${selectedPath} `
-    replaceText(el, inserted, fileTriggerStart, caret)
+    replaceText(el, inserted, start, end)
     const value = extractPlainText(el)
     const pos = getCaretOffset(el)
     handleInputChange(value, pos)
     setCompletionSuggestion(null)
     setFilePickerOpen(false)
     setFileTriggerStart(null)
+    caretBeforeBlurRef.current = null
     el.focus()
   }
 
@@ -836,10 +856,10 @@ export default function PromptInput({
                     onClick={handleCommandsClick}
                     disabled={commandsDisabled}
                     className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={t('commands')}
+                    title={t('skills')}
                   >
                     <SlashSquare className="w-3 h-3" />
-                    <span>{t('commands')}</span>
+                    <span>{t('skills')}</span>
                   </button>
                 }
               />
