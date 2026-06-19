@@ -172,6 +172,12 @@ export interface SessionUsage {
 
 export type { TaskItem }
 
+interface PendingTaskCreate {
+  subject: string
+  description?: string
+  activeForm?: string
+}
+
 interface ChatState {
   sessions: Record<string, ChatSession[]>
   messages: Record<string, ChatMessage[]>
@@ -192,6 +198,7 @@ interface ChatState {
   unreadCompletions: Record<string, boolean>
   lastActivityAt: Record<string, number>
   tasks: Record<string, TaskItem[]>
+  pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
   autoApprovedTools: Record<string, Record<string, 'auto' | 'readonly'>>
   windowCap: number
   totalMessageCount: Record<string, number>
@@ -462,6 +469,166 @@ function mutateToolUsePart(
   return {}
 }
 
+function findToolName(
+  state: ChatState,
+  sessionId: string,
+  toolUseId: string,
+): string | undefined {
+  const msgs = state.messages[sessionId] || []
+  for (const m of msgs) {
+    const part = m.parts.find(
+      (p): p is Extract<MessagePart, { type: 'tool_use' }> =>
+        p?.type === 'tool_use' && p.toolUseId === toolUseId,
+    )
+    if (part) return part.toolName
+  }
+  return undefined
+}
+
+function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
+  const tasks: TaskItem[] = []
+  const taskMap = new Map<string, TaskItem>()
+  const pendingCreates = new Map<string, PendingTaskCreate>()
+
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (!part) continue
+      if (part.type === 'tool_use') {
+        if (part.toolName === 'TodoWrite') {
+          const input = part.input as
+            | {
+                todos?: Array<{
+                  content: string
+                  status: string
+                  activeForm?: string
+                }>
+              }
+            | undefined
+          if (input?.todos) {
+            tasks.length = 0
+            taskMap.clear()
+            input.todos.forEach((todo, index) => {
+              const item: TaskItem = {
+                id: `todowrite-${index}`,
+                subject: todo.content,
+                status: normalizeSdkStatus(todo.status),
+                activeForm: todo.activeForm,
+              }
+              tasks.push(item)
+            })
+          }
+        } else if (part.toolName === 'TaskCreate') {
+          const input = part.input as
+            | { subject: string; description?: string; activeForm?: string }
+            | undefined
+          if (input?.subject) {
+            pendingCreates.set(part.toolUseId, {
+              subject: input.subject,
+              description: input.description,
+              activeForm: input.activeForm,
+            })
+          }
+        } else if (part.toolName === 'TaskUpdate') {
+          const input = part.input as
+            | {
+                taskId: string
+                status?: string
+                subject?: string
+                description?: string
+                activeForm?: string
+              }
+            | undefined
+          if (input?.taskId) {
+            const existing = taskMap.get(input.taskId)
+            if (existing) {
+              if (input.status)
+                existing.status = normalizeSdkStatus(input.status)
+              if (input.subject) existing.subject = input.subject
+              if (input.description !== undefined)
+                existing.description = input.description
+              if (input.activeForm !== undefined)
+                existing.activeForm = input.activeForm
+            }
+          }
+        }
+      } else if (part.type === 'tool_result') {
+        const pending = pendingCreates.get(part.toolUseId)
+        if (pending) {
+          let taskCreated = false
+
+          // Prefer structured toolUseResult over parsing text output
+          if (
+            part.toolUseResult &&
+            typeof part.toolUseResult === 'object' &&
+            part.toolUseResult !== null
+          ) {
+            const tr = part.toolUseResult as {
+              task?: { id?: unknown; subject?: unknown }
+            }
+            if (typeof tr.task?.id === 'string') {
+              const item: TaskItem = {
+                id: tr.task.id,
+                subject:
+                  typeof tr.task.subject === 'string'
+                    ? tr.task.subject
+                    : pending.subject,
+                description: pending.description,
+                status: 'pending',
+                activeForm: pending.activeForm,
+              }
+              taskMap.set(item.id, item)
+              tasks.push(item)
+              taskCreated = true
+            }
+          }
+
+          // Fallback: parse JSON from output text
+          if (!taskCreated) {
+            try {
+              const parsed = JSON.parse(part.output) as
+                | { task?: { id: string; subject: string } }
+                | undefined
+              if (parsed?.task?.id) {
+                const item: TaskItem = {
+                  id: parsed.task.id,
+                  subject: parsed.task.subject || pending.subject,
+                  description: pending.description,
+                  status: 'pending',
+                  activeForm: pending.activeForm,
+                }
+                taskMap.set(item.id, item)
+                tasks.push(item)
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
+
+          // Fallback: parse plain text like "Task #1 created successfully: ..."
+          if (!taskCreated) {
+            const match = part.output.match(/Task #(\d+) created successfully: (.+)/)
+            if (match) {
+              const item: TaskItem = {
+                id: match[1],
+                subject: match[2].trim() || pending.subject,
+                description: pending.description,
+                status: 'pending',
+                activeForm: pending.activeForm,
+              }
+              taskMap.set(item.id, item)
+              tasks.push(item)
+            }
+          }
+
+          pendingCreates.delete(part.toolUseId)
+        }
+      }
+    }
+  }
+
+  return tasks
+}
+
 function isSessionActive(state: ChatState, sessionId: string): boolean {
   for (const activeId of Object.values(state.activeSessionIds)) {
     if (activeId === sessionId) return true
@@ -694,14 +861,72 @@ function handleSseEvent(
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       const input = 'input' in data ? data.input : {}
       if (!toolUseId) return
-      set((state) =>
-        mutateToolUsePart(state, sessionId, toolUseId, (part) => ({
+      set((state) => {
+        const updates = mutateToolUsePart(state, sessionId, toolUseId, (part) => ({
           ...part,
           input,
           inputJsonStream: undefined,
           state: 'complete',
-        })),
-      )
+        }))
+        const toolName = findToolName(state, sessionId, toolUseId)
+        if (toolName === 'TodoWrite') {
+          const todoInput = input as
+            | { todos?: Array<{ content: string; status: string; activeForm?: string }> }
+            | undefined
+          if (todoInput?.todos) {
+            const newTasks = todoInput.todos.map((todo, index) => ({
+              id: `todowrite-${index}`,
+              subject: todo.content,
+              status: normalizeSdkStatus(todo.status),
+              activeForm: todo.activeForm,
+            }))
+            updates.tasks = { ...state.tasks, [sessionId]: newTasks }
+          }
+        } else if (toolName === 'TaskCreate') {
+          const createInput = input as
+            | { subject: string; description?: string; activeForm?: string }
+            | undefined
+          if (createInput?.subject) {
+            const pending = state.pendingTaskCreates[sessionId] || {}
+            updates.pendingTaskCreates = {
+              ...state.pendingTaskCreates,
+              [sessionId]: {
+                ...pending,
+                [toolUseId]: {
+                  subject: createInput.subject,
+                  description: createInput.description,
+                  activeForm: createInput.activeForm,
+                },
+              },
+            }
+          }
+        } else if (toolName === 'TaskUpdate') {
+          const updateInput = input as
+            | {
+                taskId: string
+                status?: string
+                subject?: string
+                description?: string
+                activeForm?: string
+              }
+            | undefined
+          if (updateInput?.taskId) {
+            const existingTasks = state.tasks[sessionId] || []
+            const updatedTasks = existingTasks.map((task) => {
+              if (task.id !== updateInput.taskId) return task
+              return {
+                ...task,
+                ...(updateInput.status && { status: normalizeSdkStatus(updateInput.status) }),
+                ...(updateInput.subject && { subject: updateInput.subject }),
+                ...(updateInput.description !== undefined && { description: updateInput.description }),
+                ...(updateInput.activeForm !== undefined && { activeForm: updateInput.activeForm }),
+              }
+            })
+            updates.tasks = { ...state.tasks, [sessionId]: updatedTasks }
+          }
+        }
+        return updates
+      })
       return
     }
     case 'tool_input_delta': {
@@ -750,13 +975,97 @@ function handleSseEvent(
           },
         ]
         const pruned = pruneWindow(newMessages, state.windowCap)
-        return {
+        const updates: Partial<ChatState> = {
           messages: { ...state.messages, [sessionId]: pruned },
           totalMessageCount: {
             ...state.totalMessageCount,
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
         }
+        const pendingCreates = state.pendingTaskCreates[sessionId]
+        if (pendingCreates && pendingCreates[toolUseId]) {
+          const pending = pendingCreates[toolUseId]
+          let taskCreated = false
+
+          // Prefer structured toolUseResult over parsing text output
+          if (
+            toolUseResult &&
+            typeof toolUseResult === 'object' &&
+            toolUseResult !== null
+          ) {
+            const tr = toolUseResult as { task?: { id?: unknown; subject?: unknown } }
+            if (typeof tr.task?.id === 'string') {
+              const newTask: TaskItem = {
+                id: tr.task.id,
+                subject:
+                  typeof tr.task.subject === 'string'
+                    ? tr.task.subject
+                    : pending.subject,
+                description: pending.description,
+                status: 'pending',
+                activeForm: pending.activeForm,
+              }
+              const existingTasks = state.tasks[sessionId] || []
+              updates.tasks = {
+                ...state.tasks,
+                [sessionId]: [...existingTasks, newTask],
+              }
+              taskCreated = true
+            }
+          }
+
+          // Fallback: parse JSON from output text
+          if (!taskCreated) {
+            try {
+              const parsed = JSON.parse(output) as
+                | { task?: { id: string; subject: string } }
+                | undefined
+              if (parsed?.task?.id) {
+                const newTask: TaskItem = {
+                  id: parsed.task.id,
+                  subject: parsed.task.subject || pending.subject,
+                  description: pending.description,
+                  status: 'pending',
+                  activeForm: pending.activeForm,
+                }
+                const existingTasks = state.tasks[sessionId] || []
+                updates.tasks = {
+                  ...state.tasks,
+                  [sessionId]: [...existingTasks, newTask],
+                }
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
+
+          // Fallback: parse plain text like "Task #1 created successfully: ..."
+          if (!taskCreated) {
+            const match = output.match(/Task #(\d+) created successfully: (.+)/)
+            if (match) {
+              const newTask: TaskItem = {
+                id: match[1],
+                subject: match[2].trim() || pending.subject,
+                description: pending.description,
+                status: 'pending',
+                activeForm: pending.activeForm,
+              }
+              const existingTasks = state.tasks[sessionId] || []
+              updates.tasks = {
+                ...state.tasks,
+                [sessionId]: [...existingTasks, newTask],
+              }
+            }
+          }
+
+          const newPending = { ...pendingCreates }
+          delete newPending[toolUseId]
+          updates.pendingTaskCreates = {
+            ...state.pendingTaskCreates,
+            [sessionId]: newPending,
+          }
+        }
+        return updates
       })
       return
     }
@@ -1582,6 +1891,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unreadCompletions: {},
   lastActivityAt: {},
   tasks: {},
+  pendingTaskCreates: {},
   autoApprovedTools: {},
   windowCap: DEFAULT_WINDOW_CAP,
   totalMessageCount: {},
@@ -1888,10 +2198,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return { isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } }
         }
         const pruned = pruneWindow(mappedMessages, state.windowCap)
+        const scannedTasks = scanMessagesForTasks(mappedMessages)
+        const taskMap = new Map<string, TaskItem>()
+        for (const task of serverTasks) taskMap.set(task.id, task)
+        for (const task of scannedTasks) {
+          if (!taskMap.has(task.id)) taskMap.set(task.id, task)
+        }
         return {
           messages: { ...state.messages, [sessionId]: pruned },
           isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
-          tasks: { ...state.tasks, [sessionId]: serverTasks },
+          tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
           totalMessageCount: {
             ...state.totalMessageCount,
             [sessionId]: mappedMessages.length,
@@ -2046,6 +2362,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newSubagents[sessionId]
       const newTasks = { ...state.tasks }
       delete newTasks[sessionId]
+      const newPendingTaskCreates = { ...state.pendingTaskCreates }
+      delete newPendingTaskCreates[sessionId]
       const newLastTurnUsage = { ...state.lastTurnUsage }
       delete newLastTurnUsage[sessionId]
       const newSessionUsage = { ...state.sessionUsage }
@@ -2058,6 +2376,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: newMessages,
         subagents: newSubagents,
         tasks: newTasks,
+        pendingTaskCreates: newPendingTaskCreates,
         lastTurnUsage: newLastTurnUsage,
         sessionUsage: newSessionUsage,
         autoApprovedTools: newAutoApprovedTools,
