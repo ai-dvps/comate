@@ -27,12 +27,6 @@ const DEFAULT_DENY_GLOBS = [
   '*.log',
 ];
 
-const SENSITIVE_RELATIVE_SEGMENTS = new Set([
-  '.claude',
-  'node_modules',
-  '.git',
-]);
-
 /**
  * Build a path policy context for a bot session.
  *
@@ -176,10 +170,6 @@ function checkFilePath(
 
 function hasDotDotSegment(pattern: string): boolean {
   return pattern.split(/[\\/]/).some((s) => s === '..');
-}
-
-function segmentAppears(pattern: string, segment: string): boolean {
-  return pattern.split(/[\\/]/).includes(segment);
 }
 
 /**

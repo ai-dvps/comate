@@ -163,6 +163,7 @@
       "users": "用户",
       "prompts": "提示词",
       "permissions": "权限",
+      "isolation": "隔离",
       "queue": "队列"
     },
     "queue": {
@@ -237,7 +238,36 @@
       "message": "保存权限策略失败。请重试。",
       "retry": "重试"
     },
-    "mcpGapNote": "注意：MCP 工具和技能不受此策略限制。它们遵循当前的允许所有行为。这是已知的审计缺口，将在后续迭代中解决。"
+    "mcpGapNote": "注意：MCP 工具和技能不受此策略限制。它们遵循当前的允许所有行为。这是已知的审计缺口，将在后续迭代中解决。",
+    "isolation": {
+      "adminUsers": {
+        "label": "管理员用户",
+        "hint": "被视作管理员的企业微信规范化用户 ID。管理员可使用下方列出的额外技能，且不受 Bash 白名单限制。",
+        "placeholder": "例如 wang@example.com"
+      },
+      "defaultSkills": {
+        "label": "默认允许技能",
+        "hint": "所有机器人用户均可调用的技能。名称会规范化为小写短横线形式。",
+        "placeholder": "例如 my-skill"
+      },
+      "adminSkills": {
+        "label": "仅管理员技能",
+        "hint": "仅管理员用户可调用的额外技能。",
+        "placeholder": "例如 admin-skill"
+      },
+      "bashWhitelist": {
+        "label": "Bash 命令白名单",
+        "hint": "允许的 Bash 命令及其参数模式。机器人会拒绝不匹配任何白名单条目的命令。",
+        "commandPlaceholder": "命令",
+        "argsPlaceholder": "参数（对动态部分使用占位符）",
+        "descriptionPlaceholder": "描述（可选）",
+        "add": "添加命令",
+        "placeholders": "占位符：{{placeholders}}"
+      },
+      "add": "添加",
+      "remove": "移除",
+      "freezeHint": "更改在下一次机器人会话生效，不影响正在进行的对话。"
+    }
   },
   "unsavedDialog": {
     "title": "有未保存的更改",

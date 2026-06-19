@@ -4,7 +4,6 @@ import path from 'path';
 import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
-import type { Provider } from '../models/provider.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import type { ChatMessage, TaskItem, SseEvent } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';

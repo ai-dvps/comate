@@ -163,6 +163,7 @@
       "users": "Users",
       "prompts": "Prompts",
       "permissions": "Permissions",
+      "isolation": "Isolation",
       "queue": "Queue"
     },
     "queue": {
@@ -237,7 +238,36 @@
       "message": "Failed to save permission policy. Please try again.",
       "retry": "Retry"
     },
-    "mcpGapNote": "Note: MCP tools and Skills are not gated by this policy. They follow today's allow-all behavior. This is a known audit gap that will be addressed in a future iteration."
+    "mcpGapNote": "Note: MCP tools and Skills are not gated by this policy. They follow today's allow-all behavior. This is a known audit gap that will be addressed in a future iteration.",
+    "isolation": {
+      "adminUsers": {
+        "label": "Admin users",
+        "hint": "Canonical WeCom user IDs that are treated as administrators. Admins can use the additional skills listed below and are not subject to the Bash whitelist.",
+        "placeholder": "e.g. wang@example.com"
+      },
+      "defaultSkills": {
+        "label": "Default allowed skills",
+        "hint": "Skills every bot user is allowed to invoke. Names are normalized to lowercase kebab-case.",
+        "placeholder": "e.g. my-skill"
+      },
+      "adminSkills": {
+        "label": "Admin-only skills",
+        "hint": "Additional skills only administrator users can invoke.",
+        "placeholder": "e.g. admin-skill"
+      },
+      "bashWhitelist": {
+        "label": "Bash command whitelist",
+        "hint": "Allowed Bash commands and their argument patterns. The bot rejects any command not matching a whitelist entry.",
+        "commandPlaceholder": "command",
+        "argsPlaceholder": "args (use placeholders for dynamic parts)",
+        "descriptionPlaceholder": "Description (optional)",
+        "add": "Add command",
+        "placeholders": "Placeholders: {{placeholders}}"
+      },
+      "add": "Add",
+      "remove": "Remove",
+      "freezeHint": "Changes apply to the next bot session, not to active conversations."
+    }
   },
   "unsavedDialog": {
     "title": "Unsaved changes",

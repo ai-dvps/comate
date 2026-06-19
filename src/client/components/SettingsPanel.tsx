@@ -25,6 +25,7 @@ import { DEFAULT_ISOLATION_SETTINGS } from '../types/wecom-isolation'
 import ProviderSection from './ProviderSection'
 import SkillsPage from './SkillsPage'
 import { PermissionsSubTab } from './PermissionsSubTab'
+import { IsolationSubTab } from './IsolationSubTab'
 import WeComQueuePanel from './WeComQueuePanel'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 
@@ -1234,7 +1235,7 @@ interface WeComWorkspaceUser {
   lastSeenAt: string
 }
 
-type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions' | 'queue'
+type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions' | 'isolation' | 'queue'
 
 export function WeComBotSection({
   state,
@@ -1308,6 +1309,7 @@ export function WeComBotSection({
     { id: 'users', label: t('wecom.tabs.users') },
     { id: 'prompts', label: t('wecom.tabs.prompts') },
     { id: 'permissions', label: t('wecom.tabs.permissions') },
+    { id: 'isolation', label: t('wecom.tabs.isolation') },
     { id: 'queue', label: t('wecom.tabs.queue') },
   ]
 
@@ -1509,6 +1511,14 @@ export function WeComBotSection({
             }}
           />
         </div>
+      )}
+
+      {/* Isolation tab */}
+      {activeSubTab === 'isolation' && (
+        <IsolationSubTab
+          isolation={state.wecomBotIsolation}
+          onUpdate={(next) => onUpdate({ wecomBotIsolation: next })}
+        />
       )}
 
       {/* Queue tab */}
