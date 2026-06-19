@@ -30,7 +30,21 @@
     "pathConfigRefreshHint": "Shell 捕获的 PATH 仅在应用启动时刷新。自定义路径对新 Claude Code 会话即时生效。",
     "pathConfigSourceShell": "Shell 捕获",
     "pathConfigSourceFallback": "回退目录",
-    "pathConfigInvalidPath": "路径必须是绝对路径。"
+    "pathConfigInvalidPath": "路径必须是绝对路径。",
+    "updaterTitle": "更新",
+    "updaterVersion": "版本 {{version}}",
+    "updaterVersionUnknown": "未知",
+    "updaterCheckNow": "检查更新",
+    "updaterChecking": "检查中...",
+    "updaterAutoCheck": "自动检查更新",
+    "updaterAutoCheckHint": "定期在后台检查新版本。",
+    "updateStatusLastCheck": "上次检查：{{time}}",
+    "updateStatusNeverChecked": "尚未检查",
+    "updateStatusChecking": "正在检查更新...",
+    "updateStatusAvailable": "有可用更新",
+    "updateStatusDownloading": "正在下载更新...",
+    "updateStatusReady": "更新已准备好安装",
+    "updateStatusError": "更新错误：{{error}}"
   },
   "providers": {
     "title": "LLM 服务商",

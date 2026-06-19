@@ -31,7 +31,7 @@ function App() {
   const { t } = useTranslation('common')
   useTheme()
   useBadgeSync()
-  const { uiFontSize } = useAppSettings()
+  const { uiFontSize, autoCheckUpdates, setLastUpdateCheckAt } = useAppSettings()
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -99,9 +99,12 @@ function App() {
     initProviders()
     isMacOS().then(setIsMac)
 
-    startPeriodicUpdateChecks(() => ({ autoCheckUpdates: true }))
+    startPeriodicUpdateChecks(
+      () => ({ autoCheckUpdates }),
+      () => setLastUpdateCheckAt(new Date().toISOString())
+    )
     return () => stopPeriodicUpdateChecks()
-  }, [fetchWorkspaces])
+  }, [fetchWorkspaces, autoCheckUpdates, setLastUpdateCheckAt])
 
   const handleForceShowWindow = useCallback(async () => {
     try {

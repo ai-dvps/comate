@@ -30,7 +30,21 @@
     "pathConfigRefreshHint": "Shell-captured PATH is refreshed at app startup. Custom paths take effect for new Claude Code sessions immediately.",
     "pathConfigSourceShell": "Shell capture",
     "pathConfigSourceFallback": "Fallback directories",
-    "pathConfigInvalidPath": "Path must be an absolute path."
+    "pathConfigInvalidPath": "Path must be an absolute path.",
+    "updaterTitle": "Updates",
+    "updaterVersion": "Version {{version}}",
+    "updaterVersionUnknown": "unknown",
+    "updaterCheckNow": "Check for Updates",
+    "updaterChecking": "Checking...",
+    "updaterAutoCheck": "Check for updates automatically",
+    "updaterAutoCheckHint": "Periodically check for new versions in the background.",
+    "updateStatusLastCheck": "Last checked: {{time}}",
+    "updateStatusNeverChecked": "Not checked yet",
+    "updateStatusChecking": "Checking for updates...",
+    "updateStatusAvailable": "An update is available",
+    "updateStatusDownloading": "Downloading update...",
+    "updateStatusReady": "Update ready to install",
+    "updateStatusError": "Update error: {{error}}"
   },
   "providers": {
     "title": "LLM Providers",
