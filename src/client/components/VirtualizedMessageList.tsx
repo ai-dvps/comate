@@ -24,6 +24,7 @@ import ChatMessageRenderer, {
   buildResultMap,
   CompactBoundary,
 } from './ChatMessageRenderer'
+import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 
 const EMPTY_ARRAY: [] = []
 
@@ -32,6 +33,8 @@ interface VirtualizedMessageListProps {
   workspaceId: string
   onOpenDrawer: (parentToolUseId: string) => void
   isVisible?: boolean
+  searchMatches?: MessageSearchMatch[]
+  currentMatch?: MessageSearchMatch | null
 }
 
 const warnedShapes = new Set<string>()
@@ -61,6 +64,8 @@ export default function VirtualizedMessageList({
   workspaceId,
   onOpenDrawer,
   isVisible = true,
+  searchMatches = [],
+  currentMatch = null,
 }: VirtualizedMessageListProps) {
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
@@ -98,6 +103,33 @@ export default function VirtualizedMessageList({
   const virtualItems = virtualizer.getVirtualItems()
   const prevViewItemsRef = useRef(viewItems)
   const anchorKeyRef = useRef<string | null>(null)
+
+  // Auto-scroll the current search match into view.
+  useEffect(() => {
+    if (!currentMatch) return
+    const index = viewItems.findIndex((item) => {
+      if (item.kind === 'message') return item.message.id === currentMatch.messageId
+      if (item.kind === 'meta') return item.messageId === currentMatch.messageId
+      return item.messageIds.includes(currentMatch.messageId)
+    })
+    if (index === -1) return
+
+    virtualizer.scrollToIndex(index, { align: 'start' })
+
+    const scrollActive = () => {
+      const el = document.querySelector('[data-search-active="true"]')
+      if (el instanceof HTMLElement) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }
+      virtualizer.measure()
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(scrollActive, 0)
+      })
+    })
+  }, [currentMatch, viewItems, virtualizer])
 
   // Remeasure virtualizer when transitioning from hidden to visible
   const wasVisibleRef = useRef(isVisible)
@@ -285,6 +317,8 @@ export default function VirtualizedMessageList({
                   onOpenDrawer,
                   sessionId,
                   autoApprovedTools,
+                  searchMatches,
+                  currentMatch,
                 )}
               </div>
             )
@@ -317,6 +351,8 @@ function renderViewItem(
   onOpenDrawer: (parentToolUseId: string) => void,
   sessionId: string,
   autoApprovedTools?: Record<string, 'auto' | 'readonly'>,
+  searchMatches?: MessageSearchMatch[],
+  currentMatch?: MessageSearchMatch | null,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     if (item.event.kind === 'slash-command') {
@@ -362,6 +398,8 @@ function renderViewItem(
       onOpenDrawer={onOpenDrawer}
       sessionId={sessionId}
       autoApprovedTools={autoApprovedTools}
+      searchMatches={searchMatches}
+      currentMatch={currentMatch}
     />
   )
 }

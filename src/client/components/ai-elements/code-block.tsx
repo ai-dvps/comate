@@ -110,6 +110,8 @@ type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
   code: string
   language: BundledLanguage
   showLineNumbers?: boolean
+  hasSearchMatch?: boolean
+  isCurrentSearchMatch?: boolean
 }
 
 interface TokenizedCode {
@@ -290,11 +292,16 @@ export const CodeBlockContainer = ({
   className,
   language,
   style,
+  hasSearchMatch = false,
+  isCurrentSearchMatch = false,
   ...props
-}: HTMLAttributes<HTMLDivElement> & { language: string }) => (
+}: HTMLAttributes<HTMLDivElement> & { language: string; hasSearchMatch?: boolean; isCurrentSearchMatch?: boolean }) => (
   <div
     className={cn(
-      'group relative w-full overflow-hidden rounded-md border border-border bg-bg text-text-primary',
+      'group relative w-full overflow-hidden rounded-md border bg-bg text-text-primary',
+      hasSearchMatch && 'ring-1 bg-accent/5',
+      isCurrentSearchMatch ? 'border-accent ring-accent' : 'border-border',
+      hasSearchMatch && !isCurrentSearchMatch && 'ring-accent/30',
       className,
     )}
     data-language={language}
@@ -413,6 +420,8 @@ export const CodeBlock = ({
   language,
   showLineNumbers = false,
   className,
+  hasSearchMatch = false,
+  isCurrentSearchMatch = false,
   children,
   ...props
 }: CodeBlockProps) => {
@@ -420,7 +429,13 @@ export const CodeBlock = ({
 
   return (
     <CodeBlockContext.Provider value={contextValue}>
-      <CodeBlockContainer className={className} language={language} {...props}>
+      <CodeBlockContainer
+        className={className}
+        language={language}
+        hasSearchMatch={hasSearchMatch}
+        isCurrentSearchMatch={isCurrentSearchMatch}
+        {...props}
+      >
         {children}
         <CodeBlockContent
           code={code}

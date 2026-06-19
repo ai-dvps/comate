@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
+import { renderHook, act } from '@testing-library/react'
 import { useMessageSearch, findMessageSearchMatches } from './useMessageSearch'
 import type { ChatMessage } from '../types/message'
 

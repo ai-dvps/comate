@@ -8,6 +8,12 @@ export interface MessageSearchMatch {
   end: number
 }
 
+export interface SearchHighlightRange {
+  start: number
+  end: number
+  isActive: boolean
+}
+
 export interface UseMessageSearchOptions {
   messages: ChatMessage[]
   debounceMs?: number

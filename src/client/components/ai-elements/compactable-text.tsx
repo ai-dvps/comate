@@ -1,18 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 
+import { cn } from '../ui/utils'
 import { Response } from './response'
 
 interface CompactableTextProps {
   children: string
+  forceExpanded?: boolean
+  hasSearchMatch?: boolean
+  isCurrentSearchMatch?: boolean
 }
 
 const COLLAPSED_MAX_HEIGHT_PX = 384
 
-export default function CompactableText({ children }: CompactableTextProps) {
+export default function CompactableText({
+  children,
+  forceExpanded = false,
+  hasSearchMatch = false,
+  isCurrentSearchMatch = false,
+}: CompactableTextProps) {
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (forceExpanded) {
+      setExpanded(true)
+    }
+  }, [forceExpanded])
 
   useEffect(() => {
     const el = contentRef.current
@@ -31,7 +46,13 @@ export default function CompactableText({ children }: CompactableTextProps) {
   }, [])
 
   return (
-    <div className="space-y-2">
+    <div
+      className={cn(
+        'space-y-2 rounded-lg',
+        hasSearchMatch && 'ring-1 bg-accent/5',
+        hasSearchMatch && (isCurrentSearchMatch ? 'ring-accent' : 'ring-accent/30'),
+      )}
+    >
       <div
         className="overflow-hidden"
         style={{

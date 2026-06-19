@@ -58,6 +58,9 @@ export type ReasoningProps = ComponentProps<typeof Collapsible> & {
   onOpenChange?: (open: boolean) => void
   duration?: number
   disableAutoBehavior?: boolean
+  forceOpen?: boolean
+  hasSearchMatch?: boolean
+  isCurrentSearchMatch?: boolean
 }
 
 const AUTO_CLOSE_DELAY = 1000
@@ -72,6 +75,9 @@ export const Reasoning = memo(
     onOpenChange,
     duration: durationProp,
     disableAutoBehavior = false,
+    forceOpen = false,
+    hasSearchMatch = false,
+    isCurrentSearchMatch = false,
     children,
     ...props
   }: ReasoningProps) => {
@@ -91,6 +97,12 @@ export const Reasoning = memo(
     const hasEverStreamedRef = useRef(isStreaming)
     const [hasAutoClosed, setHasAutoClosed] = useState(false)
     const startTimeRef = useRef<number | null>(null)
+
+    useEffect(() => {
+      if (forceOpen) {
+        setIsOpen(true)
+      }
+    }, [forceOpen, setIsOpen])
 
     useEffect(() => {
       if (isStreaming) {
@@ -143,7 +155,12 @@ export const Reasoning = memo(
     return (
       <ReasoningContext.Provider value={contextValue}>
         <Collapsible
-          className={cn('not-prose mb-2', className)}
+          className={cn(
+            'not-prose mb-2 rounded-lg',
+            hasSearchMatch && 'ring-1 bg-accent/5',
+            hasSearchMatch && (isCurrentSearchMatch ? 'ring-accent' : 'ring-accent/30'),
+            className,
+          )}
           onOpenChange={handleOpenChange}
           open={isOpen}
           {...props}

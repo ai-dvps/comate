@@ -9,6 +9,9 @@ const COMPACTABLE_MAX_HEIGHT_PX = 192
 export type CompactableContainerProps = ComponentProps<'div'> & {
   compactHeight?: number
   alwaysShowToggle?: boolean
+  forceExpanded?: boolean
+  hasSearchMatch?: boolean
+  isCurrentSearchMatch?: boolean
 }
 
 export const CompactableContainer = ({
@@ -16,11 +19,20 @@ export const CompactableContainer = ({
   children,
   compactHeight = COMPACTABLE_MAX_HEIGHT_PX,
   alwaysShowToggle = false,
+  forceExpanded = false,
+  hasSearchMatch = false,
+  isCurrentSearchMatch = false,
   ...props
 }: CompactableContainerProps) => {
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (forceExpanded) {
+      setExpanded(true)
+    }
+  }, [forceExpanded])
 
   useEffect(() => {
     const el = contentRef.current
@@ -40,7 +52,15 @@ export const CompactableContainer = ({
   }, [compactHeight])
 
   return (
-    <div className={cn(className)} {...props}>
+    <div
+      className={cn(
+        'rounded-lg',
+        hasSearchMatch && 'ring-1 bg-accent/5',
+        hasSearchMatch && (isCurrentSearchMatch ? 'ring-accent' : 'ring-accent/30'),
+        className,
+      )}
+      {...props}
+    >
       <div
         className="overflow-hidden"
         style={{

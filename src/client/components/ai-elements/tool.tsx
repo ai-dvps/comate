@@ -27,6 +27,7 @@ import { isValidElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { ToolPart, ToolState } from '../../types/message'
+import type { SearchHighlightRange } from '../../hooks/useMessageSearch'
 import { Badge } from '../ui/badge'
 import { cn } from '../ui/utils'
 import { getToolRenderer, StructuredFallback } from '../tool-renderers'
@@ -138,10 +139,29 @@ export const ToolHeader = ({
   )
 }
 
-export type ToolContentProps = ComponentProps<'div'>
+export type ToolContentProps = ComponentProps<'div'> & {
+  forceExpanded?: boolean
+  hasSearchMatch?: boolean
+  isCurrentSearchMatch?: boolean
+}
 
-export const ToolContent = ({ className, children, ...props }: ToolContentProps) => (
-  <CompactableContainer className={cn(className)} compactHeight={0} alwaysShowToggle {...props}>
+export const ToolContent = ({
+  className,
+  children,
+  forceExpanded,
+  hasSearchMatch,
+  isCurrentSearchMatch,
+  ...props
+}: ToolContentProps) => (
+  <CompactableContainer
+    className={cn(className)}
+    compactHeight={0}
+    alwaysShowToggle
+    forceExpanded={forceExpanded}
+    hasSearchMatch={hasSearchMatch}
+    isCurrentSearchMatch={isCurrentSearchMatch}
+    {...props}
+  >
     <div className="space-y-2 p-2 text-text-primary">
       {children}
     </div>
@@ -151,11 +171,14 @@ export const ToolContent = ({ className, children, ...props }: ToolContentProps)
 export type ToolInputProps = ComponentProps<'div'> & {
   input: ToolPart['input']
   toolName?: string
+  searchMatches?: SearchHighlightRange[]
 }
 
-export const ToolInput = ({ className, input, toolName, ...props }: ToolInputProps) => {
+export const ToolInput = ({ className, input, toolName, searchMatches, ...props }: ToolInputProps) => {
   const renderer = toolName ? getToolRenderer(toolName) : undefined
   const hasCustomRenderer = !!renderer
+  const hasSearchMatch = (searchMatches?.length ?? 0) > 0
+  const isCurrentSearchMatch = searchMatches?.some((r) => r.isActive) ?? false
 
   return (
     <div className={cn('space-y-2 overflow-hidden', className)} {...props}>
@@ -171,7 +194,12 @@ export const ToolInput = ({ className, input, toolName, ...props }: ToolInputPro
       ) : (
         <div className="overflow-x-auto rounded-md">
           <div className="bg-surface-hover/50 min-w-fit">
-            <CodeBlock code={JSON.stringify(input, null, 2)} language="json" />
+            <CodeBlock
+              code={JSON.stringify(input, null, 2)}
+              language="json"
+              hasSearchMatch={hasSearchMatch}
+              isCurrentSearchMatch={isCurrentSearchMatch}
+            />
           </div>
         </div>
       )}
@@ -182,26 +210,43 @@ export const ToolInput = ({ className, input, toolName, ...props }: ToolInputPro
 export type ToolOutputProps = ComponentProps<'div'> & {
   output: ToolPart['output']
   errorText: ToolPart['errorText']
+  searchMatches?: SearchHighlightRange[]
 }
 
 export const ToolOutput = ({
   className,
   output,
   errorText,
+  searchMatches,
   ...props
 }: ToolOutputProps) => {
   if (!(output || errorText)) {
     return null
   }
 
+  const hasSearchMatch = (searchMatches?.length ?? 0) > 0
+  const isCurrentSearchMatch = searchMatches?.some((r) => r.isActive) ?? false
+
   let Output = <div>{output as ReactNode}</div>
 
   if (typeof output === 'object' && !isValidElement(output)) {
     Output = (
-      <CodeBlock code={JSON.stringify(output, null, 2)} language="json" />
+      <CodeBlock
+        code={JSON.stringify(output, null, 2)}
+        language="json"
+        hasSearchMatch={hasSearchMatch}
+        isCurrentSearchMatch={isCurrentSearchMatch}
+      />
     )
   } else if (typeof output === 'string') {
-    Output = <CodeBlock code={output} language="json" />
+    Output = (
+      <CodeBlock
+        code={output}
+        language="json"
+        hasSearchMatch={hasSearchMatch}
+        isCurrentSearchMatch={isCurrentSearchMatch}
+      />
+    )
   }
 
   return (
