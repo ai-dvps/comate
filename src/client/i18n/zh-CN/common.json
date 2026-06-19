@@ -56,6 +56,13 @@
   "failedToDeleteWorkspace": "删除工作区失败",
   "streamError": "流错误",
   "serverRestarted": "服务器已重启。后台工作可能已丢失。",
+  "rateLimit": {
+    "throughput": "已达到速率限制。请稍后再试。",
+    "creditsRequired": "需要积分才能继续。",
+    "creditsRequiredCanPurchase": "需要积分。请购买积分以继续。",
+    "creditsRequiredAddPayment": "需要积分。请添加支付方式以购买积分。"
+  },
+  "modelFallback": "模型已回退：{{originalModel}} → {{fallbackModel}}",
   "failedToSend": "发送失败",
   "networkError": "网络错误",
   "subscriptionFailed": "订阅失败",
@@ -66,6 +73,7 @@
   "failedToFetchSessions": "获取会话失败",
   "failedToCreateSession": "创建会话失败",
   "failedToRenameSession": "重命名会话失败",
+  "failedToForkSession": "分叉会话失败",
   "failedToLoadMessages": "加载消息失败",
   "failedToFetchOlderMessages": "获取历史消息失败",
   "failedToFetchCommands": "获取命令失败",
