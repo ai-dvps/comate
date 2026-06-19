@@ -28,6 +28,7 @@ import ChatMessageRenderer, {
   CompactBoundary,
 } from './ChatMessageRenderer'
 import CompactingIndicator from './CompactingIndicator'
+import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 
 const EMPTY_ARRAY: [] = []
 
@@ -38,6 +39,8 @@ interface MessageListProps {
   workspaceId: string
   onOpenDrawer: (parentToolUseId: string) => void
   isVisible?: boolean
+  searchMatches?: MessageSearchMatch[]
+  currentMatch?: MessageSearchMatch | null
 }
 
 const warnedShapes = new Set<string>()
@@ -50,7 +53,7 @@ function isToolResultOnly(msg: ChatMessage): boolean {
   )
 }
 
-export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVisible = true }: MessageListProps) {
+export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVisible = true, searchMatches = [], currentMatch = null }: MessageListProps) {
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] ?? EMPTY_ARRAY)
@@ -81,6 +84,14 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
     }
   }, [visibleMessages])
 
+  useEffect(() => {
+    if (!currentMatch) return
+    const el = document.querySelector('[data-search-active="true"]')
+    if (el instanceof HTMLElement) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+  }, [currentMatch])
+
   if (messages.length > VIRTUALIZATION_THRESHOLD) {
     return (
       <VirtualizedMessageList
@@ -88,6 +99,8 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
         workspaceId={workspaceId}
         onOpenDrawer={onOpenDrawer}
         isVisible={isVisible}
+        searchMatches={searchMatches}
+        currentMatch={currentMatch}
       />
     )
   }
@@ -109,7 +122,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
   return (
     <Conversation>
       <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)}`}>
-        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId, autoApprovedTools))}
+        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId, autoApprovedTools, searchMatches, currentMatch))}
         <CompactingIndicator sessionId={sessionId} />
       </ConversationContent>
       <ConversationScrollButton />
@@ -123,6 +136,8 @@ function renderViewItem(
   onOpenDrawer: (parentToolUseId: string) => void,
   sessionId: string,
   autoApprovedTools?: Record<string, 'auto' | 'readonly'>,
+  searchMatches?: MessageSearchMatch[],
+  currentMatch?: MessageSearchMatch | null,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     if (item.event.kind === 'slash-command') {
@@ -168,6 +183,8 @@ function renderViewItem(
       onOpenDrawer={onOpenDrawer}
       sessionId={sessionId}
       autoApprovedTools={autoApprovedTools}
+      searchMatches={searchMatches}
+      currentMatch={currentMatch}
     />
   )
 }

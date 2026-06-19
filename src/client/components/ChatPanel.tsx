@@ -1,14 +1,16 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useProviderStore } from '../stores/provider-store'
+import { useMessageSearch } from '../hooks/useMessageSearch'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
 import SubagentDrawer from './SubagentDrawer'
 import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
+import MessageSearchBar from './MessageSearchBar'
 
 const EMPTY_ARRAY: [] = []
 
@@ -58,10 +60,73 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     lastError: boolean
   }>({ lastRefreshedAt: null, lastNewCount: 0, lastError: false })
   const [wecomUser, setWecomUser] = useState<{ userId: string; lastSeenAt: string | null } | null>(null)
+  const [isSearchBarOpen, setIsSearchBarOpen] = useState(false)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
+
+  const {
+    query: searchQuery,
+    setQuery: setSearchQuery,
+    matches: searchMatches,
+    currentMatch,
+    currentMatchIndex,
+    totalMatches,
+    nextMatch,
+    prevMatch,
+    isSearching,
+  } = useMessageSearch({ messages: cachedMessages })
+
+  const openSearch = useCallback(() => {
+    previousFocusRef.current = document.activeElement as HTMLElement
+    setIsSearchBarOpen(true)
+  }, [])
+
+  const closeSearch = useCallback(() => {
+    setIsSearchBarOpen(false)
+    setSearchQuery('')
+    previousFocusRef.current?.focus()
+    previousFocusRef.current = null
+  }, [setSearchQuery])
 
   useEffect(() => {
     fetchSessions(workspaceId)
   }, [workspaceId, fetchSessions])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isFindShortcut =
+        (event.key === 'f' || event.key === 'F') &&
+        (event.metaKey || event.ctrlKey)
+
+      if (isFindShortcut) {
+        const active = document.activeElement
+        const isEditableInput =
+          active instanceof HTMLInputElement ||
+          active instanceof HTMLTextAreaElement ||
+          active?.getAttribute('contenteditable') === 'true'
+
+        if (isEditableInput) return
+
+        event.preventDefault()
+        openSearch()
+        return
+      }
+
+      if (event.key === 'Escape' && isSearchBarOpen) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        closeSearch()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [isSearchBarOpen, openSearch, closeSearch])
+
+  useEffect(() => {
+    // Close search and clear query when switching sessions
+    closeSearch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId])
 
   useEffect(() => {
     // Close drawer when switching sessions
@@ -264,6 +329,19 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       <div className="flex flex-1 overflow-hidden">
         {/* Messages */}
         <div className="flex-1 overflow-hidden flex flex-col relative">
+          {isSearchBarOpen && activeSessionId && (
+            <MessageSearchBar
+              query={searchQuery}
+              onQueryChange={setSearchQuery}
+              currentMatchIndex={currentMatchIndex}
+              totalMatches={totalMatches}
+              onNext={nextMatch}
+              onPrev={prevMatch}
+              onClose={closeSearch}
+              isSearching={isSearching}
+            />
+          )}
+
           {isLoadingMessages && cachedMessages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="flex gap-1">
@@ -285,6 +363,8 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                   workspaceId={workspaceId}
                   onOpenDrawer={setOpenDrawerToolUseId}
                   isVisible={sessionId === activeSessionId}
+                  searchMatches={searchMatches}
+                  currentMatch={currentMatch}
                 />
               </div>
             ))
