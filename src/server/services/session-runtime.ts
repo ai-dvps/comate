@@ -6,6 +6,8 @@ import type {
   PermissionResult,
   PermissionUpdate,
   Query,
+  SDKRateLimitInfo,
+  SDKControlGetContextUsageResponse,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent, QuestionPayload } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
@@ -186,8 +188,10 @@ export class SessionRuntime {
       diagLog(`[Runtime ${this.sessionId}] message loop error: ${errJson}`);
       console.error('SessionRuntime message loop error:', err);
 
-      const message = err instanceof Error ? err.message : String(err);
+      const message = extractErrorMessage(err);
       const isNoConversationError = message.includes('No conversation found');
+      const isOverloadedError =
+        isRateLimitLike(err) || /(overloaded|rate.limit|529)/i.test(message);
 
       if (isNoConversationError) {
         // Fatal: the SDK has lost this session. Close the runtime so the
@@ -196,6 +200,15 @@ export class SessionRuntime {
         diagLog(`[Runtime ${this.sessionId}] closing due to lost conversation`);
         this.closed = true;
         this.input.close();
+      }
+
+      if (isOverloadedError) {
+        diagLog(`[Runtime ${this.sessionId}] detected overloaded/rate-limit error`);
+        const rateLimitInfo = extractRateLimitInfo(err);
+        if (rateLimitInfo) {
+          this.emitter.emitRateLimit(rateLimitInfo);
+          return;
+        }
       }
 
       this.emitter.emitErrorNote(
@@ -214,6 +227,7 @@ export class SessionRuntime {
         title?: string;
         description?: string;
         toolUseID: string;
+        decisionReasonType?: string;
       },
     ): Promise<PermissionResult> => {
       const requestId = options.toolUseID;
@@ -276,6 +290,7 @@ export class SessionRuntime {
         options.description,
         options.suggestions,
         timerInfo?.expiresAt,
+        options.decisionReasonType,
       );
 
       return new Promise<PermissionResult>((resolve) => {
@@ -431,6 +446,10 @@ export class SessionRuntime {
     };
   }
 
+  async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {
+    return this.query.getContextUsage();
+  }
+
   isClosed(): boolean {
     return this.closed;
   }
@@ -537,4 +556,37 @@ export class SessionRuntime {
     }
     this.pendingApprovals.clear();
   }
+}
+
+function extractRateLimitInfo(err: unknown): SDKRateLimitInfo | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const e = err as Record<string, unknown>;
+  const info = e.rate_limit_info ?? e.rateLimitInfo;
+  if (info && typeof info === 'object') {
+    return info as SDKRateLimitInfo;
+  }
+  return undefined;
+}
+
+function isRateLimitLike(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as Record<string, unknown>;
+  if (e.error === 'overloaded' || e.error === 'rate_limit') return true;
+  if (typeof e.message === 'string' && /(overloaded|rate.limit|529)/i.test(e.message)) return true;
+  return false;
+}
+
+function extractErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    const e = err as Record<string, unknown>;
+    if (typeof e.message === 'string' && e.message.length > 0) return e.message;
+    if (typeof e.error === 'string' && e.error.length > 0) return e.error;
+    if (typeof e.error === 'object' && e.error !== null) {
+      const sub = e.error as Record<string, unknown>;
+      if (typeof sub.message === 'string' && sub.message.length > 0) return sub.message;
+    }
+  }
+  const str = String(err);
+  return str === '[object Object]' ? 'Unknown SDK error' : str;
 }

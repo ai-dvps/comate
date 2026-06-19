@@ -92,18 +92,42 @@ describe('ChatMessageRenderer search highlights', () => {
     expect(container).toHaveClass('ring-1')
   })
 
-  it('marks reasoning blocks when they match', () => {
+  it('renders tool_use_meta display name and icon', () => {
     const message: RenderableMessage = {
       id: 'msg-1',
       role: 'assistant',
-      parts: [{ type: 'thinking', text: 'thinking about config', isStreaming: false }],
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-1',
+          toolName: 'mcp__server__fetch',
+          input: { url: 'https://example.com' },
+          isStreaming: false,
+          meta: {
+            displayName: 'Web Fetch',
+            iconUrl: 'https://example.com/icon.png',
+          },
+        },
+      ],
     }
-    const matches: MessageSearchMatch[] = [
-      { messageId: 'msg-1', partIndex: 0, start: 16, end: 22 },
-    ]
-    render(<ChatMessageRenderer {...baseProps} message={message} searchMatches={matches} currentMatch={matches[0]} />)
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
 
-    const content = screen.getByText('thinking about config')
-    expect(content).toBeInTheDocument()
+    expect(screen.getByText('Web Fetch')).toBeInTheDocument()
+    const img = document.querySelector('img[src="https://example.com/icon.png"]')
+    expect(img).toBeInTheDocument()
+  })
+
+  it('renders api_retry system messages as subtle inline text', () => {
+    const message: RenderableMessage = {
+      id: 'msg-1',
+      role: 'system',
+      subType: 'api_retry',
+      parts: [{ type: 'text', text: 'Retrying API request (1/3) after 1000ms' }],
+    }
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(screen.getByText('Retrying API request (1/3) after 1000ms')).toBeInTheDocument()
+    const alert = document.querySelector('[data-icon]')
+    expect(alert).not.toBeInTheDocument()
   })
 })

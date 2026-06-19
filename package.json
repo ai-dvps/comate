@@ -25,7 +25,7 @@
     "release": "npm run build:sidecar && npm run tauri:build"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.144",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.183",
     "@radix-ui/react-collapsible": "^1.1.0",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-tooltip": "^1.2.9",

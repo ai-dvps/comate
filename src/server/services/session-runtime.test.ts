@@ -376,6 +376,40 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
     }
   });
 
+  it('forwards decisionReasonType as denialReason on pending_approval', async () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      (_id, event) => {
+        if (event.type === 'pending_approval') {
+          events.push(event);
+        }
+      },
+    );
+    runtime.subscribe(createMockResponse());
+
+    const callback = getCanUseToolCallback(runtime);
+    const promise = callback('Bash', { command: 'rm -rf /' }, {
+      signal: createAbortSignal(),
+      toolUseID: 'tu-safety',
+      decisionReasonType: 'safetyCheck',
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.strictEqual(events.length, 1);
+    const event = events[0];
+    assert.strictEqual(event.type, 'pending_approval');
+    assert.strictEqual((event as { denialReason?: string }).denialReason, 'safetyCheck');
+
+    runtime!.resolveApproval('tu-safety', { behavior: 'deny', message: 'denied' });
+    await promise;
+  });
+
   it('fires timeout and resolves with fixed deny message', async () => {
     runtime = SessionRuntime.open(
       's1',
@@ -643,5 +677,92 @@ describe('session-runtime reconnect warning', { concurrency: false }, () => {
     (runtime as unknown as { currentMessageStartId?: string }).currentMessageStartId = 'start-id';
     runtime.subscribe(createMockResponse());
     assert.strictEqual(events.filter((e) => e.type === 'error_note').length, 0);
+  });
+});
+
+describe('session-runtime rate-limit errors', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createThrowingSdkClient(err: Error): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+
+    const messageGen = (async function* () {
+      throw err;
+    })();
+
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: messageGen,
+      }),
+    } as unknown as SdkClient;
+  }
+
+  function createMockResponse(): import('express').Response {
+    return {
+      write: () => true,
+    } as unknown as import('express').Response;
+  }
+
+  it('emits rate_limit event when the thrown error carries rate_limit_info', async () => {
+    const events: SseEvent[] = [];
+    const err = Object.assign(new Error('Rate limit exceeded'), {
+      error: 'rate_limit',
+      rate_limit_info: {
+        status: 'rejected',
+        errorCode: 'credits_required',
+        canUserPurchaseCredits: true,
+        hasChargeableSavedPaymentMethod: false,
+      },
+    });
+
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createThrowingSdkClient(err),
+      (_id, event) => events.push(event),
+    );
+    runtime.subscribe(createMockResponse());
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const rateLimit = events.find((e): e is Extract<SseEvent, { type: 'rate_limit' }> => e.type === 'rate_limit');
+    assert.ok(rateLimit, 'expected a rate_limit event');
+    assert.strictEqual(rateLimit.errorCode, 'credits_required');
+    assert.strictEqual(rateLimit.canUserPurchaseCredits, true);
+    assert.strictEqual(rateLimit.hasChargeableSavedPaymentMethod, false);
+    assert.ok(events.some((e) => e.type === 'error_note'), 'expected a backward-compat error_note');
+  });
+
+  it('falls back to error_note for rate-limit-like errors without rate_limit_info', async () => {
+    const events: SseEvent[] = [];
+    const err = Object.assign(new Error('overloaded'), { error: 'overloaded' });
+
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createThrowingSdkClient(err),
+      (_id, event) => events.push(event),
+    );
+    runtime.subscribe(createMockResponse());
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.ok(!events.some((e) => e.type === 'rate_limit'));
+    assert.ok(events.some((e) => e.type === 'error_note'));
   });
 });

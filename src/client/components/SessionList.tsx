@@ -6,7 +6,7 @@ import { shouldSubmitOnEnter } from '../lib/keyboard'
 import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from '../lib/session-filter'
 import type { SessionStatusFilter } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
-import { Plus, Puzzle, BookOpen, Search, X, RefreshCw, FlaskConical, Archive, ArchiveRestore, Copy } from 'lucide-react'
+import { Plus, Puzzle, BookOpen, Search, X, RefreshCw, FlaskConical, Archive, ArchiveRestore, Copy, GitBranch } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
@@ -46,6 +46,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const createSession = useChatStore((s) => s.createSession)
   const renameSession = useChatStore((s) => s.renameSession)
+  const forkSession = useChatStore((s) => s.forkSession)
   const toggleSessionWip = useChatStore((s) => s.toggleSessionWip)
   const toggleSessionArchive = useChatStore((s) => s.toggleSessionArchive)
   const fetchSessions = useChatStore((s) => s.fetchSessions)
@@ -174,6 +175,15 @@ export default function SessionList({ workspaceId }: SessionListProps) {
       await navigator.clipboard.writeText(contextMenu.sessionId)
     } catch (err) {
       console.error('Failed to copy session id:', err)
+    }
+    setContextMenu(null)
+  }
+
+  const handleForkSession = async () => {
+    if (!contextMenu) return
+    const result = await forkSession(workspaceId, contextMenu.sessionId)
+    if (!result.ok) {
+      addToast({ severity: 'error', message: result.error ?? 'Failed to fork session' })
     }
     setContextMenu(null)
   }
@@ -395,6 +405,13 @@ export default function SessionList({ workspaceId }: SessionListProps) {
               >
                 <Copy className="w-3.5 h-3.5" />
                 {t('copySessionId')}
+              </button>
+              <button
+                onClick={handleForkSession}
+                className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors flex items-center gap-2"
+              >
+                <GitBranch className="w-3.5 h-3.5" />
+                {t('forkSession')}
               </button>
             </div>
           )
