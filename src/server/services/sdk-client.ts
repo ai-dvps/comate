@@ -1,8 +1,10 @@
 import {
   query,
   listSessions,
+  listSubagents,
   getSessionInfo,
   getSessionMessages,
+  getSubagentMessages,
   renameSession,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
@@ -12,8 +14,10 @@ import type {
   SDKUserMessage,
   PermissionResult,
   ListSessionsOptions,
+  ListSubagentsOptions,
   GetSessionInfoOptions,
   GetSessionMessagesOptions,
+  GetSubagentMessagesOptions,
   SessionMutationOptions,
   SDKSessionInfo,
   SessionMessage,
@@ -78,6 +82,21 @@ export class SdkClient {
     return getSessionMessages(sessionId, options);
   }
 
+  async listSubagents(
+    sessionId: string,
+    options?: ListSubagentsOptions,
+  ): Promise<string[]> {
+    return listSubagents(sessionId, options);
+  }
+
+  async getSubagentMessages(
+    sessionId: string,
+    agentId: string,
+    options?: GetSubagentMessagesOptions,
+  ): Promise<SessionMessage[]> {
+    return getSubagentMessages(sessionId, agentId, options);
+  }
+
   async renameSession(
     sessionId: string,
     title: string,
@@ -124,8 +143,10 @@ export {
   type SDKSessionInfo,
   type SessionMessage,
   type ListSessionsOptions,
+  type ListSubagentsOptions,
   type GetSessionInfoOptions,
   type GetSessionMessagesOptions,
+  type GetSubagentMessagesOptions,
   type SessionMutationOptions,
   type InitializationResponse,
   type SlashCommandDto,

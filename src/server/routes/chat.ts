@@ -142,8 +142,8 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
     const sessionId = req.params.sessionId;
     const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-    const { messages, tasks } = await chatService.loadMessages(sessionId, workspaceId, offset, limit);
-    res.json({ messages, tasks });
+    const { messages, tasks, subagents } = await chatService.loadMessages(sessionId, workspaceId, offset, limit);
+    res.json({ messages, tasks, subagents });
   } catch (error) {
     console.error('Failed to load messages:', error);
     if (error instanceof ChatError) {
@@ -161,8 +161,8 @@ router.get('/sessions/:sessionId/messages/latest', async (req, res) => {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
     const afterMessageId = req.query.afterMessageId as string | undefined;
-    const { messages, tasks } = await chatService.loadMessagesAfter(sessionId, workspaceId, afterMessageId);
-    res.json({ messages, tasks });
+    const { messages, tasks, subagents } = await chatService.loadMessagesAfter(sessionId, workspaceId, afterMessageId);
+    res.json({ messages, tasks, subagents });
   } catch (error) {
     console.error('Failed to load latest messages:', error);
     if (error instanceof ChatError) {

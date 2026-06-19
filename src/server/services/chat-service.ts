@@ -1,14 +1,17 @@
 import { spawn } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import type { ChatMessage, TaskItem, SseEvent } from '../types/message.js';
+import type { ChatMessage, SubagentState, TaskItem, SseEvent } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
 import { SessionRuntime } from './session-runtime.js';
+import { reconstructSubagentState } from './subagent-loader.js';
+import { resolveTranscriptDir } from './analytics-transcript-path.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
@@ -20,7 +23,6 @@ import { evaluateToolPermission, resolveEffectivePolicy } from './tool-permissio
 import { createPathPolicyContext, validateToolInput } from './bot-path-policy.js';
 import { evaluateBash } from './bot-bash-policy.js';
 import { evaluateSkill } from './bot-skill-policy.js';
-import { existsSync, readFileSync } from 'fs';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -297,12 +299,137 @@ export class ChatService {
 
   // Message history loading
 
+  async loadSubagentsForSession(
+    sessionId: string,
+    workspaceId: string,
+    mainSdkMessages: SessionMessage[] = [],
+  ): Promise<SubagentState[]> {
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      return [];
+    }
+
+    const dir = normalizeWindowsPath(workspace.folderPath);
+    let agentIds: string[] = [];
+    try {
+      agentIds = await this.sdkClient.listSubagents(sessionId, { dir });
+    } catch (err) {
+      console.error(`Failed to list subagents for ${sessionId}:`, err);
+      return [];
+    }
+
+    if (agentIds.length === 0) {
+      return [];
+    }
+
+    const parentToolUseIdByAgentId = new Map<string, string>();
+    const descriptionByToolUseId = new Map<string, string>();
+
+    // Pre-scan the main transcript for Agent tool_use blocks to learn the
+    // parent toolUseId and the human-readable description.
+    for (const msg of mainSdkMessages) {
+      if (msg.type !== 'assistant') continue;
+      const raw = msg.message as { content?: unknown } | undefined;
+      const content = raw?.content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const typed = block as { type?: unknown; name?: unknown; id?: unknown; input?: unknown };
+        if (typed.type === 'tool_use' && typed.name === 'Agent') {
+          const toolUseId = typeof typed.id === 'string' ? typed.id : '';
+          const input = typed.input as Record<string, unknown> | undefined;
+          const desc = typeof input?.description === 'string' ? input.description : '';
+          if (toolUseId) {
+            descriptionByToolUseId.set(toolUseId, desc);
+          }
+        }
+      }
+    }
+
+    // Try the SDK's subagent meta file for the parent toolUseId mapping.
+    const transcriptDir = resolveTranscriptDir(workspace.folderPath);
+    for (const agentId of agentIds) {
+      if (parentToolUseIdByAgentId.has(agentId)) continue;
+      const metaPath = transcriptDir
+        ? path.join(transcriptDir, sessionId, 'subagents', `agent-${agentId}.meta.json`)
+        : null;
+      if (metaPath && existsSync(metaPath)) {
+        try {
+          const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as {
+            toolUseId?: unknown;
+            description?: unknown;
+          };
+          if (typeof meta.toolUseId === 'string') {
+            parentToolUseIdByAgentId.set(agentId, meta.toolUseId);
+            if (typeof meta.description === 'string' && meta.description) {
+              descriptionByToolUseId.set(meta.toolUseId, meta.description);
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to parse subagent meta for ${agentId}:`, err);
+        }
+      }
+    }
+
+    // Fallback: scan main transcript tool_result blocks that mention the agentId.
+    for (const agentId of agentIds) {
+      if (parentToolUseIdByAgentId.has(agentId)) continue;
+      for (const msg of mainSdkMessages) {
+        if (msg.type !== 'user') continue;
+        const raw = msg.message as { content?: unknown } | undefined;
+        const content = raw?.content;
+        const haystack = JSON.stringify(content ?? '');
+        if (!haystack.includes(agentId)) continue;
+        const arr = Array.isArray(content) ? content : [];
+        for (const block of arr) {
+          if (!block || typeof block !== 'object') continue;
+          const typed = block as { type?: unknown; tool_use_id?: unknown };
+          if (typed.type === 'tool_result') {
+            const toolUseId = typeof typed.tool_use_id === 'string' ? typed.tool_use_id : '';
+            if (toolUseId) {
+              parentToolUseIdByAgentId.set(agentId, toolUseId);
+              const toolUseResult = (msg as Record<string, unknown>).toolUseResult as
+                | Record<string, unknown>
+                | undefined;
+              if (typeof toolUseResult?.description === 'string') {
+                descriptionByToolUseId.set(toolUseId, toolUseResult.description);
+              }
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    const subagents: SubagentState[] = [];
+    for (const agentId of agentIds) {
+      const parentToolUseId = parentToolUseIdByAgentId.get(agentId);
+      if (!parentToolUseId) {
+        console.warn(`Could not map subagent ${agentId} to a parent toolUseId`);
+        continue;
+      }
+
+      try {
+        const subMessages = await this.sdkClient.getSubagentMessages(sessionId, agentId, { dir });
+        const description = descriptionByToolUseId.get(parentToolUseId) || `Agent ${agentId}`;
+        const reconstructed = reconstructSubagentState(parentToolUseId, subMessages, description);
+        if (reconstructed) {
+          subagents.push(reconstructed);
+        }
+      } catch (err) {
+        console.error(`Failed to load subagent ${agentId} for ${sessionId}:`, err);
+      }
+    }
+
+    return subagents;
+  }
+
   async loadMessages(
     sessionId: string,
     workspaceId: string,
     offset?: number,
     limit?: number,
-  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[] }> {
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[] }> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -341,14 +468,15 @@ export class ChatService {
       }
     });
     const tasks = scanSdkMessagesForTasks(sdkMessages);
-    return { messages: normalized, tasks };
+    const subagents = await this.loadSubagentsForSession(sessionId, workspaceId, sdkMessages);
+    return { messages: normalized, tasks, subagents };
   }
 
   async loadMessagesAfter(
     sessionId: string,
     workspaceId: string,
     afterMessageId?: string,
-  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[] }> {
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[] }> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -379,7 +507,8 @@ export class ChatService {
       }
     });
     const tasks = scanSdkMessagesForTasks(sliced);
-    return { messages: normalized, tasks };
+    const subagents = await this.loadSubagentsForSession(sessionId, workspaceId, sdkMessages);
+    return { messages: normalized, tasks, subagents };
   }
 
   // Session runtime management

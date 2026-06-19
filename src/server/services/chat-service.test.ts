@@ -291,7 +291,13 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
     override async listSessions(): Promise<SDKSessionInfo[]> {
       return [];
     }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
     override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
       return [];
     }
     override async renameSession(): Promise<void> {}
@@ -443,7 +449,13 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     override async listSessions(): Promise<SDKSessionInfo[]> {
       return [];
     }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
     override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
       return [];
     }
     override async renameSession(): Promise<void> {}
@@ -643,5 +655,190 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     await service.getOrCreateRuntime('s1', 'ws-1');
     assert.ok(capturedOptions);
     assert.strictEqual(capturedOptions!.canUseTool, undefined, 'GUI sessions must not have canUseTool set by this branch');
+  });
+});
+
+describe('chat-service loadMessages subagents', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+  const originalGetLocalSession = workspaceStore.getLocalSession.bind(workspaceStore);
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+
+  class TestChatService extends ChatService {
+    constructor(sdkClient?: SdkClient) {
+      super(sdkClient ?? new SdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  function setupStoreMocks() {
+    workspaceStore.get = async () => createMockWorkspace('ws-1');
+    workspaceStore.getLocalSession = () => createMockSession('s1');
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+  }
+
+  beforeEach(() => {
+    setupStoreMocks();
+  });
+
+  afterEach(async () => {
+    await service?.closeAllRuntimes();
+    workspaceStore.get = originalGet;
+    workspaceStore.getLocalSession = originalGetLocalSession;
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+  });
+
+  it('returns reconstructed subagents alongside messages and tasks', async () => {
+    const mainMessages: SessionMessage[] = [
+      {
+        type: 'assistant',
+        uuid: 'm1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool-123',
+              name: 'Agent',
+              input: { description: 'Grounding scout' },
+            },
+          ],
+        },
+      } as unknown as SessionMessage,
+      {
+        type: 'user',
+        uuid: 'm2',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-123',
+              content: 'Async agent launched. agentId: agent-1 (internal ID)',
+              is_error: false,
+            },
+          ],
+        },
+      } as unknown as SessionMessage,
+    ];
+
+    const subagentMessages: SessionMessage[] = [
+      {
+        type: 'user',
+        uuid: 'u1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'go' },
+      } as unknown as SessionMessage,
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'done' }],
+        },
+      } as unknown as SessionMessage,
+    ];
+
+    class SubagentMockSdkClient extends SdkClient {
+      override async getSessionMessages(): Promise<SessionMessage[]> {
+        return mainMessages;
+      }
+      override async listSubagents(): Promise<string[]> {
+        return ['agent-1'];
+      }
+      override async getSubagentMessages(): Promise<SessionMessage[]> {
+        return subagentMessages;
+      }
+    }
+
+    service = new TestChatService(new SubagentMockSdkClient());
+    const result = await service.loadMessages('s1', 'ws-1');
+
+    assert.strictEqual(result.subagents.length, 1);
+    assert.strictEqual(result.subagents[0].parentToolUseId, 'tool-123');
+    assert.strictEqual(result.subagents[0].description, 'Grounding scout');
+    assert.strictEqual(result.subagents[0].state, 'completed');
+    assert.strictEqual(result.subagents[0].messages.length, 2);
+    assert.strictEqual(result.subagents[0].toolCount, 0);
+  });
+
+  it('survives listSubagents failures and returns empty subagents', async () => {
+    class FailingListSdkClient extends SdkClient {
+      override async getSessionMessages(): Promise<SessionMessage[]> {
+        return [];
+      }
+      override async listSubagents(): Promise<string[]> {
+        throw new Error('disk read failed');
+      }
+    }
+
+    service = new TestChatService(new FailingListSdkClient());
+    const result = await service.loadMessages('s1', 'ws-1');
+
+    assert.deepStrictEqual(result.messages, []);
+    assert.deepStrictEqual(result.tasks, []);
+    assert.deepStrictEqual(result.subagents, []);
+  });
+
+  it('falls back to main transcript tool_result when subagent meta file is missing', async () => {
+    const mainMessages: SessionMessage[] = [
+      {
+        type: 'user',
+        uuid: 'm1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-456',
+              content: 'Async agent launched. agentId: agent-2 (internal ID)',
+              is_error: false,
+            },
+          ],
+        },
+        toolUseResult: { description: 'Fallback agent' },
+      } as unknown as SessionMessage,
+    ];
+
+    const subagentMessages: SessionMessage[] = [
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'found it' }],
+        },
+      } as unknown as SessionMessage,
+    ];
+
+    class FallbackSdkClient extends SdkClient {
+      override async getSessionMessages(): Promise<SessionMessage[]> {
+        return mainMessages;
+      }
+      override async listSubagents(): Promise<string[]> {
+        return ['agent-2'];
+      }
+      override async getSubagentMessages(): Promise<SessionMessage[]> {
+        return subagentMessages;
+      }
+    }
+
+    service = new TestChatService(new FallbackSdkClient());
+    const result = await service.loadMessages('s1', 'ws-1');
+
+    assert.strictEqual(result.subagents.length, 1);
+    assert.strictEqual(result.subagents[0].parentToolUseId, 'tool-456');
+    assert.strictEqual(result.subagents[0].description, 'Fallback agent');
   });
 });
