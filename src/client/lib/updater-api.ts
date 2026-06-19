@@ -105,16 +105,19 @@ export function dismissUpdate(): void {
   useUpdaterStore.getState().dismissUpdate()
 }
 
-export function startPeriodicUpdateChecks(getPreferences: () => UpdaterPreferences): void {
+export function startPeriodicUpdateChecks(
+  getPreferences: () => UpdaterPreferences,
+  onCheck?: () => void
+): void {
   if (!isTauri()) return
   if (checkIntervalId) return
 
-  void checkForUpdates()
+  void checkForUpdates().then(() => onCheck?.())
 
   const scheduleNext = () => {
     checkIntervalId = setInterval(() => {
       if (!getPreferences().autoCheckUpdates) return
-      void checkForUpdates()
+      void checkForUpdates().then(() => onCheck?.())
     }, getIntervalWithJitter())
   }
 

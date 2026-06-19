@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   X,
@@ -16,6 +16,8 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
+import { useUpdaterStore } from '../stores/updater-store'
+import { checkForUpdates, getAppVersion } from '../lib/updater-api'
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
 import type { ToolPermissionPolicy } from '../types/wecom-permissions'
@@ -105,9 +107,11 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const storeError = useWorkspaceStore((s) => s.error)
   const isStoreLoading = useWorkspaceStore((s) => s.isLoading)
 
-  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays } = useAppSettings()
+  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays, autoCheckUpdates, setAutoCheckUpdates, lastUpdateCheckAt, setLastUpdateCheckAt } = useAppSettings()
   const windowCap = useChatStore((s) => s.windowCap)
   const setWindowCap = useChatStore((s) => s.setWindowCap)
+  const updateStatus = useUpdaterStore((s) => s.status)
+  const updateError = useUpdaterStore((s) => s.error)
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
@@ -121,6 +125,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [appModel, setAppModel] = useState(defaultModel)
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
   const [appModifierSubmit, setAppModifierSubmit] = useState(useModifierToSubmit)
+  const [appAutoCheckUpdates, setAppAutoCheckUpdates] = useState(autoCheckUpdates)
   const [windowCapInput, setWindowCapInput] = useState(String(windowCap))
   const [archiveThresholdDaysInput, setArchiveThresholdDaysInput] = useState(String(archiveThresholdDays))
 
@@ -132,6 +137,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     appModel: defaultModel,
     appReopen: reopenLastWorkspace,
     appModifierSubmit: useModifierToSubmit,
+    appAutoCheckUpdates: autoCheckUpdates,
     appWindowCap: windowCap,
     appArchiveThresholdDays: archiveThresholdDays,
     workspaceState: {} as Record<string, WorkspaceFormState>,
@@ -153,6 +159,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appModel: defaultModel,
       appReopen: reopenLastWorkspace,
       appModifierSubmit: useModifierToSubmit,
+      appAutoCheckUpdates: autoCheckUpdates,
       appWindowCap: windowCap,
       appArchiveThresholdDays: archiveThresholdDays,
       workspaceState: JSON.parse(JSON.stringify(initial)),
@@ -160,13 +167,14 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppModel(defaultModel)
     setAppReopen(reopenLastWorkspace)
     setAppModifierSubmit(useModifierToSubmit)
+    setAppAutoCheckUpdates(autoCheckUpdates)
     setWindowCapInput(String(windowCap))
     setArchiveThresholdDaysInput(String(archiveThresholdDays))
 
     if (workspaces.length > 0) {
       setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, defaultModel, reopenLastWorkspace, useModifierToSubmit, activeWorkspaceId, windowCap, archiveThresholdDays])
+  }, [workspaces, defaultModel, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, activeWorkspaceId, windowCap, archiveThresholdDays])
 
   useEffect(() => {
     setWindowCapInput(String(windowCap))
@@ -209,10 +217,11 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     if (appModel !== snapshotRef.current.appModel) return true
     if (appReopen !== snapshotRef.current.appReopen) return true
     if (appModifierSubmit !== snapshotRef.current.appModifierSubmit) return true
+    if (appAutoCheckUpdates !== snapshotRef.current.appAutoCheckUpdates) return true
     if (windowCap !== snapshotRef.current.appWindowCap) return true
     if (archiveThresholdDays !== snapshotRef.current.appArchiveThresholdDays) return true
     return JSON.stringify(workspaceState) !== JSON.stringify(snapshotRef.current.workspaceState)
-  }, [appModel, appReopen, appModifierSubmit, windowCap, archiveThresholdDays, workspaceState])
+  }, [appModel, appReopen, appModifierSubmit, appAutoCheckUpdates, windowCap, archiveThresholdDays, workspaceState])
 
   const handleClose = useCallback(() => {
     if (isDirty()) {
@@ -256,6 +265,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setDefaultModel(appModel)
     setReopenLastWorkspace(appReopen)
     setUseModifierToSubmit(appModifierSubmit)
+    setAutoCheckUpdates(appAutoCheckUpdates)
     const parsedCap = parseInt(windowCapInput, 10)
     if (!isNaN(parsedCap)) {
       setWindowCap(parsedCap)
@@ -304,6 +314,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appModel,
       appReopen,
       appModifierSubmit,
+      appAutoCheckUpdates,
       appWindowCap: windowCap,
       appArchiveThresholdDays: nextArchiveThresholdDays,
       workspaceState: JSON.parse(JSON.stringify(workspaceState)),
@@ -323,6 +334,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppModel(snapshotRef.current.appModel)
     setAppReopen(snapshotRef.current.appReopen)
     setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
+    setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
     setWindowCapInput(String(snapshotRef.current.appWindowCap))
     setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
@@ -333,6 +345,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppModel(snapshotRef.current.appModel)
     setAppReopen(snapshotRef.current.appReopen)
     setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
+    setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
     setWindowCapInput(String(snapshotRef.current.appWindowCap))
     setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
@@ -421,6 +434,12 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 onReopenLastWorkspaceChange={setAppReopen}
                 useModifierToSubmit={appModifierSubmit}
                 onUseModifierToSubmitChange={setAppModifierSubmit}
+                autoCheckUpdates={appAutoCheckUpdates}
+                onAutoCheckUpdatesChange={setAppAutoCheckUpdates}
+                lastUpdateCheckAt={lastUpdateCheckAt}
+                updateStatus={updateStatus}
+                updateError={updateError}
+                onRecordUpdateCheck={() => setLastUpdateCheckAt(new Date().toISOString())}
                 windowCap={windowCapInput}
                 onWindowCapChange={setWindowCapInput}
                 onWindowCapCommit={(val) => {
@@ -598,6 +617,12 @@ function GeneralTab({
   onReopenLastWorkspaceChange,
   useModifierToSubmit,
   onUseModifierToSubmitChange,
+  autoCheckUpdates,
+  onAutoCheckUpdatesChange,
+  lastUpdateCheckAt,
+  updateStatus,
+  updateError,
+  onRecordUpdateCheck,
   windowCap,
   onWindowCapChange,
   onWindowCapCommit,
@@ -611,6 +636,12 @@ function GeneralTab({
   onReopenLastWorkspaceChange: (v: boolean) => void
   useModifierToSubmit: boolean
   onUseModifierToSubmitChange: (v: boolean) => void
+  autoCheckUpdates: boolean
+  onAutoCheckUpdatesChange: (v: boolean) => void
+  lastUpdateCheckAt: string | null
+  updateStatus: import('../stores/updater-store').UpdaterStatus
+  updateError: string | null
+  onRecordUpdateCheck: () => void
   windowCap: string
   onWindowCapChange: (v: string) => void
   onWindowCapCommit: (v: string) => void
@@ -619,6 +650,41 @@ function GeneralTab({
   onArchiveThresholdDaysCommit: (v: string) => void
 }) {
   const { t } = useTranslation('settings')
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [checkingNow, setCheckingNow] = useState(false)
+
+  useEffect(() => {
+    getAppVersion().then(setAppVersion)
+  }, [])
+
+  const handleCheckNow = async () => {
+    if (checkingNow || updateStatus === 'downloading' || updateStatus === 'ready' || updateStatus === 'restarting') return
+    setCheckingNow(true)
+    try {
+      await checkForUpdates()
+      onRecordUpdateCheck()
+    } finally {
+      setCheckingNow(false)
+    }
+  }
+
+  const statusText = useMemo(() => {
+    if (updateError) return t('general.updateStatusError', { error: updateError })
+    switch (updateStatus) {
+      case 'checking':
+        return t('general.updateStatusChecking')
+      case 'available':
+        return t('general.updateStatusAvailable')
+      case 'downloading':
+        return t('general.updateStatusDownloading')
+      case 'ready':
+        return t('general.updateStatusReady')
+      default:
+        return lastUpdateCheckAt
+          ? t('general.updateStatusLastCheck', { time: new Date(lastUpdateCheckAt).toLocaleString() })
+          : t('general.updateStatusNeverChecked')
+    }
+  }, [updateStatus, updateError, lastUpdateCheckAt, t])
 
   return (
     <div className="p-6 max-w-xl">
@@ -728,6 +794,52 @@ function GeneralTab({
               }`}
             />
           </button>
+        </div>
+
+        <div className="py-3 border-t border-border/50 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary">
+                {t('general.updaterTitle')}
+              </label>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                {t('general.updaterVersion', { version: appVersion ?? t('general.updaterVersionUnknown') })}
+              </p>
+            </div>
+            <button
+              onClick={handleCheckNow}
+              disabled={checkingNow || updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready' || updateStatus === 'restarting'}
+              className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+            >
+              {checkingNow || updateStatus === 'checking'
+                ? t('general.updaterChecking')
+                : t('general.updaterCheckNow')}
+            </button>
+          </div>
+          <p className="text-[10px] text-text-tertiary">{statusText}</p>
+
+          <div className="flex items-center justify-between pt-1">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary">
+                {t('general.updaterAutoCheck')}
+              </label>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                {t('general.updaterAutoCheckHint')}
+              </p>
+            </div>
+            <button
+              onClick={() => onAutoCheckUpdatesChange(!autoCheckUpdates)}
+              className={`relative w-9 h-5 rounded-full transition-colors ${
+                autoCheckUpdates ? 'bg-accent' : 'bg-border'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  autoCheckUpdates ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </div>
     </div>
