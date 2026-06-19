@@ -15,6 +15,7 @@ struct AppState {
     api_port: Mutex<Option<u16>>,
     sidecar_child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     is_shutting_down: AtomicBool,
+    is_updating: AtomicBool,
     bot_status_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     session_count_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     badge_count: AtomicU32,
@@ -24,6 +25,11 @@ struct AppState {
 fn get_api_port(state: State<'_, AppState>) -> Result<u16, String> {
     let port = state.api_port.lock().map_err(|e| e.to_string())?;
     port.ok_or_else(|| "API port not yet discovered".to_string())
+}
+
+#[tauri::command]
+fn prepare_updater_relaunch(state: State<'_, AppState>) {
+    state.is_updating.store(true, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -168,8 +174,14 @@ fn perform_shutdown(app_handle: &AppHandle) {
     app_handle.exit(0);
 }
 
-fn perform_fast_shutdown(app_handle: &AppHandle) {
-    cleanup_sidecar(app_handle, Duration::from_millis(500));
+fn cleanup_before_exit(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    let grace = if state.is_updating.load(Ordering::SeqCst) {
+        Duration::from_secs(5)
+    } else {
+        Duration::from_millis(500)
+    };
+    cleanup_sidecar(app_handle, grace);
 }
 
 fn show_main_window(app_handle: &AppHandle) {
@@ -257,21 +269,31 @@ async fn run_tray_status_poller(app_handle: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .manage(AppState {
             api_port: Mutex::new(None),
             sidecar_child: Mutex::new(None),
             is_shutting_down: AtomicBool::new(false),
+            is_updating: AtomicBool::new(false),
             bot_status_item: Mutex::new(None),
             session_count_item: Mutex::new(None),
             badge_count: AtomicU32::new(0),
         })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
-        .invoke_handler(tauri::generate_handler![get_api_port, update_badge_state, reveal_in_file_manager])
+        .invoke_handler(tauri::generate_handler![
+            get_api_port,
+            prepare_updater_relaunch,
+            update_badge_state,
+            reveal_in_file_manager
+        ])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -480,7 +502,10 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
             tauri::RunEvent::Exit => {
-                perform_fast_shutdown(app_handle);
+                cleanup_before_exit(app_handle);
+            }
+            tauri::RunEvent::ExitRequested { .. } => {
+                cleanup_before_exit(app_handle);
             }
             _ => {}
         });

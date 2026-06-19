@@ -84,5 +84,15 @@
   "provider": {
     "noProviderConfigured": "未配置 LLM 服务商。请前往设置 → 服务商添加。",
     "configure": "配置服务商"
+  },
+  "update": {
+    "checking": "正在检查更新...",
+    "available": "Comate {{version}} 可用",
+    "download": "下载",
+    "downloading": "正在下载更新... {{progress}}%",
+    "restartTitle": "重启以安装更新",
+    "restartMessage": "Comate {{version}} 已下载并准备好安装。立即重启以应用更新。",
+    "restartNow": "立即重启",
+    "restartLater": "稍后重启"
   }
 }

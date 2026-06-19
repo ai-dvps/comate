@@ -11,6 +11,8 @@ interface AppSettings {
   chatFontSize: FontSizePreset
   uiFontSize: FontSizePreset
   archiveThresholdDays: number
+  autoCheckUpdates: boolean
+  lastUpdateCheckAt: string | null
 }
 
 const STORAGE_KEY = 'app-settings'
@@ -32,6 +34,11 @@ export function getInitialSettings(): AppSettings {
         typeof parsed.archiveThresholdDays === 'number' && parsed.archiveThresholdDays > 0
           ? parsed.archiveThresholdDays
           : DEFAULT_ARCHIVE_THRESHOLD_DAYS
+      const autoCheckUpdates = typeof parsed.autoCheckUpdates === 'boolean' ? parsed.autoCheckUpdates : true
+      const lastUpdateCheckAt =
+        typeof parsed.lastUpdateCheckAt === 'string' && parsed.lastUpdateCheckAt
+          ? parsed.lastUpdateCheckAt
+          : null
       return {
         defaultModel: typeof parsed.defaultModel === 'string' ? parsed.defaultModel : '',
         reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
@@ -40,12 +47,14 @@ export function getInitialSettings(): AppSettings {
         chatFontSize: isValidFontSize(parsed.chatFontSize) ? parsed.chatFontSize : 'small',
         uiFontSize: isValidFontSize(parsed.uiFontSize) ? parsed.uiFontSize : 'medium',
         archiveThresholdDays,
+        autoCheckUpdates,
+        lastUpdateCheckAt,
       }
     }
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium', archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS }
+  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium', archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS, autoCheckUpdates: true, lastUpdateCheckAt: null }
 }
 
 function saveSettings(settings: AppSettings) {
@@ -122,6 +131,22 @@ export function useAppSettings() {
     })
   }, [])
 
+  const setAutoCheckUpdates = useCallback((autoCheckUpdates: boolean) => {
+    setSettings((prev) => {
+      const next = { ...prev, autoCheckUpdates }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
+  const setLastUpdateCheckAt = useCallback((lastUpdateCheckAt: string | null) => {
+    setSettings((prev) => {
+      const next = { ...prev, lastUpdateCheckAt }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
   return {
     defaultModel: settings.defaultModel,
     reopenLastWorkspace: settings.reopenLastWorkspace,
@@ -130,6 +155,8 @@ export function useAppSettings() {
     chatFontSize: settings.chatFontSize,
     uiFontSize: settings.uiFontSize,
     archiveThresholdDays: settings.archiveThresholdDays,
+    autoCheckUpdates: settings.autoCheckUpdates,
+    lastUpdateCheckAt: settings.lastUpdateCheckAt,
     setDefaultModel,
     setReopenLastWorkspace,
     setUseModifierToSubmit,
@@ -137,5 +164,7 @@ export function useAppSettings() {
     setChatFontSize,
     setUiFontSize,
     setArchiveThresholdDays,
+    setAutoCheckUpdates,
+    setLastUpdateCheckAt,
   }
 }
