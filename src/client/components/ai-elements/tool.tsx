@@ -23,7 +23,7 @@ import {
   XCircleIcon,
 } from 'lucide-react'
 import type { ComponentProps, ReactNode } from 'react'
-import { isValidElement } from 'react'
+import { isValidElement, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { ToolPart, ToolState } from '../../types/message'
@@ -51,6 +51,10 @@ export type ToolHeaderProps = {
   summary?: string
   className?: string
   autoApproved?: 'auto' | 'readonly'
+  meta?: {
+    displayName?: string
+    iconUrl?: string
+  }
 } & (
   | { type: string; state: ToolState; toolName?: never }
   | { type: 'dynamic-tool'; state: ToolState; toolName: string }
@@ -86,11 +90,14 @@ export const ToolHeader = ({
   state,
   toolName,
   autoApproved,
+  meta,
   ...props
 }: ToolHeaderProps) => {
   const { t } = useTranslation('chat')
+  const [iconError, setIconError] = useState(false)
   const derivedName =
     type === 'dynamic-tool' ? toolName : type.split('-').slice(1).join('-')
+  const displayTitle = title ?? meta?.displayName ?? derivedName
 
   return (
     <div
@@ -101,8 +108,17 @@ export const ToolHeader = ({
       {...props}
     >
       <div className="flex items-center gap-2 min-w-0">
-        <WrenchIcon className="size-4 text-text-tertiary flex-shrink-0" />
-        <span className="font-medium">{title ?? derivedName}</span>
+        {meta?.iconUrl && !iconError ? (
+          <img
+            src={meta.iconUrl}
+            alt=""
+            className="size-4 flex-shrink-0 object-contain"
+            onError={() => setIconError(true)}
+          />
+        ) : (
+          <WrenchIcon className="size-4 text-text-tertiary flex-shrink-0" />
+        )}
+        <span className="font-medium">{displayTitle}</span>
         {summary && (
           <span
             className="text-text-tertiary truncate max-w-[360px]"

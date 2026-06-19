@@ -70,6 +70,7 @@ interface PendingApproval {
   description?: string
   suggestions?: PermissionUpdate[]
   expiresAt?: number
+  denialReason?: 'safetyCheck' | 'asyncAgent' | string
 }
 
 interface PendingQuestion {
@@ -284,8 +285,25 @@ function ApprovalView({
       : JSON.stringify(item.input, null, 2)
   const isTruncated = inputStr.length > 200
 
+  const denialNotice = useMemo(() => {
+    if (!item.denialReason) return null
+    if (item.denialReason === 'safetyCheck') {
+      return t('approval.denialReason_safetyCheck')
+    }
+    if (item.denialReason === 'asyncAgent') {
+      return t('approval.denialReason_asyncAgent')
+    }
+    return t('approval.denialReason_default', { reason: item.denialReason })
+  }, [item.denialReason, t])
+
   return (
     <div>
+      {denialNotice && (
+        <div className="mb-3 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">
+          <span className="font-semibold">{t('approval.denialReason')}: </span>
+          {denialNotice}
+        </div>
+      )}
       <div className="mb-3 max-h-[60vh] overflow-y-auto">
         {hasCustomRenderer && showMore ? (
           <div className="bg-bg rounded px-2 py-1.5">

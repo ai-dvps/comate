@@ -35,6 +35,7 @@ const mockStore = {
   setActiveSession: vi.fn(),
   createSession: vi.fn(),
   renameSession: vi.fn(),
+  forkSession: vi.fn(() => Promise.resolve({ ok: true })),
   toggleSessionWip: vi.fn(),
   toggleSessionArchive: vi.fn(),
   fetchSessions: vi.fn(() => Promise.resolve({ ok: true })),
@@ -75,6 +76,7 @@ describe('SessionList', () => {
     mockStore.setActiveSession.mockClear()
     mockStore.createSession.mockClear()
     mockStore.renameSession.mockClear()
+    mockStore.forkSession.mockClear()
     mockStore.toggleSessionWip.mockClear()
     mockStore.toggleSessionArchive.mockClear()
     mockStore.fetchSessions.mockClear()
@@ -156,5 +158,20 @@ describe('SessionList', () => {
 
     expect(screen.getByText('Active Session')).toBeInTheDocument()
     expect(screen.queryByText('Archived Session')).not.toBeInTheDocument()
+  })
+
+  it('forks a session from the context menu and calls the store action', async () => {
+    const user = userEvent.setup()
+    mockStore.sessions.ws1 = [makeSession({ id: 's1', name: 'Session to fork' })]
+
+    renderWithI18n(<SessionList workspaceId="ws1" />)
+
+    const row = screen.getByText('Session to fork')
+    await user.pointer([{ keys: '[MouseRight]', target: row }])
+
+    const forkButton = await screen.findByRole('button', { name: /Fork session/i })
+    await user.click(forkButton)
+
+    expect(mockStore.forkSession).toHaveBeenCalledWith('ws1', 's1')
   })
 })

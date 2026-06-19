@@ -123,6 +123,7 @@ interface PendingApproval {
   description?: string
   suggestions?: PermissionUpdate[]
   expiresAt?: number
+  denialReason?: 'safetyCheck' | 'asyncAgent' | string
 }
 
 interface PendingQuestion {
@@ -145,6 +146,25 @@ export interface SessionUsage {
   cumulativeOutput: number
   cumulativeCacheRead: number
   cumulativeCacheWrite: number
+}
+
+export interface ContextUsageCategory {
+  name: string
+  tokens: number
+  color?: string
+}
+
+export interface ContextUsage {
+  totalTokens: number
+  maxTokens: number
+  percentage: number
+  categories: ContextUsageCategory[]
+}
+
+export interface ResultMeta {
+  stopReason?: string | null
+  terminalReason?: string
+  origin?: string
 }
 
 export type { TaskItem }
@@ -182,6 +202,8 @@ interface ChatState {
   isLoadingOlderMessages: Record<string, boolean>
   lastTurnUsage: Record<string, TurnUsage>
   sessionUsage: Record<string, SessionUsage>
+  contextUsage: Record<string, ContextUsage>
+  resultMeta: Record<string, ResultMeta>
   domCache: Record<string, string[]>
   isRestartingRuntime: Record<string, boolean>
 
@@ -189,6 +211,7 @@ interface ChatState {
   touchDomCache: (workspaceId: string, sessionId: string) => string | null
   getDomCache: (workspaceId: string) => string[]
   createSession: (workspaceId: string, name: string, approvalMode?: ApprovalMode, providerId?: string) => Promise<void>
+  forkSession: (workspaceId: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>
   addSession: (workspaceId: string, session: ChatSession) => void
   renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
   toggleSessionWip: (workspaceId: string, sessionId: string, isWip: boolean) => Promise<void>
@@ -218,6 +241,7 @@ interface ChatState {
   setWindowCap: (cap: number) => void
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
+  fetchContextUsage: (workspaceId: string, sessionId: string) => Promise<{ ok: boolean; data?: ContextUsage; error?: string }>
 }
 
 function generateId(): string {
@@ -986,6 +1010,27 @@ function handleSseEvent(
       })
       return
     }
+    case 'tool_use_meta': {
+      const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
+      const meta = (data as Record<string, unknown>).meta
+      if (!toolUseId || !meta || typeof meta !== 'object') return
+      const typedMeta = meta as { displayName?: unknown; iconUrl?: unknown }
+      const displayName =
+        typeof typedMeta.displayName === 'string' ? typedMeta.displayName : undefined
+      const iconUrl = typeof typedMeta.iconUrl === 'string' ? typedMeta.iconUrl : undefined
+      if (!displayName && !iconUrl) return
+      set((state) =>
+        mutateToolUsePart(state, sessionId, toolUseId, (part) => ({
+          ...part,
+          meta: {
+            ...(part.meta ?? {}),
+            ...(displayName !== undefined && { displayName }),
+            ...(iconUrl !== undefined && { iconUrl }),
+          },
+        })),
+      )
+      return
+    }
     case 'tool_input_delta': {
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       const partialJson =
@@ -1310,6 +1355,7 @@ function handleSseEvent(
             description: typeof data.description === 'string' ? data.description : undefined,
             suggestions: Array.isArray(data.suggestions) ? data.suggestions : undefined,
             expiresAt,
+            denialReason: typeof data.denialReason === 'string' ? data.denialReason : undefined,
           },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
@@ -1390,6 +1436,115 @@ function handleSseEvent(
       set((state) => addSystemMessage(state, sessionId, text))
       return
     }
+    case 'api_retry': {
+      const attempt = typeof data.attempt === 'number' ? data.attempt : 0
+      const maxRetries = typeof data.maxRetries === 'number' ? data.maxRetries : 0
+      const retryDelayMs = typeof data.retryDelayMs === 'number' ? data.retryDelayMs : 0
+      const text = i18next.t('chat:apiRetry', {
+        defaultValue: 'Retrying API request ({{attempt}}/{{maxRetries}}) after {{retryDelayMs}}ms',
+        attempt,
+        maxRetries,
+        retryDelayMs,
+      })
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [sessionId]: [
+            ...(state.messages[sessionId] || []),
+            {
+              id: generateId(),
+              role: 'system',
+              subType: 'api_retry',
+              parts: [{ type: 'text', text }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+      }))
+      return
+    }
+    case 'rate_limit': {
+      const errorCode = typeof data.errorCode === 'string' ? data.errorCode : undefined
+      const canUserPurchaseCredits = data.canUserPurchaseCredits === true
+      const hasChargeableSavedPaymentMethod = data.hasChargeableSavedPaymentMethod === true
+      let text: string
+      if (errorCode === 'credits_required') {
+        if (hasChargeableSavedPaymentMethod) {
+          text = i18next.t(
+            'common:rateLimit.creditsRequiredCanPurchase',
+            'Credits required. Purchase credits to continue.',
+          )
+        } else if (canUserPurchaseCredits) {
+          text = i18next.t(
+            'common:rateLimit.creditsRequiredAddPayment',
+            'Credits required. Add a payment method to purchase credits.',
+          )
+        } else {
+          text = i18next.t('common:rateLimit.creditsRequired', 'Credits required to continue.')
+        }
+      } else {
+        text = i18next.t(
+          'common:rateLimit.throughput',
+          'Rate limit reached. Please wait a moment and try again.',
+        )
+      }
+      set((state) => ({
+        isStreaming: { ...state.isStreaming, [sessionId]: false },
+        messages: {
+          ...state.messages,
+          [sessionId]: [
+            ...(state.messages[sessionId] || []),
+            {
+              id: generateId(),
+              role: 'system',
+              parts: [{ type: 'text', text }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+      }))
+      return
+    }
+    case 'model_fallback': {
+      const originalModel = typeof data.originalModel === 'string' ? data.originalModel : ''
+      const fallbackModel = typeof data.fallbackModel === 'string' ? data.fallbackModel : ''
+      const explanation = typeof data.explanation === 'string' ? data.explanation : undefined
+      let text: string
+      if (explanation) {
+        text = explanation
+      } else {
+        text = i18next.t('common:modelFallback', {
+          defaultValue: 'Model fallback: {{originalModel}} → {{fallbackModel}}',
+          originalModel,
+          fallbackModel,
+        })
+      }
+      set((state) => {
+        const existing = state.messages[sessionId] || []
+        const retractedIds = Array.isArray(data.retractedMessageIds)
+          ? (data.retractedMessageIds as string[])
+          : []
+        const filtered =
+          retractedIds.length > 0
+            ? existing.filter((m) => !retractedIds.includes(m.id))
+            : existing
+        return {
+          messages: {
+            ...state.messages,
+            [sessionId]: [
+              ...filtered,
+              {
+                id: generateId(),
+                role: 'system',
+                parts: [{ type: 'text', text }],
+                timestamp: Date.now(),
+              },
+            ],
+          },
+        }
+      })
+      return
+    }
     case 'server_restarted': {
       set((state) =>
         addSystemMessage(
@@ -1454,6 +1609,20 @@ function handleSseEvent(
           next.sessionUsage = {
             ...state.sessionUsage,
             [sessionId]: sessionUsage,
+          }
+        }
+
+        const stopReason =
+          data.stopReason === null || typeof data.stopReason === 'string'
+            ? data.stopReason
+            : undefined
+        const terminalReason =
+          typeof data.terminalReason === 'string' ? data.terminalReason : undefined
+        const origin = typeof data.origin === 'string' ? data.origin : undefined
+        if (stopReason !== undefined || terminalReason !== undefined || origin !== undefined) {
+          next.resultMeta = {
+            ...state.resultMeta,
+            [sessionId]: { stopReason, terminalReason, origin },
           }
         }
 
@@ -1955,6 +2124,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoadingOlderMessages: {},
   lastTurnUsage: {},
   sessionUsage: {},
+  contextUsage: {},
+  resultMeta: {},
   domCache: {},
   isRestartingRuntime: {},
 
@@ -2042,6 +2213,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
     } catch (err) {
       console.error('Failed to create session:', err)
+    }
+  },
+
+  forkSession: async (workspaceId: string, sessionId: string) => {
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) throw new Error(i18next.t('common:failedToForkSession', 'Failed to fork session'))
+      const data = (await res.json()) as { sessionId?: string }
+      const forkedSessionId = data.sessionId
+      if (!forkedSessionId) {
+        throw new Error(i18next.t('common:failedToForkSession', 'Failed to fork session'))
+      }
+      closeSessionSubscriptions(forkedSessionId)
+      const fetchResult = await get().fetchSessions(workspaceId)
+      if (fetchResult.ok) {
+        set((state) => ({
+          activeSessionIds: { ...state.activeSessionIds, [workspaceId]: forkedSessionId },
+          ...applyActivityUpdate(state, workspaceId, forkedSessionId),
+        }))
+      }
+      return { ok: true }
+    } catch (err) {
+      console.error('Failed to fork session:', err)
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error'),
+      }
     }
   },
 
@@ -2442,6 +2643,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newLastTurnUsage[sessionId]
       const newSessionUsage = { ...state.sessionUsage }
       delete newSessionUsage[sessionId]
+      const newContextUsage = { ...state.contextUsage }
+      delete newContextUsage[sessionId]
+      const newResultMeta = { ...state.resultMeta }
+      delete newResultMeta[sessionId]
       const newAutoApprovedTools = { ...state.autoApprovedTools }
       delete newAutoApprovedTools[sessionId]
       const newIsRestartingRuntime = { ...state.isRestartingRuntime }
@@ -2453,6 +2658,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingTaskCreates: newPendingTaskCreates,
         lastTurnUsage: newLastTurnUsage,
         sessionUsage: newSessionUsage,
+        contextUsage: newContextUsage,
+        resultMeta: newResultMeta,
         autoApprovedTools: newAutoApprovedTools,
         isRestartingRuntime: newIsRestartingRuntime,
       }
@@ -2740,6 +2947,46 @@ export const useChatStore = create<ChatState>((set, get) => ({
           sessions: { ...state.sessions, [workspaceId]: nextSessions },
         }
       })
+    }
+  },
+
+  fetchContextUsage: async (workspaceId: string, sessionId: string) => {
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/context-usage`)
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }))
+        throw new Error(error.error || i18next.t('common:requestFailed', 'Request failed'))
+      }
+      const data = (await res.json()) as {
+        totalTokens?: number
+        maxTokens?: number
+        percentage?: number
+        categories?: { name: string; tokens: number; color?: string }[]
+      }
+      const usage: ContextUsage = {
+        totalTokens: typeof data.totalTokens === 'number' ? data.totalTokens : 0,
+        maxTokens: typeof data.maxTokens === 'number' ? data.maxTokens : 0,
+        percentage: typeof data.percentage === 'number' ? data.percentage : 0,
+        categories: Array.isArray(data.categories)
+          ? data.categories
+              .filter((c) => c && typeof c === 'object')
+              .map((c) => ({
+                name: typeof c.name === 'string' ? c.name : '',
+                tokens: typeof c.tokens === 'number' ? c.tokens : 0,
+                color: typeof c.color === 'string' ? c.color : undefined,
+              }))
+          : [],
+      }
+      set((state) => ({
+        contextUsage: { ...state.contextUsage, [sessionId]: usage },
+      }))
+      return { ok: true, data: usage }
+    } catch (err) {
+      console.error('Failed to fetch context usage:', err)
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error'),
+      }
     }
   },
 }))

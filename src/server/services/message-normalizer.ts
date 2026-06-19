@@ -23,6 +23,9 @@ interface RawToolUseBlock {
   id?: unknown;
   name?: unknown;
   input?: unknown;
+  tool_use_meta?: unknown;
+  _meta?: unknown;
+  meta?: unknown;
 }
 
 interface RawToolResultBlock {
@@ -76,6 +79,17 @@ function stringifyOutput(content: unknown): string {
   return pieces.join('');
 }
 
+function extractToolMeta(
+  rawMeta: unknown,
+): { displayName?: string; iconUrl?: string } | undefined {
+  if (!rawMeta || typeof rawMeta !== 'object') return undefined;
+  const meta = rawMeta as Record<string, unknown>;
+  const displayName = typeof meta.display_name === 'string' ? meta.display_name : undefined;
+  const iconUrl = typeof meta.icon_url === 'string' ? meta.icon_url : undefined;
+  if (!displayName && !iconUrl) return undefined;
+  return { displayName, iconUrl };
+}
+
 /**
  * Convert an Anthropic-SDK `content` array (or string, for legacy user
  * messages) into the app's `MessagePart[]` shape.
@@ -86,7 +100,9 @@ function stringifyOutput(content: unknown): string {
 export function partsFromSdkContent(
   content: unknown,
   toolUseResult?: unknown,
+  toolUseMeta?: unknown,
 ): MessagePart[] {
+  const metaArray = Array.isArray(toolUseMeta) ? toolUseMeta : undefined;
   if (typeof content === 'string') {
     return content.length === 0 ? [] : [{ type: 'text', text: content }];
   }
@@ -109,12 +125,15 @@ export function partsFromSdkContent(
       }
       case 'tool_use': {
         const b = block as RawToolUseBlock;
+        const topLevelMeta = metaArray?.[parts.length];
+        const meta = extractToolMeta(topLevelMeta ?? b.tool_use_meta ?? b._meta ?? b.meta);
         parts.push({
           type: 'tool_use',
           toolUseId: asString(b.id),
           toolName: asString(b.name),
           input: b.input ?? {},
           state: 'complete',
+          ...(meta && { meta }),
         });
         break;
       }
@@ -164,9 +183,10 @@ export function normalizeSessionMessage(
 
   const raw = sessionMessage.message as RawMessage | null | undefined;
   const toolUseResult = (sessionMessage as Record<string, unknown>).toolUseResult;
-  const parts = raw ? partsFromSdkContent(raw.content, toolUseResult) : [];
-
   const rawMessage = sessionMessage.message as Record<string, unknown> | undefined;
+  const toolUseMeta = rawMessage?.tool_use_meta;
+  const parts = raw ? partsFromSdkContent(raw.content, toolUseResult, toolUseMeta) : [];
+
   const subtype = typeof rawMessage?.subtype === 'string' ? rawMessage.subtype : '';
   const isCompactBoundary = subtype === 'compact_boundary';
 
