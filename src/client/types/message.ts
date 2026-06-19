@@ -80,6 +80,29 @@ export interface TaskItem {
   activeForm?: string
 }
 
+export type SubagentPart =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'tool_use'; toolUseId: string; toolName: string; input: unknown }
+  | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }
+
+export interface SubagentMessage {
+  id: string
+  role: 'assistant' | 'user'
+  parts: SubagentPart[]
+}
+
+export interface SubagentState {
+  parentToolUseId: string
+  description: string
+  state: 'running' | 'completed' | 'error'
+  startTime: number
+  endTime?: number
+  toolCount: number
+  progressHint: string
+  messages: SubagentMessage[]
+}
+
 /**
  * Discriminated union of every SSE event emitted by the chat stream route.
  * The server emits these via `event: <type>` + `data: <JSON>` SSE frames.

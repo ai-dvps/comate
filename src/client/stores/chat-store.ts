@@ -1,12 +1,12 @@
 import { create } from 'zustand'
 import i18next from 'i18next'
 
-import type { ChatMessage, MessagePart, QuestionPayload, TaskItem } from '../types/message'
+import type { ChatMessage, MessagePart, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem } from '../types/message'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import { diagLog, diagWarn } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 
-export type { ChatMessage, MessagePart, MessageRole } from '../types/message'
+export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
 
 const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout>; workspaceId: string }>()
 const lastEventId = new Map<string, string>()
@@ -132,29 +132,6 @@ interface PendingQuestion {
 }
 
 type PendingItem = PendingApproval | PendingQuestion
-
-export type SubagentPart =
-  | { type: 'text'; text: string }
-  | { type: 'thinking'; text: string }
-  | { type: 'tool_use'; toolUseId: string; toolName: string; input: unknown }
-  | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }
-
-export interface SubagentMessage {
-  id: string
-  role: 'assistant' | 'user'
-  parts: SubagentPart[]
-}
-
-export interface SubagentState {
-  parentToolUseId: string
-  description: string
-  state: 'running' | 'completed' | 'error'
-  startTime: number
-  endTime?: number
-  toolCount: number
-  progressHint: string
-  messages: SubagentMessage[]
-}
 
 export interface TurnUsage {
   inputTokens: number
@@ -322,6 +299,86 @@ function sanitizeMessages(messages: unknown): ChatMessage[] {
     })
   }
 
+  return sanitized
+}
+
+function sanitizeSubagentPart(part: unknown): SubagentPart | null {
+  if (!part || typeof part !== 'object') return null
+
+  const p = part as Record<string, unknown>
+  switch (p.type) {
+    case 'text':
+      return typeof p.text === 'string' ? { type: 'text', text: p.text } : null
+    case 'thinking':
+      return typeof p.text === 'string' ? { type: 'thinking', text: p.text } : null
+    case 'tool_use':
+      return typeof p.toolUseId === 'string' && typeof p.toolName === 'string'
+        ? { type: 'tool_use', toolUseId: p.toolUseId, toolName: p.toolName, input: p.input }
+        : null
+    case 'tool_result':
+      return typeof p.toolUseId === 'string'
+        ? {
+            type: 'tool_result',
+            toolUseId: p.toolUseId,
+            output: typeof p.output === 'string' ? p.output : '',
+            isError: p.isError === true,
+          }
+        : null
+    default:
+      return null
+  }
+}
+
+function sanitizeSubagentMessage(msg: unknown): SubagentMessage | null {
+  if (!msg || typeof msg !== 'object') return null
+  const m = msg as Record<string, unknown>
+  if (m.role !== 'assistant' && m.role !== 'user') return null
+  const parts = Array.isArray(m.parts)
+    ? m.parts
+        .map((part) => sanitizeSubagentPart(part))
+        .filter((part): part is SubagentPart => part !== null)
+    : []
+  if (parts.length === 0) return null
+  return {
+    id: typeof m.id === 'string' ? m.id : generateId(),
+    role: m.role,
+    parts,
+  }
+}
+
+export function sanitizeSubagents(raw: unknown): SubagentState[] {
+  if (!Array.isArray(raw)) return []
+
+  const sanitized: SubagentState[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const s = entry as Record<string, unknown>
+    if (typeof s.parentToolUseId !== 'string') continue
+    if (s.state !== 'running' && s.state !== 'completed' && s.state !== 'error') continue
+    if (typeof s.startTime !== 'number') continue
+    if (typeof s.toolCount !== 'number') continue
+    if (typeof s.progressHint !== 'string') continue
+    if (typeof s.description !== 'string') continue
+
+    const messages = Array.isArray(s.messages)
+      ? s.messages
+          .map((msg) => sanitizeSubagentMessage(msg))
+          .filter((msg): msg is SubagentMessage => msg !== null)
+      : []
+    if (messages.length === 0) continue
+
+    const endTime = typeof s.endTime === 'number' ? s.endTime : undefined
+    sanitized.push({
+      parentToolUseId: s.parentToolUseId,
+      description: s.description,
+      state: s.state,
+      startTime: s.startTime,
+      endTime,
+      toolCount: s.toolCount,
+      progressHint: s.progressHint,
+      messages,
+    })
+  }
   return sanitized
 }
 
@@ -2187,9 +2244,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true } }))
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
       if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
-      const data = (await res.json()) as { messages?: unknown; tasks?: TaskItem[] }
+      const data = (await res.json()) as { messages?: unknown; tasks?: TaskItem[]; subagents?: unknown }
       const mappedMessages = sanitizeMessages(data.messages)
       const serverTasks = data.tasks ?? []
+      const serverSubagents = sanitizeSubagents(data.subagents)
 
       set((state) => {
         const existing = state.messages[sessionId] || []
@@ -2204,10 +2262,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         for (const task of scannedTasks) {
           if (!taskMap.has(task.id)) taskMap.set(task.id, task)
         }
+
+        const existingSubagents = state.subagents[sessionId] || []
+        const runningIds = new Set(
+          existingSubagents.filter((s) => s.state === 'running').map((s) => s.parentToolUseId),
+        )
+        const mergedSubagents = new Map<string, SubagentState>()
+        for (const s of existingSubagents) {
+          mergedSubagents.set(s.parentToolUseId, s)
+        }
+        for (const s of serverSubagents) {
+          if (!runningIds.has(s.parentToolUseId)) {
+            mergedSubagents.set(s.parentToolUseId, s)
+          }
+        }
+
         return {
           messages: { ...state.messages, [sessionId]: pruned },
           isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
           tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
+          subagents: { ...state.subagents, [sessionId]: Array.from(mergedSubagents.values()) },
           totalMessageCount: {
             ...state.totalMessageCount,
             [sessionId]: mappedMessages.length,
