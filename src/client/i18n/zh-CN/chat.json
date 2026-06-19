@@ -6,6 +6,7 @@
     "description": "发送消息以开始与 Claude 聊天"
   },
   "commands": "命令",
+  "skills": "技能",
   "files": "文件",
   "placeholder": "向 Claude 询问任何关于代码的问题...",
   "clear": "清空",

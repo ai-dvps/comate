@@ -836,10 +836,10 @@ export default function PromptInput({
                     onClick={handleCommandsClick}
                     disabled={commandsDisabled}
                     className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={t('commands')}
+                    title={t('skills')}
                   >
                     <SlashSquare className="w-3 h-3" />
-                    <span>{t('commands')}</span>
+                    <span>{t('skills')}</span>
                   </button>
                 }
               />
