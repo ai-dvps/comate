@@ -495,9 +495,14 @@ export class SessionRuntime {
       for (const item of this.ringBuffer) {
         res.write(SseEmitter.formatSsePayload(item.id, item.event));
       }
-      this.emitter.emitErrorNote(
-        'Some output may have been missed due to reconnect.',
+      const hasMissableEvents = this.ringBuffer.some(
+        (item) => item.event.type !== 'subscription_ack',
       );
+      if (hasMissableEvents) {
+        this.emitter.emitErrorNote(
+          'Some output may have been missed due to reconnect.',
+        );
+      }
       return;
     }
     for (let i = startIndex + 1; i < this.ringBuffer.length; i++) {
