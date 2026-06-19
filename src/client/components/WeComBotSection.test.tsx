@@ -49,6 +49,12 @@ const DEFAULT_STATE = {
   wecomCorpSecret: '',
   wecomFilePromptTemplate: '',
   wecomToolPermissions: undefined,
+  wecomBotIsolation: {
+    adminUserIds: [],
+    defaultAllowedSkills: [],
+    adminAllowedSkills: [],
+    bashWhitelist: [],
+  },
   promptHistoryRetentionDays: '30',
 };
 
