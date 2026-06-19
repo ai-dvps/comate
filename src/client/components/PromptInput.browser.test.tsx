@@ -147,7 +147,7 @@ describe('PromptInput browser', () => {
   it('renders the textbox and toolbar buttons', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     expect(screen.getByRole('textbox')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Commands/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Skills/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Files/i })).toBeInTheDocument()
   })
 
