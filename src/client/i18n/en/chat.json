@@ -66,6 +66,7 @@
   "archived": "Archived",
   "archive": "Archive",
   "unarchive": "Unarchive",
+  "copySessionId": "Copy session ID",
   "statusFilterLabel": "Filter sessions",
   "statusFilterAll": "All",
   "statusFilterActive": "Active",

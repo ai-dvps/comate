@@ -66,6 +66,7 @@
   "archived": "已归档",
   "archive": "归档",
   "unarchive": "取消归档",
+  "copySessionId": "复制会话 ID",
   "statusFilterLabel": "筛选会话",
   "statusFilterAll": "全部",
   "statusFilterActive": "活跃",
