@@ -18,7 +18,24 @@ import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.js';
 import { pluginSettingsService } from './plugin-settings-service.js';
 import { evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
+import { createPathPolicyContext, validateToolInput } from './bot-path-policy.js';
+import { evaluateBash } from './bot-bash-policy.js';
+import { evaluateSkill } from './bot-skill-policy.js';
 import { existsSync, readFileSync } from 'fs';
+
+const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
+const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
+
+function sanitizeBotEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith('WECOM_')) continue;
+    if (/^(AWS_|GOOGLE_|AZURE_|OPENAI_)/i.test(key)) continue;
+    if (/^CLAUDE_(API_KEY|AUTH)/i.test(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
 
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
@@ -729,7 +746,7 @@ export class ChatService {
     isBotSession?: boolean,
   ): import('@anthropic-ai/claude-agent-sdk').Options {
     const claudeSettings = loadClaudeSettings();
-    const { env } = buildClaudeEnv(claudeSettings);
+    let { env } = buildClaudeEnv(claudeSettings);
 
     // Resolve active provider: session -> default
     const provider = session.providerId
@@ -851,6 +868,40 @@ export class ChatService {
       // and plan KTD "Policy changes apply to the next bot session".
       const resolved = resolveEffectivePolicy(workspace);
       const policy = resolved.policy;
+
+      // Sanitize the child process environment for bot sessions: remove WeCom
+      // and non-Anthropic cloud credentials. Anthropic provider keys are kept
+      // because the SDK child needs them to call the API.
+      env = sanitizeBotEnv(env);
+
+      // Resolve the canonical WeCom user identity for this bot session. If the
+      // session has no mapping, fail closed on identity-sensitive tools.
+      const wecomUserId = workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
+      const canonicalUserId = wecomUserId
+        ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId)
+        : undefined;
+
+      let pathContext: import('./bot-path-policy.js').PathPolicyContext | undefined;
+      let bashContext: import('./bot-bash-policy.js').BashPolicyContext | undefined;
+      let skillContext: import('./bot-skill-policy.js').SkillPolicyContext | undefined;
+
+      if (canonicalUserId) {
+        const userDirName = canonicalUserId;
+        const wsUsers = workspaceStore.listWecomWorkspaceUsers(workspace.id);
+        const mappings = workspaceStore.listWecomUserMappings();
+        const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
+        const knownUserDirNames = wsUsers.map((u) => mappingMap.get(u.encryptedUserId) ?? u.encryptedUserId);
+
+        pathContext = createPathPolicyContext(workspace, userDirName, knownUserDirNames);
+        bashContext = {
+          whitelist: workspace.settings.wecomBotIsolation?.bashWhitelist ?? [],
+          pathContext,
+        };
+        const isolation = workspace.settings.wecomBotIsolation;
+        const isAdmin = isolation?.adminUserIds?.includes(canonicalUserId) ?? false;
+        skillContext = { isolation, isAdmin };
+      }
+
       options.canUseTool = async (
         toolName: string,
         input: Record<string, unknown>,
@@ -868,6 +919,45 @@ export class ChatService {
             message: "I can't do that in this workspace.",
           };
         }
+
+        // Identity failure = fail closed on file/Bash/Skill tools.
+        if (!canonicalUserId && IDENTITY_SENSITIVE_TOOLS.has(toolName)) {
+          return {
+            behavior: 'deny' as const,
+            message: "I can't do that in this workspace.",
+          };
+        }
+
+        if (FILE_TOOLS.has(toolName) && pathContext) {
+          const r = validateToolInput(pathContext, toolName, input);
+          if (!r.allowed) {
+            return {
+              behavior: 'deny' as const,
+              message: "I can't do that in this workspace.",
+            };
+          }
+        }
+
+        if (toolName === 'Bash' && bashContext) {
+          const r = evaluateBash(bashContext, input);
+          if (!r.allowed) {
+            return {
+              behavior: 'deny' as const,
+              message: "I can't do that in this workspace.",
+            };
+          }
+        }
+
+        if (toolName === 'Skill' && skillContext) {
+          const r = evaluateSkill(skillContext, toolName, input);
+          if (!r.allowed) {
+            return {
+              behavior: 'deny' as const,
+              message: "I can't do that in this workspace.",
+            };
+          }
+        }
+
         return { behavior: 'allow' as const, updatedInput: input };
       };
     }
