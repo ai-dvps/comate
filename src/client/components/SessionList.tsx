@@ -6,7 +6,7 @@ import { shouldSubmitOnEnter } from '../lib/keyboard'
 import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from '../lib/session-filter'
 import type { SessionStatusFilter } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
-import { Plus, Puzzle, BookOpen, Search, X, RefreshCw } from 'lucide-react'
+import { Plus, Puzzle, BookOpen, Search, X, RefreshCw, FlaskConical, Archive, ArchiveRestore, Copy } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
@@ -168,6 +168,16 @@ export default function SessionList({ workspaceId }: SessionListProps) {
     }
   }
 
+  const handleCopySessionId = async () => {
+    if (!contextMenu) return
+    try {
+      await navigator.clipboard.writeText(contextMenu.sessionId)
+    } catch (err) {
+      console.error('Failed to copy session id:', err)
+    }
+    setContextMenu(null)
+  }
+
   const searchDisabled = isLoading && sessions.length === 0
 
   return (
@@ -214,7 +224,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
         ) : (
           <button
             onClick={() => setShowCreate(true)}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-bg border border-border hover:border-border-hover rounded-lg text-xs text-text-secondary hover:text-text-primary transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-accent hover:bg-accent-hover border border-accent rounded-lg text-xs text-accent-foreground font-medium shadow-sm transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             {t('newSession')}
@@ -360,8 +370,9 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                   toggleSessionWip(workspaceId, session.id, !session.isWip)
                   setContextMenu(null)
                 }}
-                className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+                className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors flex items-center gap-2"
               >
+                <FlaskConical className="w-3.5 h-3.5" />
                 {session.isWip ? t('clearWip') : t('markAsWip')}
               </button>
               <button
@@ -369,9 +380,21 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                   toggleSessionArchive(workspaceId, session.id, !session.isArchived)
                   setContextMenu(null)
                 }}
-                className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors"
+                className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors flex items-center gap-2"
               >
+                {session.isArchived ? (
+                  <ArchiveRestore className="w-3.5 h-3.5" />
+                ) : (
+                  <Archive className="w-3.5 h-3.5" />
+                )}
                 {session.isArchived ? t('unarchive') : t('archive')}
+              </button>
+              <button
+                onClick={handleCopySessionId}
+                className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors flex items-center gap-2"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                {t('copySessionId')}
               </button>
             </div>
           )
