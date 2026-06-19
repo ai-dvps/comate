@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "targets": ["appimage"],
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  }
+}

@@ -29,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": ["dmg", "msi"],
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,6 +42,15 @@
     ],
     "resources": {
       "resources": "./resources"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY5NjVBOTNGN0U0QkE1MTIKUldRU3BVdCtQNmxsYVRsRDlwRkZZdTQwcXc4RTY0Zjg4b001ZVh3YWtxSlJiL2loNUhxWnp5QWcK",
+      "endpoints": [
+        "https://github.com/ai-dvps/claude-code-gui/releases/latest/download/latest.json"
+      ],
+      "checkOnStartup": false
     }
   }
 }
