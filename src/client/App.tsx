@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { AlertCircle, X } from 'lucide-react'
@@ -23,6 +23,9 @@ import { fontSizeClass } from './lib/font-size'
 import { isMacOS } from './lib/platform'
 import { useBadgeSync } from './lib/use-badge-sync'
 import { cn } from './components/ui/utils'
+import { startPeriodicUpdateChecks, stopPeriodicUpdateChecks } from './lib/updater-api'
+import UpdateNotification from './components/UpdateNotification'
+import UpdateRestartDialog from './components/UpdateRestartDialog'
 
 function App() {
   const { t } = useTranslation('common')
@@ -95,7 +98,21 @@ function App() {
     checkClaudeCli()
     initProviders()
     isMacOS().then(setIsMac)
+
+    startPeriodicUpdateChecks(() => ({ autoCheckUpdates: true }))
+    return () => stopPeriodicUpdateChecks()
   }, [fetchWorkspaces])
+
+  const handleForceShowWindow = useCallback(async () => {
+    try {
+      const window = getCurrentWindow()
+      await window.show()
+      await window.unminimize()
+      await window.setFocus()
+    } catch {
+      // ignore
+    }
+  }, [])
 
   useEffect(() => {
     if (providerCheck.ok) {
@@ -265,6 +282,8 @@ function App() {
           </div>
         )}
 
+        <UpdateNotification />
+
         <Sidebar
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
@@ -324,6 +343,8 @@ function App() {
           onClose={() => setShowCreateModal(false)}
         />
       )}
+
+      <UpdateRestartDialog onForceShowWindow={handleForceShowWindow} />
 
       <ToastContainer />
     </div>

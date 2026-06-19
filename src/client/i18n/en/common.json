@@ -84,5 +84,15 @@
   "provider": {
     "noProviderConfigured": "No LLM provider configured. Go to Settings → Providers to add one.",
     "configure": "Configure Provider"
+  },
+  "update": {
+    "checking": "Checking for updates...",
+    "available": "Comate {{version}} is available",
+    "download": "Download",
+    "downloading": "Downloading update... {{progress}}%",
+    "restartTitle": "Restart to install update",
+    "restartMessage": "Comate {{version}} has been downloaded and is ready to install. Restart now to apply the update.",
+    "restartNow": "Restart Now",
+    "restartLater": "Restart Later"
   }
 }
