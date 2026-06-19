@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.6] - 2026-06-19
+
+### Added
+
+- **Auto-updater** — Tauri updater plugin, in-app update check/preference UI, restart cleanup, and CI-signed updater artifacts.
+- **Pending request timeout** — timeout-aware auto-denial for pending approvals and `AskUserQuestion`.
+- **Workspace deletion** — settings affordance with type-name confirmation and cascade session cleanup.
+- **WeCom doc commands** — 22 `wecom doc` subcommands and a generic server proxy route.
+- **WeCom bot isolation** — workspace isolation settings, path/Bash/skill policy engines, and policy-aware UI banners.
+- **Prompt input overhaul** — contentEditable input with IME support, inline markdown source highlighting, local n-gram completion ghost text, history popup with search, and file picker path insertion.
+- **Session archive** — archive/unarchive sessions and a redesigned status filter popover.
+- **Sent-prompt history** — per-workspace prompt history with recall and history popup.
+
+### Changed
+
+- **Skills button** — renamed the input-box "Commands" button to "Skills".
+- **WeCom Queue** — moved the queue panel into WeCom Bot settings.
+
+### Fixed
+
+- **Reconnect warning** — suppress the missed-output warning when the ring buffer is empty, removing false-positive `error_note` events.
+- **Task compatibility** — removed SDK 0.2.x `tool_use`-based task compatibility logic.
+- **Prompt input IME** — recover stuck composition states, preserve cursor position, and custom undo/redo for contentEditable.
+- **Task status normalization** — preserve `in_progress` status when normalizing task statuses.
+- **Plugin uninstall** — remove CLI-installed plugins from `installed_plugins.json`.
+
+### Internal
+
+- Added planning artifacts for updater, workspace delete, prompt input, WeCom doc, session archive, and reconnect warning fixes.
+- Bumped `@webank/wecom` CLI to 0.2.0.
+
+[0.0.6]: https://github.com/ai-dvps/comate/releases/tag/v0.0.6
+
 ## [0.0.5] - 2026-06-14
 
 ### Added
