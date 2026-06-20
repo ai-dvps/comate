@@ -48,7 +48,8 @@
   "workspaceEmptyState": {
     "title": "欢迎使用 Comate",
     "description": "工作区是 Comate 保存会话和上下文的项目文件夹。创建一个即可开始。",
-    "button": "创建工作区"
+    "button": "创建工作区",
+    "existingTitle": "或打开现有工作区"
   },
   "noWorkspaceToBrowse": "打开工作区以浏览文件",
   "emptyWorkspace": "空工作区",

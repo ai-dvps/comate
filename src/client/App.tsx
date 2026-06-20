@@ -38,6 +38,7 @@ function App() {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces)
+  const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const activeWorkspaceSessionId = useChatStore((s) =>
     activeWorkspaceId ? s.activeSessionIds[activeWorkspaceId] : undefined
@@ -323,7 +324,11 @@ function App() {
               </div>
             ))
           ) : (
-            <WorkspaceEmptyState onCreateWorkspace={() => setShowCreateModal(true)} />
+            <WorkspaceEmptyState
+              workspaces={workspaces}
+              onCreateWorkspace={() => setShowCreateModal(true)}
+              onSelectWorkspace={(id) => openWorkspace(id)}
+            />
           )}
         </main>
       </div>
