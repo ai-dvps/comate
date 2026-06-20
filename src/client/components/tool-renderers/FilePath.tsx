@@ -71,13 +71,13 @@ export default function FilePath({ path, isDirectory, className }: FilePathProps
     relativePath = getRelativePath(path, workspacePath)
     if (relativePath !== null) {
       displayText = stripTrailingSlash(relativePath) || relativePath
-      clickable = !directoryLike
+      clickable = !directoryLike && relativePath !== '.'
     }
   }
 
   const handleClick = () => {
-    if (!clickable || !relativePath) return
-    const name = relativePath === '.' ? basename(normalizePath(workspacePath!)) : basename(relativePath)
+    if (!clickable || !relativePath || relativePath === '.') return
+    const name = basename(relativePath)
     onOpenFile(relativePath, name)
   }
 

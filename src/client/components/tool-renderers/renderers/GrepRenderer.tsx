@@ -19,21 +19,21 @@ function GrepRenderer(input: unknown): ReactNode | null {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <Search className="size-3.5 text-text-tertiary" />
-        <span className="text-text-tertiary text-xs uppercase tracking-wide">
+        <span className="text-text-tertiary text-xs uppercase tracking-wide shrink-0">
           Pattern
         </span>
-        <code className="text-xs font-mono text-text-primary bg-surface-hover/50 px-1.5 py-0.5 rounded">
+        <code className="text-xs font-mono text-text-primary bg-surface-hover/50 px-1.5 py-0.5 rounded whitespace-pre-wrap break-words">
           {pattern}
         </code>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <FileText className="size-3.5 text-text-tertiary" />
-        <span className="text-text-tertiary text-xs uppercase tracking-wide">
+        <span className="text-text-tertiary text-xs uppercase tracking-wide shrink-0">
           Path
         </span>
-        <FilePath path={path} isDirectory />
+        <FilePath path={path} isDirectory className="whitespace-pre-wrap break-words" />
       </div>
       {outputMode && (
         <div className="flex items-center gap-2">

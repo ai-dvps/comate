@@ -94,6 +94,19 @@ describe('FilePath', () => {
     expect(onOpenFile).not.toHaveBeenCalled()
   })
 
+  it('renders workspace root non-clickable', async () => {
+    const onOpenFile = vi.fn()
+    renderWithContext(<FilePath path="/workspace" />, {
+      workspacePath: '/workspace',
+      onOpenFile,
+    })
+
+    const pathEl = screen.getByText('.')
+    expect(pathEl.tagName.toLowerCase()).toBe('span')
+    await userEvent.click(pathEl)
+    expect(onOpenFile).not.toHaveBeenCalled()
+  })
+
   it('renders path as-is when workspacePath is undefined', () => {
     renderWithContext(<FilePath path="/workspace/src/Button.tsx" />, {
       workspacePath: undefined,
