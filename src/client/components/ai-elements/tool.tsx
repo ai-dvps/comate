@@ -126,7 +126,7 @@ export const ToolHeader = ({
         <span className="font-medium">{displayTitle}</span>
         {summary && (
           isPathLike ? (
-            <span className="truncate max-w-[360px]">
+            <span className="max-w-[360px] min-w-0 overflow-hidden">
               <FilePath
                 path={summary}
                 isDirectory={isDirectoryTool}

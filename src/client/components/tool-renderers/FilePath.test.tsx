@@ -93,6 +93,38 @@ describe('FilePath', () => {
     )
   })
 
+  it('truncates long relative paths from the start', () => {
+    renderWithContext(
+      <FilePath path="/workspace/src/components/Button.tsx" maxDisplayLength={10} />,
+      {
+        workspacePath: '/workspace',
+      },
+    )
+
+    const pathEl = screen.getByText(/^…/)
+    expect(pathEl.textContent).toMatch(/^…utton\.tsx$/)
+    expect(pathEl).toHaveAttribute('title', '/workspace/src/components/Button.tsx')
+  })
+
+  it('shows pointer cursor and underline only while a modifier key is held', () => {
+    renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
+      workspacePath: '/workspace',
+    })
+
+    const pathEl = screen.getByText('src/components/Button.tsx')
+    expect(pathEl).toHaveClass('cursor-default')
+    expect(pathEl).not.toHaveClass('cursor-pointer')
+    expect(pathEl).not.toHaveClass('hover:underline')
+
+    fireEvent.keyDown(document, { metaKey: true })
+    expect(pathEl).toHaveClass('cursor-pointer')
+    expect(pathEl).toHaveClass('hover:underline')
+
+    fireEvent.keyUp(document, { metaKey: false })
+    expect(pathEl).not.toHaveClass('cursor-pointer')
+    expect(pathEl).not.toHaveClass('hover:underline')
+  })
+
   it('strips trailing slashes', () => {
     renderWithContext(<FilePath path="/workspace/src/" />, {
       workspacePath: '/workspace',

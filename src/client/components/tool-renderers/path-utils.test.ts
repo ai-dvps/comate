@@ -5,6 +5,7 @@ import {
   basename,
   getRelativePath,
   getPathDisplayInfo,
+  truncateStart,
 } from './path-utils'
 
 describe('normalizePath', () => {
@@ -42,6 +43,21 @@ describe('basename', () => {
 
   it('returns whole string when no slash', () => {
     expect(basename('Button.tsx')).toBe('Button.tsx')
+  })
+})
+
+describe('truncateStart', () => {
+  it('returns short text unchanged', () => {
+    expect(truncateStart('src/Button.tsx', 20)).toBe('src/Button.tsx')
+  })
+
+  it('truncates from the start with an ellipsis', () => {
+    expect(truncateStart('src/components/Button.tsx', 12)).toBe('…/Button.tsx')
+  })
+
+  it('returns empty string when maxLength is zero or negative', () => {
+    expect(truncateStart('src/Button.tsx', 0)).toBe('')
+    expect(truncateStart('src/Button.tsx', -1)).toBe('')
   })
 })
 

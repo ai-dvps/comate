@@ -36,6 +36,12 @@ export function basename(p: string): string {
   return idx >= 0 ? p.slice(idx + 1) : p
 }
 
+export function truncateStart(text: string, maxLength: number): string {
+  if (maxLength <= 0) return ''
+  if (text.length <= maxLength) return text
+  return `…${text.slice(-(maxLength - 1))}`
+}
+
 export function getRelativePath(absPath: string, workspacePath: string): string | null {
   const normPath = normalizePath(absPath)
   const normWorkspace = normalizePath(workspacePath)
