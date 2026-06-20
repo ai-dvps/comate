@@ -171,12 +171,19 @@ function StatusCard({
       )}
     >
       {/* Header: left info (non-clickable), right open button */}
-      <div className="flex w-full items-center justify-between gap-3 p-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Bot className="size-4 shrink-0 text-text-tertiary" />
-          <span className="truncate text-sm font-medium text-text-primary">
-            {t('agentLabel', { type: subagentType || t('agent') })}
-          </span>
+      <div className="flex w-full items-start justify-between gap-3 p-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <Bot className="size-4 shrink-0 text-text-tertiary" />
+            <span className="truncate text-sm font-medium text-text-primary">
+              {t('agentLabel', { type: subagentType || t('agent') })}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-text-secondary">
+            <span>{elapsed}</span>
+            <span className="text-text-tertiary">•</span>
+            <span>{t('toolCount', { count: subagent.toolCount })}</span>
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span
@@ -243,22 +250,13 @@ function StatusCard({
               </CompactableContainer>
             )}
 
-            {/* Meta row: elapsed + tools */}
-            <div className="mt-1.5 flex items-center gap-2 text-xs text-text-secondary">
-              <span>{elapsed}</span>
-              <span className="text-text-tertiary">•</span>
-              <span>
-                {t('toolCount', { count: subagent.toolCount })}
-              </span>
-              {subagent.progressHint && (
-                <>
-                  <span className="text-text-tertiary">•</span>
-                  <span className="truncate max-w-[200px]" title={subagent.progressHint}>
-                    {subagent.progressHint}
-                  </span>
-                </>
-              )}
-            </div>
+            {subagent.progressHint && (
+              <div className="mt-1.5 flex items-center gap-2 text-xs text-text-secondary">
+                <span className="truncate max-w-[200px]" title={subagent.progressHint}>
+                  {subagent.progressHint}
+                </span>
+              </div>
+            )}
           </div>
         </CompactableContainer>
       )}
