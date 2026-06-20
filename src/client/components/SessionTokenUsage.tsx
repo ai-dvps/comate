@@ -16,6 +16,7 @@ export default function SessionTokenUsage({
 }: SessionTokenUsageProps) {
   const { t } = useTranslation('chat')
   const cumulative = useChatStore((s) => s.sessionUsage[sessionId])
+  const contextUsage = useChatStore((s) => s.contextUsage[sessionId])
   const resultMeta = useChatStore((s) => s.resultMeta[sessionId])
   const session = useChatStore((s) =>
     s.sessions[workspaceId]?.find((ses) => ses.id === sessionId),
@@ -26,14 +27,17 @@ export default function SessionTokenUsage({
     activeProvider?.model || activeProvider?.name || 'claude-sonnet-4-6'
 
   const contextWindow = getContextWindowForModel(modelName, modelUsage)
-  const hasData = !!cumulative
+  const hasSessionData = !!cumulative
+  const hasContextUsage = !!contextUsage
 
-  const totalTokens = hasData ? cumulative.cumulativeInput : 0
-
-  const fillPercentage = Math.min(
-    Math.round((totalTokens / contextWindow) * 100),
-    100,
-  )
+  const fillPercentage = hasContextUsage
+    ? contextUsage.percentage
+    : hasSessionData
+      ? Math.min(
+          Math.round((cumulative.cumulativeInput / contextWindow) * 100),
+          100,
+        )
+      : undefined
 
   const fmt = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
@@ -46,7 +50,7 @@ export default function SessionTokenUsage({
     .filter(Boolean)
     .join(' · ')
 
-  if (!hasData) {
+  if (fillPercentage === undefined) {
     return (
       <span className="text-[11px] text-text-tertiary">—</span>
     )
@@ -54,10 +58,12 @@ export default function SessionTokenUsage({
 
   return (
     <>
-      <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-        {t('tokenUsage.session')}: in {fmt(cumulative.cumulativeInput)} / out{' '}
-        {fmt(cumulative.cumulativeOutput)}
-      </span>
+      {hasSessionData && (
+        <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+          {t('tokenUsage.session')}: in {fmt(cumulative.cumulativeInput)} / out{' '}
+          {fmt(cumulative.cumulativeOutput)}
+        </span>
+      )}
 
       <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
         {t('tokenUsage.context')}: {fillPercentage}%

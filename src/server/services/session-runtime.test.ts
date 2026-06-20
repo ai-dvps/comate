@@ -698,6 +698,7 @@ describe('session-runtime rate-limit errors', { concurrency: false }, () => {
 
     const messageGen = (async function* () {
       throw err;
+      yield undefined as unknown as SDKMessage;
     })();
 
     return {
@@ -766,3 +767,122 @@ describe('session-runtime rate-limit errors', { concurrency: false }, () => {
     assert.ok(events.some((e) => e.type === 'error_note'));
   });
 });
+
+describe('session-runtime context_usage emission', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(getContextUsage: Query['getContextUsage']): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+      getContextUsage,
+    } as unknown as Query;
+
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: (async function* () {})(),
+      }),
+    } as unknown as SdkClient;
+  }
+
+  function createMockResponse(): import('express').Response {
+    return { write: () => true } as unknown as import('express').Response;
+  }
+
+  function getEmitter(runtime: SessionRuntime) {
+    return (runtime as unknown as { emitter: { emitEvent: (event: SseEvent) => void } }).emitter;
+  }
+
+  it('emits context_usage after lifecycle events', async () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(() =>
+        Promise.resolve({
+          totalTokens: 100,
+          maxTokens: 200000,
+          percentage: 5,
+          categories: [{ name: 'messages', tokens: 100, color: '#000' }],
+        } as Awaited<ReturnType<Query['getContextUsage']>>),
+      ),
+      (_id, event) => events.push(event),
+    );
+    runtime.subscribe(createMockResponse());
+    const emitter = getEmitter(runtime);
+
+    emitter.emitEvent({ type: 'assistant_start', messageId: 'm1' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const contextUsage = events.find(
+      (e): e is Extract<SseEvent, { type: 'context_usage' }> => e.type === 'context_usage',
+    );
+    assert.ok(contextUsage, 'expected context_usage event');
+    assert.strictEqual(contextUsage.totalTokens, 100);
+    assert.strictEqual(contextUsage.maxTokens, 200000);
+    assert.strictEqual(contextUsage.percentage, 5);
+    assert.strictEqual(contextUsage.categories.length, 1);
+    assert.strictEqual(contextUsage.categories[0].name, 'messages');
+    assert.strictEqual(contextUsage.categories[0].tokens, 100);
+  });
+
+  it('emits context_usage for each lifecycle event type', async () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(() =>
+        Promise.resolve({
+          totalTokens: 10,
+          maxTokens: 200000,
+          percentage: 1,
+          categories: [],
+        } as Awaited<ReturnType<Query['getContextUsage']>>),
+      ),
+      (_id, event) => events.push(event),
+    );
+    runtime.subscribe(createMockResponse());
+    const emitter = getEmitter(runtime);
+
+    emitter.emitEvent({ type: 'tool_result', toolUseId: 'tu-1', output: '', isError: false });
+    emitter.emitEvent({ type: 'assistant_done', messageId: 'm1' });
+    emitter.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    emitter.emitEvent({ type: 'compact_boundary' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.strictEqual(events.filter((e) => e.type === 'context_usage').length, 4);
+  });
+
+  it('does not emit context_usage when getContextUsage rejects', async () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(() => Promise.reject(new Error('usage unavailable'))),
+      (_id, event) => events.push(event),
+    );
+    runtime.subscribe(createMockResponse());
+    const emitter = getEmitter(runtime);
+
+    emitter.emitEvent({ type: 'assistant_start', messageId: 'm1' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.ok(!events.some((e) => e.type === 'context_usage'));
+    assert.ok(!events.some((e) => e.type === 'error_note'));
+  });
+});
+

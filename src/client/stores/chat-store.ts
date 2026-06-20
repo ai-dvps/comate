@@ -241,7 +241,6 @@ interface ChatState {
   setWindowCap: (cap: number) => void
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
-  fetchContextUsage: (workspaceId: string, sessionId: string) => Promise<{ ok: boolean; data?: ContextUsage; error?: string }>
 }
 
 function generateId(): string {
@@ -499,7 +498,7 @@ function parseData(data: string): unknown {
   }
 }
 
-type SseSetter = (
+export type SseSetter = (
   updater: (state: ChatState) => ChatState | Partial<ChatState>,
 ) => void
 
@@ -852,7 +851,7 @@ function updateSubagentToolUse(
   }))
 }
 
-function handleSseEvent(
+export function handleSseEvent(
   set: SseSetter,
   workspaceId: string,
   sessionId: string,
@@ -1220,6 +1219,8 @@ function handleSseEvent(
         const lastMessage = messages[messages.length - 1]
         const newLastTurnUsage = { ...state.lastTurnUsage }
         delete newLastTurnUsage[sessionId]
+        const newContextUsage = { ...state.contextUsage }
+        delete newContextUsage[sessionId]
         const resetSessionUsage = {
           ...state.sessionUsage,
           [sessionId]: {
@@ -1242,6 +1243,7 @@ function handleSseEvent(
             compactingStartTime: { ...state.compactingStartTime, [sessionId]: 0 },
             lastTurnUsage: newLastTurnUsage,
             sessionUsage: resetSessionUsage,
+            contextUsage: newContextUsage,
           }
         }
         return {
@@ -1250,8 +1252,29 @@ function handleSseEvent(
           compactingStartTime: { ...state.compactingStartTime, [sessionId]: 0 },
           lastTurnUsage: newLastTurnUsage,
           sessionUsage: resetSessionUsage,
+          contextUsage: newContextUsage,
         }
       })
+      return
+    }
+    case 'context_usage': {
+      const usage: ContextUsage = {
+        totalTokens: typeof data.totalTokens === 'number' ? data.totalTokens : 0,
+        maxTokens: typeof data.maxTokens === 'number' ? data.maxTokens : 0,
+        percentage: typeof data.percentage === 'number' ? data.percentage : 0,
+        categories: Array.isArray(data.categories)
+          ? data.categories.map((c: unknown) => {
+              const cx = c as Record<string, unknown>
+              return {
+                name: typeof cx.name === 'string' ? cx.name : '',
+                tokens: typeof cx.tokens === 'number' ? cx.tokens : 0,
+              }
+            })
+          : [],
+      }
+      set((state) => ({
+        contextUsage: { ...state.contextUsage, [sessionId]: usage },
+      }))
       return
     }
     case 'compact_status': {
@@ -2947,46 +2970,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           sessions: { ...state.sessions, [workspaceId]: nextSessions },
         }
       })
-    }
-  },
-
-  fetchContextUsage: async (workspaceId: string, sessionId: string) => {
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/context-usage`)
-      if (!res.ok) {
-        const error = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }))
-        throw new Error(error.error || i18next.t('common:requestFailed', 'Request failed'))
-      }
-      const data = (await res.json()) as {
-        totalTokens?: number
-        maxTokens?: number
-        percentage?: number
-        categories?: { name: string; tokens: number; color?: string }[]
-      }
-      const usage: ContextUsage = {
-        totalTokens: typeof data.totalTokens === 'number' ? data.totalTokens : 0,
-        maxTokens: typeof data.maxTokens === 'number' ? data.maxTokens : 0,
-        percentage: typeof data.percentage === 'number' ? data.percentage : 0,
-        categories: Array.isArray(data.categories)
-          ? data.categories
-              .filter((c) => c && typeof c === 'object')
-              .map((c) => ({
-                name: typeof c.name === 'string' ? c.name : '',
-                tokens: typeof c.tokens === 'number' ? c.tokens : 0,
-                color: typeof c.color === 'string' ? c.color : undefined,
-              }))
-          : [],
-      }
-      set((state) => ({
-        contextUsage: { ...state.contextUsage, [sessionId]: usage },
-      }))
-      return { ok: true, data: usage }
-    } catch (err) {
-      console.error('Failed to fetch context usage:', err)
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error'),
-      }
     }
   },
 }))

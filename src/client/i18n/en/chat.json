@@ -116,9 +116,6 @@
     "session": "Session",
     "context": "Context"
   },
-  "contextUsage": "Context usage",
-  "loadingContextUsage": "Loading context usage...",
-  "contextUsageFailed": "Unable to load context usage",
   "tokens": "tokens",
   "searchSessions": "Search sessions...",
   "refreshSessions": "Refresh sessions",

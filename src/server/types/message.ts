@@ -162,6 +162,13 @@ export type SseEvent =
       terminalReason?: string
       origin?: string
     }
+  | {
+      type: 'context_usage'
+      totalTokens: number
+      maxTokens: number
+      percentage: number
+      categories: { name: string; tokens: number }[]
+    }
   | { type: 'error'; message: string }
   | {
       type: 'rate_limit'

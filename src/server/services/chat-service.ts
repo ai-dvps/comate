@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
-import type { Query, SDKMessage, SDKSessionInfo, SDKControlGetContextUsageResponse, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
@@ -301,14 +301,6 @@ export class ChatService {
 
     const result = await this.sdkClient.forkSession(id, { dir: normalizeWindowsPath(workspace.folderPath) });
     return result;
-  }
-
-  async getContextUsage(sessionId: string, workspaceId: string): Promise<SDKControlGetContextUsageResponse> {
-    const runtime = this.getRuntimeIfExists(sessionId);
-    if (!runtime || runtime.getStatus().workspaceId !== workspaceId) {
-      throw new ChatError('Session is not active', 'SESSION_NOT_ACTIVE', 400);
-    }
-    return runtime.getContextUsage();
   }
 
   async clearDraftFlag(id: string): Promise<boolean> {
