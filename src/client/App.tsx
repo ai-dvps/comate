@@ -7,6 +7,7 @@ import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useResizableWidth } from './hooks/use-resizable-width'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
+import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
@@ -37,6 +38,7 @@ function App() {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces)
+  const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const activeWorkspaceSessionId = useChatStore((s) =>
     activeWorkspaceId ? s.activeSessionIds[activeWorkspaceId] : undefined
@@ -322,9 +324,11 @@ function App() {
               </div>
             ))
           ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-text-secondary">{t('selectOrCreateWorkspace')}</p>
-            </div>
+            <WorkspaceEmptyState
+              workspaces={workspaces}
+              onCreateWorkspace={() => setShowCreateModal(true)}
+              onSelectWorkspace={(id) => openWorkspace(id)}
+            />
           )}
         </main>
       </div>
