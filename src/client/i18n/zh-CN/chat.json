@@ -5,6 +5,12 @@
     "title": "开始对话",
     "description": "发送消息以开始与 Claude 聊天"
   },
+  "chatEmptyState": {
+    "title": "开始对话",
+    "description": "发送消息以开始与 Claude 聊天",
+    "placeholder": "会话名称（可选）",
+    "button": "开始聊天"
+  },
   "commands": "命令",
   "skills": "技能",
   "files": "文件",
