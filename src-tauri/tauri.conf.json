@@ -46,7 +46,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY5NjVBOTNGN0U0QkE1MTIKUldRU3BVdCtQNmxsYVRsRDlwRkZZdTQwcXc4RTY0Zjg4b001ZVh3YWtxSlJiL2loNUhxWnp5QWcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk5QUU3MTM0MEQ5MDM1NzYKUldSMk5aQU5OSEd1bVZlNGZuaGx1c0NKZHB4SG9EWTlzaTlLeXdndm13bEZ5QXhHclpZYUhSQ2wK",
       "endpoints": [
         "https://github.com/ai-dvps/comate/releases/latest/download/latest.json"
       ],
