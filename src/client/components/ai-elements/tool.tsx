@@ -31,6 +31,8 @@ import type { SearchHighlightRange } from '../../hooks/useMessageSearch'
 import { Badge } from '../ui/badge'
 import { cn } from '../ui/utils'
 import { getToolRenderer, StructuredFallback } from '../tool-renderers'
+import { useToolRendererContext } from '../tool-renderers/ToolRendererContext'
+import { getPathDisplayInfo } from '../tool-renderers/path-utils'
 
 import { CodeBlock } from './code-block'
 import { CompactableContainer } from './compactable-container'
@@ -94,10 +96,16 @@ export const ToolHeader = ({
   ...props
 }: ToolHeaderProps) => {
   const { t } = useTranslation('chat')
+  const { workspacePath } = useToolRendererContext()
   const [iconError, setIconError] = useState(false)
   const derivedName =
     type === 'dynamic-tool' ? toolName : type.split('-').slice(1).join('-')
   const displayTitle = title ?? meta?.displayName ?? derivedName
+
+  const isPathLike = summary && summary.includes('/')
+  const pathInfo = isPathLike ? getPathDisplayInfo(summary, workspacePath) : null
+  const displaySummary = pathInfo?.displayText ?? summary
+  const summaryTitle = pathInfo?.displayAbsolute ?? summary
 
   return (
     <div
@@ -122,14 +130,14 @@ export const ToolHeader = ({
         {summary && (
           <span
             className="text-text-tertiary truncate max-w-[360px]"
-            title={summary}
+            title={summaryTitle}
             style={
-              summary.includes('/')
+              displaySummary?.includes('/')
                 ? { direction: 'rtl', textAlign: 'left' }
                 : undefined
             }
           >
-            {summary}
+            {displaySummary}
           </span>
         )}
         {getStatusBadge(state)}
