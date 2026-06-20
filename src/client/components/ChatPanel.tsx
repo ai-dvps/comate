@@ -177,9 +177,10 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     sendMessage(workspaceId, activeSessionId, content)
   }
 
-  const handleCreateSession = useCallback(async () => {
-    const name = t('newSessionDefaultName', { count: sessions.length + 1 })
-    await createSession(workspaceId, name)
+  const handleCreateSession = useCallback(async (name: string) => {
+    const sessionName =
+      name.trim() || t('newSessionDefaultName', { count: sessions.length + 1 })
+    await createSession(workspaceId, sessionName)
   }, [createSession, workspaceId, sessions.length, t])
 
   const handleRefresh = async () => {

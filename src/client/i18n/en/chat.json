@@ -8,6 +8,7 @@
   "chatEmptyState": {
     "title": "Start a conversation",
     "description": "Send a message to begin chatting with Claude",
+    "placeholder": "Session name (optional)",
     "button": "Start chatting"
   },
   "commands": "Commands",

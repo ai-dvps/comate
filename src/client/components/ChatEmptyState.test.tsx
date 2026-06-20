@@ -11,7 +11,7 @@ function renderWithI18n(ui: React.ReactElement) {
 }
 
 describe('ChatEmptyState', () => {
-  it('renders the headline, description, and start-chatting button', () => {
+  it('renders the headline, description, and session-name input', () => {
     renderWithI18n(<ChatEmptyState onCreateSession={vi.fn()} />)
 
     expect(screen.getByText('Start a conversation')).toBeInTheDocument()
@@ -19,11 +19,32 @@ describe('ChatEmptyState', () => {
       screen.getByText(/Send a message to begin chatting/i),
     ).toBeInTheDocument()
     expect(
+      screen.getByRole('textbox', { name: '' }),
+    ).toBeInTheDocument()
+    expect(
       screen.getByRole('button', { name: /Start chatting/i }),
     ).toBeInTheDocument()
   })
 
-  it('calls onCreateSession when the button is clicked', async () => {
+  it('calls onCreateSession with the entered name when submitted', async () => {
+    const user = userEvent.setup()
+    const handleCreateSession = vi.fn()
+
+    renderWithI18n(
+      <ChatEmptyState onCreateSession={handleCreateSession} />,
+    )
+
+    await user.type(
+      screen.getByRole('textbox'),
+      'My new session',
+    )
+    await user.click(screen.getByRole('button', { name: /Start chatting/i }))
+
+    expect(handleCreateSession).toHaveBeenCalledTimes(1)
+    expect(handleCreateSession).toHaveBeenCalledWith('My new session')
+  })
+
+  it('calls onCreateSession with an empty string when no name is entered', async () => {
     const user = userEvent.setup()
     const handleCreateSession = vi.fn()
 
@@ -34,5 +55,6 @@ describe('ChatEmptyState', () => {
     await user.click(screen.getByRole('button', { name: /Start chatting/i }))
 
     expect(handleCreateSession).toHaveBeenCalledTimes(1)
+    expect(handleCreateSession).toHaveBeenCalledWith('')
   })
 })
