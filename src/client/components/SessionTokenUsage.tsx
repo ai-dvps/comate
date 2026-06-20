@@ -17,7 +17,6 @@ export default function SessionTokenUsage({
   const { t } = useTranslation('chat')
   const cumulative = useChatStore((s) => s.sessionUsage[sessionId])
   const contextUsage = useChatStore((s) => s.contextUsage[sessionId])
-  const resultMeta = useChatStore((s) => s.resultMeta[sessionId])
   const session = useChatStore((s) =>
     s.sessions[workspaceId]?.find((ses) => ses.id === sessionId),
   )
@@ -39,17 +38,6 @@ export default function SessionTokenUsage({
         )
       : undefined
 
-  const fmt = (n: number) =>
-    n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
-
-  const metaLabel = [
-    resultMeta?.stopReason,
-    resultMeta?.terminalReason,
-    resultMeta?.origin,
-  ]
-    .filter(Boolean)
-    .join(' · ')
-
   if (fillPercentage === undefined) {
     return (
       <span className="text-[11px] text-text-tertiary">—</span>
@@ -57,26 +45,8 @@ export default function SessionTokenUsage({
   }
 
   return (
-    <>
-      {hasSessionData && (
-        <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-          {t('tokenUsage.session')}: in {fmt(cumulative.cumulativeInput)} / out{' '}
-          {fmt(cumulative.cumulativeOutput)}
-        </span>
-      )}
-
-      <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-        {t('tokenUsage.context')}: {fillPercentage}%
-      </span>
-
-      {metaLabel && (
-        <span
-          className="text-[11px] text-text-tertiary/60 whitespace-nowrap shrink-0"
-          title={metaLabel}
-        >
-          {metaLabel}
-        </span>
-      )}
-    </>
+    <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
+      {t('tokenUsage.context')}: {fillPercentage}%
+    </span>
   )
 }

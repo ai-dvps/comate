@@ -4,7 +4,7 @@ import { render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '../i18n'
 import SessionTokenUsage from './SessionTokenUsage'
-import type { ChatSession, ContextUsage, ResultMeta, SessionUsage } from '../stores/chat-store'
+import type { ChatSession, ContextUsage, SessionUsage } from '../stores/chat-store'
 
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
@@ -14,7 +14,6 @@ const mockStore = {
   sessions: {} as Record<string, ChatSession[]>,
   sessionUsage: {} as Record<string, SessionUsage>,
   contextUsage: {} as Record<string, ContextUsage>,
-  resultMeta: {} as Record<string, ResultMeta>,
 }
 
 const mockProviders = {
@@ -42,32 +41,15 @@ describe('SessionTokenUsage', () => {
     expect(screen.getByText('—')).toBeInTheDocument()
   })
 
-  it('renders session token usage', () => {
+  it('renders context estimate from sessionUsage when contextUsage is absent', () => {
     mockStore.sessionUsage.s1 = {
-      cumulativeInput: 1234,
-      cumulativeOutput: 567,
+      cumulativeInput: 10000,
+      cumulativeOutput: 500,
       cumulativeCacheRead: 0,
       cumulativeCacheWrite: 0,
     }
     renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
-    expect(screen.getByText(/Session: in 1.2k \/ out 567/i)).toBeInTheDocument()
-    expect(screen.getByText(/Context: \d+%/i)).toBeInTheDocument()
-  })
-
-  it('renders result metadata when available', () => {
-    mockStore.sessionUsage.s1 = {
-      cumulativeInput: 100,
-      cumulativeOutput: 50,
-      cumulativeCacheRead: 0,
-      cumulativeCacheWrite: 0,
-    }
-    mockStore.resultMeta.s1 = {
-      stopReason: 'end_turn',
-      terminalReason: 'completed',
-      origin: 'primary',
-    }
-    renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
-    expect(screen.getByText('end_turn · completed · primary')).toBeInTheDocument()
+    expect(screen.getByText(/Context: 5%/i)).toBeInTheDocument()
   })
 
   it('renders contextUsage percentage when available', () => {
@@ -85,18 +67,5 @@ describe('SessionTokenUsage', () => {
     }
     renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
     expect(screen.getByText(/Context: 15%/i)).toBeInTheDocument()
-    expect(screen.queryByText(/Session:/i)).toBeInTheDocument()
-  })
-
-  it('falls back to sessionUsage estimate when contextUsage is absent', () => {
-    delete mockStore.contextUsage.s1
-    mockStore.sessionUsage.s1 = {
-      cumulativeInput: 10000,
-      cumulativeOutput: 500,
-      cumulativeCacheRead: 0,
-      cumulativeCacheWrite: 0,
-    }
-    renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
-    expect(screen.getByText(/Context: 5%/i)).toBeInTheDocument()
   })
 })
