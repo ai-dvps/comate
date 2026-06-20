@@ -20,6 +20,7 @@ interface FilePanelProps {
   files: ViewedFile[]
   activeFilePath: string
   width: number
+  workspacePath?: string
   onSelectFile: (path: string) => void
   onCloseFile: (path: string) => void
   onWidthChange: (width: number) => void
@@ -30,6 +31,7 @@ export default function FilePanel({
   files,
   activeFilePath,
   width,
+  workspacePath,
   onSelectFile,
   onCloseFile,
   onWidthChange,
@@ -73,7 +75,16 @@ export default function FilePanel({
 
   const activeFile = files.find((f) => f.path === activeFilePath)
 
+  const resolveAbsolutePath = (relativePath: string): string => {
+    if (!workspacePath) return relativePath
+    const base = workspacePath.replace(/\\/g, '/').replace(/\/+$/, '')
+    const relative = relativePath.startsWith('/') ? relativePath.slice(1) : relativePath
+    return `${base}/${relative}`
+  }
+
   if (files.length === 0 || !activeFile) return null
+
+  const activeAbsolutePath = resolveAbsolutePath(activeFile.path)
 
   return (
     <aside
@@ -134,8 +145,11 @@ export default function FilePanel({
               d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
             />
           </svg>
-          <span className="text-sm text-text-primary font-mono truncate">
-            {activeFile.name}
+          <span
+            className="text-sm text-text-primary font-mono truncate"
+            title={activeAbsolutePath}
+          >
+            {activeFile.path}
           </span>
         </div>
         <button

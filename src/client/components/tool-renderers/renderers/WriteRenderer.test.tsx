@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { render, screen, fireEvent } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import './WriteRenderer'
 import { getToolRenderer } from '../registry'
@@ -31,7 +30,7 @@ describe('WriteRenderer', () => {
     expect(pathEl).toBeInTheDocument()
     expect(pathEl).toHaveAttribute('title', '/workspace/src/components/Button.tsx')
 
-    await userEvent.click(pathEl)
+    fireEvent.click(pathEl, { metaKey: true })
     expect(onOpenFile).toHaveBeenCalledWith('src/components/Button.tsx', 'Button.tsx')
   })
 
