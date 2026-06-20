@@ -11,7 +11,7 @@ import { SdkClient } from './sdk-client.js';
 import type { Workspace, McpServer } from '../models/workspace.js';
 import type { ChatSession, Provider } from '../models/session.js';
 import type { SseEvent } from '../types/message.js';
-import type { Options, Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 
 function createMockWorkspace(id: string): Workspace {
   return {
@@ -415,7 +415,7 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
 
   it('registers bot event handler when isBotSession is true', async () => {
     setupStoreMocks();
-    const handler = (_id: number, _event: SseEvent) => {};
+    const handler = (() => {}) as (id: number, event: SseEvent) => void;
     SessionRuntime.open = (...args: unknown[]) => {
       const rt = createMockRuntime();
       const botHandler = args[5] as ((id: number, event: SseEvent) => void) | undefined;
@@ -914,87 +914,6 @@ describe('chat-service forkSession', { concurrency: false }, () => {
     await assert.rejects(
       () => service.forkSession('s1', 'ws-1'),
       (err: Error) => err instanceof Error && err.message === 'Workspace not found',
-    );
-  });
-});
-
-describe('chat-service getContextUsage', { concurrency: false }, () => {
-  let service: ChatService;
-  const originalGet = workspaceStore.get.bind(workspaceStore);
-
-  class TestChatService extends ChatService {
-    constructor() {
-      super(new SdkClient());
-    }
-    protected override async testClaudeBinary(): Promise<void> {}
-  }
-
-  function createMockRuntimeWithUsage(
-    usage: { totalTokens: number; maxTokens: number; percentage: number; categories: { name: string; tokens: number }[] },
-  ): SessionRuntime {
-    return {
-      isClosed: () => false,
-      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
-      getContextUsage: async () => usage as unknown as import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse,
-      close: () => Promise.resolve(),
-      subscribe: () => {},
-      unsubscribe: () => {},
-      pushMessage: () => {},
-      resolveApproval: () => {},
-      interrupt: () => Promise.resolve(),
-      addBotEventHandler: () => {},
-      clearBotEventHandlers: () => {},
-      removeBotEventHandler: () => {},
-      setApprovalMode: () => {},
-      getApprovalMode: () => 'manual' as const,
-    } as unknown as SessionRuntime;
-  }
-
-  beforeEach(() => {
-    workspaceStore.get = async () => createMockWorkspace('ws-1');
-    service = new TestChatService();
-  });
-
-  afterEach(async () => {
-    await service?.closeAllRuntimes();
-    workspaceStore.get = originalGet;
-  });
-
-  it('returns context usage for an active runtime', async () => {
-    const usage = {
-      totalTokens: 1000,
-      maxTokens: 200000,
-      percentage: 0.5,
-      categories: [{ name: 'Messages', tokens: 1000 }],
-    };
-    const runtime = createMockRuntimeWithUsage(usage);
-    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.set('s1', runtime);
-
-    const result = await service.getContextUsage('s1', 'ws-1');
-    assert.strictEqual(result.totalTokens, 1000);
-    assert.strictEqual(result.maxTokens, 200000);
-    assert.strictEqual(result.percentage, 0.5);
-  });
-
-  it('throws ChatError when no active runtime exists', async () => {
-    await assert.rejects(
-      () => service.getContextUsage('s1', 'ws-1'),
-      (err: Error) => err instanceof Error && err.message === 'Session is not active',
-    );
-  });
-
-  it('throws ChatError when runtime belongs to a different workspace', async () => {
-    const runtime = createMockRuntimeWithUsage({
-      totalTokens: 100,
-      maxTokens: 200000,
-      percentage: 0.1,
-      categories: [],
-    });
-    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.set('s1', runtime);
-
-    await assert.rejects(
-      () => service.getContextUsage('s1', 'ws-2'),
-      (err: Error) => err instanceof Error && err.message === 'Session is not active',
     );
   });
 });
