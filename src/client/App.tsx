@@ -312,6 +312,7 @@ function App() {
           files={openFiles}
           activeFilePath={activeFilePath}
           width={filePanelWidth}
+          workspacePath={activeWorkspace?.folderPath}
           onSelectFile={handleSelectFile}
           onCloseFile={handleCloseFile}
           onWidthChange={setFilePanelWidth}
