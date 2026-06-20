@@ -50,6 +50,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showAnalytics, setShowAnalytics] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false)
   const [isMac, setIsMac] = useState(false)
   const [claudeCheck, setClaudeCheck] = useState<{ ok: boolean; checking: boolean; error?: string }>({
     ok: true,
@@ -255,7 +256,10 @@ function App() {
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>
           <div data-tauri-drag-region className="w-4 self-stretch select-none flex-shrink-0" onMouseDown={handleDrag} />
           <div className="flex-shrink-0">
-            <WorkspaceSwitcher />
+            <WorkspaceSwitcher
+              open={isWorkspaceSwitcherOpen}
+              onOpenChange={setIsWorkspaceSwitcherOpen}
+            />
           </div>
           <div className="min-w-0">
             <WorkspaceTabs />
@@ -335,6 +339,7 @@ function App() {
               workspaces={workspaces}
               onCreateWorkspace={() => setShowCreateModal(true)}
               onSelectWorkspace={(id) => openWorkspace(id)}
+              onBrowseWorkspaces={() => setIsWorkspaceSwitcherOpen(true)}
             />
           )}
         </main>

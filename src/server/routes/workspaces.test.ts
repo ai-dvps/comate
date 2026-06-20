@@ -11,6 +11,7 @@ describe('workspaces routes', { concurrency: false }, () => {
   let originalListPromptHistory: typeof workspaceStore.listPromptHistory;
   let originalPrunePromptHistory: typeof workspaceStore.prunePromptHistory;
   let originalCreatePromptHistory: typeof workspaceStore.createPromptHistory;
+  let originalRecordLastOpened: typeof workspaceStore.recordLastOpened;
 
   beforeEach(() => {
     originalDelete = workspaceStore.delete.bind(workspaceStore);
@@ -19,6 +20,7 @@ describe('workspaces routes', { concurrency: false }, () => {
     originalListPromptHistory = workspaceStore.listPromptHistory.bind(workspaceStore);
     originalPrunePromptHistory = workspaceStore.prunePromptHistory.bind(workspaceStore);
     originalCreatePromptHistory = workspaceStore.createPromptHistory.bind(workspaceStore);
+    originalRecordLastOpened = workspaceStore.recordLastOpened.bind(workspaceStore);
   });
 
   afterEach(() => {
@@ -28,6 +30,7 @@ describe('workspaces routes', { concurrency: false }, () => {
     workspaceStore.listPromptHistory = originalListPromptHistory;
     workspaceStore.prunePromptHistory = originalPrunePromptHistory;
     workspaceStore.createPromptHistory = originalCreatePromptHistory;
+    workspaceStore.recordLastOpened = originalRecordLastOpened;
   });
 
   function createMockRes(): {
@@ -237,15 +240,36 @@ describe('workspaces routes', { concurrency: false }, () => {
     assert.strictEqual((res.jsonBody as { error: string }).error, 'prompt cannot be empty');
   });
 
-  it('POST /:id/prompt-history returns 404 when workspace does not exist', async () => {
+  it('POST /:id/open records last opened and returns workspace', async () => {
     const handlers = await importRouteHandlers();
 
-    workspaceStore.get = async () => null;
+    let recordedId: string | null = null;
+    workspaceStore.recordLastOpened = async (id: string) => {
+      recordedId = id;
+      return { id, name: 'Opened', lastOpenedAt: new Date().toISOString() } as Workspace;
+    };
 
-    const req = { params: { id: 'missing-ws' }, body: { sessionId: 's1', prompt: 'hello' } };
+    const req = { params: { id: 'ws-1' } };
     const res = createMockRes();
 
-    await handlers['/:id/prompt-history'].post(req, res);
+    await handlers['/:id/open'].post(req, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(recordedId, 'ws-1');
+    const body = res.jsonBody as { workspace: Workspace };
+    assert.strictEqual(body.workspace.id, 'ws-1');
+    assert.ok(body.workspace.lastOpenedAt);
+  });
+
+  it('POST /:id/open returns 404 when workspace does not exist', async () => {
+    const handlers = await importRouteHandlers();
+
+    workspaceStore.recordLastOpened = async () => null;
+
+    const req = { params: { id: 'missing-ws' } };
+    const res = createMockRes();
+
+    await handlers['/:id/open'].post(req, res);
 
     assert.strictEqual(res.statusCode, 404);
     assert.strictEqual((res.jsonBody as { error: string }).error, 'Workspace not found');

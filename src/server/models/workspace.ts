@@ -57,6 +57,7 @@ export interface Workspace {
   hooks: Hook[];
   createdAt: string;
   updatedAt: string;
+  lastOpenedAt: string | null;
 }
 
 export interface CreateWorkspaceInput {

@@ -4,9 +4,17 @@ import { Check, LayoutGrid } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import { useWorkspaceStore } from '../stores/workspace-store'
 
-export default function WorkspaceSwitcher() {
+interface WorkspaceSwitcherProps {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}
+
+export default function WorkspaceSwitcher({ open, onOpenChange }: WorkspaceSwitcherProps) {
   const { t } = useTranslation('settings')
-  const [isOpen, setIsOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+
+  const isOpen = open ?? internalOpen
+  const setIsOpen = onOpenChange ?? setInternalOpen
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)

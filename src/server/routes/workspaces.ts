@@ -52,6 +52,21 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// POST /api/workspaces/:id/open
+router.post('/:id/open', async (req, res) => {
+  try {
+    const workspace = await store.recordLastOpened(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    res.json({ workspace });
+  } catch (error) {
+    console.error('Failed to record workspace last opened:', error);
+    res.status(500).json({ error: 'Failed to record workspace last opened' });
+  }
+});
+
 // PUT /api/workspaces/:id
 router.put('/:id', async (req, res) => {
   try {
