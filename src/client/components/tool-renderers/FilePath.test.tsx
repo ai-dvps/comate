@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import FilePath from './FilePath'
@@ -22,19 +22,50 @@ function renderWithContext(
 }
 
 describe('FilePath', () => {
-  it('renders relative path inside workspace and opens file on click', async () => {
+  const originalClipboard = navigator.clipboard
+
+  beforeEach(() => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    })
+  })
+
+  afterEach(() => {
+    Object.assign(navigator, { clipboard: originalClipboard })
+  })
+
+  it('renders relative path inside workspace', () => {
+    renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
+      workspacePath: '/workspace',
+    })
+
+    const pathEl = screen.getByText('src/components/Button.tsx')
+    expect(pathEl).toBeInTheDocument()
+    expect(pathEl).toHaveAttribute('title', '/workspace/src/components/Button.tsx')
+  })
+
+  it('opens file on Cmd/Ctrl+click', async () => {
     const onOpenFile = vi.fn()
     renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
       workspacePath: '/workspace',
       onOpenFile,
     })
 
-    const pathEl = screen.getByText('src/components/Button.tsx')
-    expect(pathEl).toBeInTheDocument()
-    expect(pathEl).toHaveAttribute('title', '/workspace/src/components/Button.tsx')
-
-    await userEvent.click(pathEl)
+    fireEvent.click(screen.getByText('src/components/Button.tsx'), { metaKey: true })
     expect(onOpenFile).toHaveBeenCalledWith('src/components/Button.tsx', 'Button.tsx')
+  })
+
+  it('does not open file on plain click', async () => {
+    const onOpenFile = vi.fn()
+    renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
+      workspacePath: '/workspace',
+      onOpenFile,
+    })
+
+    await userEvent.click(screen.getByText('src/components/Button.tsx'))
+    expect(onOpenFile).not.toHaveBeenCalled()
   })
 
   it('passes the relative path, not the absolute path, to onOpenFile', async () => {
@@ -44,10 +75,54 @@ describe('FilePath', () => {
       onOpenFile,
     })
 
-    await userEvent.click(screen.getByText('lib/utils.ts'))
+    fireEvent.click(screen.getByText('lib/utils.ts'), { ctrlKey: true })
     expect(onOpenFile).toHaveBeenCalledTimes(1)
     expect(onOpenFile.mock.calls[0][0]).toBe('lib/utils.ts')
     expect(onOpenFile.mock.calls[0][1]).toBe('utils.ts')
+  })
+
+  it('copies absolute path when copy button is clicked', async () => {
+    renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
+      workspacePath: '/workspace',
+    })
+
+    const copyButton = screen.getByRole('button', { name: 'Copy path' })
+    await userEvent.click(copyButton)
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      '/workspace/src/components/Button.tsx',
+    )
+  })
+
+  it('truncates long relative paths from the start', () => {
+    renderWithContext(
+      <FilePath path="/workspace/src/components/Button.tsx" maxDisplayLength={10} />,
+      {
+        workspacePath: '/workspace',
+      },
+    )
+
+    const pathEl = screen.getByText(/^…/)
+    expect(pathEl.textContent).toMatch(/^…utton\.tsx$/)
+    expect(pathEl).toHaveAttribute('title', '/workspace/src/components/Button.tsx')
+  })
+
+  it('shows pointer cursor and underline only while a modifier key is held', () => {
+    renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
+      workspacePath: '/workspace',
+    })
+
+    const pathEl = screen.getByText('src/components/Button.tsx')
+    expect(pathEl).toHaveClass('cursor-default')
+    expect(pathEl).not.toHaveClass('cursor-pointer')
+    expect(pathEl).not.toHaveClass('hover:underline')
+
+    fireEvent.keyDown(document, { metaKey: true })
+    expect(pathEl).toHaveClass('cursor-pointer')
+    expect(pathEl).toHaveClass('hover:underline')
+
+    fireEvent.keyUp(document, { metaKey: false })
+    expect(pathEl).not.toHaveClass('cursor-pointer')
+    expect(pathEl).not.toHaveClass('hover:underline')
   })
 
   it('strips trailing slashes', () => {

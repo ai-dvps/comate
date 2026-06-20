@@ -31,6 +31,7 @@ import type { SearchHighlightRange } from '../../hooks/useMessageSearch'
 import { Badge } from '../ui/badge'
 import { cn } from '../ui/utils'
 import { getToolRenderer, StructuredFallback } from '../tool-renderers'
+import FilePath from '../tool-renderers/FilePath'
 
 import { CodeBlock } from './code-block'
 import { CompactableContainer } from './compactable-container'
@@ -99,6 +100,10 @@ export const ToolHeader = ({
     type === 'dynamic-tool' ? toolName : type.split('-').slice(1).join('-')
   const displayTitle = title ?? meta?.displayName ?? derivedName
 
+  const isUrl = summary ? /^https?:\/\//i.test(summary) : false
+  const isPathLike = summary && summary.includes('/') && !isUrl
+  const isDirectoryTool = derivedName === 'Glob' || derivedName === 'Grep'
+
   return (
     <div
       className={cn(
@@ -120,17 +125,22 @@ export const ToolHeader = ({
         )}
         <span className="font-medium">{displayTitle}</span>
         {summary && (
-          <span
-            className="text-text-tertiary truncate max-w-[360px]"
-            title={summary}
-            style={
-              summary.includes('/')
-                ? { direction: 'rtl', textAlign: 'left' }
-                : undefined
-            }
-          >
-            {summary}
-          </span>
+          isPathLike ? (
+            <span className="max-w-[360px] min-w-0 overflow-hidden">
+              <FilePath
+                path={summary}
+                isDirectory={isDirectoryTool}
+                className="text-text-tertiary"
+              />
+            </span>
+          ) : (
+            <span
+              className="text-text-tertiary truncate max-w-[360px]"
+              title={summary}
+            >
+              {summary}
+            </span>
+          )
         )}
         {getStatusBadge(state)}
         {autoApproved && (
