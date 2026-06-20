@@ -45,6 +45,11 @@
   "loadingFiles": "Loading files…",
   "noFilesMatch": "No files match{{filter}}",
   "selectOrCreateWorkspace": "Select or create a workspace to get started",
+  "workspaceEmptyState": {
+    "title": "Welcome to Comate",
+    "description": "A workspace is a project folder where Comate keeps your sessions and context. Create one to get started.",
+    "button": "Create workspace"
+  },
   "noWorkspaceToBrowse": "Open a workspace to browse files",
   "emptyWorkspace": "Empty workspace",
   "emptyFolder": "Empty folder",

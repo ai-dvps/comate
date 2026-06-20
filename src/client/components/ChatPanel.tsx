@@ -4,6 +4,7 @@ import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useProviderStore } from '../stores/provider-store'
 import { useMessageSearch } from '../hooks/useMessageSearch'
+import ChatEmptyState from './ChatEmptyState'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
@@ -34,6 +35,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const resolveApproval = useChatStore((s) => s.resolveApproval)
   const interruptSession = useChatStore((s) => s.interruptSession)
   const cleanupWorkspace = useChatStore((s) => s.cleanupWorkspace)
+  const createSession = useChatStore((s) => s.createSession)
 
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === workspaceId)
@@ -174,6 +176,11 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     if (!activeSessionId) return
     sendMessage(workspaceId, activeSessionId, content)
   }
+
+  const handleCreateSession = useCallback(async () => {
+    const name = t('newSessionDefaultName', { count: sessions.length + 1 })
+    await createSession(workspaceId, name)
+  }, [createSession, workspaceId, sessions.length, t])
 
   const handleRefresh = async () => {
     if (!activeSessionId) return
@@ -369,49 +376,49 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
               </div>
             ))
           ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-text-secondary">{t('selectSessionPrompt')}</p>
-            </div>
+            <ChatEmptyState onCreateSession={handleCreateSession} />
           )}
 
           {/* Approval Surface or Prompt Input */}
-          <div className="flex-shrink-0 border-t border-border/30 bg-bg">
-            {activeSessionId && currentApproval ? (
-              <ApprovalSurface
-                workspaceId={workspaceId}
-                pendingItem={currentApproval}
-                queueDepth={approvalQueueLength - 1}
-                isResolving={resolvingRequestId === currentApproval?.requestId}
-                onAllow={handleAllow}
-                onAllowAlways={handleAllowAlways}
-                onDeny={handleDeny}
-                onAnswerQuestion={handleAnswerQuestion}
-                onChatAbout={handleChatAbout}
-                onStop={handleStop}
-              />
-            ) : (
-              <PromptInput
-                workspaceId={workspaceId}
-                sessionId={activeSessionId || ''}
-                onSend={handleSend}
-                onStop={handleStop}
-                onRefresh={handleRefresh}
-                disabled={!activeSessionId || isBotSession}
-                isStreaming={isStreaming}
-                isInterrupting={isInterrupting}
-                hasSession={!!activeSessionId}
-                isBotSession={isBotSession}
-                botName={botName}
-                wecomUser={wecomUser}
-                refreshMeta={{
-                  lastRefreshedAt: refreshMeta.lastRefreshedAt,
-                  lastNewCount: refreshMeta.lastNewCount,
-                  lastError: refreshMeta.lastError,
-                  isRefreshing: isLoadingMessages,
-                }}
-              />
-            )}
-          </div>
+          {activeSessionId && (
+            <div className="flex-shrink-0 border-t border-border/30 bg-bg">
+              {currentApproval ? (
+                <ApprovalSurface
+                  workspaceId={workspaceId}
+                  pendingItem={currentApproval}
+                  queueDepth={approvalQueueLength - 1}
+                  isResolving={resolvingRequestId === currentApproval?.requestId}
+                  onAllow={handleAllow}
+                  onAllowAlways={handleAllowAlways}
+                  onDeny={handleDeny}
+                  onAnswerQuestion={handleAnswerQuestion}
+                  onChatAbout={handleChatAbout}
+                  onStop={handleStop}
+                />
+              ) : (
+                <PromptInput
+                  workspaceId={workspaceId}
+                  sessionId={activeSessionId}
+                  onSend={handleSend}
+                  onStop={handleStop}
+                  onRefresh={handleRefresh}
+                  disabled={isBotSession}
+                  isStreaming={isStreaming}
+                  isInterrupting={isInterrupting}
+                  hasSession
+                  isBotSession={isBotSession}
+                  botName={botName}
+                  wecomUser={wecomUser}
+                  refreshMeta={{
+                    lastRefreshedAt: refreshMeta.lastRefreshedAt,
+                    lastNewCount: refreshMeta.lastNewCount,
+                    lastError: refreshMeta.lastError,
+                    isRefreshing: isLoadingMessages,
+                  }}
+                />
+              )}
+            </div>
+          )}
 
           {/* Status Bar */}
           {activeSessionId && (
