@@ -1,6 +1,7 @@
 import { FileText, Search } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
+import FilePath from '../FilePath'
 
 function GrepRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
@@ -32,7 +33,7 @@ function GrepRenderer(input: unknown): ReactNode | null {
         <span className="text-text-tertiary text-xs uppercase tracking-wide">
           Path
         </span>
-        <span className="font-mono text-xs text-text-primary">{path}</span>
+        <FilePath path={path} isDirectory />
       </div>
       {outputMode && (
         <div className="flex items-center gap-2">
