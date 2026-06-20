@@ -1,3 +1,4 @@
+import { Copy } from 'lucide-react'
 import { useToolRendererContext } from './ToolRendererContext'
 import { cn } from '../ui/utils'
 import { basename, getPathDisplayInfo } from './path-utils'
@@ -15,24 +16,22 @@ export default function FilePath({ path, isDirectory, className }: FilePathProps
   const directoryLike = isDirectory || /[\\/]$/.test(path)
   const clickable = relativePath !== null && !directoryLike && relativePath !== '.'
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!clickable || !relativePath || relativePath === '.') return
+    if (!e.metaKey && !e.ctrlKey) return
     const name = basename(relativePath)
     onOpenFile(relativePath, name)
   }
 
-  if (!clickable) {
-    return (
-      <span
-        className={cn('font-mono text-xs text-text-primary', className)}
-        title={displayAbsolute}
-      >
-        {displayText}
-      </span>
-    )
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(displayAbsolute)
+    } catch (err) {
+      console.error('Failed to copy path:', err)
+    }
   }
 
-  return (
+  const pathEl = clickable ? (
     <button
       type="button"
       onClick={handleClick}
@@ -45,5 +44,27 @@ export default function FilePath({ path, isDirectory, className }: FilePathProps
     >
       {displayText}
     </button>
+  ) : (
+    <span
+      className={cn('font-mono text-xs text-text-primary', className)}
+      title={displayAbsolute}
+    >
+      {displayText}
+    </span>
+  )
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      {pathEl}
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="inline-flex items-center justify-center p-0.5 rounded text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        title="Copy path"
+        aria-label="Copy path"
+      >
+        <Copy className="w-3 h-3" />
+      </button>
+    </span>
   )
 }

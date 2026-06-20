@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { ReactElement } from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
 import { ToolHeader } from './tool'
@@ -49,7 +49,7 @@ describe('ToolHeader', () => {
       { onOpenFile },
     )
 
-    await userEvent.click(screen.getByText('src/components/Button.tsx'))
+    fireEvent.click(screen.getByText('src/components/Button.tsx'), { metaKey: true })
     expect(onOpenFile).toHaveBeenCalledWith('src/components/Button.tsx', 'Button.tsx')
   })
 
