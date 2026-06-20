@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert'
-import { normalizeSdkStatus, sanitizeSubagents, useChatStore } from './chat-store'
+import { normalizeSdkStatus, sanitizeSubagents, useChatStore, handleSseEvent, type SseSetter } from './chat-store'
 import type { SubagentState, TaskItem } from '../types/message'
 
 describe('normalizeSdkStatus', () => {
@@ -170,5 +170,63 @@ describe('loadMessages subagent hydration', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+})
+
+describe('handleSseEvent context_usage', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {},
+      messages: {},
+      subagents: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      contextUsage: {},
+    })
+  })
+
+  it('updates contextUsage on context_usage event', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'context_usage', {
+      totalTokens: 100,
+      maxTokens: 200000,
+      percentage: 5,
+      categories: [{ name: 'messages', tokens: 100 }],
+    })
+    const state = useChatStore.getState()
+    assert.strictEqual(state.contextUsage['s1'].percentage, 5)
+    assert.strictEqual(state.contextUsage['s1'].totalTokens, 100)
+    assert.strictEqual(state.contextUsage['s1'].categories[0].name, 'messages')
+  })
+
+  it('clears contextUsage on compact_boundary', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      contextUsage: {
+        s1: { totalTokens: 100, maxTokens: 200000, percentage: 80, categories: [] },
+      },
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'compact_boundary', {})
+    const state = useChatStore.getState()
+    assert.strictEqual(state.contextUsage['s1'], undefined)
+  })
+
+  it('overwrites previous contextUsage values', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      contextUsage: {
+        s1: { totalTokens: 100, maxTokens: 200000, percentage: 80, categories: [] },
+      },
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'context_usage', {
+      totalTokens: 10,
+      maxTokens: 200000,
+      percentage: 5,
+      categories: [],
+    })
+    const state = useChatStore.getState()
+    assert.strictEqual(state.contextUsage['s1'].percentage, 5)
+    assert.strictEqual(state.contextUsage['s1'].totalTokens, 10)
   })
 })

@@ -154,6 +154,15 @@ export class SessionRuntime {
       for (const handler of this.botEventHandlers) {
         handler(id, event);
       }
+      if (
+        event.type === 'assistant_start' ||
+        event.type === 'tool_result' ||
+        event.type === 'assistant_done' ||
+        event.type === 'result' ||
+        event.type === 'compact_boundary'
+      ) {
+        this.emitContextUsage();
+      }
     });
   }
 
@@ -448,6 +457,28 @@ export class SessionRuntime {
 
   async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {
     return this.query.getContextUsage();
+  }
+
+  private emitContextUsage(): void {
+    this.getContextUsage()
+      .then((usage) => {
+        if (this.closed) return;
+        this.emitter.emitEvent({
+          type: 'context_usage',
+          totalTokens: usage.totalTokens,
+          maxTokens: usage.maxTokens,
+          percentage: usage.percentage,
+          categories: usage.categories.map((category) => ({
+            name: category.name,
+            tokens: category.tokens,
+          })),
+        });
+      })
+      .catch((err) => {
+        diagLog(
+          `[Runtime ${this.sessionId}] getContextUsage failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 
   isClosed(): boolean {

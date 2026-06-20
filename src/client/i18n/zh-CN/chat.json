@@ -116,9 +116,6 @@
     "session": "累计",
     "context": "上下文"
   },
-  "contextUsage": "上下文使用",
-  "loadingContextUsage": "正在加载上下文使用...",
-  "contextUsageFailed": "无法加载上下文使用",
   "tokens": "token",
   "searchSessions": "搜索会话...",
   "refreshSessions": "刷新会话",

@@ -136,24 +136,6 @@ router.post('/sessions/:sessionId/fork', async (req, res) => {
   }
 });
 
-// GET /api/workspaces/:id/sessions/:sessionId/context-usage
-// Returns the current context-window usage breakdown for the active session runtime
-router.get('/sessions/:sessionId/context-usage', async (req, res) => {
-  try {
-    const workspaceId = (req.params as unknown as { id: string }).id;
-    const sessionId = req.params.sessionId;
-    const usage = await chatService.getContextUsage(sessionId, workspaceId);
-    res.json(usage);
-  } catch (error) {
-    console.error('Failed to get context usage:', error);
-    if (error instanceof ChatError) {
-      res.status(error.statusCode).json({ error: error.message, code: error.code });
-      return;
-    }
-    res.status(500).json({ error: 'Failed to get context usage' });
-  }
-});
-
 // GET /api/workspaces/:id/sessions/status
 // Lightweight status check for background session discovery
 router.get('/sessions/status', async (req, res) => {
