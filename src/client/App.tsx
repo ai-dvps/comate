@@ -27,6 +27,7 @@ import { cn } from './components/ui/utils'
 import { startPeriodicUpdateChecks, stopPeriodicUpdateChecks } from './lib/updater-api'
 import UpdateNotification from './components/UpdateNotification'
 import UpdateRestartDialog from './components/UpdateRestartDialog'
+import { ToolRendererProvider } from './components/tool-renderers/ToolRendererContext'
 
 function App() {
   const { t } = useTranslation('common')
@@ -242,9 +243,15 @@ function App() {
   }
 
   return (
-    <div className={`h-screen flex flex-col bg-bg text-text-primary ${fontSizeClass(uiFontSize)} overflow-x-hidden`}>
-      {/* Top Bar */}
-      <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50 relative z-30">
+    <ToolRendererProvider
+      value={{
+        workspacePath: activeWorkspace?.folderPath,
+        onOpenFile: handleFileClick,
+      }}
+    >
+      <div className={`h-screen flex flex-col bg-bg text-text-primary ${fontSizeClass(uiFontSize)} overflow-x-hidden`}>
+        {/* Top Bar */}
+        <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50 relative z-30">
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>
           <div data-tauri-drag-region className="w-4 self-stretch select-none flex-shrink-0" onMouseDown={handleDrag} />
           <div className="flex-shrink-0">
@@ -355,6 +362,7 @@ function App() {
 
       <ToastContainer />
     </div>
+    </ToolRendererProvider>
   )
 }
 
