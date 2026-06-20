@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
+import FilePath from '../FilePath'
 
 function GlobRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
@@ -19,7 +20,7 @@ function GlobRenderer(input: unknown): ReactNode | null {
       {pathStr && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-text-tertiary text-xs uppercase tracking-wide shrink-0">Path</span>
-          <span className="text-text-secondary text-sm font-mono whitespace-pre-wrap break-words">{pathStr}</span>
+          <FilePath path={pathStr} isDirectory className="whitespace-pre-wrap break-words" />
         </div>
       )}
     </div>
