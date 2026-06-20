@@ -1,17 +1,27 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Briefcase } from 'lucide-react'
+import { Briefcase, FolderOpen } from 'lucide-react'
 
 import { Button } from './ui/button'
 
+interface WorkspaceItem {
+  id: string
+  name: string
+}
+
 interface WorkspaceEmptyStateProps {
+  workspaces?: WorkspaceItem[]
   onCreateWorkspace: () => void
+  onSelectWorkspace: (id: string) => void
 }
 
 export const WorkspaceEmptyState: React.FC<WorkspaceEmptyStateProps> = ({
+  workspaces = [],
   onCreateWorkspace,
+  onSelectWorkspace,
 }) => {
   const { t } = useTranslation('common')
+  const hasExistingWorkspaces = workspaces.length > 0
 
   return (
     <div className="flex flex-col items-center justify-center h-full px-4">
@@ -28,6 +38,27 @@ export const WorkspaceEmptyState: React.FC<WorkspaceEmptyStateProps> = ({
         <Button onClick={onCreateWorkspace}>
           {t('workspaceEmptyState.button')}
         </Button>
+
+        {hasExistingWorkspaces && (
+          <div className="mt-8 w-full text-left">
+            <p className="text-xs font-medium text-text-tertiary uppercase tracking-wider mb-3 text-center">
+              {t('workspaceEmptyState.existingTitle')}
+            </p>
+            <div className="flex flex-col gap-2">
+              {workspaces.map((workspace) => (
+                <Button
+                  key={workspace.id}
+                  variant="outline"
+                  className="w-full justify-start gap-2"
+                  onClick={() => onSelectWorkspace(workspace.id)}
+                >
+                  <FolderOpen className="w-4 h-4 text-text-tertiary shrink-0" />
+                  <span className="truncate">{workspace.name}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

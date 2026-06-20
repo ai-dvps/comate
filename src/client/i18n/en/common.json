@@ -48,7 +48,8 @@
   "workspaceEmptyState": {
     "title": "Welcome to Comate",
     "description": "A workspace is a project folder where Comate keeps your sessions and context. Create one to get started.",
-    "button": "Create workspace"
+    "button": "Create workspace",
+    "existingTitle": "Or open an existing workspace"
   },
   "noWorkspaceToBrowse": "Open a workspace to browse files",
   "emptyWorkspace": "Empty workspace",

@@ -10,9 +10,14 @@ function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
 }
 
+const defaultProps = {
+  onCreateWorkspace: vi.fn(),
+  onSelectWorkspace: vi.fn(),
+}
+
 describe('WorkspaceEmptyState', () => {
   it('renders the headline, description, and create-workspace button', () => {
-    renderWithI18n(<WorkspaceEmptyState onCreateWorkspace={vi.fn()} />)
+    renderWithI18n(<WorkspaceEmptyState {...defaultProps} />)
 
     expect(screen.getByText('Welcome to Comate')).toBeInTheDocument()
     expect(
@@ -28,11 +33,50 @@ describe('WorkspaceEmptyState', () => {
     const handleCreateWorkspace = vi.fn()
 
     renderWithI18n(
-      <WorkspaceEmptyState onCreateWorkspace={handleCreateWorkspace} />,
+      <WorkspaceEmptyState
+        {...defaultProps}
+        onCreateWorkspace={handleCreateWorkspace}
+      />,
     )
 
     await user.click(screen.getByRole('button', { name: /Create workspace/i }))
 
     expect(handleCreateWorkspace).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not show existing workspaces when the list is empty', () => {
+    renderWithI18n(<WorkspaceEmptyState {...defaultProps} workspaces={[]} />)
+
+    expect(
+      screen.queryByText(/Or open an existing workspace/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('lists existing workspaces and calls onSelectWorkspace when one is clicked', async () => {
+    const user = userEvent.setup()
+    const handleSelectWorkspace = vi.fn()
+    const workspaces = [
+      { id: 'ws1', name: 'Alpha' },
+      { id: 'ws2', name: 'Beta' },
+    ]
+
+    renderWithI18n(
+      <WorkspaceEmptyState
+        {...defaultProps}
+        workspaces={workspaces}
+        onSelectWorkspace={handleSelectWorkspace}
+      />,
+    )
+
+    expect(
+      screen.getByText(/Or open an existing workspace/i),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Beta' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Beta' }))
+
+    expect(handleSelectWorkspace).toHaveBeenCalledTimes(1)
+    expect(handleSelectWorkspace).toHaveBeenCalledWith('ws2')
   })
 })
