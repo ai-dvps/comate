@@ -51,9 +51,16 @@ export class SqliteStore {
         mcpServers TEXT NOT NULL DEFAULT '[]',
         hooks TEXT NOT NULL DEFAULT '[]',
         createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
+        updatedAt TEXT NOT NULL,
+        lastOpenedAt TEXT
       )
     `);
+
+    // Migration: add lastOpenedAt column to existing workspaces table
+    const workspaceColumns = this.db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[];
+    if (!workspaceColumns.some(col => col.name === 'lastOpenedAt')) {
+      this.db.exec('ALTER TABLE workspaces ADD COLUMN lastOpenedAt TEXT');
+    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS wecom_user_sessions (
@@ -330,8 +337,8 @@ export class SqliteStore {
 
     // Migrate workspaces
     const insert = this.db.prepare(`
-      INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt, lastOpenedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertMany = this.db.transaction((workspaces: Workspace[]) => {
@@ -346,7 +353,8 @@ export class SqliteStore {
           JSON.stringify(ws.mcpServers || []),
           JSON.stringify(ws.hooks || []),
           ws.createdAt,
-          ws.updatedAt
+          ws.updatedAt,
+          ws.lastOpenedAt ?? null
         );
       }
     });
@@ -473,11 +481,12 @@ export class SqliteStore {
       hooks: input.hooks || [],
       createdAt: now,
       updatedAt: now,
+      lastOpenedAt: null,
     };
 
     this.db.prepare(`
-      INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt, lastOpenedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       workspace.id,
       workspace.name,
@@ -488,7 +497,8 @@ export class SqliteStore {
       JSON.stringify(workspace.mcpServers),
       JSON.stringify(workspace.hooks),
       workspace.createdAt,
-      workspace.updatedAt
+      workspace.updatedAt,
+      workspace.lastOpenedAt
     );
 
     return workspace;
@@ -527,6 +537,15 @@ export class SqliteStore {
     );
 
     return workspace;
+  }
+
+  async recordLastOpened(id: string): Promise<Workspace | null> {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE workspaces SET lastOpenedAt = ? WHERE id = ?
+    `).run(now, id);
+    if (result.changes === 0) return null;
+    return this.get(id);
   }
 
   async delete(id: string): Promise<boolean> {
@@ -1215,6 +1234,7 @@ interface RawWorkspaceRow {
   hooks: string;
   createdAt: string;
   updatedAt: string;
+  lastOpenedAt: string | null;
 }
 
 function parseRow(row: RawWorkspaceRow): Workspace {
@@ -1229,6 +1249,7 @@ function parseRow(row: RawWorkspaceRow): Workspace {
     hooks: safeJsonParse(row.hooks, []),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    lastOpenedAt: row.lastOpenedAt ?? null,
   };
 }
 

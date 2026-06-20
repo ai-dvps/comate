@@ -17,6 +17,7 @@ export interface Workspace {
   hooks: { name: string; scriptPath: string }[];
   createdAt: string;
   updatedAt: string;
+  lastOpenedAt?: string;
 }
 
 interface WorkspaceState {
@@ -29,7 +30,7 @@ interface WorkspaceState {
   fetchWorkspaces: () => Promise<void>;
   createWorkspace: (input: { name: string; folderPath: string; description?: string }) => Promise<Workspace | null>;
   setActiveWorkspace: (id: string | null) => void;
-  openWorkspace: (id: string) => void;
+  openWorkspace: (id: string) => Promise<void>;
   closeWorkspace: (id: string) => void;
   updateWorkspace: (id: string, input: Partial<Omit<Workspace, 'id' | 'createdAt' | 'updatedAt'>>) => Promise<void>;
   deleteWorkspace: (id: string) => Promise<void>;
@@ -98,19 +99,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ activeWorkspaceId: id });
   },
 
-  openWorkspace: (id) => {
+  openWorkspace: async (id) => {
     const { openWorkspaceIds, activeWorkspaceId } = get();
     if (openWorkspaceIds.includes(id)) {
-      // Already open, just focus it
       if (activeWorkspaceId !== id) {
         set({ activeWorkspaceId: id });
       }
-      return;
+    } else {
+      set({
+        openWorkspaceIds: [...openWorkspaceIds, id],
+        activeWorkspaceId: id,
+      });
     }
-    set({
-      openWorkspaceIds: [...openWorkspaceIds, id],
-      activeWorkspaceId: id,
-    });
+
+    try {
+      const res = await fetch(`${API_BASE}/workspaces/${id}/open`, { method: 'POST' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const updated = data.workspace as Workspace;
+      set({
+        workspaces: get().workspaces.map((w) => (w.id === id ? updated : w)),
+      });
+    } catch {
+      // Best-effort: don't block UI if last-opened recording fails
+    }
   },
 
   closeWorkspace: (id) => {
