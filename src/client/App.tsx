@@ -7,6 +7,7 @@ import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useResizableWidth } from './hooks/use-resizable-width'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
+import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
@@ -322,9 +323,7 @@ function App() {
               </div>
             ))
           ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-text-secondary">{t('selectOrCreateWorkspace')}</p>
-            </div>
+            <WorkspaceEmptyState onCreateWorkspace={() => setShowCreateModal(true)} />
           )}
         </main>
       </div>
