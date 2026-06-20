@@ -31,8 +31,7 @@ import type { SearchHighlightRange } from '../../hooks/useMessageSearch'
 import { Badge } from '../ui/badge'
 import { cn } from '../ui/utils'
 import { getToolRenderer, StructuredFallback } from '../tool-renderers'
-import { useToolRendererContext } from '../tool-renderers/ToolRendererContext'
-import { getPathDisplayInfo } from '../tool-renderers/path-utils'
+import FilePath from '../tool-renderers/FilePath'
 
 import { CodeBlock } from './code-block'
 import { CompactableContainer } from './compactable-container'
@@ -96,16 +95,14 @@ export const ToolHeader = ({
   ...props
 }: ToolHeaderProps) => {
   const { t } = useTranslation('chat')
-  const { workspacePath } = useToolRendererContext()
   const [iconError, setIconError] = useState(false)
   const derivedName =
     type === 'dynamic-tool' ? toolName : type.split('-').slice(1).join('-')
   const displayTitle = title ?? meta?.displayName ?? derivedName
 
-  const isPathLike = summary && summary.includes('/')
-  const pathInfo = isPathLike ? getPathDisplayInfo(summary, workspacePath) : null
-  const displaySummary = pathInfo?.displayText ?? summary
-  const summaryTitle = pathInfo?.displayAbsolute ?? summary
+  const isUrl = summary ? /^https?:\/\//i.test(summary) : false
+  const isPathLike = summary && summary.includes('/') && !isUrl
+  const isDirectoryTool = derivedName === 'Glob' || derivedName === 'Grep'
 
   return (
     <div
@@ -128,17 +125,22 @@ export const ToolHeader = ({
         )}
         <span className="font-medium">{displayTitle}</span>
         {summary && (
-          <span
-            className="text-text-tertiary truncate max-w-[360px]"
-            title={summaryTitle}
-            style={
-              displaySummary?.includes('/')
-                ? { direction: 'rtl', textAlign: 'left' }
-                : undefined
-            }
-          >
-            {displaySummary}
-          </span>
+          isPathLike ? (
+            <span className="truncate max-w-[360px]">
+              <FilePath
+                path={summary}
+                isDirectory={isDirectoryTool}
+                className="text-text-tertiary"
+              />
+            </span>
+          ) : (
+            <span
+              className="text-text-tertiary truncate max-w-[360px]"
+              title={summary}
+            >
+              {summary}
+            </span>
+          )
         )}
         {getStatusBadge(state)}
         {autoApproved && (
