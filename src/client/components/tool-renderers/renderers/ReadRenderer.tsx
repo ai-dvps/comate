@@ -1,6 +1,7 @@
 import { FileText } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
+import FilePath from '../FilePath'
 
 function ReadRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
@@ -25,7 +26,7 @@ function ReadRenderer(input: unknown): ReactNode | null {
       <span className="text-text-tertiary text-xs uppercase tracking-wide">
         Reading
       </span>
-      <span className="font-mono text-xs text-text-primary">{filePath}</span>
+      <FilePath path={filePath} />
     </div>
   )
 }

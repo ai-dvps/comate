@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { CodeBlockContent } from '../../ai-elements/code-block'
 import { getLanguageFromFilename } from '@/lib/language'
 import { registerToolRenderer } from '../registry'
+import FilePath from '../FilePath'
 
 function EditRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
@@ -35,7 +36,7 @@ function EditRenderer(input: unknown): ReactNode | null {
         <span className="text-text-tertiary text-xs uppercase tracking-wide">
           Editing
         </span>
-        <span className="font-mono text-xs text-text-primary">{file_path}</span>
+        <FilePath path={file_path} />
         {replaceAll && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-text-tertiary/20 text-text-tertiary">
             Replace all

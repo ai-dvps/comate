@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { CodeBlockContent } from '../../ai-elements/code-block'
 import { getLanguageFromFilename } from '@/lib/language'
 import { registerToolRenderer } from '../registry'
+import FilePath from '../FilePath'
 
 function WriteRenderer(input: unknown): ReactNode | null {
   if (
@@ -28,7 +29,7 @@ function WriteRenderer(input: unknown): ReactNode | null {
         <span className="text-text-tertiary text-xs uppercase tracking-wide">
           Writing to
         </span>
-        <span className="font-mono text-xs text-text-primary">{file_path}</span>
+        <FilePath path={file_path} />
       </div>
       <div className="rounded-md overflow-hidden">
         <CodeBlockContent
