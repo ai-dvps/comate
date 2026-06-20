@@ -58,5 +58,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          test -f src-tauri/target/release/bundle/*/latest.json || (echo "Missing latest.json updater manifest" && exit 1)
+          if ! find src-tauri/target -name latest.json | grep -q .; then
+            echo "Missing latest.json updater manifest"
+            exit 1
+          fi
           echo "Updater artifacts present"
