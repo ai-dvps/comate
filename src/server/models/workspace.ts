@@ -29,6 +29,14 @@ export interface WorkspaceSettings {
   wecomBotIsolation?: WeComBotIsolationSettings;
   /** Number of days to retain sent-prompt history for this workspace. Zero or negative disables pruning. */
   promptHistoryRetentionDays?: number;
+  /** Feishu (Lark) bot app credentials and admin list. */
+  feishuAppId?: string;
+  feishuAppSecret?: string;
+  feishuEncryptKey?: string;
+  feishuVerificationToken?: string;
+  feishuBotEnabled?: boolean;
+  /** Feishu user IDs allowed to switch the bot's active workspace. */
+  feishuAdminUserIds?: string[];
 }
 
 export interface Skill {

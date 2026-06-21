@@ -112,6 +112,7 @@
   "workspaceSections": {
     "basic": "Basic Info",
     "wecom": "WeCom Bot",
+    "feishu": "Feishu Bot",
     "skills": "Skills",
     "mcp": "MCP",
     "hooks": "Hooks"
@@ -281,6 +282,30 @@
       "add": "Add",
       "remove": "Remove",
       "freezeHint": "Changes apply to the next bot session, not to active conversations."
+    }
+  },
+  "feishu": {
+    "enableBot": "Enable Feishu Bot",
+    "enableBotHint": "When enabled, this workspace can be bound to a Feishu bot.",
+    "appId": "App ID",
+    "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
+    "appSecret": "App Secret",
+    "appSecretPlaceholder": "your-app-secret",
+    "encryptKey": "Encrypt Key",
+    "encryptKeyPlaceholder": "your-encrypt-key",
+    "verificationToken": "Verification Token",
+    "verificationTokenPlaceholder": "your-verification-token",
+    "status": "Status:",
+    "botSessionNote": "Bot sessions follow this workspace's tool permission policy (see the WeCom Bot > Permissions tab). Save changes to connect or disconnect.",
+    "tabs": {
+      "connection": "Connection"
+    },
+    "adminUsers": {
+      "label": "Admin users",
+      "hint": "Feishu user IDs that are allowed to switch the bot's active workspace.",
+      "placeholder": "e.g. ou_xxxxxxxxxxxxxxxx",
+      "add": "Add",
+      "remove": "Remove"
     }
   },
   "unsavedDialog": {
