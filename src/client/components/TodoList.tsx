@@ -24,30 +24,26 @@ interface TodoListProps {
   onSessionNavigate?: () => void;
 }
 
-const statusConfig: Record<TodoStatus, { label: string; icon: typeof Circle; color: string; bg: string }> = {
+const statusConfig: Record<TodoStatus, { label: string; icon: typeof Circle; color: string }> = {
   pending: {
     label: 'Pending',
     icon: Circle,
     color: 'text-text-tertiary',
-    bg: 'bg-text-tertiary/10',
   },
   done: {
     label: 'Done',
     icon: CheckCircle2,
     color: 'text-green-500',
-    bg: 'bg-green-500/10',
   },
   discard: {
     label: 'Discard',
     icon: XCircle,
     color: 'text-red-400',
-    bg: 'bg-red-400/10',
   },
   'did-but-need-verify': {
     label: 'Verify',
     icon: AlertCircle,
     color: 'text-amber-400',
-    bg: 'bg-amber-400/10',
   },
 };
 
@@ -250,7 +246,7 @@ export default function TodoList({ workspaceId, onSessionNavigate }: TodoListPro
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
-                        className={`mt-0.5 p-0.5 rounded flex-shrink-0 ${status.bg} ${status.color} hover:opacity-80 transition-opacity cursor-pointer`}
+                        className={`mt-0.5 p-0.5 rounded flex-shrink-0 ${status.color} hover:opacity-80 transition-opacity cursor-pointer`}
                         title={status.label}
                       >
                         <StatusIcon className="w-3.5 h-3.5" />
