@@ -403,3 +403,120 @@ describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
     assert.strictEqual(store.listPromptHistory(ws.id).length, 0);
   });
 });
+
+describe('SqliteStore Feishu state', { concurrency: false }, () => {
+  let store: SqliteStore;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    store = new SqliteStore();
+    db = (store as unknown as { db: Database.Database }).db;
+    db.prepare('DELETE FROM feishu_bot_binding').run();
+    db.prepare('DELETE FROM feishu_user_sessions').run();
+    db.prepare('DELETE FROM feishu_active_sessions').run();
+    db.prepare('DELETE FROM sessions').run();
+    db.prepare('DELETE FROM workspaces').run();
+  });
+
+  async function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  function createSession(workspaceId: string, id: string) {
+    const now = new Date().toISOString();
+    db.prepare(
+      'INSERT INTO sessions (id, workspace_id, name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(id, workspaceId, id, 'feishu', now, now);
+  }
+
+  it('sets and reads the active workspace binding', async () => {
+    const ws = await createWorkspace('Feishu Binding');
+    assert.strictEqual(store.getFeishuActiveWorkspace(), null);
+
+    store.setFeishuActiveWorkspace(ws.id);
+    assert.strictEqual(store.getFeishuActiveWorkspace(), ws.id);
+
+    const ws2 = await createWorkspace('Feishu Binding 2');
+    store.setFeishuActiveWorkspace(ws2.id);
+    assert.strictEqual(store.getFeishuActiveWorkspace(), ws2.id);
+  });
+
+  it('clears the active workspace binding', async () => {
+    const ws = await createWorkspace('Feishu Clear');
+    store.setFeishuActiveWorkspace(ws.id);
+    store.clearFeishuActiveWorkspace();
+    assert.strictEqual(store.getFeishuActiveWorkspace(), null);
+  });
+
+  it('lists sessions per Feishu user and isolates users', async () => {
+    const ws = await createWorkspace('Feishu Users');
+    createSession(ws.id, 'session-a');
+    createSession(ws.id, 'session-b');
+    createSession(ws.id, 'session-c');
+
+    store.addFeishuUserSession(ws.id, 'user-alice', 'session-a');
+    store.addFeishuUserSession(ws.id, 'user-alice', 'session-b');
+    store.addFeishuUserSession(ws.id, 'user-bob', 'session-c');
+
+    const alice = store.listFeishuSessionsByUser(ws.id, 'user-alice');
+    assert.strictEqual(alice.length, 2);
+    assert.ok(alice.some((s) => s.sessionId === 'session-a'));
+    assert.ok(alice.some((s) => s.sessionId === 'session-b'));
+
+    const bob = store.listFeishuSessionsByUser(ws.id, 'user-bob');
+    assert.strictEqual(bob.length, 1);
+    assert.strictEqual(bob[0].sessionId, 'session-c');
+  });
+
+  it('sets and reads the active session', async () => {
+    const ws = await createWorkspace('Feishu Active');
+    createSession(ws.id, 'session-1');
+
+    store.setFeishuActiveSession(ws.id, 'user-alice', 'session-1');
+    assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), 'session-1');
+
+    createSession(ws.id, 'session-2');
+    store.setFeishuActiveSession(ws.id, 'user-alice', 'session-2');
+    assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), 'session-2');
+  });
+
+  it('returns session owner for Feishu sessions', async () => {
+    const ws = await createWorkspace('Feishu Owner');
+    createSession(ws.id, 'session-x');
+    store.addFeishuUserSession(ws.id, 'user-alice', 'session-x');
+    assert.strictEqual(store.getFeishuSessionOwner(ws.id, 'session-x'), 'user-alice');
+    assert.strictEqual(store.getFeishuSessionOwner(ws.id, 'session-y'), null);
+  });
+
+  it('drops orphaned mappings and active sessions when the session is deleted', async () => {
+    const ws = await createWorkspace('Feishu Orphan');
+    createSession(ws.id, 'session-alive');
+    createSession(ws.id, 'session-deleted');
+
+    store.addFeishuUserSession(ws.id, 'user-alice', 'session-alive');
+    store.addFeishuUserSession(ws.id, 'user-alice', 'session-deleted');
+    store.setFeishuActiveSession(ws.id, 'user-alice', 'session-deleted');
+
+    db.prepare('DELETE FROM sessions WHERE id = ?').run('session-deleted');
+
+    const sessions = store.listFeishuSessionsByUser(ws.id, 'user-alice');
+    assert.strictEqual(sessions.length, 1);
+    assert.strictEqual(sessions[0].sessionId, 'session-alive');
+
+    assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), null);
+  });
+
+  it('deletes workspace cascades to Feishu state', async () => {
+    const ws = await createWorkspace('Feishu Cascade');
+    createSession(ws.id, 'session-1');
+    store.setFeishuActiveWorkspace(ws.id);
+    store.addFeishuUserSession(ws.id, 'user-alice', 'session-1');
+    store.setFeishuActiveSession(ws.id, 'user-alice', 'session-1');
+
+    await store.delete(ws.id);
+
+    assert.strictEqual(store.getFeishuActiveWorkspace(), null);
+    assert.strictEqual(store.listFeishuSessionsByUser(ws.id, 'user-alice').length, 0);
+    assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), null);
+  });
+});

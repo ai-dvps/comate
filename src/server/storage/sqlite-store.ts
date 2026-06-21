@@ -93,6 +93,34 @@ export class SqliteStore {
     `);
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feishu_bot_binding (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        activeWorkspaceId TEXT NOT NULL
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feishu_user_sessions (
+        workspaceId TEXT NOT NULL,
+        feishuUserId TEXT NOT NULL,
+        sessionId TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (workspaceId, feishuUserId, sessionId)
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feishu_active_sessions (
+        workspaceId TEXT NOT NULL,
+        feishuUserId TEXT NOT NULL,
+        sessionId TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (workspaceId, feishuUserId)
+      )
+    `);
+
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_metadata (
         session_id TEXT PRIMARY KEY,
         is_wip INTEGER NOT NULL DEFAULT 0
@@ -553,6 +581,9 @@ export class SqliteStore {
     if (result.changes > 0) {
       this.db.prepare('DELETE FROM wecom_user_sessions WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM feishu_bot_binding WHERE activeWorkspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM feishu_user_sessions WHERE workspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
@@ -695,6 +726,94 @@ export class SqliteStore {
       .prepare('SELECT encryptedUserId, firstSeenAt, lastSeenAt FROM wecom_workspace_users WHERE workspaceId = ? ORDER BY lastSeenAt DESC')
       .all(workspaceId) as Array<{ encryptedUserId: string; firstSeenAt: string; lastSeenAt: string }>;
     return rows;
+  }
+
+  // Feishu bot state
+
+  getFeishuActiveWorkspace(): string | null {
+    const row = this.db
+      .prepare('SELECT activeWorkspaceId FROM feishu_bot_binding WHERE id = 1')
+      .get() as { activeWorkspaceId: string } | undefined;
+    return row?.activeWorkspaceId ?? null;
+  }
+
+  setFeishuActiveWorkspace(workspaceId: string): void {
+    this.db
+      .prepare(`
+        INSERT INTO feishu_bot_binding (id, activeWorkspaceId)
+        VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          activeWorkspaceId = excluded.activeWorkspaceId
+      `)
+      .run(workspaceId);
+  }
+
+  clearFeishuActiveWorkspace(): void {
+    this.db.prepare('DELETE FROM feishu_bot_binding WHERE id = 1').run();
+  }
+
+  addFeishuUserSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO feishu_user_sessions (workspaceId, feishuUserId, sessionId, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?)
+      `)
+      .run(workspaceId, feishuUserId, sessionId, now, now);
+  }
+
+  getFeishuSessionOwner(workspaceId: string, sessionId: string): string | null {
+    const row = this.db
+      .prepare('SELECT feishuUserId FROM feishu_user_sessions WHERE workspaceId = ? AND sessionId = ?')
+      .get(workspaceId, sessionId) as { feishuUserId: string } | undefined;
+    return row?.feishuUserId ?? null;
+  }
+
+  listFeishuSessionsByUser(workspaceId: string, feishuUserId: string): Array<{ sessionId: string; createdAt: string }> {
+    const rows = this.db
+      .prepare(`
+        SELECT s.sessionId, s.createdAt
+        FROM feishu_user_sessions s
+        JOIN sessions sess ON sess.id = s.sessionId
+        WHERE s.workspaceId = ? AND s.feishuUserId = ?
+        ORDER BY s.createdAt ASC
+      `)
+      .all(workspaceId, feishuUserId) as Array<{ sessionId: string; createdAt: string }>;
+    return rows;
+  }
+
+  setFeishuActiveSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO feishu_active_sessions (workspaceId, feishuUserId, sessionId, updatedAt)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspaceId, feishuUserId) DO UPDATE SET
+          sessionId = excluded.sessionId,
+          updatedAt = excluded.updatedAt
+      `)
+      .run(workspaceId, feishuUserId, sessionId, now);
+  }
+
+  getFeishuActiveSession(workspaceId: string, feishuUserId: string): string | null {
+    const row = this.db
+      .prepare('SELECT sessionId FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?')
+      .get(workspaceId, feishuUserId) as { sessionId: string } | undefined;
+    if (!row) return null;
+    const exists = this.db
+      .prepare('SELECT 1 FROM sessions WHERE id = ?')
+      .get(row.sessionId) as { '1': number } | undefined;
+    if (!exists) {
+      this.db.prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?').run(workspaceId, feishuUserId);
+      return null;
+    }
+    return row.sessionId;
+  }
+
+  clearFeishuActiveSession(workspaceId: string, feishuUserId: string): void {
+    this.db
+      .prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?')
+      .run(workspaceId, feishuUserId);
   }
 
   // Session metadata (WIP, etc.)
