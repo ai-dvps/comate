@@ -1,15 +1,22 @@
+import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import Database from 'better-sqlite3';
 import { SqliteStore } from './sqlite-store.js';
+
+const testDbDir = mkdtempSync(join(tmpdir(), 'sqlite-store-test-'));
+const testDbPath = join(testDbDir, 'data.db');
 
 describe('SqliteStore proactive messages', { concurrency: false }, () => {
   let store: SqliteStore;
   let db: Database.Database;
 
   beforeEach(() => {
-    store = new SqliteStore();
+    store = new SqliteStore(testDbPath);
     // Access internal db for direct state verification
     db = (store as unknown as { db: Database.Database }).db;
     // Clean tables before each test
@@ -219,7 +226,7 @@ describe('SqliteStore workspace delete cascade', { concurrency: false }, () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    store = new SqliteStore();
+    store = new SqliteStore(testDbPath);
     db = (store as unknown as { db: Database.Database }).db;
     db.prepare('DELETE FROM session_analytics_cache').run();
     db.prepare('DELETE FROM session_metadata').run();
@@ -324,7 +331,7 @@ describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    store = new SqliteStore();
+    store = new SqliteStore(testDbPath);
     db = (store as unknown as { db: Database.Database }).db;
     db.prepare('DELETE FROM workspace_prompt_history').run();
     db.prepare('DELETE FROM workspaces').run();
@@ -409,7 +416,7 @@ describe('SqliteStore Feishu state', { concurrency: false }, () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    store = new SqliteStore();
+    store = new SqliteStore(testDbPath);
     db = (store as unknown as { db: Database.Database }).db;
     db.prepare('DELETE FROM feishu_bot_binding').run();
     db.prepare('DELETE FROM feishu_user_sessions').run();

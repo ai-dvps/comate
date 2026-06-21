@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';

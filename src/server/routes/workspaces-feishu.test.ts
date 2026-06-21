@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
@@ -34,10 +34,11 @@ export class SqliteStore {
   private db: Database.Database;
   private analyticsCache?: AnalyticsCache;
 
-  constructor() {
-    ensureDirSync();
+  constructor(dbPath?: string) {
+    const dbFile = dbPath ?? DB_FILE;
+    ensureDirSync(dirname(dbFile));
     const options = getDatabaseOptions();
-    this.db = new Database(DB_FILE, options);
+    this.db = new Database(dbFile, options);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(`
@@ -1541,9 +1542,9 @@ function safeJsonParse<T>(json: string, fallback: T): T {
   }
 }
 
-function ensureDirSync(): void {
-  if (!existsSync(STORAGE_DIR)) {
-    mkdirSync(STORAGE_DIR, { recursive: true });
+function ensureDirSync(dir: string): void {
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
