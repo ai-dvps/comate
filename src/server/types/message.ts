@@ -213,6 +213,7 @@ export type SseEvent =
     }
   | { type: 'pending_question'; requestId: string; questions: QuestionPayload[]; expiresAt?: number }
   | { type: 'approval_resolved'; requestId: string }
+  | { type: 'approval_timeout'; requestId: string }
   | { type: 'auto_approval'; toolUseId: string; toolName: string; mode: 'auto' | 'readonly' }
   | { type: 'interrupted'; messageId: string | null }
   | { type: 'error_note'; text: string }

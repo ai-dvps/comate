@@ -782,6 +782,19 @@ export class SqliteStore {
     return rows;
   }
 
+  listFeishuSessionsForWorkspace(workspaceId: string): Array<{ sessionId: string; feishuUserId: string; createdAt: string }> {
+    const rows = this.db
+      .prepare(`
+        SELECT s.sessionId, s.feishuUserId, s.createdAt
+        FROM feishu_user_sessions s
+        JOIN sessions sess ON sess.id = s.sessionId
+        WHERE s.workspaceId = ?
+        ORDER BY s.createdAt ASC
+      `)
+      .all(workspaceId) as Array<{ sessionId: string; feishuUserId: string; createdAt: string }>;
+    return rows;
+  }
+
   setFeishuActiveSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
     const now = new Date().toISOString();
     this.db
@@ -867,7 +880,7 @@ export class SqliteStore {
     name: string,
     approvalMode?: string,
     providerId?: string,
-    source?: 'gui' | 'wecom',
+    source?: 'gui' | 'wecom' | 'feishu',
   ): ChatSession {
     const now = new Date().toISOString();
     const mode = approvalMode ?? 'manual';

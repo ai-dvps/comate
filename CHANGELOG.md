@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.12] - 2026-06-21
+
+### Added
+
+- **Feishu (Lark) bot integration** — connect a Feishu custom app bot to a workspace and answer direct messages through Claude sessions.
+  - Workspace settings for Feishu app credentials, encrypt key, verification token, and admin user IDs.
+  - Per-Feishu-user session tracking and active session selection via `/session` and `/workspace` commands.
+  - Streaming replies with markdown text, approval cards, and interactive question cards.
+  - Card callback route with signature verification for allow/deny/question actions.
+  - Server lifecycle wiring, status API, and graceful shutdown.
+  - Session source tracking (`feishu`) with a Feishu badge in the session list.
+
+### Fixed
+
+- **Feishu bot connection on enable** — saving workspace settings with Feishu enabled and valid credentials now connects the bot and sets the active workspace binding instead of leaving the status as `not_configured`.
+
 ## [0.0.11] - 2026-06-21
 
 ### Added
