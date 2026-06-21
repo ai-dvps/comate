@@ -42,6 +42,7 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
+        id: build_tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -56,10 +57,30 @@ jobs:
       - name: Verify updater artifacts
         if: env.TAURI_SIGNING_PRIVATE_KEY != ''
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.build_tauri.outputs.releaseId }}
         run: |
-          set -e
-          if ! find src-tauri/target -name latest.json | grep -q .; then
-            echo "Missing latest.json updater manifest"
+          set -euo pipefail
+
+          if ! find src-tauri/target -name '*.sig' -print -quit | grep -q .; then
+            echo "Missing updater signatures"
             exit 1
           fi
+
+          if [ ! -s latest.json ]; then
+            echo "Missing local latest.json updater manifest"
+            exit 1
+          fi
+
+          if [ -z "${RELEASE_ID}" ]; then
+            echo "Missing release id from tauri-action"
+            exit 1
+          fi
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" --jq '.[].name' | grep -Fxq latest.json; then
+            echo "Missing latest.json updater manifest release asset"
+            exit 1
+          fi
+
           echo "Updater artifacts present"
