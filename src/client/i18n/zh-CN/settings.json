@@ -112,6 +112,7 @@
   "workspaceSections": {
     "basic": "基本信息",
     "wecom": "企业微信机器人",
+    "feishu": "飞书机器人",
     "skills": "技能",
     "mcp": "MCP",
     "hooks": "钩子"
@@ -281,6 +282,30 @@
       "add": "添加",
       "remove": "移除",
       "freezeHint": "更改在下一次机器人会话生效，不影响正在进行的对话。"
+    }
+  },
+  "feishu": {
+    "enableBot": "启用飞书机器人",
+    "enableBotHint": "启用后，此工作区可绑定到一个飞书机器人。",
+    "appId": "App ID",
+    "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
+    "appSecret": "App Secret",
+    "appSecretPlaceholder": "your-app-secret",
+    "encryptKey": "Encrypt Key",
+    "encryptKeyPlaceholder": "your-encrypt-key",
+    "verificationToken": "Verification Token",
+    "verificationTokenPlaceholder": "your-verification-token",
+    "status": "状态：",
+    "botSessionNote": "机器人会话遵循此工作区的工具权限策略（见企业微信机器人 > 权限选项卡）。保存更改以连接或断开。",
+    "tabs": {
+      "connection": "连接"
+    },
+    "adminUsers": {
+      "label": "管理员用户",
+      "hint": "允许切换机器人活动工作区的飞书用户 ID。",
+      "placeholder": "例如 ou_xxxxxxxxxxxxxxxx",
+      "add": "添加",
+      "remove": "移除"
     }
   },
   "unsavedDialog": {
