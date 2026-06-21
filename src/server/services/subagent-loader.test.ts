@@ -134,4 +134,60 @@ describe('reconstructSubagentState', () => {
     assert.strictEqual(state!.messages[0].parts.length, 1);
     assert.strictEqual(state!.messages[0].parts[0].type, 'text');
   });
+
+  it('uses fallback timestamps when SDK messages omit timestamps', () => {
+    const messages: SessionMessage[] = [
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+      } as unknown as SessionMessage,
+      {
+        type: 'result',
+        uuid: 'r1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: { is_error: false },
+      } as unknown as SessionMessage,
+    ];
+
+    const state = reconstructSubagentState('tool-123', messages, 'Test agent', {
+      fallbackStartTime: 1000,
+      fallbackEndTime: 9000,
+    });
+    assert.ok(state);
+    assert.strictEqual(state!.startTime, 1000);
+    assert.strictEqual(state!.endTime, 9000);
+  });
+
+  it('prefers SDK timestamps over fallback timestamps', () => {
+    const messages: SessionMessage[] = [
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+        timestamp: '2026-06-19T10:00:02.000Z',
+      } as unknown as SessionMessage,
+      {
+        type: 'result',
+        uuid: 'r1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: { is_error: false },
+        timestamp: '2026-06-19T10:00:10.000Z',
+      } as unknown as SessionMessage,
+    ];
+
+    const state = reconstructSubagentState('tool-123', messages, 'Test agent', {
+      fallbackStartTime: 1000,
+      fallbackEndTime: 9000,
+    });
+    assert.ok(state);
+    assert.strictEqual(state!.startTime, Date.parse('2026-06-19T10:00:02.000Z'));
+    assert.strictEqual(state!.endTime, Date.parse('2026-06-19T10:00:10.000Z'));
+  });
 });

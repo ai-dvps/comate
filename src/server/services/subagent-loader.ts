@@ -166,6 +166,11 @@ function deriveProgressHint(
   return description ?? '';
 }
 
+interface ReconstructOptions {
+  fallbackStartTime?: number;
+  fallbackEndTime?: number;
+}
+
 /**
  * Convert raw subagent SDK messages into the client-side SubagentState shape.
  * Returns null when no displayable messages could be reconstructed.
@@ -174,6 +179,7 @@ export function reconstructSubagentState(
   parentToolUseId: string,
   sdkMessages: SessionMessage[],
   description?: string,
+  options: ReconstructOptions = {},
 ): SubagentState | null {
   const messages: SubagentMessage[] = [];
   let toolCount = 0;
@@ -205,9 +211,12 @@ export function reconstructSubagentState(
 
   const firstTs = parseTimestamp(sdkMessages[0]);
   const lastTs = parseTimestamp(sdkMessages[sdkMessages.length - 1]);
-  const startTime = firstTs ?? Date.now();
+  const startTime = firstTs ?? options.fallbackStartTime ?? Date.now();
   const state = deriveState(sdkMessages, messages);
-  const endTime = state !== 'running' ? (lastTs ?? Date.now()) : undefined;
+  const endTime =
+    state !== 'running'
+      ? (lastTs ?? options.fallbackEndTime ?? Date.now())
+      : undefined;
   const progressHint = deriveProgressHint(messages, description);
 
   return {

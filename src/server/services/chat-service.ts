@@ -334,10 +334,14 @@ export class ChatService {
 
     const parentToolUseIdByAgentId = new Map<string, string>();
     const descriptionByToolUseId = new Map<string, string>();
+    const toolUseIndexByToolUseId = new Map<string, number>();
+    const toolResultIndexByToolUseId = new Map<string, number>();
+    const now = Date.now();
 
     // Pre-scan the main transcript for Agent tool_use blocks to learn the
-    // parent toolUseId and the human-readable description.
-    for (const msg of mainSdkMessages) {
+    // parent toolUseId, the human-readable description, and the message index
+    // so we can approximate startTime when the SDK omits timestamps.
+    for (const [msgIdx, msg] of mainSdkMessages.entries()) {
       if (msg.type !== 'assistant') continue;
       const raw = msg.message as { content?: unknown } | undefined;
       const content = raw?.content;
@@ -351,6 +355,7 @@ export class ChatService {
           const desc = typeof input?.description === 'string' ? input.description : '';
           if (toolUseId) {
             descriptionByToolUseId.set(toolUseId, desc);
+            toolUseIndexByToolUseId.set(toolUseId, msgIdx);
           }
         }
       }
@@ -384,7 +389,7 @@ export class ChatService {
     // Fallback: scan main transcript tool_result blocks that mention the agentId.
     for (const agentId of agentIds) {
       if (parentToolUseIdByAgentId.has(agentId)) continue;
-      for (const msg of mainSdkMessages) {
+      for (const [msgIdx, msg] of mainSdkMessages.entries()) {
         if (msg.type !== 'user') continue;
         const raw = msg.message as { content?: unknown } | undefined;
         const content = raw?.content;
@@ -398,6 +403,7 @@ export class ChatService {
             const toolUseId = typeof typed.tool_use_id === 'string' ? typed.tool_use_id : '';
             if (toolUseId) {
               parentToolUseIdByAgentId.set(agentId, toolUseId);
+              toolResultIndexByToolUseId.set(toolUseId, msgIdx);
               const toolUseResult = (msg as Record<string, unknown>).toolUseResult as
                 | Record<string, unknown>
                 | undefined;
@@ -408,6 +414,22 @@ export class ChatService {
           }
         }
         break;
+      }
+    }
+
+    // Capture tool_result indexes for subagents that were mapped via meta or the
+    // first scan, so completed subagents can get an approximate endTime.
+    for (const [msgIdx, msg] of mainSdkMessages.entries()) {
+      if (msg.type !== 'user') continue;
+      const raw = msg.message as { content?: unknown } | undefined;
+      const content = raw?.content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const typed = block as { type?: unknown; tool_use_id?: unknown };
+        if (typed.type === 'tool_result' && typeof typed.tool_use_id === 'string') {
+          toolResultIndexByToolUseId.set(typed.tool_use_id, msgIdx);
+        }
       }
     }
 
@@ -422,7 +444,20 @@ export class ChatService {
       try {
         const subMessages = await this.sdkClient.getSubagentMessages(sessionId, agentId, { dir });
         const description = descriptionByToolUseId.get(parentToolUseId) || `Agent ${agentId}`;
-        const reconstructed = reconstructSubagentState(parentToolUseId, subMessages, description);
+        const toolUseIdx = toolUseIndexByToolUseId.get(parentToolUseId);
+        const toolResultIdx = toolResultIndexByToolUseId.get(parentToolUseId);
+        const fallbackStartTime =
+          toolUseIdx !== undefined
+            ? now - (mainSdkMessages.length - toolUseIdx) * 1000
+            : undefined;
+        const fallbackEndTime =
+          toolResultIdx !== undefined
+            ? now - (mainSdkMessages.length - toolResultIdx) * 1000
+            : undefined;
+        const reconstructed = reconstructSubagentState(parentToolUseId, subMessages, description, {
+          fallbackStartTime,
+          fallbackEndTime,
+        });
         if (reconstructed) {
           subagents.push(reconstructed);
         }
