@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import * as lark from '@larksuiteoapi/node-sdk';

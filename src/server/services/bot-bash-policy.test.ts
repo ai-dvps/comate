@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -58,7 +59,8 @@ describe('evaluateBash', () => {
   });
 
   it('rejects commands containing control characters', () => {
-    const result = evaluateBash(ctx, { command: 'echo\nrm -rf /' });
+    const result = evaluateBash(ctx, { command: 'echo
+rm -rf /' });
     assert.equal(result.allowed, false);
     assert.equal(result.reason, 'control-characters');
   });
@@ -70,7 +72,7 @@ describe('evaluateBash', () => {
   });
 
   it('rejects trailing backslash', () => {
-    const result = evaluateBash(ctx, { command: 'echo hello\\' });
+    const result = evaluateBash(ctx, { command: 'echo hello\' });
     assert.equal(result.allowed, false);
     assert.equal(result.reason, 'trailing-backslash');
   });

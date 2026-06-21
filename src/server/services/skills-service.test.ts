@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 /**
  * Tests for SkillsService business logic.
  *
@@ -62,7 +63,15 @@ function buildSourceRepoInWorkspace(
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
       join(skillDir, 'SKILL.md'),
-      `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n# ${skill.name}\n\nSkill body.\n`,
+      `---
+name: ${skill.name}
+description: ${skill.description}
+---
+
+# ${skill.name}
+
+Skill body.
+`,
       'utf-8'
     );
   }
@@ -281,7 +290,11 @@ describe('SkillsService', () => {
     it('listInstalled marks existing symlinked skills as isLegacySymlink', async () => {
       const realTarget = join(tmpRoot, 'some-real-dir');
       mkdirSync(realTarget, { recursive: true });
-      writeFileSync(join(realTarget, 'SKILL.md'), '---\nname: legacy\ndescription: x\n---\n');
+      writeFileSync(join(realTarget, 'SKILL.md'), '---
+name: legacy
+description: x
+---
+');
 
       const skillsDir = join(tmpRoot, '.claude', 'skills');
       mkdirSync(skillsDir, { recursive: true });
@@ -418,7 +431,13 @@ describe('SkillsService', () => {
       // Mutate the source — change the SKILL.md body
       writeFileSync(
         join(sourceRepo, 'skills', 'update-target', 'SKILL.md'),
-        '---\nname: update-target\ndescription: original description\n---\n\nUpdated body.\n',
+        '---
+name: update-target
+description: original description
+---
+
+Updated body.
+',
         'utf-8'
       );
 
@@ -440,7 +459,11 @@ describe('SkillsService', () => {
     it('update on symlinked-legacy skill refuses', async () => {
       const realTarget = join(tmpRoot, 'real-update-target');
       mkdirSync(realTarget, { recursive: true });
-      writeFileSync(join(realTarget, 'SKILL.md'), '---\nname: legacy-update\ndescription: x\n---\n');
+      writeFileSync(join(realTarget, 'SKILL.md'), '---
+name: legacy-update
+description: x
+---
+');
 
       const skillsDir = join(tmpRoot, '.claude', 'skills');
       mkdirSync(skillsDir, { recursive: true });
