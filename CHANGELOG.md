@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.11] - 2026-06-21
+
+### Added
+
+- **Friendly empty states** — onboarding empty state for new users and the ability to select an existing workspace from it.
+- **Session title prompt** — ask for an optional session title before creating a new chat.
+- **Subagent brief status** — surface elapsed time and tool count in `SubagentBriefStatus`.
+- **Workspace recency** — track `lastOpenedAt` and cap the empty-state recent workspace list.
+
+### Changed
+
+- **Context usage streaming** — stream context usage via SSE and unify the indicator in `SessionTokenUsage`.
+- **Relative path display** — consistent relative paths in the file panel and tool headers.
+- **Tool path display** — improved file path display in tool usage parameters.
+- **Status bar context usage** — simplified to a single percentage label.
+
+### Fixed
+
+- **Subagent elapsed time** — freeze elapsed duration at `endTime` when a subagent completes; derive approximate historical timestamps from the parent transcript when the SDK omits them.
+- **CI updater artifact path** — fixed verification path for updater artifacts.
+
+### Internal
+
+- Added `CLAUDE.md` and solution guides for testing and the Tauri updater.
+
+## [0.0.10] - 2026-06-20
+
+### Fixed
+
+- **macOS updater target** — enable the macOS updater target in the Tauri bundle.
+
+## [0.0.9] - 2026-06-20
+
+### Fixed
+
+- **Updater signing keypair** — rotate the Tauri updater Ed25519 signing keypair.
+
+## [0.0.8] - 2026-06-19
+
+### Fixed
+
+- **Updater endpoint** — point the Tauri updater endpoint to the current repository (#51).
+
 ## [0.0.7] - 2026-06-20
 
 ### Added
@@ -28,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added planning artifacts for chat message search.
 
+[0.0.11]: https://github.com/ai-dvps/comate/releases/tag/v0.0.11
+[0.0.10]: https://github.com/ai-dvps/comate/releases/tag/v0.0.10
+[0.0.9]: https://github.com/ai-dvps/comate/releases/tag/v0.0.9
+[0.0.8]: https://github.com/ai-dvps/comate/releases/tag/v0.0.8
 [0.0.7]: https://github.com/ai-dvps/comate/releases/tag/v0.0.7
 
 ## [0.0.6] - 2026-06-19
