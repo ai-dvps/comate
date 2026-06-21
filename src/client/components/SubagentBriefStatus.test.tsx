@@ -141,5 +141,33 @@ describe('SubagentBriefStatus', () => {
       })
       expect(screen.getByText('3s')).toBeInTheDocument()
     })
+
+    it('freezes elapsed time at endTime for a completed subagent', async () => {
+      vi.setSystemTime(new Date('2026-06-20T10:00:10.000Z'))
+      mockStore.subagents['session-1'] = [
+        makeSubagent({
+          state: 'completed',
+          startTime: Date.now() - 10000,
+          endTime: Date.now() - 2000,
+          toolCount: 3,
+        }),
+      ]
+
+      renderWithI18n(
+        <SubagentBriefStatus
+          parentToolUseId="tu-1"
+          sessionId="session-1"
+          onOpenDrawer={() => {}}
+        />,
+      )
+
+      expect(screen.getByText('8s')).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      expect(screen.getByText('8s')).toBeInTheDocument()
+    })
   })
 })

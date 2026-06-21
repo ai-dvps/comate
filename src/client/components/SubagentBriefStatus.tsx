@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bot,
@@ -45,21 +45,25 @@ function getAgentPrompt(input: unknown): string | undefined {
   return undefined
 }
 
-function useElapsed(startTime: number, isRunning: boolean): string {
-  const [elapsed, setElapsed] = useState(() => Date.now() - startTime)
-  const startRef = useRef(startTime)
+function useElapsed(
+  startTime: number,
+  endTime: number | undefined,
+  isRunning: boolean,
+): string {
+  const base = isRunning ? Date.now() : (endTime ?? Date.now())
+  const [elapsed, setElapsed] = useState(base - startTime)
 
   useEffect(() => {
-    startRef.current = startTime
+    const newElapsed = (isRunning ? Date.now() : (endTime ?? Date.now())) - startTime
+    setElapsed(newElapsed)
     if (!isRunning) {
-      setElapsed(Date.now() - startRef.current)
       return
     }
     const id = setInterval(() => {
-      setElapsed(Date.now() - startRef.current)
+      setElapsed(Date.now() - startTime)
     }, 1000)
     return () => clearInterval(id)
-  }, [startTime, isRunning])
+  }, [startTime, endTime, isRunning])
 
   return formatDuration(elapsed)
 }
@@ -158,7 +162,7 @@ function StatusCard({
 }) {
   const { t } = useTranslation('chat')
   const isRunning = subagent.state === 'running'
-  const elapsed = useElapsed(subagent.startTime, isRunning)
+  const elapsed = useElapsed(subagent.startTime, subagent.endTime, isRunning)
 
   const config = statusConfig[subagent.state]
   const hasContent = subagent.description || prompt || result
