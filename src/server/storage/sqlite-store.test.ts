@@ -468,6 +468,20 @@ describe('SqliteStore Feishu state', { concurrency: false }, () => {
     assert.strictEqual(bob[0].sessionId, 'session-c');
   });
 
+  it('lists all Feishu sessions for a workspace', async () => {
+    const ws = await createWorkspace('Feishu Workspace List');
+    createSession(ws.id, 'session-a');
+    createSession(ws.id, 'session-b');
+
+    store.addFeishuUserSession(ws.id, 'user-alice', 'session-a');
+    store.addFeishuUserSession(ws.id, 'user-bob', 'session-b');
+
+    const all = store.listFeishuSessionsForWorkspace(ws.id);
+    assert.strictEqual(all.length, 2);
+    assert.ok(all.some((s) => s.sessionId === 'session-a' && s.feishuUserId === 'user-alice'));
+    assert.ok(all.some((s) => s.sessionId === 'session-b' && s.feishuUserId === 'user-bob'));
+  });
+
   it('sets and reads the active session', async () => {
     const ws = await createWorkspace('Feishu Active');
     createSession(ws.id, 'session-1');

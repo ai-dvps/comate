@@ -3,6 +3,7 @@ import { store } from '../storage/sqlite-store.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 import { chatService } from '../services/chat-service.js';
+import { feishuBotService } from '../services/feishu-bot-service.js';
 import { SAFE_PRESET } from '../services/tool-permission-policy.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
@@ -97,13 +98,28 @@ router.put('/:id', async (req, res) => {
       return;
     }
 
-    // Manage bot connection based on updated settings
+    // Manage WeCom bot connection based on updated settings
     const enabled = workspace.settings.wecomBotEnabled;
     const hasCredentials = workspace.settings.wecomBotId && workspace.settings.wecomBotSecret;
     if (enabled && hasCredentials) {
       wecomBotService.connect(workspace);
     } else {
       wecomBotService.disconnect(workspace.id);
+    }
+
+    // Manage Feishu bot connection. Feishu uses a single global active workspace
+    // binding; enabling this workspace connects it, disabling clears the binding.
+    const feishuEnabled = workspace.settings.feishuBotEnabled;
+    const hasFeishuCredentials = workspace.settings.feishuAppId && workspace.settings.feishuAppSecret;
+    if (feishuEnabled && hasFeishuCredentials) {
+      feishuBotService.connect(workspace).catch((err) => {
+        console.error('[WorkspacesRoute] Feishu connect failed:', err);
+      });
+    } else {
+      if (store.getFeishuActiveWorkspace() === workspace.id) {
+        store.clearFeishuActiveWorkspace();
+      }
+      feishuBotService.disconnect();
     }
 
     res.json({ workspace });
@@ -129,6 +145,22 @@ router.get('/:id/bot/status', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/feishu/status
+router.get('/:id/feishu/status', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const status = feishuBotService.getStatus(req.params.id);
+    res.json({ status });
+  } catch (error) {
+    console.error('Failed to get Feishu bot status:', error);
+    res.status(500).json({ error: 'Failed to get Feishu bot status' });
+  }
+});
+
 // DELETE /api/workspaces/:id
 router.delete('/:id', async (req, res) => {
   try {
@@ -141,6 +173,12 @@ router.delete('/:id', async (req, res) => {
     // Evict any cached bot runtimes for this workspace so they do not keep
     // answering inbound messages against a workspace whose settings row is gone.
     await chatService.closeRuntimesForWorkspace(req.params.id);
+
+    // Clear the global Feishu active binding if the deleted workspace was active.
+    if (store.getFeishuActiveWorkspace() === req.params.id) {
+      store.clearFeishuActiveWorkspace();
+      feishuBotService.disconnect();
+    }
 
     res.status(204).send();
   } catch (error) {

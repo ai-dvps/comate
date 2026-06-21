@@ -381,6 +381,7 @@ export class SessionRuntime {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) return;
     diagLog(`[Runtime ${this.sessionId}] timeout deny requestId=${requestId}`);
+    this.emitter.emitApprovalTimeout(requestId);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
     pending.resolve({

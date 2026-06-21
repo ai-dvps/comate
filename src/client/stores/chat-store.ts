@@ -101,7 +101,7 @@ export interface ChatSession {
   isDraft?: boolean
   isWip?: boolean
   isArchived?: boolean
-  source?: 'gui' | 'wecom'
+  source?: 'gui' | 'wecom' | 'feishu'
   approvalMode?: ApprovalMode
   providerId?: string
   createdAt: string

@@ -87,6 +87,7 @@
   "noArchivedSessions": "No archived sessions.",
   "noWipSessions": "No work-in-progress sessions.",
   "wecomBotSession": "WeCom bot session",
+  "feishuBotSession": "Feishu bot session",
   "close": "Close",
   "toolCount_one": "{{count}} tool",
   "toolCount_other": "{{count}} tools",

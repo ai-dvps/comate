@@ -150,6 +150,14 @@ export default function SessionListItem({
                 title={t('wecomBotSession')}
               />
             )}
+            {session.source === 'feishu' && (
+              <span
+                className="px-1 py-0.5 text-[9px] bg-blue-500/20 text-blue-400 rounded flex-shrink-0"
+                title={t('feishuBotSession')}
+              >
+                Feishu
+              </span>
+            )}
             {rowState !== 'idle' && <StatusIndicator state={rowState} />}
           </div>
           <p className="text-[11px] text-text-tertiary truncate mt-0.5">{preview}</p>
