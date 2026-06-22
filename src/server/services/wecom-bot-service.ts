@@ -1,7 +1,9 @@
 import AiBot from '@wecom/aibot-node-sdk';
 import type { WSClient, WsFrame, TextMessage, FileMessage, ImageMessage, VoiceMessage, VideoMessage, BaseMessage } from '@wecom/aibot-node-sdk';
 import fsPromises from 'node:fs/promises';
+import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
@@ -9,7 +11,10 @@ import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
 import { createStreamReply, type StreamReplyConnection, type StreamReplyResult } from './wecom-stream-reply.js';
 import { saveMediaFile } from './wecom-file-storage.js';
+import { validateSendFilePath } from './wecom-send-file-policy.js';
 import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
+
+const MAX_SEND_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 /**
  * Resolve the stream-reply handler for an inbound WeCom message, honoring the
@@ -402,6 +407,69 @@ export class WeComBotService {
       msgtype: 'markdown',
       markdown: { content: message },
     });
+  }
+
+  async sendFile(workspaceId: string, toUser: string, filePath: string): Promise<void> {
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} not found`);
+    }
+
+    const conn = this.connections.get(workspaceId);
+    if (!conn || conn.status !== 'connected') {
+      throw new Error(`Bot for workspace ${workspaceId} is not connected`);
+    }
+
+    const encryptedUserId = workspaceStore.getEncryptedUserIdByPlaintext(toUser.trim());
+    if (!encryptedUserId) {
+      throw new Error(`WeCom user ID has not been decrypted yet. The recipient must send at least one message to the bot first.`);
+    }
+
+    const userFolderName = workspaceStore.getWecomUserMapping(encryptedUserId) ?? encryptedUserId;
+
+    const validation = validateSendFilePath(workspace.folderPath, userFolderName, filePath.trim());
+    if (!validation.allowed) {
+      if (validation.reason === 'other-user-dir') {
+        await conn.client.sendMessage(encryptedUserId, {
+          msgtype: 'markdown',
+          markdown: { content: 'unauthorized file access' },
+        });
+      }
+      throw new Error(`File access denied: ${validation.reason}`);
+    }
+
+    const { absolutePath, relativePath } = validation;
+
+    const stats = await fsPromises.stat(absolutePath);
+    if (stats.size > MAX_SEND_FILE_SIZE_BYTES) {
+      throw new Error(`File exceeds maximum send size of ${MAX_SEND_FILE_SIZE_BYTES} bytes`);
+    }
+
+    const buffer = await fsPromises.readFile(absolutePath);
+    const md5 = createHash('md5').update(buffer).digest('hex');
+
+    let mediaId: string;
+    const cached = workspaceStore.getWecomMediaCacheEntry(workspaceId, relativePath, md5);
+    if (cached) {
+      mediaId = cached.mediaId;
+    } else {
+      const uploadResult = await conn.client.uploadMedia(buffer, {
+        type: 'file',
+        filename: path.basename(relativePath),
+      });
+      mediaId = uploadResult.media_id;
+      const createdAt = new Date(uploadResult.created_at).toISOString();
+      workspaceStore.createWecomMediaCacheEntry({
+        workspaceId,
+        relativePath,
+        md5,
+        filename: path.basename(relativePath),
+        mediaId,
+        createdAt,
+      });
+    }
+
+    await conn.client.sendMediaMessage(encryptedUserId, 'file', mediaId);
   }
 
   private getContextFilePath(workspace: Workspace): string {
