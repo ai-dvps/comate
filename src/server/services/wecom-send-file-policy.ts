@@ -61,7 +61,14 @@ export function validateSendFilePath(
     };
   }
 
-  const resolvedWorkspacePath = path.resolve(workspaceFolderPath);
+  const resolvedWorkspacePath = (() => {
+    const base = path.resolve(workspaceFolderPath);
+    try {
+      return fs.realpathSync(base);
+    } catch {
+      return base;
+    }
+  })();
   const resolved = path.resolve(resolvedWorkspacePath, rawFilePath);
   const realResolved = resolveRealPath(resolved);
 
