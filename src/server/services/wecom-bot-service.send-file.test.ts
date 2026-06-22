@@ -1,11 +1,18 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fsPromises from 'node:fs/promises';
-import fs from 'node:fs';
+import type { Stats } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { WeComBotService } from './wecom-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import type { Workspace } from '../models/workspace.js';
+
+interface MarkdownMessageBody {
+  markdown: {
+    content: string;
+  };
+}
 
 describe('WeComBotService.sendFile', { concurrency: false }, () => {
   let service: WeComBotService;
@@ -44,7 +51,7 @@ describe('WeComBotService.sendFile', { concurrency: false }, () => {
     origGetWecomMediaCacheEntry = workspaceStore.getWecomMediaCacheEntry.bind(workspaceStore);
     origCreateWecomMediaCacheEntry = workspaceStore.createWecomMediaCacheEntry.bind(workspaceStore);
 
-    workspaceStore.get = async () => ({ id: 'ws-1', folderPath: tempDir, settings: {} } as any);
+    workspaceStore.get = async () => ({ id: 'ws-1', folderPath: tempDir, settings: {} } as unknown as Workspace);
     workspaceStore.getEncryptedUserIdByPlaintext = (plaintext: string) => {
       if (plaintext === 'ZhangWei') return 'enc-zhangwei';
       if (plaintext === 'LiSi') return 'enc-lisi';
@@ -94,7 +101,7 @@ describe('WeComBotService.sendFile', { concurrency: false }, () => {
   }
 
   function injectConnection(conn: unknown) {
-    (service as any).connections.set('ws-1', conn);
+    (service as unknown as { connections: Map<string, unknown> }).connections.set('ws-1', conn);
   }
 
   async function writeFile(relPath: string, content: string): Promise<string> {
@@ -169,7 +176,7 @@ describe('WeComBotService.sendFile', { concurrency: false }, () => {
 
     assert.strictEqual(sentMessages.length, 1);
     assert.strictEqual(sentMessages[0].userId, 'enc-lisi');
-    assert.deepStrictEqual((sentMessages[0].body as any).markdown, { content: 'unauthorized file access' });
+    assert.deepStrictEqual((sentMessages[0].body as MarkdownMessageBody).markdown, { content: 'unauthorized file access' });
     assert.strictEqual(uploadedFiles.length, 0);
     assert.strictEqual(sentFiles.length, 0);
   });
@@ -204,7 +211,7 @@ describe('WeComBotService.sendFile', { concurrency: false }, () => {
     await writeFile('docs/huge.pdf', 'x');
 
     const origStat = fsPromises.stat;
-    fsPromises.stat = async () => ({ size: 21 * 1024 * 1024 } as fs.Stats);
+    fsPromises.stat = async () => ({ size: 21 * 1024 * 1024 } as Stats);
 
     try {
       await assert.rejects(
