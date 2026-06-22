@@ -77,6 +77,7 @@ interface WorkspaceFormState {
   feishuEncryptKey: string
   feishuVerificationToken: string
   feishuBotEnabled: boolean
+  feishuBotName: string
   feishuAdminUserIds: string[]
 }
 
@@ -106,6 +107,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     feishuEncryptKey: (workspace.settings?.feishuEncryptKey as string) || '',
     feishuVerificationToken: (workspace.settings?.feishuVerificationToken as string) || '',
     feishuBotEnabled: (workspace.settings?.feishuBotEnabled as boolean) || false,
+    feishuBotName: (workspace.settings?.feishuBotName as string) || '',
     feishuAdminUserIds: (workspace.settings?.feishuAdminUserIds as string[] | undefined) ?? [],
   }
 }
@@ -315,6 +317,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           feishuEncryptKey: ws.feishuEncryptKey || undefined,
           feishuVerificationToken: ws.feishuVerificationToken || undefined,
           feishuBotEnabled: ws.feishuBotEnabled,
+          feishuBotName: ws.feishuBotName || undefined,
           feishuAdminUserIds: ws.feishuAdminUserIds,
         },
         skills: ws.skills,
@@ -1527,6 +1530,17 @@ export function FeishuBotSection({
                 }`}
               />
             </button>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.botName')}</label>
+            <input
+              value={state.feishuBotName}
+              onChange={(e) => onUpdate({ feishuBotName: e.target.value })}
+              placeholder={t('feishu.botNamePlaceholder')}
+              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">{t('feishu.botNameHint')}</p>
           </div>
 
           <div>
