@@ -100,16 +100,22 @@ export class FeishuStreamReply {
         }
         break;
       case 'thinking_start':
-        this.setPlaceholder('\n\n正在思考...');
+        if (this.collecting) {
+          this.setPlaceholder('\n\n正在思考...');
+        }
         break;
       case 'tool_use_start':
-        this.setPlaceholder(`\n\n🔧 ${event.toolName}...`);
+        if (this.collecting) {
+          this.setPlaceholder(`\n\n🔧 ${event.toolName}...`);
+        }
         break;
       case 'tool_result':
         this.clearPlaceholder();
         break;
       case 'subagent_start':
-        this.setPlaceholder(`\n\n🤖 ${event.description ?? '运行子代理'}...`);
+        if (this.collecting) {
+          this.setPlaceholder(`\n\n🤖 ${event.description ?? '运行子代理'}...`);
+        }
         break;
       case 'subagent_done':
         this.clearPlaceholder();

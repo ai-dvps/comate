@@ -107,6 +107,19 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     assert.strictEqual(cardJson.body.elements[0].content, 'custom hint');
   });
 
+  it('ignores thinking/tool/subagent placeholders before assistant_start', async () => {
+    const reply = createReply();
+    const { handler } = await reply.start();
+
+    handler(1, { type: 'thinking_start' } as SseEvent);
+    handler(1, { type: 'tool_use_start', toolName: 'Bash' } as SseEvent);
+    handler(1, { type: 'subagent_start', description: 'Running subagent' } as SseEvent);
+    await sleep(150);
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(contentCalls.length, 0, 'pre-turn placeholder events should not update the card');
+  });
+
   it('removes the thinking placeholder when the first text delta arrives', async () => {
     const reply = createReply();
     const { handler } = await reply.start();
