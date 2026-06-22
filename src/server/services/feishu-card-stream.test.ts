@@ -267,12 +267,12 @@ describe('FeishuCardStream', { concurrency: false }, () => {
     stream.setContent('x');
     await sleep(30);
 
-    // No thrown error; subsequent calls are ignored.
+    // No thrown error; subsequent updates are still attempted.
     stream.setContent('y');
     await sleep(30);
 
     const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
-    assert.strictEqual(contentCalls.length, 1);
+    assert.strictEqual(contentCalls.length, 2);
 
     // finish should still attempt settings.
     await stream.finish('final');

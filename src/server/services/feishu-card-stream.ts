@@ -99,7 +99,6 @@ export class FeishuCardStream {
   private messageId: string | null = null;
   private sequence = 0;
   private pendingText = '';
-  private failed = false;
   private finalized = false;
   private finishPromise: Promise<void> | null = null;
   private throttle: ContentThrottle;
@@ -155,7 +154,7 @@ export class FeishuCardStream {
   }
 
   setContent(text: string): void {
-    if (this.failed || this.finalized || !this.cardId) return;
+    if (this.finalized || !this.cardId) return;
     // Feishu requires content to be 1..100000 chars AFTER its own normalization.
     // Empty, whitespace-only, and zero-width-character-only strings (incl.
     // U+200B, which String.trim() does NOT remove) are rejected with 99992402
@@ -174,7 +173,7 @@ export class FeishuCardStream {
       return this.finishPromise ?? Promise.resolve();
     }
     this.finalized = true;
-    if (text !== undefined && !this.failed) {
+    if (text !== undefined) {
       this.pendingText = text;
     }
     this.finishPromise = this.doFinish();
@@ -207,7 +206,7 @@ export class FeishuCardStream {
   }
 
   private async pushContent(): Promise<void> {
-    if (!this.cardId || this.failed) return;
+    if (!this.cardId) return;
     const seq = ++this.sequence;
     const preview = this.pendingText.replace(/\s+/g, ' ').slice(0, 60);
     diagLog(
@@ -227,7 +226,6 @@ export class FeishuCardStream {
         },
       });
     } catch (err) {
-      this.failed = true;
       diagWarn('[FeishuCardStream] content update failed:', formatApiError(err));
     }
   }
