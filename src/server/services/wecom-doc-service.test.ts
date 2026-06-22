@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -130,7 +131,9 @@ describe('WeComDocService', { concurrency: false }, () => {
 
   it('processes smartpage-create with top-level page_filepath', async () => {
     const mdPath = path.join(tempDir, 'overview.md');
-    await fsPromises.writeFile(mdPath, '# Overview\n\nContent', 'utf-8');
+    await fsPromises.writeFile(mdPath, '# Overview
+
+Content', 'utf-8');
 
     mockFetch((url, body) => {
       if (url.includes('get_mcp_config')) {
@@ -148,7 +151,9 @@ describe('WeComDocService', { concurrency: false }, () => {
       assert.ok(Array.isArray(args.pages));
       const page = (args.pages as Record<string, unknown>[])[0];
       assert.strictEqual(page.title, 'Overview');
-      assert.strictEqual(page.page_content, '# Overview\n\nContent');
+      assert.strictEqual(page.page_content, '# Overview
+
+Content');
       assert.strictEqual('page_filepath' in args, false);
       return mcpJsonResponse({ errcode: 0, errmsg: 'ok', docid: 'PAGE1' });
     });

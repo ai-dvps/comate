@@ -230,3 +230,121 @@ describe('handleSseEvent context_usage', () => {
     assert.strictEqual(state.contextUsage['s1'].totalTokens, 10)
   })
 })
+
+describe('bot session guards', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {},
+      activeSessionIds: {},
+      messages: {},
+      drafts: {},
+      subagents: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      approvalQueue: {},
+      serverNonce: {},
+      pendingSend: {},
+    })
+  })
+
+  function makeSession(source: 'gui' | 'wecom' | 'feishu'): ReturnType<typeof useChatStore.getState>['sessions'][string][number] {
+    return {
+      id: 's1',
+      workspaceId: 'ws-1',
+      name: 'Test',
+      source,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  it('sendMessage does not post to a Feishu bot session', () => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeSession('feishu')] },
+    })
+
+    const originalFetch = globalThis.fetch
+    let fetchCalled = false
+    globalThis.fetch = async () => {
+      fetchCalled = true
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }
+
+    try {
+      useChatStore.getState().sendMessage('ws-1', 's1', 'hello')
+      assert.strictEqual(fetchCalled, false)
+      assert.strictEqual(useChatStore.getState().messages['s1'], undefined)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('sendMessage posts to a GUI session', () => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeSession('gui')] },
+      serverNonce: { s1: 'nonce-1' },
+    })
+
+    const originalFetch = globalThis.fetch
+    let fetchCalled = false
+    globalThis.fetch = async () => {
+      fetchCalled = true
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }
+
+    try {
+      useChatStore.getState().sendMessage('ws-1', 's1', 'hello')
+      assert.strictEqual(fetchCalled, true)
+      assert.strictEqual(useChatStore.getState().messages['s1']?.length, 1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('refreshBotMessages fetches latest messages for a Feishu bot session', async () => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeSession('feishu')] },
+    })
+
+    const originalFetch = globalThis.fetch
+    let fetchedUrl: string | null = null
+    globalThis.fetch = async (url) => {
+      fetchedUrl = String(url)
+      return new Response(JSON.stringify({ messages: [] }), { status: 200 })
+    }
+
+    const originalWindow = globalThis.window
+    globalThis.window = { location: { origin: 'http://localhost' } } as unknown as Window & typeof globalThis
+
+    try {
+      await useChatStore.getState().refreshBotMessages('ws-1', 's1')
+      assert.ok(fetchedUrl)
+      assert.ok(fetchedUrl?.includes('/sessions/s1/messages/latest'))
+    } finally {
+      globalThis.fetch = originalFetch
+      globalThis.window = originalWindow
+    }
+  })
+
+  it('refreshBotMessages does not fetch for a GUI session', async () => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeSession('gui')] },
+    })
+
+    const originalFetch = globalThis.fetch
+    let fetchCalled = false
+    globalThis.fetch = async () => {
+      fetchCalled = true
+      return new Response(JSON.stringify({ messages: [] }), { status: 200 })
+    }
+
+    try {
+      await useChatStore.getState().refreshBotMessages('ws-1', 's1')
+      assert.strictEqual(fetchCalled, false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+

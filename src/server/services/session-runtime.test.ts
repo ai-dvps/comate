@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { SessionRuntime } from './session-runtime.js';
@@ -885,4 +886,3 @@ describe('session-runtime context_usage emission', { concurrency: false }, () =>
     assert.ok(!events.some((e) => e.type === 'error_note'));
   });
 });
-

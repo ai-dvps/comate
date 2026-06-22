@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
@@ -35,10 +35,16 @@ export class SqliteStore {
   private db: Database.Database;
   private analyticsCache?: AnalyticsCache;
 
-  constructor() {
-    ensureDirSync();
+  constructor(dbPath?: string) {
+    const dbFile = dbPath ?? DB_FILE;
+    const inMemory = dbFile === ':memory:';
+    // An in-memory database has no parent directory to create; only ensure
+    // the directory when we are opening a real file on disk.
+    if (!inMemory) {
+      ensureDirSync(dirname(dbFile));
+    }
     const options = getDatabaseOptions();
-    this.db = new Database(DB_FILE, options);
+    this.db = new Database(dbFile, options);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(`
@@ -90,6 +96,46 @@ export class SqliteStore {
         firstSeenAt TEXT NOT NULL,
         lastSeenAt TEXT NOT NULL,
         PRIMARY KEY (workspaceId, encryptedUserId)
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feishu_bot_binding (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        activeWorkspaceId TEXT NOT NULL
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feishu_user_sessions (
+        workspaceId TEXT NOT NULL,
+        feishuUserId TEXT NOT NULL,
+        sessionId TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (workspaceId, feishuUserId, sessionId)
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feishu_active_sessions (
+        workspaceId TEXT NOT NULL,
+        feishuUserId TEXT NOT NULL,
+        sessionId TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (workspaceId, feishuUserId)
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feishu_workspace_users (
+        workspaceId TEXT NOT NULL,
+        openId TEXT NOT NULL,
+        userId TEXT,
+        name TEXT,
+        firstSeenAt TEXT NOT NULL,
+        lastSeenAt TEXT NOT NULL,
+        PRIMARY KEY (workspaceId, openId)
       )
     `);
 
@@ -227,6 +273,26 @@ export class SqliteStore {
       this.analyticsCache = new AnalyticsCache(this.db);
     }
     return this.analyticsCache;
+  }
+
+  /**
+   * Wipe every user table in a single transaction. Intended for tests so they
+   * can reset state between cases without reaching into the private `db`
+   * handle. The table list is derived from the live schema at call time, so
+   * newly added tables are covered automatically — there is no hard-coded list
+   * to keep in sync. The schema declares no foreign keys, so deletion order is
+   * irrelevant.
+   */
+  resetData(): void {
+    const tables = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+      .all() as Array<{ name: string }>;
+    const wipe = this.db.transaction(() => {
+      for (const { name } of tables) {
+        this.db.prepare(`DELETE FROM "${name}"`).run();
+      }
+    });
+    wipe();
   }
 
   private migrateTodoDetailColumn(): void {
@@ -566,6 +632,10 @@ export class SqliteStore {
     if (result.changes > 0) {
       this.db.prepare('DELETE FROM wecom_user_sessions WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM feishu_bot_binding WHERE activeWorkspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM feishu_user_sessions WHERE workspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM feishu_workspace_users WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_media_cache WHERE workspace_id = ?').run(id);
@@ -711,6 +781,155 @@ export class SqliteStore {
     return rows;
   }
 
+  // Feishu bot state
+
+  getFeishuActiveWorkspace(): string | null {
+    const row = this.db
+      .prepare('SELECT activeWorkspaceId FROM feishu_bot_binding WHERE id = 1')
+      .get() as { activeWorkspaceId: string } | undefined;
+    return row?.activeWorkspaceId ?? null;
+  }
+
+  setFeishuActiveWorkspace(workspaceId: string): void {
+    this.db
+      .prepare(`
+        INSERT INTO feishu_bot_binding (id, activeWorkspaceId)
+        VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          activeWorkspaceId = excluded.activeWorkspaceId
+      `)
+      .run(workspaceId);
+  }
+
+  clearFeishuActiveWorkspace(): void {
+    this.db.prepare('DELETE FROM feishu_bot_binding WHERE id = 1').run();
+  }
+
+  addFeishuUserSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO feishu_user_sessions (workspaceId, feishuUserId, sessionId, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?)
+      `)
+      .run(workspaceId, feishuUserId, sessionId, now, now);
+  }
+
+  getFeishuSessionOwner(workspaceId: string, sessionId: string): string | null {
+    const row = this.db
+      .prepare('SELECT feishuUserId FROM feishu_user_sessions WHERE workspaceId = ? AND sessionId = ?')
+      .get(workspaceId, sessionId) as { feishuUserId: string } | undefined;
+    return row?.feishuUserId ?? null;
+  }
+
+  listFeishuSessionsByUser(workspaceId: string, feishuUserId: string): Array<{ sessionId: string; createdAt: string }> {
+    const rows = this.db
+      .prepare(`
+        SELECT s.sessionId, s.createdAt
+        FROM feishu_user_sessions s
+        JOIN sessions sess ON sess.id = s.sessionId
+        WHERE s.workspaceId = ? AND s.feishuUserId = ?
+        ORDER BY s.createdAt ASC
+      `)
+      .all(workspaceId, feishuUserId) as Array<{ sessionId: string; createdAt: string }>;
+    return rows;
+  }
+
+  listFeishuSessionsForWorkspace(workspaceId: string): Array<{ sessionId: string; feishuUserId: string; createdAt: string }> {
+    const rows = this.db
+      .prepare(`
+        SELECT s.sessionId, s.feishuUserId, s.createdAt
+        FROM feishu_user_sessions s
+        JOIN sessions sess ON sess.id = s.sessionId
+        WHERE s.workspaceId = ?
+        ORDER BY s.createdAt ASC
+      `)
+      .all(workspaceId) as Array<{ sessionId: string; feishuUserId: string; createdAt: string }>;
+    return rows;
+  }
+
+  setFeishuActiveSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO feishu_active_sessions (workspaceId, feishuUserId, sessionId, updatedAt)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspaceId, feishuUserId) DO UPDATE SET
+          sessionId = excluded.sessionId,
+          updatedAt = excluded.updatedAt
+      `)
+      .run(workspaceId, feishuUserId, sessionId, now);
+  }
+
+  getFeishuActiveSession(workspaceId: string, feishuUserId: string): string | null {
+    const row = this.db
+      .prepare('SELECT sessionId FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?')
+      .get(workspaceId, feishuUserId) as { sessionId: string } | undefined;
+    if (!row) return null;
+    const exists = this.db
+      .prepare('SELECT 1 FROM sessions WHERE id = ?')
+      .get(row.sessionId) as { '1': number } | undefined;
+    if (!exists) {
+      this.db.prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?').run(workspaceId, feishuUserId);
+      return null;
+    }
+    return row.sessionId;
+  }
+
+  clearFeishuActiveSession(workspaceId: string, feishuUserId: string): void {
+    this.db
+      .prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?')
+      .run(workspaceId, feishuUserId);
+  }
+
+  // Feishu workspace user directory
+
+  getFeishuWorkspaceUser(
+    workspaceId: string,
+    openId: string,
+  ): { openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string } | null {
+    const row = this.db
+      .prepare('SELECT openId, userId, name, firstSeenAt, lastSeenAt FROM feishu_workspace_users WHERE workspaceId = ? AND openId = ?')
+      .get(workspaceId, openId) as { openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string } | undefined;
+    return row ?? null;
+  }
+
+  setFeishuWorkspaceUser(workspaceId: string, openId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO feishu_workspace_users (workspaceId, openId, firstSeenAt, lastSeenAt)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspaceId, openId) DO UPDATE SET
+          lastSeenAt = excluded.lastSeenAt
+      `)
+      .run(workspaceId, openId, now, now);
+  }
+
+  setFeishuWorkspaceUserName(workspaceId: string, openId: string, name: string, userId?: string | null): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        UPDATE feishu_workspace_users
+        SET name = ?, userId = COALESCE(?, userId), lastSeenAt = ?
+        WHERE workspaceId = ? AND openId = ?
+      `)
+      .run(name, userId ?? null, now, workspaceId, openId);
+  }
+
+  listFeishuWorkspaceUsers(workspaceId: string): Array<{
+    openId: string;
+    userId: string | null;
+    name: string | null;
+    firstSeenAt: string;
+    lastSeenAt: string;
+  }> {
+    const rows = this.db
+      .prepare('SELECT openId, userId, name, firstSeenAt, lastSeenAt FROM feishu_workspace_users WHERE workspaceId = ? ORDER BY lastSeenAt DESC')
+      .all(workspaceId) as Array<{ openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string }>;
+    return rows;
+  }
+
   // Session metadata (WIP, etc.)
 
   getSessionMetadata(sessionIds: string[]): Record<string, { isWip: boolean }> {
@@ -762,7 +981,7 @@ export class SqliteStore {
     name: string,
     approvalMode?: string,
     providerId?: string,
-    source?: 'gui' | 'wecom',
+    source?: 'gui' | 'wecom' | 'feishu',
   ): ChatSession {
     const now = new Date().toISOString();
     const mode = approvalMode ?? 'manual';
@@ -1233,14 +1452,18 @@ export class SqliteStore {
 
   // Workspace prompt history
 
-  createPromptHistory(workspaceId: string, sessionId: string, prompt: string): WorkspacePromptHistoryEntry {
-    const now = new Date().toISOString();
+  createPromptHistory(
+    workspaceId: string,
+    sessionId: string,
+    prompt: string,
+    createdAt: string = new Date().toISOString(),
+  ): WorkspacePromptHistoryEntry {
     const entry: WorkspacePromptHistoryEntry = {
       id: uuidv4(),
       workspaceId,
       sessionId,
       prompt: prompt.trim(),
-      createdAt: now,
+      createdAt,
     };
     this.db.prepare(`
       INSERT INTO workspace_prompt_history (id, workspace_id, session_id, prompt, created_at)
@@ -1482,9 +1705,9 @@ function safeJsonParse<T>(json: string, fallback: T): T {
   }
 }
 
-function ensureDirSync(): void {
-  if (!existsSync(STORAGE_DIR)) {
-    mkdirSync(STORAGE_DIR, { recursive: true });
+function ensureDirSync(dir: string): void {
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 

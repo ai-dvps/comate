@@ -112,6 +112,7 @@
   "workspaceSections": {
     "basic": "Basic Info",
     "wecom": "WeCom Bot",
+    "feishu": "Feishu Bot",
     "skills": "Skills",
     "mcp": "MCP",
     "hooks": "Hooks"
@@ -283,6 +284,42 @@
       "freezeHint": "Changes apply to the next bot session, not to active conversations."
     }
   },
+  "feishu": {
+    "enableBot": "Enable Feishu Bot",
+    "enableBotHint": "When enabled, this workspace can be bound to a Feishu bot.",
+    "botName": "Bot Name",
+    "botNamePlaceholder": "My Bot",
+    "botNameHint": "A friendly name for this bot.",
+    "appId": "App ID",
+    "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
+    "appSecret": "App Secret",
+    "appSecretPlaceholder": "your-app-secret",
+    "encryptKey": "Encrypt Key",
+    "encryptKeyPlaceholder": "your-encrypt-key",
+    "verificationToken": "Verification Token",
+    "verificationTokenPlaceholder": "your-verification-token",
+    "status": "Status:",
+    "usersTitle": "Feishu Users",
+    "usersEmpty": "No Feishu users have messaged this workspace yet.",
+    "userPending": "Pending resolution",
+    "firstSeen": "First seen",
+    "lastSeen": "Last seen",
+    "usersLoading": "Loading Feishu users...",
+    "usersError": "Failed to load Feishu users",
+    "usersRetry": "Retry",
+    "botSessionNote": "Bot sessions follow this workspace's tool permission policy (see the WeCom Bot > Permissions tab). Save changes to connect or disconnect.",
+    "tabs": {
+      "connection": "Connection",
+      "users": "Users"
+    },
+    "adminUsers": {
+      "label": "Admin users",
+      "hint": "Feishu user IDs that are allowed to switch the bot's active workspace.",
+      "placeholder": "e.g. ou_xxxxxxxxxxxxxxxx",
+      "add": "Add",
+      "remove": "Remove"
+    }
+  },
   "unsavedDialog": {
     "title": "Unsaved changes",
     "message": "You have unsaved changes. Save them before closing?",
@@ -430,6 +467,12 @@
     "botDisconnected": "WeCom bot disconnected",
     "botError": "WeCom bot error",
     "botNotConfigured": "WeCom bot not configured",
+    "botConnecting": "WeCom bot connecting",
+    "feishuBotConnected": "Feishu bot connected",
+    "feishuBotDisconnected": "Feishu bot disconnected",
+    "feishuBotError": "Feishu bot error",
+    "feishuBotNotConfigured": "Feishu bot not configured",
+    "feishuBotConnecting": "Feishu bot connecting",
     "closeTab": "Close {{name}}",
     "searchTabs": "Search tabs...",
     "noSearchResults": "No matching tabs",

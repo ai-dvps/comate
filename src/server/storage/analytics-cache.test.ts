@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 /**
  * Run via: `npx tsx --test src/server/storage/analytics-cache.test.ts`
  */

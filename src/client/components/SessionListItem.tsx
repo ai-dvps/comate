@@ -85,12 +85,16 @@ export default function SessionListItem({
       )}
     >
       <div className="flex items-start gap-2">
-        <MessageSquare
-          className={cn(
-            'w-3.5 h-3.5 flex-shrink-0 mt-0.5',
-            isActive ? 'text-accent' : 'text-text-tertiary',
-          )}
-        />
+        {rowState === 'idle' ? (
+          <MessageSquare
+            className={cn(
+              'w-3.5 h-3.5 flex-shrink-0 mt-0.5',
+              isActive ? 'text-accent' : 'text-text-tertiary',
+            )}
+          />
+        ) : (
+          <StatusIndicator state={rowState} className="mt-0.5" />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {editingSessionId === session.id ? (
@@ -137,23 +141,14 @@ export default function SessionListItem({
                 </button>
               </>
             )}
+          </div>
+          <p className="text-[11px] text-text-tertiary truncate mt-0.5">{preview}</p>
+          <div className="flex items-center gap-1.5 mt-1">
             {session.isDraft && (
               <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
                 {t('draft')}
               </span>
             )}
-            {session.source === 'wecom' && (
-              <img
-                src="/wecom-icon.svg"
-                alt="WeCom"
-                className="w-3 h-3 flex-shrink-0"
-                title={t('wecomBotSession')}
-              />
-            )}
-            {rowState !== 'idle' && <StatusIndicator state={rowState} />}
-          </div>
-          <p className="text-[11px] text-text-tertiary truncate mt-0.5">{preview}</p>
-          <div className="flex items-center gap-1.5 mt-1">
             {session.isWip && (
               <span className="px-1 py-0.5 text-[9px] bg-purple-500/20 text-purple-400 rounded">
                 {t('wip')}
@@ -180,6 +175,22 @@ export default function SessionListItem({
                 )}
                 {t(`approvalMode.${session.approvalMode}`)}
               </span>
+            )}
+            {session.source === 'wecom' && (
+              <img
+                src="/wecom-icon.svg"
+                alt="WeCom"
+                className="w-3 h-3 flex-shrink-0"
+                title={t('wecomBotSession')}
+              />
+            )}
+            {session.source === 'feishu' && (
+              <img
+                src="/feishu-icon.svg"
+                alt="Feishu"
+                className="w-3 h-3 flex-shrink-0"
+                title={t('feishuBotSession')}
+              />
             )}
             <span className="text-[10px] text-text-tertiary/60">
               {getSessionTimestamp(session, t)}

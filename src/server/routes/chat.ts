@@ -218,6 +218,33 @@ router.get('/sessions/:sessionId/wecom-user', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/sessions/:sessionId/feishu-user
+// Returns Feishu user info for bot sessions
+router.get('/sessions/:sessionId/feishu-user', async (req, res) => {
+  try {
+    const workspaceId = (req.params as unknown as { id: string }).id;
+    const sessionId = req.params.sessionId;
+    const openId = store.getFeishuSessionOwner(workspaceId, sessionId);
+    if (!openId) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    const workspaceUser = store.getFeishuWorkspaceUser(workspaceId, openId);
+    res.json({
+      userId: workspaceUser?.name ?? workspaceUser?.userId ?? openId,
+      name: workspaceUser?.name ?? null,
+      lastSeenAt: workspaceUser?.lastSeenAt ?? null,
+    });
+  } catch (error) {
+    console.error('Failed to get Feishu user:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to get Feishu user' });
+  }
+});
+
 // GET /api/workspaces/:id/sessions/:sessionId/stream
 // Long-lived SSE subscription for streaming output
 router.get('/sessions/:sessionId/stream', async (req, res) => {

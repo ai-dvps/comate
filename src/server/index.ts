@@ -17,6 +17,7 @@ import wecomQueueRoutes from './routes/wecom-queue.js';
 import wecomSendRoutes from './routes/wecom-send.js';
 import wecomSendFileRoutes from './routes/wecom-send-file.js';
 import wecomDocRoutes from './routes/wecom-doc.js';
+import feishuCardRoutes from './routes/feishu-card.js';
 import systemRoutes from './routes/system.js';
 import todoRoutes from './routes/todos.js';
 import providerRoutes from './routes/providers.js';
@@ -28,6 +29,7 @@ import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
 import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { chatService } from './services/chat-service.js';
+import { feishuBotService } from './services/feishu-bot-service.js';
 import { diagLog } from './utils/diag-logger.js';
 import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
 import { getStorageDir } from './storage/data-dir.js';
@@ -75,6 +77,9 @@ function ensureComateBuiltInMarketplace(): void {
 ensureComateBuiltInMarketplace();
 
 app.use(cors());
+// Feishu card callbacks need the raw request body for signature verification.
+// Mount this route before express.json() consumes the stream.
+app.use('/api/feishu/card', feishuCardRoutes);
 app.use(express.json());
 
 // API routes
@@ -180,6 +185,11 @@ const server = app.listen(PORT, () => {
     console.error('Failed to initialize WeCom bot service:', err);
   });
 
+  // Initialize Feishu bot service for the active workspace binding
+  feishuBotService.initialize().catch((err) => {
+    console.error('Failed to initialize Feishu bot service:', err);
+  });
+
   // Wire resolver to renamer before initializing
   wecomUserResolver.setOnMappingStored(async (workspaceId, encryptedUserId) => {
     await wecomSessionRenamer.renameSessionsForUser(workspaceId, encryptedUserId);
@@ -225,6 +235,7 @@ async function shutdown(signal: string): Promise<void> {
     logCleanupTimer = null;
   }
   wecomBotService.disconnectAll();
+  feishuBotService.disconnect();
   await wecomQueueWorker.shutdown();
   await wecomUserResolver.shutdown();
   await chatService.closeAllRuntimes();
