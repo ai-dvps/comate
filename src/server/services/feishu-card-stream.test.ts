@@ -151,6 +151,35 @@ describe('FeishuCardStream', { concurrency: false }, () => {
     assertUuidV4(contentArgs.data.uuid);
   });
 
+  it('never sends empty or whitespace-only content (Feishu requires min len 1)', async () => {
+    const client = makeMockClient();
+    const stream = new FeishuCardStream(client, 'ou_123', {
+      streamThrottleMs: 10,
+      streamThrottleChars: 1,
+    });
+    await stream.start('initial');
+    calls = [];
+
+    // Empty string, whitespace-only, and zero-width space must all be dropped.
+    stream.setContent('');
+    stream.setContent('   ');
+    stream.setContent('​'); // U+200B zero-width space
+    await sleep(30);
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(contentCalls.length, 0);
+
+    // A real update still goes through after the rejected ones.
+    stream.setContent('real text');
+    await sleep(30);
+    const realCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(realCalls.length, 1);
+    assert.strictEqual(
+      (realCalls[0].args as { data: { content: string } }).data.content,
+      'real text',
+    );
+  });
+
   it('fires immediately when enough characters accumulate', async () => {
     const client = makeMockClient();
     const stream = new FeishuCardStream(client, 'ou_123', {

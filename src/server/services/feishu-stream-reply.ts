@@ -174,9 +174,12 @@ export class FeishuStreamReply {
   private updateController(): void {
     if (!this.controller) return;
     const content = this.responseText + this.visiblePlaceholder;
-    // Feishu rejects empty content updates, so use a zero-width space when
-    // there is nothing visible to show (e.g. a placeholder was just cleared).
-    this.controller.setContent(content || '​');
+    // Feishu rejects empty/whitespace-only content updates (99992402 min len 1,
+    // and zero-width spaces are normalized away too). When there is nothing
+    // visible to show, skip the update entirely — the card keeps its last
+    // content until real answer text arrives and overwrites it.
+    if (!content || content.trim() === '') return;
+    this.controller.setContent(content);
   }
 
   private signalWaiting(): void {
