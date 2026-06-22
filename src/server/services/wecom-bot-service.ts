@@ -1,7 +1,6 @@
 import AiBot from '@wecom/aibot-node-sdk';
 import type { WSClient, WsFrame, TextMessage, FileMessage, ImageMessage, VoiceMessage, VideoMessage, BaseMessage } from '@wecom/aibot-node-sdk';
 import fsPromises from 'node:fs/promises';
-import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { Workspace } from '../models/workspace.js';
