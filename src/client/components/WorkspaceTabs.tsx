@@ -6,78 +6,13 @@ import { Folder, X, ChevronDown, Search } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import StatusIndicator from './StatusIndicator'
 import ConfirmDialog from './ConfirmDialog'
-
-type BotStatus = 'connected' | 'disconnected' | 'error' | 'not_configured' | 'connecting'
-
-type BotPrefix = 'bot' | 'feishuBot'
-
-function getBotStatusLabel(status: BotStatus, t: (key: string) => string, prefix: BotPrefix): string {
-  const keyMap: Record<BotStatus, string> = {
-    connected: `${prefix}Connected`,
-    disconnected: `${prefix}Disconnected`,
-    error: `${prefix}Error`,
-    not_configured: `${prefix}NotConfigured`,
-    connecting: `${prefix}Connecting`,
-  }
-  return t(`workspaceTabs.${keyMap[status]}`)
-}
-
-const BOT_STATUS_CLASS: Record<BotStatus, string> = {
-  connected: 'opacity-100',
-  disconnected: 'opacity-40 grayscale',
-  error: 'opacity-100',
-  not_configured: 'opacity-40 grayscale',
-  connecting: 'opacity-100',
-}
-
-const BOT_STATUS_DOT: Record<BotStatus, string> = {
-  connected: 'bg-green-500',
-  disconnected: 'bg-text-tertiary',
-  error: 'bg-warning',
-  not_configured: 'bg-text-tertiary',
-  // Blue brand dot + pulse so the in-flight state reads as "working" without
-  // relying on color alone (the rest of the dot language is green/grey/amber).
-  connecting: 'bg-blue-500 animate-pulse',
-}
+import { BotStatusIcon } from './BotStatusIcon'
+import { getBotStatusLabel, useBotStatuses, type BotStatus } from '../hooks/use-bot-statuses'
 
 interface WorkspaceItem {
   id: string
   name: string
   settings: { wecomBotEnabled?: boolean; feishuBotEnabled?: boolean }
-}
-
-interface BotStatusIconProps {
-  iconSrc: string
-  alt: string
-  status: BotStatus
-  title: string
-}
-
-/**
- * Bot status icon + status-dot overlay. Shared by the WeCom and Feishu tab
- * indicators. The wrapper span carries the accessible name (bot + status) so
- * screen readers announce the status rather than the word "image"; the inner
- * img is decorative.
- */
-function BotStatusIcon({ iconSrc, alt, status, title }: BotStatusIconProps) {
-  return (
-    <span
-      className="relative inline-flex flex-shrink-0"
-      title={title}
-      role="img"
-      aria-label={title}
-    >
-      <img
-        src={iconSrc}
-        alt={alt}
-        aria-hidden="true"
-        className={`w-3 h-3 flex-shrink-0 ${BOT_STATUS_CLASS[status]}`}
-      />
-      <span
-        className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${BOT_STATUS_DOT[status]} ring-1 ring-bg`}
-      />
-    </span>
-  )
 }
 
 interface TabPillProps {
@@ -141,57 +76,6 @@ function TabPill({
       )}
     </div>
   )
-}
-
-/**
- * Polls a bot status endpoint for open, bot-enabled workspaces on a fixed
- * cadence. Shared by WeCom and Feishu so both indicators use identical polling
- * lifecycle semantics (fetch on mount + interval, clear when none enabled).
- */
-function useBotStatuses(
-  openWorkspaceIds: string[],
-  workspaces: WorkspaceItem[],
-  enabledKey: 'wecomBotEnabled' | 'feishuBotEnabled',
-  endpoint: string,
-): Record<string, BotStatus> {
-  const [statuses, setStatuses] = useState<Record<string, BotStatus>>({})
-
-  useEffect(() => {
-    const enabledIds = openWorkspaceIds.filter((id) => {
-      const ws = workspaces.find((w) => w.id === id)
-      return ws?.settings[enabledKey]
-    })
-    if (enabledIds.length === 0) {
-      setStatuses({})
-      return
-    }
-
-    const fetchStatuses = async () => {
-      const results = await Promise.all(
-        enabledIds.map(async (id) => {
-          try {
-            const res = await fetch(`/api/workspaces/${id}${endpoint}`)
-            if (!res.ok) return { id, status: 'error' as BotStatus }
-            const data = await res.json()
-            return { id, status: (data.status as BotStatus) ?? 'error' }
-          } catch {
-            return { id, status: 'error' as BotStatus }
-          }
-        }),
-      )
-      const next: Record<string, BotStatus> = {}
-      for (const { id, status } of results) {
-        next[id] = status
-      }
-      setStatuses(next)
-    }
-
-    fetchStatuses()
-    const interval = setInterval(fetchStatuses, 5000)
-    return () => clearInterval(interval)
-  }, [openWorkspaceIds, workspaces, enabledKey, endpoint])
-
-  return statuses
 }
 
 export default function WorkspaceTabs() {

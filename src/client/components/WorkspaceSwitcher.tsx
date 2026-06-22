@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, LayoutGrid } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { BotStatusIcon } from './BotStatusIcon'
+import { getBotStatusLabel, useBotStatuses } from '../hooks/use-bot-statuses'
 
 interface WorkspaceSwitcherProps {
   open?: boolean
@@ -20,6 +22,11 @@ export default function WorkspaceSwitcher({ open, onOpenChange }: WorkspaceSwitc
   const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
+
+  // All workspace ids (memoized so the polling effects do not restart every render).
+  const allWorkspaceIds = useMemo(() => workspaces.map((w) => w.id), [workspaces])
+  const wecomStatuses = useBotStatuses(allWorkspaceIds, workspaces, 'wecomBotEnabled', '/bot/status')
+  const feishuStatuses = useBotStatuses(allWorkspaceIds, workspaces, 'feishuBotEnabled', '/feishu/status')
 
   const handleSelect = (id: string) => {
     openWorkspace(id)
@@ -56,6 +63,8 @@ export default function WorkspaceSwitcher({ open, onOpenChange }: WorkspaceSwitc
             workspaces.map((ws) => {
               const isOpenTab = openWorkspaceIds.includes(ws.id)
               const isActive = activeWorkspaceId === ws.id
+              const wecomStatus = wecomStatuses[ws.id]
+              const feishuStatus = feishuStatuses[ws.id]
               return (
                 <button
                   key={ws.id}
@@ -67,13 +76,31 @@ export default function WorkspaceSwitcher({ open, onOpenChange }: WorkspaceSwitc
                   }`}
                 >
                   <span className="truncate flex-1">{ws.name}</span>
-                  {isOpenTab && (
-                    <Check
-                      className={`w-3.5 h-3.5 flex-shrink-0 ${
-                        isActive ? 'text-accent' : 'text-text-tertiary'
-                      }`}
-                    />
-                  )}
+                  <span className="flex items-center gap-1.5 flex-shrink-0">
+                    {wecomStatus && (
+                      <BotStatusIcon
+                        iconSrc="/wecom-icon.svg"
+                        alt="WeCom"
+                        status={wecomStatus}
+                        title={getBotStatusLabel(wecomStatus, t, 'bot')}
+                      />
+                    )}
+                    {feishuStatus && (
+                      <BotStatusIcon
+                        iconSrc="/feishu-icon.svg"
+                        alt="Feishu"
+                        status={feishuStatus}
+                        title={getBotStatusLabel(feishuStatus, t, 'feishuBot')}
+                      />
+                    )}
+                    {isOpenTab && (
+                      <Check
+                        className={`w-3.5 h-3.5 flex-shrink-0 ${
+                          isActive ? 'text-accent' : 'text-text-tertiary'
+                        }`}
+                      />
+                    )}
+                  </span>
                 </button>
               )
             })
