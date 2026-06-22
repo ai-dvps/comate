@@ -7,6 +7,10 @@ import { chatService } from './chat-service.js';
 import { feishuUserResolver } from './feishu-user-resolver.js';
 import type { SseEvent } from '../types/message.js';
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 interface MockThread {
   id: string;
   channelId: string;
@@ -297,11 +301,17 @@ describe('FeishuBotService', () => {
     it('delivers the answer content via CardKit streaming APIs', async () => {
       chatService.pushMessage = async (_sessionId, _workspaceId, _text, _isBot, handler) => {
         const h = handler as ((id: number, event: SseEvent) => void) & { cleanup: () => void };
-        h(1, { type: 'assistant_start' } as SseEvent);
-        h(2, { type: 'text_delta', text: 'Hi' } as SseEvent);
-        h(3, { type: 'text_delta', text: ' there' } as SseEvent);
-        h(4, { type: 'assistant_done' } as SseEvent);
-        h(5, { type: 'result', isError: false } as SseEvent);
+        // Mirror the real runtime: pushMessage enqueues the user message and
+        // resolves immediately, then the assistant turn streams its events
+        // asynchronously on a later tick. Finalizing as soon as pushMessage
+        // resolves would race the turn and freeze the card on the hint.
+        setTimeout(() => {
+          h(1, { type: 'assistant_start' } as SseEvent);
+          h(2, { type: 'text_delta', text: 'Hi' } as SseEvent);
+          h(3, { type: 'text_delta', text: ' there' } as SseEvent);
+          h(4, { type: 'assistant_done' } as SseEvent);
+          h(5, { type: 'result', isError: false } as SseEvent);
+        }, 10);
       };
 
       await (service as unknown as { handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleChatMessage(
@@ -309,6 +319,9 @@ describe('FeishuBotService', () => {
         feishuUserId,
         'hello',
       );
+      // Let the asynchronously-streamed turn complete; the reply finalizes
+      // itself on the `result` event.
+      await sleep(120);
 
       const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
       assert.strictEqual(textPosts.length, 0, 'hint should not be a separate text post');
