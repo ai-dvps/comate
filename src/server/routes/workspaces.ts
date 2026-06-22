@@ -299,4 +299,31 @@ router.post('/:id/prompt-history', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/feishu/users
+router.get('/:id/feishu/users', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const users = store.listFeishuWorkspaceUsers(req.params.id);
+
+    const result = users.map((u) => ({
+      openId: u.openId,
+      userId: u.userId ?? undefined,
+      name: u.name ?? undefined,
+      firstSeenAt: u.firstSeenAt,
+      lastSeenAt: u.lastSeenAt,
+      namePending: !u.name,
+    }));
+
+    res.json({ users: result });
+  } catch (error) {
+    console.error('Failed to list Feishu workspace users:', error);
+    res.status(500).json({ error: 'Failed to list Feishu workspace users' });
+  }
+});
+
 export default router;

@@ -27,6 +27,7 @@ export class FeishuStreamReply {
   private workspaceId: string;
   private sessionId: string;
   private onWaiting?: () => void;
+  private initialHint?: string;
 
   private queue: QueueItem[] = [];
   private pendingResolve: (() => void) | null = null;
@@ -44,7 +45,7 @@ export class FeishuStreamReply {
     openId: string,
     workspaceId: string,
     sessionId: string,
-    options?: { onWaiting?: () => void },
+    options?: { onWaiting?: () => void; initialHint?: string },
   ) {
     this.thread = thread;
     this.larkClient = larkClient;
@@ -52,6 +53,7 @@ export class FeishuStreamReply {
     this.workspaceId = workspaceId;
     this.sessionId = sessionId;
     this.onWaiting = options?.onWaiting;
+    this.initialHint = options?.initialHint;
   }
 
   start(options?: { onWaiting?: () => void }): FeishuStreamReplyHandle {
@@ -198,7 +200,7 @@ export class FeishuStreamReply {
 
   private async *makeStream(): AsyncIterable<StreamChunk> {
     // Opening placeholder so the user sees immediate feedback.
-    yield { type: 'markdown_text', text: '收到，正在处理...' };
+    yield { type: 'markdown_text', text: this.initialHint ?? '收到，正在处理...' };
 
     while (true) {
       const item = await this.nextItem();

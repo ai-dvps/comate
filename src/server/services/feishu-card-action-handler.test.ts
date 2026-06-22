@@ -63,6 +63,23 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
     assert.strictEqual((result as { toast: { content: string } }).toast.content, '你没有权限切换工作空间。');
   });
 
+  it('select_workspace invokes the setActiveWorkspace callback for admins', async () => {
+    workspaceStore.get = async () => makeWorkspace();
+
+    let calledWorkspaceId: string | null = null;
+    const callbacks = {
+      setActiveWorkspace: async (workspaceId: string) => {
+        calledWorkspaceId = workspaceId;
+      },
+    };
+
+    const payload: CardActionPayload = { action: 'select_workspace', workspaceId: 'ws-1' };
+    const result = await handler.handle('admin-1', payload, callbacks);
+
+    assert.strictEqual(calledWorkspaceId, 'ws-1');
+    assert.strictEqual((result as { toast: { content: string } }).toast.content, '工作空间已切换。');
+  });
+
   it('select_session checks ownership and updates active session', async () => {
     workspaceStore.get = async () => makeWorkspace();
     workspaceStore.getFeishuSessionOwner = () => 'user-1';

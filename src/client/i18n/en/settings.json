@@ -296,9 +296,18 @@
     "verificationToken": "Verification Token",
     "verificationTokenPlaceholder": "your-verification-token",
     "status": "Status:",
+    "usersTitle": "Feishu Users",
+    "usersEmpty": "No Feishu users have messaged this workspace yet.",
+    "userPending": "Pending resolution",
+    "firstSeen": "First seen",
+    "lastSeen": "Last seen",
+    "usersLoading": "Loading Feishu users...",
+    "usersError": "Failed to load Feishu users",
+    "usersRetry": "Retry",
     "botSessionNote": "Bot sessions follow this workspace's tool permission policy (see the WeCom Bot > Permissions tab). Save changes to connect or disconnect.",
     "tabs": {
-      "connection": "Connection"
+      "connection": "Connection",
+      "users": "Users"
     },
     "adminUsers": {
       "label": "Admin users",

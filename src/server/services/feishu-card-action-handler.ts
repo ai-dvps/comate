@@ -2,7 +2,6 @@ import type { Workspace } from '../models/workspace.js';
 import type { QuestionPayload } from '../types/message.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
-import { feishuBotService } from './feishu-bot-service.js';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 
 export interface CardActionPayload {
@@ -14,6 +13,10 @@ export interface CardActionPayload {
   questionIndex?: number;
   answer?: string;
   multiSelect?: boolean;
+}
+
+export interface CardActionCallbacks {
+  setActiveWorkspace?: (workspaceId: string) => Promise<void>;
 }
 
 interface PendingQuestionState {
@@ -33,7 +36,7 @@ export class FeishuCardActionHandler {
     });
   }
 
-  async handle(openId: string, payload: CardActionPayload): Promise<unknown> {
+  async handle(openId: string, payload: CardActionPayload, callbacks?: CardActionCallbacks): Promise<unknown> {
     const now = Date.now();
     const last = this.rateLimit.get(openId) ?? 0;
     if (now - last < this.rateLimitMs) {
@@ -48,7 +51,7 @@ export class FeishuCardActionHandler {
 
     switch (payload.action) {
       case 'select_workspace':
-        return this.handleSelectWorkspace(openId, workspace, payload);
+        return this.handleSelectWorkspace(openId, workspace, payload, callbacks);
       case 'select_session':
         return this.handleSelectSession(openId, workspace, payload);
       case 'create_session':
@@ -68,6 +71,7 @@ export class FeishuCardActionHandler {
     openId: string,
     workspace: Workspace,
     payload: CardActionPayload,
+    callbacks?: CardActionCallbacks,
   ): unknown {
     const admins = workspace.settings.feishuAdminUserIds ?? [];
     if (!admins.includes(openId)) {
@@ -76,7 +80,7 @@ export class FeishuCardActionHandler {
     if (!payload.workspaceId) {
       return this.toast('缺少工作空间信息。', 'error');
     }
-    feishuBotService.setActiveWorkspace(payload.workspaceId).catch((err) => {
+    callbacks?.setActiveWorkspace?.(payload.workspaceId).catch((err) => {
       console.error('[FeishuCardActionHandler] setActiveWorkspace failed:', err);
     });
     return this.toast('工作空间已切换。');

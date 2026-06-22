@@ -36,7 +36,12 @@ export class SqliteStore {
 
   constructor(dbPath?: string) {
     const dbFile = dbPath ?? DB_FILE;
-    ensureDirSync(dirname(dbFile));
+    const inMemory = dbFile === ':memory:';
+    // An in-memory database has no parent directory to create; only ensure
+    // the directory when we are opening a real file on disk.
+    if (!inMemory) {
+      ensureDirSync(dirname(dbFile));
+    }
     const options = getDatabaseOptions();
     this.db = new Database(dbFile, options);
     this.db.exec('PRAGMA journal_mode = WAL');
@@ -118,6 +123,18 @@ export class SqliteStore {
         sessionId TEXT NOT NULL,
         updatedAt TEXT NOT NULL,
         PRIMARY KEY (workspaceId, feishuUserId)
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feishu_workspace_users (
+        workspaceId TEXT NOT NULL,
+        openId TEXT NOT NULL,
+        userId TEXT,
+        name TEXT,
+        firstSeenAt TEXT NOT NULL,
+        lastSeenAt TEXT NOT NULL,
+        PRIMARY KEY (workspaceId, openId)
       )
     `);
 
@@ -243,6 +260,26 @@ export class SqliteStore {
       this.analyticsCache = new AnalyticsCache(this.db);
     }
     return this.analyticsCache;
+  }
+
+  /**
+   * Wipe every user table in a single transaction. Intended for tests so they
+   * can reset state between cases without reaching into the private `db`
+   * handle. The table list is derived from the live schema at call time, so
+   * newly added tables are covered automatically — there is no hard-coded list
+   * to keep in sync. The schema declares no foreign keys, so deletion order is
+   * irrelevant.
+   */
+  resetData(): void {
+    const tables = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+      .all() as Array<{ name: string }>;
+    const wipe = this.db.transaction(() => {
+      for (const { name } of tables) {
+        this.db.prepare(`DELETE FROM "${name}"`).run();
+      }
+    });
+    wipe();
   }
 
   private migrateTodoDetailColumn(): void {
@@ -585,6 +622,7 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM feishu_bot_binding WHERE activeWorkspaceId = ?').run(id);
       this.db.prepare('DELETE FROM feishu_user_sessions WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ?').run(id);
+      this.db.prepare('DELETE FROM feishu_workspace_users WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
@@ -828,6 +866,54 @@ export class SqliteStore {
     this.db
       .prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?')
       .run(workspaceId, feishuUserId);
+  }
+
+  // Feishu workspace user directory
+
+  getFeishuWorkspaceUser(
+    workspaceId: string,
+    openId: string,
+  ): { openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string } | null {
+    const row = this.db
+      .prepare('SELECT openId, userId, name, firstSeenAt, lastSeenAt FROM feishu_workspace_users WHERE workspaceId = ? AND openId = ?')
+      .get(workspaceId, openId) as { openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string } | undefined;
+    return row ?? null;
+  }
+
+  setFeishuWorkspaceUser(workspaceId: string, openId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO feishu_workspace_users (workspaceId, openId, firstSeenAt, lastSeenAt)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspaceId, openId) DO UPDATE SET
+          lastSeenAt = excluded.lastSeenAt
+      `)
+      .run(workspaceId, openId, now, now);
+  }
+
+  setFeishuWorkspaceUserName(workspaceId: string, openId: string, name: string, userId?: string | null): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        UPDATE feishu_workspace_users
+        SET name = ?, userId = COALESCE(?, userId), lastSeenAt = ?
+        WHERE workspaceId = ? AND openId = ?
+      `)
+      .run(name, userId ?? null, now, workspaceId, openId);
+  }
+
+  listFeishuWorkspaceUsers(workspaceId: string): Array<{
+    openId: string;
+    userId: string | null;
+    name: string | null;
+    firstSeenAt: string;
+    lastSeenAt: string;
+  }> {
+    const rows = this.db
+      .prepare('SELECT openId, userId, name, firstSeenAt, lastSeenAt FROM feishu_workspace_users WHERE workspaceId = ? ORDER BY lastSeenAt DESC')
+      .all(workspaceId) as Array<{ openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string }>;
+    return rows;
   }
 
   // Session metadata (WIP, etc.)
@@ -1313,14 +1399,18 @@ export class SqliteStore {
 
   // Workspace prompt history
 
-  createPromptHistory(workspaceId: string, sessionId: string, prompt: string): WorkspacePromptHistoryEntry {
-    const now = new Date().toISOString();
+  createPromptHistory(
+    workspaceId: string,
+    sessionId: string,
+    prompt: string,
+    createdAt: string = new Date().toISOString(),
+  ): WorkspacePromptHistoryEntry {
     const entry: WorkspacePromptHistoryEntry = {
       id: uuidv4(),
       workspaceId,
       sessionId,
       prompt: prompt.trim(),
-      createdAt: now,
+      createdAt,
     };
     this.db.prepare(`
       INSERT INTO workspace_prompt_history (id, workspace_id, session_id, prompt, created_at)
