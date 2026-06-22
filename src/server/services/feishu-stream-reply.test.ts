@@ -129,12 +129,15 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     handler(1, { type: 'tool_use_start', toolName: 'Bash' } as SseEvent);
     await sleep(150);
     assert.ok(lastContentCall()?.data.content.includes('🔧 Bash'));
+    const countAfterPlaceholder = calls.filter((c) => c.method === 'cardElement.content').length;
 
     handler(1, { type: 'tool_result' } as SseEvent);
     await sleep(150);
-    // Feishu rejects empty content, so the placeholder is replaced with an
-    // invisible zero-width space until the next text delta arrives.
-    assert.strictEqual(lastContentCall()?.data.content, '​');
+    // Feishu rejects empty content (min len 1), so the empty update after
+    // clearing the placeholder is skipped — no new content call is made. The
+    // card keeps showing the placeholder until real text arrives.
+    const countAfterClear = calls.filter((c) => c.method === 'cardElement.content').length;
+    assert.strictEqual(countAfterClear, countAfterPlaceholder);
 
     handler(1, { type: 'text_delta', text: 'result' } as SseEvent);
     await sleep(150);
@@ -149,12 +152,14 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     handler(1, { type: 'subagent_start', description: 'Running subagent' } as SseEvent);
     await sleep(150);
     assert.ok(lastContentCall()?.data.content.includes('🤖'));
+    const countAfterPlaceholder = calls.filter((c) => c.method === 'cardElement.content').length;
 
     handler(1, { type: 'subagent_done' } as SseEvent);
     await sleep(150);
-    // Feishu rejects empty content, so the placeholder is replaced with an
-    // invisible zero-width space until the next text delta arrives.
-    assert.strictEqual(lastContentCall()?.data.content, '​');
+    // Feishu rejects empty content (min len 1), so the empty update after
+    // clearing the placeholder is skipped — no new content call is made.
+    const countAfterClear = calls.filter((c) => c.method === 'cardElement.content').length;
+    assert.strictEqual(countAfterClear, countAfterPlaceholder);
   });
 
   it('finalizes with only the answer text on result', async () => {

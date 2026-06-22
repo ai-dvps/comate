@@ -1,7 +1,7 @@
 import type * as lark from '@larksuiteoapi/node-sdk';
 import { randomUUID } from 'crypto';
 import { buildStreamingAnswerCard } from './feishu-card-builder.js';
-import { diagWarn } from '../utils/diag-logger.js';
+import { diagLog, diagWarn } from '../utils/diag-logger.js';
 
 const DEFAULT_THROTTLE_MS = 100;
 const DEFAULT_THROTTLE_CHARS = 50;
@@ -156,7 +156,13 @@ export class FeishuCardStream {
 
   setContent(text: string): void {
     if (this.failed || this.finalized || !this.cardId) return;
-    if (!text || text === this.pendingText) return;
+    // Feishu requires content to be 1..100000 chars AFTER its own normalization.
+    // Empty, whitespace-only, and zero-width-character-only strings (incl.
+    // U+200B, which String.trim() does NOT remove) are rejected with 99992402
+    // "min len 1". Drop anything with no visible characters before it reaches
+    // the API.
+    if (!text || !hasVisibleChar(text)) return;
+    if (text === this.pendingText) return;
 
     const deltaChars = Math.max(1, Math.abs(text.length - this.pendingText.length));
     this.pendingText = text;
@@ -202,12 +208,21 @@ export class FeishuCardStream {
 
   private async pushContent(): Promise<void> {
     if (!this.cardId || this.failed) return;
+    const seq = ++this.sequence;
+    const preview = this.pendingText.replace(/\s+/g, ' ').slice(0, 60);
+    diagLog(
+      `[FeishuCardStream] pushContent seq=${seq} len=${this.pendingText.length} visible=${hasVisibleChar(this.pendingText)} content=${JSON.stringify(preview)}`,
+    );
+    if (!this.pendingText || !hasVisibleChar(this.pendingText)) {
+      diagWarn('[FeishuCardStream] skipping empty content update (would fail min len 1)');
+      return;
+    }
     try {
       await this.larkClient.cardkit.v1.cardElement.content({
         path: { card_id: this.cardId, element_id: STREAM_ELEMENT_ID },
         data: {
           content: this.pendingText,
-          sequence: ++this.sequence,
+          sequence: seq,
           uuid: randomUUID(),
         },
       });
@@ -252,4 +267,20 @@ function truncateSummary(text: string, max = 50): string {
   if (!text) return '';
   const cleaned = text.replace(/\s+/g, ' ').trim();
   return cleaned.length <= max ? cleaned : cleaned.slice(0, max - 1) + '…';
+}
+
+/**
+ * Feishu normalizes `content` before validating its length and rejects anything
+ * with no visible characters (99992402 "min len 1"). Whitespace and the Unicode
+ * zero-width family (U+200B–U+200F, U+FEFF, NBSP, etc.) are stripped by Feishu,
+ * so a string of only such characters reads as empty server-side. Note that
+ * `String.prototype.trim` does NOT remove zero-width spaces, so it is not a
+ * sufficient emptiness check. Returns true only when at least one character
+ * would survive that normalization.
+ */
+function hasVisibleChar(text: string): boolean {
+  // \s covers ASCII/Unicode whitespace; the zero-width family and
+  // NBSP/BOM are not matched by \s (and not removed by String.trim),
+  // so strip them explicitly. If nothing survives, Feishu sees length 0.
+  return !!text.replace(/[\s\u00a0\u200b-\u200f\u2028\u2029\ufeff]/g, '');
 }
