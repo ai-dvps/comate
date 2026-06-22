@@ -5,6 +5,7 @@ import { FeishuBotService } from './feishu-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { feishuUserResolver } from './feishu-user-resolver.js';
+import type { SseEvent } from '../types/message.js';
 
 interface MockThread {
   id: string;
@@ -15,9 +16,22 @@ interface MockThread {
 }
 
 interface MockLarkClient {
+  cardkit: {
+    v1: {
+      card: {
+        create: (args: { data: { type: string; data: string } }) => Promise<unknown>;
+        settings: (args: { path: { card_id: string }; data: { settings: string; sequence: number; uuid: string } }) => Promise<unknown>;
+      };
+      cardElement: {
+        content: (args: { path: { card_id: string; element_id: string }; data: { content: string; sequence: number; uuid: string } }) => Promise<unknown>;
+      };
+    };
+  };
   im: {
-    message: {
-      create: (args: { params: { receive_id_type: string }; data: { receive_id: string; msg_type: string; content: string } }) => Promise<unknown>;
+    v1: {
+      message: {
+        create: (args: { params: { receive_id_type: string }; data: { receive_id: string; msg_type: string; content: string } }) => Promise<unknown>;
+      };
     };
   };
 }
@@ -41,7 +55,7 @@ describe('FeishuBotService', () => {
   let userSessions: Array<{ workspaceId: string; feishuUserId: string; sessionId: string }>;
   let resolverCalls: Array<{ workspaceId: string; openId: string }>;
 
-  let larkCalls: Array<{ params: { receive_id_type: string }; data: { receive_id: string; msg_type: string; content: string } }>;
+  let larkCalls: Array<{ method: string; args: unknown }>;
 
   const feishuUserId = 'ou_123';
 
@@ -143,14 +157,36 @@ describe('FeishuBotService', () => {
     // Inject a minimal larkClient so FeishuStreamReply can be instantiated
     (service as unknown as { connection: { larkClient: MockLarkClient } }).connection = {
       larkClient: {
+        cardkit: {
+          v1: {
+            card: {
+              create: async (args: { data: { type: string; data: string } }) => {
+                larkCalls.push({ method: 'card.create', args });
+                return { data: { card_id: 'card-1' } };
+              },
+              settings: async (args: { path: { card_id: string }; data: { settings: string; sequence: number; uuid: string } }) => {
+                larkCalls.push({ method: 'card.settings', args });
+                return { data: {} };
+              },
+            },
+            cardElement: {
+              content: async (args: { path: { card_id: string; element_id: string }; data: { content: string; sequence: number; uuid: string } }) => {
+                larkCalls.push({ method: 'cardElement.content', args });
+                return { data: {} };
+              },
+            },
+          },
+        },
         im: {
-          message: {
-            create: async (args: {
-              params: { receive_id_type: string };
-              data: { receive_id: string; msg_type: string; content: string };
-            }) => {
-              larkCalls.push(args);
-              return { data: { message_id: 'msg-1' } };
+          v1: {
+            message: {
+              create: async (args: {
+                params: { receive_id_type: string };
+                data: { receive_id: string; msg_type: string; content: string };
+              }) => {
+                larkCalls.push({ method: 'im.message.create', args });
+                return { data: { message_id: 'msg-1' } };
+              },
             },
           },
         },
@@ -198,8 +234,18 @@ describe('FeishuBotService', () => {
       const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
       assert.strictEqual(textPosts.length, 0, 'hint should not be a separate text post');
 
-      const streamPosts = thread.posts.filter((p) => p.type === 'stream');
-      assert.strictEqual(streamPosts.length, 1);
+      const createCalls = larkCalls.filter((c) => c.method === 'card.create');
+      assert.strictEqual(createCalls.length, 1, 'should create a streaming card');
+      const cardJson = JSON.parse((createCalls[0].args as { data: { data: string } }).data.data);
+      assert.strictEqual(cardJson.config.streaming_mode, true);
+      assert.ok((cardJson.body.elements[0].content as string).includes('已为你创建新会话'));
+
+      const messageCalls = larkCalls.filter((c) => c.method === 'im.message.create');
+      assert.strictEqual(messageCalls.length, 1, 'should send the card message');
+      assert.strictEqual(
+        (messageCalls[0].args as { data: { msg_type: string } }).data.msg_type,
+        'interactive',
+      );
 
       assert.strictEqual(pushArgs[0], 'session-1');
       assert.strictEqual(pushArgs[1], workspace.id);
@@ -248,64 +294,43 @@ describe('FeishuBotService', () => {
   });
 
   describe('stream delivery after auto-create', () => {
-    it('delivers the answer content even when the hint is posted first', async () => {
-      const streamTexts: string[] = [];
-      const consumingThread: MockThread = {
-        id: 'thread-1',
-        channelId: 'ou_123',
-        isDM: true,
-        posts: [],
-        async post(value) {
-          if (typeof value === 'string') {
-            this.posts.push({ type: 'text', value });
-            return;
-          }
-          if (value && typeof value === 'object' && Symbol.asyncIterator in value) {
-            let accumulated = '';
-            for await (const chunk of value as AsyncIterable<unknown>) {
-              if (typeof chunk === 'string') {
-                accumulated += chunk;
-              } else if (chunk && typeof chunk === 'object' && (chunk as { type?: string }).type === 'markdown_text') {
-                accumulated += (chunk as { text: string }).text;
-              }
-            }
-            streamTexts.push(accumulated);
-            this.posts.push({ type: 'stream', value: accumulated });
-            return;
-          }
-          this.posts.push({ type: 'stream', value });
-        },
-      };
-
-      let capturedHandler: ((id: number, event: import('../types/message.js').SseEvent) => void) | null = null;
+    it('delivers the answer content via CardKit streaming APIs', async () => {
       chatService.pushMessage = async (_sessionId, _workspaceId, _text, _isBot, handler) => {
-        capturedHandler = handler as (id: number, event: import('../types/message.js').SseEvent) => void;
+        const h = handler as ((id: number, event: SseEvent) => void) & { cleanup: () => void };
+        h(1, { type: 'assistant_start' } as SseEvent);
+        h(2, { type: 'text_delta', text: 'Hi' } as SseEvent);
+        h(3, { type: 'text_delta', text: ' there' } as SseEvent);
+        h(4, { type: 'assistant_done' } as SseEvent);
+        h(5, { type: 'result', isError: false } as SseEvent);
       };
 
-      const chatPromise = (service as unknown as { handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleChatMessage(
-        consumingThread,
+      await (service as unknown as { handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleChatMessage(
+        thread,
         feishuUserId,
         'hello',
       );
 
-      // Simulate the runtime emitting the response after pushMessage resolves
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      if (capturedHandler) {
-        capturedHandler(1, { type: 'assistant_start' } as import('../types/message.js').SseEvent);
-        capturedHandler(2, { type: 'text_delta', text: 'Hi' } as import('../types/message.js').SseEvent);
-        capturedHandler(3, { type: 'text_delta', text: ' there' } as import('../types/message.js').SseEvent);
-        capturedHandler(4, { type: 'assistant_done' } as import('../types/message.js').SseEvent);
-        capturedHandler(5, { type: 'result' } as import('../types/message.js').SseEvent);
-      }
-
-      await chatPromise;
-
-      const textPosts = consumingThread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
       assert.strictEqual(textPosts.length, 0, 'hint should not be a separate text post');
 
-      assert.strictEqual(streamTexts.length, 1);
-      assert.ok(streamTexts[0].includes('已为你创建新会话'));
-      assert.ok(streamTexts[0].includes('Hi there'));
+      const createCalls = larkCalls.filter((c) => c.method === 'card.create');
+      assert.strictEqual(createCalls.length, 1);
+      const cardJson = JSON.parse((createCalls[0].args as { data: { data: string } }).data.data);
+      assert.ok((cardJson.body.elements[0].content as string).includes('已为你创建新会话'));
+
+      const contentCalls = larkCalls.filter((c) => c.method === 'cardElement.content');
+      const lastContent = contentCalls[contentCalls.length - 1]?.args as {
+        data: { content: string };
+      };
+      assert.strictEqual(lastContent?.data.content, 'Hi there');
+
+      const settingsCalls = larkCalls.filter((c) => c.method === 'card.settings');
+      assert.strictEqual(settingsCalls.length, 1);
+      const settingsPayload = JSON.parse(
+        (settingsCalls[0].args as { data: { settings: string } }).data.settings,
+      );
+      assert.strictEqual(settingsPayload.config.streaming_mode, false);
+      assert.strictEqual(settingsPayload.config.summary.content, 'Hi there');
     });
   });
 
@@ -316,10 +341,22 @@ describe('FeishuBotService', () => {
         feishuUserId,
       );
 
-      const interactiveCalls = larkCalls.filter((c) => c.data.msg_type === 'interactive');
+      const interactiveCalls = larkCalls.filter(
+        (c) =>
+          c.method === 'im.message.create' &&
+          (c.args as { data: { msg_type: string } }).data.msg_type === 'interactive',
+      );
       assert.strictEqual(interactiveCalls.length, 1, 'should send one interactive card');
-      assert.strictEqual(interactiveCalls[0].params.receive_id_type, 'open_id');
-      assert.strictEqual(interactiveCalls[0].data.receive_id, feishuUserId, 'must use user open_id, not chat_id');
+      assert.strictEqual(
+        (interactiveCalls[0].args as { params: { receive_id_type: string } }).params
+          .receive_id_type,
+        'open_id',
+      );
+      assert.strictEqual(
+        (interactiveCalls[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+        'must use user open_id, not chat_id',
+      );
     });
 
     it('/workspace sends the workspace list card to the user open_id', async () => {
@@ -328,10 +365,22 @@ describe('FeishuBotService', () => {
         feishuUserId,
       );
 
-      const interactiveCalls = larkCalls.filter((c) => c.data.msg_type === 'interactive');
+      const interactiveCalls = larkCalls.filter(
+        (c) =>
+          c.method === 'im.message.create' &&
+          (c.args as { data: { msg_type: string } }).data.msg_type === 'interactive',
+      );
       assert.strictEqual(interactiveCalls.length, 1, 'should send one interactive card');
-      assert.strictEqual(interactiveCalls[0].params.receive_id_type, 'open_id');
-      assert.strictEqual(interactiveCalls[0].data.receive_id, feishuUserId, 'must use user open_id, not chat_id');
+      assert.strictEqual(
+        (interactiveCalls[0].args as { params: { receive_id_type: string } }).params
+          .receive_id_type,
+        'open_id',
+      );
+      assert.strictEqual(
+        (interactiveCalls[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+        'must use user open_id, not chat_id',
+      );
     });
 
     it('/workspace denies non-admin users before sending any card', async () => {
@@ -342,7 +391,11 @@ describe('FeishuBotService', () => {
         feishuUserId,
       );
 
-      const interactiveCalls = larkCalls.filter((c) => c.data.msg_type === 'interactive');
+      const interactiveCalls = larkCalls.filter(
+        (c) =>
+          c.method === 'im.message.create' &&
+          (c.args as { data: { msg_type: string } }).data.msg_type === 'interactive',
+      );
       assert.strictEqual(interactiveCalls.length, 0, 'no card should be sent to non-admins');
       const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
       assert.ok(textPosts.some((text) => String(text).includes('没有权限')));
@@ -402,11 +455,23 @@ describe('FeishuBotService', () => {
         makeActionEvent(payload, null, 'ou_fallback'),
       );
 
-      const textCalls = larkCalls.filter((c) => c.data.msg_type === 'text');
+      const textCalls = larkCalls.filter(
+        (c) =>
+          c.method === 'im.message.create' &&
+          (c.args as { data: { msg_type: string } }).data.msg_type === 'text',
+      );
       assert.strictEqual(textCalls.length, 1);
-      assert.strictEqual(textCalls[0].params.receive_id_type, 'open_id');
-      assert.strictEqual(textCalls[0].data.receive_id, 'ou_fallback');
-      assert.ok(textCalls[0].data.content.includes('会话已切换。'));
+      assert.strictEqual(
+        (textCalls[0].args as { params: { receive_id_type: string } }).params.receive_id_type,
+        'open_id',
+      );
+      assert.strictEqual(
+        (textCalls[0].args as { data: { receive_id: string } }).data.receive_id,
+        'ou_fallback',
+      );
+      assert.ok(
+        (textCalls[0].args as { data: { content: string } }).data.content.includes('会话已切换。'),
+      );
     });
 
     it('replies with an error when the action value is unparseable', async () => {

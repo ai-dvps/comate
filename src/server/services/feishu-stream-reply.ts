@@ -1,5 +1,5 @@
-import type { Thread, StreamChunk } from 'chat';
-import * as lark from '@larksuiteoapi/node-sdk';
+import type { Thread } from 'chat';
+import type * as lark from '@larksuiteoapi/node-sdk';
 import type { SseEvent } from '../types/message.js';
 import {
   buildApprovalCard,
@@ -7,17 +7,11 @@ import {
   type FeishuCard,
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler } from './feishu-card-action-handler.js';
-
-interface QueueItem {
-  value?: StreamChunk;
-  done?: boolean;
-  error?: Error;
-}
+import { FeishuCardStream } from './feishu-card-stream.js';
 
 export interface FeishuStreamReplyHandle {
   handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
-  stream: AsyncIterable<StreamChunk>;
-  finalize: () => void;
+  finalize: () => Promise<void>;
 }
 
 export class FeishuStreamReply {
@@ -29,13 +23,13 @@ export class FeishuStreamReply {
   private onWaiting?: () => void;
   private initialHint?: string;
 
-  private queue: QueueItem[] = [];
-  private pendingResolve: (() => void) | null = null;
+  private controller: FeishuCardStream | null = null;
   private finalized = false;
+  private finishPromise: Promise<void> | null = null;
   private waitingSignaled = false;
   private collecting = false;
-  private buffer = '';
-  private placeholderActive = false;
+  private responseText = '';
+  private visiblePlaceholder = '';
   private seenPendingApprovals = new Set<string>();
   private seenPendingQuestions = new Set<string>();
 
@@ -56,43 +50,53 @@ export class FeishuStreamReply {
     this.initialHint = options?.initialHint;
   }
 
-  start(options?: { onWaiting?: () => void }): FeishuStreamReplyHandle {
+  async start(options?: { onWaiting?: () => void }): Promise<FeishuStreamReplyHandle> {
     this.onWaiting = options?.onWaiting ?? this.onWaiting;
+
+    this.controller = new FeishuCardStream(this.larkClient, this.openId);
+    try {
+      await this.controller.start(this.initialHint ?? '收到，正在处理...');
+    } catch (err) {
+      console.error('[FeishuStreamReply] Failed to start streaming card:', err);
+      this.controller = null;
+      throw err;
+    }
+
     const handler = Object.assign(
       (_id: number, event: SseEvent) => {
         this.handleEvent(event);
       },
       {
         cleanup: () => {
-          this.finalize();
+          void this.finalize();
         },
       },
     );
 
     return {
       handler,
-      stream: this.makeStream(),
       finalize: () => this.finalize(),
     };
   }
 
   private handleEvent(event: SseEvent): void {
     if (this.finalized) {
-      // After the stream has finalized, only approval/question/timeout cards
-      // that were already in-flight may still arrive. Ignore stream events.
       return;
     }
 
     switch (event.type) {
       case 'assistant_start':
         this.collecting = true;
-        this.clearPlaceholder();
+        this.clearPlaceholderState();
+        if (this.responseText && !this.responseText.endsWith('\n\n')) {
+          this.responseText += '\n\n';
+        }
         break;
       case 'text_delta':
         if (this.collecting) {
-          this.clearPlaceholder();
-          this.buffer += event.text;
-          this.enqueue({ type: 'markdown_text', text: event.text });
+          this.clearPlaceholderState();
+          this.responseText += event.text;
+          this.updateController();
         }
         break;
       case 'thinking_start':
@@ -117,23 +121,23 @@ export class FeishuStreamReply {
       case 'error_note':
         this.clearPlaceholder();
         if (event.text) {
-          this.buffer += `\n\n⚠️ ${event.text}`;
-          this.enqueue({ type: 'markdown_text', text: `\n\n⚠️ ${event.text}` });
+          this.responseText += `\n\n⚠️ ${event.text}`;
         }
-        this.finalize();
+        this.updateController();
+        void this.finalize();
         break;
       case 'result':
         this.clearPlaceholder();
         if (event.isError) {
-          const text = '\n\n⚠️ 处理失败，请稍后重试。';
-          this.buffer += text;
-          this.enqueue({ type: 'markdown_text', text });
+          this.responseText += '\n\n⚠️ 处理失败，请稍后重试。';
         }
-        this.finalize();
+        this.updateController();
+        void this.finalize();
         break;
       case 'interrupted':
         this.clearPlaceholder();
-        this.finalize();
+        this.updateController();
+        void this.finalize();
         break;
       case 'pending_approval':
         this.signalWaiting();
@@ -152,23 +156,24 @@ export class FeishuStreamReply {
   }
 
   private setPlaceholder(text: string): void {
-    if (this.placeholderActive) return;
-    this.placeholderActive = true;
-    this.buffer += text;
-    this.enqueue({ type: 'markdown_text', text });
+    if (this.visiblePlaceholder) return;
+    this.visiblePlaceholder = text;
+    this.updateController();
   }
 
   private clearPlaceholder(): void {
-    if (!this.placeholderActive) return;
-    this.placeholderActive = false;
+    if (!this.visiblePlaceholder) return;
+    this.clearPlaceholderState();
+    this.updateController();
   }
 
-  private enqueue(chunk: StreamChunk): void {
-    this.queue.push({ value: chunk });
-    if (this.pendingResolve) {
-      this.pendingResolve();
-      this.pendingResolve = null;
-    }
+  private clearPlaceholderState(): void {
+    this.visiblePlaceholder = '';
+  }
+
+  private updateController(): void {
+    if (!this.controller) return;
+    this.controller.setContent(this.responseText + this.visiblePlaceholder);
   }
 
   private signalWaiting(): void {
@@ -177,37 +182,23 @@ export class FeishuStreamReply {
     this.onWaiting();
   }
 
-  private finalize(): void {
-    if (this.finalized) return;
+  private finalize(): Promise<void> {
+    if (this.finalized) {
+      return this.finishPromise ?? Promise.resolve();
+    }
     this.finalized = true;
     this.collecting = false;
-    this.clearPlaceholder();
-    this.queue.push({ done: true });
-    if (this.pendingResolve) {
-      this.pendingResolve();
-      this.pendingResolve = null;
-    }
-  }
+    this.clearPlaceholderState();
+    this.updateController();
 
-  private async nextItem(): Promise<QueueItem> {
-    while (this.queue.length === 0) {
-      await new Promise<void>((resolve) => {
-        this.pendingResolve = resolve;
-      });
+    if (!this.controller) {
+      // If the controller was never started (should not happen in normal flow),
+      // there is nothing to finalize.
+      return Promise.resolve();
     }
-    return this.queue.shift()!;
-  }
 
-  private async *makeStream(): AsyncIterable<StreamChunk> {
-    // Opening placeholder so the user sees immediate feedback.
-    yield { type: 'markdown_text', text: this.initialHint ?? '收到，正在处理...' };
-
-    while (true) {
-      const item = await this.nextItem();
-      if (item.error) throw item.error;
-      if (item.done) return;
-      if (item.value) yield item.value;
-    }
+    this.finishPromise = this.controller.finish(this.responseText);
+    return this.finishPromise;
   }
 
   private postApprovalCard(event: Extract<SseEvent, { type: 'pending_approval' }>): void {
@@ -243,7 +234,7 @@ export class FeishuStreamReply {
   }
 
   private async sendCard(card: FeishuCard): Promise<void> {
-    await this.larkClient.im.message.create({
+    await this.larkClient.im.v1.message.create({
       params: { receive_id_type: 'open_id' },
       data: {
         receive_id: this.openId,
