@@ -4,6 +4,7 @@ import { basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import Send from './commands/send.js';
+import SendFile from './commands/send-file.js';
 import GetDocContent from './commands/doc/get-doc-content.js';
 import CreateDoc from './commands/doc/create-doc.js';
 import EditDocContent from './commands/doc/edit-doc-content.js';
@@ -29,6 +30,7 @@ import SmartsheetUpdateRecordsAutoFile from './commands/doc/smartsheet-update-re
 
 export const COMMANDS: Record<string, unknown> = {
   send: Send,
+  'send-file': SendFile,
   'doc:get-doc-content': GetDocContent,
   'doc:create-doc': CreateDoc,
   'doc:edit-doc-content': EditDocContent,
