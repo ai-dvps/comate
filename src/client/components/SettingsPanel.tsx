@@ -53,7 +53,7 @@ interface SettingsPanelProps {
 
 type SettingsTab = 'general' | 'appearance' | 'workspace' | 'providers'
 
-type WorkspaceSection = 'basic' | 'wecom' | 'skills' | 'mcp' | 'hooks'
+type WorkspaceSection = 'basic' | 'wecom' | 'feishu' | 'skills' | 'mcp' | 'hooks'
 
 interface WorkspaceFormState {
   name: string
@@ -72,6 +72,13 @@ interface WorkspaceFormState {
   wecomToolPermissions: ToolPermissionPolicy | undefined
   wecomBotIsolation: WeComBotIsolationSettings
   promptHistoryRetentionDays: string
+  feishuAppId: string
+  feishuAppSecret: string
+  feishuEncryptKey: string
+  feishuVerificationToken: string
+  feishuBotEnabled: boolean
+  feishuBotName: string
+  feishuAdminUserIds: string[]
 }
 
 function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
@@ -95,6 +102,13 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     wecomToolPermissions: workspace.settings?.wecomToolPermissions as ToolPermissionPolicy | undefined,
     wecomBotIsolation: (workspace.settings?.wecomBotIsolation as WeComBotIsolationSettings | undefined) ?? { ...DEFAULT_ISOLATION_SETTINGS },
     promptHistoryRetentionDays: String(workspace.settings?.promptHistoryRetentionDays ?? 30),
+    feishuAppId: (workspace.settings?.feishuAppId as string) || '',
+    feishuAppSecret: (workspace.settings?.feishuAppSecret as string) || '',
+    feishuEncryptKey: (workspace.settings?.feishuEncryptKey as string) || '',
+    feishuVerificationToken: (workspace.settings?.feishuVerificationToken as string) || '',
+    feishuBotEnabled: (workspace.settings?.feishuBotEnabled as boolean) || false,
+    feishuBotName: (workspace.settings?.feishuBotName as string) || '',
+    feishuAdminUserIds: (workspace.settings?.feishuAdminUserIds as string[] | undefined) ?? [],
   }
 }
 
@@ -298,6 +312,13 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           wecomToolPermissions: ws.wecomToolPermissions,
           wecomBotIsolation: ws.wecomBotIsolation,
           promptHistoryRetentionDays,
+          feishuAppId: ws.feishuAppId || undefined,
+          feishuAppSecret: ws.feishuAppSecret || undefined,
+          feishuEncryptKey: ws.feishuEncryptKey || undefined,
+          feishuVerificationToken: ws.feishuVerificationToken || undefined,
+          feishuBotEnabled: ws.feishuBotEnabled,
+          feishuBotName: ws.feishuBotName || undefined,
+          feishuAdminUserIds: ws.feishuAdminUserIds,
         },
         skills: ws.skills,
         mcpServers: ws.mcpServers.map((m) => ({
@@ -1188,6 +1209,7 @@ function WorkspaceTabShell({
   const sections: { id: WorkspaceSection; label: string }[] = [
     { id: 'basic', label: t('workspaceSections.basic') },
     { id: 'wecom', label: t('workspaceSections.wecom') },
+    { id: 'feishu', label: t('workspaceSections.feishu') },
     { id: 'skills', label: t('workspaceSections.skills') },
     { id: 'mcp', label: t('workspaceSections.mcp') },
     { id: 'hooks', label: t('workspaceSections.hooks') },
@@ -1251,6 +1273,9 @@ function WorkspaceTabShell({
               )}
               {activeSection === 'wecom' && (
                 <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} onSave={onSave} />
+              )}
+              {activeSection === 'feishu' && (
+                <FeishuBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
               )}
               {activeSection === 'skills' && (
                 <SkillsRedirectCard onOpen={() => setShowSkillsPage(true)} />
@@ -1348,6 +1373,362 @@ interface WeComWorkspaceUser {
 }
 
 type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions' | 'isolation' | 'queue'
+
+type FeishuSubTab = 'connection' | 'users'
+
+interface FeishuWorkspaceUser {
+  openId: string
+  userId?: string
+  name?: string
+  firstSeenAt: string
+  lastSeenAt: string
+  namePending: boolean
+}
+
+export function FeishuBotSection({
+  state,
+  onUpdate,
+  workspaceId,
+}: {
+  state: WorkspaceFormState
+  onUpdate: (updates: Partial<WorkspaceFormState>) => void
+  workspaceId: string
+}) {
+  const { t } = useTranslation('settings')
+  const [activeSubTab, setActiveSubTab] = useState<FeishuSubTab>('connection')
+  const [showAppSecret, setShowAppSecret] = useState(false)
+  const [showEncryptKey, setShowEncryptKey] = useState(false)
+  const [showVerificationToken, setShowVerificationToken] = useState(false)
+  const [status, setStatus] = useState<string>('unknown')
+  const [newAdminId, setNewAdminId] = useState('')
+  const [users, setUsers] = useState<FeishuWorkspaceUser[]>([])
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false)
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [usersRetryCount, setUsersRetryCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/feishu/status`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled) setStatus(data.status || 'unknown')
+      } catch {
+        if (!cancelled) setStatus('unknown')
+      }
+    }
+    fetchStatus()
+    const interval = setInterval(fetchStatus, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [workspaceId])
+
+  // Reset sub-tab and users state when the selected workspace changes.
+  useEffect(() => {
+    setActiveSubTab('connection')
+    setUsers([])
+    setUsersError(null)
+    setUsersRetryCount(0)
+  }, [workspaceId])
+
+  // Fetch and poll the Feishu workspace user directory.
+  useEffect(() => {
+    if (activeSubTab !== 'users') return
+
+    let cancelled = false
+    const fetchUsers = async () => {
+      setIsLoadingUsers(true)
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/feishu/users`)
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        const data = (await res.json()) as { users?: FeishuWorkspaceUser[] }
+        if (!cancelled) {
+          setUsers(data.users || [])
+          setUsersError(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setUsersError(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        if (!cancelled) setIsLoadingUsers(false)
+      }
+    }
+
+    fetchUsers()
+    const interval = setInterval(fetchUsers, 10000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [workspaceId, activeSubTab, usersRetryCount])
+
+  const statusColor =
+    status === 'connected'
+      ? 'text-success'
+      : status === 'error'
+        ? 'text-destructive'
+        : 'text-text-tertiary'
+
+  const addAdminId = () => {
+    const value = newAdminId.trim()
+    if (!value || state.feishuAdminUserIds.includes(value)) return
+    onUpdate({ feishuAdminUserIds: [...state.feishuAdminUserIds, value] })
+    setNewAdminId('')
+  }
+
+  const removeAdminId = (value: string) => {
+    onUpdate({ feishuAdminUserIds: state.feishuAdminUserIds.filter((id) => id !== value) })
+  }
+
+  const subTabs: { id: FeishuSubTab; label: string }[] = [
+    { id: 'connection', label: t('feishu.tabs.connection') },
+    { id: 'users', label: t('feishu.tabs.users') },
+  ]
+
+  return (
+    <div className="space-y-0">
+      <div className="flex border-b border-border/50 flex-shrink-0 -mx-6 px-6">
+        {subTabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveSubTab(tab.id)}
+            className={`py-2 px-3 text-[11px] font-medium transition-all ${
+              activeSubTab === tab.id
+                ? 'text-text-primary border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeSubTab === 'connection' && (
+        <div className="max-w-xl space-y-4 pt-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary">
+                {t('feishu.enableBot')}
+              </label>
+              <p className="text-[10px] text-text-tertiary mt-0.5">{t('feishu.enableBotHint')}</p>
+            </div>
+            <button
+              onClick={() => onUpdate({ feishuBotEnabled: !state.feishuBotEnabled })}
+              className={`relative w-9 h-5 rounded-full transition-colors ${
+                state.feishuBotEnabled ? 'bg-accent' : 'bg-border'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  state.feishuBotEnabled ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.botName')}</label>
+            <input
+              value={state.feishuBotName}
+              onChange={(e) => onUpdate({ feishuBotName: e.target.value })}
+              placeholder={t('feishu.botNamePlaceholder')}
+              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">{t('feishu.botNameHint')}</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.appId')}</label>
+            <input
+              value={state.feishuAppId}
+              onChange={(e) => onUpdate({ feishuAppId: e.target.value })}
+              placeholder={t('feishu.appIdPlaceholder')}
+              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.appSecret')}</label>
+            <div className="flex gap-2">
+              <input
+                type={showAppSecret ? 'text' : 'password'}
+                value={state.feishuAppSecret}
+                onChange={(e) => onUpdate({ feishuAppSecret: e.target.value })}
+                placeholder={t('feishu.appSecretPlaceholder')}
+                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+              />
+              <button
+                onClick={() => setShowAppSecret(!showAppSecret)}
+                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
+              >
+                {showAppSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.encryptKey')}</label>
+            <div className="flex gap-2">
+              <input
+                type={showEncryptKey ? 'text' : 'password'}
+                value={state.feishuEncryptKey}
+                onChange={(e) => onUpdate({ feishuEncryptKey: e.target.value })}
+                placeholder={t('feishu.encryptKeyPlaceholder')}
+                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+              />
+              <button
+                onClick={() => setShowEncryptKey(!showEncryptKey)}
+                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
+              >
+                {showEncryptKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.verificationToken')}</label>
+            <div className="flex gap-2">
+              <input
+                type={showVerificationToken ? 'text' : 'password'}
+                value={state.feishuVerificationToken}
+                onChange={(e) => onUpdate({ feishuVerificationToken: e.target.value })}
+                placeholder={t('feishu.verificationTokenPlaceholder')}
+                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+              />
+              <button
+                onClick={() => setShowVerificationToken(!showVerificationToken)}
+                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
+              >
+                {showVerificationToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.adminUsers.label')}</label>
+            <p className="text-[10px] text-text-tertiary mb-2">{t('feishu.adminUsers.hint')}</p>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {state.feishuAdminUserIds.map((id) => (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] bg-bg border border-border rounded"
+                >
+                  <code className="font-mono text-text-secondary">{id}</code>
+                  <button
+                    type="button"
+                    onClick={() => removeAdminId(id)}
+                    className="text-text-tertiary hover:text-destructive"
+                    aria-label={t('feishu.adminUsers.remove')}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={newAdminId}
+                onChange={(e) => setNewAdminId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    addAdminId()
+                  }
+                }}
+                placeholder={t('feishu.adminUsers.placeholder')}
+                className="flex-1 px-3 py-1.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+              />
+              <button
+                type="button"
+                onClick={addAdminId}
+                className="px-3 py-1.5 text-xs font-medium bg-accent text-accent-foreground rounded hover:bg-accent-hover"
+              >
+                {t('feishu.adminUsers.add')}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-2">
+            <span className="text-[11px] font-medium text-text-secondary">{t('feishu.status')}</span>
+            <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
+          </div>
+
+          <div className="text-[10px] text-text-tertiary pt-2">
+            <p>{t('feishu.botSessionNote')}</p>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'users' && (
+        <div className="max-w-xl pt-4">
+          <h3 className="text-xs font-medium text-text-secondary mb-3">{t('feishu.usersTitle')}</h3>
+
+          {isLoadingUsers && users.length === 0 && (
+            <p className="text-[11px] text-text-tertiary">{t('feishu.usersLoading')}</p>
+          )}
+
+          {usersError && (
+            <div className="space-y-2">
+              <p className="text-[11px] text-destructive">
+                {t('feishu.usersError')}: {usersError}
+              </p>
+              <button
+                type="button"
+                onClick={() => setUsersRetryCount((c) => c + 1)}
+                className="px-3 py-1.5 text-[11px] font-medium bg-accent text-accent-foreground rounded hover:bg-accent-hover"
+              >
+                {t('feishu.usersRetry')}
+              </button>
+            </div>
+          )}
+
+          {!isLoadingUsers && !usersError && users.length === 0 && (
+            <p className="text-[11px] text-text-tertiary">{t('feishu.usersEmpty')}</p>
+          )}
+
+          {users.length > 0 && (
+            <div className="space-y-2">
+              {users.map((user) => (
+                <div
+                  key={user.openId}
+                  className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-text-primary">
+                      {user.name || user.openId}
+                    </span>
+                    {user.namePending && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
+                        {t('feishu.userPending')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-text-tertiary mt-1 break-all">
+                    {user.openId}
+                  </div>
+                  <div className="flex items-center gap-4 mt-1">
+                    <span className="text-[10px] text-text-tertiary">
+                      {t('feishu.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
+                    </span>
+                    <span className="text-[10px] text-text-tertiary">
+                      {t('feishu.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function WeComBotSection({
   state,

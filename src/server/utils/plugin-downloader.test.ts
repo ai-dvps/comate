@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs';
@@ -19,7 +20,8 @@ describe('plugin-downloader', { concurrency: false }, () => {
       join(pluginDir, '.claude-plugin', 'plugin.json'),
       JSON.stringify({ name: 'wecom', version: '0.1.0' }),
     );
-    writeFileSync(join(pluginDir, 'SKILL.md'), '# send-wecom-msg\n');
+    writeFileSync(join(pluginDir, 'SKILL.md'), '# send-wecom-msg
+');
 
     const downloader = new PluginDownloader({ cacheDir });
     const result = await downloader.downloadLocal('wecom', pluginDir);

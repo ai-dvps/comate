@@ -326,6 +326,10 @@ export class SseEmitter {
     this.send({ type: 'approval_resolved', requestId });
   }
 
+  emitApprovalTimeout(requestId: string): void {
+    this.send({ type: 'approval_timeout', requestId });
+  }
+
   emitAutoApproval(toolUseId: string, toolName: string, mode: 'auto' | 'readonly'): void {
     this.send({ type: 'auto_approval', toolUseId, toolName, mode });
   }

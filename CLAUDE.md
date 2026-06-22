@@ -11,6 +11,7 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 | `npm run tauri:dev` | Start the Tauri desktop app (also launches Vite) |
 | `npm run lint` | Run ESLint on `.ts`/`.tsx` |
 | `npm run test:client` | Run jsdom-based component/hook tests |
+| `npm run test:server` | Run `node:test` server tests (excludes `src/server/vendor/`) |
 | `npm run test:browser` | Run Playwright browser tests |
 | `npm run release` | Build sidecar + Tauri production bundle |
 
@@ -117,7 +118,8 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 
 - **jsdom tests**: Component and hook tests under `src/client/{components,hooks}/**/*.test.tsx`.
 - **Browser tests**: `*.browser.test.tsx` files run with Playwright + Vitest browser mode.
-- **Server/lib tests**: Some server utilities and `src/client/lib` files use `node:test` and are excluded from Vitest.
+- **Server/lib tests**: Some server utilities and `src/client/lib` files use `node:test` and are excluded from Vitest. Run them with `npm run test:server`.
+- **Server SQLite isolation (mandatory)**: Every server test must import `test-utils/test-env` as its **first** statement — it redirects SQLite away from the production `data.db` (via `COMATE_DATA_DIR`) and is enforced by a lint rule plus a runtime guard. Never construct `SqliteStore()` against the default path in a test; use `createIsolatedStore()` or `new SqliteStore(':memory:')`, and reset with `store.resetData()` rather than reaching into the private `db`. See `docs/solutions/conventions/use-isolated-test-database-for-comate.md`.
 - Mock globals in `vitest.setup.ts`: `ResizeObserver`, `matchMedia`, `scrollIntoView`.
 
 ## Desktop / Tauri Notes

@@ -134,10 +134,14 @@ export class ChatService {
 
     // Identify bot sessions from the user mapping table
     const wecomMappings = workspaceStore.listWecomSessions(workspaceId);
-    const botSessionIds = new Set(wecomMappings.map((m) => m.sessionId));
+    const feishuMappings = workspaceStore.listFeishuSessionsForWorkspace(workspaceId);
+    const botSessionIds = new Set([
+      ...wecomMappings.map((m) => m.sessionId),
+      ...feishuMappings.map((m) => m.sessionId),
+    ]);
     for (const session of allSessions) {
       if (botSessionIds.has(session.id)) {
-        session.source = 'wecom';
+        session.source = wecomMappings.some((m) => m.sessionId === session.id) ? 'wecom' : 'feishu';
       }
     }
 
@@ -563,6 +567,7 @@ export class ChatService {
     workspaceId: string,
     isBotSession?: boolean,
     botEventHandler?: (id: number, event: import('../types/message.js').SseEvent) => void,
+    botUserId?: string,
   ): Promise<SessionRuntime> {
     const existing = this.runtimes.get(sessionId);
     if (existing && !existing.isClosed()) {
@@ -616,7 +621,7 @@ export class ChatService {
         }
       }
 
-      const options = this.buildSdkOptions(workspace, session, isBotSession);
+      const options = this.buildSdkOptions(workspace, session, isBotSession, botUserId);
       await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
       const runtime = SessionRuntime.open(
         sessionId,
@@ -737,8 +742,9 @@ export class ChatService {
     message: string,
     isBotSession?: boolean,
     botEventHandler?: (id: number, event: SseEvent) => void,
+    botUserId?: string,
   ): Promise<void> {
-    const runtime = await this.getOrCreateRuntime(sessionId, workspaceId, isBotSession, botEventHandler);
+    const runtime = await this.getOrCreateRuntime(sessionId, workspaceId, isBotSession, botEventHandler, botUserId);
 
     // Promote a draft session to a real SDK session on first message. The SDK
     // creates the persistent session when this message is pushed, so clear the
@@ -917,6 +923,7 @@ export class ChatService {
     workspace: Workspace,
     session: ChatSession,
     isBotSession?: boolean,
+    botUserId?: string,
   ): import('@anthropic-ai/claude-agent-sdk').Options {
     const claudeSettings = loadClaudeSettings();
     let { env } = buildClaudeEnv(claudeSettings);
@@ -1047,12 +1054,14 @@ export class ChatService {
       // because the SDK child needs them to call the API.
       env = sanitizeBotEnv(env);
 
-      // Resolve the canonical WeCom user identity for this bot session. If the
-      // session has no mapping, fail closed on identity-sensitive tools.
+      // Resolve the canonical bot user identity for this session. Prefer the
+      // explicitly supplied Feishu user ID, otherwise fall back to the existing
+      // WeCom user mapping for backward compatibility.
       const wecomUserId = workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
-      const canonicalUserId = wecomUserId
-        ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId)
-        : undefined;
+      const canonicalUserId = botUserId
+        ?? (wecomUserId
+          ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId)
+          : undefined);
 
       let pathContext: import('./bot-path-policy.js').PathPolicyContext | undefined;
       let bashContext: import('./bot-bash-policy.js').BashPolicyContext | undefined;

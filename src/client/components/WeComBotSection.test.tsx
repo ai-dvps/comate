@@ -56,6 +56,12 @@ const DEFAULT_STATE = {
     bashWhitelist: [],
   },
   promptHistoryRetentionDays: '30',
+  feishuAppId: '',
+  feishuAppSecret: '',
+  feishuEncryptKey: '',
+  feishuVerificationToken: '',
+  feishuBotEnabled: false,
+  feishuAdminUserIds: [],
 };
 
 describe('WeComBotSection', () => {

@@ -112,6 +112,7 @@
   "workspaceSections": {
     "basic": "基本信息",
     "wecom": "企业微信机器人",
+    "feishu": "飞书机器人",
     "skills": "技能",
     "mcp": "MCP",
     "hooks": "钩子"
@@ -283,6 +284,42 @@
       "freezeHint": "更改在下一次机器人会话生效，不影响正在进行的对话。"
     }
   },
+  "feishu": {
+    "enableBot": "启用飞书机器人",
+    "enableBotHint": "启用后，此工作区可绑定到一个飞书机器人。",
+    "botName": "机器人名称",
+    "botNamePlaceholder": "我的机器人",
+    "botNameHint": "此机器人的友好名称。",
+    "appId": "App ID",
+    "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
+    "appSecret": "App Secret",
+    "appSecretPlaceholder": "your-app-secret",
+    "encryptKey": "Encrypt Key",
+    "encryptKeyPlaceholder": "your-encrypt-key",
+    "verificationToken": "Verification Token",
+    "verificationTokenPlaceholder": "your-verification-token",
+    "status": "状态：",
+    "usersTitle": "飞书用户",
+    "usersEmpty": "暂无飞书用户向此工作区发送消息。",
+    "userPending": "待解析",
+    "firstSeen": "首次出现",
+    "lastSeen": "最近出现",
+    "usersLoading": "正在加载飞书用户...",
+    "usersError": "加载飞书用户失败",
+    "usersRetry": "重试",
+    "botSessionNote": "机器人会话遵循此工作区的工具权限策略（见企业微信机器人 > 权限选项卡）。保存更改以连接或断开。",
+    "tabs": {
+      "connection": "连接",
+      "users": "用户"
+    },
+    "adminUsers": {
+      "label": "管理员用户",
+      "hint": "允许切换机器人活动工作区的飞书用户 ID。",
+      "placeholder": "例如 ou_xxxxxxxxxxxxxxxx",
+      "add": "添加",
+      "remove": "移除"
+    }
+  },
   "unsavedDialog": {
     "title": "有未保存的更改",
     "message": "您有未保存的更改。关闭前是否保存？",
@@ -430,6 +467,12 @@
     "botDisconnected": "企业微信机器人已断开",
     "botError": "企业微信机器人错误",
     "botNotConfigured": "企业微信机器人未配置",
+    "botConnecting": "企业微信机器人连接中",
+    "feishuBotConnected": "飞书机器人已连接",
+    "feishuBotDisconnected": "飞书机器人已断开",
+    "feishuBotError": "飞书机器人错误",
+    "feishuBotNotConfigured": "飞书机器人未配置",
+    "feishuBotConnecting": "飞书机器人连接中",
     "closeTab": "关闭 {{name}}",
     "searchTabs": "搜索标签页...",
     "noSearchResults": "没有匹配的标签页",

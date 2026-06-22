@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 /**
  * Tests for the Skills API route handlers.
  *

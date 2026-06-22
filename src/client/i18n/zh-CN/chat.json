@@ -87,6 +87,7 @@
   "noArchivedSessions": "没有已归档会话。",
   "noWipSessions": "没有进行中的会话。",
   "wecomBotSession": "企业微信机器人会话",
+  "feishuBotSession": "飞书机器人会话",
   "close": "关闭",
   "toolCount_one": "{{count}} 个工具",
   "toolCount_other": "{{count}} 个工具",
