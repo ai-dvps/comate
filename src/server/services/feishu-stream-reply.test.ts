@@ -132,7 +132,9 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
 
     handler(1, { type: 'tool_result' } as SseEvent);
     await sleep(150);
-    assert.strictEqual(lastContentCall()?.data.content, '');
+    // Feishu rejects empty content, so the placeholder is replaced with an
+    // invisible zero-width space until the next text delta arrives.
+    assert.strictEqual(lastContentCall()?.data.content, '​');
 
     handler(1, { type: 'text_delta', text: 'result' } as SseEvent);
     await sleep(150);
@@ -150,7 +152,9 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
 
     handler(1, { type: 'subagent_done' } as SseEvent);
     await sleep(150);
-    assert.strictEqual(lastContentCall()?.data.content, '');
+    // Feishu rejects empty content, so the placeholder is replaced with an
+    // invisible zero-width space until the next text delta arrives.
+    assert.strictEqual(lastContentCall()?.data.content, '​');
   });
 
   it('finalizes with only the answer text on result', async () => {

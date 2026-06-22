@@ -156,7 +156,7 @@ export class FeishuCardStream {
 
   setContent(text: string): void {
     if (this.failed || this.finalized || !this.cardId) return;
-    if (text === this.pendingText) return;
+    if (!text || text === this.pendingText) return;
 
     const deltaChars = Math.max(1, Math.abs(text.length - this.pendingText.length));
     this.pendingText = text;
