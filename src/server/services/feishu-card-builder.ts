@@ -16,7 +16,6 @@ export interface FeishuCard {
 export interface StreamingAnswerCard {
   schema: '2.0';
   config: {
-    wide_screen_mode: boolean;
     streaming_mode: boolean;
     summary?: { content: string };
     streaming_config: {
@@ -251,7 +250,6 @@ export function buildStreamingAnswerCard(initialText: string): StreamingAnswerCa
   return {
     schema: '2.0',
     config: {
-      wide_screen_mode: true,
       streaming_mode: true,
       summary: { content: truncateStreamingSummary(initialText) },
       streaming_config: {
