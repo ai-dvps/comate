@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  server-tests:
+    name: Server tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # `npm ci` installs better-sqlite3, whose prebuilt binary for the runner
+      # arch is fetched automatically — no native rebuild step needed in plain
+      # CI (COMATE_SIDECAR is unset, so getNativeBindingPath() is unused).
+      - name: Install dependencies
+        run: npm ci
+
+      # Runs every server test (excluding vendored tests under
+      # src/server/vendor). This also exercises the test-env runtime guard
+      # (src/server/test-utils/test-env.ts) and the ESLint test-env-first rule
+      # is enforced via `npm run lint`.
+      - name: Run server tests
+        run: npm run test:server
+
+      - name: Run client tests
+        run: npm run test:client
