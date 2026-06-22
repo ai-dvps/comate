@@ -142,14 +142,6 @@ export default function SessionListItem({
                 {t('draft')}
               </span>
             )}
-            {session.source === 'wecom' && (
-              <img
-                src="/wecom-icon.svg"
-                alt="WeCom"
-                className="w-3 h-3 flex-shrink-0"
-                title={t('wecomBotSession')}
-              />
-            )}
             {session.source === 'feishu' && (
               <span
                 className="px-1 py-0.5 text-[9px] bg-blue-500/20 text-blue-400 rounded flex-shrink-0"
@@ -188,6 +180,14 @@ export default function SessionListItem({
                 )}
                 {t(`approvalMode.${session.approvalMode}`)}
               </span>
+            )}
+            {session.source === 'wecom' && (
+              <img
+                src="/wecom-icon.svg"
+                alt="WeCom"
+                className="w-3 h-3 flex-shrink-0"
+                title={t('wecomBotSession')}
+              />
             )}
             <span className="text-[10px] text-text-tertiary/60">
               {getSessionTimestamp(session, t)}
