@@ -1,5 +1,9 @@
 import type { ChatSession } from '../stores/chat-store'
 
+export function isBotSession(source?: string): boolean {
+  return source === 'wecom' || source === 'feishu'
+}
+
 export function getSessionDisplayName(session: ChatSession): string {
   const name = session.customTitle || session.summary || session.name
   if (session.source === 'wecom' && name.startsWith('WeCom: ')) {

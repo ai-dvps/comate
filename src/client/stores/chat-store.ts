@@ -5,6 +5,7 @@ import type { ChatMessage, MessagePart, QuestionPayload, SubagentMessage, Subage
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import { diagLog, diagWarn } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
+import { isBotSession } from '../lib/session-filter'
 
 export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
 
@@ -2430,7 +2431,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Auto-subscribe when switching to a session (skip for bot sessions)
     if (sessionId) {
       const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
-      if (session?.source !== 'wecom') {
+      if (session && !isBotSession(session.source)) {
         subscribeToSession(set, get, workspaceId, sessionId)
       }
     }
@@ -2535,7 +2536,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: (workspaceId: string, sessionId: string, content: string) => {
     // Defensive guard: do not send messages to bot sessions
     const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
-    if (session?.source === 'wecom') {
+    if (session && isBotSession(session.source)) {
       console.warn('[sendMessage] blocked: cannot send messages to bot sessions')
       return
     }
@@ -2844,7 +2845,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   refreshBotMessages: async (workspaceId: string, sessionId: string) => {
     const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
-    if (session?.source !== 'wecom') {
+    if (!session || !isBotSession(session.source)) {
       console.warn('[refreshBotMessages] blocked: only bot sessions support refresh')
       return
     }
