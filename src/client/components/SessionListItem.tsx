@@ -85,12 +85,16 @@ export default function SessionListItem({
       )}
     >
       <div className="flex items-start gap-2">
-        <MessageSquare
-          className={cn(
-            'w-3.5 h-3.5 flex-shrink-0 mt-0.5',
-            isActive ? 'text-accent' : 'text-text-tertiary',
-          )}
-        />
+        {rowState === 'idle' ? (
+          <MessageSquare
+            className={cn(
+              'w-3.5 h-3.5 flex-shrink-0 mt-0.5',
+              isActive ? 'text-accent' : 'text-text-tertiary',
+            )}
+          />
+        ) : (
+          <StatusIndicator state={rowState} className="mt-0.5" />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {editingSessionId === session.id ? (
@@ -145,7 +149,6 @@ export default function SessionListItem({
                 Feishu
               </span>
             )}
-            {rowState !== 'idle' && <StatusIndicator state={rowState} />}
           </div>
           <p className="text-[11px] text-text-tertiary truncate mt-0.5">{preview}</p>
           <div className="flex items-center gap-1.5 mt-1">
