@@ -174,4 +174,22 @@ describe('SessionList', () => {
 
     expect(mockStore.forkSession).toHaveBeenCalledWith('ws1', 's1')
   })
+
+  it('renders the bot source icon on bot-sourced sessions and no icon on gui sessions', () => {
+    mockStore.sessions.ws1 = [
+      makeSession({ id: 'feishu-s', name: 'Feishu Chat', source: 'feishu' }),
+      makeSession({ id: 'wecom-s', name: 'WeCom Chat', source: 'wecom' }),
+      makeSession({ id: 'gui-s', name: 'Gui Chat' }),
+    ]
+
+    renderWithI18n(<SessionList workspaceId="ws1" />)
+
+    // Feishu and WeCom icons render for their respective sources.
+    expect(screen.getByAltText('Feishu')).toBeInTheDocument()
+    expect(screen.getByAltText('WeCom')).toBeInTheDocument()
+    // Exactly two bot icons — a gui/default session renders neither.
+    expect(screen.getAllByAltText(/^(Feishu|WeCom)$/)).toHaveLength(2)
+    // The old Feishu text badge is gone.
+    expect(screen.queryByText('Feishu')).not.toBeInTheDocument()
+  })
 })

@@ -141,14 +141,6 @@ export default function SessionListItem({
                 </button>
               </>
             )}
-            {session.source === 'feishu' && (
-              <span
-                className="px-1 py-0.5 text-[9px] bg-blue-500/20 text-blue-400 rounded flex-shrink-0"
-                title={t('feishuBotSession')}
-              >
-                Feishu
-              </span>
-            )}
           </div>
           <p className="text-[11px] text-text-tertiary truncate mt-0.5">{preview}</p>
           <div className="flex items-center gap-1.5 mt-1">
@@ -190,6 +182,14 @@ export default function SessionListItem({
                 alt="WeCom"
                 className="w-3 h-3 flex-shrink-0"
                 title={t('wecomBotSession')}
+              />
+            )}
+            {session.source === 'feishu' && (
+              <img
+                src="/feishu-icon.svg"
+                alt="Feishu"
+                className="w-3 h-3 flex-shrink-0"
+                title={t('feishuBotSession')}
               />
             )}
             <span className="text-[10px] text-text-tertiary/60">

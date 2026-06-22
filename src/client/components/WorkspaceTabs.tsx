@@ -7,16 +7,19 @@ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import StatusIndicator from './StatusIndicator'
 import ConfirmDialog from './ConfirmDialog'
 
-type BotStatus = 'connected' | 'disconnected' | 'error' | 'not_configured'
+type BotStatus = 'connected' | 'disconnected' | 'error' | 'not_configured' | 'connecting'
 
-function getBotStatusLabel(status: BotStatus, t: (key: string) => string): string {
-  const labels: Record<BotStatus, string> = {
-    connected: t('workspaceTabs.botConnected'),
-    disconnected: t('workspaceTabs.botDisconnected'),
-    error: t('workspaceTabs.botError'),
-    not_configured: t('workspaceTabs.botNotConfigured'),
+type BotPrefix = 'bot' | 'feishuBot'
+
+function getBotStatusLabel(status: BotStatus, t: (key: string) => string, prefix: BotPrefix): string {
+  const keyMap: Record<BotStatus, string> = {
+    connected: `${prefix}Connected`,
+    disconnected: `${prefix}Disconnected`,
+    error: `${prefix}Error`,
+    not_configured: `${prefix}NotConfigured`,
+    connecting: `${prefix}Connecting`,
   }
-  return labels[status]
+  return t(`workspaceTabs.${keyMap[status]}`)
 }
 
 const BOT_STATUS_CLASS: Record<BotStatus, string> = {
@@ -24,6 +27,7 @@ const BOT_STATUS_CLASS: Record<BotStatus, string> = {
   disconnected: 'opacity-40 grayscale',
   error: 'opacity-100',
   not_configured: 'opacity-40 grayscale',
+  connecting: 'opacity-100',
 }
 
 const BOT_STATUS_DOT: Record<BotStatus, string> = {
@@ -31,26 +35,76 @@ const BOT_STATUS_DOT: Record<BotStatus, string> = {
   disconnected: 'bg-text-tertiary',
   error: 'bg-warning',
   not_configured: 'bg-text-tertiary',
+  // Blue brand dot + pulse so the in-flight state reads as "working" without
+  // relying on color alone (the rest of the dot language is green/grey/amber).
+  connecting: 'bg-blue-500 animate-pulse',
 }
 
 interface WorkspaceItem {
   id: string
   name: string
-  settings: { wecomBotEnabled?: boolean }
+  settings: { wecomBotEnabled?: boolean; feishuBotEnabled?: boolean }
+}
+
+interface BotStatusIconProps {
+  iconSrc: string
+  alt: string
+  status: BotStatus
+  title: string
+}
+
+/**
+ * Bot status icon + status-dot overlay. Shared by the WeCom and Feishu tab
+ * indicators. The wrapper span carries the accessible name (bot + status) so
+ * screen readers announce the status rather than the word "image"; the inner
+ * img is decorative.
+ */
+function BotStatusIcon({ iconSrc, alt, status, title }: BotStatusIconProps) {
+  return (
+    <span
+      className="relative inline-flex flex-shrink-0"
+      title={title}
+      role="img"
+      aria-label={title}
+    >
+      <img
+        src={iconSrc}
+        alt={alt}
+        aria-hidden="true"
+        className={`w-3 h-3 flex-shrink-0 ${BOT_STATUS_CLASS[status]}`}
+      />
+      <span
+        className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${BOT_STATUS_DOT[status]} ring-1 ring-bg`}
+      />
+    </span>
+  )
 }
 
 interface TabPillProps {
   ws: WorkspaceItem
   isActive: boolean
   counts: { needsMe: number; finishedUnread: number; streaming: number }
-  botStatus?: BotStatus
-  botStatusTitle?: string
+  wecomStatus?: BotStatus
+  feishuStatus?: BotStatus
+  wecomTitle?: string
+  feishuTitle?: string
   onClick: () => void
   onClose?: (e: React.MouseEvent) => void
   closeLabel?: string
 }
 
-function TabPill({ ws, isActive, counts, botStatus, botStatusTitle, onClick, onClose, closeLabel }: TabPillProps) {
+function TabPill({
+  ws,
+  isActive,
+  counts,
+  wecomStatus,
+  feishuStatus,
+  wecomTitle,
+  feishuTitle,
+  onClick,
+  onClose,
+  closeLabel,
+}: TabPillProps) {
   return (
     <div
       data-tab-id={ws.id}
@@ -65,17 +119,11 @@ function TabPill({ ws, isActive, counts, botStatus, botStatusTitle, onClick, onC
     >
       <Folder className={`w-3 h-3 flex-shrink-0 ${isActive ? 'text-accent' : 'text-text-tertiary'}`} />
       <span className="truncate max-w-[100px]">{ws.name}</span>
-      {botStatus && (
-        <span className="relative inline-flex flex-shrink-0" title={botStatusTitle}>
-          <img
-            src="/wecom-icon.svg"
-            alt="WeCom"
-            className={`w-3 h-3 flex-shrink-0 ${BOT_STATUS_CLASS[botStatus]}`}
-          />
-          <span
-            className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${BOT_STATUS_DOT[botStatus]} ring-1 ring-bg`}
-          />
-        </span>
+      {wecomStatus && wecomTitle && (
+        <BotStatusIcon iconSrc="/wecom-icon.svg" alt="WeCom" status={wecomStatus} title={wecomTitle} />
+      )}
+      {feishuStatus && feishuTitle && (
+        <BotStatusIcon iconSrc="/feishu-icon.svg" alt="Feishu" status={feishuStatus} title={feishuTitle} />
       )}
       {counts.needsMe > 0 && <StatusIndicator state="needs-me" count={counts.needsMe} />}
       {counts.finishedUnread > 0 && <StatusIndicator state="finished-unread" count={counts.finishedUnread} />}
@@ -95,6 +143,57 @@ function TabPill({ ws, isActive, counts, botStatus, botStatusTitle, onClick, onC
   )
 }
 
+/**
+ * Polls a bot status endpoint for open, bot-enabled workspaces on a fixed
+ * cadence. Shared by WeCom and Feishu so both indicators use identical polling
+ * lifecycle semantics (fetch on mount + interval, clear when none enabled).
+ */
+function useBotStatuses(
+  openWorkspaceIds: string[],
+  workspaces: WorkspaceItem[],
+  enabledKey: 'wecomBotEnabled' | 'feishuBotEnabled',
+  endpoint: string,
+): Record<string, BotStatus> {
+  const [statuses, setStatuses] = useState<Record<string, BotStatus>>({})
+
+  useEffect(() => {
+    const enabledIds = openWorkspaceIds.filter((id) => {
+      const ws = workspaces.find((w) => w.id === id)
+      return ws?.settings[enabledKey]
+    })
+    if (enabledIds.length === 0) {
+      setStatuses({})
+      return
+    }
+
+    const fetchStatuses = async () => {
+      const results = await Promise.all(
+        enabledIds.map(async (id) => {
+          try {
+            const res = await fetch(`/api/workspaces/${id}${endpoint}`)
+            if (!res.ok) return { id, status: 'error' as BotStatus }
+            const data = await res.json()
+            return { id, status: (data.status as BotStatus) ?? 'error' }
+          } catch {
+            return { id, status: 'error' as BotStatus }
+          }
+        }),
+      )
+      const next: Record<string, BotStatus> = {}
+      for (const { id, status } of results) {
+        next[id] = status
+      }
+      setStatuses(next)
+    }
+
+    fetchStatuses()
+    const interval = setInterval(fetchStatuses, 5000)
+    return () => clearInterval(interval)
+  }, [openWorkspaceIds, workspaces, enabledKey, endpoint])
+
+  return statuses
+}
+
 export default function WorkspaceTabs() {
   const { t } = useTranslation('settings')
   const { workspaces, openWorkspaceIds, activeWorkspaceId, setActiveWorkspace, closeWorkspace } =
@@ -106,7 +205,6 @@ export default function WorkspaceTabs() {
   const unreadCompletions = useChatStore((s) => s.unreadCompletions)
   const activeSessionIds = useChatStore((s) => s.activeSessionIds)
 
-  const [botStatuses, setBotStatuses] = useState<Record<string, BotStatus>>({})
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null)
@@ -121,40 +219,8 @@ export default function WorkspaceTabs() {
     [openWorkspaceIds, workspaces]
   )
 
-  useEffect(() => {
-    const enabledIds = openWorkspaceIds.filter((id) => {
-      const ws = workspaces.find((w) => w.id === id)
-      return ws?.settings.wecomBotEnabled
-    })
-    if (enabledIds.length === 0) {
-      setBotStatuses({})
-      return
-    }
-
-    const fetchStatuses = async () => {
-      const results = await Promise.all(
-        enabledIds.map(async (id) => {
-          try {
-            const res = await fetch(`/api/workspaces/${id}/bot/status`)
-            if (!res.ok) return { id, status: 'error' as BotStatus }
-            const data = await res.json()
-            return { id, status: (data.status as BotStatus) ?? 'error' }
-          } catch {
-            return { id, status: 'error' as BotStatus }
-          }
-        })
-      )
-      const next: Record<string, BotStatus> = {}
-      for (const { id, status } of results) {
-        next[id] = status
-      }
-      setBotStatuses(next)
-    }
-
-    fetchStatuses()
-    const interval = setInterval(fetchStatuses, 5000)
-    return () => clearInterval(interval)
-  }, [openWorkspaceIds, workspaces])
+  const wecomBotStatuses = useBotStatuses(openWorkspaceIds, workspaces, 'wecomBotEnabled', '/bot/status')
+  const feishuBotStatuses = useBotStatuses(openWorkspaceIds, workspaces, 'feishuBotEnabled', '/feishu/status')
 
   // Scroll active tab into view when it changes
   useEffect(() => {
@@ -217,15 +283,18 @@ export default function WorkspaceTabs() {
         {openWorkspaces.map((ws) => {
           const isActive = activeWorkspaceId === ws.id
           const counts = getWorkspaceCounts(ws.id)
-          const botStatus = botStatuses[ws.id]
+          const wecomStatus = wecomBotStatuses[ws.id]
+          const feishuStatus = feishuBotStatuses[ws.id]
           return (
             <TabPill
               key={ws.id}
               ws={ws}
               isActive={isActive}
               counts={counts}
-              botStatus={botStatus}
-              botStatusTitle={botStatus ? getBotStatusLabel(botStatus, t) : undefined}
+              wecomStatus={wecomStatus}
+              feishuStatus={feishuStatus}
+              wecomTitle={wecomStatus ? getBotStatusLabel(wecomStatus, t, 'bot') : undefined}
+              feishuTitle={feishuStatus ? getBotStatusLabel(feishuStatus, t, 'feishuBot') : undefined}
               onClick={() => setActiveWorkspace(ws.id)}
               onClose={(e) => handleClose(e, ws.id)}
               closeLabel={t('workspaceTabs.closeTab', { name: ws.name })}
@@ -281,7 +350,8 @@ export default function WorkspaceTabs() {
                 filteredWorkspaces.map((ws) => {
                   const isActive = activeWorkspaceId === ws.id
                   const counts = getWorkspaceCounts(ws.id)
-                  const botStatus = botStatuses[ws.id]
+                  const wecomStatus = wecomBotStatuses[ws.id]
+                  const feishuStatus = feishuBotStatuses[ws.id]
                   return (
                     <div
                       key={ws.id}
@@ -298,20 +368,21 @@ export default function WorkspaceTabs() {
                         }`}
                       />
                       <span className="truncate flex-1">{ws.name}</span>
-                      {botStatus && (
-                        <span
-                          className="relative inline-flex flex-shrink-0"
-                          title={getBotStatusLabel(botStatus, t)}
-                        >
-                          <img
-                            src="/wecom-icon.svg"
-                            alt="WeCom"
-                            className={`w-3 h-3 flex-shrink-0 ${BOT_STATUS_CLASS[botStatus]}`}
-                          />
-                          <span
-                            className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${BOT_STATUS_DOT[botStatus]} ring-1 ring-bg`}
-                          />
-                        </span>
+                      {wecomStatus && (
+                        <BotStatusIcon
+                          iconSrc="/wecom-icon.svg"
+                          alt="WeCom"
+                          status={wecomStatus}
+                          title={getBotStatusLabel(wecomStatus, t, 'bot')}
+                        />
+                      )}
+                      {feishuStatus && (
+                        <BotStatusIcon
+                          iconSrc="/feishu-icon.svg"
+                          alt="Feishu"
+                          status={feishuStatus}
+                          title={getBotStatusLabel(feishuStatus, t, 'feishuBot')}
+                        />
                       )}
                       {counts.needsMe > 0 && (
                         <StatusIndicator state="needs-me" count={counts.needsMe} />
