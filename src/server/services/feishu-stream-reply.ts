@@ -173,7 +173,10 @@ export class FeishuStreamReply {
 
   private updateController(): void {
     if (!this.controller) return;
-    this.controller.setContent(this.responseText + this.visiblePlaceholder);
+    const content = this.responseText + this.visiblePlaceholder;
+    // Feishu rejects empty content updates, so use a zero-width space when
+    // there is nothing visible to show (e.g. a placeholder was just cleared).
+    this.controller.setContent(content || '​');
   }
 
   private signalWaiting(): void {
