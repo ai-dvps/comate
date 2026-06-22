@@ -7,6 +7,7 @@ import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
+import type { WeComMediaCacheEntry, CreateWeComMediaCacheInput } from '../models/wecom-media-cache.js';
 import { getStorageDir } from './data-dir.js';
 import { getNativeBindingPath } from './native-binding.js';
 import { ensureAnalyticsCacheSchema, AnalyticsCache } from './analytics-cache.js';
@@ -191,6 +192,18 @@ export class SqliteStore {
         delivered_at TEXT,
         claimed_at TEXT,
         retry_count INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS wecom_media_cache (
+        workspace_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        md5 TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        media_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, relative_path, md5)
       )
     `);
 
@@ -555,6 +568,7 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
+      this.db.prepare('DELETE FROM wecom_media_cache WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM session_metadata WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)').run(id);
       this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id);
@@ -1178,6 +1192,45 @@ export class SqliteStore {
     return result.changes > 0;
   }
 
+  // WeCom media cache for proactive file sends
+
+  getWecomMediaCacheEntry(workspaceId: string, relativePath: string, md5: string): WeComMediaCacheEntry | null {
+    const row = this.db
+      .prepare(`
+        SELECT workspace_id, relative_path, md5, filename, media_id, created_at
+        FROM wecom_media_cache
+        WHERE workspace_id = ? AND relative_path = ? AND md5 = ?
+          AND datetime(created_at) > datetime('now', '-71 hours')
+        ORDER BY created_at DESC
+        LIMIT 1
+      `)
+      .get(workspaceId, relativePath, md5) as RawMediaCacheRow | undefined;
+    return row ? parseMediaCacheRow(row) : null;
+  }
+
+  createWecomMediaCacheEntry(input: CreateWeComMediaCacheInput): WeComMediaCacheEntry {
+    const entry: WeComMediaCacheEntry = {
+      workspaceId: input.workspaceId,
+      relativePath: input.relativePath,
+      md5: input.md5,
+      filename: input.filename,
+      mediaId: input.mediaId,
+      createdAt: input.createdAt,
+    };
+    this.db.prepare(`
+      INSERT OR REPLACE INTO wecom_media_cache (workspace_id, relative_path, md5, filename, media_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.workspaceId,
+      entry.relativePath,
+      entry.md5,
+      entry.filename,
+      entry.mediaId,
+      entry.createdAt,
+    );
+    return entry;
+  }
+
   // Workspace prompt history
 
   createPromptHistory(workspaceId: string, sessionId: string, prompt: string): WorkspacePromptHistoryEntry {
@@ -1380,6 +1433,26 @@ function parseProactiveMessageRow(row: RawProactiveMessageRow): WeComProactiveMe
     deliveredAt: row.delivered_at,
     claimedAt: row.claimed_at,
     retryCount: row.retry_count,
+  };
+}
+
+interface RawMediaCacheRow {
+  workspace_id: string;
+  relative_path: string;
+  md5: string;
+  filename: string;
+  media_id: string;
+  created_at: string;
+}
+
+function parseMediaCacheRow(row: RawMediaCacheRow): WeComMediaCacheEntry {
+  return {
+    workspaceId: row.workspace_id,
+    relativePath: row.relative_path,
+    md5: row.md5,
+    filename: row.filename,
+    mediaId: row.media_id,
+    createdAt: row.created_at,
   };
 }
 
