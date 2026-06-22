@@ -16,10 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Card callback route with signature verification for allow/deny/question actions.
   - Server lifecycle wiring, status API, and graceful shutdown.
   - Session source tracking (`feishu`) with a Feishu badge in the session list.
+  - Auto-create a Feishu session on the first chat message when no session is active, and tell users they can use `/session` to switch or `/new` to create another session manually; the hint is rendered inside the same streaming reply card so the answer updates in place.
+  - `/new` command to create a new Feishu session, with an optional custom title (e.g. `/new Project Planning`).
 
 ### Fixed
 
+- **Feishu card callback buttons** — the callback route now accepts `POST /api/feishu/card` (matching the setup checklist) using the active workspace binding's credentials, and parses `action.value` when Feishu delivers it as a JSON string. The previous `/:workspaceId` path is retained for backward compatibility. Card actions are also handled through the Feishu SDK long-connection/WebSocket channel (`chat.onAction`) so buttons work when the app is configured to use long-connection callbacks instead of a public HTTP URL.
+- **Feishu `/session` and card replies** — command cards and streaming approval/question cards now use the user's actual `open_id` (`ou_*`) instead of the p2p `chat_id` (`oc_*`) for `larkClient.im.message.create`, fixing the `99992361 open_id cross app` error.
 - **Feishu bot connection on enable** — saving workspace settings with Feishu enabled and valid credentials now connects the bot and sets the active workspace binding instead of leaving the status as `not_configured`.
+
+### Changed
+
+- **Test database isolation hardened** — server tests now run against isolated SQLite databases by default. `test-utils/test-env` redirects `COMATE_DATA_DIR` and is enforced as the first import by an ESLint rule plus a runtime guard that refuses production paths; `SqliteStore` supports in-memory databases and a public `resetData()` hook so tests no longer reach into the private `db` handle. Added `npm run test:server` and a CI workflow that runs server tests on pull requests.
 
 ## [0.0.11] - 2026-06-21
 

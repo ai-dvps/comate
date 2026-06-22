@@ -1,5 +1,5 @@
 import '../test-utils/test-env.js';
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
@@ -22,6 +22,10 @@ describe('workspaces route Feishu connection', { concurrency: false }, () => {
     feishuBotService.connect = originalConnect;
     feishuBotService.disconnect = originalDisconnect;
     feishuBotService.reconnectIfActive = originalReconnectIfActive;
+  });
+
+  beforeEach(() => {
+    workspaceStore.resetData();
   });
 
   function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
@@ -60,6 +64,18 @@ describe('workspaces route Feishu connection', { concurrency: false }, () => {
       }
     }
     throw new Error('PUT handler not found');
+  }
+
+  async function importGetFeishuUsersHandler() {
+    const mod = await import('./workspaces.js');
+    const router = mod.default;
+    const layers = (router as unknown as { stack: Array<{ route?: { methods: Record<string, boolean>; path: string; stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }> } }> }).stack;
+    for (const layer of layers) {
+      if (layer.route?.path === '/:id/feishu/users' && layer.route.methods.get) {
+        return layer.route.stack[layer.route.stack.length - 1].handle;
+      }
+    }
+    throw new Error('GET /:id/feishu/users handler not found');
   }
 
   it('connects Feishu when newly enabled with credentials', async () => {
@@ -163,5 +179,67 @@ describe('workspaces route Feishu connection', { concurrency: false }, () => {
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(disconnected, true);
     assert.strictEqual(cleared, true);
+  });
+
+  describe('GET /api/workspaces/:id/feishu/users', () => {
+    it('returns 404 when the workspace does not exist', async () => {
+      workspaceStore.get = async () => null;
+
+      const handler = await importGetFeishuUsersHandler();
+      const res = createMockRes();
+      await handler({ params: { id: 'missing' } }, res);
+
+      assert.strictEqual(res.statusCode, 404);
+    });
+
+    it('returns an empty list when no Feishu users have been discovered', async () => {
+      const ws = await workspaceStore.create({ name: 'Empty Users', folderPath: '/tmp/empty' });
+
+      const handler = await importGetFeishuUsersHandler();
+      const res = createMockRes();
+      await handler({ params: { id: ws.id } }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(res.jsonBody, { users: [] });
+    });
+
+    it('returns users ordered by lastSeenAt DESC with namePending true when uncached', async () => {
+      const ws = await workspaceStore.create({ name: 'Pending Users', folderPath: '/tmp/pending' });
+
+      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-bob');
+
+      const handler = await importGetFeishuUsersHandler();
+      const res = createMockRes();
+      await handler({ params: { id: ws.id } }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      const body = res.jsonBody as { users: Array<{ openId: string; namePending: boolean }> };
+      assert.strictEqual(body.users.length, 2);
+      assert.strictEqual(body.users[0].openId, 'ou-bob');
+      assert.strictEqual(body.users[1].openId, 'ou-alice');
+      assert.strictEqual(body.users[0].namePending, true);
+      assert.strictEqual(body.users[1].namePending, true);
+    });
+
+    it('returns cached names and marks namePending false', async () => {
+      const ws = await workspaceStore.create({ name: 'Named Users', folderPath: '/tmp/named' });
+
+      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+      workspaceStore.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice', 'alice-uid');
+
+      const handler = await importGetFeishuUsersHandler();
+      const res = createMockRes();
+      await handler({ params: { id: ws.id } }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      const body = res.jsonBody as { users: Array<{ openId: string; name: string; userId: string; namePending: boolean }> };
+      assert.strictEqual(body.users.length, 1);
+      assert.strictEqual(body.users[0].openId, 'ou-alice');
+      assert.strictEqual(body.users[0].name, 'Alice');
+      assert.strictEqual(body.users[0].userId, 'alice-uid');
+      assert.strictEqual(body.users[0].namePending, false);
+    });
   });
 });

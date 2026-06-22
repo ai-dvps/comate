@@ -1,11 +1,9 @@
 import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import Database from 'better-sqlite3';
 import { SqliteStore } from './sqlite-store.js';
 
 const testDbDir = mkdtempSync(join(tmpdir(), 'sqlite-store-test-'));
@@ -13,15 +11,10 @@ const testDbPath = join(testDbDir, 'data.db');
 
 describe('SqliteStore proactive messages', { concurrency: false }, () => {
   let store: SqliteStore;
-  let db: Database.Database;
 
   beforeEach(() => {
     store = new SqliteStore(testDbPath);
-    // Access internal db for direct state verification
-    db = (store as unknown as { db: Database.Database }).db;
-    // Clean tables before each test
-    db.prepare('DELETE FROM wecom_proactive_messages').run();
-    db.prepare('DELETE FROM wecom_user_sessions').run();
+    store.resetData();
   });
 
   function createMessageInput(overrides: Partial<{
@@ -198,9 +191,7 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
   });
 
   it('getWecomUserIdBySession returns correct userId for existing mapping', () => {
-    db.prepare(
-      'INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)'
-    ).run('ws-1', 'user-alice', 'session-123', new Date().toISOString(), new Date().toISOString());
+    store.setWecomSession('ws-1', 'user-alice', 'session-123');
 
     const userId = store.getWecomUserIdBySession('ws-1', 'session-123');
     assert.strictEqual(userId, 'user-alice');
@@ -212,9 +203,7 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
   });
 
   it('getWecomUserIdBySession returns null when session exists in different workspace', () => {
-    db.prepare(
-      'INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)'
-    ).run('ws-1', 'user-alice', 'session-123', new Date().toISOString(), new Date().toISOString());
+    store.setWecomSession('ws-1', 'user-alice', 'session-123');
 
     const userId = store.getWecomUserIdBySession('ws-2', 'session-123');
     assert.strictEqual(userId, null);
@@ -223,118 +212,107 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
 
 describe('SqliteStore workspace delete cascade', { concurrency: false }, () => {
   let store: SqliteStore;
-  let db: Database.Database;
 
   beforeEach(() => {
     store = new SqliteStore(testDbPath);
-    db = (store as unknown as { db: Database.Database }).db;
-    db.prepare('DELETE FROM session_analytics_cache').run();
-    db.prepare('DELETE FROM session_metadata').run();
-    db.prepare('DELETE FROM sessions').run();
-    db.prepare('DELETE FROM wecom_proactive_messages').run();
-    db.prepare('DELETE FROM wecom_user_sessions').run();
-    db.prepare('DELETE FROM todos').run();
-    db.prepare('DELETE FROM workspaces').run();
+    store.resetData();
   });
 
   function createWorkspace(name: string) {
     return store.create({ name, folderPath: `/tmp/${name}` });
   }
 
-  function insertSession(workspaceId: string, id: string) {
-    const now = new Date().toISOString();
-    db.prepare(
-      `INSERT INTO sessions (id, workspace_id, name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(id, workspaceId, 'Test session', now, now);
+  function createSession(workspaceId: string): string {
+    return store.createLocalSession(workspaceId, 'Test session').id;
   }
 
-  function insertSessionMetadata(sessionId: string) {
-    db.prepare('INSERT INTO session_metadata (session_id, is_wip) VALUES (?, ?)').run(sessionId, 1);
+  function seedSessionMetadata(sessionId: string): void {
+    store.setSessionMetadata(sessionId, true);
   }
 
-  function insertAnalyticsCache(workspaceId: string, sessionId: string) {
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO session_analytics_cache (
-        session_id, workspace_id, transcript_mtime, extracted_at,
-        total_tokens, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-        estimated_cost_usd, cost_coverage_percent, duration_ms, message_count, has_compaction,
-        model_usage, tool_usage, daily_stats, heatmap
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      sessionId, workspaceId, now, now,
-      0, 0, 0, 0, 0,
-      0, 100, 0, 0, 0,
-      '[]', '[]', '[]', '[]'
-    );
+  function seedAnalyticsCache(workspaceId: string, sessionId: string): void {
+    store.getAnalyticsCache().upsert({
+      sessionId,
+      workspaceId,
+      transcriptMtime: Date.now(),
+      extractedAt: Date.now(),
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0,
+      costCoveragePercent: 100,
+      durationMs: 0,
+      messageCount: 0,
+      firstMessageTs: null,
+      lastMessageTs: null,
+      hasCompaction: false,
+      modelUsage: [],
+      toolUsage: [],
+      dailyStats: [],
+      heatmap: [],
+    });
   }
 
   it('deleting a workspace removes sessions, session_metadata, and analytics cache rows', async () => {
     const ws = await createWorkspace('Cascade Sessions');
-    const sessionId = randomUUID();
-    insertSession(ws.id, sessionId);
-    insertSessionMetadata(sessionId);
-    insertAnalyticsCache(ws.id, sessionId);
+    const sessionId = createSession(ws.id);
+    seedSessionMetadata(sessionId);
+    seedAnalyticsCache(ws.id, sessionId);
 
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(ws.id).count, 1);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_metadata WHERE session_id = ?').get(sessionId).count, 1);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(ws.id).count, 1);
+    assert.strictEqual(store.listLocalSessions(ws.id).length, 1);
+    assert.strictEqual(Object.keys(store.getSessionMetadata([sessionId])).length, 1);
+    assert.strictEqual(store.getAnalyticsCache().listByWorkspace(ws.id).length, 1);
 
     await store.delete(ws.id);
 
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(ws.id).count, 0);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_metadata WHERE session_id = ?').get(sessionId).count, 0);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(ws.id).count, 0);
+    assert.strictEqual(store.listLocalSessions(ws.id).length, 0);
+    assert.strictEqual(Object.keys(store.getSessionMetadata([sessionId])).length, 0);
+    assert.strictEqual(store.getAnalyticsCache().listByWorkspace(ws.id).length, 0);
   });
 
   it('deleting a non-existent workspace leaves sessions and cache untouched', async () => {
     const ws = await createWorkspace('Untouched');
-    const sessionId = randomUUID();
-    insertSession(ws.id, sessionId);
-    insertSessionMetadata(sessionId);
-    insertAnalyticsCache(ws.id, sessionId);
+    const sessionId = createSession(ws.id);
+    seedSessionMetadata(sessionId);
+    seedAnalyticsCache(ws.id, sessionId);
 
     const deleted = await store.delete('non-existent-id');
     assert.strictEqual(deleted, false);
 
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(ws.id).count, 1);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_metadata WHERE session_id = ?').get(sessionId).count, 1);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(ws.id).count, 1);
+    assert.strictEqual(store.listLocalSessions(ws.id).length, 1);
+    assert.strictEqual(Object.keys(store.getSessionMetadata([sessionId])).length, 1);
+    assert.strictEqual(store.getAnalyticsCache().listByWorkspace(ws.id).length, 1);
   });
 
   it('deleting one workspace does not affect sessions in another workspace', async () => {
     const wsA = await createWorkspace('Workspace A');
     const wsB = await createWorkspace('Workspace B');
-    const sessionA = randomUUID();
-    const sessionB = randomUUID();
+    const sessionA = createSession(wsA.id);
+    const sessionB = createSession(wsB.id);
 
-    insertSession(wsA.id, sessionA);
-    insertSessionMetadata(sessionA);
-    insertAnalyticsCache(wsA.id, sessionA);
+    seedSessionMetadata(sessionA);
+    seedAnalyticsCache(wsA.id, sessionA);
 
-    insertSession(wsB.id, sessionB);
-    insertSessionMetadata(sessionB);
-    insertAnalyticsCache(wsB.id, sessionB);
+    seedSessionMetadata(sessionB);
+    seedAnalyticsCache(wsB.id, sessionB);
 
     await store.delete(wsA.id);
 
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(wsA.id).count, 0);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM sessions WHERE workspace_id = ?').get(wsB.id).count, 1);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_metadata WHERE session_id = ?').get(sessionB).count, 1);
-    assert.strictEqual(db.prepare('SELECT COUNT(*) as count FROM session_analytics_cache WHERE workspace_id = ?').get(wsB.id).count, 1);
+    assert.strictEqual(store.listLocalSessions(wsA.id).length, 0);
+    assert.strictEqual(store.listLocalSessions(wsB.id).length, 1);
+    assert.strictEqual(Object.keys(store.getSessionMetadata([sessionB])).length, 1);
+    assert.strictEqual(store.getAnalyticsCache().listByWorkspace(wsB.id).length, 1);
   });
 });
 
 describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
   let store: SqliteStore;
-  let db: Database.Database;
 
   beforeEach(() => {
     store = new SqliteStore(testDbPath);
-    db = (store as unknown as { db: Database.Database }).db;
-    db.prepare('DELETE FROM workspace_prompt_history').run();
-    db.prepare('DELETE FROM workspaces').run();
+    store.resetData();
   });
 
   async function createWorkspace(name: string) {
@@ -377,12 +355,10 @@ describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
 
   it('prunePromptHistory removes entries older than retentionDays', async () => {
     const ws = await createWorkspace('History Prune');
-    db.prepare(
-      'INSERT INTO workspace_prompt_history (id, workspace_id, session_id, prompt, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(randomUUID(), ws.id, 'session-1', 'old', new Date(Date.now() - 31 * 86400_000).toISOString());
-    db.prepare(
-      'INSERT INTO workspace_prompt_history (id, workspace_id, session_id, prompt, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(randomUUID(), ws.id, 'session-1', 'recent', new Date().toISOString());
+    // Backdate one entry via the optional createdAt argument so it falls
+    // outside the retention window.
+    store.createPromptHistory(ws.id, 'session-1', 'old', new Date(Date.now() - 31 * 86400_000).toISOString());
+    store.createPromptHistory(ws.id, 'session-1', 'recent');
 
     const pruned = store.prunePromptHistory(ws.id, 30);
     assert.strictEqual(pruned, 1);
@@ -413,16 +389,10 @@ describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
 
 describe('SqliteStore Feishu state', { concurrency: false }, () => {
   let store: SqliteStore;
-  let db: Database.Database;
 
   beforeEach(() => {
     store = new SqliteStore(testDbPath);
-    db = (store as unknown as { db: Database.Database }).db;
-    db.prepare('DELETE FROM feishu_bot_binding').run();
-    db.prepare('DELETE FROM feishu_user_sessions').run();
-    db.prepare('DELETE FROM feishu_active_sessions').run();
-    db.prepare('DELETE FROM sessions').run();
-    db.prepare('DELETE FROM workspaces').run();
+    store.resetData();
   });
 
   async function createWorkspace(name: string) {
@@ -431,9 +401,16 @@ describe('SqliteStore Feishu state', { concurrency: false }, () => {
 
   function createSession(workspaceId: string, id: string) {
     const now = new Date().toISOString();
-    db.prepare(
-      'INSERT INTO sessions (id, workspace_id, name, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(id, workspaceId, id, 'feishu', now, now);
+    store.syncSdkSession({
+      id,
+      workspaceId,
+      name: id,
+      isDraft: false,
+      isWip: false,
+      source: 'feishu',
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   it('sets and reads the active workspace binding', async () => {
@@ -518,7 +495,7 @@ describe('SqliteStore Feishu state', { concurrency: false }, () => {
     store.addFeishuUserSession(ws.id, 'user-alice', 'session-deleted');
     store.setFeishuActiveSession(ws.id, 'user-alice', 'session-deleted');
 
-    db.prepare('DELETE FROM sessions WHERE id = ?').run('session-deleted');
+    store.deleteLocalSession('session-deleted');
 
     const sessions = store.listFeishuSessionsByUser(ws.id, 'user-alice');
     assert.strictEqual(sessions.length, 1);
@@ -539,5 +516,162 @@ describe('SqliteStore Feishu state', { concurrency: false }, () => {
     assert.strictEqual(store.getFeishuActiveWorkspace(), null);
     assert.strictEqual(store.listFeishuSessionsByUser(ws.id, 'user-alice').length, 0);
     assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), null);
+  });
+
+  it('upserts Feishu workspace users preserving firstSeenAt', async () => {
+    const ws = await createWorkspace('Feishu Users Upsert');
+
+    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+    const first = store.getFeishuWorkspaceUser(ws.id, 'ou-alice');
+    assert.ok(first);
+    assert.strictEqual(first.openId, 'ou-alice');
+    assert.strictEqual(first.name, null);
+    assert.strictEqual(first.userId, null);
+
+    // Simulate a later message and verify firstSeenAt stays the same while lastSeenAt changes.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+    const second = store.getFeishuWorkspaceUser(ws.id, 'ou-alice');
+    assert.ok(second);
+    assert.strictEqual(second.firstSeenAt, first.firstSeenAt);
+    assert.notStrictEqual(second.lastSeenAt, first.lastSeenAt);
+  });
+
+  it('lists Feishu workspace users ordered by lastSeenAt DESC', async () => {
+    const ws = await createWorkspace('Feishu Users List');
+
+    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    store.setFeishuWorkspaceUser(ws.id, 'ou-bob');
+
+    const users = store.listFeishuWorkspaceUsers(ws.id);
+    assert.strictEqual(users.length, 2);
+    assert.strictEqual(users[0].openId, 'ou-bob');
+    assert.strictEqual(users[1].openId, 'ou-alice');
+  });
+
+  it('caches display name and user_id', async () => {
+    const ws = await createWorkspace('Feishu Users Name');
+
+    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+    store.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice', 'alice-uid');
+
+    const user = store.getFeishuWorkspaceUser(ws.id, 'ou-alice');
+    assert.ok(user);
+    assert.strictEqual(user.name, 'Alice');
+    assert.strictEqual(user.userId, 'alice-uid');
+
+    const listed = store.listFeishuWorkspaceUsers(ws.id);
+    assert.strictEqual(listed[0].name, 'Alice');
+  });
+
+  it('keeps existing userId when updating name without userId', async () => {
+    const ws = await createWorkspace('Feishu Users Partial Update');
+
+    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+    store.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice', 'alice-uid');
+    store.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice Updated');
+
+    const user = store.getFeishuWorkspaceUser(ws.id, 'ou-alice');
+    assert.ok(user);
+    assert.strictEqual(user.name, 'Alice Updated');
+    assert.strictEqual(user.userId, 'alice-uid');
+  });
+
+  it('returns null for unknown Feishu workspace user', async () => {
+    const ws = await createWorkspace('Feishu Users Missing');
+    assert.strictEqual(store.getFeishuWorkspaceUser(ws.id, 'ou-unknown'), null);
+  });
+
+  it('deletes workspace cascades to Feishu workspace users', async () => {
+    const ws = await createWorkspace('Feishu Users Cascade');
+    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+
+    await store.delete(ws.id);
+
+    assert.strictEqual(store.listFeishuWorkspaceUsers(ws.id).length, 0);
+  });
+});
+
+describe('SqliteStore in-memory + resetData', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    // ':memory:' opens a hermetic per-instance database with no file artifacts.
+    // Constructing it successfully also proves the unconditional WAL pragma in
+    // the constructor does not throw against an in-memory database.
+    store = new SqliteStore(':memory:');
+  });
+
+  it('round-trips a workspace create/get/delete against an in-memory database', async () => {
+    const created = await store.create({ name: 'InMem', folderPath: '/tmp/inmem' });
+    const fetched = await store.get(created.id);
+    assert.ok(fetched);
+    assert.strictEqual(fetched!.name, 'InMem');
+
+    const deleted = await store.delete(created.id);
+    assert.strictEqual(deleted, true);
+    assert.strictEqual(await store.get(created.id), null);
+  });
+
+  it('resetData clears rows across every table family', async () => {
+    const ws = await store.create({ name: 'WS', folderPath: '/tmp/ws' });
+    const session = store.createLocalSession(ws.id, 's1');
+    store.createTodo(ws.id, { text: 'do thing' });
+    store.setWecomSession(ws.id, 'enc-user', session.id);
+    store.setWecomUserMapping('enc-user', 'plain-user');
+    store.setFeishuActiveWorkspace(ws.id);
+    store.addFeishuUserSession(ws.id, 'feishu-user', session.id);
+    store.createPromptHistory(ws.id, session.id, 'hello');
+    store.getAnalyticsCache().upsert({
+      sessionId: session.id,
+      workspaceId: ws.id,
+      transcriptMtime: 1,
+      extractedAt: 1,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0,
+      costCoveragePercent: 100,
+      durationMs: 0,
+      messageCount: 0,
+      firstMessageTs: null,
+      lastMessageTs: null,
+      hasCompaction: false,
+      modelUsage: [],
+      toolUsage: [],
+      dailyStats: [],
+      heatmap: [],
+    });
+
+    store.resetData();
+
+    // Every table family is empty after reset — proving resetData derived the
+    // full table set from the schema rather than a hard-coded subset.
+    assert.strictEqual((await store.list()).length, 0);
+    assert.strictEqual(store.listLocalSessions().length, 0);
+    assert.strictEqual(store.getTodosByWorkspace(ws.id).length, 0);
+    assert.strictEqual(store.listWecomSessions(ws.id).length, 0);
+    assert.strictEqual(store.getWecomUserMapping('enc-user'), null);
+    assert.strictEqual(store.getFeishuActiveWorkspace(), null);
+    assert.strictEqual(store.listFeishuSessionsForWorkspace(ws.id).length, 0);
+    assert.strictEqual(store.listPromptHistory(ws.id).length, 0);
+    assert.strictEqual(store.getAnalyticsCache().listAll().length, 0);
+  });
+
+  it('resetData on a freshly constructed (empty) store completes without error', () => {
+    assert.doesNotThrow(() => store.resetData());
+  });
+
+  it('separate in-memory stores are isolated from each other', async () => {
+    // Each ':memory:' instance is a distinct database on its own connection.
+    const other = new SqliteStore(':memory:');
+    const ws = await store.create({ name: 'Owner', folderPath: '/tmp/owner' });
+
+    assert.ok(await store.get(ws.id));
+    // The workspace is not visible in the independent in-memory instance.
+    assert.strictEqual(await other.get(ws.id), null);
   });
 });

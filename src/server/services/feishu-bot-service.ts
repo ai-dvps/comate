@@ -2,7 +2,7 @@ import { Chat } from 'chat';
 import { createMemoryState } from '@chat-adapter/state-memory';
 import { createLarkAdapter, type LarkAdapter } from '@larksuite/vercel-chat-adapter';
 import * as lark from '@larksuiteoapi/node-sdk';
-import type { Thread, Message, DirectMessageHandler, MentionHandler } from 'chat';
+import type { Thread, Message, DirectMessageHandler, MentionHandler, ActionEvent } from 'chat';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
@@ -12,6 +12,8 @@ import {
   buildSessionListCard,
   type FeishuCard,
 } from './feishu-card-builder.js';
+import { feishuCardActionHandler, type CardActionPayload } from './feishu-card-action-handler.js';
+import { feishuUserResolver } from './feishu-user-resolver.js';
 import { diagLog } from '../utils/diag-logger.js';
 
 export type FeishuBotStatus =
@@ -77,6 +79,7 @@ export class FeishuBotService {
     const handler = this.createDispatchHandler();
     chat.onDirectMessage(handler);
     chat.onNewMention(handler);
+    chat.onAction((event) => this.handleCardAction(event));
 
     this.connection = {
       chat,
@@ -157,6 +160,12 @@ export class FeishuBotService {
       const feishuUserId = message.author.userId;
       const text = (message.text ?? '').trim();
 
+      const workspaceId = this.connection?.workspaceId;
+      if (workspaceId) {
+        workspaceStore.setFeishuWorkspaceUser(workspaceId, feishuUserId);
+        void feishuUserResolver.resolveOnMessage(workspaceId, feishuUserId, this.connection!.larkClient);
+      }
+
       diagLog(
         `[FeishuBotService] dispatch from=${feishuUserId} text=${text.slice(0, 80)} threadId=${thread.id}`,
       );
@@ -168,6 +177,8 @@ export class FeishuBotService {
           await this.runForUser(feishuUserId, () => this.handleSessionCommand(thread, feishuUserId));
         } else if (text === '/stop') {
           await this.runForUser(feishuUserId, () => this.handleStopCommand(thread, feishuUserId));
+        } else if (text === '/new' || text.startsWith('/new ')) {
+          await this.runForUser(feishuUserId, () => this.handleNewSessionCommand(thread, feishuUserId, text));
         } else {
           await this.runForUser(feishuUserId, () => this.handleChatMessage(thread, feishuUserId, text));
         }
@@ -187,6 +198,96 @@ export class FeishuBotService {
     await next;
   }
 
+  private async handleCardAction(event: ActionEvent): Promise<void> {
+    diagLog(
+      `[FeishuBotService] card action actionId=${event.actionId} user=${event.user.userId} value=${event.value?.slice(0, 200) ?? ''}`,
+    );
+
+    const payload = this.parseCardActionValue(event.value);
+    if (!payload) {
+      diagLog('[FeishuBotService] card action value missing or unparseable');
+      await this.safePostActionResponse(event, '无法解析卡片操作。');
+      return;
+    }
+
+    try {
+      const result = await feishuCardActionHandler.handle(event.user.userId, payload as unknown as CardActionPayload, {
+        setActiveWorkspace: (workspaceId: string) => this.setActiveWorkspace(workspaceId),
+      });
+      const content = this.extractToastContent(result);
+      if (content) {
+        await this.safePostActionResponse(event, content);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      diagLog(`[FeishuBotService] card action handler error: ${message}`);
+      await this.safePostActionResponse(event, '处理操作失败，请稍后重试。');
+    }
+  }
+
+  private parseCardActionValue(raw: unknown): Record<string, unknown> | null {
+    if (raw && typeof raw === 'object') {
+      return raw as Record<string, unknown>;
+    }
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        // ignore malformed JSON
+      }
+    }
+    return null;
+  }
+
+  private extractToastContent(result: unknown): string | undefined {
+    if (
+      result &&
+      typeof result === 'object' &&
+      'toast' in result &&
+      result.toast &&
+      typeof result.toast === 'object' &&
+      'content' in result.toast &&
+      typeof result.toast.content === 'string'
+    ) {
+      return result.toast.content;
+    }
+    return undefined;
+  }
+
+  private async safePostActionResponse(event: ActionEvent, text: string): Promise<void> {
+    if (event.thread) {
+      try {
+        await event.thread.post(text);
+        return;
+      } catch (err) {
+        diagLog('[FeishuBotService] failed to post action response to thread:', err);
+      }
+    }
+
+    const larkClient = this.connection?.larkClient;
+    const openId = event.user.userId;
+    if (!larkClient || !openId) {
+      diagLog('[FeishuBotService] no thread or larkClient available to send action response');
+      return;
+    }
+
+    try {
+      await larkClient.im.message.create({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: openId,
+          msg_type: 'text',
+          content: JSON.stringify({ text }),
+        },
+      });
+    } catch (err) {
+      console.error('[FeishuBotService] failed to send action response:', err);
+    }
+  }
+
   private async handleWorkspaceCommand(thread: Thread, feishuUserId: string): Promise<void> {
     const workspace = await this.requireActiveWorkspace(thread);
     if (!workspace) return;
@@ -199,7 +300,7 @@ export class FeishuBotService {
 
     const workspaces = await workspaceStore.list();
     const card = buildWorkspaceListCard(workspaces);
-    await this.sendCardToThread(thread, card);
+    await this.sendCardToThread(thread, feishuUserId, card);
   }
 
   private async handleSessionCommand(thread: Thread, feishuUserId: string): Promise<void> {
@@ -218,7 +319,7 @@ export class FeishuBotService {
     }
 
     const card = buildSessionListCard(workspace.name, sessions);
-    await this.sendCardToThread(thread, card);
+    await this.sendCardToThread(thread, feishuUserId, card);
   }
 
   private async handleStopCommand(thread: Thread, feishuUserId: string): Promise<void> {
@@ -240,31 +341,95 @@ export class FeishuBotService {
     await runtime.interrupt();
   }
 
+  private async getOrCreateSession(
+    workspace: Workspace,
+    feishuUserId: string,
+  ): Promise<{ sessionId: string; isNew: boolean }> {
+    const activeSessionId = workspaceStore.getFeishuActiveSession(workspace.id, feishuUserId);
+    if (activeSessionId) {
+      const session = await chatService.getSession(activeSessionId, workspace.id);
+      if (session) {
+        return { sessionId: activeSessionId, isNew: false };
+      }
+    }
+
+    const session = await chatService.createSession({
+      workspaceId: workspace.id,
+      name: feishuUserId,
+      source: 'feishu',
+    });
+
+    workspaceStore.addFeishuUserSession(workspace.id, feishuUserId, session.id);
+    workspaceStore.setFeishuActiveSession(workspace.id, feishuUserId, session.id);
+
+    return { sessionId: session.id, isNew: true };
+  }
+
+  private async handleNewSessionCommand(
+    thread: Thread,
+    feishuUserId: string,
+    text: string,
+  ): Promise<void> {
+    const workspace = await this.requireActiveWorkspace(thread);
+    if (!workspace) return;
+
+    let title = '';
+    const firstSpace = text.indexOf(' ');
+    if (firstSpace !== -1) {
+      title = text.slice(firstSpace + 1).trim();
+    }
+
+    if (!title) {
+      title = feishuUserId;
+    }
+
+    try {
+      const session = await chatService.createSession({
+        workspaceId: workspace.id,
+        name: title,
+        source: 'feishu',
+      });
+
+      workspaceStore.addFeishuUserSession(workspace.id, feishuUserId, session.id);
+      workspaceStore.setFeishuActiveSession(workspace.id, feishuUserId, session.id);
+
+      await this.safePostText(thread, `已创建新会话：${title}`);
+    } catch (err) {
+      console.error('[FeishuBotService] failed to create session via /new:', err);
+      await this.safePostText(thread, '⚠️ 创建会话失败，请稍后重试。');
+    }
+  }
+
   private async handleChatMessage(thread: Thread, feishuUserId: string, text: string): Promise<void> {
     if (!text) return;
 
     const workspace = await this.requireActiveWorkspace(thread);
     if (!workspace) return;
 
-    const sessionId = workspaceStore.getFeishuActiveSession(workspace.id, feishuUserId);
-    if (!sessionId) {
-      await this.safePostText(
-        thread,
-        '请先运行 /session 选择或创建一个会话，然后再发送消息。',
-      );
+    let sessionId: string;
+    let initialHint: string | undefined;
+    try {
+      const result = await this.getOrCreateSession(workspace, feishuUserId);
+      sessionId = result.sessionId;
+      if (result.isNew) {
+        initialHint = '已为你创建新会话。发送 /session 可切换会话，发送 /new 可创建新会话。';
+      }
+    } catch (err) {
+      console.error('[FeishuBotService] failed to get or create session:', err);
+      await this.safePostText(thread, '⚠️ 创建会话失败，请稍后重试。');
       return;
     }
 
-    const openId = this.resolveOpenId(thread);
     const larkClient = this.connection?.larkClient;
     if (!larkClient) return;
 
     const reply = new FeishuStreamReply(
       thread,
       larkClient,
-      openId,
+      feishuUserId,
       workspace.id,
       sessionId,
+      { initialHint },
     );
 
     let waiting = false;
@@ -315,20 +480,6 @@ export class FeishuBotService {
     return workspace;
   }
 
-  private resolveOpenId(thread: Thread): string {
-    const adapter = this.connection?.adapter;
-    if (!adapter) return '';
-    try {
-      const decoded = adapter.decodeThreadId(thread.id);
-      if (decoded.chatId.startsWith('ou_')) {
-        return decoded.chatId;
-      }
-    } catch {
-      // fall through
-    }
-    return thread.channelId;
-  }
-
   private async safePostText(thread: Thread, text: string): Promise<void> {
     try {
       await thread.post(text);
@@ -345,8 +496,7 @@ export class FeishuBotService {
     }
   }
 
-  private async sendCardToThread(thread: Thread, card: FeishuCard): Promise<void> {
-    const openId = this.resolveOpenId(thread);
+  private async sendCardToThread(thread: Thread, openId: string, card: FeishuCard): Promise<void> {
     const larkClient = this.connection?.larkClient;
     if (!openId || !larkClient) return;
     try {

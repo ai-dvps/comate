@@ -1371,7 +1371,16 @@ interface WeComWorkspaceUser {
 
 type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions' | 'isolation' | 'queue'
 
-type FeishuSubTab = 'connection'
+type FeishuSubTab = 'connection' | 'users'
+
+interface FeishuWorkspaceUser {
+  openId: string
+  userId?: string
+  name?: string
+  firstSeenAt: string
+  lastSeenAt: string
+  namePending: boolean
+}
 
 export function FeishuBotSection({
   state,
@@ -1389,6 +1398,10 @@ export function FeishuBotSection({
   const [showVerificationToken, setShowVerificationToken] = useState(false)
   const [status, setStatus] = useState<string>('unknown')
   const [newAdminId, setNewAdminId] = useState('')
+  const [users, setUsers] = useState<FeishuWorkspaceUser[]>([])
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false)
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [usersRetryCount, setUsersRetryCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -1410,6 +1423,48 @@ export function FeishuBotSection({
     }
   }, [workspaceId])
 
+  // Reset sub-tab and users state when the selected workspace changes.
+  useEffect(() => {
+    setActiveSubTab('connection')
+    setUsers([])
+    setUsersError(null)
+    setUsersRetryCount(0)
+  }, [workspaceId])
+
+  // Fetch and poll the Feishu workspace user directory.
+  useEffect(() => {
+    if (activeSubTab !== 'users') return
+
+    let cancelled = false
+    const fetchUsers = async () => {
+      setIsLoadingUsers(true)
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/feishu/users`)
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        const data = (await res.json()) as { users?: FeishuWorkspaceUser[] }
+        if (!cancelled) {
+          setUsers(data.users || [])
+          setUsersError(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setUsersError(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        if (!cancelled) setIsLoadingUsers(false)
+      }
+    }
+
+    fetchUsers()
+    const interval = setInterval(fetchUsers, 10000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [workspaceId, activeSubTab, usersRetryCount])
+
   const statusColor =
     status === 'connected'
       ? 'text-success'
@@ -1428,19 +1483,27 @@ export function FeishuBotSection({
     onUpdate({ feishuAdminUserIds: state.feishuAdminUserIds.filter((id) => id !== value) })
   }
 
+  const subTabs: { id: FeishuSubTab; label: string }[] = [
+    { id: 'connection', label: t('feishu.tabs.connection') },
+    { id: 'users', label: t('feishu.tabs.users') },
+  ]
+
   return (
     <div className="space-y-0">
       <div className="flex border-b border-border/50 flex-shrink-0 -mx-6 px-6">
-        <button
-          onClick={() => setActiveSubTab('connection')}
-          className={`py-2 px-3 text-[11px] font-medium transition-all ${
-            activeSubTab === 'connection'
-              ? 'text-text-primary border-b-2 border-accent'
-              : 'text-text-secondary hover:text-text-primary'
-          }`}
-        >
-          {t('feishu.tabs.connection')}
-        </button>
+        {subTabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveSubTab(tab.id)}
+            className={`py-2 px-3 text-[11px] font-medium transition-all ${
+              activeSubTab === tab.id
+                ? 'text-text-primary border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {activeSubTab === 'connection' && (
@@ -1585,6 +1648,68 @@ export function FeishuBotSection({
           <div className="text-[10px] text-text-tertiary pt-2">
             <p>{t('feishu.botSessionNote')}</p>
           </div>
+        </div>
+      )}
+
+      {activeSubTab === 'users' && (
+        <div className="max-w-xl pt-4">
+          <h3 className="text-xs font-medium text-text-secondary mb-3">{t('feishu.usersTitle')}</h3>
+
+          {isLoadingUsers && users.length === 0 && (
+            <p className="text-[11px] text-text-tertiary">{t('feishu.usersLoading')}</p>
+          )}
+
+          {usersError && (
+            <div className="space-y-2">
+              <p className="text-[11px] text-destructive">
+                {t('feishu.usersError')}: {usersError}
+              </p>
+              <button
+                type="button"
+                onClick={() => setUsersRetryCount((c) => c + 1)}
+                className="px-3 py-1.5 text-[11px] font-medium bg-accent text-accent-foreground rounded hover:bg-accent-hover"
+              >
+                {t('feishu.usersRetry')}
+              </button>
+            </div>
+          )}
+
+          {!isLoadingUsers && !usersError && users.length === 0 && (
+            <p className="text-[11px] text-text-tertiary">{t('feishu.usersEmpty')}</p>
+          )}
+
+          {users.length > 0 && (
+            <div className="space-y-2">
+              {users.map((user) => (
+                <div
+                  key={user.openId}
+                  className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-text-primary">
+                      {user.name || user.openId}
+                    </span>
+                    {user.namePending && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
+                        {t('feishu.userPending')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-text-tertiary mt-1 break-all">
+                    {user.openId}
+                  </div>
+                  <div className="flex items-center gap-4 mt-1">
+                    <span className="text-[10px] text-text-tertiary">
+                      {t('feishu.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
+                    </span>
+                    <span className="text-[10px] text-text-tertiary">
+                      {t('feishu.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
