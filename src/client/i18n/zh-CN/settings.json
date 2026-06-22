@@ -287,6 +287,9 @@
   "feishu": {
     "enableBot": "启用飞书机器人",
     "enableBotHint": "启用后，此工作区可绑定到一个飞书机器人。",
+    "botName": "机器人名称",
+    "botNamePlaceholder": "我的机器人",
+    "botNameHint": "此机器人的友好名称。",
     "appId": "App ID",
     "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
     "appSecret": "App Secret",

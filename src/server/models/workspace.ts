@@ -35,6 +35,7 @@ export interface WorkspaceSettings {
   feishuEncryptKey?: string;
   feishuVerificationToken?: string;
   feishuBotEnabled?: boolean;
+  feishuBotName?: string;
   /** Feishu user IDs allowed to switch the bot's active workspace. */
   feishuAdminUserIds?: string[];
 }

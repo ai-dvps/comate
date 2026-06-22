@@ -287,6 +287,9 @@
   "feishu": {
     "enableBot": "Enable Feishu Bot",
     "enableBotHint": "When enabled, this workspace can be bound to a Feishu bot.",
+    "botName": "Bot Name",
+    "botNamePlaceholder": "My Bot",
+    "botNameHint": "A friendly name for this bot.",
     "appId": "App ID",
     "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
     "appSecret": "App Secret",

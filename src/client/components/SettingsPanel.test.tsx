@@ -45,6 +45,7 @@ const DEFAULT_STATE = {
   feishuEncryptKey: '',
   feishuVerificationToken: '',
   feishuBotEnabled: true,
+  feishuBotName: '',
   feishuAdminUserIds: [],
 };
 
@@ -82,6 +83,26 @@ describe('FeishuBotSection', () => {
 
     expect(screen.getByRole('button', { name: /Connection/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Users/i })).toBeInTheDocument();
+  });
+
+  it('renders a bot name input and calls onUpdate when changed', async () => {
+    const onUpdate = vi.fn();
+    await renderWithAct(
+      <FeishuBotSection
+        state={{ ...DEFAULT_STATE, feishuBotName: 'Acme Bot' }}
+        onUpdate={onUpdate}
+        workspaceId="ws-1"
+      />,
+    );
+
+    const input = screen.getByPlaceholderText(/My Bot/i) as HTMLInputElement;
+    expect(input.value).toBe('Acme Bot');
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'New Bot' } });
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith({ feishuBotName: 'New Bot' });
   });
 
   it('shows loading state then resolved users when switching to the users tab', async () => {
