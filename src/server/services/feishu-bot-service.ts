@@ -433,16 +433,11 @@ export class FeishuBotService {
       { initialHint },
     );
 
-    let waiting = false;
     let handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void } | undefined;
     let finalize: (() => Promise<void>) | undefined;
 
     try {
-      const handle = await reply.start({
-        onWaiting: () => {
-          waiting = true;
-        },
-      });
+      const handle = await reply.start();
       handler = handle.handler;
       finalize = handle.finalize;
     } catch (err) {
@@ -461,15 +456,16 @@ export class FeishuBotService {
       return;
     }
 
-    if (waiting) {
-      // The runtime is waiting for an approval/question. Let the queue advance
-      // so the user can still issue /session or /stop, but keep the streaming
-      // card finalization running in the background.
-      void finalize();
-      return;
-    }
-
-    await finalize();
+    // chatService.pushMessage only ENQUEUES the user message — it returns as
+    // soon as the message is queued, NOT when the assistant turn completes
+    // (runtime.pushMessage just calls input.push). The assistant streams its
+    // events asynchronously afterwards. So we must NOT finalize here: doing so
+    // would race the turn, freeze the card on the hint with empty content, and
+    // drop every subsequent text_delta (handleEvent ignores events once
+    // finalized). FeishuStreamReply finalizes itself when the turn's `result`
+    // (or error_note / interrupted) event arrives. Returning now also lets the
+    // per-user queue advance, so the user can still run /session or /stop while
+    // a turn — or a pending approval — is in flight.
   }
 
   private async requireActiveWorkspace(thread: Thread): Promise<Workspace | null> {
