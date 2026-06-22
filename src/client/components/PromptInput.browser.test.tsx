@@ -144,6 +144,57 @@ describe('PromptInput browser', () => {
     return page.getByRole('textbox')
   }
 
+  it('renders the WeCom bot bar with user info when isBotSession is true', () => {
+    renderWithI18n(
+      <PromptInput
+        {...DEFAULT_PROPS}
+        isBotSession
+        botName="WeCom Bot"
+        botIcon="/wecom-icon.svg"
+        botUser={{ userId: 'alice@example.com', lastSeenAt: new Date().toISOString() }}
+      />,
+    )
+
+    expect(screen.getByText('WeCom Bot')).toBeInTheDocument()
+    expect(screen.getByText('alice@example.com')).toBeInTheDocument()
+    expect(document.querySelector('img[src="/wecom-icon.svg"]')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('renders the Feishu bot bar with user info when isBotSession is true', () => {
+    renderWithI18n(
+      <PromptInput
+        {...DEFAULT_PROPS}
+        isBotSession
+        botName="Feishu Bot"
+        botIcon="/feishu-icon.svg"
+        botUser={{ userId: 'ou-alice', lastSeenAt: new Date().toISOString() }}
+      />,
+    )
+
+    expect(screen.getByText('Feishu Bot')).toBeInTheDocument()
+    expect(screen.getByText('ou-alice')).toBeInTheDocument()
+    expect(document.querySelector('img[src="/feishu-icon.svg"]')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('calls onRefresh when the refresh button is clicked in a bot session', async () => {
+    const onRefresh = vi.fn()
+    renderWithI18n(
+      <PromptInput
+        {...DEFAULT_PROPS}
+        isBotSession
+        botName="Feishu Bot"
+        botIcon="/feishu-icon.svg"
+        botUser={{ userId: 'ou-alice', lastSeenAt: null }}
+        onRefresh={onRefresh}
+      />,
+    )
+
+    await userEvent.click(screen.getByText('Refresh'))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalled())
+  })
+
   it('renders the textbox and toolbar buttons', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     expect(screen.getByRole('textbox')).toBeInTheDocument()

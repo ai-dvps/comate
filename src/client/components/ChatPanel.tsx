@@ -43,7 +43,11 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   )
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const activeSessionIsBot = activeSession ? isBotSession(activeSession.source) : false
-  const botName = (workspace?.settings?.wecomBotName as string) || ''
+  const activeSessionIsFeishu = activeSession?.source === 'feishu'
+  const botName = activeSessionIsFeishu
+    ? (workspace?.settings?.feishuBotName as string) || ''
+    : (workspace?.settings?.wecomBotName as string) || ''
+  const botIcon = activeSessionIsFeishu ? '/feishu-icon.svg' : '/wecom-icon.svg'
 
   const providers = useProviderStore((s) => s.providers)
   const activeProvider = providers.find((p) => p.id === activeSession?.providerId)
@@ -62,7 +66,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     lastNewCount: number
     lastError: boolean
   }>({ lastRefreshedAt: null, lastNewCount: 0, lastError: false })
-  const [wecomUser, setWecomUser] = useState<{ userId: string; lastSeenAt: string | null } | null>(null)
+  const [botUser, setBotUser] = useState<{ userId: string; lastSeenAt: string | null } | null>(null)
   const [isSearchBarOpen, setIsSearchBarOpen] = useState(false)
   const previousFocusRef = useRef<HTMLElement | null>(null)
 
@@ -150,25 +154,26 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
 
   useEffect(() => {
     setRefreshMeta({ lastRefreshedAt: null, lastNewCount: 0, lastError: false })
-    setWecomUser(null)
+    setBotUser(null)
   }, [activeSessionId])
 
   useEffect(() => {
     if (!activeSessionId || !activeSessionIsBot) return
-    const fetchWecomUser = async () => {
+    const fetchBotUser = async () => {
       try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${activeSessionId}/wecom-user`)
+        const endpoint = activeSessionIsFeishu ? 'feishu-user' : 'wecom-user'
+        const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${activeSessionId}/${endpoint}`)
         if (!res.ok) return
         const data = (await res.json()) as { userId?: string; lastSeenAt?: string | null }
         if (data.userId) {
-          setWecomUser({ userId: data.userId, lastSeenAt: data.lastSeenAt ?? null })
+          setBotUser({ userId: data.userId, lastSeenAt: data.lastSeenAt ?? null })
         }
       } catch {
         // silently ignore
       }
     }
-    fetchWecomUser()
-  }, [workspaceId, activeSessionId, activeSessionIsBot])
+    fetchBotUser()
+  }, [workspaceId, activeSessionId, activeSessionIsBot, activeSessionIsFeishu])
 
   const currentApproval = approvalQueue[0] || null
   const approvalQueueLength = approvalQueue.length
@@ -410,7 +415,8 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                   hasSession
                   isBotSession={activeSessionIsBot}
                   botName={botName}
-                  wecomUser={wecomUser}
+                  botIcon={botIcon}
+                  botUser={botUser}
                   refreshMeta={{
                     lastRefreshedAt: refreshMeta.lastRefreshedAt,
                     lastNewCount: refreshMeta.lastNewCount,

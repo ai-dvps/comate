@@ -68,7 +68,8 @@ interface PromptInputProps {
   isBotSession?: boolean
   refreshMeta?: RefreshMeta
   botName?: string
-  wecomUser?: { userId: string; lastSeenAt: string | null } | null
+  botIcon?: string
+  botUser?: { userId: string; lastSeenAt: string | null } | null
 }
 
 export default function PromptInput({
@@ -84,7 +85,8 @@ export default function PromptInput({
   isBotSession = false,
   refreshMeta,
   botName,
-  wecomUser,
+  botIcon,
+  botUser,
 }: PromptInputProps) {
   const { t } = useTranslation('chat')
   const { useModifierToSubmit } = useAppSettings()
@@ -794,7 +796,9 @@ export default function PromptInput({
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="flex items-center gap-1.5 min-w-0">
-              <img src="/wecom-icon.svg" alt="WeCom" className="w-4 h-4 flex-shrink-0" />
+              {botIcon ? (
+                <img src={botIcon} alt="" className="w-4 h-4 flex-shrink-0" />
+              ) : null}
               {botName ? (
                 <span className="text-sm font-medium text-text-secondary truncate">{botName}</span>
               ) : (
@@ -804,11 +808,11 @@ export default function PromptInput({
             <div className="flex items-center gap-1.5 min-w-0">
               <User className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
               <span className="text-sm text-text-secondary truncate">
-                {wecomUser?.userId ?? '...'}
+                {botUser?.userId ?? '...'}
               </span>
-              {wecomUser?.lastSeenAt && (
+              {botUser?.lastSeenAt && (
                 <span className="text-xs text-text-tertiary flex-shrink-0">
-                  · {formatRelativeDate(new Date(wecomUser.lastSeenAt), t)}
+                  · {formatRelativeDate(new Date(botUser.lastSeenAt), t)}
                 </span>
               )}
             </div>
