@@ -12,6 +12,7 @@ import SubagentDrawer from './SubagentDrawer'
 import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
 import MessageSearchBar from './MessageSearchBar'
+import { isBotSession } from '../lib/session-filter'
 
 const EMPTY_ARRAY: [] = []
 
@@ -41,7 +42,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     s.workspaces.find((w) => w.id === workspaceId)
   )
   const activeSession = sessions.find((s) => s.id === activeSessionId)
-  const isBotSession = activeSession?.source === 'wecom'
+  const activeSessionIsBot = activeSession ? isBotSession(activeSession.source) : false
   const botName = (workspace?.settings?.wecomBotName as string) || ''
 
   const providers = useProviderStore((s) => s.providers)
@@ -153,7 +154,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   }, [activeSessionId])
 
   useEffect(() => {
-    if (!activeSessionId || !isBotSession) return
+    if (!activeSessionId || !activeSessionIsBot) return
     const fetchWecomUser = async () => {
       try {
         const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${activeSessionId}/wecom-user`)
@@ -167,7 +168,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
       }
     }
     fetchWecomUser()
-  }, [workspaceId, activeSessionId, isBotSession])
+  }, [workspaceId, activeSessionId, activeSessionIsBot])
 
   const currentApproval = approvalQueue[0] || null
   const approvalQueueLength = approvalQueue.length
@@ -403,11 +404,11 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                   onSend={handleSend}
                   onStop={handleStop}
                   onRefresh={handleRefresh}
-                  disabled={isBotSession}
+                  disabled={activeSessionIsBot}
                   isStreaming={isStreaming}
                   isInterrupting={isInterrupting}
                   hasSession
-                  isBotSession={isBotSession}
+                  isBotSession={activeSessionIsBot}
                   botName={botName}
                   wecomUser={wecomUser}
                   refreshMeta={{

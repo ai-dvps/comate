@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from './session-filter'
+import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus, isBotSession } from './session-filter'
 import type { ChatSession } from '../stores/chat-store'
 
 function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
@@ -13,6 +13,19 @@ function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
     ...overrides,
   }
 }
+
+describe('isBotSession', () => {
+  it('returns true for wecom and feishu sources', () => {
+    assert.strictEqual(isBotSession('wecom'), true)
+    assert.strictEqual(isBotSession('feishu'), true)
+  })
+
+  it('returns false for gui, undefined, and unknown sources', () => {
+    assert.strictEqual(isBotSession('gui'), false)
+    assert.strictEqual(isBotSession(undefined), false)
+    assert.strictEqual(isBotSession('other'), false)
+  })
+})
 
 describe('getSessionDisplayName', () => {
   it('prefers customTitle over summary and name', () => {
