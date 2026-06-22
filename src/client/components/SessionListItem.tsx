@@ -137,11 +137,6 @@ export default function SessionListItem({
                 </button>
               </>
             )}
-            {session.isDraft && (
-              <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
-                {t('draft')}
-              </span>
-            )}
             {session.source === 'feishu' && (
               <span
                 className="px-1 py-0.5 text-[9px] bg-blue-500/20 text-blue-400 rounded flex-shrink-0"
@@ -154,6 +149,11 @@ export default function SessionListItem({
           </div>
           <p className="text-[11px] text-text-tertiary truncate mt-0.5">{preview}</p>
           <div className="flex items-center gap-1.5 mt-1">
+            {session.isDraft && (
+              <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
+                {t('draft')}
+              </span>
+            )}
             {session.isWip && (
               <span className="px-1 py-0.5 text-[9px] bg-purple-500/20 text-purple-400 rounded">
                 {t('wip')}

@@ -2566,9 +2566,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       ]
       const pruned = pruneWindow(newMessages, state.windowCap)
+      const workspaceSessions = state.sessions[workspaceId] || []
+      const nextSessions = workspaceSessions.map((s) =>
+        s.id === sessionId ? { ...s, isDraft: false } : s,
+      )
       return {
         messages: { ...state.messages, [sessionId]: pruned },
         drafts: nextDrafts,
+        sessions: { ...state.sessions, [workspaceId]: nextSessions },
         isStreaming: { ...state.isStreaming, [sessionId]: true },
         unreadCompletions: nextUnread,
         totalMessageCount: {
