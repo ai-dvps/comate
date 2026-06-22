@@ -13,6 +13,27 @@ export interface FeishuCard {
   elements: unknown[];
 }
 
+export interface StreamingAnswerCard {
+  schema: '2.0';
+  config: {
+    wide_screen_mode: boolean;
+    streaming_mode: boolean;
+    summary?: { content: string };
+    streaming_config: {
+      print_frequency_ms: { default: number };
+      print_step: { default: number };
+      print_strategy: string;
+    };
+  };
+  body: {
+    elements: Array<{
+      tag: 'markdown';
+      element_id: string;
+      content: string;
+    }>;
+  };
+}
+
 function baseCard(title: string, elements: unknown[]): FeishuCard {
   return {
     config: { wide_screen_mode: true },
@@ -224,4 +245,35 @@ export function buildQuestionCard(params: {
   );
 
   return baseCard('需要你的回答', elements);
+}
+
+export function buildStreamingAnswerCard(initialText: string): StreamingAnswerCard {
+  return {
+    schema: '2.0',
+    config: {
+      wide_screen_mode: true,
+      streaming_mode: true,
+      summary: { content: truncateStreamingSummary(initialText) },
+      streaming_config: {
+        print_frequency_ms: { default: 70 },
+        print_step: { default: 1 },
+        print_strategy: 'fast',
+      },
+    },
+    body: {
+      elements: [
+        {
+          tag: 'markdown',
+          element_id: 'stream_md',
+          content: initialText,
+        },
+      ],
+    },
+  };
+}
+
+function truncateStreamingSummary(text: string, max = 50): string {
+  if (!text) return '';
+  const cleaned = text.replace(/\s+/g, ' ').trim();
+  return cleaned.length <= max ? cleaned : cleaned.slice(0, max - 1) + '…';
 }

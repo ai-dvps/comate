@@ -3,6 +3,7 @@ import { createMemoryState } from '@chat-adapter/state-memory';
 import { createLarkAdapter, type LarkAdapter } from '@larksuite/vercel-chat-adapter';
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Thread, Message, DirectMessageHandler, MentionHandler, ActionEvent } from 'chat';
+import type { SseEvent } from '../types/message.js';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
@@ -275,7 +276,7 @@ export class FeishuBotService {
     }
 
     try {
-      await larkClient.im.message.create({
+      await larkClient.im.v1.message.create({
         params: { receive_id_type: 'open_id' },
         data: {
           receive_id: openId,
@@ -433,21 +434,28 @@ export class FeishuBotService {
     );
 
     let waiting = false;
-    const { handler, stream, finalize } = reply.start({
-      onWaiting: () => {
-        waiting = true;
-      },
-    });
+    let handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void } | undefined;
+    let finalize: (() => Promise<void>) | undefined;
 
-    const streamPromise = this.safePostStream(thread, stream).finally(() => {
-      finalize();
-    });
+    try {
+      const handle = await reply.start({
+        onWaiting: () => {
+          waiting = true;
+        },
+      });
+      handler = handle.handler;
+      finalize = handle.finalize;
+    } catch (err) {
+      console.error('[FeishuBotService] failed to start streaming reply:', err);
+      await this.safePostText(thread, '⚠️ 发送消息失败，请稍后重试。');
+      return;
+    }
 
     try {
       await chatService.pushMessage(sessionId, workspace.id, text, true, handler, feishuUserId);
     } catch (err) {
       handler.cleanup();
-      finalize();
+      await finalize();
       console.error('[FeishuBotService] pushMessage error:', err);
       await this.safePostText(thread, '⚠️ 发送消息失败，请稍后重试。');
       return;
@@ -455,12 +463,13 @@ export class FeishuBotService {
 
     if (waiting) {
       // The runtime is waiting for an approval/question. Let the queue advance
-      // so the user can still issue /session or /stop, but leave the stream
-      // promise running in the background to receive the resumed output.
+      // so the user can still issue /session or /stop, but keep the streaming
+      // card finalization running in the background.
+      void finalize();
       return;
     }
 
-    await streamPromise;
+    await finalize();
   }
 
   private async requireActiveWorkspace(thread: Thread): Promise<Workspace | null> {
@@ -488,19 +497,11 @@ export class FeishuBotService {
     }
   }
 
-  private async safePostStream(thread: Thread, stream: AsyncIterable<unknown>): Promise<void> {
-    try {
-      await thread.post(stream as AsyncIterable<string>);
-    } catch (err) {
-      console.error('[FeishuBotService] failed to post stream:', err);
-    }
-  }
-
   private async sendCardToThread(thread: Thread, openId: string, card: FeishuCard): Promise<void> {
     const larkClient = this.connection?.larkClient;
     if (!openId || !larkClient) return;
     try {
-      await larkClient.im.message.create({
+      await larkClient.im.v1.message.create({
         params: { receive_id_type: 'open_id' },
         data: {
           receive_id: openId,
