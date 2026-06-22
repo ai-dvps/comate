@@ -94,6 +94,11 @@ describe('FeishuCardStream', { concurrency: false }, () => {
     const cardJson = JSON.parse(createCall.data.data);
     assert.strictEqual(cardJson.schema, '2.0');
     assert.strictEqual(cardJson.config.streaming_mode, true);
+    assert.deepStrictEqual(Object.keys(cardJson.config).sort(), [
+      'streaming_config',
+      'streaming_mode',
+      'summary',
+    ]);
     assert.strictEqual(cardJson.body.elements[0].element_id, 'stream_md');
     assert.strictEqual(cardJson.body.elements[0].content, '收到，正在处理...');
 
