@@ -276,7 +276,7 @@ function truncateSummary(text: string, max = 50): string {
  * sufficient emptiness check. Returns true only when at least one character
  * would survive that normalization.
  */
-function hasVisibleChar(text: string): boolean {
+export function hasVisibleChar(text: string): boolean {
   // \s covers ASCII/Unicode whitespace; the zero-width family and
   // NBSP/BOM are not matched by \s (and not removed by String.trim),
   // so strip them explicitly. If nothing survives, Feishu sees length 0.
