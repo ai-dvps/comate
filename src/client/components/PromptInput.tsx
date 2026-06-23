@@ -17,6 +17,7 @@ import PromptGhostText from './PromptGhostText'
 import {
   extractPlainText,
   getCaretOffset,
+  getSelectionOffsets,
   replaceText,
   setCaretOffset,
   setContent,
@@ -433,9 +434,9 @@ export default function PromptInput({
     if (!text) return
     const el = editableRef.current
     if (!el) return
-    const offset = getCaretOffset(el)
-    pushUndoState(input, offset)
-    replaceText(el, text, offset, offset)
+    const [start, end] = getSelectionOffsets(el)
+    pushUndoState(input, start)
+    replaceText(el, text, start, end)
     handleInputChange(extractPlainText(el), getCaretOffset(el))
   }
 
@@ -445,9 +446,9 @@ export default function PromptInput({
     if (!text) return
     const el = editableRef.current
     if (!el) return
-    const offset = getCaretOffset(el)
-    pushUndoState(input, offset)
-    replaceText(el, text, offset, offset)
+    const [start, end] = getSelectionOffsets(el)
+    pushUndoState(input, start)
+    replaceText(el, text, start, end)
     handleInputChange(extractPlainText(el), getCaretOffset(el))
   }
 
