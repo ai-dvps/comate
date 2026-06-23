@@ -1054,6 +1054,22 @@ export class ChatService {
       // because the SDK child needs them to call the API.
       env = sanitizeBotEnv(env);
 
+      // Inject the plaintext WeCom user ID into the bot session env so the
+      // send-wecom-file skill can resolve "send <file> to me" without prompting.
+      const wecomEncryptedId =
+        botUserId ?? workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
+      if (wecomEncryptedId) {
+        const plaintextUserId = workspaceStore.getWecomUserMapping(wecomEncryptedId);
+        if (plaintextUserId) {
+          env.WECOM_USER_ID = plaintextUserId;
+        }
+      }
+
+      // buildSdkOptions() already constructed an options object with the
+      // original env reference, but sanitizeBotEnv() returns a new object above.
+      // Ensure the returned options point to the sanitized + injected env.
+      options.env = env;
+
       // Resolve the canonical bot user identity for this session. Prefer the
       // explicitly supplied Feishu user ID, otherwise fall back to the existing
       // WeCom user mapping for backward compatibility.

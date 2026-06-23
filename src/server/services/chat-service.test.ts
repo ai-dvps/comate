@@ -544,6 +544,76 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     return capturedOptions.canUseTool;
   }
 
+  async function captureBotOptions(
+    workspaceSettingsOverrides: Record<string, unknown> = {},
+    botUserId?: string,
+    sessionOverrides: Partial<ChatSession> = {},
+  ): Promise<Options> {
+    const mockWorkspace = createMockWorkspace('ws-1');
+    Object.assign(mockWorkspace.settings, workspaceSettingsOverrides);
+    workspaceStore.get = async () => mockWorkspace;
+    workspaceStore.getLocalSession = () => ({ ...createMockSession('s1'), ...sessionOverrides });
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+    workspaceStore.listWecomWorkspaceUsers = () => [];
+    workspaceStore.listWecomUserMappings = () => [];
+    if (!mockWorkspace.settings.wecomBotIsolation?.bashWhitelist) {
+      mockWorkspace.settings.wecomBotIsolation = {
+        ...(mockWorkspace.settings.wecomBotIsolation ?? {}),
+        bashWhitelist: [{ command: 'ls', args: [] }],
+      };
+    }
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', true, undefined, botUserId);
+    assert.ok(capturedOptions, 'options must be captured');
+    return capturedOptions;
+  }
+
+  it('WeCom bot session sets WECOM_USER_ID to plaintext user ID', async () => {
+    workspaceStore.getWecomUserIdBySession = () => 'wecom-user-1';
+    workspaceStore.getWecomUserMapping = () => 'user1';
+    const options = await captureBotOptions({ wecomBotEnabled: true }, 'wecom-user-1');
+    assert.strictEqual(options.env.WECOM_USER_ID, 'user1');
+  });
+
+  it('WeCom bot session leaves WECOM_USER_ID unset when plaintext mapping is missing', async () => {
+    workspaceStore.getWecomUserIdBySession = () => 'wecom-user-1';
+    workspaceStore.getWecomUserMapping = () => undefined;
+    const options = await captureBotOptions({ wecomBotEnabled: true }, 'wecom-user-1');
+    assert.strictEqual(options.env.WECOM_USER_ID, undefined);
+  });
+
+  it('Feishu bot session does not set WECOM_USER_ID', async () => {
+    workspaceStore.getWecomUserIdBySession = () => undefined;
+    workspaceStore.getWecomUserMapping = () => undefined;
+    const options = await captureBotOptions({ wecomBotEnabled: true }, 'feishu-user-1');
+    assert.strictEqual(options.env.WECOM_USER_ID, undefined);
+  });
+
+  it('GUI session does not set WECOM_USER_ID', async () => {
+    workspaceStore.getWecomUserIdBySession = () => 'wecom-user-1';
+    workspaceStore.getWecomUserMapping = () => 'user1';
+    const mockWorkspace = createMockWorkspace('ws-1');
+    workspaceStore.get = async () => mockWorkspace;
+    workspaceStore.getLocalSession = () => createMockSession('s1');
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', false);
+    assert.ok(capturedOptions, 'options must be captured');
+    assert.strictEqual(capturedOptions.env.WECOM_USER_ID, undefined);
+  });
+
   it('bot session with policy denying Shell: canUseTool returns deny for Bash with generic message', async () => {
     const canUseTool = await captureBotCanUseTool({
       wecomBotEnabled: true,
