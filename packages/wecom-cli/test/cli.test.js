@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -10,12 +10,92 @@ const CLI = new URL('../dist/index.js', import.meta.url).pathname;
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 
-function run(args, cwd) {
+function run(args, cwd, env) {
   const result = spawnSync(process.execPath, [CLI, ...args], {
     cwd,
     encoding: 'utf-8',
+    env: { ...process.env, ...env },
   });
   return result;
+}
+
+const MOCK_SERVER_SCRIPT = `
+import { createServer } from 'node:http';
+const status = parseInt(process.env.MOCK_STATUS || '200', 10);
+const body = process.env.MOCK_BODY || '{}';
+const expectedUrl = process.env.MOCK_EXPECTED_URL || '';
+const server = createServer((req, res) => {
+  if (expectedUrl && req.url !== expectedUrl) {
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('unexpected url: ' + req.url);
+    return;
+  }
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(body);
+});
+server.listen(0, '127.0.0.1', () => {
+  const { port } = server.address();
+  console.log('URL:http://127.0.0.1:' + port);
+});
+`;
+
+function startMockServer(env) {
+  return new Promise((resolve, reject) => {
+    const dir = mkdtempSync(join(tmpdir(), 'wecom-mock-server-'));
+    const scriptPath = join(dir, 'mock-server.js');
+    writeFileSync(scriptPath, MOCK_SERVER_SCRIPT);
+    const proc = spawn(process.execPath, [scriptPath], {
+      stdio: ['ignore', 'pipe', 'inherit'],
+      env: { ...process.env, ...env },
+    });
+    let resolved = false;
+    let stdoutBuffer = '';
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        proc.kill();
+        reject(new Error('mock server startup timeout'));
+      }
+    }, 5000);
+    proc.stdout.on('data', (chunk) => {
+      stdoutBuffer += chunk.toString();
+      const match = stdoutBuffer.match(/URL:(http:\/\/[^\s]+)/);
+      if (match && !resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        resolve({
+          url: match[1],
+          close: () =>
+            new Promise((resolveClose) => {
+              proc.kill();
+              proc.on('exit', () => resolveClose());
+            }),
+        });
+      }
+    });
+    proc.on('error', (err) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(err);
+      }
+    });
+    proc.on('exit', (code) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(new Error(`mock server exited early with code ${code}`));
+      }
+    });
+  });
+}
+
+function writeContext(cwd, serverUrl, workspaceId = 'w') {
+  mkdirSync(join(cwd, '.claude'));
+  writeFileSync(
+    join(cwd, '.claude/wecom-context.json'),
+    JSON.stringify({ botId: 'b', serverUrl, workspaceId })
+  );
 }
 
 describe('wecom cli', () => {
@@ -41,6 +121,18 @@ describe('wecom cli', () => {
       assert(result.stdout.includes('--msg-type'));
     });
 
+    it('shows current-user help', () => {
+      const result = run(['current-user', '--help']);
+      assert.strictEqual(result.status, 0);
+      assert(result.stdout.includes('--session-id'));
+    });
+
+    it('lists current-user in top-level help', () => {
+      const result = run(['--help']);
+      assert.strictEqual(result.status, 0);
+      assert(result.stdout.includes('current-user'));
+    });
+
     it('does not show old msg:send command', () => {
       const result = run(['--help']);
       assert.strictEqual(result.status, 0);
@@ -61,6 +153,13 @@ describe('wecom cli', () => {
       assert.strictEqual(result.status, 2);
       assert(result.stderr.includes('No WeCom bot context file found'));
     });
+
+    it('exits 2 for current-user', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      assert.strictEqual(result.status, 2);
+      assert(result.stderr.includes('No WeCom bot context file found'));
+    });
   });
 
   describe('invalid context file', () => {
@@ -69,6 +168,15 @@ describe('wecom cli', () => {
       mkdirSync(join(tmpDir, '.claude'));
       writeFileSync(join(tmpDir, '.claude/wecom-context.json'), '{}');
       const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir);
+      assert.strictEqual(result.status, 1);
+      assert(result.stderr.includes('Invalid context file format'));
+    });
+
+    it('exits 1 for current-user with malformed context', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      mkdirSync(join(tmpDir, '.claude'));
+      writeFileSync(join(tmpDir, '.claude/wecom-context.json'), '{}');
+      const result = run(['current-user', '--session-id', 's'], tmpDir);
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Invalid context file format'));
     });
@@ -83,6 +191,18 @@ describe('wecom cli', () => {
         JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' })
       );
       const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir);
+      assert.strictEqual(result.status, 1);
+      assert(result.stderr.includes('missing workspaceId'));
+    });
+
+    it('exits 1 for current-user', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      mkdirSync(join(tmpDir, '.claude'));
+      writeFileSync(
+        join(tmpDir, '.claude/wecom-context.json'),
+        JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' })
+      );
+      const result = run(['current-user', '--session-id', 's'], tmpDir);
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('missing workspaceId'));
     });
@@ -124,6 +244,14 @@ describe('wecom cli', () => {
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Missing session ID'));
     });
+
+    it('exits 1 for current-user without --session-id and no env var', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      writeContext(tmpDir, 'http://localhost');
+      const result = run(['current-user'], tmpDir);
+      assert.strictEqual(result.status, 1);
+      assert(result.stderr.includes('Missing session ID'));
+    });
   });
 
   describe('invalid --msg-type', () => {
@@ -137,6 +265,104 @@ describe('wecom cli', () => {
       const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's', '--msg-type', 'bad'], tmpDir);
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Expected --msg-type='));
+    });
+  });
+
+  describe('current-user', () => {
+    it('prints the user ID when the server returns 200', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: JSON.stringify({ userId: 'user1', lastSeenAt: null }),
+        MOCK_EXPECTED_URL: '/api/workspaces/w/sessions/s/wecom-user',
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      try {
+        assert.strictEqual(result.status, 0);
+        assert.strictEqual(result.stdout.trim(), 'user1');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('falls back to CLAUDE_SESSION_ID env var', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: JSON.stringify({ userId: 'user2', lastSeenAt: null }),
+        MOCK_EXPECTED_URL: '/api/workspaces/w/sessions/env-session/wecom-user',
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      writeContext(tmpDir, server.url);
+      const result = run(['current-user'], tmpDir, { CLAUDE_SESSION_ID: 'env-session' });
+      try {
+        assert.strictEqual(result.status, 0);
+        assert.strictEqual(result.stdout.trim(), 'user2');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('exits 2 when the server returns 404', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '404',
+        MOCK_BODY: JSON.stringify({ error: 'unknown_session', message: 'Session not found' }),
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      try {
+        assert.strictEqual(result.status, 2);
+        assert(result.stderr.includes('Session not found'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('exits 3 when the server returns 500', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '500',
+        MOCK_BODY: JSON.stringify({ error: 'internal_error' }),
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      try {
+        assert.strictEqual(result.status, 3);
+        assert(result.stderr.includes('internal_error'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('exits 1 when the server returns invalid JSON', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: 'not-json',
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      try {
+        assert.strictEqual(result.status, 1);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('exits 1 when the server response is missing userId', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: JSON.stringify({ lastSeenAt: null }),
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      try {
+        assert.strictEqual(result.status, 1);
+      } finally {
+        await server.close();
+      }
     });
   });
 
