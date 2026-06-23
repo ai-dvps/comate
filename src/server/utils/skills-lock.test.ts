@@ -321,8 +321,7 @@ describe('serialize helpers', () => {
     };
     const out = serializeProjectLock(data);
     assert.ok(out.indexOf('"alpha"') < out.indexOf('"zebra"'), 'should be sorted');
-    assert.ok(out.endsWith('
-'), 'should end with newline');
+    assert.ok(out.endsWith('\n'), 'should end with newline');
   });
 
   it('serializeGlobalLock preserves insertion order', () => {
@@ -341,8 +340,7 @@ describe('serialize helpers', () => {
     };
     const out = serializeGlobalLock(data);
     assert.ok(out.indexOf('"zebra"') < out.indexOf('"alpha"'), 'insertion order preserved');
-    assert.ok(out.endsWith('
-'));
+    assert.ok(out.endsWith('\n'));
   });
 });
 

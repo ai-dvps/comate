@@ -6,9 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  rollupGlobal,
   rollupWorkspace,
-  type WorkspaceRollupInput,
 } from './analytics-aggregation.js';
 import type { SessionAnalyticsRow } from '../storage/analytics-cache.js';
 
@@ -115,4 +113,6 @@ describe('rollupWorkspace', () => {
     assert.ok(summary.recentGrowth);
     assert.equal(summary.recentGrowth!.current, 700); // 7×100
     assert.equal(summary.recentGrowth!.previous, 350); // 7×50
-    assert.equal(summary.recentGrowth!.percentDelta, 100); // +100
+    assert.equal(summary.recentGrowth!.percentDelta, 100); // +100%
+  });
+});

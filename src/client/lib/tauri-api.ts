@@ -1,7 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 
+interface TauriWindow extends Window {
+  __TAURI_INTERNALS__?: unknown;
+}
+
 export function isTauri(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
+  return typeof window !== 'undefined' && !!(window as TauriWindow).__TAURI_INTERNALS__;
 }
 
 async function resolveApiBaseWithRetry(): Promise<string> {

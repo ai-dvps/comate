@@ -131,9 +131,9 @@ describe('WeComDocService', { concurrency: false }, () => {
 
   it('processes smartpage-create with top-level page_filepath', async () => {
     const mdPath = path.join(tempDir, 'overview.md');
-    await fsPromises.writeFile(mdPath, '# Overview
+    await fsPromises.writeFile(mdPath, `# Overview
 
-Content', 'utf-8');
+Content`, 'utf-8');
 
     mockFetch((url, body) => {
       if (url.includes('get_mcp_config')) {
@@ -151,9 +151,9 @@ Content', 'utf-8');
       assert.ok(Array.isArray(args.pages));
       const page = (args.pages as Record<string, unknown>[])[0];
       assert.strictEqual(page.title, 'Overview');
-      assert.strictEqual(page.page_content, '# Overview
+      assert.strictEqual(page.page_content, `# Overview
 
-Content');
+Content`);
       assert.strictEqual('page_filepath' in args, false);
       return mcpJsonResponse({ errcode: 0, errmsg: 'ok', docid: 'PAGE1' });
     });

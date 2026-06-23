@@ -112,7 +112,7 @@ describe('AnalyticsService', () => {
     const home = mkdtempSync(join(tmpdir(), 'analytics-svc-home-'));
     process.env.HOME = home;
     const folderPath = join(home, 'my-project');
-    const encoded = folderPath.replace(/[/\]/g, '-');
+    const encoded = folderPath.replace(/[/\\]/g, '-');
     const projectsDir = join(home, '.claude', 'projects', encoded);
     mkdirSync(projectsDir, { recursive: true });
     writeFileSync(join(projectsDir, 'sess-1.jsonl'), assistantJson());
@@ -150,7 +150,7 @@ describe('AnalyticsService', () => {
     const home = mkdtempSync(join(tmpdir(), 'analytics-svc-home-'));
     process.env.HOME = home;
     const folderPath = join(home, 'my-project');
-    const encoded = folderPath.replace(/[/\]/g, '-');
+    const encoded = folderPath.replace(/[/\\]/g, '-');
     const projectsDir = join(home, '.claude', 'projects', encoded);
     mkdirSync(projectsDir, { recursive: true });
     writeFileSync(join(projectsDir, 'sess-stable.jsonl'), assistantJson());
@@ -165,8 +165,7 @@ describe('AnalyticsService', () => {
     await service.getWorkspaceSummary('ws-1');
     // Mutate the transcript behind the cache's back: the service should NOT
     // re-read because the SDK still reports lastModified=5_000 (matches cache).
-    writeFileSync(join(projectsDir, 'sess-stable.jsonl'), assistantJson() + '
-' + assistantJson({ timestamp: '2026-06-13T15:00:00.000Z' }));
+    writeFileSync(join(projectsDir, 'sess-stable.jsonl'), assistantJson() + '\n' + assistantJson({ timestamp: '2026-06-13T15:00:00.000Z' }));
 
     await service.getWorkspaceSummary('ws-1');
     const cached = stubStore.cache.get('sess-stable');
@@ -182,7 +181,7 @@ describe('AnalyticsService', () => {
     const home = mkdtempSync(join(tmpdir(), 'analytics-svc-home-'));
     process.env.HOME = home;
     const folderPath = join(home, 'my-project');
-    const encoded = folderPath.replace(/[/\]/g, '-');
+    const encoded = folderPath.replace(/[/\\]/g, '-');
     const projectsDir = join(home, '.claude', 'projects', encoded);
     mkdirSync(projectsDir, { recursive: true });
     writeFileSync(join(projectsDir, 'sess-grow.jsonl'), assistantJson());
@@ -201,8 +200,7 @@ describe('AnalyticsService', () => {
     // Grow the transcript and bump the SDK's reported mtime.
     writeFileSync(
       join(projectsDir, 'sess-grow.jsonl'),
-      assistantJson() + '
-' + assistantJson({ timestamp: '2026-06-13T15:00:00.000Z' }),
+      assistantJson() + '\n' + assistantJson({ timestamp: '2026-06-13T15:00:00.000Z' }),
     );
     reportedMtime = 2_000;
     // Rebuild the SDK with the new mtime.
@@ -227,7 +225,7 @@ describe('AnalyticsService', () => {
     const folders = [folderA, folderB];
     for (let i = 0; i < folders.length; i++) {
       const folder = folders[i]!;
-      const encoded = folder.replace(/[/\]/g, '-');
+      const encoded = folder.replace(/[/\\]/g, '-');
       const dir = join(home, '.claude', 'projects', encoded);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, `${sessionIds[i]}.jsonl`), assistantJson());

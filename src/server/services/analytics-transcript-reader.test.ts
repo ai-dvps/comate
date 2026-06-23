@@ -4,13 +4,9 @@ import '../test-utils/test-env.js';
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import {
   extractFromTranscriptText,
-  extractSessionAnalytics,
 } from './analytics-transcript-reader.js';
 
 function assistantLine(overrides: Record<string, unknown> = {}): string {
@@ -31,27 +27,9 @@ function assistantLine(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-function turnDurationLine(durationMs: number, timestamp = '2026-06-13T14:30:01.000Z'): string {
-  return JSON.stringify({
-    type: 'system',
-    timestamp,
-    durationMs,
-    messageCount: 2,
-  });
-}
-
-function compactBoundaryLine(): string {
-  return JSON.stringify({
-    type: 'compact_boundary',
-    timestamp: '2026-06-13T14:00:00.000Z',
-    compactMetadata: { trigger: 'manual', preTokens: 1000, postTokens: 200, durationMs: 500 },
-  });
-}
-
 describe('extractFromTranscriptText', () => {
   it('sums usage across assistant entries and attributes tokens to the per-turn model', () => {
-    const text = [assistantLine(), assistantLine()].join('
-');
+    const text = [assistantLine(), assistantLine()].join('\n');
     const agg = extractFromTranscriptText(text);
 
     assert.equal(agg.totalTokens, 330); // 165 × 2
@@ -80,12 +58,14 @@ describe('extractFromTranscriptText', () => {
           content: [],
         },
       }),
-    ].join('
-');
+    ].join('\n');
     const agg = extractFromTranscriptText(text);
 
     // claude-sonnet-4: 100 in + 50 out + 10 ccw + 5 cr
     //   = 100/1M*3 + 50/1M*15 + 10/1M*3.75 + 5/1M*0.3
     //   ≈ 0.001089 USD; unknown model contributes 0 cost.
     assert.ok(agg.estimatedCostUsd > 0);
-    // Coverage: 165 of 465 tokens are priced → ~35.48
+    // Coverage: 165 of 465 tokens are priced → ~35.48%
+    assert.ok(agg.costCoveragePercent > 30 && agg.costCoveragePercent < 40);
+  });
+});

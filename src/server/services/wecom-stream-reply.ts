@@ -2,6 +2,7 @@ import type { WsFrame } from '@wecom/aibot-node-sdk';
 import type { SseEvent } from '../types/message.js';
 import { debounce } from '../utils/debounce.js';
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export interface StreamReplyConnection {
   client: {
     replyStream: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<unknown>;

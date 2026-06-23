@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, before, after, beforeEach } from 'node:test';

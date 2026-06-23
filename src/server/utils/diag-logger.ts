@@ -4,7 +4,7 @@ import util from 'util';
 import { getLogsDir } from './log-cleanup.js';
 
 const logFile = path.join(getLogsDir(), 'sse-diag.log');
-const mirrorToConsole = process.env.COMATE_SIDECAR !== '1';
+const mirrorToConsole = () => process.env.COMATE_SIDECAR !== '1';
 
 if (!existsSync(path.dirname(logFile))) {
   try {
@@ -16,7 +16,7 @@ if (!existsSync(path.dirname(logFile))) {
 
 const stream = createWriteStream(logFile, { flags: 'a' });
 stream.on('error', (err) => {
-  if (mirrorToConsole) {
+  if (mirrorToConsole()) {
     console.error('[diag-logger] stream error:', err.message);
   }
 });
@@ -35,7 +35,7 @@ function formatArg(arg: unknown): string {
 
 export function diagLog(...args: unknown[]): void {
   const line = `[${timestamp()}] ${args.map(formatArg).join(' ')}`;
-  if (mirrorToConsole) {
+  if (mirrorToConsole()) {
     console.log(line);
   }
   if (stream.writable) {
@@ -45,7 +45,7 @@ export function diagLog(...args: unknown[]): void {
 
 export function diagWarn(...args: unknown[]): void {
   const line = `[${timestamp()}] [WARN] ${args.map(formatArg).join(' ')}`;
-  if (mirrorToConsole) {
+  if (mirrorToConsole()) {
     console.warn(line);
   }
   if (stream.writable) {

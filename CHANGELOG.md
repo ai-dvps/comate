@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-06-23
+
 ### Added
 
 - **Feishu bot session GUI parity** — Feishu-bound sessions are now treated as bot sessions in the GUI, suppressing the chat input, blocking local sends, skipping SSE subscriptions, and surfacing a Feishu-branded bot bar with the configured bot name, bound user info, and refresh control.
@@ -102,6 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added planning artifacts for chat message search.
 
+[0.0.13]: https://github.com/ai-dvps/comate/releases/tag/v0.0.13
+[0.0.12]: https://github.com/ai-dvps/comate/releases/tag/v0.0.12
 [0.0.11]: https://github.com/ai-dvps/comate/releases/tag/v0.0.11
 [0.0.10]: https://github.com/ai-dvps/comate/releases/tag/v0.0.10
 [0.0.9]: https://github.com/ai-dvps/comate/releases/tag/v0.0.9
