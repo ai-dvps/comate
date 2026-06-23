@@ -235,6 +235,38 @@ describe('FeishuCardStream', { concurrency: false }, () => {
     assert.strictEqual(settingsPayload.config.summary.content, 'final answer');
   });
 
+  it('finish pushes a final content update even when no setContent was called', async () => {
+    const client = makeMockClient();
+    const stream = new FeishuCardStream(client, 'ou_123');
+    await stream.start('initial');
+
+    await stream.finish('final answer');
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(contentCalls.length, 1);
+    assert.strictEqual(
+      (contentCalls[0].args as { data: { content: string } }).data.content,
+      'final answer',
+    );
+
+    const settingsCalls = calls.filter((c) => c.method === 'card.settings');
+    assert.strictEqual(settingsCalls.length, 1);
+  });
+
+  it('finish with empty text does not push a content update', async () => {
+    const client = makeMockClient();
+    const stream = new FeishuCardStream(client, 'ou_123');
+    await stream.start('initial');
+
+    await stream.finish('');
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(contentCalls.length, 0);
+
+    const settingsCalls = calls.filter((c) => c.method === 'card.settings');
+    assert.strictEqual(settingsCalls.length, 1);
+  });
+
   it('returns the same promise when finish is called multiple times', async () => {
     const client = makeMockClient();
     const stream = new FeishuCardStream(client, 'ou_123');
