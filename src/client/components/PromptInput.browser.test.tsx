@@ -441,6 +441,35 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(el.textContent).toBe('plain text'))
   })
 
+  it('replaces selected text when pasting', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const el = editableElement()
+
+    await editableLocator().fill('hello world')
+    await waitFor(() => expect(el.textContent).toBe('hello world'))
+
+    // Select the word "world" (offsets 6..11).
+    const selection = window.getSelection()
+    const textNode = el.firstChild
+    if (textNode) {
+      const range = document.createRange()
+      range.setStart(textNode, 6)
+      range.setEnd(textNode, 11)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+    }
+
+    const dt = new DataTransfer()
+    dt.setData('text/plain', 'pasted')
+    const paste = new ClipboardEvent('paste', {
+      bubbles: true,
+      clipboardData: dt,
+    })
+    el.dispatchEvent(paste)
+
+    await waitFor(() => expect(el.textContent).toBe('hello pasted'))
+  })
+
   it('disables the input while streaming', async () => {
     seedHistory(['history prompt'])
     chatStoreMock.setDraft('session-1', '@')

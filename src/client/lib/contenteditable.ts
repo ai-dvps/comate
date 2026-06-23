@@ -72,6 +72,24 @@ function findNodeAtOffset(
   return null
 }
 
+function getOffsetInElement(
+  element: HTMLElement,
+  container: Node,
+  nodeOffset: number,
+): number {
+  let offset = 0
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node) {
+    if (node === container) {
+      return offset + nodeOffset
+    }
+    offset += node.textContent?.length ?? 0
+    node = walker.nextNode()
+  }
+  return offset
+}
+
 /**
  * Return the current caret position as a character offset within the
  * `contentEditable` element's plain-text value.
@@ -80,18 +98,23 @@ export function getCaretOffset(element: HTMLElement): number {
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return 0
   const range = selection.getRangeAt(0)
+  return getOffsetInElement(element, range.startContainer, range.startOffset)
+}
 
-  let offset = 0
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-  let node = walker.nextNode()
-  while (node) {
-    if (node === range.startContainer) {
-      return offset + range.startOffset
-    }
-    offset += node.textContent?.length ?? 0
-    node = walker.nextNode()
+/**
+ * Return the start and end character offsets of the current selection within
+ * the `contentEditable` element's plain-text value. When the selection is
+ * collapsed, both values are equal.
+ */
+export function getSelectionOffsets(element: HTMLElement): [number, number] {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) {
+    return [0, 0]
   }
-  return offset
+  const range = selection.getRangeAt(0)
+  const start = getOffsetInElement(element, range.startContainer, range.startOffset)
+  const end = getOffsetInElement(element, range.endContainer, range.endOffset)
+  return [start, end]
 }
 
 /**
