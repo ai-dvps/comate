@@ -3,7 +3,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import type { Thread } from 'chat';
 import type * as lark from '@larksuiteoapi/node-sdk';
-import { FeishuStreamReply } from './feishu-stream-reply.js';
+import { FeishuStreamReply, FALLBACK_TEXT } from './feishu-stream-reply.js';
 import type { SseEvent } from '../types/message.js';
 
 interface MockCall {
@@ -230,6 +230,79 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
       data: { content: string };
     };
     assert.ok(lastContent?.data.content.includes('处理失败'));
+    assert.strictEqual(lastContent?.data.content, '\n\n⚠️ 处理失败，请稍后重试。');
+  });
+
+  it('replaces the placeholder with the fallback message on result with no model text', async () => {
+    const reply = createReply();
+    const { handler, finalize } = await reply.start();
+
+    handler(1, { type: 'assistant_start' } as SseEvent);
+    handler(1, { type: 'result', isError: false } as SseEvent);
+    await finalize();
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(contentCalls.length, 1);
+    assert.strictEqual(
+      (contentCalls[0].args as { data: { content: string } }).data.content,
+      FALLBACK_TEXT,
+    );
+
+    const settingsCalls = calls.filter((c) => c.method === 'card.settings');
+    assert.strictEqual(settingsCalls.length, 1);
+    const settingsPayload = JSON.parse(
+      (settingsCalls[0].args as { data: { settings: string } }).data.settings,
+    );
+    assert.strictEqual(settingsPayload.config.summary.content, FALLBACK_TEXT);
+  });
+
+  it('replaces the placeholder with the fallback message on error_note with empty text', async () => {
+    const reply = createReply();
+    const { handler, finalize } = await reply.start();
+
+    handler(1, { type: 'error_note', text: '' } as SseEvent);
+    await finalize();
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(contentCalls.length, 1);
+    assert.strictEqual(
+      (contentCalls[0].args as { data: { content: string } }).data.content,
+      FALLBACK_TEXT,
+    );
+  });
+
+  it('replaces the placeholder with the fallback message on interrupted with no model text', async () => {
+    const reply = createReply();
+    const { handler, finalize } = await reply.start();
+
+    handler(1, { type: 'assistant_start' } as SseEvent);
+    handler(1, { type: 'interrupted' } as SseEvent);
+    await finalize();
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(contentCalls.length, 1);
+    assert.strictEqual(
+      (contentCalls[0].args as { data: { content: string } }).data.content,
+      FALLBACK_TEXT,
+    );
+  });
+
+  it('does not duplicate the fallback message when finalize is called repeatedly on an empty answer', async () => {
+    const reply = createReply();
+    const { handler, finalize } = await reply.start();
+
+    handler(1, { type: 'result', isError: false } as SseEvent);
+    const p1 = finalize();
+    const p2 = finalize();
+    assert.strictEqual(p1, p2);
+    await p1;
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    assert.strictEqual(contentCalls.length, 1);
+    assert.strictEqual(
+      (contentCalls[0].args as { data: { content: string } }).data.content,
+      FALLBACK_TEXT,
+    );
   });
 
   function parseCardContent(call: unknown): Record<string, unknown> | null {
