@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import { execute } from '@oclif/core';
+import { createRequire } from 'node:module';
 import { basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json');
 
 import Send from './commands/send.js';
 import SendFile from './commands/send-file.js';
@@ -62,8 +66,8 @@ void execute({
   loadOptions: {
     root: __dirname,
     pjson: {
-      name: '@webank/wecom',
-      version: '0.2.0',
+      name: packageJson.name,
+      version: packageJson.version,
       oclif: {
         bin: 'wecom',
         commands: {

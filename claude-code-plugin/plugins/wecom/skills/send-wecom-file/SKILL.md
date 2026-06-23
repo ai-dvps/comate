@@ -28,7 +28,7 @@ If `wecom` is not in PATH, use `npx wecom` or the full path from `WECOM_CLI_PATH
    ```bash
    wecom --version
    ```
-   Expected: `0.3.0` or higher. If the version is lower, advise the user to update:
+   Expected: `1.0.1` or higher. If the version is lower, advise the user to update:
    ```bash
    npm install -g @webank/wecom@latest
    ```
@@ -141,7 +141,7 @@ Report the actual exit code and meaning to the user.
 </anti_patterns>
 
 <success_criteria>
-- CLI version is verified to be `0.3.0` or higher
+- CLI version is verified to be `1.0.1` or higher
 - Recipient is resolved via explicit user ID or `${WECOM_USER_ID}`
 - File is found via workspace-wide recursive search
 - Ambiguous matches are presented to the user for selection

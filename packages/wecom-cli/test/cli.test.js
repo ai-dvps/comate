@@ -1,11 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const CLI = new URL('../dist/index.js', import.meta.url).pathname;
+const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 
 function run(args, cwd) {
   const result = spawnSync(process.execPath, [CLI, ...args], {
@@ -21,6 +24,12 @@ describe('wecom cli', () => {
       const result = run(['--help']);
       assert.strictEqual(result.status, 0);
       assert(result.stdout.includes('$ wecom [COMMAND]'));
+    });
+
+    it('shows version from package.json', () => {
+      const result = run(['--version']);
+      assert.strictEqual(result.status, 0);
+      assert(result.stdout.includes(packageJson.version));
     });
 
     it('shows send help', () => {
