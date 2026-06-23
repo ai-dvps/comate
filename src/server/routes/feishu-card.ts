@@ -37,6 +37,31 @@ export function parseCardActionValue(raw: unknown): Record<string, unknown> | nu
   return null;
 }
 
+/**
+ * Extract the operator open_id and event_key from an `application.bot.menu_v6`
+ * event payload. The SDK nests the user id under `operator.operator_id.open_id`
+ * (NOT `operator.open_id`); this helper centralizes that path so it is tested
+ * in one place.
+ */
+export function extractMenuEvent(data: Record<string, unknown>): {
+  openId: string;
+  eventKey: string | undefined;
+} {
+  const operator = data.operator as { operator_id?: { open_id?: string } } | undefined;
+  const openId = operator?.operator_id?.open_id ?? '';
+  const eventKey = typeof data.event_key === 'string' ? data.event_key : undefined;
+  return { openId, eventKey };
+}
+
+function readEventType(body: Record<string, unknown>): string | undefined {
+  const header = body.header;
+  if (header && typeof header === 'object') {
+    const type = (header as Record<string, unknown>).event_type;
+    if (typeof type === 'string') return type;
+  }
+  return undefined;
+}
+
 function buildDispatcherInput(
   req: RawBodyRequest,
   body: Record<string, unknown>,
@@ -79,6 +104,27 @@ async function handleCardCallback(
       return;
     }
 
+    // Menu events can create sessions, so they require the app credentials (to
+    // build a DM client) AND a non-empty encrypt key. The SDK's
+    // checkIsEventValidated returns true unconditionally when the encrypt key is
+    // empty, silently bypassing signature verification — reject unverifiable
+    // menu events at the route before any handler runs. This is scoped to menu
+    // events only; existing card-action handling is unchanged.
+    if (readEventType(body) === 'application.bot.menu_v6') {
+      const appId = workspace.settings.feishuAppId?.trim();
+      const appSecret = workspace.settings.feishuAppSecret?.trim();
+      const encryptKeyTrimmed = (workspace.settings.feishuEncryptKey ?? '').trim();
+      if (!appId || !appSecret || !encryptKeyTrimmed) {
+        diagLog(
+          `[FeishuCardRoute] menu event rejected: incomplete Feishu credentials/encrypt key for workspace ${workspaceId}`,
+        );
+        res
+          .status(400)
+          .json({ error: 'Workspace Feishu credentials or encryption key are not configured' });
+        return;
+      }
+    }
+
     const dispatcher = new lark.EventDispatcher({ encryptKey, verificationToken });
     dispatcher.register({
       url_verification: (data: Record<string, unknown>) => {
@@ -110,6 +156,33 @@ async function handleCardCallback(
           diagLog(`[FeishuCardRoute] action handler error: ${message}`);
           return { toast: { type: 'error', content: '处理操作失败。' } };
         }
+      },
+      'application.bot.menu_v6': async (data: Record<string, unknown>) => {
+        const { openId, eventKey } = extractMenuEvent(data);
+        diagLog(
+          `[FeishuCardRoute] menu_v6 openId=${openId || '(missing)'} key=${(eventKey ?? '').slice(0, 40)}`,
+        );
+
+        // Credentials are guaranteed present: the route-level guard above
+        // rejected menu events for workspaces missing appId/appSecret/encryptKey.
+        // Build a fresh client per callback (KTD2) so the correct workspace's
+        // credentials are used, independent of the singleton service connection.
+        const menuClient = new lark.Client({
+          appId: workspace.settings.feishuAppId!.trim(),
+          appSecret: workspace.settings.feishuAppSecret!.trim(),
+          appType: lark.AppType.SelfBuild,
+          loggerLevel: lark.LoggerLevel.error,
+        });
+
+        // Fire-and-forget: respond to Feishu immediately so it does not retry
+        // (a retry would re-enter runForUser and could create a duplicate
+        // session). The DM send is serialized per user inside handleMenuEvent,
+        // and its own error handling reports failures back to the user.
+        feishuBotService.handleMenuEvent(menuClient, workspace, openId, eventKey).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          diagLog(`[FeishuCardRoute] menu handler error: ${message}`);
+        });
+        return { toast: { type: 'success', content: '已处理。' } };
       },
     });
 
