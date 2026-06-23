@@ -1,13 +1,15 @@
 import type { Thread } from 'chat';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import type { SseEvent } from '../types/message.js';
+
+export const FALLBACK_TEXT = '⚠️ 处理失败，请稍后重试。';
 import {
   buildApprovalCard,
   buildQuestionCard,
   type FeishuCard,
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler } from './feishu-card-action-handler.js';
-import { FeishuCardStream } from './feishu-card-stream.js';
+import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
 
 export interface FeishuStreamReplyHandle {
   handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
@@ -202,6 +204,10 @@ export class FeishuStreamReply {
     this.collecting = false;
     this.clearPlaceholderState();
     this.updateController();
+
+    if (!hasVisibleChar(this.responseText)) {
+      this.responseText = FALLBACK_TEXT;
+    }
 
     if (!this.controller) {
       // If the controller was never started (should not happen in normal flow),
