@@ -629,4 +629,178 @@ describe('FeishuBotService', () => {
       assert.strictEqual(resolverCalls.length, 0);
     });
   });
+
+  describe('bot menu events (handleMenuEvent)', () => {
+    type LarkClientLike = import('@larksuiteoapi/node-sdk').Client;
+
+    function makeMenuLarkClient(): LarkClientLike {
+      return {
+        im: {
+          v1: {
+            message: {
+              create: async (args: {
+                params: { receive_id_type: string };
+                data: { receive_id: string; msg_type: string; content: string };
+              }) => {
+                larkCalls.push({ method: 'im.message.create', args });
+                return { data: { message_id: 'msg-menu-1' } };
+              },
+            },
+          },
+        },
+      } as unknown as LarkClientLike;
+    }
+
+    function makeFailingMenuLarkClient(): LarkClientLike {
+      return {
+        im: {
+          v1: {
+            message: {
+              create: async () => {
+                throw new Error('feishu api down');
+              },
+            },
+          },
+        },
+      } as unknown as LarkClientLike;
+    }
+
+    function interactiveCardCalls() {
+      return larkCalls.filter(
+        (c) =>
+          c.method === 'im.message.create' &&
+          (c.args as { data: { msg_type: string } }).data.msg_type === 'interactive',
+      );
+    }
+
+    function textCalls() {
+      return larkCalls.filter(
+        (c) =>
+          c.method === 'im.message.create' &&
+          (c.args as { data: { msg_type: string } }).data.msg_type === 'text',
+      );
+    }
+
+    it('"session" sends the session-list card to the operator open_id', async () => {
+      workspaceStore.listFeishuSessionsByUser = () => [
+        { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
+      ];
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'session');
+
+      const interactive = interactiveCardCalls();
+      assert.strictEqual(interactive.length, 1, 'should send one interactive session-list card');
+      assert.strictEqual(
+        (interactive[0].args as { params: { receive_id_type: string } }).params.receive_id_type,
+        'open_id',
+      );
+      assert.strictEqual(
+        (interactive[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+        'card must be addressed to the operator open_id',
+      );
+    });
+
+    it('"session" still sends a card when the user has no sessions', async () => {
+      workspaceStore.listFeishuSessionsByUser = () => [];
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'session');
+
+      assert.strictEqual(interactiveCardCalls().length, 1, 'empty-state card should still be sent');
+    });
+
+    it('"new" creates a session scoped to the operator open_id and notifies them', async () => {
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'new');
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+      assert.strictEqual(createdSessions[0].source, 'feishu');
+      assert.strictEqual(userSessions.length, 1);
+      assert.strictEqual(userSessions[0].feishuUserId, feishuUserId);
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok(
+        (text[0].args as { data: { content: string } }).data.content.includes(
+          `已创建新会话：${feishuUserId}`,
+        ),
+      );
+      assert.strictEqual(
+        (text[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+      );
+    });
+
+    it('serializes concurrent menu new clicks for the same user (no interleaving)', async () => {
+      const events: string[] = [];
+      let counter = 0;
+      chatService.createSession = async (input) => {
+        counter += 1;
+        const id = `session-${counter}`;
+        events.push(`start:${id}`);
+        await new Promise((r) => setTimeout(r, 15));
+        events.push(`end:${id}`);
+        return {
+          id,
+          workspaceId: input.workspaceId,
+          name: input.name,
+          source: input.source ?? 'feishu',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        } as import('../models/session.js').ChatSession;
+      };
+
+      const p1 = service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'new');
+      const p2 = service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'new');
+      await Promise.all([p1, p2]);
+
+      // Serialized through runForUser: session-1 fully completes before
+      // session-2 starts. Each click creates exactly one session (no dedup —
+      // "new" semantics) but the two never interleave.
+      assert.deepStrictEqual(events, [
+        'start:session-1',
+        'end:session-1',
+        'start:session-2',
+        'end:session-2',
+      ]);
+      assert.strictEqual(counter, 2);
+    });
+
+    it('sends an error text when the workspace is not Feishu-enabled', async () => {
+      const disabledWorkspace = {
+        ...workspace,
+        settings: { ...workspace.settings, feishuBotEnabled: false },
+      } as import('../models/workspace.js').Workspace;
+
+      await service.handleMenuEvent(makeMenuLarkClient(), disabledWorkspace, feishuUserId, 'session');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok(
+        (text[0].args as { data: { content: string } }).data.content.includes('未启用'),
+        'should report the workspace is not enabled',
+      );
+      assert.strictEqual(interactiveCardCalls().length, 0, 'must not send a card for a disabled workspace');
+    });
+
+    it('sends an error text for an unknown event_key', async () => {
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'delete');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok(
+        (text[0].args as { data: { content: string } }).data.content.includes('未知'),
+        'should report an unknown menu operation',
+      );
+      assert.strictEqual(createdSessions.length, 0, 'must not create a session for an unknown key');
+    });
+
+    it('does not crash when the Feishu message send fails', async () => {
+      await assert.doesNotReject(async () => {
+        await service.handleMenuEvent(makeFailingMenuLarkClient(), workspace, feishuUserId, 'new');
+      });
+    });
+  });
 });

@@ -3,7 +3,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import { parseCardActionValue } from './feishu-card.js';
+import { parseCardActionValue, extractMenuEvent } from './feishu-card.js';
 import type { Workspace } from '../models/workspace.js';
 
 describe('feishu card route', { concurrency: false }, () => {
@@ -185,6 +185,100 @@ describe('feishu card route', { concurrency: false }, () => {
       assert.strictEqual(parseCardActionValue(null), null);
       assert.strictEqual(parseCardActionValue(undefined), null);
       assert.strictEqual(parseCardActionValue('{invalid'), null);
+    });
+  });
+
+  describe('application.bot.menu_v6 extraction', () => {
+    it('extracts operator.operator_id.open_id and event_key', () => {
+      const { openId, eventKey } = extractMenuEvent({
+        operator: { operator_id: { open_id: 'ou_menu' } },
+        event_key: 'session',
+      });
+      assert.strictEqual(openId, 'ou_menu');
+      assert.strictEqual(eventKey, 'session');
+    });
+
+    it('returns an empty open_id when operator.operator_id.open_id is missing', () => {
+      const { openId, eventKey } = extractMenuEvent({ operator: {}, event_key: 'new' });
+      assert.strictEqual(openId, '');
+      assert.strictEqual(eventKey, 'new');
+    });
+
+    it('returns undefined event_key when event_key is not a string', () => {
+      const { openId, eventKey } = extractMenuEvent({
+        operator: { operator_id: { open_id: 'ou_menu' } },
+        event_key: 42,
+      });
+      assert.strictEqual(openId, 'ou_menu');
+      assert.strictEqual(eventKey, undefined);
+    });
+  });
+
+  describe('application.bot.menu_v6 route handling', () => {
+    function menuBody(eventKey = 'session', openId = 'ou_menu'): string {
+      return JSON.stringify({
+        schema: '2.0',
+        header: { event_type: 'application.bot.menu_v6' },
+        event: {
+          operator: { operator_id: { open_id: openId } },
+          event_key: eventKey,
+        },
+      });
+    }
+
+    function makeMenuWorkspace(overrides: Partial<Workspace['settings']> = {}): Workspace {
+      return {
+        ...makeWorkspace(),
+        settings: {
+          feishuBotEnabled: true,
+          feishuAppId: 'app-1',
+          feishuAppSecret: 'secret-1',
+          feishuEncryptKey: 'key',
+          feishuVerificationToken: 'token',
+          ...overrides,
+        },
+      } as Workspace;
+    }
+
+    it('rejects a menu event with HTTP 400 when the workspace lacks app credentials', async () => {
+      // makeWorkspace() has no feishuAppId / feishuAppSecret
+      workspaceStore.get = async () => makeWorkspace();
+
+      const handler = await importHandler('/:workspaceId');
+      const res = createMockRes();
+      await handler({ params: { workspaceId: 'ws-1' }, rawBody: menuBody(), headers: {} }, res);
+
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(
+        (res.jsonBody as { error: string }).error,
+        'Workspace Feishu credentials or encryption key are not configured',
+      );
+    });
+
+    it('rejects a menu event with HTTP 400 when the workspace lacks an encrypt key', async () => {
+      workspaceStore.get = async () =>
+        makeMenuWorkspace({ feishuEncryptKey: '' });
+
+      const handler = await importHandler('/:workspaceId');
+      const res = createMockRes();
+      await handler({ params: { workspaceId: 'ws-1' }, rawBody: menuBody(), headers: {} }, res);
+
+      assert.strictEqual(res.statusCode, 400);
+    });
+
+    it('admits a menu event when the workspace is fully configured', async () => {
+      workspaceStore.get = async () => makeMenuWorkspace();
+      invokeStub = async () => ({ toast: { type: 'success', content: '已处理。' } });
+
+      const handler = await importHandler('/:workspaceId');
+      const res = createMockRes();
+      await handler(
+        { params: { workspaceId: 'ws-1' }, rawBody: menuBody('session', 'ou_menu'), headers: {} },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual((res.jsonBody as { toast: { content: string } }).toast.content, '已处理。');
     });
   });
 });
