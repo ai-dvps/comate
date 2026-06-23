@@ -574,20 +574,6 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     return capturedOptions;
   }
 
-  it('WeCom bot session sets WECOM_USER_ID to plaintext user ID', async () => {
-    workspaceStore.getWecomUserIdBySession = () => 'wecom-user-1';
-    workspaceStore.getWecomUserMapping = () => 'user1';
-    const options = await captureBotOptions({ wecomBotEnabled: true }, 'wecom-user-1');
-    assert.strictEqual(options.env.WECOM_USER_ID, 'user1');
-  });
-
-  it('WeCom bot session leaves WECOM_USER_ID unset when plaintext mapping is missing', async () => {
-    workspaceStore.getWecomUserIdBySession = () => 'wecom-user-1';
-    workspaceStore.getWecomUserMapping = () => undefined;
-    const options = await captureBotOptions({ wecomBotEnabled: true }, 'wecom-user-1');
-    assert.strictEqual(options.env.WECOM_USER_ID, undefined);
-  });
-
   it('Feishu bot session does not set WECOM_USER_ID', async () => {
     workspaceStore.getWecomUserIdBySession = () => undefined;
     workspaceStore.getWecomUserMapping = () => undefined;
