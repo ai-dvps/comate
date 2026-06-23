@@ -319,8 +319,8 @@ describe('bot session guards', () => {
 
     try {
       await useChatStore.getState().refreshBotMessages('ws-1', 's1')
-      assert.ok(fetchedUrl)
-      assert.ok(fetchedUrl?.includes('/sessions/s1/messages/latest'))
+      assert.ok(fetchedUrl !== null)
+      assert.ok((fetchedUrl as string).includes('/sessions/s1/messages/latest'))
     } finally {
       globalThis.fetch = originalFetch
       globalThis.window = originalWindow

@@ -61,6 +61,7 @@ const DEFAULT_STATE = {
   feishuEncryptKey: '',
   feishuVerificationToken: '',
   feishuBotEnabled: false,
+  feishuBotName: '',
   feishuAdminUserIds: [],
 };
 
