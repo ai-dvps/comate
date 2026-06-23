@@ -149,6 +149,7 @@ describe('marketplace-service', { concurrency: false }, () => {
         ]);
         assert.ok(update, 'Should detect update when manifest resolves a newer version');
         assert.strictEqual(update!.version, '3.5.0');
+        assert.ok(fetchCount >= 2, 'should fetch marketplace and plugin manifest');
       } finally {
         global.fetch = originalFetch;
       }

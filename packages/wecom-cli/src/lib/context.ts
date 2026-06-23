@@ -11,6 +11,7 @@ export interface ContextFile {
 
 export function findContextFile(startDir: string): string | null {
   let current = path.resolve(startDir);
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     const filePath = path.join(current, CONTEXT_FILE_NAME);
     if (fs.existsSync(filePath)) {

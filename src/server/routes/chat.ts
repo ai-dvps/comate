@@ -375,7 +375,6 @@ router.post('/sessions/:sessionId/interrupt', async (req, res) => {
 // Change the approval mode for a session (mid-session or persist for next start)
 router.post('/sessions/:sessionId/approval-mode', async (req, res) => {
   const sessionId = req.params.sessionId;
-  const workspaceId = (req.params as unknown as { id: string }).id;
   const { approvalMode } = req.body;
 
   if (!approvalMode || !['auto', 'readonly', 'manual'].includes(approvalMode)) {

@@ -1,4 +1,6 @@
 import '../test-utils/test-env.js';
+// Ensure diagLog mirrors to console so this test can capture logged output.
+process.env.COMATE_SIDECAR = '';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';

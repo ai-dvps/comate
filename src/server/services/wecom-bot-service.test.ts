@@ -1,4 +1,5 @@
 import '../test-utils/test-env.js';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fsPromises from 'node:fs/promises';

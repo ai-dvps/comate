@@ -158,7 +158,7 @@ describe('sanitizeSubpath', () => {
 
   it('normalizes backslashes before checking', () => {
     assert.throws(
-      () => sanitizeSubpath('skills\..\..\etc'),
+      () => sanitizeSubpath('skills\\..\\..\\etc'),
       /path traversal/
     );
   });

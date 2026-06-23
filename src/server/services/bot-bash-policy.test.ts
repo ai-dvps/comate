@@ -59,8 +59,7 @@ describe('evaluateBash', () => {
   });
 
   it('rejects commands containing control characters', () => {
-    const result = evaluateBash(ctx, { command: 'echo
-rm -rf /' });
+    const result = evaluateBash(ctx, { command: 'echo\nrm -rf /' });
     assert.equal(result.allowed, false);
     assert.equal(result.reason, 'control-characters');
   });
@@ -72,7 +71,7 @@ rm -rf /' });
   });
 
   it('rejects trailing backslash', () => {
-    const result = evaluateBash(ctx, { command: 'echo hello\' });
+    const result = evaluateBash(ctx, { command: 'echo hello\\' });
     assert.equal(result.allowed, false);
     assert.equal(result.reason, 'trailing-backslash');
   });

@@ -6,6 +6,8 @@ import { normalizeWindowsPath } from './normalize-windows-path.js';
 const PLATFORM_ARCH = `${process.platform}-${process.arch}`;
 const CLAUDE_BINARY_NAME = process.platform === 'win32' ? 'claude.exe' : 'claude';
 
+const require = createRequire(import.meta.url);
+
 function tryResolve(packageName: string): string | undefined {
   try {
     return createRequire(import.meta.url).resolve(packageName);
@@ -80,7 +82,6 @@ export function resolveSdkBinary(): string | undefined {
 
 function tryFile(filePath: string): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { existsSync } = require('fs');
     return existsSync(filePath);
   } catch {

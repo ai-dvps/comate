@@ -12,6 +12,7 @@ export interface BashPolicyResult {
   reason?: string;
 }
 
+// eslint-disable-next-line no-control-regex
 const SHELL_METACHARACTERS = /[|&;`$<>(){}[\]~*?!#\\\r\n\x00-\x08\x0b\x0c\x0e-\x1f]/;
 
 function hasShellMetacharacters(token: string): boolean {
@@ -19,6 +20,7 @@ function hasShellMetacharacters(token: string): boolean {
 }
 
 function hasControlCharacters(command: string): boolean {
+  // eslint-disable-next-line no-control-regex
   return /[\r\n\x00-\x08\x0b\x0c\x0e-\x1f]/.test(command);
 }
 

@@ -20,8 +20,7 @@ describe('plugin-downloader', { concurrency: false }, () => {
       join(pluginDir, '.claude-plugin', 'plugin.json'),
       JSON.stringify({ name: 'wecom', version: '0.1.0' }),
     );
-    writeFileSync(join(pluginDir, 'SKILL.md'), '# send-wecom-msg
-');
+    writeFileSync(join(pluginDir, 'SKILL.md'), '# send-wecom-msg\n');
 
     const downloader = new PluginDownloader({ cacheDir });
     const result = await downloader.downloadLocal('wecom', pluginDir);

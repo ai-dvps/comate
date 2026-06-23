@@ -1,5 +1,9 @@
+interface TauriWindow extends Window {
+  __TAURI_INTERNALS__?: unknown;
+}
+
 function isTauri(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__
+  return typeof window !== 'undefined' && !!(window as TauriWindow).__TAURI_INTERNALS__;
 }
 
 let macOSPromise: Promise<boolean> | null = null

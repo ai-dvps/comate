@@ -366,7 +366,7 @@ router.post('/update', async (req, res) => {
     const downloader = new PluginDownloader({ cacheDir: pluginSettingsService.resolvePluginCacheDir(), timeoutMs: DEFAULT_TIMEOUT_MS });
 
     let downloadResult;
-    let versionForPath = update.version;
+    const versionForPath = update.version;
 
     if (update.sourceType === 'local') {
       downloadResult = await downloader.downloadLocal(pluginId, update.sourceUrl);

@@ -19,7 +19,7 @@ export abstract class BaseCommand extends Command {
     }
   }
 
-  protected override async catch(err: Error & { exitCode?: number; oclif?: { exit?: number } }): Promise<any> {
+  protected override async catch(err: Error & { exitCode?: number; oclif?: { exit?: number } }): Promise<unknown> {
     // Remap oclif validation errors (default exit 2) to exit 1
     // to avoid colliding with our "no context file" exit code 2
     if (err.oclif?.exit === 2 && !err.message?.includes('context file')) {

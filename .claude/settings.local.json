@@ -172,7 +172,13 @@
       "Bash(ls -la /Users/shunyun/RustProjects/wecom-cli)",
       "Bash(find /Users/shunyun/RustProjects/wecom-cli/src -type f -name \"*.rs\" | head -50)",
       "Bash(wnpm publish *)",
-      "Bash(ls -la /Users/shunyun/workspace/)"
+      "Bash(ls -la /Users/shunyun/workspace/)",
+      "Bash(1)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(COMATE_SIDECAR='' node -e ' *)",
+      "Bash(COMATE_SIDECAR='' npx tsx -e ' *)",
+      "Bash(COMATE_SIDECAR=1 npx tsx /tmp/test-diag.ts)",
+      "Bash(COMATE_SIDECAR=1 npx tsx test-diag.ts)"
     ]
   }
 }
