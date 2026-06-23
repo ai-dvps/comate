@@ -15,7 +15,9 @@ export function supportsPlaintextOnly(): boolean {
 
 /**
  * Walk the children of a node and build a plain-text string. Block-level
- * elements (`<div>`, `<p>`) and `<br>` are converted to newline characters.
+ * elements (`<div>`, `<p>`) are converted to newline characters, and `<br>`
+ * tags are converted to newlines unless they are the sole content of an empty
+ * block (the block separator already provides the newline).
  */
 function walkTextNodes(node: Node): string {
   let result = ''
@@ -25,7 +27,15 @@ function walkTextNodes(node: Node): string {
     } else if (child.nodeType === Node.ELEMENT_NODE) {
       const tag = (child as Element).tagName
       if (tag === 'BR') {
-        result += '\n'
+        const parent = child.parentElement
+        const isOnlyChild = parent !== null && parent.childNodes.length === 1
+        const parentIsBlock =
+          parent !== null && (parent.tagName === 'DIV' || parent.tagName === 'P')
+        // An empty block (<div><br></div>) already gets a newline from the
+        // block separator below; don't add a second one for the <br>.
+        if (!isOnlyChild || !parentIsBlock) {
+          result += '\n'
+        }
       } else {
         result += walkTextNodes(child)
         if (tag === 'DIV' || tag === 'P') {
@@ -38,12 +48,20 @@ function walkTextNodes(node: Node): string {
 }
 
 /**
- * Extract a single plain-text value from a `contentEditable` element,
- * normalizing consecutive block separators to single newline characters.
+ * Extract a single plain-text value from a `contentEditable` element.
+ *
+ * For `contentEditable="plaintext-only"`, newlines are stored literally in the
+ * DOM, so `textContent` is exact and preserves intentional empty lines.
+ *
+ * For `contentEditable="true"`, lines are wrapped in block elements; this
+ * walks the DOM and converts block separators to newlines without
+ * double-counting empty blocks.
  */
 export function extractPlainText(element: HTMLElement): string {
-  const raw = walkTextNodes(element)
-  return raw.replace(/\n+/g, '\n')
+  if (element.contentEditable === 'plaintext-only') {
+    return element.textContent ?? ''
+  }
+  return walkTextNodes(element)
 }
 
 /**

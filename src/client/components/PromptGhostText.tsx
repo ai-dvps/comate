@@ -18,13 +18,32 @@ export default function PromptGhostText({
 
   if (!ghost) return null
 
+  const lines = input.split('\n')
+  const lastIndex = lines.length - 1
+
   return (
     <div
       aria-hidden
-      className="absolute inset-0 z-20 px-4 py-3 pointer-events-none whitespace-pre-wrap break-words"
+      className="absolute inset-0 z-20 px-4 py-3 pointer-events-none"
     >
-      <span className="invisible">{input}</span>
-      <span className="text-text-tertiary">{ghost}</span>
+      {lines.map((line, index) => {
+        const isLast = index === lastIndex
+        const showGhost = isLast
+        if (line === '' && !showGhost) {
+          return <div key={index} className="whitespace-pre-wrap break-words"><br /></div>
+        }
+        return (
+          <div
+            key={index}
+            className="whitespace-pre-wrap break-words"
+          >
+            <span className="invisible">{line}</span>
+            {showGhost ? (
+              <span className="text-text-tertiary">{ghost}</span>
+            ) : null}
+          </div>
+        )
+      })}
     </div>
   )
 }
