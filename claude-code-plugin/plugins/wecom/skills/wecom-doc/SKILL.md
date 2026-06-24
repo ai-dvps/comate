@@ -38,6 +38,12 @@ Add a record to a smartsheet:
 wecom doc:smartsheet-add-records --docid DOCID --sheet-id SHEET --records '[{"field_values":{"Field1":"Value1"}}]'
 ```
 
+Export every smartsheet in a document to one `.xlsx` file:
+
+```bash
+wecom doc:smartsheet-export-excel --docid DOCID --output ./export.xlsx
+```
+
 If `wecom` is not in PATH, use `npx wecom` or `${WECOM_CLI_PATH}`.
 </quick_start>
 
@@ -70,10 +76,11 @@ If `wecom` is not in PATH, use `npx wecom` or `${WECOM_CLI_PATH}`.
    - The smartsheet auto-file helpers (`smartsheet-add-records-auto-file` and `smartsheet-update-records-auto-file`) use `--data` instead of `--json` because oclif reserves `--json` as a built-in boolean flag.
 5. **Create smartpages**: When explicitly requested, use `doc:smartpage-create` with a local Markdown file path or `--json` for multi-page input. Save the returned docid.
 6. **Handle uploads**: For images/files attached directly to a doc, use `doc:upload-doc-image` or `doc:upload-doc-file`. For records that include image/file fields, prefer the auto-file helpers (`doc:smartsheet-add-records-auto-file`, `doc:smartsheet-update-records-auto-file`).
-7. **Handle async polling**: `get-doc-content`, `smartpage-export-task`, and `smartpage-get-export-result` are async:
+7. **Export smartsheets to Excel**: To save a whole smartsheet document as a workbook, use `doc:smartsheet-export-excel --docid DOCID --output PATH.xlsx`. It exports every sheet (tab) into one `.xlsx` file. This command writes a binary file locally — it does **not** take `--json` and prints the output path, not JSON. Pass `--force` to overwrite an existing file.
+8. **Handle async polling**: `get-doc-content`, `smartpage-export-task`, and `smartpage-get-export-result` are async:
    - First call returns a `task_id`.
    - If `task_done` is `false`, call again with the `task_id` until `task_done` is `true`.
-8. **Execute and report**: Show the command and the outcome. If `errcode` is non-zero, surface `errcode` and `errmsg` to the user and retry once.
+9. **Execute and report**: Show the command and the outcome. If `errcode` is non-zero, surface `errcode` and `errmsg` to the user and retry once.
 </workflow>
 
 <examples>
@@ -159,6 +166,16 @@ wecom doc:smartsheet-add-records-auto-file --docid DOC123 --sheet-id SHEET1 --da
 The server resolves `image_path`/`file_path` fields to WeCom media IDs.
 </output>
 </example>
+
+<example number="9">
+<input>Export the smartsheet at https://doc.weixin.qq.com/smartsheet/DOC123 to Excel</input>
+<output>
+```bash
+wecom doc:smartsheet-export-excel --docid DOC123 --output ./DOC123.xlsx
+```
+Every sheet in the document is written as a worksheet in the `.xlsx`. The command prints the absolute output path. Add `--force` to overwrite an existing file.
+</output>
+</example>
 </examples>
 
 <anti_patterns>
@@ -185,6 +202,10 @@ The legacy Rust CLI required `+smartpage_create`. The new TypeScript CLI uses `w
 Most commands accept `--json` to override the request body. The smartsheet auto-file helpers (`smartsheet-add-records-auto-file` and `smartsheet-update-records-auto-file`) use `--data` instead because oclif reserves `--json` as a built-in boolean flag. Passing `--json` to those commands will fail.
 </pitfall>
 
+<pitfall name="export_excel_writes_a_file">
+`smartsheet-export-excel` is the only smartsheet command that writes a **binary file** instead of printing JSON. It requires `--output` (a `.xlsx` path) and does **not** accept `--json`. If the file exists, it prompts in a TTY or exits `1` non-interactively unless `--force` is passed. Report the printed output path, not a JSON body.
+</pitfall>
+
 <pitfall name="quoting_json_flags">
 Flags like `--fields`, `--records`, `--data` expect JSON strings. Always wrap the JSON in single quotes on the shell to avoid expansion issues:
 ```bash
@@ -208,6 +229,7 @@ Report the actual exit code and meaning to the user.
 - Smartpage tools are only used when explicitly triggered
 - Smartsheet tools are used for `/smartsheet/*` URLs and smart-table operations
 - Uploads are handled via `doc:upload-doc-image`, `doc:upload-doc-file`, or auto-file helpers as appropriate
+- Smartsheet-to-Excel exports use `doc:smartsheet-export-excel` with `--output` (and `--force` when overwriting), reporting the written file path
 - Async tasks are polled until `task_done` is true
 - Complex parameters are passed correctly via `--json` (or `--data` for auto-file helpers)
 - The executed CLI command is shown in the response
@@ -250,3 +272,4 @@ Report the actual exit code and meaning to the user.
 - [smartsheet-delete-records.md](references/smartsheet-delete-records.md)
 - [smartsheet-add-records-auto-file.md](references/smartsheet-add-records-auto-file.md)
 - [smartsheet-update-records-auto-file.md](references/smartsheet-update-records-auto-file.md)
+- [smartsheet-export-excel.md](references/smartsheet-export-excel.md)
