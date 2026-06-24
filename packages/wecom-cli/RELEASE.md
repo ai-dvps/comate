@@ -33,6 +33,11 @@ This document describes how to release a new version of `@webank/wecom`.
 
 ## Release History
 
+### 1.1.0
+- Added `current-user` command to resolve the current WeCom user/session context via the CLI.
+- Updated dependent WeCom skills (`send-wecom-file`, `send-wecom-msg`, `wecom-doc`) to require CLI `1.1.0` or higher.
+- Synced workspace lockfile versions.
+
 ### 1.0.1
 - Fixed `wecom --version` to read from `package.json` instead of a hardcoded value.
 - Updated dependent WeCom skills (`send-wecom-file`, `send-wecom-msg`, `wecom-doc`) to require CLI `1.0.1` or higher.
