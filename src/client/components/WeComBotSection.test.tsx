@@ -200,7 +200,21 @@ describe('WeComBotSection', () => {
     expect(screen.getByText(/historical proactive messages/i)).toBeInTheDocument();
   });
 
-  it('does not show the disabled banner when the bot is enabled', async () => {
+  it('shows encrypted IDs and action buttons in the users tab', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        users: [
+          {
+            encryptedUserId: 'enc-1',
+            plaintextUserId: 'Alice',
+            firstSeenAt: new Date().toISOString(),
+            lastSeenAt: new Date().toISOString(),
+          },
+        ],
+      }),
+    });
+
     await renderWithAct(
       <WeComBotSection
         state={DEFAULT_STATE}
@@ -211,10 +225,206 @@ describe('WeComBotSection', () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Queue/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Users/i }));
       await Promise.resolve();
     });
 
-    expect(screen.queryByText(/WeCom Bot is disabled/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Alice')).toBeInTheDocument();
+    expect(screen.getByText(/enc-1/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reload/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Resolve pending now/i })).toBeInTheDocument();
+  });
+
+  it('reloads the user list when the reload button is clicked', async () => {
+    await renderWithAct(
+      <WeComBotSection
+        state={DEFAULT_STATE}
+        onUpdate={vi.fn()}
+        workspaceId="ws-1"
+        onSave={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Users/i }));
+      await Promise.resolve();
+    });
+
+    const initialUserFetches = mockFetch.mock.calls.filter((call) =>
+      String(call[0]).includes('/wecom/users'),
+    ).length;
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Reload/i }));
+      await Promise.resolve();
+    });
+
+    const laterUserFetches = mockFetch.mock.calls.filter((call) =>
+      String(call[0]).includes('/wecom/users'),
+    ).length;
+    expect(laterUserFetches).toBeGreaterThan(initialUserFetches);
+  });
+
+  it('saves a manual plaintext ID when inline editing', async () => {
+    mockFetch.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/plaintext')) {
+        return {
+          ok: true,
+          json: async () => ({ encryptedUserId: 'enc-1', plaintextUserId: 'U123' }),
+        } as Response;
+      }
+      if (url.includes('/wecom/users')) {
+        return {
+          ok: true,
+          json: async () => ({
+            users: [
+              {
+                encryptedUserId: 'enc-1',
+                firstSeenAt: new Date().toISOString(),
+                lastSeenAt: new Date().toISOString(),
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+
+    await renderWithAct(
+      <WeComBotSection
+        state={DEFAULT_STATE}
+        onUpdate={vi.fn()}
+        workspaceId="ws-1"
+        onSave={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Users/i }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Add plaintext ID/i }));
+      await Promise.resolve();
+    });
+
+    const input = screen.getByPlaceholderText(/Enterprise userId/i) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'U123' } });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+      await Promise.resolve();
+    });
+
+    const plaintextCalls = mockFetch.mock.calls.filter((call) =>
+      String(call[0]).includes('/plaintext'),
+    );
+    expect(plaintextCalls.length).toBe(1);
+    expect((plaintextCalls[0][1] as RequestInit)?.method).toBe('POST');
+    expect(screen.getByText('U123')).toBeInTheDocument();
+  });
+
+  it('shows a duplicate error when the manual plaintext ID is already used', async () => {
+    mockFetch.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/plaintext')) {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({ error: 'Duplicate' }),
+        } as Response;
+      }
+      if (url.includes('/wecom/users')) {
+        return {
+          ok: true,
+          json: async () => ({
+            users: [
+              {
+                encryptedUserId: 'enc-1',
+                firstSeenAt: new Date().toISOString(),
+                lastSeenAt: new Date().toISOString(),
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+
+    await renderWithAct(
+      <WeComBotSection
+        state={DEFAULT_STATE}
+        onUpdate={vi.fn()}
+        workspaceId="ws-1"
+        onSave={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Users/i }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Add plaintext ID/i }));
+      await Promise.resolve();
+    });
+
+    const input = screen.getByPlaceholderText(/Enterprise userId/i) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'U123' } });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/already used by another user/i)).toBeInTheDocument();
+  });
+
+  it('triggers an immediate batch resolve and shows the result', async () => {
+    mockFetch.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/wecom/resolve-pending')) {
+        return {
+          ok: true,
+          json: async () => ({ resolved: 2, failed: 1 }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({ users: [] }) } as Response;
+    });
+
+    await renderWithAct(
+      <WeComBotSection
+        state={{ ...DEFAULT_STATE, wecomCorpId: 'CORP', wecomCorpSecret: 'SECRET' }}
+        onUpdate={vi.fn()}
+        workspaceId="ws-1"
+        onSave={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Users/i }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Resolve pending now/i }));
+      await Promise.resolve();
+    });
+
+    const resolveCalls = mockFetch.mock.calls.filter((call) =>
+      String(call[0]).includes('/wecom/resolve-pending'),
+    );
+    expect(resolveCalls.length).toBe(1);
+    expect(resolveCalls[0][1]).toMatchObject({ method: 'POST' });
+    expect(screen.getByText(/Resolved 2 user\(s\), 1 failed\./i)).toBeInTheDocument();
   });
 });

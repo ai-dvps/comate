@@ -781,6 +781,32 @@ export class SqliteStore {
     return rows;
   }
 
+  isPlaintextUserIdUsedInWorkspace(
+    workspaceId: string,
+    plaintextUserId: string,
+    excludeEncryptedUserId?: string,
+  ): boolean {
+    const rows = this.db
+      .prepare(
+        `
+        SELECT w.encryptedUserId, m.plaintextUserId
+        FROM wecom_workspace_users w
+        LEFT JOIN wecom_user_id_mappings m ON m.encryptedUserId = w.encryptedUserId
+        WHERE w.workspaceId = ?
+      `,
+      )
+      .all(workspaceId) as Array<{ encryptedUserId: string; plaintextUserId: string | null }>;
+
+    for (const row of rows) {
+      if (row.plaintextUserId === plaintextUserId) {
+        if (!excludeEncryptedUserId || row.encryptedUserId !== excludeEncryptedUserId) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   // Feishu bot state
 
   getFeishuActiveWorkspace(): string | null {

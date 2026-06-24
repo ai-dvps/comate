@@ -9,6 +9,8 @@ topic: wecom-user-id-resolution
 
 A hybrid resolver that converts encrypted WeCom user IDs (`openuserid`) to plaintext enterprise IDs. Unseen IDs are queued for periodic batch conversion by default; the system also supports an immediate single lookup when a consumer explicitly needs the plaintext ID before the next scheduled flush. Two new workspace settings fields (`corpid`, `corpsecret`) enable the enterprise API, and resolved mappings are persisted for instant reuse.
 
+In addition, the workspace settings WeCom users tab now lets admins manually type a plaintext userId for an existing user when auto-resolution is slow or unavailable, always displays the encrypted `openuserid`, and provides manual controls to reload the list and trigger an immediate flush of pending IDs.
+
 ---
 
 ## Problem Frame
@@ -17,13 +19,15 @@ The existing WeCom bot integration stores encrypted user IDs as the canonical us
 
 The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid_to_userid`), but calling it individually for every new user is inefficient and risks rate limits at the scale this deployment targets (100+ potential users). A batched, queued approach resolves most IDs in the background without blocking message handling, while an immediate lookup escape hatch serves consumers that cannot wait.
 
+Admins also need visibility into the raw encrypted identifier and a way to bridge the gap when automatic resolution is delayed or temporarily failing. Manual entry is intended as a stopgap, not a replacement for the API.
+
 ---
 
 ## Actors
 
 - A1. WeCom User: Sends messages to the bot; their encrypted ID arrives in the websocket frame.
 - A2. WeCom Bot Service: Receives messages, queues unseen IDs, triggers batch resolution, and handles immediate lookups.
-- A3. Admin: Configures `corpid` and `corpsecret` in workspace settings.
+- A3. Admin: Configures `corpid` and `corpsecret` in workspace settings; can view the user list, type plaintext IDs, reload the list, and trigger an immediate flush.
 - A4. Skill / Permission Consumer: Requests the plaintext user ID for permission checks or session attribution.
 
 ---
@@ -65,6 +69,27 @@ The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid
   - **Outcome:** Plaintext ID is available synchronously to the consumer.
   - **Covered by:** R9, R13, R14
 
+- F6. Admin manually enters a plaintext userId
+  - **Trigger:** Admin opens the WeCom users tab and sees a user whose plaintext ID is still pending or incorrect.
+  - **Actors:** A3
+  - **Steps:** Admin clicks into the plaintext userId cell, types the value, and saves. The system validates uniqueness within the workspace, stores the mapping, and updates the displayed plaintext ID.
+  - **Outcome:** The row now shows the admin-entered plaintext ID. The encrypted ID remains visible. Auto-resolution may overwrite the value later.
+  - **Covered by:** R20–R23, R26, R27
+
+- F7. Admin reloads the user list
+  - **Trigger:** Admin clicks the reload button in the WeCom users tab.
+  - **Actors:** A3
+  - **Steps:** UI fetches the latest workspace user list and current mappings from the server.
+  - **Outcome:** The list reflects the most recent state, including any mappings resolved since the last auto-poll.
+  - **Covered by:** R24
+
+- F8. Admin triggers immediate resolution for pending IDs
+  - **Trigger:** Admin clicks the "Resolve pending now" button in the WeCom users tab.
+  - **Actors:** A3, A2
+  - **Steps:** UI asks the backend to flush queued IDs for the workspace. The resolver obtains a valid access token and calls the batch conversion API. Successful mappings are stored.
+  - **Outcome:** Pending plaintext IDs are resolved without waiting for the next scheduled flush.
+  - **Covered by:** R25, R9
+
 ---
 
 ## Requirements
@@ -103,6 +128,17 @@ The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid
 
 - R19. The mapping is keyed by `(workspaceId, encryptedUserId)` and stores the plaintext `userId`; mappings survive server restarts.
 
+**Settings user list**
+
+- R20. The WeCom users tab displays the encrypted `openuserid` for every user in the list, in addition to the plaintext userId.
+- R21. Each existing user row has an inline editable plaintext userId cell; the admin can type or change the value for users already known to the workspace.
+- R22. Inline edits use explicit Save and Cancel controls per row; changes are not committed until the admin confirms.
+- R23. Saving a manual plaintext userId rejects duplicates within the same workspace and surfaces a clear validation error.
+- R24. The WeCom users tab provides a reload button that fetches the latest user list and mappings on demand.
+- R25. The WeCom users tab provides a "Resolve pending now" button that triggers an immediate flush of all pending IDs for the workspace.
+- R26. Manual plaintext entries are not authoritative; auto-resolution may overwrite them when the WeCom API returns a different value.
+- R27. The plaintext userId cell shows a static placeholder while the plaintext ID is unresolved.
+
 ---
 
 ## Acceptance Examples
@@ -112,6 +148,9 @@ The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid
 - AE3. **Covers R8, R12.** Given a flush with three queued IDs where one resolves and two fail, then the successful mapping is stored and the two failed IDs remain queued for the next flush.
 - AE4. **Covers R16, R17.** Given a workspace with a cached token expiring in 3 minutes, when a flush triggers, then the system uses the cached token. If the token had expired, it fetches a new one before calling the batch API.
 - AE5. **Covers R9, R13, R14.** Given a new user `E789` whose ID is queued but not yet flushed, when a consumer calls the immediate resolution API for `E789`, then the system resolves the ID via single lookup, stores the mapping, removes `E789` from the pending queue, and returns the plaintext ID within the API round-trip time.
+- AE6. **Covers R20–R23, R26, R27.** Given user `E123` with no plaintext ID, when the admin types `U456` into the plaintext cell and saves, then the workspace stores `E123 → U456`, the list shows `U456` and `E123`, and a later successful API resolution may overwrite the mapping with a different value.
+- AE7. **Covers R20, R24.** Given the user list is stale after a background flush, when the admin clicks reload, then the list updates to show the newly resolved plaintext IDs.
+- AE8. **Covers R25, R9.** Given two pending users `E111` and `E222`, when the admin clicks "Resolve pending now", then the resolver flushes the workspace queue and the list shows the resolved plaintext IDs after reload.
 
 ---
 
@@ -122,6 +161,7 @@ The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid
 - Consumers can request immediate resolution when they cannot wait for the next flush.
 - The system does not exceed reasonable WeChat Work API rate limits for a 100+ user org.
 - Mappings survive server restarts.
+- Admins can see the encrypted ID for every user and can manually bridge unresolved plaintext IDs without leaving the settings UI.
 
 ---
 
@@ -133,6 +173,9 @@ The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid
 - UI changes to session list or admin dashboards beyond the resolved ID being available.
 - CorpSecret rotation workflow.
 - Multi-corp support per workspace.
+- Creating brand-new WeCom user records from manual input; manual input only edits existing users.
+- Bulk import or CSV paste of plaintext IDs.
+- Per-row "resolve this user" action; only a global flush control is in scope.
 
 ---
 
@@ -143,6 +186,10 @@ The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid
 - **Encrypted ID remains the canonical session key:** Minimizes changes to existing session routing logic.
 - **Store corpsecret alongside existing bot secret in workspace settings:** Reuses the existing sensitivity boundary; no separate credential vault in this phase.
 - **Immediate lookup is a public resolver API:** Any consumer can request it; no gatekeeper logic in this phase.
+- **Manual plaintext input is a stopgap, not authoritative:** Auto-resolution can overwrite admin-entered values, keeping the WeCom API as the eventual source of truth.
+- **Encrypted ID is always visible in the settings user list:** Makes the canonical identifier discoverable for debugging and correlation.
+- **Explicit Save/Cancel per row rather than auto-save:** Reduces accidental overwrites in a list that auto-refreshes on a timer.
+- **Manual reload + global resolver coexist with auto-poll:** Gives admins control without removing the automatic 10-second refresh.
 
 ---
 
@@ -152,6 +199,7 @@ The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid
 - The `gettoken` API returns an expiration time that can be used for cache invalidation.
 - The workspace's `corpid` and `corpsecret` have sufficient permissions to call both APIs.
 - The existing SQLite store can accommodate a new mapping table.
+- The settings user list surfaces are implemented in `src/client/components/SettingsPanel.tsx`, server routes in `src/server/routes/workspaces.ts`, and storage in `src/server/storage/sqlite-store.ts`.
 
 ---
 
@@ -168,3 +216,5 @@ The WeChat Work enterprise API provides a conversion endpoint (`batch/openuserid
 - [Affects R1–R4][Technical] Whether to validate credentials eagerly (on save) or lazily (on first flush).
 - [Affects R18][Technical] Exact error handling and retry strategy for token fetch failures.
 - [Affects R9][Technical] Exact shape of the immediate resolution API (function signature, async/sync, timeout).
+- [Affects R21–R23][Technical] Exact inline editing interaction (click-to-edit vs always-visible field) and duplicate-check endpoint shape.
+- [Affects R25][Technical] Whether the global resolver button calls the existing immediate-resolution endpoint per ID or a new workspace-scoped flush endpoint.

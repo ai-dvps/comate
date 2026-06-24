@@ -232,17 +232,17 @@ export class WeComUserIdResolver {
     resolverLog(`[WeComUserIdResolver] Flush finished, elapsed=${Date.now() - start}ms`);
   }
 
-  private async flushWorkspace(workspaceId: string): Promise<void> {
+  private async flushWorkspace(workspaceId: string): Promise<{ resolved: number; failed: number }> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace?.settings.wecomCorpId || !workspace.settings.wecomCorpSecret) {
       resolverWarn(`[WeComUserIdResolver] Flush skipped workspace=${workspaceId} reason=no_credentials`);
       this.queue.delete(workspaceId);
       this.retryMeta.delete(workspaceId);
-      return;
+      return { resolved: 0, failed: 0 };
     }
 
     const wsQueue = this.queue.get(workspaceId);
-    if (!wsQueue || wsQueue.size === 0) return;
+    if (!wsQueue || wsQueue.size === 0) return { resolved: 0, failed: 0 };
 
     const now = Date.now();
     const readyIds: string[] = [];
@@ -256,7 +256,7 @@ export class WeComUserIdResolver {
       }
     }
 
-    if (readyIds.length === 0) return;
+    if (readyIds.length === 0) return { resolved: 0, failed: 0 };
 
     resolverLog(`[WeComUserIdResolver] Flush workspace=${workspaceId} readyIds=${readyIds.length} totalQueued=${wsQueue.size}`);
     const flushStart = Date.now();
@@ -293,6 +293,21 @@ export class WeComUserIdResolver {
     }
 
     resolverLog(`[WeComUserIdResolver] Flush workspace=${workspaceId} done success=${result.mappings.length} failed=${result.failedIds.length} elapsed=${Date.now() - flushStart}ms`);
+    return { resolved: result.mappings.length, failed: result.failedIds.length };
+  }
+
+  /**
+   * Public entry point for flushing a single workspace's queue on demand.
+   * Returns the number of resolved and failed IDs; errors are caught and
+   * surfaced as zero counts so the caller gets a stable response.
+   */
+  async flushWorkspaceNow(workspaceId: string): Promise<{ resolved: number; failed: number }> {
+    try {
+      return await this.flushWorkspace(workspaceId);
+    } catch (err) {
+      resolverError(`[WeComUserIdResolver] flushWorkspaceNow failed workspace=${workspaceId}:`, this.redactedError(err));
+      return { resolved: 0, failed: 0 };
+    }
   }
 
   private async getToken(workspaceId: string): Promise<string> {
