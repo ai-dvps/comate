@@ -118,12 +118,17 @@ describe('WeComDocService.exportSmartsheetWorkbook', { concurrency: false }, () 
     assert.strictEqual(recordCall.args.key_type, 'CELL_VALUE_KEY_TYPE_FIELD_ID');
   });
 
-  it('fetches all pages of records', async () => {
+  it('paginates records by cursor (the API ignores offset)', async () => {
+    // The WeCom smartsheet_get_records API ignores `offset` and advances only
+    // via the opaque `cursor` seeded from a prior response's `next_cursor`.
+    // A mock that keyed off `offset` masked a hang where the export re-fetched
+    // page 1 up to SMARTSHEET_MAX_PAGES times. See data/paulinexu regression.
     const page1 = Array.from({ length: 1000 }, (_, i) => ({
       record_id: `r${i}`,
       values: { f1: `Name ${i}` },
     }));
     const page2 = [{ record_id: 'r1000', values: { f1: 'Last' } }];
+    let noCursorCalls = 0;
 
     mockMcp((call) => {
       if (call.name === 'smartsheet_get_sheet') {
@@ -132,12 +137,19 @@ describe('WeComDocService.exportSmartsheetWorkbook', { concurrency: false }, () 
       if (call.name === 'smartsheet_get_fields') {
         return { errcode: 0, fields: [{ field_id: 'f1', field_title: 'Name' }] };
       }
-      // records: first page full (has_more), second page partial
-      const offset = call.args.offset as number;
-      if (offset === 0) {
-        return { errcode: 0, records: page1, has_more: true };
+      // records: real API ignores offset; only the cursor advances the page.
+      const cursor = call.args.cursor;
+      if (!cursor) {
+        noCursorCalls += 1;
+        if (noCursorCalls > 1) {
+          throw new Error('offset pagination bug: records re-queried without advancing the cursor');
+        }
+        return { errcode: 0, records: page1, has_more: true, next_cursor: 'CURSOR_1' };
       }
-      return { errcode: 0, records: page2, has_more: false };
+      if (cursor === 'CURSOR_1') {
+        return { errcode: 0, records: page2, has_more: false };
+      }
+      throw new Error(`unexpected cursor ${String(cursor)}`);
     });
 
     const buffer = await service.exportSmartsheetWorkbook(makeWorkspace(), 'DOC1');
@@ -148,7 +160,7 @@ describe('WeComDocService.exportSmartsheetWorkbook', { concurrency: false }, () 
     assert.strictEqual(ws.rowCount, 1002);
     const recordCalls = calls.filter((c) => c.name === 'smartsheet_get_records');
     assert.strictEqual(recordCalls.length, 2);
-    assert.strictEqual(recordCalls[1].args.offset, 1000);
+    assert.strictEqual(recordCalls[1].args.cursor, 'CURSOR_1');
   });
 
   it('maps cell types and flattens complex values', async () => {
