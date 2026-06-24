@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Update download progress bar stayed at 0%** — when downloading a new app version, the progress bar never advanced because the updater event handler only passed downloaded bytes to the store and omitted the total content length, so the percentage was always calculated as zero. The handler now captures `contentLength` from the `Started` event and passes it with each `Progress` update.
+
 ## [0.0.15] - 2026-06-24
 
 ### Added

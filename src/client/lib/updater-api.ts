@@ -11,6 +11,7 @@ const JITTER_MAX_MS = 5 * 60 * 1000 // 5 minutes
 let checkIntervalId: ReturnType<typeof setInterval> | null = null
 let currentUpdate: Update | null = null
 let downloadedBytes = 0
+let totalContentLength = 0
 
 export interface UpdaterPreferences {
   autoCheckUpdates: boolean
@@ -29,17 +30,18 @@ function mapUpdate(update: Update): { currentVersion: string; version: string; b
   }
 }
 
-function handleDownloadEvent(event: DownloadEvent): void {
+export function handleDownloadEvent(event: DownloadEvent): void {
   const store = useUpdaterStore.getState()
 
   switch (event.event) {
     case 'Started':
       downloadedBytes = 0
+      totalContentLength = event.data.contentLength ?? 0
       store.setDownloading()
       break
     case 'Progress':
       downloadedBytes += event.data.chunkLength
-      store.setDownloadProgress(downloadedBytes)
+      store.setDownloadProgress(downloadedBytes, totalContentLength)
       break
     case 'Finished':
       store.setReady()
