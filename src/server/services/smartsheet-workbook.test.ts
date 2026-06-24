@@ -125,6 +125,39 @@ describe('buildSmartsheetWorkbook', () => {
     assert.strictEqual(ws.getRow(3).getCell(1).value, 'Bob');
   });
 
+  it('populates cells when records are keyed by field title (real WeCom API shape)', async () => {
+    // The WeCom smartsheet_get_records API ignores key_type and returns the
+    // `values` map keyed by field_title, not field_id. The workbook must still
+    // resolve each cell. See data/paulinexu regression.
+    const sheets: SmartsheetData[] = [
+      {
+        title: '工作表1',
+        fields: [
+          { fieldId: 'f0D5oz', title: '项目名称', type: 'FIELD_TYPE_TEXT' },
+          { fieldId: 'f0WSMP', title: 'GPU', type: 'FIELD_TYPE_NUMBER' },
+          { fieldId: 'f4XdGt', title: '非GPU', type: 'FIELD_TYPE_NUMBER' },
+        ],
+        records: [
+          { 项目名称: [{ text: 'M-安全', type: 'text' }], 非GPU: 47817.21 },
+          { 项目名称: [{ text: 'M-公共资源', type: 'text' }], GPU: 0, 非GPU: 18684.18 },
+        ],
+      },
+    ];
+
+    const buffer = await buildSmartsheetWorkbook(sheets);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+
+    const ws = wb.getWorksheet('工作表1');
+    assert.ok(ws);
+    assert.strictEqual(ws.getRow(1).getCell(1).value, '项目名称');
+    assert.strictEqual(ws.getRow(2).getCell(1).value, 'M-安全');
+    assert.strictEqual(ws.getRow(2).getCell(3).value, 47817.21);
+    assert.strictEqual(ws.getRow(3).getCell(1).value, 'M-公共资源');
+    assert.strictEqual(ws.getRow(3).getCell(2).value, 0);
+    assert.strictEqual(ws.getRow(3).getCell(3).value, 18684.18);
+  });
+
   it('deduplicates worksheet names', async () => {
     const sheets: SmartsheetData[] = [
       { title: 'Q2 Plan', fields: [], records: [] },
