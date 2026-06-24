@@ -2,7 +2,7 @@ import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updat
 import { relaunch } from '@tauri-apps/plugin-process'
 import { invoke } from '@tauri-apps/api/core'
 import { isTauri } from './tauri-api'
-import { useUpdaterStore } from '../stores/updater-store'
+import { useUpdaterStore, type UpdaterStatus } from '../stores/updater-store'
 import { getVersion } from '@tauri-apps/api/app'
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
@@ -28,6 +28,14 @@ function mapUpdate(update: Update): { currentVersion: string; version: string; b
     body: update.body,
     date: update.date,
   }
+}
+
+export function canStartDownload(status: UpdaterStatus): boolean {
+  return status !== 'downloading' && status !== 'ready' && status !== 'restarting'
+}
+
+export function canRestart(status: UpdaterStatus): boolean {
+  return status === 'ready'
 }
 
 export function handleDownloadEvent(event: DownloadEvent): void {
@@ -78,6 +86,8 @@ export async function downloadAndInstallUpdate(): Promise<void> {
   if (!isTauri() || !currentUpdate) return
 
   const store = useUpdaterStore.getState()
+  if (!canStartDownload(store.status)) return
+
   store.setDownloading()
   downloadedBytes = 0
 
@@ -92,6 +102,8 @@ export async function restartToUpdate(): Promise<void> {
   if (!isTauri()) return
 
   const store = useUpdaterStore.getState()
+  if (!canRestart(store.status)) return
+
   store.setRestarting()
 
   try {
