@@ -122,7 +122,7 @@ describe('PermissionsSubTab', () => {
     // Click "Always allow" on the Bash row
     const bashRow = screen.getByText('Bash').closest('div.flex')!;
     const allowButtons = bashRow.querySelectorAll('button');
-    // Order: inherit, alwaysAllow, alwaysDeny
+    // Order: inherit, alwaysAllow, ask, alwaysDeny
     const alwaysAllowBtn = allowButtons[1];
     fireEvent.click(alwaysAllowBtn);
 
@@ -130,6 +130,29 @@ describe('PermissionsSubTab', () => {
     const arg = onUpdate.mock.calls[0][0] as ToolPermissionPolicy;
     expect(arg.posture).toBe('custom');
     expect(arg.overrides?.Bash).toBe('allow');
+    // Category default unchanged
+    expect(arg.categoryDefaults.shell).toBe('deny');
+  });
+
+  it('clicking "Ask" override on a denied-category tool emits an ask override', () => {
+    const onUpdate = vi.fn();
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
+
+    // Expand Shell (only contains Bash)
+    const shellCard = screen.getByText('Shell').closest('div.border')!;
+    fireEvent.click(shellCard.querySelector('button[aria-label="expand"]')!);
+
+    // Click "Ask" on the Bash row
+    const bashRow = screen.getByText('Bash').closest('div.flex')!;
+    const askButtons = bashRow.querySelectorAll('button');
+    // Order: inherit, alwaysAllow, ask, alwaysDeny
+    const askBtn = askButtons[2];
+    fireEvent.click(askBtn);
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    const arg = onUpdate.mock.calls[0][0] as ToolPermissionPolicy;
+    expect(arg.posture).toBe('custom');
+    expect(arg.overrides?.Bash).toBe('ask');
     // Category default unchanged
     expect(arg.categoryDefaults.shell).toBe('deny');
   });
@@ -168,6 +191,53 @@ describe('PermissionsSubTab', () => {
     renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={vi.fn()} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
 
     expect(screen.getByText(/Changes apply to the next bot session/)).toBeInTheDocument();
+  });
+
+  it('clicking "Ask" on a category default toggle emits ask for that category', () => {
+    const onUpdate = vi.fn();
+    renderWithI18n(<PermissionsSubTab policy={SAFE_PRESET} onUpdate={onUpdate} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
+
+    // Toggle Shell category default from deny to ask
+    const shellCard = screen.getByText('Shell').closest('div.border')!;
+    const toggleButtons = shellCard.querySelectorAll('button');
+    // The DecisionToggle has three buttons: Allow, Ask, Deny
+    const askBtn = toggleButtons[1]; // Ask is the middle button
+    fireEvent.click(askBtn);
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    const arg = onUpdate.mock.calls[0][0] as ToolPermissionPolicy;
+    expect(arg.posture).toBe('custom');
+    expect(arg.categoryDefaults.shell).toBe('ask');
+  });
+
+  it('renders ask state on a category default toggle', () => {
+    const policyWithAsk: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults, shell: 'ask' },
+    };
+    renderWithI18n(<PermissionsSubTab policy={policyWithAsk} onUpdate={vi.fn()} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
+
+    const shellCard = screen.getByText('Shell').closest('div.border')!;
+    const toggleButtons = shellCard.querySelectorAll('button');
+    // Ask button should be highlighted
+    expect(toggleButtons[1].className).toContain('bg-warning');
+  });
+
+  it('renders ask state on an override row', () => {
+    const policyWithAskOverride: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults },
+      overrides: { Bash: 'ask' },
+    };
+    renderWithI18n(<PermissionsSubTab policy={policyWithAskOverride} onUpdate={vi.fn()} workspaceId={DEFAULT_PROPS.workspaceId} needsUpgradePrompt={DEFAULT_PROPS.needsUpgradePrompt} onApplySafePreset={DEFAULT_PROPS.onApplySafePreset} />);
+
+    const shellCard = screen.getByText('Shell').closest('div.border')!;
+    fireEvent.click(shellCard.querySelector('button[aria-label="expand"]')!);
+
+    const bashRow = screen.getByText('Bash').closest('div.flex')!;
+    const overrideButtons = bashRow.querySelectorAll('button');
+    // Order: inherit, alwaysAllow, ask, alwaysDeny — ask button should be highlighted
+    expect(overrideButtons[2].className).toContain('bg-warning');
   });
 
   it('F4 flow: select preset → toggle one override → policy persists with both (integration)', () => {

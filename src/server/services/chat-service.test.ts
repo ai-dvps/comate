@@ -12,7 +12,8 @@ import { SdkClient } from './sdk-client.js';
 import type { Workspace, McpServer } from '../models/workspace.js';
 import type { ChatSession, Provider } from '../models/session.js';
 import type { SseEvent } from '../types/message.js';
-import type { Options, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { QuestionPayload } from '../types/message.js';
 
 function createMockWorkspace(id: string): Workspace {
   return {
@@ -496,14 +497,49 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
   });
 
   function createMockRuntime(): SessionRuntime {
+    const pendingApprovals = new Map<string, { resolve: (result: PermissionResult) => void }>();
+
     const mock = {
       isClosed: () => false,
-      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      getStatus: () => ({ pendingCount: pendingApprovals.size, isProcessing: pendingApprovals.size > 0, workspaceId: 'ws-1' }),
       close: () => Promise.resolve(),
       subscribe: () => {},
       unsubscribe: () => {},
       pushMessage: () => {},
-      resolveApproval: () => {},
+      resolveApproval: (requestId: string, result: PermissionResult) => {
+        const pending = pendingApprovals.get(requestId);
+        if (!pending) return;
+        pendingApprovals.delete(requestId);
+        pending.resolve(result);
+      },
+      requestToolApproval: (requestId: string, _toolName: string, _toolUseId: string, _input: Record<string, unknown>, options: { signal?: AbortSignal; timeout?: number; suggestions?: PermissionUpdate[] } = {}) => {
+        return new Promise<PermissionResult>((resolve) => {
+          pendingApprovals.set(requestId, { resolve });
+          if (options.timeout) {
+            setTimeout(() => {
+              const p = pendingApprovals.get(requestId);
+              if (p) {
+                pendingApprovals.delete(requestId);
+                p.resolve({ behavior: 'deny', message: 'Request timed out waiting for user response.' });
+              }
+            }, options.timeout);
+          }
+        });
+      },
+      requestToolQuestion: (requestId: string, _questions: QuestionPayload[], _input: Record<string, unknown>, options: { signal?: AbortSignal; timeout?: number } = {}) => {
+        return new Promise<PermissionResult>((resolve) => {
+          pendingApprovals.set(requestId, { resolve });
+          if (options.timeout) {
+            setTimeout(() => {
+              const p = pendingApprovals.get(requestId);
+              if (p) {
+                pendingApprovals.delete(requestId);
+                p.resolve({ behavior: 'deny', message: 'Request timed out waiting for user response.' });
+              }
+            }, options.timeout);
+          }
+        });
+      },
       interrupt: () => Promise.resolve(),
       addBotEventHandler: () => {},
       clearBotEventHandlers: () => {},
@@ -736,6 +772,201 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     await service.getOrCreateRuntime('s1', 'ws-1');
     assert.ok(capturedOptions);
     assert.strictEqual(capturedOptions!.canUseTool, undefined, 'GUI sessions must not have canUseTool set by this branch');
+  });
+
+  it('bot session with policy ask for Shell: canUseTool returns a pending Promise', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'custom',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'ask',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const promise = canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-ask-1', signal: new AbortController().signal });
+    assert.ok(promise instanceof Promise, 'ask policy should return a Promise');
+
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    runtime.resolveApproval('tu-ask-1', { behavior: 'allow', updatedInput: { command: 'ls' } });
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'allow');
+    if (result.behavior === 'allow') {
+      assert.deepStrictEqual(result.updatedInput, { command: 'ls' });
+    }
+  });
+
+  it('bot session ask policy: always allow resolves with updatedPermissions', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'custom',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'ask',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const suggestions: PermissionUpdate[] = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'allow' }], behavior: 'allow' }];
+    const promise = canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-ask-2', signal: new AbortController().signal, suggestions });
+
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    runtime.resolveApproval('tu-ask-2', { behavior: 'allow', updatedInput: { command: 'ls' }, updatedPermissions: suggestions });
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'allow');
+    if (result.behavior === 'allow') {
+      assert.deepStrictEqual(result.updatedPermissions, suggestions);
+    }
+  });
+
+  it('bot session ask policy: deny resolves with generic message', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'custom',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'ask',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const promise = canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-ask-3', signal: new AbortController().signal });
+
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    runtime.resolveApproval('tu-ask-3', { behavior: 'deny', message: "I can't do that in this workspace." });
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'deny');
+    if (result.behavior === 'deny') {
+      assert.ok(!result.message.toLowerCase().includes('shell'), 'denial message must not leak capability name');
+    }
+  });
+
+  it('bot session ask policy: timeout denies with generic message', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'custom',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'ask',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const promise = canUseTool('Bash', { command: 'ls', timeout: 50 }, { toolUseID: 'tu-ask-4', signal: new AbortController().signal });
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'deny');
+    if (result.behavior === 'deny') {
+      assert.ok(result.message.includes('timed out'), 'timeout should produce a timed-out message');
+    }
+  });
+
+  it('bot session AskUserQuestion registers a pending question and resolves with answers', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const promise = canUseTool('AskUserQuestion', {
+      questions: [{ question: 'What is your favorite color?', options: [{ label: 'Red' }, { label: 'Blue' }] }],
+    }, { toolUseID: 'tu-q-1', signal: new AbortController().signal });
+
+    assert.ok(promise instanceof Promise, 'AskUserQuestion should return a Promise');
+
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    runtime.resolveApproval('tu-q-1', {
+      behavior: 'allow',
+      updatedInput: {
+        questions: [{ question: 'What is your favorite color?', options: [{ label: 'Red' }, { label: 'Blue' }] }],
+        answers: ['Red'],
+      },
+    });
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'allow');
+    if (result.behavior === 'allow') {
+      assert.deepStrictEqual((result.updatedInput as Record<string, unknown>).answers, ['Red']);
+    }
+  });
+
+  it('bot session: existing allow policy is unaffected', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'allow',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const result = await canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-allow-1', signal: new AbortController().signal });
+    assert.strictEqual(result.behavior, 'allow');
+
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    assert.strictEqual(runtime.getStatus().pendingCount, 0, 'allow policy should not register a pending approval');
+  });
+
+  it('bot session: existing deny policy is unaffected', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const result = await canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-deny-1', signal: new AbortController().signal });
+    assert.strictEqual(result.behavior, 'deny');
+
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    assert.strictEqual(runtime.getStatus().pendingCount, 0, 'deny policy should not register a pending approval');
   });
 });
 

@@ -16,7 +16,7 @@ export type ToolCategory =
 
 export type ToolPosture = 'allow-all' | 'safe' | 'custom';
 
-export type CategoryDecision = 'allow' | 'deny';
+export type CategoryDecision = 'allow' | 'deny' | 'ask';
 
 export interface ToolPermissionPolicy {
   posture: ToolPosture;

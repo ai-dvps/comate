@@ -1092,6 +1092,14 @@ export class ChatService {
       options.canUseTool = async (
         toolName: string,
         input: Record<string, unknown>,
+        sdkOptions: {
+          signal: AbortSignal;
+          suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+          title?: string;
+          description?: string;
+          toolUseID: string;
+          decisionReasonType?: string;
+        },
       ) => {
         const decision = evaluateToolPermission(policy, toolName);
         // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
@@ -1143,6 +1151,59 @@ export class ChatService {
               message: "I can't do that in this workspace.",
             };
           }
+        }
+
+        // AskUserQuestion always requires user input, regardless of policy
+        if (toolName === 'AskUserQuestion') {
+          const runtime = this.runtimes.get(session.id);
+          if (!runtime) {
+            return {
+              behavior: 'deny' as const,
+              message: "I can't do that in this workspace.",
+            };
+          }
+          const questions = (input.questions as unknown[] ?? []).map((q: unknown) => {
+            const qx = q as Record<string, unknown>;
+            return {
+              question: typeof qx.question === 'string' ? qx.question : '',
+              header: typeof qx.header === 'string' ? qx.header : undefined,
+              options: Array.isArray(qx.options)
+                ? qx.options.map((o: unknown) => {
+                    const ox = o as Record<string, unknown>;
+                    return {
+                      label: typeof ox.label === 'string' ? ox.label : '',
+                      description: typeof ox.description === 'string' ? ox.description : undefined,
+                      preview: typeof ox.preview === 'string' ? ox.preview : undefined,
+                    };
+                  })
+                : [],
+              multiSelect: qx.multiSelect === true,
+            };
+          });
+          const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+          return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
+            timeout,
+            signal: sdkOptions.signal,
+          });
+        }
+
+        if (decision === 'ask') {
+          const runtime = this.runtimes.get(session.id);
+          if (!runtime) {
+            return {
+              behavior: 'deny' as const,
+              message: "I can't do that in this workspace.",
+            };
+          }
+          const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+          return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
+            title: sdkOptions.title,
+            description: sdkOptions.description,
+            suggestions: sdkOptions.suggestions,
+            timeout,
+            signal: sdkOptions.signal,
+            decisionReasonType: sdkOptions.decisionReasonType,
+          });
         }
 
         return { behavior: 'allow' as const, updatedInput: input };
