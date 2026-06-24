@@ -184,22 +184,26 @@ export class WeComDocService {
     sheetId: string,
   ): Promise<Array<Record<string, unknown>>> {
     const records: Array<Record<string, unknown>> = [];
-    let offset = 0;
+    let cursor: string | undefined;
     let pageCount = 0;
 
     while (pageCount < SMARTSHEET_MAX_PAGES) {
+      const args: Record<string, unknown> = {
+        docid,
+        sheet_id: sheetId,
+        key_type: 'CELL_VALUE_KEY_TYPE_FIELD_ID',
+        limit: SMARTSHEET_PAGE_SIZE,
+      };
+      // The WeCom get_records API ignores `offset` and paginates by an opaque
+      // cursor; send it only after the first page.
+      if (cursor) args.cursor = cursor;
+
       const res = await this.mcpClient.callJsonTool(
         botId,
         botSecret,
         'doc',
         'smartsheet_get_records',
-        {
-          docid,
-          sheet_id: sheetId,
-          key_type: 'CELL_VALUE_KEY_TYPE_FIELD_ID',
-          offset,
-          limit: SMARTSHEET_PAGE_SIZE,
-        },
+        args,
       );
 
       const pageRecords = res.records;
@@ -219,17 +223,18 @@ export class WeComDocService {
       }
 
       pageCount += 1;
-      offset += pageRecords.length;
 
       if (res.has_more === false) {
         break;
       }
-      if (typeof res.next === 'boolean' && res.next === false) {
+      // Stop when there is no cursor to advance. Without this guard a server
+      // that keeps reporting has_more=true would re-fetch the same page until
+      // SMARTSHEET_MAX_PAGES (~minutes per sheet) and never finish.
+      const nextCursor = typeof res.next_cursor === 'string' ? res.next_cursor : '';
+      if (nextCursor.length === 0) {
         break;
       }
-      if (pageRecords.length < SMARTSHEET_PAGE_SIZE) {
-        break;
-      }
+      cursor = nextCursor;
     }
 
     return records;

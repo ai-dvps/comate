@@ -11,7 +11,11 @@ export interface SmartsheetField {
 export interface SmartsheetData {
   title: string;
   fields: SmartsheetField[];
-  /** Each record's cell map keyed by field_id (CELL_VALUE_KEY_TYPE_FIELD_ID). */
+  /**
+   * Each record's cell map. The WeCom get_records API keys this by field_title
+   * (it ignores the requested CELL_VALUE_KEY_TYPE_FIELD_ID); buildSmartsheetWorkbook
+   * resolves cells by field_id first, then falls back to field_title.
+   */
   records: Array<Record<string, unknown>>;
 }
 
@@ -97,9 +101,15 @@ export async function buildSmartsheetWorkbook(sheets: SmartsheetData[]): Promise
     worksheet.addRow(sheet.fields.map((field) => field.title));
 
     for (const record of sheet.records) {
-      const row = sheet.fields.map((field) =>
-        formatCellValue(field.type, record[field.fieldId]),
-      );
+      const row = sheet.fields.map((field) => {
+        // The WeCom get_records API ignores key_type and returns the `values`
+        // map keyed by field_title, so a field_id lookup misses. Prefer the
+        // field_id (forward-compatible if the API ever honors key_type) and
+        // fall back to the title the API actually uses.
+        const cell =
+          record[field.fieldId] !== undefined ? record[field.fieldId] : record[field.title];
+        return formatCellValue(field.type, cell);
+      });
       worksheet.addRow(row);
     }
   }
