@@ -52,7 +52,7 @@ The WeCom bot currently handles only text messages. Team members increasingly sh
 
 **File storage**
 
-- R3. Downloaded files are saved inside the sender's workspace under a folder named with the plaintext WeCom user ID when a mapping exists; otherwise the encrypted WeCom user ID is used.
+- R3. Downloaded files are saved inside the sender's workspace under `data/<user-folder>`, where `<user-folder>` is named with the plaintext WeCom user ID when a mapping exists; otherwise the encrypted WeCom user ID is used.
 - R4. If a file with the same name already exists in the target folder, the new file is renamed by appending a timestamp in `yyyy-mm-dd-hh-mm-ss` format before the file extension.
 - R5. The saved path included in the prompt is expressed relative to the workspace root.
 
@@ -71,9 +71,9 @@ The WeCom bot currently handles only text messages. Team members increasingly sh
 
 ## Acceptance Examples
 
-- AE1. **Covers R1–R3, R6–R8.** Given an enabled bot where user `ZhangWei` already has a session and a plaintext mapping, when `ZhangWei` sends a PDF named `report.pdf`, then the file is saved to `<workspace>/ZhangWei/report.pdf` and the agent in `ZhangWei`'s session receives a prompt referencing `@ZhangWei/report.pdf`.
+- AE1. **Covers R1–R3, R6–R8.** Given an enabled bot where user `ZhangWei` already has a session and a plaintext mapping, when `ZhangWei` sends a PDF named `report.pdf`, then the file is saved to `<workspace>/data/ZhangWei/report.pdf` and the agent in `ZhangWei`'s session receives a prompt referencing `@data/ZhangWei/report.pdf`.
 - AE2. **Covers R4.** Given `ZhangWei` already has `report.pdf` in their folder, when `ZhangWei` sends another `report.pdf`, then the new file is saved with a timestamp suffix such as `report-2026-06-12-14-30-00.pdf`.
-- AE3. **Covers R3.** Given a user whose plaintext ID is not yet mapped, when they send `image.png`, then the file is saved to `<workspace>/<encrypted-user-id>/image.png` and the prompt references that path.
+- AE3. **Covers R3.** Given a user whose plaintext ID is not yet mapped, when they send `image.png`, then the file is saved to `<workspace>/data/<encrypted-user-id>/image.png` and the prompt references that path.
 - AE4. **Covers R9–R10.** Given a download failure, when a user sends a file, then the bot logs the error, replies with a failure message, and remains connected for the next message.
 
 ---

@@ -116,13 +116,13 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     await (service as any).handleMediaMessage('ws-1', frame);
 
     // File should be saved
-    const savedFile = path.join(tempDir, 'ZhangWei', 'report.pdf');
+    const savedFile = path.join(tempDir, 'data', 'ZhangWei', 'report.pdf');
     const content = await fsPromises.readFile(savedFile);
     assert.deepStrictEqual(content, Buffer.from('file-content'));
 
     // Prompt should be pushed
     assert.strictEqual(pushedMessages.length, 1);
-    assert.ok(pushedMessages[0].includes('@ZhangWei/report.pdf'));
+    assert.ok(pushedMessages[0].includes('@data/ZhangWei/report.pdf'));
     assert.ok(pushedMessages[0].includes('ZhangWei'));
     assert.ok(pushedMessages[0].includes('skill'));
   });
@@ -140,12 +140,12 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
 
     await (service as any).handleMediaMessage('ws-1', frame);
 
-    const savedFile = path.join(tempDir, 'enc-user-1', 'report.pdf');
+    const savedFile = path.join(tempDir, 'data', 'enc-user-1', 'report.pdf');
     const content = await fsPromises.readFile(savedFile);
     assert.deepStrictEqual(content, Buffer.from('file-content'));
 
     assert.strictEqual(pushedMessages.length, 1);
-    assert.ok(pushedMessages[0].includes('@enc-user-1/report.pdf'));
+    assert.ok(pushedMessages[0].includes('@data/enc-user-1/report.pdf'));
   });
 
   it('handles image message: downloads and saves', async () => {
@@ -159,7 +159,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
 
     await (service as any).handleMediaMessage('ws-1', frame);
 
-    const savedFile = path.join(tempDir, 'enc-user-1', 'photo.png');
+    const savedFile = path.join(tempDir, 'data', 'enc-user-1', 'photo.png');
     const content = await fsPromises.readFile(savedFile);
     assert.deepStrictEqual(content, Buffer.from('image-data'));
     assert.strictEqual(pushedMessages.length, 1);
@@ -293,7 +293,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     await (service as any).handleMediaMessage('ws-1', frame);
 
     assert.strictEqual(pushedMessages.length, 1);
-    assert.strictEqual(pushedMessages[0], 'Please summarize the file enc-user-1/report.pdf');
+    assert.strictEqual(pushedMessages[0], 'Please summarize the file data/enc-user-1/report.pdf');
   });
 
   it('falls back to default prompt when template is empty', async () => {
@@ -312,7 +312,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     await (service as any).handleMediaMessage('ws-1', frame);
 
     assert.strictEqual(pushedMessages.length, 1);
-    assert.ok(pushedMessages[0].includes('a file named @enc-user-1/report.pdf'));
+    assert.ok(pushedMessages[0].includes('a file named @data/enc-user-1/report.pdf'));
     assert.ok(pushedMessages[0].includes('skill'));
   });
 

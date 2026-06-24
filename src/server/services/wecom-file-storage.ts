@@ -17,7 +17,7 @@ export async function saveMediaFile(
   fileBuffer: Buffer,
   filename: string,
 ): Promise<string> {
-  const targetDir = path.join(workspaceFolderPath, userFolderName);
+  const targetDir = path.join(workspaceFolderPath, 'data', userFolderName);
   const resolvedWorkspacePath = path.resolve(workspaceFolderPath);
 
   // Validate target directory is within workspace (use separator to prevent prefix bypass)

@@ -640,7 +640,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    const result = await canUseTool('Read', { file_path: '/tmp/test/user1/x' });
+    const result = await canUseTool('Read', { file_path: '/tmp/test/data/user1/x' });
     assert.strictEqual(result.behavior, 'allow');
   });
 
@@ -684,7 +684,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
 
     const editResult = await canUseTool('Edit', { file_path: '/tmp/x' });
     assert.strictEqual(editResult.behavior, 'deny');
-    const writeResult = await canUseTool('Write', { file_path: '/tmp/test/user1/x' });
+    const writeResult = await canUseTool('Write', { file_path: '/tmp/test/data/user1/x' });
     assert.strictEqual(writeResult.behavior, 'allow');
   });
 
@@ -716,7 +716,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
 
     const bashResult = await canUseTool('Bash', { command: 'ls' });
     assert.strictEqual(bashResult.behavior, 'allow');
-    const writeResult = await canUseTool('Write', { file_path: '/tmp/test/user1/x' });
+    const writeResult = await canUseTool('Write', { file_path: '/tmp/test/data/user1/x' });
     assert.strictEqual(writeResult.behavior, 'allow');
   });
 
