@@ -44,7 +44,12 @@
     "updateStatusAvailable": "有可用更新",
     "updateStatusDownloading": "正在下载更新...",
     "updateStatusReady": "更新已准备好安装",
-    "updateStatusError": "更新错误：{{error}}"
+    "updateStatusError": "更新错误：{{error}}",
+    "updaterDownload": "下载",
+    "updaterDownloadingProgress": "{{progress}}%",
+    "updaterInstallNow": "安装并重启",
+    "updaterLater": "稍后",
+    "updaterNewVersionAvailable": "Comate {{version}} 可用"
   },
   "providers": {
     "title": "LLM 服务商",
@@ -125,11 +130,6 @@
     "promptHistoryRetentionDays": "提示词历史保留（天）",
     "promptHistoryRetentionDaysPlaceholder": "30",
     "promptHistoryRetentionDaysHint": "此工作区保留已发送提示词历史的天数。设置为 0 或负数可禁用自动清理。更改将在下次加载历史时生效。"
-  },
-  "skills": {
-    "addSkill": "添加技能",
-    "skillNamePlaceholder": "技能名称",
-    "noSkills": "尚未添加技能"
   },
   "mcp": {
     "serverName": "服务器名称",
@@ -397,6 +397,9 @@
     "enableFailed": "更改插件状态失败"
   },
   "skills": {
+    "addSkill": "添加技能",
+    "skillNamePlaceholder": "技能名称",
+    "noSkills": "尚未添加技能",
     "title": "技能",
     "installedTab": "已安装",
     "searchTab": "搜索",
