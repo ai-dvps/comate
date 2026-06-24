@@ -214,6 +214,53 @@ router.get('/:id/wecom/users', async (req, res) => {
   }
 });
 
+// POST /api/workspaces/:id/wecom/users/:encryptedUserId/plaintext
+// Allows admins to manually set the plaintext enterprise userId for an existing
+// WeCom user. Duplicate plaintext IDs are rejected within the same workspace.
+router.post('/:id/wecom/users/:encryptedUserId/plaintext', async (req, res) => {
+  try {
+    const workspaceId = req.params.id;
+    const encryptedUserId = req.params.encryptedUserId;
+    const { plaintextUserId } = req.body as { plaintextUserId?: unknown };
+
+    const workspace = await store.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const existingUser = store.getWecomWorkspaceUser(workspaceId, encryptedUserId);
+    if (!existingUser) {
+      res.status(400).json({ error: 'WeCom user not found in workspace' });
+      return;
+    }
+
+    if (!plaintextUserId || typeof plaintextUserId !== 'string') {
+      res.status(400).json({ error: 'plaintextUserId is required' });
+      return;
+    }
+
+    const trimmed = plaintextUserId.trim();
+    if (!trimmed) {
+      res.status(400).json({ error: 'plaintextUserId cannot be empty' });
+      return;
+    }
+
+    const isDuplicate = store.isPlaintextUserIdUsedInWorkspace(workspaceId, trimmed, encryptedUserId);
+    if (isDuplicate) {
+      res.status(409).json({ error: 'Plaintext userId is already used by another user in this workspace' });
+      return;
+    }
+
+    store.setWecomUserMapping(encryptedUserId, trimmed);
+
+    res.json({ encryptedUserId, plaintextUserId: trimmed });
+  } catch (error) {
+    console.error('Failed to set WeCom user plaintext ID:', error);
+    res.status(500).json({ error: 'Failed to set WeCom user plaintext ID' });
+  }
+});
+
 // GET /api/workspaces/:id/wecom/resolver-status
 router.get('/:id/wecom/resolver-status', async (req, res) => {
   try {
@@ -235,6 +282,24 @@ router.get('/:id/wecom/resolver-status', async (req, res) => {
   } catch (error) {
     console.error('Failed to get resolver status:', error);
     res.status(500).json({ error: 'Failed to get resolver status' });
+  }
+});
+
+// POST /api/workspaces/:id/wecom/resolve-pending
+// Immediately flushes any pending WeCom user ID resolution jobs for the workspace.
+router.post('/:id/wecom/resolve-pending', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const result = await wecomUserResolver.flushWorkspaceNow(req.params.id);
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to resolve pending WeCom user IDs:', error);
+    res.status(500).json({ error: 'Failed to resolve pending WeCom user IDs' });
   }
 });
 
