@@ -46,7 +46,7 @@ If `wecom` is not in PATH, use `npx wecom` or `${WECOM_CLI_PATH}`.
    ```bash
    wecom --version
    ```
-   Expected: `1.0.1` or higher. If lower, advise the user to update:
+   Expected: `1.1.0` or higher. If lower, advise the user to update:
    ```bash
    npm install -g @webank/wecom@latest
    ```
