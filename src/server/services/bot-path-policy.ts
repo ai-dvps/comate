@@ -40,7 +40,7 @@ export function createPathPolicyContext(
   knownUserDirNames: string[] = [],
 ): PathPolicyContext {
   const workspaceFolder = path.resolve(workspace.folderPath);
-  const userDir = path.join(workspaceFolder, userDirName);
+  const userDir = path.join(workspaceFolder, 'data', userDirName);
   // Future: merge a configurable workspace denylist here.
   const denyMatchers = DEFAULT_DENY_GLOBS.map((g) => picomatch(g));
   return {
@@ -104,7 +104,7 @@ function isWithinUserDir(ctx: PathPolicyContext, resolved: string): boolean {
 
 function isInOtherUserDir(ctx: PathPolicyContext, resolved: string): boolean {
   for (const other of ctx.knownUserDirNames) {
-    const otherDir = path.join(ctx.workspaceFolder, other);
+    const otherDir = path.join(ctx.workspaceFolder, 'data', other);
     if (startsWithDir(resolved, otherDir)) return true;
   }
   return false;
@@ -199,7 +199,11 @@ function checkGlobPattern(
   if (segments[0] === '.claude' || segments[0] === 'node_modules' || segments[0] === '.git') {
     return { allowed: false, reason: 'denylist' };
   }
-  if (ctx.knownUserDirNames.includes(segments[0] || '')) {
+  if (
+    segments[0] === 'data' &&
+    segments[1] !== undefined &&
+    ctx.knownUserDirNames.includes(segments[1])
+  ) {
     return { allowed: false, reason: 'other-user-dir' };
   }
 
