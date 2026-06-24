@@ -29,6 +29,60 @@ function createMockWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 }
 
 describe('evaluateToolPermission', () => {
+  it('returns ask when category default is ask', () => {
+    const policy: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults, shell: 'ask' },
+    };
+    assert.equal(evaluateToolPermission(policy, 'Bash'), 'ask');
+  });
+
+  it('returns ask when per-tool override is ask', () => {
+    const policy: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults, shell: 'deny' },
+      overrides: { Bash: 'ask' },
+    };
+    assert.equal(evaluateToolPermission(policy, 'Bash'), 'ask');
+  });
+
+  it('returns allow when override is allow even if category default is ask', () => {
+    const policy: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults, shell: 'ask' },
+      overrides: { Bash: 'allow' },
+    };
+    assert.equal(evaluateToolPermission(policy, 'Bash'), 'allow');
+  });
+
+  it('returns deny when override is deny even if category default is ask', () => {
+    const policy: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...ALLOW_ALL_PRESET.categoryDefaults, shell: 'ask' },
+      overrides: { Bash: 'deny' },
+    };
+    assert.equal(evaluateToolPermission(policy, 'Bash'), 'deny');
+  });
+
+  it('unknown tools fall through to allow-all regardless of policy', () => {
+    const policy: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults },
+    };
+    assert.equal(evaluateToolPermission(policy, 'mcp__someServer__tool'), 'unknown');
+    assert.equal(evaluateToolPermission(policy, 'Skill_MySkill'), 'unknown');
+    assert.equal(evaluateToolPermission(policy, 'SomeFutureTool'), 'unknown');
+  });
+
+  it('SAFE_PRESET and ALLOW_ALL_PRESET contain no ask values', () => {
+    for (const value of Object.values(SAFE_PRESET.categoryDefaults)) {
+      assert.ok(value !== 'ask', 'SAFE_PRESET should not contain ask');
+    }
+    for (const value of Object.values(ALLOW_ALL_PRESET.categoryDefaults)) {
+      assert.ok(value !== 'ask', 'ALLOW_ALL_PRESET should not contain ask');
+    }
+  });
+
   it('returns override value when override exists for the tool', () => {
     const policy: ToolPermissionPolicy = {
       posture: 'custom',
@@ -158,19 +212,20 @@ describe('resolveEffectivePolicy', () => {
     // Pass a policy with missing categories and invalid values
     const malformed = {
       posture: 'custom',
-      categoryDefaults: { shell: 'deny' }, // missing other categories
+      categoryDefaults: { shell: 'deny', fileRead: 'ask' }, // missing other categories, includes ask
       // @ts-expect-error testing runtime malformed input
-      overrides: { Bash: 'invalid-value' },
+      overrides: { Bash: 'invalid-value', Edit: 'ask' },
     };
     const workspace = createMockWorkspace({
       settings: { wecomBotEnabled: true, wecomToolPermissions: malformed },
     });
     const result = resolveEffectivePolicy(workspace);
-    // Sanitized: missing categories filled from SAFE_PRESET, invalid override dropped
+    // Sanitized: missing categories filled from SAFE_PRESET, invalid override dropped, ask preserved
     assert.equal(result.policy.categoryDefaults.shell, 'deny');
-    assert.equal(result.policy.categoryDefaults.fileRead, 'allow'); // filled from SAFE_PRESET
+    assert.equal(result.policy.categoryDefaults.fileRead, 'ask');
     assert.equal(result.policy.categoryDefaults.reply, 'allow'); // filled from SAFE_PRESET
-    assert.equal(result.policy.overrides, undefined); // invalid override dropped
+    assert.equal(result.policy.overrides?.Edit, 'ask');
+    assert.equal(result.policy.overrides?.Bash, undefined); // invalid override dropped
   });
 
   it('sanitizes invalid posture value to custom', () => {

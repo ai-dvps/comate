@@ -242,12 +242,14 @@
     },
     "defaultToggle": {
       "allow": "允许",
+      "ask": "询问",
       "deny": "拒绝"
     },
     "override": {
       "label": "此类别中的工具",
       "inherit": "继承",
       "alwaysAllow": "始终允许",
+      "ask": "询问",
       "alwaysDeny": "始终拒绝",
       "inheritSuffix": "（继承类别默认值）"
     },

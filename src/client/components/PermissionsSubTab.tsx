@@ -97,7 +97,7 @@ export function PermissionsSubTab({
     });
   };
 
-  const setOverride = (_cat: ToolCategory, tool: string, value: 'allow' | 'deny' | 'inherit') => {
+  const setOverride = (_cat: ToolCategory, tool: string, value: 'allow' | 'deny' | 'ask' | 'inherit') => {
     const nextOverrides = { ...(effective.overrides || {}) };
     if (value === 'inherit') {
       delete nextOverrides[tool];
@@ -249,7 +249,7 @@ function CategoryCard({
   expanded: boolean;
   onToggleExpanded: () => void;
   onSetDefault: (value: CategoryDecision) => void;
-  onSetOverride: (tool: string, value: 'allow' | 'deny' | 'inherit') => void;
+  onSetOverride: (tool: string, value: 'allow' | 'deny' | 'ask' | 'inherit') => void;
 }) {
   const { t } = useTranslation('settings');
   const tools = CATEGORY_TOOLS[category];
@@ -317,6 +317,15 @@ function DecisionToggle({
       </button>
       <button
         type="button"
+        onClick={() => onChange('ask')}
+        className={`px-2 py-1 text-[10px] font-medium ${
+          value === 'ask' ? 'bg-warning/20 text-warning' : 'text-text-secondary hover:bg-border/50'
+        }`}
+      >
+        {t('wecom.defaultToggle.ask')}
+      </button>
+      <button
+        type="button"
         onClick={() => onChange('deny')}
         className={`px-2 py-1 text-[10px] font-medium ${
           value === 'deny' ? 'bg-destructive/20 text-destructive' : 'text-text-secondary hover:bg-border/50'
@@ -335,7 +344,7 @@ function ToolOverrideRow({
 }: {
   tool: string;
   value: CategoryDecision | undefined;
-  onChange: (value: 'allow' | 'deny' | 'inherit') => void;
+  onChange: (value: 'allow' | 'deny' | 'ask' | 'inherit') => void;
 }) {
   const { t } = useTranslation('settings');
   return (
@@ -364,6 +373,17 @@ function ToolOverrideRow({
           }`}
         >
           {t('wecom.override.alwaysAllow')}
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange('ask')}
+          className={`px-2 py-0.5 text-[10px] ${
+            value === 'ask'
+              ? 'bg-warning/20 text-warning'
+              : 'text-text-tertiary hover:bg-border/50'
+          }`}
+        >
+          {t('wecom.override.ask')}
         </button>
         <button
           type="button"
