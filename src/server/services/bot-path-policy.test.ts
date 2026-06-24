@@ -34,7 +34,7 @@ describe('createPathPolicyContext', () => {
     const ctx = createPathPolicyContext(workspace, 'user-a', ['user-b']);
     assert.equal(ctx.workspaceFolder, path.resolve('/tmp/test'));
     assert.equal(ctx.userDirName, 'user-a');
-    assert.equal(ctx.userDir, path.join(path.resolve('/tmp/test'), 'user-a'));
+    assert.equal(ctx.userDir, path.join(path.resolve('/tmp/test'), 'data', 'user-a'));
     assert.deepEqual(ctx.knownUserDirNames, ['user-b']);
   });
 
@@ -52,11 +52,11 @@ describe('validateToolInput', () => {
 
   before(() => {
     tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-path-policy-')));
-    const userDir = path.join(tmpDir, 'user-a');
-    const otherDir = path.join(tmpDir, 'user-b');
+    const userDir = path.join(tmpDir, 'data', 'user-a');
+    const otherDir = path.join(tmpDir, 'data', 'user-b');
     const claudeDir = path.join(tmpDir, '.claude');
-    fs.mkdirSync(userDir);
-    fs.mkdirSync(otherDir);
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(otherDir, { recursive: true });
     fs.mkdirSync(claudeDir);
     fs.writeFileSync(path.join(userDir, 'note.txt'), 'hello');
     fs.writeFileSync(path.join(otherDir, 'secret.txt'), 'secret');
@@ -67,12 +67,12 @@ describe('validateToolInput', () => {
   });
 
   it('allows reading a file inside the user directory', () => {
-    const result = validateToolInput(ctx, 'Read', { file_path: path.join(tmpDir, 'user-a', 'note.txt') });
+    const result = validateToolInput(ctx, 'Read', { file_path: path.join(tmpDir, 'data', 'user-a', 'note.txt') });
     assert.equal(result.allowed, true);
   });
 
   it('denies reading a file inside another user directory', () => {
-    const result = validateToolInput(ctx, 'Read', { file_path: path.join(tmpDir, 'user-b', 'secret.txt') });
+    const result = validateToolInput(ctx, 'Read', { file_path: path.join(tmpDir, 'data', 'user-b', 'secret.txt') });
     assert.equal(result.allowed, false);
     assert.equal(result.reason, 'other-user-dir');
   });
@@ -99,8 +99,14 @@ describe('validateToolInput', () => {
     assert.equal(validateToolInput(ctx, 'Read', { file_path: 123 }).allowed, false);
   });
 
+  it('denies writing to the old root-level user directory', () => {
+    const result = validateToolInput(ctx, 'Write', { file_path: path.join(tmpDir, 'user-a', 'old.txt') });
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, 'outside-user-dir-write');
+  });
+
   it('allows writing inside the user directory', () => {
-    const result = validateToolInput(ctx, 'Write', { file_path: path.join(tmpDir, 'user-a', 'new.txt') });
+    const result = validateToolInput(ctx, 'Write', { file_path: path.join(tmpDir, 'data', 'user-a', 'new.txt') });
     assert.equal(result.allowed, true);
   });
 
@@ -111,7 +117,7 @@ describe('validateToolInput', () => {
   });
 
   it('allows NotebookEdit inside the user directory', () => {
-    const result = validateToolInput(ctx, 'NotebookEdit', { notebook_path: path.join(tmpDir, 'user-a', 'book.ipynb') });
+    const result = validateToolInput(ctx, 'NotebookEdit', { notebook_path: path.join(tmpDir, 'data', 'user-a', 'book.ipynb') });
     assert.equal(result.allowed, true);
   });
 
@@ -128,26 +134,26 @@ describe('validateToolInput', () => {
   });
 
   it('rejects Glob patterns targeting another user directory', () => {
-    const result = validateToolInput(ctx, 'Glob', { pattern: 'user-b/**' });
+    const result = validateToolInput(ctx, 'Glob', { pattern: 'data/user-b/**' });
     assert.equal(result.allowed, false);
     assert.equal(result.reason, 'other-user-dir');
   });
 
   it('allows Glob patterns inside the user directory', () => {
-    const result = validateToolInput(ctx, 'Glob', { pattern: 'user-a/**/*.txt' });
+    const result = validateToolInput(ctx, 'Glob', { pattern: 'data/user-a/**/*.txt' });
     assert.equal(result.allowed, true);
   });
 
   it('validates absolute Glob patterns against the path policy', () => {
     const result = validateToolInput(ctx, 'Glob', {
-      pattern: path.join(tmpDir, 'user-a', '*.txt'),
+      pattern: path.join(tmpDir, 'data', 'user-a', '*.txt'),
     });
     assert.equal(result.allowed, true);
   });
 
   it('rejects Grep path targeting another user directory', () => {
     const result = validateToolInput(ctx, 'Grep', {
-      path: path.join(tmpDir, 'user-b'),
+      path: path.join(tmpDir, 'data', 'user-b'),
       pattern: 'secret',
     });
     assert.equal(result.allowed, false);
@@ -173,7 +179,7 @@ describe('validateToolInput', () => {
 describe('resolveAndCheckPath', () => {
   it('allows reading a shared file and denies writing it', () => {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-resolve-')));
-    fs.mkdirSync(path.join(tmpDir, 'user-a'));
+    fs.mkdirSync(path.join(tmpDir, 'data', 'user-a'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, 'shared.txt'), 'shared');
     const workspace = createWorkspace({ folderPath: tmpDir });
     const ctx = createPathPolicyContext(workspace, 'user-a');
@@ -190,17 +196,17 @@ describe('resolveAndCheckPath', () => {
 describe('checkUserPath', () => {
   it('allows paths inside the user directory', () => {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-user-')));
-    fs.mkdirSync(path.join(tmpDir, 'user-a'));
+    fs.mkdirSync(path.join(tmpDir, 'data', 'user-a'), { recursive: true });
     const workspace = createWorkspace({ folderPath: tmpDir });
     const ctx = createPathPolicyContext(workspace, 'user-a');
 
-    const result = checkUserPath(ctx, path.join(tmpDir, 'user-a', 'file.txt'));
+    const result = checkUserPath(ctx, path.join(tmpDir, 'data', 'user-a', 'file.txt'));
     assert.equal(result.allowed, true);
   });
 
   it('denies paths outside the user directory', () => {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-user-')));
-    fs.mkdirSync(path.join(tmpDir, 'user-a'));
+    fs.mkdirSync(path.join(tmpDir, 'data', 'user-a'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, 'shared.txt'), 'shared');
     const workspace = createWorkspace({ folderPath: tmpDir });
     const ctx = createPathPolicyContext(workspace, 'user-a');
