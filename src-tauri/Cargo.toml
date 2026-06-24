@@ -1,6 +1,6 @@
 [package]
 name = "comate"
-version = "0.0.13"
+version = "0.0.14"
 description = "Your friendly AI workspace companion"
 authors = ["spearwang"]
 license = ""
