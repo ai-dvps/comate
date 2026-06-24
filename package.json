@@ -50,6 +50,7 @@
     "clsx": "^2.0.0",
     "cors": "^2.8.5",
     "dompurify": "^3.4.4",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "fdir": "^6.5.0",
     "fuzzysort": "^3.1.0",

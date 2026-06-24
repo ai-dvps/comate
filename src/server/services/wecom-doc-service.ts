@@ -2,9 +2,16 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import type { Workspace } from '../models/workspace.js';
 import { WeComMcpClient } from './wecom-mcp-client.js';
+import {
+  buildSmartsheetWorkbook,
+  type SmartsheetData,
+  type SmartsheetField,
+} from './smartsheet-workbook.js';
 
 const IMAGE_SIZE_LIMIT = 30 * 1024 * 1024;
 const FILE_SIZE_LIMIT = 10 * 1024 * 1024;
+const SMARTSHEET_PAGE_SIZE = 1000;
+const SMARTSHEET_MAX_PAGES = 1000;
 
 interface ImageUploadResult {
   url: string;
@@ -57,6 +64,175 @@ export class WeComDocService {
     }
 
     return this.mcpClient.callJsonTool(botId, botSecret, 'doc', remoteMethod, args);
+  }
+
+  /**
+   * Export every smartsheet in a WeCom document as a single `.xlsx` workbook.
+   *
+   * Server-side composition of the existing smartsheet_get_sheet,
+   * smartsheet_get_fields, and smartsheet_get_records APIs.
+   */
+  async exportSmartsheetWorkbook(workspace: Workspace, docid: string): Promise<Buffer> {
+    const botId = workspace.settings.wecomBotId;
+    const botSecret = workspace.settings.wecomBotSecret;
+
+    if (!botId || !botSecret) {
+      throw new Error('Workspace is missing WeCom bot credentials');
+    }
+
+    if (typeof docid !== 'string' || docid.trim().length === 0) {
+      throw new Error('docid is required');
+    }
+
+    const sheetList = await this.listSmartsheets(botId, botSecret, docid);
+    const sheets: SmartsheetData[] = [];
+
+    for (const sheet of sheetList) {
+      const fields = await this.getAllFields(botId, botSecret, docid, sheet.sheetId);
+      const records = await this.getAllRecords(botId, botSecret, docid, sheet.sheetId);
+      sheets.push({
+        title: sheet.title,
+        fields,
+        records,
+      });
+    }
+
+    return buildSmartsheetWorkbook(sheets);
+  }
+
+  private async listSmartsheets(
+    botId: string,
+    botSecret: string,
+    docid: string,
+  ): Promise<Array<{ sheetId: string; title: string }>> {
+    const res = await this.mcpClient.callJsonTool(botId, botSecret, 'doc', 'smartsheet_get_sheet', {
+      docid,
+    });
+
+    const sheetList = res.sheet_list ?? res.sheets;
+    if (!Array.isArray(sheetList)) {
+      throw new Error('Unexpected smartsheet_get_sheet response: missing sheet_list');
+    }
+
+    return sheetList
+      .filter((item) => typeof item === 'object' && item !== null && item.type === 'smartsheet')
+      .map((item) => {
+        const s = item as Record<string, unknown>;
+        return {
+          sheetId: String(s.sheet_id ?? ''),
+          title: String(s.title ?? ''),
+        };
+      })
+      .filter((item) => item.sheetId.length > 0);
+  }
+
+  private async getAllFields(
+    botId: string,
+    botSecret: string,
+    docid: string,
+    sheetId: string,
+  ): Promise<SmartsheetField[]> {
+    const fields: SmartsheetField[] = [];
+    let offset = 0;
+    let pageCount = 0;
+
+    while (pageCount < SMARTSHEET_MAX_PAGES) {
+      const res = await this.mcpClient.callJsonTool(
+        botId,
+        botSecret,
+        'doc',
+        'smartsheet_get_fields',
+        { docid, sheet_id: sheetId, offset, limit: SMARTSHEET_PAGE_SIZE },
+      );
+
+      const pageFields = res.fields ?? res.field_list;
+      if (!Array.isArray(pageFields) || pageFields.length === 0) {
+        break;
+      }
+
+      for (const item of pageFields) {
+        if (typeof item !== 'object' || item === null) continue;
+        const f = item as Record<string, unknown>;
+        const fieldId = String(f.field_id ?? '');
+        if (fieldId.length === 0) continue;
+        fields.push({
+          fieldId,
+          title: String(f.field_title ?? f.title ?? ''),
+          type: typeof f.field_type === 'string' ? f.field_type : undefined,
+        });
+      }
+
+      pageCount += 1;
+      offset += pageFields.length;
+
+      const total = typeof res.total === 'number' ? res.total : undefined;
+      if (total !== undefined && offset >= total) {
+        break;
+      }
+      if (pageFields.length < SMARTSHEET_PAGE_SIZE) {
+        break;
+      }
+    }
+
+    return fields;
+  }
+
+  private async getAllRecords(
+    botId: string,
+    botSecret: string,
+    docid: string,
+    sheetId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const records: Array<Record<string, unknown>> = [];
+    let offset = 0;
+    let pageCount = 0;
+
+    while (pageCount < SMARTSHEET_MAX_PAGES) {
+      const res = await this.mcpClient.callJsonTool(
+        botId,
+        botSecret,
+        'doc',
+        'smartsheet_get_records',
+        {
+          docid,
+          sheet_id: sheetId,
+          key_type: 'CELL_VALUE_KEY_TYPE_FIELD_ID',
+          offset,
+          limit: SMARTSHEET_PAGE_SIZE,
+        },
+      );
+
+      const pageRecords = res.records;
+      if (!Array.isArray(pageRecords) || pageRecords.length === 0) {
+        break;
+      }
+
+      for (const item of pageRecords) {
+        if (typeof item !== 'object' || item === null) continue;
+        const record = item as Record<string, unknown>;
+        const values = record.field_values ?? record.values;
+        records.push(
+          typeof values === 'object' && values !== null
+            ? (values as Record<string, unknown>)
+            : {},
+        );
+      }
+
+      pageCount += 1;
+      offset += pageRecords.length;
+
+      if (res.has_more === false) {
+        break;
+      }
+      if (typeof res.next === 'boolean' && res.next === false) {
+        break;
+      }
+      if (pageRecords.length < SMARTSHEET_PAGE_SIZE) {
+        break;
+      }
+    }
+
+    return records;
   }
 
   private async processSmartpageCreate(

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -454,6 +454,121 @@ describe('wecom cli', () => {
         ], tmpDir);
         assert.strictEqual(result.status, 1);
         assert(result.stderr.includes('Missing required flag data'));
+      });
+    });
+
+    describe('smartsheet-export-excel', () => {
+      const EXPORT_URL = '/api/workspaces/w/wecom/smartsheet-export';
+
+      it('--help shows flags', () => {
+        const result = run(['doc:smartsheet-export-excel', '--help']);
+        assert.strictEqual(result.status, 0);
+        assert(result.stdout.includes('--docid'));
+        assert(result.stdout.includes('--output'));
+        assert(result.stdout.includes('--force'));
+      });
+
+      it('writes the workbook bytes and prints the absolute path', async () => {
+        const server = await startMockServer({
+          MOCK_STATUS: '200',
+          MOCK_BODY: 'XLSX-BYTES',
+          MOCK_EXPECTED_URL: EXPORT_URL,
+        });
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        writeContext(tmpDir, server.url);
+        const result = run(
+          ['doc:smartsheet-export-excel', '--docid', 'DOC1', '--output', 'out.xlsx'],
+          tmpDir
+        );
+        try {
+          assert.strictEqual(result.status, 0);
+          assert(result.stdout.trim().endsWith('out.xlsx'));
+          const outPath = join(tmpDir, 'out.xlsx');
+          assert(existsSync(outPath));
+          assert.strictEqual(readFileSync(outPath, 'utf-8'), 'XLSX-BYTES');
+        } finally {
+          await server.close();
+        }
+      });
+
+      it('exits 1 and leaves the file untouched when it exists and --force is not given', async () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        writeContext(tmpDir, 'http://127.0.0.1:1');
+        const outPath = join(tmpDir, 'out.xlsx');
+        writeFileSync(outPath, 'ORIGINAL');
+        // Non-TTY (spawnSync pipes), so the prompt branch is skipped and it errors out.
+        const result = run(
+          ['doc:smartsheet-export-excel', '--docid', 'DOC1', '--output', 'out.xlsx'],
+          tmpDir
+        );
+        assert.strictEqual(result.status, 1);
+        assert(result.stderr.includes('already exists'));
+        assert.strictEqual(readFileSync(outPath, 'utf-8'), 'ORIGINAL');
+      });
+
+      it('overwrites an existing file when --force is given', async () => {
+        const server = await startMockServer({
+          MOCK_STATUS: '200',
+          MOCK_BODY: 'NEW-BYTES',
+          MOCK_EXPECTED_URL: EXPORT_URL,
+        });
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        writeContext(tmpDir, server.url);
+        const outPath = join(tmpDir, 'out.xlsx');
+        writeFileSync(outPath, 'ORIGINAL');
+        const result = run(
+          ['doc:smartsheet-export-excel', '--docid', 'DOC1', '--output', 'out.xlsx', '--force'],
+          tmpDir
+        );
+        try {
+          assert.strictEqual(result.status, 0);
+          assert.strictEqual(readFileSync(outPath, 'utf-8'), 'NEW-BYTES');
+        } finally {
+          await server.close();
+        }
+      });
+
+      it('exits 3 and leaves no file when the server returns an error', async () => {
+        const server = await startMockServer({
+          MOCK_STATUS: '500',
+          MOCK_BODY: JSON.stringify({ error: 'smartsheet_export_failed', message: 'mcp boom' }),
+          MOCK_EXPECTED_URL: EXPORT_URL,
+        });
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        writeContext(tmpDir, server.url);
+        const result = run(
+          ['doc:smartsheet-export-excel', '--docid', 'DOC1', '--output', 'out.xlsx'],
+          tmpDir
+        );
+        try {
+          assert.strictEqual(result.status, 3);
+          assert(result.stderr.includes('mcp boom'));
+          assert(!existsSync(join(tmpDir, 'out.xlsx')));
+        } finally {
+          await server.close();
+        }
+      });
+
+      it('exits 1 when --docid is missing', () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        writeContext(tmpDir, 'http://localhost');
+        const result = run(
+          ['doc:smartsheet-export-excel', '--output', 'out.xlsx'],
+          tmpDir
+        );
+        assert.strictEqual(result.status, 1);
+        assert(result.stderr.includes('Missing required flag docid'));
+      });
+
+      it('exits 1 when --output is missing', () => {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+        writeContext(tmpDir, 'http://localhost');
+        const result = run(
+          ['doc:smartsheet-export-excel', '--docid', 'DOC1'],
+          tmpDir
+        );
+        assert.strictEqual(result.status, 1);
+        assert(result.stderr.includes('Missing required flag output'));
       });
     });
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **WeCom CLI `doc:smartsheet-export-excel`** — exports every smartsheet in a WeCom document to a single `.xlsx` workbook (one worksheet per smartsheet). Since the smart-document MCP has no native export, the server composes the existing `smartsheet_get_sheet`/`get_fields`/`get_records` APIs (paginating all records with field-id-keyed cells), builds the workbook with `exceljs`, and returns the binary bytes via `POST /api/workspaces/:workspaceId/wecom/smartsheet-export`. The CLI writes the bytes to `--output`, prompts before overwriting an existing file (or requires `--force` when non-interactive), and cleans up any partial file it created if the export fails.
+
 ### Fixed
 
 - **Feishu bot menu produced no feedback** — the menu-event guard rejected events with HTTP 400 when the workspace had no `feishuEncryptKey` configured, a common (token-only) setup where card actions already worked via the SDK's empty-key verification bypass. The guard now requires only `feishuAppId`/`feishuAppSecret` (needed to build the reply DM client), matching the rest of the endpoint. Diagnostic logging was also added across the menu flow: event type on receipt, guard pass/reject, handler dispatch, and the service-side decision and DM-send result.

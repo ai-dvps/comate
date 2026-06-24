@@ -33,6 +33,11 @@ This document describes how to release a new version of `@webank/wecom`.
 
 ## Release History
 
+### 1.2.0
+- Added `doc:smartsheet-export-excel` command to export every smartsheet in a WeCom document to a single `.xlsx` workbook (one worksheet per smartsheet), with overwrite protection (`--force`) and partial-file cleanup on failure.
+- Updated dependent WeCom skills (`send-wecom-file`, `send-wecom-msg`, `wecom-doc`) to require CLI `1.2.0` or higher, and listed the new command in the `wecom-doc` skill.
+- Synced workspace lockfile versions.
+
 ### 1.1.0
 - Added `current-user` command to resolve the current WeCom user/session context via the CLI.
 - Updated dependent WeCom skills (`send-wecom-file`, `send-wecom-msg`, `wecom-doc`) to require CLI `1.1.0` or higher.
