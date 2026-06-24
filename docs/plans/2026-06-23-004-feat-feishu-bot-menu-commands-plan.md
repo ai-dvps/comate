@@ -25,14 +25,14 @@ Feishu bot menus are configured with event keys. Clicking a menu sends an `appli
 - R2. A menu event whose `event_key` is `session` must produce the same session-list card as typing `/session`.
 - R3. A menu event whose `event_key` is `new` must create a new session and notify the user the same way as typing `/new`.
 - R4. Menu-triggered responses must be sent to the user's DM via the same Feishu message API used by existing card sends.
-- R5. Menu event handling must respect the active Feishu workspace binding and fail gracefully when no workspace is bound, disabled, or missing required Feishu credentials or encryption key.
+- R5. Menu event handling must respect the active Feishu workspace binding and fail gracefully when no workspace is bound, disabled, or missing the Feishu app credentials (`feishuAppId`/`feishuAppSecret`) needed to build the reply DM client. (Payload encryption / `feishuEncryptKey` is not required — see KTD1.)
 - R6. The existing `/session` and `/new` text command behavior must remain unchanged.
 
 ---
 
 ## Key Technical Decisions
 
-- **KTD1. Handle menu events in the existing Feishu callback route.** Adding a separate endpoint would require operators to configure another URL and verification token in the Feishu developer console. Extending the current route reuses signature verification and keeps the public surface unchanged. **Security invariant:** menu events MUST be dispatched only through the existing `lark.EventDispatcher.invoke` call, which runs `checkIsEventValidated` before invoking any registered handler, so they inherit request-signature verification. Any future refactor must preserve this — moving the menu handler outside `invoke` would let anyone who knows the callback URL forge menu events. Note: the SDK's `checkIsEventValidated` returns `true` unconditionally when the encrypt key is empty, so a non-empty `feishuEncryptKey` is a hard precondition (see R5 and U1).
+- **KTD1. Handle menu events in the existing Feishu callback route.** Adding a separate endpoint would require operators to configure another URL and verification token in the Feishu developer console. Extending the current route reuses signature verification and keeps the public surface unchanged. **Security invariant:** menu events MUST be dispatched only through the existing `lark.EventDispatcher.invoke` call, which runs `checkIsEventValidated` before invoking any registered handler, so they inherit request-signature verification. Any future refactor must preserve this — moving the menu handler outside `invoke` would let anyone who knows the callback URL forge menu events. Note: the SDK's `checkIsEventValidated` returns `true` unconditionally when the encrypt key is empty, so for token-only workspaces (no `feishuEncryptKey`) there is effectively no signature check — the menu flow accepts this same posture as card-action handling rather than forcing encryption, which would break common setups. (If enforcement is later desired, it should be an endpoint-wide setting, not a menu-only gate.)
 - **KTD2. Construct a fresh `lark.Client` in the route handler from workspace credentials.** The singleton `feishuBotService` connection may point to a different workspace or be disconnected. Creating a client per callback ensures the correct app credentials are used and removes a hidden dependency on service connection state.
 - **KTD3. Extract Thread-free command logic in `FeishuBotService`.** Menu events arrive without a chat-SDK `Thread`. The core session-list and new-session logic must be callable with only a workspace, user `open_id`, and `larkClient`.
 - **KTD4. Serialize menu commands through the existing per-user queue.** Rapid double-clicks of the "new" menu could otherwise create duplicate sessions. Reusing `runForUser` keeps menu and chat command handling consistent.
@@ -80,7 +80,7 @@ sequenceDiagram
 - **Approach:**
   - Register an `application.bot.menu_v6` handler in the `lark.EventDispatcher` alongside `url_verification` and `card.action.trigger`.
   - Extract `operator.operator_id.open_id` and `event_key` from the normalized event payload (the SDK nests the user id under `operator.operator_id`, not `operator`). Defensively handle missing fields.
-  - Before constructing the client, verify the workspace has `feishuAppId`, `feishuAppSecret`, and a `feishuEncryptKey` configured (mirroring the guard in `FeishuBotService.connect`). The encrypt key is mandatory because the SDK's signature check is silently bypassed when it is empty. If any are missing, reject the event with `400`/`403` and do not dispatch — without credentials there is no client to send a DM, so return an error HTTP response and send nothing.
+  - Before constructing the client, verify the workspace has `feishuAppId` and `feishuAppSecret` configured (needed to build the reply DM client). If either is missing, reject the event with `400` and do not dispatch — without credentials there is no client to send a DM, so return an error HTTP response and send nothing. (A `feishuEncryptKey` is NOT required: payload encryption is optional on Feishu and the rest of the endpoint already operates without it.)
   - Construct a `lark.Client` from the workspace's `feishuAppId` and `feishuAppSecret`, configured with `loggerLevel: lark.LoggerLevel.error` to suppress info/debug request-detail logging (the `lark.Client` option is `loggerLevel`, an enum — there is no string `'silent'` option on the client; `connect` sets no logger level, so this is additional hardening).
   - Call `feishuBotService.handleMenuEvent(larkClient, workspace, openId, eventKey)` **fire-and-forget** (attach a `.catch` for diagnostics, do not `await`). The HTTP response returns immediately so Feishu does not retry — a retry would re-enter `runForUser` and could create a duplicate session for `new`, undercutting KTD4. The per-user queue still serializes the actual DM work; errors are reported back to the user inside `handleMenuEvent`.
   - Return a response that Feishu expects (an empty object or toast) without leaking internal errors.
@@ -90,8 +90,8 @@ sequenceDiagram
   - Menu event with `event_key: "new"` invokes `handleMenuEvent` and returns a success-shaped response.
   - Menu event with unknown `event_key` returns a helpful error toast.
   - Menu event missing `operator.operator_id.open_id` returns an error toast.
-  - Workspace enabled but `feishuEncryptKey` missing returns `400`/`403` and sends no message.
-  - Workspace missing `feishuAppId`/`feishuAppSecret` returns `400`/`403` and sends no message.
+  - Workspace missing `feishuAppId`/`feishuAppSecret` returns `400` and sends no message.
+  - Workspace with app credentials but no `feishuEncryptKey` is still admitted (encryption is optional).
   - Workspace disabled returns `403`.
   - Root callback with no active workspace binding returns `400`.
 - **Verification:** All `feishu-card.test.ts` cases pass; the new handler is covered.
@@ -166,7 +166,7 @@ sequenceDiagram
 - **Risk:** Rapid menu clicks creating duplicate sessions. Mitigation: KTD4 serializes per-user menu commands through the existing queue.
 - **Dependency:** The Feishu developer console must subscribe `application.bot.menu_v6` and point it at the app's existing Feishu callback URL.
 - **Dependency:** The Feishu app must be configured with menu `event_key` values `session` and `new`.
-- **Dependency:** The bound workspace must have a non-empty `feishuEncryptKey` (and `feishuVerificationToken`) — the SDK silently bypasses signature verification when the encrypt key is empty, which would let forged menu events create sessions. The route rejects events for workspaces lacking it (R5).
+- **Dependency:** The bound workspace must have `feishuAppId` and `feishuAppSecret` configured so the route can build a per-callback `lark.Client` to send the reply DM. A `feishuEncryptKey` is optional (payload encryption is off by default on Feishu); the route does not require it.
 
 ---
 

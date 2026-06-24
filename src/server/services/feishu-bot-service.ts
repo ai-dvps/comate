@@ -167,31 +167,37 @@ export class FeishuBotService {
     eventKey: string | undefined,
   ): Promise<void> {
     const key = (eventKey ?? '').trim();
-    diagLog(`[FeishuBotService] menu event from=${openId} key=${key} workspace=${workspace.id}`);
+    diagLog(
+      `[FeishuBotService] menu event from=${openId || '(missing)'} key="${key}" workspace=${workspace.id}`,
+    );
 
     if (!openId) {
-      diagLog('[FeishuBotService] menu event missing operator open_id; ignoring');
+      diagLog('[FeishuBotService] menu event ignored: missing operator open_id');
       return;
     }
 
     // Defensive: the route already gates on enabled + credentials, but guard
     // against the binding being cleared/disabled between dispatch and handling.
     if (!this.isFeishuEnabled(workspace)) {
+      diagLog(`[FeishuBotService] menu event: workspace ${workspace.id} not feishu-enabled`);
       await this.sendMenuText(larkClient, openId, '⚠️ 当前工作空间未启用飞书机器人。');
       return;
     }
 
     if (key !== 'session' && key !== 'new') {
+      diagLog(`[FeishuBotService] menu event: unknown key "${key}"`);
       await this.sendMenuText(larkClient, openId, '⚠️ 未知的菜单操作。');
       return;
     }
 
+    diagLog(`[FeishuBotService] menu event: processing key="${key}" for ${openId}`);
     await this.runForUser(openId, async () => {
       if (key === 'session') {
         await this.sendSessionListCard(larkClient, workspace, openId);
       } else {
         await this.createAndNotifyNewSession(larkClient, workspace, openId);
       }
+      diagLog(`[FeishuBotService] menu event: completed key="${key}" for ${openId}`);
     });
   }
 
@@ -589,6 +595,9 @@ export class FeishuBotService {
     const sessions = await this.collectSessionList(workspace, openId);
     const card = buildSessionListCard(workspace.name, sessions);
     await this.sendMenuCard(larkClient, openId, card);
+    diagLog(
+      `[FeishuBotService] menu: sent session-list card (${sessions.length} sessions) to ${openId}`,
+    );
   }
 
   /** Menu handler: create a session and notify the operator via DM. */
@@ -598,8 +607,9 @@ export class FeishuBotService {
     openId: string,
   ): Promise<void> {
     try {
-      await this.instantiateFeishuSession(workspace, openId, openId);
+      const session = await this.instantiateFeishuSession(workspace, openId, openId);
       await this.sendMenuText(larkClient, openId, `已创建新会话：${openId}`);
+      diagLog(`[FeishuBotService] menu: created session ${session.id} and notified ${openId}`);
     } catch (err) {
       console.error('[FeishuBotService] failed to create session via menu:', err);
       await this.sendMenuText(larkClient, openId, '⚠️ 创建会话失败，请稍后重试。');
@@ -619,7 +629,7 @@ export class FeishuBotService {
         },
       });
     } catch (err) {
-      console.error('[FeishuBotService] failed to send menu text:', err);
+      diagLog(`[FeishuBotService] failed to send menu text to ${openId}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -636,7 +646,7 @@ export class FeishuBotService {
         },
       });
     } catch (err) {
-      console.error('[FeishuBotService] failed to send menu card:', err);
+      diagLog(`[FeishuBotService] failed to send menu card to ${openId}: ${err instanceof Error ? err.message : String(err)}`);
       await this.sendMenuText(larkClient, openId, '发送卡片失败，请稍后重试。');
     }
   }

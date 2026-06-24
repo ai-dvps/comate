@@ -104,25 +104,33 @@ async function handleCardCallback(
       return;
     }
 
-    // Menu events can create sessions, so they require the app credentials (to
-    // build a DM client) AND a non-empty encrypt key. The SDK's
-    // checkIsEventValidated returns true unconditionally when the encrypt key is
-    // empty, silently bypassing signature verification — reject unverifiable
-    // menu events at the route before any handler runs. This is scoped to menu
-    // events only; existing card-action handling is unchanged.
-    if (readEventType(body) === 'application.bot.menu_v6') {
+    const eventType = readEventType(body);
+    diagLog(
+      `[FeishuCardRoute] event received workspaceId=${workspaceId} type=${eventType ?? '(unknown)'}`,
+    );
+
+    // Menu events need app credentials to build a DM client for the reply.
+    // Encryption is NOT required here: it is optional on Feishu, and the SDK's
+    // checkIsEventValidated already bypasses signature verification when the
+    // encrypt key is empty — the same posture card-action handling relies on,
+    // so menu events must not be stricter than the rest of the endpoint.
+    if (eventType === 'application.bot.menu_v6') {
       const appId = workspace.settings.feishuAppId?.trim();
       const appSecret = workspace.settings.feishuAppSecret?.trim();
-      const encryptKeyTrimmed = (workspace.settings.feishuEncryptKey ?? '').trim();
-      if (!appId || !appSecret || !encryptKeyTrimmed) {
+      if (!appId || !appSecret) {
+        const missing = [
+          !appId && 'feishuAppId',
+          !appSecret && 'feishuAppSecret',
+        ]
+          .filter(Boolean)
+          .join(', ');
         diagLog(
-          `[FeishuCardRoute] menu event rejected: incomplete Feishu credentials/encrypt key for workspace ${workspaceId}`,
+          `[FeishuCardRoute] menu event rejected: missing ${missing} for workspace ${workspaceId}`,
         );
-        res
-          .status(400)
-          .json({ error: 'Workspace Feishu credentials or encryption key are not configured' });
+        res.status(400).json({ error: 'Workspace Feishu app credentials are not configured' });
         return;
       }
+      diagLog(`[FeishuCardRoute] menu event admitted for workspace ${workspaceId}`);
     }
 
     const dispatcher = new lark.EventDispatcher({ encryptKey, verificationToken });
@@ -160,12 +168,12 @@ async function handleCardCallback(
       'application.bot.menu_v6': async (data: Record<string, unknown>) => {
         const { openId, eventKey } = extractMenuEvent(data);
         diagLog(
-          `[FeishuCardRoute] menu_v6 openId=${openId || '(missing)'} key=${(eventKey ?? '').slice(0, 40)}`,
+          `[FeishuCardRoute] menu_v6 received openId=${openId || '(missing)'} key=${(eventKey ?? '').slice(0, 40)}`,
         );
 
         // Credentials are guaranteed present: the route-level guard above
-        // rejected menu events for workspaces missing appId/appSecret/encryptKey.
-        // Build a fresh client per callback (KTD2) so the correct workspace's
+        // rejected menu events for workspaces missing appId/appSecret. Build a
+        // fresh client per callback (KTD2) so the correct workspace's
         // credentials are used, independent of the singleton service connection.
         const menuClient = new lark.Client({
           appId: workspace.settings.feishuAppId!.trim(),
@@ -178,6 +186,7 @@ async function handleCardCallback(
         // (a retry would re-enter runForUser and could create a duplicate
         // session). The DM send is serialized per user inside handleMenuEvent,
         // and its own error handling reports failures back to the user.
+        diagLog(`[FeishuCardRoute] menu_v6 dispatching to handleMenuEvent openId=${openId || '(missing)'}`);
         feishuBotService.handleMenuEvent(menuClient, workspace, openId, eventKey).catch((err) => {
           const message = err instanceof Error ? err.message : String(err);
           diagLog(`[FeishuCardRoute] menu handler error: ${message}`);

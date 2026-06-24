@@ -251,19 +251,21 @@ describe('feishu card route', { concurrency: false }, () => {
       assert.strictEqual(res.statusCode, 400);
       assert.strictEqual(
         (res.jsonBody as { error: string }).error,
-        'Workspace Feishu credentials or encryption key are not configured',
+        'Workspace Feishu app credentials are not configured',
       );
     });
 
-    it('rejects a menu event with HTTP 400 when the workspace lacks an encrypt key', async () => {
-      workspaceStore.get = async () =>
-        makeMenuWorkspace({ feishuEncryptKey: '' });
+    it('admits a menu event when the workspace has app credentials but no encrypt key', async () => {
+      // Encryption is optional on Feishu; the menu flow must work without it,
+      // matching how card-action handling already behaves.
+      workspaceStore.get = async () => makeMenuWorkspace({ feishuEncryptKey: '' });
+      invokeStub = async () => ({ toast: { type: 'success', content: '已处理。' } });
 
       const handler = await importHandler('/:workspaceId');
       const res = createMockRes();
       await handler({ params: { workspaceId: 'ws-1' }, rawBody: menuBody(), headers: {} }, res);
 
-      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(res.statusCode, 200);
     });
 
     it('admits a menu event when the workspace is fully configured', async () => {

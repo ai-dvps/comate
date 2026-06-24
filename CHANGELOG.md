@@ -7,13 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Feishu bot menu produced no feedback** — the menu-event guard rejected events with HTTP 400 when the workspace had no `feishuEncryptKey` configured, a common (token-only) setup where card actions already worked via the SDK's empty-key verification bypass. The guard now requires only `feishuAppId`/`feishuAppSecret` (needed to build the reply DM client), matching the rest of the endpoint. Diagnostic logging was also added across the menu flow: event type on receipt, guard pass/reject, handler dispatch, and the service-side decision and DM-send result.
+
 ## [0.0.14] - 2026-06-24
 
 ### Added
 
 - **Manual WeCom user ID mapping** — admins can now manually enter a plaintext enterprise `userId` for an existing WeCom user directly from the workspace settings, instead of waiting for the automatic resolver. The user list displays each user's encrypted `openuserid` alongside the plaintext ID, supports inline editing with explicit Save/Cancel, and includes Reload and "Resolve pending now" buttons to refresh the list or trigger an immediate batch resolution for the workspace. Duplicate plaintext IDs are rejected within the same workspace, and auto-resolution may still overwrite manual entries later.
 
-- **Feishu bot menu commands** — the Feishu callback route now handles `application.bot.menu_v6` events. Clicking a bot menu with `event_key` `session` sends the same session-list card as `/session`, and `new` creates a new session and notifies the user, exactly like typing the command. Menu events are signature-verified through the existing callback, reject workspaces missing Feishu credentials or encryption key, and build a per-callback `lark.Client` so the correct workspace's credentials are used regardless of the service's singleton connection.
+- **Feishu bot menu commands** — the Feishu callback route now handles `application.bot.menu_v6` events. Clicking a bot menu with `event_key` `session` sends the same session-list card as `/session`, and `new` creates a new session and notifies the user, exactly like typing the command. Menu events are signature-verified through the existing callback, reject workspaces missing Feishu app credentials, and build a per-callback `lark.Client` so the correct workspace's credentials are used regardless of the service's singleton connection.
 
 ### Changed
 
