@@ -242,12 +242,14 @@
     },
     "defaultToggle": {
       "allow": "Allow",
+      "ask": "Ask",
       "deny": "Deny"
     },
     "override": {
       "label": "Tools in this category",
       "inherit": "Inherit",
       "alwaysAllow": "Always allow",
+      "ask": "Ask",
       "alwaysDeny": "Always deny",
       "inheritSuffix": "(inherits category default)"
     },

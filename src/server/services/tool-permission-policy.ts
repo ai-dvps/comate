@@ -23,9 +23,9 @@ export type ToolPosture = 'allow-all' | 'safe' | 'custom';
 
 export interface ToolPermissionPolicy {
   posture: ToolPosture;
-  categoryDefaults: Record<ToolCategory, 'allow' | 'deny'>;
+  categoryDefaults: Record<ToolCategory, 'allow' | 'deny' | 'ask'>;
   /** Optional per-tool overrides that invert the category default for named tools. Keys are SDK tool names (e.g., 'Bash', 'Edit'). */
-  overrides?: Record<string, 'allow' | 'deny'>;
+  overrides?: Record<string, 'allow' | 'deny' | 'ask'>;
 }
 
 /** Sentinel tool name for the Reply capability. Reply is not an SDK tool — it is the WeCom send-message path. */
@@ -87,7 +87,7 @@ export const ALLOW_ALL_PRESET: ToolPermissionPolicy = {
 };
 
 /** Result of evaluateToolPermission. 'unknown' means the tool is not in any category (MCP, Skill, future SDK tool without a category fit) — callers fall through to today's allow-all behavior per R10. */
-export type PermissionDecision = 'allow' | 'deny' | 'unknown';
+export type PermissionDecision = 'allow' | 'deny' | 'ask' | 'unknown';
 
 /**
  * Evaluate whether a tool is allowed under a policy.
@@ -109,6 +109,7 @@ export function evaluateToolPermission(
   const override = policy.overrides?.[toolName];
   if (override === 'allow') return 'allow';
   if (override === 'deny') return 'deny';
+  if (override === 'ask') return 'ask';
 
   // Category default
   const category = TOOL_TO_CATEGORY.get(toolName);
@@ -171,15 +172,15 @@ function sanitizePolicy(policy: ToolPermissionPolicy): ToolPermissionPolicy {
   const categoryDefaults = { ...SAFE_PRESET.categoryDefaults };
   for (const key of Object.keys(categoryDefaults) as ToolCategory[]) {
     const value = policy.categoryDefaults?.[key];
-    if (value === 'allow' || value === 'deny') {
+    if (value === 'allow' || value === 'deny' || value === 'ask') {
       categoryDefaults[key] = value;
     }
   }
 
-  const overrides: Record<string, 'allow' | 'deny'> = {};
+  const overrides: Record<string, 'allow' | 'deny' | 'ask'> = {};
   if (policy.overrides && typeof policy.overrides === 'object') {
     for (const [tool, value] of Object.entries(policy.overrides)) {
-      if (value === 'allow' || value === 'deny') {
+      if (value === 'allow' || value === 'deny' || value === 'ask') {
         overrides[tool] = value;
       }
     }

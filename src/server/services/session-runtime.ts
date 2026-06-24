@@ -244,33 +244,10 @@ export class SessionRuntime {
       if (toolName === 'AskUserQuestion') {
         const questions = this.parseAskUserQuestion(input);
         const timeout = this.parseTimeout(input);
-        const timerInfo = timeout ? this.startTimeoutTimer(requestId, timeout) : undefined;
         diagLog(`[Runtime ${this.sessionId}] emitPendingQuestion requestId=${requestId} questions=${questions.length} timeout=${timeout ?? 'none'}`);
-        this.emitter.emitPendingQuestion(requestId, questions, timerInfo?.expiresAt);
-        return new Promise<PermissionResult>((resolve) => {
-          this.pendingApprovals.set(requestId, {
-            resolve,
-            input,
-            type: 'question',
-            questions,
-            ...(timerInfo && { expiresAt: timerInfo.expiresAt, timer: timerInfo.timer }),
-          });
-
-          if (options.signal) {
-            const onAbort = () => {
-              const pending = this.pendingApprovals.get(requestId);
-              if (pending) {
-                this.clearPendingTimer(pending);
-                this.pendingApprovals.delete(requestId);
-                this.emitter.emitApprovalResolved(requestId);
-                resolve({
-                  behavior: 'deny',
-                  message: `Tool approval aborted by SDK: ${requestId}`,
-                });
-              }
-            };
-            options.signal.addEventListener('abort', onAbort, { once: true });
-          }
+        return this.requestToolQuestion(requestId, questions, input, {
+          timeout,
+          signal: options.signal,
         });
       }
 
@@ -289,47 +266,13 @@ export class SessionRuntime {
 
       diagLog(`[Runtime ${this.sessionId}] emitPendingApproval requestId=${requestId} toolName=${toolName}`);
       const timeout = this.parseTimeout(input);
-      const timerInfo = timeout ? this.startTimeoutTimer(requestId, timeout) : undefined;
-      this.emitter.emitPendingApproval(
-        requestId,
-        toolName,
-        options.toolUseID,
-        input,
-        options.title,
-        options.description,
-        options.suggestions,
-        timerInfo?.expiresAt,
-        options.decisionReasonType,
-      );
-
-      return new Promise<PermissionResult>((resolve) => {
-        this.pendingApprovals.set(requestId, {
-          resolve,
-          input,
-          type: 'approval',
-          toolName,
-          toolUseId: options.toolUseID,
-          title: options.title,
-          description: options.description,
-          suggestions: options.suggestions,
-          ...(timerInfo && { expiresAt: timerInfo.expiresAt, timer: timerInfo.timer }),
-        });
-
-        if (options.signal) {
-          const onAbort = () => {
-            const pending = this.pendingApprovals.get(requestId);
-            if (pending) {
-              this.clearPendingTimer(pending);
-              this.pendingApprovals.delete(requestId);
-              this.emitter.emitApprovalResolved(requestId);
-              resolve({
-                behavior: 'deny',
-                message: `Tool approval aborted by SDK: ${requestId}`,
-              });
-            }
-          };
-          options.signal.addEventListener('abort', onAbort, { once: true });
-        }
+      return this.requestToolApproval(requestId, toolName, options.toolUseID, input, {
+        title: options.title,
+        description: options.description,
+        suggestions: options.suggestions,
+        timeout,
+        signal: options.signal,
+        decisionReasonType: options.decisionReasonType,
       });
     };
   }
@@ -523,6 +466,122 @@ export class SessionRuntime {
         : result;
 
     pending.resolve(finalResult);
+  }
+
+  /**
+   * Registers a pending tool approval, emits the pending_approval SSE event,
+   * and returns a Promise that resolves when resolveApproval is called.
+   * Used by the bot canUseTool callback to mirror the GUI approval flow.
+   */
+  requestToolApproval(
+    requestId: string,
+    toolName: string,
+    toolUseId: string,
+    input: Record<string, unknown>,
+    options: {
+      title?: string;
+      description?: string;
+      suggestions?: PermissionUpdate[];
+      timeout?: number;
+      signal?: AbortSignal;
+      decisionReasonType?: string;
+    } = {},
+  ): Promise<PermissionResult> {
+    const timerInfo = options.timeout ? this.startTimeoutTimer(requestId, options.timeout) : undefined;
+    this.emitter.emitPendingApproval(
+      requestId,
+      toolName,
+      toolUseId,
+      input,
+      options.title,
+      options.description,
+      options.suggestions,
+      timerInfo?.expiresAt,
+      options.decisionReasonType,
+    );
+    return this.waitForResolution(requestId, input, 'approval', {
+      toolName,
+      toolUseId,
+      title: options.title,
+      description: options.description,
+      suggestions: options.suggestions,
+      expiresAt: timerInfo?.expiresAt,
+      timer: timerInfo?.timer,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Registers a pending question, emits the pending_question SSE event,
+   * and returns a Promise that resolves when resolveApproval is called.
+   * Used by the bot canUseTool callback to mirror the GUI question flow.
+   */
+  requestToolQuestion(
+    requestId: string,
+    questions: QuestionPayload[],
+    input: Record<string, unknown>,
+    options: {
+      timeout?: number;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<PermissionResult> {
+    const timerInfo = options.timeout ? this.startTimeoutTimer(requestId, options.timeout) : undefined;
+    this.emitter.emitPendingQuestion(requestId, questions, timerInfo?.expiresAt);
+    return this.waitForResolution(requestId, input, 'question', {
+      questions,
+      expiresAt: timerInfo?.expiresAt,
+      timer: timerInfo?.timer,
+      signal: options.signal,
+    });
+  }
+
+  private waitForResolution(
+    requestId: string,
+    input: Record<string, unknown>,
+    type: 'approval' | 'question',
+    data: {
+      toolName?: string;
+      toolUseId?: string;
+      title?: string;
+      description?: string;
+      suggestions?: PermissionUpdate[];
+      questions?: QuestionPayload[];
+      expiresAt?: number;
+      timer?: NodeJS.Timeout;
+      signal?: AbortSignal;
+    },
+  ): Promise<PermissionResult> {
+    return new Promise<PermissionResult>((resolve) => {
+      this.pendingApprovals.set(requestId, {
+        resolve,
+        input,
+        type,
+        ...(data.toolName !== undefined && { toolName: data.toolName }),
+        ...(data.toolUseId !== undefined && { toolUseId: data.toolUseId }),
+        ...(data.title !== undefined && { title: data.title }),
+        ...(data.description !== undefined && { description: data.description }),
+        ...(data.suggestions !== undefined && { suggestions: data.suggestions }),
+        ...(data.questions !== undefined && { questions: data.questions }),
+        ...(data.expiresAt !== undefined && { expiresAt: data.expiresAt }),
+        ...(data.timer !== undefined && { timer: data.timer }),
+      });
+
+      if (data.signal) {
+        const onAbort = () => {
+          const pending = this.pendingApprovals.get(requestId);
+          if (pending) {
+            this.clearPendingTimer(pending);
+            this.pendingApprovals.delete(requestId);
+            this.emitter.emitApprovalResolved(requestId);
+            resolve({
+              behavior: 'deny',
+              message: `Tool approval aborted by SDK: ${requestId}`,
+            });
+          }
+        };
+        data.signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
   }
 
   async interrupt(): Promise<void> {
