@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Settings panel now supports the full update flow inline** — after clicking "Check for Updates", the General tab shows the new version, a Download button, download progress, and Install & Restart / Later actions. The main window notification stays in sync as a parallel surface, so users can close Settings and finish installing from the main window.
+
 ### Fixed
 
 - **Update download progress bar stayed at 0%** — when downloading a new app version, the progress bar never advanced because the updater event handler only passed downloaded bytes to the store and omitted the total content length, so the percentage was always calculated as zero. The handler now captures `contentLength` from the `Started` event and passes it with each `Progress` update.

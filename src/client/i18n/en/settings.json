@@ -44,7 +44,12 @@
     "updateStatusAvailable": "An update is available",
     "updateStatusDownloading": "Downloading update...",
     "updateStatusReady": "Update ready to install",
-    "updateStatusError": "Update error: {{error}}"
+    "updateStatusError": "Update error: {{error}}",
+    "updaterDownload": "Download",
+    "updaterDownloadingProgress": "{{progress}}%",
+    "updaterInstallNow": "Install & Restart",
+    "updaterLater": "Later",
+    "updaterNewVersionAvailable": "Comate {{version}} is available"
   },
   "providers": {
     "title": "LLM Providers",
@@ -125,11 +130,6 @@
     "promptHistoryRetentionDays": "Prompt History Retention (days)",
     "promptHistoryRetentionDaysPlaceholder": "30",
     "promptHistoryRetentionDaysHint": "How many days to keep sent-prompt history for this workspace. Set to 0 or a negative number to disable pruning. Changes apply the next time the history is loaded."
-  },
-  "skills": {
-    "addSkill": "Add Skill",
-    "skillNamePlaceholder": "Skill name",
-    "noSkills": "No skills added"
   },
   "mcp": {
     "serverName": "Server name",
@@ -397,6 +397,9 @@
     "enableFailed": "Failed to change plugin state"
   },
   "skills": {
+    "addSkill": "Add Skill",
+    "skillNamePlaceholder": "Skill name",
+    "noSkills": "No skills added",
     "title": "Skills",
     "installedTab": "Installed",
     "searchTab": "Search",

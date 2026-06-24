@@ -13,13 +13,14 @@ import {
   AlertTriangle,
   RefreshCw,
   Play,
+  Loader2,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
 import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { useUpdaterStore } from '../stores/updater-store'
-import { checkForUpdates, getAppVersion } from '../lib/updater-api'
+import { checkForUpdates, getAppVersion, downloadAndInstallUpdate, restartToUpdate, dismissUpdate } from '../lib/updater-api'
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
 import type { ToolPermissionPolicy } from '../types/wecom-permissions'
@@ -128,6 +129,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const setWindowCap = useChatStore((s) => s.setWindowCap)
   const updateStatus = useUpdaterStore((s) => s.status)
   const updateError = useUpdaterStore((s) => s.error)
+  const updateInfo = useUpdaterStore((s) => s.update)
+  const downloadProgress = useUpdaterStore((s) => s.downloadProgress)
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
@@ -462,6 +465,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 lastUpdateCheckAt={lastUpdateCheckAt}
                 updateStatus={updateStatus}
                 updateError={updateError}
+                updateInfo={updateInfo}
+                downloadProgress={downloadProgress}
                 onRecordUpdateCheck={() => setLastUpdateCheckAt(new Date().toISOString())}
                 windowCap={windowCapInput}
                 onWindowCapChange={setWindowCapInput}
@@ -633,7 +638,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
 // --- App-level tabs ---
 
-function GeneralTab({
+export function GeneralTab({
   defaultModel,
   onDefaultModelChange,
   reopenLastWorkspace,
@@ -645,6 +650,8 @@ function GeneralTab({
   lastUpdateCheckAt,
   updateStatus,
   updateError,
+  updateInfo,
+  downloadProgress,
   onRecordUpdateCheck,
   windowCap,
   onWindowCapChange,
@@ -664,6 +671,8 @@ function GeneralTab({
   lastUpdateCheckAt: string | null
   updateStatus: import('../stores/updater-store').UpdaterStatus
   updateError: string | null
+  updateInfo: import('../stores/updater-store').UpdateInfo | null
+  downloadProgress: number
   onRecordUpdateCheck: () => void
   windowCap: string
   onWindowCapChange: (v: string) => void
@@ -829,17 +838,93 @@ function GeneralTab({
                 {t('general.updaterVersion', { version: appVersion ?? t('general.updaterVersionUnknown') })}
               </p>
             </div>
-            <button
-              onClick={handleCheckNow}
-              disabled={checkingNow || updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready' || updateStatus === 'restarting'}
-              className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-            >
-              {checkingNow || updateStatus === 'checking'
-                ? t('general.updaterChecking')
-                : t('general.updaterCheckNow')}
-            </button>
+            {(updateStatus === 'idle' || updateStatus === 'checking' || updateStatus === 'error') && (
+              <button
+                onClick={handleCheckNow}
+                disabled={checkingNow || updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready' || updateStatus === 'restarting'}
+                className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+              >
+                {checkingNow || updateStatus === 'checking'
+                  ? t('general.updaterChecking')
+                  : t('general.updaterCheckNow')}
+              </button>
+            )}
+            {updateStatus === 'available' && (
+              <button
+                onClick={() => void downloadAndInstallUpdate()}
+                className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
+              >
+                {t('general.updaterDownload')}
+              </button>
+            )}
           </div>
-          <p className="text-[10px] text-text-tertiary">{statusText}</p>
+
+          {(updateStatus === 'idle' || updateStatus === 'error') && (
+            <p className={`text-[10px] ${updateStatus === 'error' ? 'text-destructive' : 'text-text-tertiary'}`}>
+              {statusText}
+            </p>
+          )}
+
+          {updateStatus === 'checking' && (
+            <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
+              <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+              {statusText}
+            </div>
+          )}
+
+          {updateStatus === 'available' && updateInfo && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-text-primary">
+                {t('general.updaterNewVersionAvailable', { version: updateInfo.version })}
+              </p>
+              {updateInfo.body && (
+                <div className="max-h-32 overflow-y-auto rounded-lg bg-bg border border-border p-3">
+                  <p className="text-xs text-text-secondary whitespace-pre-wrap">{updateInfo.body}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {updateStatus === 'downloading' && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-text-secondary">
+                <span>{statusText}</span>
+                <span>{t('general.updaterDownloadingProgress', { progress: downloadProgress })}</span>
+              </div>
+              <div
+                className="w-full h-1.5 bg-border rounded-full overflow-hidden"
+                role="progressbar"
+                aria-valuenow={downloadProgress}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div
+                  className="h-full bg-accent transition-all duration-200"
+                  style={{ width: `${downloadProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {updateStatus === 'ready' && (
+            <div className="space-y-2">
+              <p className="text-[10px] text-text-secondary">{statusText}</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void restartToUpdate()}
+                  className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
+                >
+                  {t('general.updaterInstallNow')}
+                </button>
+                <button
+                  onClick={dismissUpdate}
+                  className="px-3 py-1.5 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
+                >
+                  {t('general.updaterLater')}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-between pt-1">
             <div>
