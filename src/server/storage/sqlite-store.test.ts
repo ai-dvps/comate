@@ -210,6 +210,65 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
   });
 });
 
+describe('SqliteStore WeCom user ID mappings', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  async function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  it('isPlaintextUserIdUsedInWorkspace returns false when checking the same user', async () => {
+    const ws = await createWorkspace('WeCom Dup');
+    store.setWecomWorkspaceUser(ws.id, 'E123');
+    store.setWecomUserMapping('E123', 'U456');
+
+    assert.strictEqual(
+      store.isPlaintextUserIdUsedInWorkspace(ws.id, 'U456', 'E123'),
+      false,
+    );
+  });
+
+  it('isPlaintextUserIdUsedInWorkspace returns true when another user has the same plaintext', async () => {
+    const ws = await createWorkspace('WeCom Dup');
+    store.setWecomWorkspaceUser(ws.id, 'E123');
+    store.setWecomWorkspaceUser(ws.id, 'E789');
+    store.setWecomUserMapping('E123', 'U456');
+    store.setWecomUserMapping('E789', 'U456');
+
+    assert.strictEqual(
+      store.isPlaintextUserIdUsedInWorkspace(ws.id, 'U456', 'E123'),
+      true,
+    );
+  });
+
+  it('isPlaintextUserIdUsedInWorkspace isolates workspaces', async () => {
+    const ws1 = await createWorkspace('WeCom A');
+    const ws2 = await createWorkspace('WeCom B');
+    store.setWecomWorkspaceUser(ws2.id, 'E999');
+    store.setWecomUserMapping('E999', 'U456');
+
+    assert.strictEqual(
+      store.isPlaintextUserIdUsedInWorkspace(ws1.id, 'U456', 'E123'),
+      false,
+    );
+  });
+
+  it('isPlaintextUserIdUsedInWorkspace returns false for unmapped users', async () => {
+    const ws = await createWorkspace('WeCom Unmapped');
+    store.setWecomWorkspaceUser(ws.id, 'E789');
+
+    assert.strictEqual(
+      store.isPlaintextUserIdUsedInWorkspace(ws.id, 'U456', 'E123'),
+      false,
+    );
+  });
+});
+
 describe('SqliteStore workspace delete cascade', { concurrency: false }, () => {
   let store: SqliteStore;
 

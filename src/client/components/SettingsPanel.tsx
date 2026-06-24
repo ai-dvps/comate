@@ -11,6 +11,8 @@ import {
   Moon,
   Monitor,
   AlertTriangle,
+  RefreshCw,
+  Play,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
@@ -1747,6 +1749,14 @@ export function WeComBotSection({
   const [showCorpSecret, setShowCorpSecret] = useState(false)
   const [status, setStatus] = useState<string>('unknown')
   const [users, setUsers] = useState<WeComWorkspaceUser[]>([])
+  const [usersIsLoading, setUsersIsLoading] = useState(false)
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [usersRetryCount, setUsersRetryCount] = useState(0)
+  const [editingUserId, setEditingUserId] = useState<string | null>(null)
+  const [draftPlaintext, setDraftPlaintext] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
+  const [resolveBusy, setResolveBusy] = useState(false)
+  const [resolveResult, setResolveResult] = useState<{ resolved: number; failed: number } | null>(null)
 
   // Fetch connection status
   useEffect(() => {
@@ -1769,26 +1779,118 @@ export function WeComBotSection({
     }
   }, [workspaceId])
 
-  // Fetch WeCom workspace users
+  // Reset users state when the selected workspace changes.
   useEffect(() => {
+    setUsers([])
+    setUsersError(null)
+    setUsersRetryCount(0)
+    setEditingUserId(null)
+    setDraftPlaintext('')
+    setEditError(null)
+    setResolveResult(null)
+  }, [workspaceId])
+
+  // Fetch and poll WeCom workspace users.
+  useEffect(() => {
+    if (activeSubTab !== 'users') return
+
     let cancelled = false
     const fetchUsers = async () => {
+      setUsersIsLoading(true)
       try {
         const res = await fetch(`/api/workspaces/${workspaceId}/wecom/users`)
-        if (!res.ok) return
-        const data = await res.json()
-        if (!cancelled) setUsers(data.users || [])
-      } catch {
-        if (!cancelled) setUsers([])
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        const data = (await res.json()) as { users?: WeComWorkspaceUser[] }
+        if (!cancelled) {
+          setUsers(data.users || [])
+          setUsersError(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setUsersError(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        if (!cancelled) setUsersIsLoading(false)
       }
     }
+
     fetchUsers()
     const interval = setInterval(fetchUsers, 10000)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [workspaceId])
+  }, [workspaceId, activeSubTab, usersRetryCount])
+
+  const handleReloadUsers = () => {
+    setUsersRetryCount((c) => c + 1)
+  }
+
+  const handleResolvePending = async () => {
+    setResolveBusy(true)
+    setResolveResult(null)
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/wecom/resolve-pending`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`)
+      }
+      const result = (await res.json()) as { resolved: number; failed: number }
+      setResolveResult(result)
+      // Refresh the user list so any newly resolved IDs appear.
+      setUsersRetryCount((c) => c + 1)
+    } catch (err) {
+      setResolveResult({ resolved: 0, failed: 0 })
+    } finally {
+      setResolveBusy(false)
+    }
+  }
+
+  const startEdit = (user: WeComWorkspaceUser) => {
+    setEditingUserId(user.encryptedUserId)
+    setDraftPlaintext(user.plaintextUserId || '')
+    setEditError(null)
+  }
+
+  const cancelEdit = () => {
+    setEditingUserId(null)
+    setDraftPlaintext('')
+    setEditError(null)
+  }
+
+  const submitEdit = async (user: WeComWorkspaceUser) => {
+    const trimmed = draftPlaintext.trim()
+    if (!trimmed) {
+      setEditError(t('wecom.userPlaintextRequired'))
+      return
+    }
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/wecom/users/${encodeURIComponent(user.encryptedUserId)}/plaintext`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plaintextUserId: trimmed }),
+      })
+      if (res.status === 409) {
+        setEditError(t('wecom.userDuplicate'))
+        return
+      }
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.encryptedUserId === user.encryptedUserId ? { ...u, plaintextUserId: trimmed } : u,
+        ),
+      )
+      cancelEdit()
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   const statusColor =
     status === 'connected'
@@ -1934,36 +2036,141 @@ export function WeComBotSection({
       {/* Users tab */}
       {activeSubTab === 'users' && (
         <div className="max-w-xl pt-4">
-          <h3 className="text-xs font-medium text-text-secondary mb-3">{t('wecom.usersTitle')}</h3>
-          {users.length === 0 ? (
-            <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
-          ) : (
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-medium text-text-secondary">{t('wecom.usersTitle')}</h3>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleReloadUsers}
+                disabled={usersIsLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${usersIsLoading ? 'animate-spin' : ''}`} />
+                {t('wecom.usersReload')}
+              </button>
+              <button
+                type="button"
+                onClick={handleResolvePending}
+                disabled={resolveBusy || !state.wecomCorpId || !state.wecomCorpSecret}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+              >
+                {resolveBusy ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Play className="w-3.5 h-3.5" />
+                )}
+                {t('wecom.usersResolvePending')}
+              </button>
+            </div>
+          </div>
+
+          {(!state.wecomCorpId || !state.wecomCorpSecret) && (
+            <p className="text-[11px] text-text-tertiary mb-3">{t('wecom.usersResolvePendingDisabled')}</p>
+          )}
+
+          {resolveResult && (
+            <p className="text-[11px] text-text-secondary mb-3">
+              {t('wecom.usersResolvePendingResult', {
+                resolved: resolveResult.resolved,
+                failed: resolveResult.failed,
+              })}
+            </p>
+          )}
+
+          {usersIsLoading && users.length === 0 && (
+            <p className="text-[11px] text-text-tertiary">{t('wecom.usersLoading')}</p>
+          )}
+
+          {usersError && (
             <div className="space-y-2">
-              {users.map((user) => (
-                <div
-                  key={user.encryptedUserId}
-                  className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-text-primary">
-                      {user.plaintextUserId || user.encryptedUserId}
-                    </span>
-                    {!user.plaintextUserId && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
-                        {t('wecom.userPending')}
+              <p className="text-[11px] text-destructive">
+                {t('wecom.usersError')}: {usersError}
+              </p>
+              <button
+                type="button"
+                onClick={handleReloadUsers}
+                className="px-3 py-1.5 text-[11px] font-medium bg-accent text-accent-foreground rounded hover:bg-accent-hover"
+              >
+                {t('wecom.usersRetry')}
+              </button>
+            </div>
+          )}
+
+          {!usersIsLoading && !usersError && users.length === 0 && (
+            <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
+          )}
+
+          {users.length > 0 && (
+            <div className="space-y-2">
+              {users.map((user) => {
+                const isEditing = editingUserId === user.encryptedUserId
+                return (
+                  <div
+                    key={user.encryptedUserId}
+                    className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-text-primary">
+                        {user.plaintextUserId || user.encryptedUserId}
                       </span>
+                      {!user.plaintextUserId && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
+                          {t('wecom.userPending')}
+                      </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-text-tertiary mt-1 break-all">
+                      {t('wecom.userEncryptedId')}: {user.encryptedUserId}
+                    </div>
+                    <div className="flex items-center gap-4 mt-1">
+                      <span className="text-[10px] text-text-tertiary">
+                        {t('wecom.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
+                      </span>
+                      <span className="text-[10px] text-text-tertiary">
+                        {t('wecom.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
+                      </span>
+                    </div>
+                    {isEditing ? (
+                      <div className="mt-2 space-y-2">
+                        <input
+                          value={draftPlaintext}
+                          onChange={(e) => {
+                            setDraftPlaintext(e.target.value)
+                            setEditError(null)
+                          }}
+                          placeholder={t('wecom.userPlaintextPlaceholder')}
+                          className="w-full px-3 py-1.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                        />
+                        {editError && <p className="text-[11px] text-destructive">{editError}</p>}
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => submitEdit(user)}
+                            className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded transition-colors"
+                          >
+                            {t('wecom.userSave')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            className="px-3 py-1.5 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded transition-colors"
+                          >
+                            {t('wecom.userCancel')}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startEdit(user)}
+                        className="mt-2 text-[11px] text-accent hover:text-accent-hover underline underline-offset-2"
+                      >
+                        {user.plaintextUserId ? t('wecom.userEdit') : t('wecom.userAddPlaintext')}
+                      </button>
                     )}
                   </div>
-                  <div className="flex items-center gap-4 mt-1">
-                    <span className="text-[10px] text-text-tertiary">
-                      {t('wecom.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
-                    </span>
-                    <span className="text-[10px] text-text-tertiary">
-                      {t('wecom.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
