@@ -46,7 +46,7 @@ If `wecom` is not in PATH, use `npx wecom` or `${WECOM_CLI_PATH}`.
    ```bash
    wecom --version
    ```
-   Expected: `1.1.0` or higher. If lower, advise the user to update:
+   Expected: `1.2.0` or higher. If lower, advise the user to update:
    ```bash
    npm install -g @webank/wecom@latest
    ```
@@ -224,6 +224,7 @@ Report the actual exit code and meaning to the user.
 | Smartsheet structure | `doc:smartsheet-get-sheet`, `doc:smartsheet-add-sheet`, `doc:smartsheet-update-sheet`, `doc:smartsheet-delete-sheet` |
 | Smartsheet fields | `doc:smartsheet-get-fields`, `doc:smartsheet-add-fields`, `doc:smartsheet-update-fields`, `doc:smartsheet-delete-fields` |
 | Smartsheet records | `doc:smartsheet-get-records`, `doc:smartsheet-add-records`, `doc:smartsheet-update-records`, `doc:smartsheet-delete-records` |
+| Smartsheet export | `doc:smartsheet-export-excel` |
 | Smartsheet auto-file helpers | `doc:smartsheet-add-records-auto-file`, `doc:smartsheet-update-records-auto-file` |
 
 ## Reference docs

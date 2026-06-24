@@ -66,3 +66,44 @@ export function postJson(url: string, body: unknown): Promise<{ status: number; 
     req.end();
   });
 }
+
+export function postForBinary(
+  url: string,
+  body: unknown,
+): Promise<{ status: number; body: Buffer; contentType: string }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const client = parsed.protocol === 'https:' ? https : http;
+    const bodyString = JSON.stringify(body);
+    const req = client.request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(bodyString),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => {
+          chunks.push(chunk);
+        });
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode || 0,
+            body: Buffer.concat(chunks),
+            contentType: res.headers['content-type'] || '',
+          });
+        });
+      }
+    );
+    req.on('error', (err) => {
+      reject(err);
+    });
+    req.write(bodyString);
+    req.end();
+  });
+}

@@ -25,6 +25,7 @@ import SmartsheetAddFields from './commands/doc/smartsheet-add-fields.js';
 import SmartsheetUpdateFields from './commands/doc/smartsheet-update-fields.js';
 import SmartsheetDeleteFields from './commands/doc/smartsheet-delete-fields.js';
 import SmartsheetGetRecords from './commands/doc/smartsheet-get-records.js';
+import SmartsheetExportExcel from './commands/doc/smartsheet-export-excel.js';
 import SmartsheetAddRecords from './commands/doc/smartsheet-add-records.js';
 import SmartsheetUpdateRecords from './commands/doc/smartsheet-update-records.js';
 import SmartsheetDeleteRecords from './commands/doc/smartsheet-delete-records.js';
@@ -52,6 +53,7 @@ export const COMMANDS: Record<string, unknown> = {
   'doc:smartsheet-update-fields': SmartsheetUpdateFields,
   'doc:smartsheet-delete-fields': SmartsheetDeleteFields,
   'doc:smartsheet-get-records': SmartsheetGetRecords,
+  'doc:smartsheet-export-excel': SmartsheetExportExcel,
   'doc:smartsheet-add-records': SmartsheetAddRecords,
   'doc:smartsheet-update-records': SmartsheetUpdateRecords,
   'doc:smartsheet-delete-records': SmartsheetDeleteRecords,
