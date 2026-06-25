@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 import FilePath from '../FilePath'
 
-function GrepRenderer(input: unknown): ReactNode | null {
+export default function GrepRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
     return null
   }

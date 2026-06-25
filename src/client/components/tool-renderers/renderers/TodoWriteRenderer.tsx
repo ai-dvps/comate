@@ -13,7 +13,7 @@ function statusIcon(status: string): ReactNode {
   }
 }
 
-function TodoWriteRenderer(input: unknown): ReactNode | null {
+export default function TodoWriteRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { todos } = input as Record<string, unknown>

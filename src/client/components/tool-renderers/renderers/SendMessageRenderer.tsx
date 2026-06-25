@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function SendMessageRenderer(input: unknown): ReactNode | null {
+export default function SendMessageRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { to, message } = input as Record<string, unknown>

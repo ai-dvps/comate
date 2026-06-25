@@ -1,6 +1,6 @@
 import { Copy } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useToolRendererContext } from './ToolRendererContext'
+import { useToolRendererContext } from './use-tool-renderer-context'
 import { cn } from '../ui/utils'
 import { basename, getPathDisplayInfo, truncateStart } from './path-utils'
 

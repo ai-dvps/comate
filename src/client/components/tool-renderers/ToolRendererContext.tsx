@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext } from 'react'
 
 export interface ToolRendererContextValue {
   workspacePath: string | undefined
@@ -11,7 +11,4 @@ const ToolRendererContext = createContext<ToolRendererContextValue>({
 })
 
 export const ToolRendererProvider = ToolRendererContext.Provider
-
-export function useToolRendererContext(): ToolRendererContextValue {
-  return useContext(ToolRendererContext)
-}
+export default ToolRendererContext

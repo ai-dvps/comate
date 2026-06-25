@@ -2,7 +2,7 @@ import { FileCode } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function NotebookEditRenderer(input: unknown): ReactNode | null {
+export default function NotebookEditRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { notebook_path, cell_id, new_source, cell_type, edit_mode } = input as Record<string, unknown>

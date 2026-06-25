@@ -79,7 +79,7 @@ function App() {
     }
   }
 
-  const initProviders = async () => {
+  const initProviders = useCallback(async () => {
     try {
       await fetchProviders()
       const currentProviders = useProviderStore.getState().providers
@@ -95,7 +95,7 @@ function App() {
     } catch {
       setProviderCheck({ ok: false, checking: false, error: t('provider.noProviderConfigured') })
     }
-  }
+  }, [fetchProviders, detectProviders, t])
 
   useEffect(() => {
     fetchWorkspaces()
@@ -108,7 +108,7 @@ function App() {
       () => setLastUpdateCheckAt(new Date().toISOString())
     )
     return () => stopPeriodicUpdateChecks()
-  }, [fetchWorkspaces, autoCheckUpdates, setLastUpdateCheckAt])
+  }, [fetchWorkspaces, autoCheckUpdates, setLastUpdateCheckAt, initProviders])
 
   const handleForceShowWindow = useCallback(async () => {
     try {

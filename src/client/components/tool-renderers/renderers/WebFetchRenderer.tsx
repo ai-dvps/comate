@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function WebFetchRenderer(input: unknown): ReactNode | null {
+export default function WebFetchRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { url, prompt } = input as Record<string, unknown>

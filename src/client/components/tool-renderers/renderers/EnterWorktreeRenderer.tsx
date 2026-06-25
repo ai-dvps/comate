@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function EnterWorktreeRenderer(input: unknown): ReactNode | null {
+export default function EnterWorktreeRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { name } = input as Record<string, unknown>
