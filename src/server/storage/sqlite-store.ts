@@ -326,17 +326,64 @@ export class SqliteStore {
   }
 
   /**
-   * Add the isActive column to wecom_user_sessions for existing databases.
-   * Fresh databases get the column from the CREATE TABLE statement; this
-   * migration covers databases created before the column existed. Existing
-   * rows default to non-active (0), so no backfill is performed — per the
-   * plan, markerless existing users start a fresh session on next message.
-   * Idempotent: the PRAGMA table_info guard skips when the column is present.
+   * Add the isActive column to wecom_user_sessions for existing databases and
+   * backfill the latest session per user as active. Fresh databases get the
+   * column from the CREATE TABLE statement; this migration covers databases
+   * created before the column existed. Rows that already have an active marker
+   * are left untouched.
+   *
+   * Idempotent: the PRAGMA table_info guard skips adding the column when it is
+   * already present, and the backfill only operates on (workspaceId,
+   * wecomUserId) pairs that have no active row.
    */
   private migrateWecomUserSessionsActiveColumn(): void {
     const columns = this.db.prepare("PRAGMA table_info(wecom_user_sessions)").all() as Array<{ name: string }>;
     if (!columns.some((col) => col.name === 'isActive')) {
       this.db.exec('ALTER TABLE wecom_user_sessions ADD COLUMN isActive INTEGER NOT NULL DEFAULT 0');
+    }
+
+    const now = new Date().toISOString();
+
+    // Find every workspace/user pair that has no active session marker.
+    const pairsWithoutActive = this.db
+      .prepare(`
+        SELECT workspaceId, wecomUserId
+        FROM wecom_user_sessions
+        GROUP BY workspaceId, wecomUserId
+        HAVING SUM(isActive) = 0
+      `)
+      .all() as Array<{ workspaceId: string; wecomUserId: string }>;
+
+    const selectLatest = this.db.prepare(`
+      SELECT wus.sessionId FROM wecom_user_sessions AS wus
+      JOIN sessions AS s ON s.id = wus.sessionId
+      WHERE wus.workspaceId = ? AND wus.wecomUserId = ?
+      ORDER BY wus.createdAt DESC, wus.rowid DESC
+      LIMIT 1
+    `);
+
+    const markActive = this.db.prepare(`
+      UPDATE wecom_user_sessions
+      SET isActive = 1, updatedAt = ?
+      WHERE workspaceId = ? AND wecomUserId = ? AND sessionId = ?
+    `);
+
+    const backfill = this.db.transaction(() => {
+      for (const pair of pairsWithoutActive) {
+        const latest = selectLatest.get(pair.workspaceId, pair.wecomUserId) as
+          | { sessionId: string }
+          | undefined;
+        if (latest) {
+          markActive.run(now, pair.workspaceId, pair.wecomUserId, latest.sessionId);
+        }
+      }
+    });
+    backfill();
+
+    if (pairsWithoutActive.length > 0) {
+      console.log(
+        `[SqliteStore] Backfilled ${pairsWithoutActive.length} WeCom user session mapping(s) with active marker`,
+      );
     }
   }
 
