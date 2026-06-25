@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { createStreamReply, type StreamReplyConnection } from './wecom-stream-reply.js';
 import type { SseEvent } from '../types/message.js';
 import { decodeButtonKey } from './wecom-template-card.js';
+import { ACKNOWLEDGMENT_POOL } from '../utils/bot-placeholder.js';
 
 describe('wecom-stream-reply', () => {
   let sentCards: any[];
@@ -34,6 +35,22 @@ describe('wecom-stream-reply', () => {
         from: { userid: 'user-1' },
         msgtype: 'text',
         text: { content: 'hello' },
+      },
+    };
+  }
+
+  function makeMockReplyConn(
+    calls: Array<{ text: string; finish?: boolean }>,
+  ): StreamReplyConnection {
+    return {
+      client: {
+        replyStream: async (_frame, _streamId, text, finish) => {
+          calls.push({ text, finish });
+        },
+        replyStreamNonBlocking: async (_frame, _streamId, text, finish) => {
+          calls.push({ text, finish });
+        },
+        sendMessage: async () => {},
       },
     };
   }
@@ -140,40 +157,22 @@ describe('wecom-stream-reply', () => {
 
   it('uses a rotating placeholder for the initial reply stream', () => {
     const calls: Array<{ text: string; finish?: boolean }> = [];
-    const replyConn: StreamReplyConnection = {
-      client: {
-        replyStream: async (_frame, _streamId, text, finish) => {
-          calls.push({ text, finish });
-        },
-        replyStreamNonBlocking: async (_frame, _streamId, text, finish) => {
-          calls.push({ text, finish });
-        },
-        sendMessage: async () => {},
-      },
-    };
+    const replyConn = makeMockReplyConn(calls);
 
     const { handler } = createStreamReply(replyConn, makeFrame(), 'sess-1', 'user-1');
     handler.cleanup();
 
     const initialCall = calls.find((c) => c.finish === false);
     assert.ok(initialCall);
-    assert.notStrictEqual(initialCall!.text, '收到，正在处理中.');
-    assert.ok(!initialCall!.text.includes('收到，正在处理中'));
+    assert.ok(
+      ACKNOWLEDGMENT_POOL.some((message) => `${message}.` === initialCall!.text),
+      `initial placeholder "${initialCall!.text}" should be a pool message with a trailing period`,
+    );
   });
 
   it('uses the same base message for placeholder animation frames', async () => {
     const calls: Array<{ text: string }> = [];
-    const replyConn: StreamReplyConnection = {
-      client: {
-        replyStream: async (_frame, _streamId, text) => {
-          calls.push({ text });
-        },
-        replyStreamNonBlocking: async (_frame, _streamId, text) => {
-          calls.push({ text });
-        },
-        sendMessage: async () => {},
-      },
-    };
+    const replyConn = makeMockReplyConn(calls);
 
     const { handler } = createStreamReply(replyConn, makeFrame(), 'sess-1', 'user-1');
     await new Promise((resolve) => setTimeout(resolve, 700));
@@ -192,15 +191,7 @@ describe('wecom-stream-reply', () => {
 
   it('keeps the fixed text for the thinking placeholder', async () => {
     const calls: Array<{ text: string }> = [];
-    const replyConn: StreamReplyConnection = {
-      client: {
-        replyStream: async () => {},
-        replyStreamNonBlocking: async (_frame, _streamId, text) => {
-          calls.push({ text });
-        },
-        sendMessage: async () => {},
-      },
-    };
+    const replyConn = makeMockReplyConn(calls);
     const { handler } = createStreamReply(replyConn, makeFrame(), 'sess-1', 'user-1');
 
     handler(1, { type: 'assistant_start' } as SseEvent);
