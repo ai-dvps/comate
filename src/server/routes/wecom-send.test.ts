@@ -8,7 +8,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
   let originalGetWecomUserIdBySession: typeof workspaceStore.getWecomUserIdBySession;
   let originalGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
   let originalGetEncryptedUserIdByPlaintext: typeof workspaceStore.getEncryptedUserIdByPlaintext;
-  let originalGetWecomSession: typeof workspaceStore.getWecomSession;
+  let originalGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
   let originalEnqueueProactiveMessage: typeof workspaceStore.enqueueProactiveMessage;
   let originalGetStatus: (workspaceId: string) => string;
   let originalSendDirectMessage: (
@@ -21,7 +21,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
     originalGetWecomUserIdBySession = workspaceStore.getWecomUserIdBySession.bind(workspaceStore);
     originalGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
     originalGetEncryptedUserIdByPlaintext = workspaceStore.getEncryptedUserIdByPlaintext.bind(workspaceStore);
-    originalGetWecomSession = workspaceStore.getWecomSession.bind(workspaceStore);
+    originalGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
     originalEnqueueProactiveMessage = workspaceStore.enqueueProactiveMessage.bind(workspaceStore);
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
@@ -33,7 +33,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
     workspaceStore.getWecomUserIdBySession = originalGetWecomUserIdBySession;
     workspaceStore.getWecomUserMapping = originalGetWecomUserMapping;
     workspaceStore.getEncryptedUserIdByPlaintext = originalGetEncryptedUserIdByPlaintext;
-    workspaceStore.getWecomSession = originalGetWecomSession;
+    workspaceStore.getActiveWecomSession = originalGetActiveWecomSession;
     workspaceStore.enqueueProactiveMessage = originalEnqueueProactiveMessage;
 
     import('../services/wecom-bot-service.js').then(({ wecomBotService }) => {
@@ -116,7 +116,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
     workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
     workspaceStore.getWecomUserMapping = () => 'alice';
     workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-bob';
-    workspaceStore.getWecomSession = () => 'session-bob';
+    workspaceStore.getActiveWecomSession = () => 'session-bob';
     workspaceStore.enqueueProactiveMessage = () =>
       ({ id: 'msg-1', status: 'pending' } as WeComProactiveMessage);
 
@@ -140,7 +140,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
     const handlers = await importRouteHandlers();
     workspaceStore.getWecomUserIdBySession = () => null;
     workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-bob';
-    workspaceStore.getWecomSession = () => 'session-bob';
+    workspaceStore.getActiveWecomSession = () => 'session-bob';
     workspaceStore.enqueueProactiveMessage = () =>
       ({ id: 'msg-2', status: 'pending' } as WeComProactiveMessage);
 
@@ -161,7 +161,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
     workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
     workspaceStore.getWecomUserMapping = () => 'alice';
     workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-alice';
-    workspaceStore.getWecomSession = () => 'session-alice';
+    workspaceStore.getActiveWecomSession = () => 'session-alice';
     workspaceStore.enqueueProactiveMessage = () =>
       ({ id: 'msg-3', status: 'pending' } as WeComProactiveMessage);
 
@@ -227,7 +227,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
     workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
     workspaceStore.getWecomUserMapping = () => 'alice';
     workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-bob';
-    workspaceStore.getWecomSession = () => null;
+    workspaceStore.getActiveWecomSession = () => null;
 
     const req = {
       params: { workspaceId: 'ws-1' },
