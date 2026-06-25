@@ -562,12 +562,6 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     workspaceStore.getWecomUserMapping = () => 'user1';
     workspaceStore.listWecomWorkspaceUsers = () => [];
     workspaceStore.listWecomUserMappings = () => [];
-    if (!mockWorkspace.settings.wecomBotIsolation?.bashWhitelist) {
-      mockWorkspace.settings.wecomBotIsolation = {
-        ...(mockWorkspace.settings.wecomBotIsolation ?? {}),
-        bashWhitelist: [{ command: 'ls', args: [] }],
-      };
-    }
 
     let capturedOptions: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {
@@ -592,12 +586,6 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     workspaceStore.getDefaultProvider = () => createMockProvider();
     workspaceStore.listWecomWorkspaceUsers = () => [];
     workspaceStore.listWecomUserMappings = () => [];
-    if (!mockWorkspace.settings.wecomBotIsolation?.bashWhitelist) {
-      mockWorkspace.settings.wecomBotIsolation = {
-        ...(mockWorkspace.settings.wecomBotIsolation ?? {}),
-        bashWhitelist: [{ command: 'ls', args: [] }],
-      };
-    }
 
     let capturedOptions: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {

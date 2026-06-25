@@ -286,15 +286,6 @@
         "hint": "仅管理员用户可调用的额外技能。",
         "placeholder": "例如 admin-skill"
       },
-      "bashWhitelist": {
-        "label": "Bash 命令白名单",
-        "hint": "允许的 Bash 命令及其参数模式。机器人会拒绝不匹配任何白名单条目的命令。",
-        "commandPlaceholder": "命令",
-        "argsPlaceholder": "参数（对动态部分使用占位符）",
-        "descriptionPlaceholder": "描述（可选）",
-        "add": "添加命令",
-        "placeholders": "占位符：{{placeholders}}"
-      },
       "add": "添加",
       "remove": "移除",
       "freezeHint": "更改在下一次机器人会话生效，不影响正在进行的对话。"

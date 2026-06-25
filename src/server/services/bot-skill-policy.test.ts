@@ -9,7 +9,6 @@ function createIsolation(overrides: Partial<WeComBotIsolationSettings> = {}): We
     adminUserIds: [],
     defaultAllowedSkills: [],
     adminAllowedSkills: [],
-    bashWhitelist: [],
     ...overrides,
   };
 }
