@@ -110,7 +110,9 @@ vi.mock('../hooks/use-app-settings', () => ({
 }))
 
 vi.mock('./ProviderSelector', () => ({
-  default: () => <div data-testid="provider-selector" />,
+  default: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="provider-selector" data-disabled={disabled ? 'true' : 'false'} />
+  ),
 }))
 
 vi.mock('./ApprovalModeToggle', () => ({
@@ -124,6 +126,7 @@ describe('PromptInput browser', () => {
     chatStoreMock.getState().drafts = {}
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().promptHistory = {}
+    chatStoreMock.getState().isRestartingRuntime = {}
     filesMock.results = []
     filesMock.truncated = false
     appSettingsMock.useModifierToSubmit = false
@@ -159,6 +162,7 @@ describe('PromptInput browser', () => {
     expect(screen.getByText('alice@example.com')).toBeInTheDocument()
     expect(document.querySelector('img[src="/wecom-icon.svg"]')).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
   })
 
   it('renders the Feishu bot bar with user info when isBotSession is true', () => {
@@ -176,6 +180,8 @@ describe('PromptInput browser', () => {
     expect(screen.getByText('ou-alice')).toBeInTheDocument()
     expect(document.querySelector('img[src="/feishu-icon.svg"]')).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
+    expect(screen.queryByTestId('approval-mode-toggle')).not.toBeInTheDocument()
   })
 
   it('calls onRefresh when the refresh button is clicked in a bot session', async () => {
@@ -195,9 +201,59 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(onRefresh).toHaveBeenCalled())
   })
 
+  it('shows an interactive provider selector on a bot session when not streaming', () => {
+    renderWithI18n(
+      <PromptInput
+        {...DEFAULT_PROPS}
+        isBotSession
+        botName="WeCom Bot"
+        botIcon="/wecom-icon.svg"
+        botUser={{ userId: 'alice@example.com', lastSeenAt: null }}
+      />,
+    )
+
+    // R1/R5: the selector is present and stays interactive even though the bot input is read-only.
+    const selector = screen.getByTestId('provider-selector')
+    expect(selector).toBeInTheDocument()
+    expect(selector).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('disables the provider selector on a bot session while streaming', () => {
+    renderWithI18n(
+      <PromptInput
+        {...DEFAULT_PROPS}
+        isBotSession
+        isStreaming
+        botName="WeCom Bot"
+        botIcon="/wecom-icon.svg"
+        botUser={{ userId: 'alice@example.com', lastSeenAt: null }}
+      />,
+    )
+
+    // R6: switching is blocked while the runtime is streaming.
+    expect(screen.getByTestId('provider-selector')).toHaveAttribute('data-disabled', 'true')
+  })
+
+  it('disables the provider selector on a bot session while the runtime is restarting', () => {
+    chatStoreMock.getState().isRestartingRuntime = { [DEFAULT_PROPS.sessionId]: true }
+    renderWithI18n(
+      <PromptInput
+        {...DEFAULT_PROPS}
+        isBotSession
+        botName="WeCom Bot"
+        botIcon="/wecom-icon.svg"
+        botUser={{ userId: 'alice@example.com', lastSeenAt: null }}
+      />,
+    )
+
+    // R6: switching is blocked while the runtime is restarting after a provider change.
+    expect(screen.getByTestId('provider-selector')).toHaveAttribute('data-disabled', 'true')
+  })
+
   it('renders the textbox and toolbar buttons', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     expect(screen.getByRole('textbox')).toBeInTheDocument()
+    expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Skills/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Files/i })).toBeInTheDocument()
   })

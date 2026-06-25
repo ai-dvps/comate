@@ -9,6 +9,7 @@ interface ProviderSelectorProps {
   workspaceId: string
   sessionId: string
   disabled?: boolean
+  hideNameBelowSm?: boolean
 }
 
 function ProviderAvatar({ name, className = '' }: { name: string; className?: string }) {
@@ -22,7 +23,7 @@ function ProviderAvatar({ name, className = '' }: { name: string; className?: st
   )
 }
 
-export default function ProviderSelector({ workspaceId, sessionId, disabled = false }: ProviderSelectorProps) {
+export default function ProviderSelector({ workspaceId, sessionId, disabled = false, hideNameBelowSm = false }: ProviderSelectorProps) {
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
 
@@ -62,7 +63,7 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
           title={t('provider.selectorTitle')}
         >
           <ProviderAvatar name={displayName} className="w-4 h-4 text-[9px]" />
-          <span className="max-w-[120px] truncate">{displayName}</span>
+          <span className={`max-w-[120px] truncate ${hideNameBelowSm ? 'hidden sm:inline' : ''}`}>{displayName}</span>
           {isRestarting ? (
             <Loader2 className="w-3 h-3 animate-spin opacity-60" />
           ) : (
