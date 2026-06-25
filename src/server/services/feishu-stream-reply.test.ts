@@ -5,6 +5,7 @@ import type { Thread } from 'chat';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import { FeishuStreamReply, FALLBACK_TEXT } from './feishu-stream-reply.js';
 import type { SseEvent } from '../types/message.js';
+import { ACKNOWLEDGMENT_POOL } from '../utils/bot-placeholder.js';
 
 interface MockCall {
   method: string;
@@ -84,7 +85,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     };
   }
 
-  it('starts a streaming card with the default hint', async () => {
+  it('starts a streaming card with the default hint from the rotating pool', async () => {
     const reply = createReply();
     await reply.start();
 
@@ -93,7 +94,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     };
     const cardJson = JSON.parse(createCall.data.data);
     assert.strictEqual(cardJson.config.streaming_mode, true);
-    assert.strictEqual(cardJson.body.elements[0].content, '收到，正在处理...');
+    assert.ok(ACKNOWLEDGMENT_POOL.includes(cardJson.body.elements[0].content));
   });
 
   it('starts a streaming card with a custom hint', async () => {
@@ -105,6 +106,40 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     };
     const cardJson = JSON.parse(createCall.data.data);
     assert.strictEqual(cardJson.body.elements[0].content, 'custom hint');
+  });
+
+  it('can start different replies with different pool messages', async () => {
+    const originalRandom = Math.random;
+    let index = 0;
+    Math.random = () => {
+      const value = index / ACKNOWLEDGMENT_POOL.length;
+      index = (index + 1) % ACKNOWLEDGMENT_POOL.length;
+      return value;
+    };
+
+    try {
+      const firstReply = createReply();
+      await firstReply.start();
+      const firstCall = calls.find((c) => c.method === 'card.create')?.args as {
+        data: { type: string; data: string };
+      };
+      const firstCard = JSON.parse(firstCall.data.data);
+
+      const secondReply = createReply();
+      await secondReply.start();
+      const allCreateCalls = calls.filter((c) => c.method === 'card.create');
+      const secondCall = allCreateCalls[allCreateCalls.length - 1]?.args as {
+        data: { type: string; data: string };
+      };
+      const secondCard = JSON.parse(secondCall.data.data);
+
+      assert.notStrictEqual(
+        firstCard.body.elements[0].content,
+        secondCard.body.elements[0].content,
+      );
+    } finally {
+      Math.random = originalRandom;
+    }
   });
 
   it('ignores thinking/tool/subagent placeholders before assistant_start', async () => {
