@@ -900,14 +900,17 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       behavior: 'allow',
       updatedInput: {
         questions: [{ question: 'What is your favorite color?', options: [{ label: 'Red' }, { label: 'Blue' }] }],
-        answers: ['Red'],
+        answers: { 'What is your favorite color?': 'Red' },
       },
     });
 
     const result = await promise;
     assert.strictEqual(result.behavior, 'allow');
     if (result.behavior === 'allow') {
-      assert.deepStrictEqual((result.updatedInput as Record<string, unknown>).answers, ['Red']);
+      assert.deepStrictEqual(
+        (result.updatedInput as Record<string, unknown>).answers,
+        { 'What is your favorite color?': 'Red' },
+      );
     }
   });
 
