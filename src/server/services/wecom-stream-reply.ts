@@ -1,6 +1,7 @@
 import type { TemplateCard, WsFrame } from '@wecom/aibot-node-sdk';
 import type { SseEvent } from '../types/message.js';
 import { debounce } from '../utils/debounce.js';
+import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { buildToolApprovalCard, buildQuestionCard } from './wecom-template-card.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -27,6 +28,7 @@ export function createStreamReply(
   wecomUserId: string,
 ): StreamReplyResult {
   const streamId = `${sessionId}-${Date.now()}`;
+  const placeholderMessage = getRandomAcknowledgment();
 
   let responseText = '';
   let collecting = false;
@@ -69,13 +71,13 @@ export function createStreamReply(
   let dotCount = 0;
   const sendAnimationFrame = () => {
     dotCount = (dotCount + 1) % 3;
-    const text = `收到，正在处理中${'.'.repeat(dotCount + 1)}`;
+    const text = `${placeholderMessage}${'.'.repeat(dotCount + 1)}`;
     conn.client.replyStreamNonBlocking(frame, streamId, text, false).catch((err: Error) => {
       console.error('Failed to send WeCom animation frame:', err);
     });
   };
 
-  conn.client.replyStream(frame, streamId, '收到，正在处理中.', false).catch((err: Error) => {
+  conn.client.replyStream(frame, streamId, `${placeholderMessage}.`, false).catch((err: Error) => {
     console.error('Failed to send WeCom processing placeholder:', err);
   });
   animationInterval = setInterval(sendAnimationFrame, 600);
