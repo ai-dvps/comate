@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **WeCom template-card event parsing for AskUserQuestion submissions** — the SDK emits `template_card_event` nested under `event.template_card_event` with `selected_items.selected_item` / `option_ids.option_id` wrappers. The parser now normalizes that shape, so card submits correctly resolve pending questions and the GUI no longer stays stuck in a running `AskUserQuestion` state.
 - **WeCom multi-select AskUserQuestion card type** — single-question multi-select prompts now render as a `vote_interaction` card with `checkbox.mode: 1`, matching WeChat Work's expected multi-select format, instead of the unsupported `multiple_interaction` layout.
+- **WeCom bot AskUserQuestion answer shape** — when a user selects options on a template card, the bot now returns `answers` as a `Record<string, string>` keyed by the question text, matching the Anthropic SDK's `AskUserQuestionOutput` shape. Previously it returned a `string[]`, which caused the model to report that the user had not answered the questions.
 
 ## [0.0.15] - 2026-06-24
 
