@@ -76,6 +76,7 @@ export class SqliteStore {
         sessionId TEXT NOT NULL,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL,
+        isActive INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (workspaceId, wecomUserId, sessionId)
       )
     `);
@@ -258,6 +259,7 @@ export class SqliteStore {
     this.migrateTodoDetailColumn();
     this.migrateMappingTable();
     this.migrateWecomUserSessions();
+    this.migrateWecomUserSessionsActiveColumn();
     this.migrateFromLegacy();
     this.migrateDraftSessions();
     this.migrateSessionMetadataToSessions();
@@ -320,6 +322,68 @@ export class SqliteStore {
       console.log('[SqliteStore] Migrated todos table: dropped detail column');
     } catch (err) {
       console.error('[SqliteStore] Failed to migrate todos table:', err);
+    }
+  }
+
+  /**
+   * Add the isActive column to wecom_user_sessions for existing databases and
+   * backfill the latest session per user as active. Fresh databases get the
+   * column from the CREATE TABLE statement; this migration covers databases
+   * created before the column existed. Rows that already have an active marker
+   * are left untouched.
+   *
+   * Idempotent: the PRAGMA table_info guard skips adding the column when it is
+   * already present, and the backfill only operates on (workspaceId,
+   * wecomUserId) pairs that have no active row.
+   */
+  private migrateWecomUserSessionsActiveColumn(): void {
+    const columns = this.db.prepare("PRAGMA table_info(wecom_user_sessions)").all() as Array<{ name: string }>;
+    if (!columns.some((col) => col.name === 'isActive')) {
+      this.db.exec('ALTER TABLE wecom_user_sessions ADD COLUMN isActive INTEGER NOT NULL DEFAULT 0');
+    }
+
+    const now = new Date().toISOString();
+
+    // Find every workspace/user pair that has no active session marker.
+    const pairsWithoutActive = this.db
+      .prepare(`
+        SELECT workspaceId, wecomUserId
+        FROM wecom_user_sessions
+        GROUP BY workspaceId, wecomUserId
+        HAVING SUM(isActive) = 0
+      `)
+      .all() as Array<{ workspaceId: string; wecomUserId: string }>;
+
+    const selectLatest = this.db.prepare(`
+      SELECT wus.sessionId FROM wecom_user_sessions AS wus
+      JOIN sessions AS s ON s.id = wus.sessionId
+      WHERE wus.workspaceId = ? AND wus.wecomUserId = ?
+      ORDER BY wus.createdAt DESC, wus.rowid DESC
+      LIMIT 1
+    `);
+
+    const markActive = this.db.prepare(`
+      UPDATE wecom_user_sessions
+      SET isActive = 1, updatedAt = ?
+      WHERE workspaceId = ? AND wecomUserId = ? AND sessionId = ?
+    `);
+
+    const backfill = this.db.transaction(() => {
+      for (const pair of pairsWithoutActive) {
+        const latest = selectLatest.get(pair.workspaceId, pair.wecomUserId) as
+          | { sessionId: string }
+          | undefined;
+        if (latest) {
+          markActive.run(now, pair.workspaceId, pair.wecomUserId, latest.sessionId);
+        }
+      }
+    });
+    backfill();
+
+    if (pairsWithoutActive.length > 0) {
+      console.log(
+        `[SqliteStore] Backfilled ${pairsWithoutActive.length} WeCom user session mapping(s) with active marker`,
+      );
     }
   }
 
@@ -649,13 +713,6 @@ export class SqliteStore {
 
   // WeCom user session mapping
 
-  getWecomSession(workspaceId: string, wecomUserId: string): string | null {
-    const row = this.db
-      .prepare('SELECT sessionId FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ? ORDER BY createdAt DESC LIMIT 1')
-      .get(workspaceId, wecomUserId) as { sessionId: string } | undefined;
-    return row?.sessionId ?? null;
-  }
-
   setWecomSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
     const now = new Date().toISOString();
     this.db
@@ -685,6 +742,49 @@ export class SqliteStore {
       .prepare('SELECT wecomUserId FROM wecom_user_sessions WHERE workspaceId = ? AND sessionId = ?')
       .get(workspaceId, sessionId) as { wecomUserId: string } | undefined;
     return row?.wecomUserId ?? null;
+  }
+
+  /**
+   * Return the user's active (current) WeCom session id, or null if none is
+   * active. Self-heals: if the active row points at a session that no longer
+   * exists, the marker is cleared (demoted) and null is returned so the caller
+   * creates a fresh session. Reads the explicit isActive marker rather than
+   * inferring the latest session by createdAt.
+   */
+  getActiveWecomSession(workspaceId: string, wecomUserId: string): string | null {
+    const row = this.db
+      .prepare('SELECT sessionId FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ? AND isActive = 1 LIMIT 1')
+      .get(workspaceId, wecomUserId) as { sessionId: string } | undefined;
+    if (!row) return null;
+    const exists = this.db
+      .prepare('SELECT 1 FROM sessions WHERE id = ?')
+      .get(row.sessionId) as { '1': number } | undefined;
+    if (!exists) {
+      this.db
+        .prepare('UPDATE wecom_user_sessions SET isActive = 0, updatedAt = ? WHERE workspaceId = ? AND wecomUserId = ? AND sessionId = ?')
+        .run(new Date().toISOString(), workspaceId, wecomUserId, row.sessionId);
+      return null;
+    }
+    return row.sessionId;
+  }
+
+  /**
+   * Mark sessionId as the user's active (current) WeCom session, demoting every
+   * other row for that user to inactive. Runs in a transaction so the
+   * single-active invariant holds. The row must already exist (inserted via
+   * setWecomSession); this only flips the marker.
+   */
+  setActiveWecomSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
+    const now = new Date().toISOString();
+    const activate = this.db.transaction(() => {
+      this.db
+        .prepare('UPDATE wecom_user_sessions SET isActive = 0 WHERE workspaceId = ? AND wecomUserId = ?')
+        .run(workspaceId, wecomUserId);
+      this.db
+        .prepare('UPDATE wecom_user_sessions SET isActive = 1, updatedAt = ? WHERE workspaceId = ? AND wecomUserId = ? AND sessionId = ?')
+        .run(now, workspaceId, wecomUserId, sessionId);
+    });
+    activate();
   }
 
   listWecomSessionsForBackfill(): Array<{
@@ -1008,6 +1108,7 @@ export class SqliteStore {
     approvalMode?: string,
     providerId?: string,
     source?: 'gui' | 'wecom' | 'feishu',
+    customTitle?: string,
   ): ChatSession {
     const now = new Date().toISOString();
     const mode = approvalMode ?? 'manual';
@@ -1020,11 +1121,12 @@ export class SqliteStore {
       approvalMode: mode as ChatSession['approvalMode'],
       createdAt: now,
       updatedAt: now,
+      customTitle,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, providerId ?? null, session.createdAt, session.updatedAt);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, created_at, updated_at, custom_title)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, providerId ?? null, session.createdAt, session.updatedAt, customTitle ?? null);
     return session;
   }
 

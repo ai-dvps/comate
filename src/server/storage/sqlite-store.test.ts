@@ -734,3 +734,150 @@ describe('SqliteStore in-memory + resetData', { concurrency: false }, () => {
     assert.strictEqual(await other.get(ws.id), null);
   });
 });
+
+describe('SqliteStore wecom active session + customTitle', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  // Helper mirroring the real bot flow: create the sessions-table row, the
+  // wecom_user_sessions mapping row, then (optionally) flip it active.
+  function makeSession(workspaceId: string, wecomUserId: string, active = false): string {
+    const session = store.createLocalSession(workspaceId, wecomUserId, undefined, undefined, 'wecom');
+    store.setWecomSession(workspaceId, wecomUserId, session.id);
+    if (active) store.setActiveWecomSession(workspaceId, wecomUserId, session.id);
+    return session.id;
+  }
+
+  it('newly inserted wecom session rows default to non-active (no backfill)', () => {
+    makeSession('ws-1', 'user-a');
+    // isActive defaults to 0; no setActiveWecomSession called
+    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), null);
+  });
+
+  it('migration is idempotent (constructing a second store does not throw)', () => {
+    assert.doesNotThrow(() => new SqliteStore(':memory:'));
+  });
+
+  it('setActiveWecomSession marks the row active and getActiveWecomSession returns it', () => {
+    const id = makeSession('ws-1', 'user-a', true);
+    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), id);
+  });
+
+  it('activating a second session demotes the first (single-active invariant)', () => {
+    const first = makeSession('ws-1', 'user-a', true);
+    const second = makeSession('ws-1', 'user-a', true);
+    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), second);
+    // first is preserved but no longer active
+    const ids = store.listWecomSessionsByUser('ws-1', 'user-a').map((s) => s.sessionId);
+    assert.ok(ids.includes(first));
+    assert.ok(ids.includes(second));
+  });
+
+  it('getActiveWecomSession self-heals when the active session is absent from sessions', () => {
+    // wecom_user_sessions row exists, but 'sess-gone' was never inserted into sessions
+    store.setWecomSession('ws-1', 'user-a', 'sess-gone');
+    store.setActiveWecomSession('ws-1', 'user-a', 'sess-gone');
+    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), null);
+  });
+
+  it('two users each keep their own independent active session', () => {
+    const a = makeSession('ws-1', 'user-a', true);
+    const b = makeSession('ws-1', 'user-b', true);
+    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), a);
+    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-b'), b);
+  });
+
+  it('createLocalSession persists customTitle when provided', () => {
+    const session = store.createLocalSession('ws-1', 'Project X', undefined, undefined, 'wecom', 'Project X');
+    assert.strictEqual(session.customTitle, 'Project X');
+    const fromDb = store.getLocalSession(session.id);
+    assert.ok(fromDb);
+    assert.strictEqual(fromDb!.customTitle, 'Project X');
+  });
+
+  it('createLocalSession leaves customTitle unset when not provided', () => {
+    const session = store.createLocalSession('ws-1', 'user-1', undefined, undefined, 'wecom');
+    assert.strictEqual(session.customTitle, undefined);
+    const fromDb = store.getLocalSession(session.id);
+    assert.ok(fromDb);
+    assert.strictEqual(fromDb!.customTitle, undefined);
+  });
+});
+
+describe('SqliteStore wecom active session backfill', { concurrency: false }, () => {
+  const backfillDbPath = join(testDbDir, 'backfill-data.db');
+
+  beforeEach(() => {
+    try {
+      const store = new SqliteStore(backfillDbPath);
+      store.resetData();
+    } catch {
+      // If the DB does not exist yet, resetData is not needed.
+    }
+  });
+
+  it('backfills the latest inactive session as active on store construction', () => {
+    // Simulate pre-backfill state: a WeCom user has sessions but no active marker.
+    const firstStore = new SqliteStore(backfillDbPath);
+    firstStore.resetData();
+
+    const oldSession = firstStore.createLocalSession('ws-1', 'user-a', undefined, undefined, 'wecom');
+    firstStore.setWecomSession('ws-1', 'user-a', oldSession.id);
+    // Intentionally not calling setActiveWecomSession, mimicking rows created
+    // before the active-marker feature existed.
+
+    // Constructing a new store (e.g. after Comate restart) should run the
+    // migration/backfill and mark the latest session active.
+    const restartedStore = new SqliteStore(backfillDbPath);
+    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), oldSession.id);
+  });
+
+  it('does not overwrite an existing active session when backfilling', () => {
+    const firstStore = new SqliteStore(backfillDbPath);
+    firstStore.resetData();
+
+    const oldSession = firstStore.createLocalSession('ws-1', 'user-a', undefined, undefined, 'wecom');
+    firstStore.setWecomSession('ws-1', 'user-a', oldSession.id);
+
+    const activeSession = firstStore.createLocalSession('ws-1', 'user-a', undefined, undefined, 'wecom');
+    firstStore.setWecomSession('ws-1', 'user-a', activeSession.id);
+    firstStore.setActiveWecomSession('ws-1', 'user-a', activeSession.id);
+
+    const restartedStore = new SqliteStore(backfillDbPath);
+    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), activeSession.id);
+  });
+
+  it('backfills independently per workspace and per user', () => {
+    const firstStore = new SqliteStore(backfillDbPath);
+    firstStore.resetData();
+
+    const aSession = firstStore.createLocalSession('ws-1', 'user-a', undefined, undefined, 'wecom');
+    firstStore.setWecomSession('ws-1', 'user-a', aSession.id);
+
+    const bSession = firstStore.createLocalSession('ws-1', 'user-b', undefined, undefined, 'wecom');
+    firstStore.setWecomSession('ws-1', 'user-b', bSession.id);
+
+    const otherWsSession = firstStore.createLocalSession('ws-2', 'user-a', undefined, undefined, 'wecom');
+    firstStore.setWecomSession('ws-2', 'user-a', otherWsSession.id);
+
+    const restartedStore = new SqliteStore(backfillDbPath);
+    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), aSession.id);
+    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-b'), bSession.id);
+    assert.strictEqual(restartedStore.getActiveWecomSession('ws-2', 'user-a'), otherWsSession.id);
+  });
+
+  it('does not backfill a session whose row is missing from sessions table', () => {
+    const firstStore = new SqliteStore(backfillDbPath);
+    firstStore.resetData();
+
+    // Insert a mapping to a session that no longer exists.
+    firstStore.setWecomSession('ws-1', 'user-a', 'deleted-session-id');
+
+    const restartedStore = new SqliteStore(backfillDbPath);
+    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), null);
+  });
+});
