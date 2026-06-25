@@ -79,6 +79,25 @@ export interface BotConnection {
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
 }
 
+/**
+ * Detect and parse the `/clear` and `/new` new-session commands (aliases).
+ * Matches the exact token or a prefix followed by a space, so `/newer` or
+ * `/clearx` do not trigger. Returns the optional title (text after the first
+ * space, trimmed) when the message is a command.
+ */
+export function parseWecomNewSessionCommand(content: string): { isCommand: boolean; title: string } {
+  const trimmed = content.trim();
+  const isCommand =
+    trimmed === '/clear' ||
+    trimmed.startsWith('/clear ') ||
+    trimmed === '/new' ||
+    trimmed.startsWith('/new ');
+  if (!isCommand) return { isCommand: false, title: '' };
+  const firstSpace = trimmed.indexOf(' ');
+  const title = firstSpace !== -1 ? trimmed.slice(firstSpace + 1).trim() : '';
+  return { isCommand: true, title };
+}
+
 export class WeComBotService {
   private connections = new Map<string, BotConnection>();
   private botIdToWorkspaceId = new Map<string, string>();
@@ -247,6 +266,16 @@ export class WeComBotService {
     // Track that this user has interacted with this workspace
     wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
 
+    // /clear and /new (aliases) start a fresh session. Intercepted before the
+    // message reaches the agent so the literal command is never a chat turn.
+    const command = parseWecomNewSessionCommand(content);
+    if (command.isCommand) {
+      const conn = this.connections.get(workspaceId);
+      if (!conn) return;
+      await this.handleNewSessionCommand(workspaceId, wecomUserId, command.title, conn);
+      return;
+    }
+
     const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
     if (!sessionId) return;
 
@@ -263,6 +292,42 @@ export class WeComBotService {
     );
 
     await chatService.pushMessage(sessionId, workspaceId, content, true, streamReply?.handler);
+  }
+
+  /**
+   * Handle `/clear` / `/new`: create a fresh WeCom session, mark it the user's
+   * current session, preserve prior sessions, refresh naming, and reply with a
+   * title-bearing confirmation. Mirrors feishu-bot-service handleNewSessionCommand.
+   * `title` is the user-supplied title (already trimmed) or '' when none given.
+   */
+  private async handleNewSessionCommand(
+    workspaceId: string,
+    wecomUserId: string,
+    title: string,
+    conn: BotConnection,
+  ): Promise<void> {
+    // Default name mirrors getOrCreateSession (wecomUserId). A user-supplied
+    // title is also stored as customTitle so the auto-renamer cannot overwrite it.
+    const name = title || wecomUserId;
+    try {
+      await this.instantiateWecomSession(workspaceId, wecomUserId, name, title || undefined);
+
+      const displayTitle = title || name;
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: { content: `新的会话已创建：【${displayTitle}】，可继续对话` },
+      });
+    } catch (err) {
+      console.error('[WeComBotService] failed to create session via /clear|/new:', err);
+      try {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '⚠️ 创建会话失败，请稍后重试。' },
+        });
+      } catch {
+        // Ignore secondary send failure
+      }
+    }
   }
 
   private async handleMediaMessage(workspaceId: string, frame: WsFrame<BaseMessage>): Promise<void> {
@@ -395,8 +460,38 @@ export class WeComBotService {
     return template.replace(/\$file_name\$/g, relativePath);
   }
 
+  /**
+   * Create a new WeCom session, register it in the user↔session mapping, mark it
+   * the user's active session, and fire-and-forget refresh naming. Shared by the
+   * normal-message path (getOrCreateSession) and the /clear,/new commands, so
+   * both new-session creation paths stay identical.
+   */
+  private async instantiateWecomSession(
+    workspaceId: string,
+    wecomUserId: string,
+    name: string,
+    customTitle?: string,
+  ): Promise<string> {
+    const session = await chatService.createSession({
+      workspaceId,
+      name,
+      source: 'wecom',
+      customTitle,
+    });
+    workspaceStore.setWecomSession(workspaceId, wecomUserId, session.id);
+    workspaceStore.setActiveWecomSession(workspaceId, wecomUserId, session.id);
+
+    const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
+    if (plaintextUserId) {
+      wecomSessionRenamer.renameSessionsForUser(workspaceId, wecomUserId).catch((err) => {
+        console.error('[WeComBotService] Failed to rename sessions after creation:', err);
+      });
+    }
+    return session.id;
+  }
+
   private async getOrCreateSession(workspaceId: string, wecomUserId: string): Promise<string | null> {
-    let sessionId = workspaceStore.getWecomSession(workspaceId, wecomUserId);
+    let sessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
 
     if (sessionId) {
       const session = await chatService.getSession(sessionId, workspaceId);
@@ -406,20 +501,7 @@ export class WeComBotService {
     }
 
     if (!sessionId) {
-      const session = await chatService.createSession({
-        workspaceId,
-        name: wecomUserId,
-        source: 'wecom',
-      });
-      sessionId = session.id;
-      workspaceStore.setWecomSession(workspaceId, wecomUserId, sessionId);
-
-      const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
-      if (plaintextUserId) {
-        wecomSessionRenamer.renameSessionsForUser(workspaceId, wecomUserId).catch((err) => {
-          console.error('[WeComBotService] Failed to rename sessions after creation:', err);
-        });
-      }
+      sessionId = await this.instantiateWecomSession(workspaceId, wecomUserId, wecomUserId);
     }
 
     return sessionId;

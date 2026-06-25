@@ -14,7 +14,7 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   let originalListProactiveMessages: typeof workspaceStore.listProactiveMessages;
   let originalClaimNextPendingMessage: typeof workspaceStore.claimNextPendingMessage;
   let originalGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
-  let originalGetWecomSession: typeof workspaceStore.getWecomSession;
+  let originalGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
   let originalUpdateProactiveMessage: typeof workspaceStore.updateProactiveMessage;
   let originalGetRuntimeIfExists: typeof chatService.getRuntimeIfExists;
   let originalGetOrCreateRuntime: typeof chatService.getOrCreateRuntime;
@@ -27,7 +27,7 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     originalListProactiveMessages = workspaceStore.listProactiveMessages.bind(workspaceStore);
     originalClaimNextPendingMessage = workspaceStore.claimNextPendingMessage.bind(workspaceStore);
     originalGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
-    originalGetWecomSession = workspaceStore.getWecomSession.bind(workspaceStore);
+    originalGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
     originalUpdateProactiveMessage = workspaceStore.updateProactiveMessage.bind(workspaceStore);
     originalGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
     originalGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
@@ -40,7 +40,7 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     workspaceStore.listProactiveMessages = originalListProactiveMessages;
     workspaceStore.claimNextPendingMessage = originalClaimNextPendingMessage;
     workspaceStore.getWecomUserMapping = originalGetWecomUserMapping;
-    workspaceStore.getWecomSession = originalGetWecomSession;
+    workspaceStore.getActiveWecomSession = originalGetActiveWecomSession;
     workspaceStore.updateProactiveMessage = originalUpdateProactiveMessage;
     chatService.getRuntimeIfExists = originalGetRuntimeIfExists;
     chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
@@ -67,7 +67,7 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   function setupHappyPathMocks() {
     workspaceStore.list = async () => [{ id: 'ws-1' } as Workspace];
     workspaceStore.getWecomUserMapping = () => 'plain-b';
-    workspaceStore.getWecomSession = () => 'session-b';
+    workspaceStore.getActiveWecomSession = () => 'session-b';
     workspaceStore.claimNextPendingMessage = () => {
       const msg = mockMessages.find((m) => m.status === 'pending');
       if (msg) {
@@ -120,7 +120,7 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   it('releases claim when recipient runtime is busy', async () => {
     workspaceStore.list = async () => [{ id: 'ws-1' } as Workspace];
     workspaceStore.getWecomUserMapping = () => 'plain-b';
-    workspaceStore.getWecomSession = () => 'session-b';
+    workspaceStore.getActiveWecomSession = () => 'session-b';
     workspaceStore.claimNextPendingMessage = () => createMockMessage();
     workspaceStore.updateProactiveMessage = (id, input) => {
       const msg = mockMessages.find((m) => m.id === id);
@@ -215,7 +215,7 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   it('marks message failed when dispatch throws', async () => {
     workspaceStore.list = async () => [{ id: 'ws-1' } as Workspace];
     workspaceStore.getWecomUserMapping = () => 'plain-b';
-    workspaceStore.getWecomSession = () => 'session-b';
+    workspaceStore.getActiveWecomSession = () => 'session-b';
     workspaceStore.claimNextPendingMessage = () => createMockMessage();
     workspaceStore.updateProactiveMessage = (id, input) => {
       const msg = mockMessages.find((m) => m.id === id);
