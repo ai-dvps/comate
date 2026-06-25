@@ -53,7 +53,6 @@ const DEFAULT_STATE = {
     adminUserIds: [],
     defaultAllowedSkills: [],
     adminAllowedSkills: [],
-    bashWhitelist: [],
   },
   promptHistoryRetentionDays: '30',
   feishuAppId: '',

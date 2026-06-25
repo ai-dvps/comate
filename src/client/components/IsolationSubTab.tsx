@@ -1,39 +1,11 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Trash2 } from 'lucide-react';
-import type { WeComBotIsolationSettings, BashWhitelistEntry } from '../types/wecom-isolation';
+import { Trash2 } from 'lucide-react';
+import type { WeComBotIsolationSettings } from '../types/wecom-isolation';
 
 interface IsolationSubTabProps {
   isolation: WeComBotIsolationSettings;
   onUpdate: (isolation: WeComBotIsolationSettings) => void;
-}
-
-const PLACEHOLDER_TYPES: Array<{ type: BashWhitelistEntry['args'][number] extends infer U ? U extends { type: string } ? U['type'] : never : never; label: string }> = [
-  { type: 'user_path', label: '{{user_path}}' },
-  { type: 'shared_path', label: '{{shared_path}}' },
-  { type: 'any', label: '{{arg}}' },
-];
-
-function parseArgsInput(input: string): BashWhitelistEntry['args'] {
-  const tokens = input.trim().split(/\s+/).filter(Boolean);
-  return tokens.map((token) => {
-    if (token === '{{user_path}}') return { type: 'user_path' };
-    if (token === '{{shared_path}}') return { type: 'shared_path' };
-    if (token === '{{arg}}') return { type: 'any' };
-    return token;
-  });
-}
-
-function formatArgsInput(args: BashWhitelistEntry['args']): string {
-  return args
-    .map((arg) => {
-      if (typeof arg === 'string') return arg;
-      if (arg.type === 'user_path') return '{{user_path}}';
-      if (arg.type === 'shared_path') return '{{shared_path}}';
-      if (arg.type === 'any') return '{{arg}}';
-      return '';
-    })
-    .join(' ');
 }
 
 export function IsolationSubTab({ isolation, onUpdate }: IsolationSubTabProps) {
@@ -71,25 +43,6 @@ export function IsolationSubTab({ isolation, onUpdate }: IsolationSubTabProps) {
 
   const removeSkill = (key: 'defaultAllowedSkills' | 'adminAllowedSkills', value: string) => {
     update({ [key]: isolation[key].filter((s) => s !== value) });
-  };
-
-  const addBashEntry = () => {
-    update({
-      bashWhitelist: [
-        ...isolation.bashWhitelist,
-        { command: '', args: [{ type: 'user_path' }] },
-      ],
-    });
-  };
-
-  const updateBashEntry = (index: number, entry: BashWhitelistEntry) => {
-    const next = [...isolation.bashWhitelist];
-    next[index] = entry;
-    update({ bashWhitelist: next });
-  };
-
-  const removeBashEntry = (index: number) => {
-    update({ bashWhitelist: isolation.bashWhitelist.filter((_, i) => i !== index) });
   };
 
   return (
@@ -233,62 +186,6 @@ export function IsolationSubTab({ isolation, onUpdate }: IsolationSubTabProps) {
               {t('wecom.isolation.add')}
             </button>
           </div>
-        </div>
-      </div>
-
-      <div className="border border-border rounded p-3 space-y-3">
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1">
-            {t('wecom.isolation.bashWhitelist.label')}
-          </label>
-          <p className="text-[10px] text-text-tertiary mb-2">{t('wecom.isolation.bashWhitelist.hint')}</p>
-          <div className="space-y-2 mb-2">
-            {isolation.bashWhitelist.map((entry, index) => (
-              <div key={index} className="flex items-start gap-2 p-2 bg-bg rounded border border-border/50">
-                <div className="flex-1 grid grid-cols-1 gap-2">
-                  <div className="flex gap-2">
-                    <input
-                      value={entry.command}
-                      onChange={(e) => updateBashEntry(index, { ...entry, command: e.target.value })}
-                      placeholder={t('wecom.isolation.bashWhitelist.commandPlaceholder')}
-                      className="flex-1 px-2 py-1 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                    />
-                    <input
-                      value={formatArgsInput(entry.args)}
-                      onChange={(e) => updateBashEntry(index, { ...entry, args: parseArgsInput(e.target.value) })}
-                      placeholder={t('wecom.isolation.bashWhitelist.argsPlaceholder')}
-                      className="flex-[2] px-2 py-1 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary font-mono"
-                    />
-                  </div>
-                  <input
-                    value={entry.description ?? ''}
-                    onChange={(e) => updateBashEntry(index, { ...entry, description: e.target.value })}
-                    placeholder={t('wecom.isolation.bashWhitelist.descriptionPlaceholder')}
-                    className="w-full px-2 py-1 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeBashEntry(index)}
-                  className="p-1.5 text-text-tertiary hover:text-destructive"
-                  aria-label={t('wecom.isolation.remove')}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={addBashEntry}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border rounded hover:bg-surface-hover text-text-secondary"
-          >
-            <Plus size={14} />
-            {t('wecom.isolation.bashWhitelist.add')}
-          </button>
-          <p className="text-[10px] text-text-tertiary mt-2">
-            {t('wecom.isolation.bashWhitelist.placeholders', { placeholders: PLACEHOLDER_TYPES.map((p) => p.label).join(', ') })}
-          </p>
         </div>
       </div>
 

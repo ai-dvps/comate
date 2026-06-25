@@ -286,15 +286,6 @@
         "hint": "Additional skills only administrator users can invoke.",
         "placeholder": "e.g. admin-skill"
       },
-      "bashWhitelist": {
-        "label": "Bash command whitelist",
-        "hint": "Allowed Bash commands and their argument patterns. The bot rejects any command not matching a whitelist entry.",
-        "commandPlaceholder": "command",
-        "argsPlaceholder": "args (use placeholders for dynamic parts)",
-        "descriptionPlaceholder": "Description (optional)",
-        "add": "Add command",
-        "placeholders": "Placeholders: {{placeholders}}"
-      },
       "add": "Add",
       "remove": "Remove",
       "freezeHint": "Changes apply to the next bot session, not to active conversations."

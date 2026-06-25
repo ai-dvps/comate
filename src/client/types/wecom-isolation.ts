@@ -6,22 +6,14 @@
  * src/server/models/workspace.ts.
  */
 
-export interface BashWhitelistEntry {
-  command: string;
-  args: Array<string | { type: 'user_path' | 'shared_path' | 'any'; value?: string }>;
-  description?: string;
-}
-
 export interface WeComBotIsolationSettings {
   adminUserIds: string[];
   defaultAllowedSkills: string[];
   adminAllowedSkills: string[];
-  bashWhitelist: BashWhitelistEntry[];
 }
 
 export const DEFAULT_ISOLATION_SETTINGS: WeComBotIsolationSettings = {
   adminUserIds: [],
   defaultAllowedSkills: [],
   adminAllowedSkills: [],
-  bashWhitelist: [],
 };
