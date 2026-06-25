@@ -4,6 +4,9 @@ import { debounce } from '../utils/debounce.js';
 import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { buildToolApprovalCard, buildQuestionCard } from './wecom-template-card.js';
 
+const THINKING_PLACEHOLDER = '\n\n收到，正在处理中.';
+const THINKING_PLACEHOLDER_PREFIX = '\n\n收到，正在处理中';
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface StreamReplyConnection {
   client: {
@@ -153,7 +156,7 @@ export function createStreamReply(
         responseText += event.text;
         flushStream();
       } else if (collecting && event.type === 'thinking_start') {
-        setPlaceholder('\n\n收到，正在处理中.', true);
+        setPlaceholder(THINKING_PLACEHOLDER, true);
       } else if (collecting && event.type === 'tool_use_start') {
         clearPlaceholder();
         setPlaceholder(`\n\n🔧 ${event.toolName}...`, false);
@@ -167,7 +170,7 @@ export function createStreamReply(
       } else if (collecting && event.type === 'assistant_done') {
         collecting = false;
         stopAnimation();
-        if (currentPlaceholder && currentPlaceholder.includes('收到，正在处理中')) {
+        if (currentPlaceholder && currentPlaceholder.startsWith(THINKING_PLACEHOLDER_PREFIX)) {
           clearPlaceholder();
         }
         flushStream.flush();

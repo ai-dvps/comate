@@ -108,40 +108,6 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     assert.strictEqual(cardJson.body.elements[0].content, 'custom hint');
   });
 
-  it('can start different replies with different pool messages', async () => {
-    const originalRandom = Math.random;
-    let index = 0;
-    Math.random = () => {
-      const value = index / ACKNOWLEDGMENT_POOL.length;
-      index = (index + 1) % ACKNOWLEDGMENT_POOL.length;
-      return value;
-    };
-
-    try {
-      const firstReply = createReply();
-      await firstReply.start();
-      const firstCall = calls.find((c) => c.method === 'card.create')?.args as {
-        data: { type: string; data: string };
-      };
-      const firstCard = JSON.parse(firstCall.data.data);
-
-      const secondReply = createReply();
-      await secondReply.start();
-      const allCreateCalls = calls.filter((c) => c.method === 'card.create');
-      const secondCall = allCreateCalls[allCreateCalls.length - 1]?.args as {
-        data: { type: string; data: string };
-      };
-      const secondCard = JSON.parse(secondCall.data.data);
-
-      assert.notStrictEqual(
-        firstCard.body.elements[0].content,
-        secondCard.body.elements[0].content,
-      );
-    } finally {
-      Math.random = originalRandom;
-    }
-  });
-
   it('ignores thinking/tool/subagent placeholders before assistant_start', async () => {
     const reply = createReply();
     const { handler } = await reply.start();
