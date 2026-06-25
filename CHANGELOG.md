@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+- **WeCom/Feishu bot acknowledgment now rotates** — the fixed "收到，正在处理中" / "收到，正在处理..." placeholder shown right after a bot message is replaced with a small built-in pool of friendlier Chinese acknowledgments. A message is chosen at random for each incoming message, and the same pool is shared across WeCom and Feishu.
+- **WeCom bot Bash whitelist removed** — the Bash command whitelist in the Isolation tab has been removed. `Bash` calls from bot sessions are now gated only by the tool-permission policy (Permissions tab) and the canonical WeCom user identity check. The whitelist will be redesigned in a later iteration.
+
+### Fixed
+
 - **WeCom bot `/clear` & `/new` session commands** — WeCom users can now start a fresh conversation with `/clear <optional title>` or `/new <optional title>` (aliases). Each creates a new session, marks it the user's current session via an explicit per-user active marker (a new `isActive` column on `wecom_user_sessions`, replacing the old "most-recent by creation time" inference), preserves prior sessions in the history viewer, and replies `新的会话已创建：【<title>】，可继续对话`. A user-supplied title is stored as a protected `customTitle` so the auto-renamer won't overwrite it. The proactive-message path resolves the recipient's current session through the same active marker for consistency. On first launch after this update, the latest existing WeCom session for each user is automatically backfilled as the active session so restarts continue from the existing conversation.
 
 - **WeCom bot "ask" permission and template-card approvals** — workspace admins can set any built-in tool category or override to `ask`, pausing the tool call until the WeCom user approves it. Approvals and `AskUserQuestion` prompts are delivered as native WeChat Work template-card messages with `allow`, `always allow`, and `deny` buttons. `always allow` delegates persistence to the Claude SDK via `updatedPermissions`; Comate does not maintain a separate grant store. Expired or already-resolved cards update to a terminal state when clicked.
