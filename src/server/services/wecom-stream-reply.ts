@@ -1,7 +1,11 @@
 import type { TemplateCard, WsFrame } from '@wecom/aibot-node-sdk';
 import type { SseEvent } from '../types/message.js';
 import { debounce } from '../utils/debounce.js';
+import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { buildToolApprovalCard, buildQuestionCard } from './wecom-template-card.js';
+
+const THINKING_PLACEHOLDER = '\n\n收到，正在处理中.';
+const THINKING_PLACEHOLDER_PREFIX = '\n\n收到，正在处理中';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface StreamReplyConnection {
@@ -27,6 +31,7 @@ export function createStreamReply(
   wecomUserId: string,
 ): StreamReplyResult {
   const streamId = `${sessionId}-${Date.now()}`;
+  const placeholderMessage = getRandomAcknowledgment();
 
   let responseText = '';
   let collecting = false;
@@ -69,13 +74,13 @@ export function createStreamReply(
   let dotCount = 0;
   const sendAnimationFrame = () => {
     dotCount = (dotCount + 1) % 3;
-    const text = `收到，正在处理中${'.'.repeat(dotCount + 1)}`;
+    const text = `${placeholderMessage}${'.'.repeat(dotCount + 1)}`;
     conn.client.replyStreamNonBlocking(frame, streamId, text, false).catch((err: Error) => {
       console.error('Failed to send WeCom animation frame:', err);
     });
   };
 
-  conn.client.replyStream(frame, streamId, '收到，正在处理中.', false).catch((err: Error) => {
+  conn.client.replyStream(frame, streamId, `${placeholderMessage}.`, false).catch((err: Error) => {
     console.error('Failed to send WeCom processing placeholder:', err);
   });
   animationInterval = setInterval(sendAnimationFrame, 600);
@@ -151,7 +156,7 @@ export function createStreamReply(
         responseText += event.text;
         flushStream();
       } else if (collecting && event.type === 'thinking_start') {
-        setPlaceholder('\n\n收到，正在处理中.', true);
+        setPlaceholder(THINKING_PLACEHOLDER, true);
       } else if (collecting && event.type === 'tool_use_start') {
         clearPlaceholder();
         setPlaceholder(`\n\n🔧 ${event.toolName}...`, false);
@@ -165,7 +170,7 @@ export function createStreamReply(
       } else if (collecting && event.type === 'assistant_done') {
         collecting = false;
         stopAnimation();
-        if (currentPlaceholder && currentPlaceholder.includes('收到，正在处理中')) {
+        if (currentPlaceholder && currentPlaceholder.startsWith(THINKING_PLACEHOLDER_PREFIX)) {
           clearPlaceholder();
         }
         flushStream.flush();
