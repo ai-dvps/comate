@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { CodeBlockContent } from '../../ai-elements/code-block'
 import { registerToolRenderer } from '../registry'
 
-function BashRenderer(input: unknown): ReactNode | null {
+export default function BashRenderer(input: unknown): ReactNode | null {
   if (
     typeof input !== 'object' ||
     input === null ||

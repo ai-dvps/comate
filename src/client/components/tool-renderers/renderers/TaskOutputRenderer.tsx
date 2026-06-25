@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function TaskOutputRenderer(input: unknown): ReactNode | null {
+export default function TaskOutputRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { task_id, block, timeout } = input as Record<string, unknown>

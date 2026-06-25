@@ -2,7 +2,7 @@ import { Terminal } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function PowerShellRenderer(input: unknown): ReactNode | null {
+export default function PowerShellRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { command } = input as Record<string, unknown>

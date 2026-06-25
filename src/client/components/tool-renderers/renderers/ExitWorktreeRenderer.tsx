@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function ExitWorktreeRenderer(input: unknown): ReactNode | null {
+export default function ExitWorktreeRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { action, discard_changes } = input as Record<string, unknown>

@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 
 import type { SubagentMessage } from '../stores/chat-store'
-import ChatMessageRenderer, {
-  adaptSubagentMessage,
-  buildResultMap,
-} from './ChatMessageRenderer'
+import ChatMessageRenderer from './ChatMessageRenderer'
+import { adaptSubagentMessage, buildResultMap } from './chat-message-adapter'
 
 function isToolResultOnly(msg: SubagentMessage): boolean {
   return (

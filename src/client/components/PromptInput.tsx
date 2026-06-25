@@ -207,7 +207,8 @@ export default function PromptInput({
     setArgumentHint(null)
     setLastInsertedCommand(null)
     setCompletionSuggestion(null)
-    undoStackRef.current = [{ value: input, caret: input.length }]
+    const currentInput = useChatStore.getState().drafts[sessionId] ?? ''
+    undoStackRef.current = [{ value: currentInput, caret: currentInput.length }]
     redoStackRef.current = []
     undoGroupOpenRef.current = false
     if (undoGroupTimerRef.current) {

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function TeamCreateRenderer(input: unknown): ReactNode | null {
+export default function TeamCreateRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { team_name, description, agent_type } = input as Record<string, unknown>

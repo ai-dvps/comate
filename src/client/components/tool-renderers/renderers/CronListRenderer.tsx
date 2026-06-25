@@ -2,7 +2,7 @@ import { List } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function CronListRenderer(_: unknown): ReactNode | null {
+export default function CronListRenderer(_: unknown): ReactNode | null {
   void _
   return (
     <div className="flex items-center gap-2">
