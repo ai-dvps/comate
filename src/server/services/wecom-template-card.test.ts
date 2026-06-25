@@ -204,7 +204,7 @@ describe('wecom-template-card', () => {
       assert.ok(card.submit_button);
     });
 
-    it('builds a multiple_interaction card for multi-select question', () => {
+    it('builds a vote_interaction card for a single multi-select question', () => {
       const card = buildQuestionCard({
         requestId: 'req-q3',
         sessionId: 'sess-q3',
@@ -217,9 +217,12 @@ describe('wecom-template-card', () => {
         ],
       });
 
-      assert.strictEqual(card.card_type, 'multiple_interaction');
-      assert.ok(card.select_list);
-      assert.strictEqual(card.select_list?.length, 1);
+      assert.strictEqual(card.card_type, 'vote_interaction');
+      assert.ok(card.checkbox);
+      assert.strictEqual(card.checkbox?.mode, 1);
+      assert.strictEqual(card.checkbox?.option_list.length, 3);
+      assert.strictEqual(card.checkbox?.option_list[0].text, 'A');
+      assert.ok(card.submit_button);
     });
 
     it('falls back to text_notice for free-text questions', () => {
@@ -285,11 +288,12 @@ describe('wecom-template-card', () => {
       const frame = {
         headers: { req_id: 'req-123' },
         body: {
+          from: { userid: 'user-789' },
           event: {
             eventtype: 'template_card_event' as const,
             event_key: key,
             task_id: 'task-456',
-            from: { userid: 'user-789' },
+            card_type: 'button_interaction',
           },
         },
       };
@@ -301,16 +305,58 @@ describe('wecom-template-card', () => {
       assert.strictEqual(parsed.sessionId, sessionId);
       assert.strictEqual(parsed.wecomUserId, 'user-789');
       assert.strictEqual(parsed.taskId, 'task-456');
+      assert.strictEqual(parsed.cardType, 'button_interaction');
+    });
+
+    it('parses the raw SDK wrapper shape with nested selected_items', () => {
+      const requestId = 'req-event-2';
+      const sessionId = 'sess-event-2';
+      const key = encodeButtonKey(requestId, 'allow', sessionId);
+      const questionKey = encodeButtonKey(requestId, 'allow', sessionId);
+
+      const frame = {
+        headers: { req_id: 'req-123' },
+        body: {
+          from: { userid: 'user-999' },
+          event: {
+            eventtype: 'template_card_event' as const,
+            template_card_event: {
+              card_type: 'vote_interaction',
+              event_key: key,
+              task_id: 'task-789',
+              selected_items: {
+                selected_item: [
+                  {
+                    question_key: questionKey,
+                    option_ids: { option_id: ['1', '2'] },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+
+      const parsed = parseTemplateCardEvent(frame as unknown as Parameters<typeof parseTemplateCardEvent>[0]);
+      assert.ok(parsed);
+      assert.strictEqual(parsed.requestId, requestId);
+      assert.strictEqual(parsed.sessionId, sessionId);
+      assert.strictEqual(parsed.wecomUserId, 'user-999');
+      assert.strictEqual(parsed.taskId, 'task-789');
+      assert.strictEqual(parsed.cardType, 'vote_interaction');
+      assert.deepStrictEqual(parsed.selectedItems, [
+        { question_key: questionKey, option_ids: ['1', '2'] },
+      ]);
     });
 
     it('returns undefined for non-Comate keys', () => {
       const frame = {
         headers: { req_id: 'req-123' },
         body: {
+          from: { userid: 'user-1' },
           event: {
             eventtype: 'template_card_event' as const,
             event_key: 'random-key',
-            from: { userid: 'user-1' },
           },
         },
       };
@@ -323,9 +369,9 @@ describe('wecom-template-card', () => {
       const frame = {
         headers: { req_id: 'req-123' },
         body: {
+          from: { userid: 'user-1' },
           event: {
             eventtype: 'template_card_event' as const,
-            from: { userid: 'user-1' },
           },
         },
       };

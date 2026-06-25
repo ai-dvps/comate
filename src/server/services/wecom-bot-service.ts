@@ -1,5 +1,18 @@
 import AiBot from '@wecom/aibot-node-sdk';
-import type { WSClient, WsFrame, TextMessage, FileMessage, ImageMessage, VoiceMessage, VideoMessage, BaseMessage } from '@wecom/aibot-node-sdk';
+import type {
+  WSClient,
+  WsFrame,
+  TextMessage,
+  FileMessage,
+  ImageMessage,
+  VoiceMessage,
+  VideoMessage,
+  BaseMessage,
+  TemplateCard,
+  TemplateCardEventData,
+  EventMessageWith,
+} from '@wecom/aibot-node-sdk';
+import type { QuestionPayload } from '../types/message.js';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -12,6 +25,12 @@ import { createStreamReply, type StreamReplyConnection, type StreamReplyResult }
 import { saveMediaFile } from './wecom-file-storage.js';
 import { validateSendFilePath } from './wecom-send-file-policy.js';
 import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
+import {
+  buildTerminalCard,
+  decodeButtonKey,
+  parseTemplateCardEvent,
+  type NormalizedSelectedItem,
+} from './wecom-template-card.js';
 
 const MAX_SEND_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
@@ -36,6 +55,7 @@ async function resolveStreamReplyIfNeeded<TFrame>(
   frame: WsFrame<TFrame>,
   sessionId: string,
   wecomUserId: string,
+  sendTemplateCard?: (card: TemplateCard) => Promise<unknown>,
 ): Promise<StreamReplyResult | undefined> {
   const workspace = await workspaceStore.get(workspaceId);
   if (!workspace) return undefined;
@@ -43,7 +63,12 @@ async function resolveStreamReplyIfNeeded<TFrame>(
   if (evaluateToolPermission(policy, REPLY_TOOL_NAME) === 'deny') {
     return undefined;
   }
-  return createStreamReply(conn, frame as WsFrame<unknown>, sessionId, wecomUserId);
+  return createStreamReply(
+    { ...conn, sendTemplateCard },
+    frame as WsFrame<unknown>,
+    sessionId,
+    wecomUserId,
+  );
 }
 
 export interface BotConnection {
@@ -58,6 +83,7 @@ export class WeComBotService {
   private connections = new Map<string, BotConnection>();
   private botIdToWorkspaceId = new Map<string, string>();
   private serverUrl: string | null = null;
+  private cardClickRateLimit = new Map<string, number>();
 
   setServerUrl(url: string): void {
     this.serverUrl = url;
@@ -148,6 +174,12 @@ export class WeComBotService {
       });
     });
 
+    client.on('event.template_card_event', (frame: WsFrame<EventMessageWith<TemplateCardEventData>>) => {
+      this.handleTemplateCardEvent(workspace.id, frame).catch((err) => {
+        console.error('Failed to handle WeCom template card event:', err);
+      });
+    });
+
     client.connect();
   }
 
@@ -221,7 +253,14 @@ export class WeComBotService {
     const conn = this.connections.get(workspaceId);
     if (!conn) return;
 
-    const streamReply = await resolveStreamReplyIfNeeded(workspaceId, conn, frame, sessionId, wecomUserId);
+    const streamReply = await resolveStreamReplyIfNeeded(
+      workspaceId,
+      conn,
+      frame,
+      sessionId,
+      wecomUserId,
+      (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+    );
 
     await chatService.pushMessage(sessionId, workspaceId, content, true, streamReply?.handler);
   }
@@ -255,7 +294,14 @@ export class WeComBotService {
         const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
         if (!sessionId) return;
 
-        const streamReply = await resolveStreamReplyIfNeeded(workspaceId, conn, frame, sessionId, wecomUserId);
+        const streamReply = await resolveStreamReplyIfNeeded(
+          workspaceId,
+          conn,
+          frame,
+          sessionId,
+          wecomUserId,
+          (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+        );
         const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
         try {
           await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply?.handler);
@@ -290,7 +336,14 @@ export class WeComBotService {
       const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
       if (!sessionId) return;
 
-      const streamReply = await resolveStreamReplyIfNeeded(workspaceId, conn, frame, sessionId, wecomUserId);
+      const streamReply = await resolveStreamReplyIfNeeded(
+        workspaceId,
+        conn,
+        frame,
+        sessionId,
+        wecomUserId,
+        (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+      );
       const defaultFilePrompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
       const prompt = await this.resolveFilePrompt(workspaceId, relativePath, defaultFilePrompt);
       try {
@@ -408,6 +461,17 @@ export class WeComBotService {
     });
   }
 
+  async sendTemplateCard(workspaceId: string, toUser: string, card: TemplateCard): Promise<void> {
+    const conn = this.connections.get(workspaceId);
+    if (!conn || conn.status !== 'connected') {
+      return;
+    }
+    await conn.client.sendMessage(toUser, {
+      msgtype: 'template_card',
+      template_card: card,
+    });
+  }
+
   async sendFile(workspaceId: string, toUser: string, filePath: string): Promise<void> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
@@ -469,6 +533,118 @@ export class WeComBotService {
     }
 
     await conn.client.sendMediaMessage(encryptedUserId, 'file', mediaId);
+  }
+
+  private async handleTemplateCardEvent(
+    workspaceId: string,
+    frame: WsFrame<EventMessageWith<TemplateCardEventData>>,
+  ): Promise<void> {
+    if (!frame.body) return;
+    const parsed = parseTemplateCardEvent(
+      frame as unknown as WsFrame<{
+        event: TemplateCardEventData;
+        from?: { userid?: string };
+      }>,
+    );
+    if (!parsed) return;
+
+    // Per-user per-request rate limit to absorb duplicate SDK deliveries.
+    const now = Date.now();
+    const rateLimitKey = `${parsed.wecomUserId}:${parsed.requestId}`;
+    const last = this.cardClickRateLimit.get(rateLimitKey) ?? 0;
+    if (now - last < 1000) return;
+    this.cardClickRateLimit.set(rateLimitKey, now);
+
+    // Verify the clicking user owns the session.
+    const ownerWecomUserId = workspaceStore.getWecomUserIdBySession(workspaceId, parsed.sessionId);
+    if (ownerWecomUserId !== parsed.wecomUserId) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+      return;
+    }
+
+    const runtime = chatService.getRuntimeIfExists(parsed.sessionId);
+    if (!runtime) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '会话已结束或已超时');
+      return;
+    }
+
+    const pending = runtime.getPendingCardState(parsed.requestId);
+    if (!pending) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '该请求已过期或已处理');
+      return;
+    }
+
+    if (pending.type === 'approval') {
+      if (parsed.action === 'deny') {
+        runtime.resolveApproval(parsed.requestId, {
+          behavior: 'deny',
+          message: 'User denied this tool call.',
+        });
+        await this.updateCardToTerminal(workspaceId, frame, parsed, '已拒绝');
+      } else {
+        runtime.resolveApproval(parsed.requestId, {
+          behavior: 'allow',
+          updatedPermissions: parsed.action === 'always_allow' ? pending.suggestions : undefined,
+        });
+        await this.updateCardToTerminal(workspaceId, frame, parsed, parsed.action === 'always_allow' ? '已始终允许' : '已允许');
+      }
+      return;
+    }
+
+    // Question: parse selected options and resolve with answers.
+    const answers = this.buildAnswersFromCardEvent(parsed, pending.questions);
+    runtime.resolveApproval(parsed.requestId, {
+      behavior: 'allow',
+      updatedInput: { questions: pending.questions, answers },
+    });
+    await this.updateCardToTerminal(workspaceId, frame, parsed, '已提交');
+  }
+
+  private buildAnswersFromCardEvent(
+    parsed: { requestId: string; selectedItems?: NormalizedSelectedItem[] },
+    questions: QuestionPayload[],
+  ): string[] {
+    const selectedItems = parsed.selectedItems ?? [];
+    const answers = new Array(questions.length).fill('');
+
+    for (const item of selectedItems) {
+      if (!item.question_key || !Array.isArray(item.option_ids)) continue;
+      const decoded = decodeButtonKey(item.question_key);
+      if (!decoded) continue;
+
+      // The question key encodes either `requestId` (single-question vote) or
+      // `requestId:qIdx` (multiple-interaction). Verify it belongs to this request.
+      const [baseRequestId, qIdxStr] = decoded.requestId.split(':');
+      if (baseRequestId !== parsed.requestId) continue;
+      const qIdx = qIdxStr === undefined ? 0 : Number(qIdxStr);
+      if (!Number.isFinite(qIdx) || qIdx < 0 || qIdx >= questions.length) continue;
+
+      const labels: string[] = [];
+      for (const optId of item.option_ids) {
+        const opt = questions[qIdx].options[Number(optId)];
+        if (opt) labels.push(opt.label);
+      }
+      answers[qIdx] = labels.join(', ');
+    }
+
+    return answers;
+  }
+
+  private async updateCardToTerminal(
+    workspaceId: string,
+    frame: WsFrame<EventMessageWith<TemplateCardEventData>>,
+    parsed: { cardType?: string; taskId?: string },
+    notice: string,
+  ): Promise<void> {
+    const conn = this.connections.get(workspaceId);
+    if (!conn || conn.status !== 'connected' || !frame.body) return;
+
+    const card = buildTerminalCard(parsed.cardType ?? 'button_interaction', notice, parsed.taskId);
+    try {
+      await conn.client.updateTemplateCard({ headers: frame.headers }, card);
+    } catch (err) {
+      console.error('[WeComBotService] Failed to update template card:', err);
+    }
   }
 
   private getContextFilePath(workspace: Workspace): string {

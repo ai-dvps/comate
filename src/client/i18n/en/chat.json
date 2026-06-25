@@ -38,6 +38,7 @@
     "allow": "Allow",
     "allowAlways": "Allow always",
     "deny": "Deny",
+    "botPending": "Waiting for the bot user to respond in chat...",
     "chatAboutThis": "Chat about this",
     "submitted": "Submitted",
     "back": "Back",

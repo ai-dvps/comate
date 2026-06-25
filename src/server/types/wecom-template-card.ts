@@ -14,6 +14,12 @@ export interface DecodedKeyPayload {
   sessionId: string;
 }
 
+/** Normalized selected-item shape used by template-card event handlers. */
+export interface NormalizedSelectedItem {
+  question_key: string;
+  option_ids: string[];
+}
+
 /** Result of parsing a template-card click event. */
 export interface ParsedCardEvent {
   requestId: string;
@@ -23,6 +29,10 @@ export interface ParsedCardEvent {
   wecomUserId: string;
   /** The task_id from the original card, used for updateTemplateCard. */
   taskId?: string;
+  /** The card_type from the original card, used for terminal-state updates. */
+  cardType?: string;
+  /** Normalized selected options, present for question cards. */
+  selectedItems?: NormalizedSelectedItem[];
 }
 
 /** Options for building a tool-approval card. */

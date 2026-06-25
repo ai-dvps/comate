@@ -138,4 +138,38 @@ describe('ChatPanel', () => {
     expect(screen.getByTestId('approval-surface')).toBeInTheDocument()
     expect(screen.queryByTestId('prompt-input')).not.toBeInTheDocument()
   })
+
+  it('renders a non-interactive pending banner for bot-session approvals', () => {
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.messages = { s1: [] }
+    mockChatStore.sessions = {
+      ws1: [
+        {
+          id: 's1',
+          workspaceId: 'ws1',
+          name: 'WeCom Session',
+          source: 'wecom',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+          isDraft: false,
+        },
+      ],
+    }
+    mockChatStore.approvalQueue = {
+      s1: [
+        {
+          requestId: 'r1',
+          type: 'tool',
+          toolName: 'test',
+        },
+      ],
+    }
+
+    renderWithI18n(<ChatPanel workspaceId="ws1" />)
+
+    expect(screen.queryByTestId('approval-surface')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('prompt-input')).not.toBeInTheDocument()
+    expect(screen.getByText('Waiting for the bot user to respond in chat...')).toBeInTheDocument()
+  })
 })
