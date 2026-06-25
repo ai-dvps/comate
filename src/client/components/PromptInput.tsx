@@ -835,6 +835,12 @@ export default function PromptInput({
               )}
               <span className="hidden sm:inline">{t('refresh')}</span>
             </button>
+            <ProviderSelector
+              workspaceId={workspaceId}
+              sessionId={sessionId}
+              disabled={isStreaming || isRestarting}
+              hideNameBelowSm
+            />
           </div>
         </div>
       ) : (
