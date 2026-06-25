@@ -26,6 +26,7 @@ export interface CreateSessionInput {
   approvalMode?: ApprovalMode;
   providerId?: string;
   source?: 'gui' | 'wecom' | 'feishu';
+  customTitle?: string;
 }
 
 export interface UpdateSessionInput {

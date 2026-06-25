@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { WeComBotService } from './wecom-bot-service.js';
+import { WeComBotService, parseWecomNewSessionCommand } from './wecom-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { encodeButtonKey } from './wecom-template-card.js';
@@ -15,7 +15,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
   let tempDir: string;
 
   // Saved originals for restoration
-  let origGetWecomSession: typeof workspaceStore.getWecomSession;
+  let origGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
   let origSetWecomSession: typeof workspaceStore.setWecomSession;
   let origGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
   let origGet: typeof workspaceStore.get;
@@ -33,7 +33,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     pushedMessages = [];
     sentMessages = [];
 
-    origGetWecomSession = workspaceStore.getWecomSession.bind(workspaceStore);
+    origGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
     origSetWecomSession = workspaceStore.setWecomSession.bind(workspaceStore);
     origGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
     origGet = workspaceStore.get.bind(workspaceStore);
@@ -42,7 +42,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     origGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
 
     // Default: no existing session
-    workspaceStore.getWecomSession = () => null;
+    workspaceStore.getActiveWecomSession = () => null;
     workspaceStore.setWecomSession = () => {};
     workspaceStore.getWecomUserMapping = () => null;
     workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as any);
@@ -58,7 +58,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
   });
 
   afterEach(async () => {
-    workspaceStore.getWecomSession = origGetWecomSession;
+    workspaceStore.getActiveWecomSession = origGetActiveWecomSession;
     workspaceStore.setWecomSession = origSetWecomSession;
     workspaceStore.getWecomUserMapping = origGetWecomUserMapping;
     workspaceStore.get = origGet;
@@ -230,7 +230,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     injectConnection(conn);
 
     chatService.createSession = async () => { throw new Error('DB error'); };
-    workspaceStore.getWecomSession = () => null;
+    workspaceStore.getActiveWecomSession = () => null;
 
     const frame = makeFrame('file', {
       file: { url: 'https://example.com/file', aeskey: 'key123' },
@@ -264,7 +264,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     injectConnection(conn);
 
     let sessionCreated = false;
-    workspaceStore.getWecomSession = () => null;
+    workspaceStore.getActiveWecomSession = () => null;
     workspaceStore.setWecomSession = () => { sessionCreated = true; };
     chatService.createSession = async () => ({ id: 'new-sess', workspaceId: 'ws-1' } as any);
 
@@ -651,5 +651,167 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     );
 
     assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, ['A', 'D']);
+  });
+});
+
+describe('parseWecomNewSessionCommand', () => {
+  it('matches exact /new and /clear with no title', () => {
+    assert.deepStrictEqual(parseWecomNewSessionCommand('/new'), { isCommand: true, title: '' });
+    assert.deepStrictEqual(parseWecomNewSessionCommand('/clear'), { isCommand: true, title: '' });
+  });
+
+  it('matches /new and /clear with a title', () => {
+    assert.deepStrictEqual(parseWecomNewSessionCommand('/new 项目X'), { isCommand: true, title: '项目X' });
+    assert.deepStrictEqual(parseWecomNewSessionCommand('/clear Project X'), { isCommand: true, title: 'Project X' });
+  });
+
+  it('does not trigger on /newer or /clearx (prefix without trailing space)', () => {
+    assert.deepStrictEqual(parseWecomNewSessionCommand('/newer'), { isCommand: false, title: '' });
+    assert.deepStrictEqual(parseWecomNewSessionCommand('/clearx'), { isCommand: false, title: '' });
+  });
+
+  it('does not trigger on plain text', () => {
+    assert.deepStrictEqual(parseWecomNewSessionCommand('hello world'), { isCommand: false, title: '' });
+  });
+
+  it('trims a leading space before the command and extra spaces around the title', () => {
+    assert.deepStrictEqual(parseWecomNewSessionCommand('  /new   Project X  '), { isCommand: true, title: 'Project X' });
+  });
+});
+
+describe('WeComBotService /clear & /new commands + active lookup', { concurrency: false }, () => {
+  let service: WeComBotService;
+  let sentMessages: Array<{ userId: string; content: string }>;
+  let pushedContents: string[];
+  let createdSessions: Array<{ name: string; customTitle?: string }>;
+  let activatedSessionIds: string[];
+
+  let origGetActive: typeof workspaceStore.getActiveWecomSession;
+  let origSet: typeof workspaceStore.setWecomSession;
+  let origSetActive: typeof workspaceStore.setActiveWecomSession;
+  let origGetMapping: typeof workspaceStore.getWecomUserMapping;
+  let origCreate: typeof chatService.createSession;
+  let origGetSession: typeof chatService.getSession;
+  let origPush: typeof chatService.pushMessage;
+
+  beforeEach(() => {
+    service = new WeComBotService();
+    sentMessages = [];
+    pushedContents = [];
+    createdSessions = [];
+    activatedSessionIds = [];
+
+    origGetActive = workspaceStore.getActiveWecomSession.bind(workspaceStore);
+    origSet = workspaceStore.setWecomSession.bind(workspaceStore);
+    origSetActive = workspaceStore.setActiveWecomSession.bind(workspaceStore);
+    origGetMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
+    origCreate = chatService.createSession.bind(chatService);
+    origGetSession = chatService.getSession.bind(chatService);
+    origPush = chatService.pushMessage.bind(chatService);
+
+    workspaceStore.getActiveWecomSession = () => null;
+    workspaceStore.setWecomSession = () => {};
+    workspaceStore.setActiveWecomSession = (_ws, _u, sid) => {
+      activatedSessionIds.push(sid);
+    };
+    workspaceStore.getWecomUserMapping = () => null;
+    chatService.createSession = async (input) => {
+      createdSessions.push({ name: input.name, customTitle: input.customTitle });
+      return { id: `sess-${createdSessions.length}`, workspaceId: input.workspaceId } as any;
+    };
+    chatService.getSession = async () => ({ id: 'sess-1', workspaceId: 'ws-1' } as any);
+    chatService.pushMessage = (async (...args: unknown[]) => {
+      pushedContents.push(args[2] as string);
+    }) as any;
+  });
+
+  afterEach(() => {
+    workspaceStore.getActiveWecomSession = origGetActive;
+    workspaceStore.setWecomSession = origSet;
+    workspaceStore.setActiveWecomSession = origSetActive;
+    workspaceStore.getWecomUserMapping = origGetMapping;
+    chatService.createSession = origCreate;
+    chatService.getSession = origGetSession;
+    chatService.pushMessage = origPush;
+  });
+
+  function injectConnection() {
+    (service as any).connections.set('ws-1', {
+      client: {
+        sendMessage: async (userId: string, body: any) => {
+          sentMessages.push({ userId, content: body.markdown.content });
+        },
+      },
+      workspaceId: 'ws-1',
+      botId: 'bot-1',
+      folderPath: '/tmp',
+      status: 'connected' as const,
+    });
+  }
+
+  function makeTextFrame(content: string) {
+    return {
+      headers: { req_id: 'r' },
+      body: {
+        msgid: 'm',
+        aibotid: 'bot-1',
+        chattype: 'single',
+        from: { userid: 'enc-user-1' },
+        msgtype: 'text',
+        text: { content },
+      },
+    };
+  }
+
+  it('/new with title creates, activates, replies with the title, and does not forward to agent (AE1)', async () => {
+    injectConnection();
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/new 项目X'));
+    assert.strictEqual(createdSessions.length, 1);
+    assert.strictEqual(createdSessions[0].name, '项目X');
+    assert.strictEqual(createdSessions[0].customTitle, '项目X');
+    assert.strictEqual(activatedSessionIds.length, 1);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.ok(sentMessages[0].content.includes('项目X'));
+    assert.strictEqual(pushedContents.length, 0);
+  });
+
+  it('/clear is an alias of /new (AE2)', async () => {
+    injectConnection();
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/clear 项目X'));
+    assert.strictEqual(createdSessions.length, 1);
+    assert.strictEqual(createdSessions[0].name, '项目X');
+    assert.strictEqual(pushedContents.length, 0);
+  });
+
+  it('/new with no title uses the default name and leaves customTitle unset (AE3)', async () => {
+    injectConnection();
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/new'));
+    assert.strictEqual(createdSessions.length, 1);
+    assert.strictEqual(createdSessions[0].name, 'enc-user-1');
+    assert.strictEqual(createdSessions[0].customTitle, undefined);
+    assert.ok(sentMessages[0].content.includes('enc-user-1'));
+  });
+
+  it('/newer does not trigger a command (no session created)', async () => {
+    injectConnection();
+    workspaceStore.getActiveWecomSession = () => 'sess-existing';
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/newer idea'));
+    assert.strictEqual(createdSessions.length, 0);
+  });
+
+  it('getOrCreateSession reuses the active session when one exists (R6)', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-active';
+    chatService.getSession = async () => ({ id: 'sess-active', workspaceId: 'ws-1' } as any);
+    const id = await (service as any).getOrCreateSession('ws-1', 'user-a');
+    assert.strictEqual(id, 'sess-active');
+    assert.strictEqual(createdSessions.length, 0);
+  });
+
+  it('getOrCreateSession creates and activates a fresh session when none is active (R8)', async () => {
+    workspaceStore.getActiveWecomSession = () => null;
+    const id = await (service as any).getOrCreateSession('ws-1', 'user-a');
+    assert.strictEqual(createdSessions.length, 1);
+    assert.strictEqual(activatedSessionIds.length, 1);
+    assert.strictEqual(id, activatedSessionIds[0]);
   });
 });

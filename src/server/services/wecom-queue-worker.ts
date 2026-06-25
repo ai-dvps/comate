@@ -133,7 +133,7 @@ export class WeComQueueWorker {
     }
 
     // Find recipient session
-    const sessionId = workspaceStore.getWecomSession(entry.workspaceId, entry.recipientEncryptedUserId);
+    const sessionId = workspaceStore.getActiveWecomSession(entry.workspaceId, entry.recipientEncryptedUserId);
     if (!sessionId) {
       console.log(`[WeComQueueWorker] Cannot dispatch ${entry.id}: no session for recipient`);
       return false;
@@ -150,7 +150,7 @@ export class WeComQueueWorker {
   }
 
   private async dispatch(entry: WeComProactiveMessage): Promise<void> {
-    const sessionId = workspaceStore.getWecomSession(entry.workspaceId, entry.recipientEncryptedUserId)!;
+    const sessionId = workspaceStore.getActiveWecomSession(entry.workspaceId, entry.recipientEncryptedUserId)!;
 
     console.log(`[WeComQueueWorker] Dispatching ${entry.id} to session ${sessionId}`);
 

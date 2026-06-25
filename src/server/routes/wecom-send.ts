@@ -66,7 +66,7 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    const recipientSessionId = store.getWecomSession(workspaceId, encryptedUserId);
+    const recipientSessionId = store.getActiveWecomSession(workspaceId, encryptedUserId);
     if (!recipientSessionId) {
       res.status(400).json({
         error: 'recipient_no_session',
