@@ -38,6 +38,7 @@
     "allow": "允许",
     "allowAlways": "始终允许",
     "deny": "拒绝",
+    "botPending": "正在等待企微用户在聊天中确认...",
     "chatAboutThis": "关于此内容聊天",
     "submitted": "已提交",
     "back": "返回",

@@ -469,6 +469,25 @@ export class SessionRuntime {
   }
 
   /**
+   * Expose the type and context of a pending card action so that external
+   * responders (e.g. WeCom template-card clicks) can resolve approvals or
+   * questions without duplicating the pending-approval map.
+   */
+  getPendingCardState(
+    requestId: string,
+  ):
+    | { type: 'approval'; suggestions?: PermissionUpdate[] }
+    | { type: 'question'; questions: QuestionPayload[] }
+    | undefined {
+    const pending = this.pendingApprovals.get(requestId);
+    if (!pending) return undefined;
+    if (pending.type === 'question') {
+      return { type: 'question', questions: pending.questions ?? [] };
+    }
+    return { type: 'approval', suggestions: pending.suggestions };
+  }
+
+  /**
    * Registers a pending tool approval, emits the pending_approval SSE event,
    * and returns a Promise that resolves when resolveApproval is called.
    * Used by the bot canUseTool callback to mirror the GUI approval flow.

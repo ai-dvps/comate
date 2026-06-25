@@ -8,6 +8,7 @@ import os from 'node:os';
 import { WeComBotService } from './wecom-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
+import { encodeButtonKey } from './wecom-template-card.js';
 
 describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
   let service: WeComBotService;
@@ -397,5 +398,258 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     assert.strictEqual(pushedMessages.length, 1);
     // Stream reply IS created (placeholder frame is sent)
     assert.ok(replyStreamCallCount > 0, 'Reply-allow must construct the stream reply');
+  });
+});
+
+describe('WeComBotService template card events', { concurrency: false }, () => {
+  let service: WeComBotService;
+  let tempDir: string;
+
+  let origGetWecomUserIdBySession: typeof workspaceStore.getWecomUserIdBySession;
+  let origGetRuntimeIfExists: typeof chatService.getRuntimeIfExists;
+
+  let resolvedApprovals: Array<{ requestId: string; result: any }>;
+  let updatedCards: Array<{ frame: any; card: any }>;
+  let pendingCardState: any;
+
+  beforeEach(async () => {
+    service = new WeComBotService();
+    tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'wecom-card-test-'));
+
+    origGetWecomUserIdBySession = workspaceStore.getWecomUserIdBySession.bind(workspaceStore);
+    origGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
+
+    resolvedApprovals = [];
+    updatedCards = [];
+    pendingCardState = { type: 'approval', suggestions: [{ id: 'suggestion-1' }] };
+
+    workspaceStore.getWecomUserIdBySession = () => 'owner-1';
+
+    chatService.getRuntimeIfExists = () => ({
+      getPendingCardState: () => pendingCardState,
+      resolveApproval: (requestId: string, result: any) => {
+        resolvedApprovals.push({ requestId, result });
+      },
+    } as any);
+  });
+
+  afterEach(async () => {
+    workspaceStore.getWecomUserIdBySession = origGetWecomUserIdBySession;
+    chatService.getRuntimeIfExists = origGetRuntimeIfExists;
+    await fsPromises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  function createMockConnection() {
+    return {
+      client: {
+        replyStream: async () => {},
+        replyStreamNonBlocking: async () => {},
+        sendMessage: async () => {},
+        updateTemplateCard: async (frame: any, card: any) => {
+          updatedCards.push({ frame, card });
+        },
+      },
+      workspaceId: 'ws-1',
+      botId: 'bot-1',
+      folderPath: tempDir,
+      status: 'connected' as const,
+    };
+  }
+
+  function injectConnection(conn: any) {
+    (service as any).connections.set('ws-1', conn);
+  }
+
+  function makeCardEvent(key: string, extras: any = {}) {
+    const rawSelectedItems = extras.event?.selected_items;
+    const normalizedSelectedItems = rawSelectedItems
+      ? { selected_item: rawSelectedItems.map((item: any) => ({
+          question_key: item.question_key,
+          option_ids: { option_id: item.option_ids },
+        })) }
+      : undefined;
+    return {
+      headers: { req_id: 'req-1' },
+      body: {
+        msgid: 'msg-1',
+        aibotid: 'bot-1',
+        chattype: 'single',
+        from: { userid: extras.userid ?? 'owner-1' },
+        msgtype: 'event',
+        event: {
+          eventtype: 'template_card_event',
+          template_card_event: {
+            event_key: key,
+            task_id: 'task-1',
+            card_type: 'button_interaction',
+            ...extras.event,
+            ...(normalizedSelectedItems ? { selected_items: normalizedSelectedItems } : {}),
+          },
+        },
+      },
+    };
+  }
+
+  it('sends a template card via sendTemplateCard', async () => {
+    const conn = createMockConnection();
+    const sentMessages: Array<{ userId: string; body: any }> = [];
+    conn.client.sendMessage = async (userId: string, body: any) => {
+      sentMessages.push({ userId, body });
+    };
+    injectConnection(conn);
+
+    await service.sendTemplateCard('ws-1', 'owner-1', {
+      card_type: 'text_notice',
+      main_title: { title: 'Test', desc: 'Desc' },
+    } as any);
+
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].userId, 'owner-1');
+    assert.strictEqual(sentMessages[0].body.msgtype, 'template_card');
+    assert.strictEqual(sentMessages[0].body.template_card.card_type, 'text_notice');
+  });
+
+  it('resolves approval when user clicks allow', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    const key = encodeButtonKey('req-1', 'allow', 'sess-1');
+    await (service as any).handleTemplateCardEvent('ws-1', makeCardEvent(key));
+
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(resolvedApprovals[0].requestId, 'req-1');
+    assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
+    assert.strictEqual(resolvedApprovals[0].result.updatedPermissions, undefined);
+    assert.strictEqual(updatedCards.length, 1);
+    assert.strictEqual(updatedCards[0].card.card_type, 'text_notice');
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
+  });
+
+  it('resolves approval when user clicks always_allow with suggestions', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    const key = encodeButtonKey('req-1', 'always_allow', 'sess-1');
+    await (service as any).handleTemplateCardEvent('ws-1', makeCardEvent(key));
+
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedPermissions, [{ id: 'suggestion-1' }]);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已始终允许');
+  });
+
+  it('resolves approval when user clicks deny', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    const key = encodeButtonKey('req-1', 'deny', 'sess-1');
+    await (service as any).handleTemplateCardEvent('ws-1', makeCardEvent(key));
+
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(resolvedApprovals[0].result.behavior, 'deny');
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已拒绝');
+  });
+
+  it('ignores clicks from a non-owner user and updates card', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    const key = encodeButtonKey('req-1', 'allow', 'sess-1');
+    await (service as any).handleTemplateCardEvent(
+      'ws-1',
+      makeCardEvent(key, { userid: 'attacker-1' }),
+    );
+
+    assert.strictEqual(resolvedApprovals.length, 0);
+    assert.strictEqual(updatedCards.length, 1);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '无法操作该会话');
+  });
+
+  it('updates card to terminal state when pending approval is missing', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    pendingCardState = undefined;
+
+    const key = encodeButtonKey('req-1', 'allow', 'sess-1');
+    await (service as any).handleTemplateCardEvent('ws-1', makeCardEvent(key));
+
+    assert.strictEqual(resolvedApprovals.length, 0);
+    assert.strictEqual(updatedCards.length, 1);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '该请求已过期或已处理');
+  });
+
+  it('ignores non-Comate keys silently', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTemplateCardEvent('ws-1', makeCardEvent('some-random-key'));
+
+    assert.strictEqual(resolvedApprovals.length, 0);
+    assert.strictEqual(updatedCards.length, 0);
+  });
+
+  it('resolves question when user submits an answer', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    pendingCardState = {
+      type: 'question',
+      questions: [
+        {
+          question: 'Choose one',
+          options: [{ label: 'A' }, { label: 'B' }],
+          multiSelect: false,
+        },
+      ],
+    };
+
+    const key = encodeButtonKey('req-1', 'allow', 'sess-1');
+    await (service as any).handleTemplateCardEvent(
+      'ws-1',
+      makeCardEvent(key, {
+        event: {
+          selected_items: [
+            { question_key: encodeButtonKey('req-1', 'allow', 'sess-1'), option_ids: ['1'] },
+          ],
+        },
+      }),
+    );
+
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput, {
+      questions: pendingCardState.questions,
+      answers: ['B'],
+    });
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已提交');
+  });
+
+  it('resolves multiple questions from a multiple_interaction card', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    pendingCardState = {
+      type: 'question',
+      questions: [
+        { question: 'Q1', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false },
+        { question: 'Q2', options: [{ label: 'C' }, { label: 'D' }], multiSelect: false },
+      ],
+    };
+
+    const key = encodeButtonKey('req-1', 'allow', 'sess-1');
+    await (service as any).handleTemplateCardEvent(
+      'ws-1',
+      makeCardEvent(key, {
+        event: {
+          selected_items: [
+            { question_key: encodeButtonKey('req-1:0', 'allow', 'sess-1'), option_ids: ['0'] },
+            { question_key: encodeButtonKey('req-1:1', 'allow', 'sess-1'), option_ids: ['1'] },
+          ],
+        },
+      }),
+    );
+
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, ['A', 'D']);
   });
 });

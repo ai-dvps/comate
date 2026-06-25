@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **WeCom bot "ask" permission and template-card approvals** — workspace admins can set any built-in tool category or override to `ask`, pausing the tool call until the WeCom user approves it. Approvals and `AskUserQuestion` prompts are delivered as native WeChat Work template-card messages with `allow`, `always allow`, and `deny` buttons. `always allow` delegates persistence to the Claude SDK via `updatedPermissions`; Comate does not maintain a separate grant store. Expired or already-resolved cards update to a terminal state when clicked.
+- **GUI pending indicator for bot-session approvals** — when a WeCom (or Feishu) bot session is waiting for a user decision, the chat panel shows a non-interactive "Waiting for the bot user to respond in chat..." banner instead of the interactive approval controls.
+
 - **Settings panel now supports the full update flow inline** — after clicking "Check for Updates", the General tab shows the new version, a Download button, download progress, and Install & Restart / Later actions. The main window notification stays in sync as a parallel surface, so users can close Settings and finish installing from the main window.
 
 ### Fixed
 
-- **Update download progress bar stayed at 0%** — when downloading a new app version, the progress bar never advanced because the updater event handler only passed downloaded bytes to the store and omitted the total content length, so the percentage was always calculated as zero. The handler now captures `contentLength` from the `Started` event and passes it with each `Progress` update.
+- **WeCom template-card event parsing for AskUserQuestion submissions** — the SDK emits `template_card_event` nested under `event.template_card_event` with `selected_items.selected_item` / `option_ids.option_id` wrappers. The parser now normalizes that shape, so card submits correctly resolve pending questions and the GUI no longer stays stuck in a running `AskUserQuestion` state.
+- **WeCom multi-select AskUserQuestion card type** — single-question multi-select prompts now render as a `vote_interaction` card with `checkbox.mode: 1`, matching WeChat Work's expected multi-select format, instead of the unsupported `multiple_interaction` layout.
 
 ## [0.0.15] - 2026-06-24
 

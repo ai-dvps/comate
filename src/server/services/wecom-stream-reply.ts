@@ -1,6 +1,7 @@
-import type { WsFrame } from '@wecom/aibot-node-sdk';
+import type { TemplateCard, WsFrame } from '@wecom/aibot-node-sdk';
 import type { SseEvent } from '../types/message.js';
 import { debounce } from '../utils/debounce.js';
+import { buildToolApprovalCard, buildQuestionCard } from './wecom-template-card.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface StreamReplyConnection {
@@ -9,6 +10,8 @@ export interface StreamReplyConnection {
     replyStreamNonBlocking: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<unknown>;
     sendMessage: (userId: string, body: any) => Promise<unknown>;
   };
+  /** Optional callback used to send a template-card message for pending approvals/questions. */
+  sendTemplateCard?: (card: TemplateCard) => Promise<unknown>;
 }
 
 export interface StreamReplyResult {
@@ -31,6 +34,7 @@ export function createStreamReply(
   let animationInterval: NodeJS.Timeout | null = null;
   let currentPlaceholder: string | null = null;
   let placeholderAnimationInterval: NodeJS.Timeout | null = null;
+  const sentTemplateCards = new Set<string>();
 
   const stopAnimation = () => {
     if (animationInterval) {
@@ -180,6 +184,32 @@ export function createStreamReply(
       } else if (event.type === 'interrupted') {
         clearPlaceholder();
         finalizeStream();
+      } else if (event.type === 'pending_approval') {
+        if (sentTemplateCards.has(event.requestId)) return;
+        sentTemplateCards.add(event.requestId);
+        const card = buildToolApprovalCard({
+          requestId: event.requestId,
+          sessionId,
+          toolName: event.toolName,
+          title: event.title,
+          description: event.description,
+          taskId: event.requestId,
+        });
+        conn.sendTemplateCard?.(card).catch((err: Error) => {
+          console.error('Failed to send WeCom approval card:', err);
+        });
+      } else if (event.type === 'pending_question') {
+        if (sentTemplateCards.has(event.requestId)) return;
+        sentTemplateCards.add(event.requestId);
+        const card = buildQuestionCard({
+          requestId: event.requestId,
+          sessionId,
+          questions: event.questions,
+          taskId: event.requestId,
+        });
+        conn.sendTemplateCard?.(card).catch((err: Error) => {
+          console.error('Failed to send WeCom question card:', err);
+        });
       }
     },
     {

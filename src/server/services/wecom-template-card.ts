@@ -10,6 +10,7 @@ import type { TemplateCard, TemplateCardEventData, WsFrame } from '@wecom/aibot-
 import type {
   ToolApprovalAction,
   DecodedKeyPayload,
+  NormalizedSelectedItem,
   ParsedCardEvent,
   ToolApprovalCardOptions,
   QuestionCardOptions,
@@ -17,6 +18,73 @@ import type {
 
 const KEY_PREFIX = 'comate:1:';
 const MAX_KEY_BYTES = 1024;
+
+/**
+ * Runtime shape of a WeCom `template_card_event` callback.
+ * The SDK emits the raw body unchanged; the payload we care about is nested
+ * under `event.template_card_event`, not the typed `TemplateCardEventData`.
+ */
+interface RawTemplateCardEventWrapper {
+  eventtype: 'template_card_event';
+  template_card_event: {
+    card_type: string;
+    event_key: string;
+    task_id?: string;
+    selected_items?: {
+      selected_item: Array<{
+        question_key: string;
+        option_ids?: { option_id: string[] };
+      }>;
+    };
+  };
+}
+
+/** Normalized selected-item shape used by the event handler. */
+export type { NormalizedSelectedItem } from '../types/wecom-template-card.js';
+
+/**
+ * Extract the actionable detail from a raw template-card event.
+ * Handles both the observed runtime wrapper (`event.template_card_event`)
+ * and the flat SDK type in case a future SDK version flattens it.
+ */
+export function getTemplateCardEventDetail(
+  event: unknown,
+): {
+  card_type?: string;
+  event_key?: string;
+  task_id?: string;
+  selected_items?: NormalizedSelectedItem[];
+} | undefined {
+  const wrapper = event as RawTemplateCardEventWrapper | undefined;
+  if (wrapper?.template_card_event) {
+    const detail = wrapper.template_card_event;
+    return {
+      card_type: detail.card_type,
+      event_key: detail.event_key,
+      task_id: detail.task_id,
+      selected_items: detail.selected_items?.selected_item.map((item) => ({
+        question_key: item.question_key,
+        option_ids: item.option_ids?.option_id ?? [],
+      })),
+    };
+  }
+
+  const flat = event as
+    | (TemplateCardEventData & {
+        selected_items?: NormalizedSelectedItem[];
+      })
+    | undefined;
+  if (flat?.event_key) {
+    return {
+      event_key: flat.event_key,
+      task_id: flat.task_id,
+      card_type: (flat as { card_type?: string }).card_type,
+      selected_items: flat.selected_items,
+    };
+  }
+
+  return undefined;
+}
 
 /** Encode a compact JSON payload into a base64url string. */
 function encodePayload(payload: { r: string; a: ToolApprovalAction; s: string }): string {
@@ -128,8 +196,9 @@ export function buildToolApprovalCard(options: ToolApprovalCardOptions): Templat
 
 /**
  * Build a question card.
- * - Single-choice / boolean questions → `vote_interaction`
- * - Multiple questions or multi-select → `multiple_interaction`
+ * - Single question with options → `vote_interaction` (mode 0 for single
+ *   select, mode 1 for multi-select)
+ * - Multiple questions → `multiple_interaction`
  *
  * For free-text questions with no options, we render a single text-notice card
  * instructing the user to reply in chat (fallback because cards lack clean text
@@ -156,7 +225,7 @@ export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
   }
 
   // Single question with options → vote_interaction
-  if (questions.length === 1 && !questions[0].multiSelect) {
+  if (questions.length === 1) {
     const q = questions[0];
     return {
       card_type: 'vote_interaction',
@@ -168,7 +237,7 @@ export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
       task_id: taskId,
       checkbox: {
         question_key: encodeButtonKey(requestId, 'allow', sessionId),
-        mode: 0,
+        mode: q.multiSelect ? 1 : 0,
         option_list: q.options.map((opt, idx) => ({
           id: String(idx),
           text: opt.label,
@@ -181,7 +250,7 @@ export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
     };
   }
 
-  // Multiple questions or multi-select → multiple_interaction
+  // Multiple questions → multiple_interaction
   const selectList = questions.map((q, qIdx) => ({
     question_key: encodeButtonKey(`${requestId}:${qIdx}`, 'allow', sessionId),
     title: q.header ?? `问题 ${qIdx + 1}`,
@@ -237,27 +306,29 @@ export function buildTerminalCard(
  */
 export function parseTemplateCardEvent(
   frame: WsFrame<{
-    event: TemplateCardEventData & { from?: { userid?: string } };
+    event: TemplateCardEventData | RawTemplateCardEventWrapper;
+    from?: { userid?: string };
   }>,
 ): ParsedCardEvent | undefined {
-  const event = frame.body?.event;
-  if (!event) return undefined;
+  const rawEvent = frame.body?.event;
+  if (!rawEvent) return undefined;
 
-  const key = event.event_key;
-  if (!key) return undefined;
+  const detail = getTemplateCardEventDetail(rawEvent);
+  if (!detail?.event_key) return undefined;
 
-  const decoded = decodeButtonKey(key);
+  const decoded = decodeButtonKey(detail.event_key);
   if (!decoded) return undefined;
 
-  const wecomUserId = frame.body?.event?.from?.userid ?? '';
-  const taskId = event.task_id;
+  const wecomUserId = frame.body?.from?.userid ?? '';
 
   return {
     requestId: decoded.requestId,
     action: decoded.action,
     sessionId: decoded.sessionId,
     wecomUserId,
-    taskId,
+    taskId: detail.task_id,
+    cardType: detail.card_type,
+    selectedItems: detail.selected_items,
   };
 }
 

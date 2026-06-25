@@ -390,18 +390,22 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           {activeSessionId && (
             <div className="flex-shrink-0 border-t border-border/30 bg-bg">
               {currentApproval ? (
-                <ApprovalSurface
-                  workspaceId={workspaceId}
-                  pendingItem={currentApproval}
-                  queueDepth={approvalQueueLength - 1}
-                  isResolving={resolvingRequestId === currentApproval?.requestId}
-                  onAllow={handleAllow}
-                  onAllowAlways={handleAllowAlways}
-                  onDeny={handleDeny}
-                  onAnswerQuestion={handleAnswerQuestion}
-                  onChatAbout={handleChatAbout}
-                  onStop={handleStop}
-                />
+                activeSessionIsBot ? (
+                  <BotPendingBanner label={t('approval.botPending')} />
+                ) : (
+                  <ApprovalSurface
+                    workspaceId={workspaceId}
+                    pendingItem={currentApproval}
+                    queueDepth={approvalQueueLength - 1}
+                    isResolving={resolvingRequestId === currentApproval?.requestId}
+                    onAllow={handleAllow}
+                    onAllowAlways={handleAllowAlways}
+                    onDeny={handleDeny}
+                    onAnswerQuestion={handleAnswerQuestion}
+                    onChatAbout={handleChatAbout}
+                    onStop={handleStop}
+                  />
+                )
               ) : (
                 <PromptInput
                   workspaceId={workspaceId}
@@ -444,6 +448,20 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             onWidthChange={setSubagentPanelWidth}
           />
         )}
+      </div>
+    </div>
+  )
+}
+
+function BotPendingBanner({ label }: { label: string }) {
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-3">
+      <div className="bg-surface border border-border/50 rounded-lg px-4 py-3 flex items-center gap-3">
+        <span className="relative flex h-3 w-3">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-accent" />
+        </span>
+        <span className="text-sm text-text-secondary">{label}</span>
       </div>
     </div>
   )
