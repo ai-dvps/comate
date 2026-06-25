@@ -10,6 +10,7 @@ import {
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler } from './feishu-card-action-handler.js';
 import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
+import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 
 export interface FeishuStreamReplyHandle {
   handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
@@ -57,7 +58,7 @@ export class FeishuStreamReply {
 
     this.controller = new FeishuCardStream(this.larkClient, this.openId);
     try {
-      await this.controller.start(this.initialHint ?? '收到，正在处理...');
+      await this.controller.start(this.initialHint ?? getRandomAcknowledgment());
     } catch (err) {
       console.error('[FeishuStreamReply] Failed to start streaming card:', err);
       this.controller = null;

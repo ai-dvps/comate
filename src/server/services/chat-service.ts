@@ -21,7 +21,6 @@ import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.
 import { pluginSettingsService } from './plugin-settings-service.js';
 import { evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { createPathPolicyContext, validateToolInput } from './bot-path-policy.js';
-import { evaluateBash } from './bot-bash-policy.js';
 import { evaluateSkill } from './bot-skill-policy.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
@@ -1069,7 +1068,6 @@ export class ChatService {
           : undefined);
 
       let pathContext: import('./bot-path-policy.js').PathPolicyContext | undefined;
-      let bashContext: import('./bot-bash-policy.js').BashPolicyContext | undefined;
       let skillContext: import('./bot-skill-policy.js').SkillPolicyContext | undefined;
 
       if (canonicalUserId) {
@@ -1080,10 +1078,6 @@ export class ChatService {
         const knownUserDirNames = wsUsers.map((u) => mappingMap.get(u.encryptedUserId) ?? u.encryptedUserId);
 
         pathContext = createPathPolicyContext(workspace, userDirName, knownUserDirNames);
-        bashContext = {
-          whitelist: workspace.settings.wecomBotIsolation?.bashWhitelist ?? [],
-          pathContext,
-        };
         const isolation = workspace.settings.wecomBotIsolation;
         const isAdmin = isolation?.adminUserIds?.includes(canonicalUserId) ?? false;
         skillContext = { isolation, isAdmin };
@@ -1125,16 +1119,6 @@ export class ChatService {
 
         if (FILE_TOOLS.has(toolName) && pathContext) {
           const r = validateToolInput(pathContext, toolName, input);
-          if (!r.allowed) {
-            return {
-              behavior: 'deny' as const,
-              message: "I can't do that in this workspace.",
-            };
-          }
-        }
-
-        if (toolName === 'Bash' && bashContext) {
-          const r = evaluateBash(bashContext, input);
           if (!r.allowed) {
             return {
               behavior: 'deny' as const,

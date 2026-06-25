@@ -1,9 +1,3 @@
-export interface BashWhitelistEntry {
-  command: string;
-  args: Array<string | { type: 'user_path' | 'shared_path' | 'any'; value?: string }>;
-  description?: string;
-}
-
 export interface WeComBotIsolationSettings {
   /** Canonical WeCom user ids with the wider skill set. */
   adminUserIds: string[];
@@ -11,8 +5,6 @@ export interface WeComBotIsolationSettings {
   defaultAllowedSkills: string[];
   /** Additional skills allowed only to admin users. */
   adminAllowedSkills: string[];
-  /** Allowed Bash commands and argument patterns. */
-  bashWhitelist: BashWhitelistEntry[];
 }
 
 export interface WorkspaceSettings {

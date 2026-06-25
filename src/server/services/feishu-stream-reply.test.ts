@@ -5,6 +5,7 @@ import type { Thread } from 'chat';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import { FeishuStreamReply, FALLBACK_TEXT } from './feishu-stream-reply.js';
 import type { SseEvent } from '../types/message.js';
+import { ACKNOWLEDGMENT_POOL } from '../utils/bot-placeholder.js';
 
 interface MockCall {
   method: string;
@@ -84,7 +85,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     };
   }
 
-  it('starts a streaming card with the default hint', async () => {
+  it('starts a streaming card with the default hint from the rotating pool', async () => {
     const reply = createReply();
     await reply.start();
 
@@ -93,7 +94,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     };
     const cardJson = JSON.parse(createCall.data.data);
     assert.strictEqual(cardJson.config.streaming_mode, true);
-    assert.strictEqual(cardJson.body.elements[0].content, '收到，正在处理...');
+    assert.ok(ACKNOWLEDGMENT_POOL.includes(cardJson.body.elements[0].content));
   });
 
   it('starts a streaming card with a custom hint', async () => {
