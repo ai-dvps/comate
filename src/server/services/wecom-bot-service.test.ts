@@ -15,7 +15,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
   let tempDir: string;
 
   // Saved originals for restoration
-  let origGetWecomSession: typeof workspaceStore.getWecomSession;
+  let origGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
   let origSetWecomSession: typeof workspaceStore.setWecomSession;
   let origGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
   let origGet: typeof workspaceStore.get;
@@ -33,7 +33,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     pushedMessages = [];
     sentMessages = [];
 
-    origGetWecomSession = workspaceStore.getWecomSession.bind(workspaceStore);
+    origGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
     origSetWecomSession = workspaceStore.setWecomSession.bind(workspaceStore);
     origGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
     origGet = workspaceStore.get.bind(workspaceStore);
@@ -42,7 +42,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     origGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
 
     // Default: no existing session
-    workspaceStore.getWecomSession = () => null;
+    workspaceStore.getActiveWecomSession = () => null;
     workspaceStore.setWecomSession = () => {};
     workspaceStore.getWecomUserMapping = () => null;
     workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as any);
@@ -58,7 +58,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
   });
 
   afterEach(async () => {
-    workspaceStore.getWecomSession = origGetWecomSession;
+    workspaceStore.getActiveWecomSession = origGetActiveWecomSession;
     workspaceStore.setWecomSession = origSetWecomSession;
     workspaceStore.getWecomUserMapping = origGetWecomUserMapping;
     workspaceStore.get = origGet;
@@ -230,7 +230,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     injectConnection(conn);
 
     chatService.createSession = async () => { throw new Error('DB error'); };
-    workspaceStore.getWecomSession = () => null;
+    workspaceStore.getActiveWecomSession = () => null;
 
     const frame = makeFrame('file', {
       file: { url: 'https://example.com/file', aeskey: 'key123' },
@@ -264,7 +264,7 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
     injectConnection(conn);
 
     let sessionCreated = false;
-    workspaceStore.getWecomSession = () => null;
+    workspaceStore.getActiveWecomSession = () => null;
     workspaceStore.setWecomSession = () => { sessionCreated = true; };
     chatService.createSession = async () => ({ id: 'new-sess', workspaceId: 'ws-1' } as any);
 

@@ -666,13 +666,6 @@ export class SqliteStore {
 
   // WeCom user session mapping
 
-  getWecomSession(workspaceId: string, wecomUserId: string): string | null {
-    const row = this.db
-      .prepare('SELECT sessionId FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ? ORDER BY createdAt DESC LIMIT 1')
-      .get(workspaceId, wecomUserId) as { sessionId: string } | undefined;
-    return row?.sessionId ?? null;
-  }
-
   setWecomSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
     const now = new Date().toISOString();
     this.db
@@ -708,8 +701,8 @@ export class SqliteStore {
    * Return the user's active (current) WeCom session id, or null if none is
    * active. Self-heals: if the active row points at a session that no longer
    * exists, the marker is cleared (demoted) and null is returned so the caller
-   * creates a fresh session. Unlike getWecomSession (latest by createdAt), this
-   * reads the explicit isActive marker.
+   * creates a fresh session. Reads the explicit isActive marker rather than
+   * inferring the latest session by createdAt.
    */
   getActiveWecomSession(workspaceId: string, wecomUserId: string): string | null {
     const row = this.db
