@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function RemoteTriggerRenderer(input: unknown): ReactNode | null {
+export default function RemoteTriggerRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { action, trigger_id } = input as Record<string, unknown>

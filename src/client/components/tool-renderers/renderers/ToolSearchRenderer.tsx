@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function ToolSearchRenderer(input: unknown): ReactNode | null {
+export default function ToolSearchRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { query, max_results } = input as Record<string, unknown>

@@ -22,11 +22,8 @@ import {
 import { MutedSystemNote } from './ai-elements/muted-system-note'
 import SlashCommandMessage from './ai-elements/slash-command-message'
 import VirtualizedMessageList from './VirtualizedMessageList'
-import ChatMessageRenderer, {
-  adaptChatMessage,
-  buildResultMap,
-  CompactBoundary,
-} from './ChatMessageRenderer'
+import ChatMessageRenderer, { CompactBoundary } from './ChatMessageRenderer'
+import { adaptChatMessage, buildResultMap } from './chat-message-adapter'
 import CompactingIndicator from './CompactingIndicator'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 

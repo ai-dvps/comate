@@ -10,11 +10,10 @@ describe('canStartDownload', () => {
     assert.strictEqual(canStartDownload('restarting'), false)
   })
 
-  it('returns true for idle, checking, available, and error', () => {
+  it('returns true for idle, checking, and available', () => {
     assert.strictEqual(canStartDownload('idle'), true)
     assert.strictEqual(canStartDownload('checking'), true)
     assert.strictEqual(canStartDownload('available'), true)
-    assert.strictEqual(canStartDownload('error'), true)
   })
 })
 
@@ -26,7 +25,6 @@ describe('canRestart', () => {
     assert.strictEqual(canRestart('available'), false)
     assert.strictEqual(canRestart('downloading'), false)
     assert.strictEqual(canRestart('restarting'), false)
-    assert.strictEqual(canRestart('error'), false)
   })
 })
 

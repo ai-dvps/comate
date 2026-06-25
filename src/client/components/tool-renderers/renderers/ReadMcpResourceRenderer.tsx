@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function ReadMcpResourceRenderer(input: unknown): ReactNode | null {
+export default function ReadMcpResourceRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { uri, server } = input as Record<string, unknown>

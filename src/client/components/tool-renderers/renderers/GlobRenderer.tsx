@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 import FilePath from '../FilePath'
 
-function GlobRenderer(input: unknown): ReactNode | null {
+export default function GlobRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { pattern, path } = input as Record<string, unknown>

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function ConfigRenderer(input: unknown): ReactNode | null {
+export default function ConfigRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { setting, value } = input as Record<string, unknown>

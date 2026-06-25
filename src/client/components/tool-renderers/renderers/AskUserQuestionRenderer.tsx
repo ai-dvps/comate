@@ -4,7 +4,7 @@ import { Streamdown } from 'streamdown'
 
 import { registerToolRenderer } from '../registry'
 
-function AskUserQuestionRenderer(input: unknown): ReactNode | null {
+export default function AskUserQuestionRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { questions } = input as Record<string, unknown>

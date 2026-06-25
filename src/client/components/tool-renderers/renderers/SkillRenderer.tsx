@@ -2,7 +2,7 @@ import { Zap } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function SkillRenderer(input: unknown): ReactNode | null {
+export default function SkillRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
     return null
   }
