@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'
-import { ToolRendererProvider, useToolRendererContext } from './ToolRendererContext'
+import { ToolRendererProvider } from './ToolRendererContext'
+import { useToolRendererContext } from './use-tool-renderer-context'
 
 describe('ToolRendererContext', () => {
   it('returns default values when no provider is present', () => {

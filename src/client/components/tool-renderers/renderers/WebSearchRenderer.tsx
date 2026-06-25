@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function WebSearchRenderer(input: unknown): ReactNode | null {
+export default function WebSearchRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { query, allowed_domains, blocked_domains } = input as Record<string, unknown>

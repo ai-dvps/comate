@@ -5,7 +5,7 @@ import { getLanguageFromFilename } from '@/lib/language'
 import { registerToolRenderer } from '../registry'
 import FilePath from '../FilePath'
 
-function EditRenderer(input: unknown): ReactNode | null {
+export default function EditRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
     return null
   }

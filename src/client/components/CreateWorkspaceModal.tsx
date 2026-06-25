@@ -46,7 +46,7 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
     } finally {
       setIsCreating(false)
     }
-  }, [name, folderPath, description, isValid, isCreating, createWorkspace, openWorkspace, onClose])
+  }, [name, folderPath, description, isValid, isCreating, createWorkspace, openWorkspace, onClose, t])
 
   const handleBrowse = useCallback(async () => {
     if (!isTauri()) return

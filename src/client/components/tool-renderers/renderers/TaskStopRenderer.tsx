@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function TaskStopRenderer(input: unknown): ReactNode | null {
+export default function TaskStopRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { task_id, shell_id } = input as Record<string, unknown>

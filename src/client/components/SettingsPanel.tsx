@@ -838,7 +838,7 @@ export function GeneralTab({
                 {t('general.updaterVersion', { version: appVersion ?? t('general.updaterVersionUnknown') })}
               </p>
             </div>
-            {(updateStatus === 'idle' || updateStatus === 'checking' || updateStatus === 'error') && (
+            {(updateStatus === 'idle' || updateStatus === 'checking' || updateError) && (
               <button
                 onClick={handleCheckNow}
                 disabled={checkingNow || updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready' || updateStatus === 'restarting'}
@@ -859,8 +859,8 @@ export function GeneralTab({
             )}
           </div>
 
-          {(updateStatus === 'idle' || updateStatus === 'error') && (
-            <p className={`text-[10px] ${updateStatus === 'error' ? 'text-destructive' : 'text-text-tertiary'}`}>
+          {(updateStatus === 'idle' || updateError) && (
+            <p className={`text-[10px] ${updateError ? 'text-destructive' : 'text-text-tertiary'}`}>
               {statusText}
             </p>
           )}

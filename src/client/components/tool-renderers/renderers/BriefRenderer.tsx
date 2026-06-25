@@ -2,7 +2,7 @@ import { MessageSquare } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { registerToolRenderer } from '../registry'
 
-function BriefRenderer(input: unknown): ReactNode | null {
+export default function BriefRenderer(input: unknown): ReactNode | null {
   if (!input || typeof input !== 'object') return null
 
   const { message, attachments, status } = input as Record<string, unknown>

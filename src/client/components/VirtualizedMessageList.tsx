@@ -19,11 +19,8 @@ import { MutedSystemNote } from './ai-elements/muted-system-note'
 import SlashCommandMessage from './ai-elements/slash-command-message'
 import { Button } from './ui/button'
 import CompactingIndicator from './CompactingIndicator'
-import ChatMessageRenderer, {
-  adaptChatMessage,
-  buildResultMap,
-  CompactBoundary,
-} from './ChatMessageRenderer'
+import ChatMessageRenderer, { CompactBoundary } from './ChatMessageRenderer'
+import { adaptChatMessage, buildResultMap } from './chat-message-adapter'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 
 const EMPTY_ARRAY: [] = []
