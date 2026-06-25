@@ -685,11 +685,10 @@ export class WeComBotService {
   private buildAnswersFromCardEvent(
     parsed: { requestId: string; selectedItems?: NormalizedSelectedItem[] },
     questions: QuestionPayload[],
-  ): string[] {
-    const selectedItems = parsed.selectedItems ?? [];
-    const answers = new Array(questions.length).fill('');
+  ): Record<string, string> {
+    const answers: Record<string, string> = {};
 
-    for (const item of selectedItems) {
+    for (const item of parsed.selectedItems ?? []) {
       if (!item.question_key || !Array.isArray(item.option_ids)) continue;
       const decoded = decodeButtonKey(item.question_key);
       if (!decoded) continue;
@@ -701,12 +700,15 @@ export class WeComBotService {
       const qIdx = qIdxStr === undefined ? 0 : Number(qIdxStr);
       if (!Number.isFinite(qIdx) || qIdx < 0 || qIdx >= questions.length) continue;
 
+      const question = questions[qIdx];
       const labels: string[] = [];
       for (const optId of item.option_ids) {
-        const opt = questions[qIdx].options[Number(optId)];
+        const opt = question.options[Number(optId)];
         if (opt) labels.push(opt.label);
       }
-      answers[qIdx] = labels.join(', ');
+      if (labels.length > 0) {
+        answers[question.question] = labels.join(', ');
+      }
     }
 
     return answers;

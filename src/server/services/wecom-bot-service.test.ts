@@ -620,7 +620,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
     assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput, {
       questions: pendingCardState.questions,
-      answers: ['B'],
+      answers: { 'Choose one': 'B' },
     });
     assert.strictEqual(updatedCards[0].card.main_title.desc, '已提交');
   });
@@ -650,7 +650,42 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
       }),
     );
 
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, ['A', 'D']);
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, {
+      Q1: 'A',
+      Q2: 'D',
+    });
+  });
+
+  it('joins multi-select options with a comma', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    pendingCardState = {
+      type: 'question',
+      questions: [
+        {
+          question: 'Pick all that apply',
+          options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }],
+          multiSelect: true,
+        },
+      ],
+    };
+
+    const key = encodeButtonKey('req-1', 'allow', 'sess-1');
+    await (service as any).handleTemplateCardEvent(
+      'ws-1',
+      makeCardEvent(key, {
+        event: {
+          selected_items: [
+            { question_key: encodeButtonKey('req-1', 'allow', 'sess-1'), option_ids: ['0', '2'] },
+          ],
+        },
+      }),
+    );
+
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, {
+      'Pick all that apply': 'A, C',
+    });
   });
 });
 
