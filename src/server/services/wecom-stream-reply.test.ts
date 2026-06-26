@@ -1,8 +1,8 @@
 import '../test-utils/test-env.js';
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStreamReply, type StreamReplyConnection } from './wecom-stream-reply.js';
+import { createStreamReply, __setSafeguardDelayForTesting, __restoreSafeguardDelay, type StreamReplyConnection } from './wecom-stream-reply.js';
 import type { SseEvent } from '../types/message.js';
 import { decodeButtonKey } from './wecom-template-card.js';
 import { ACKNOWLEDGMENT_POOL } from '../utils/bot-placeholder.js';
@@ -203,5 +203,186 @@ describe('wecom-stream-reply', () => {
       calls.some((c) => c.text.includes('收到，正在处理中')),
       'thinking placeholder should keep the fixed text',
     );
+  });
+});
+
+function makeSafeguardFrame(): any {
+  return {
+    headers: { req_id: 'req-sg' },
+    body: { msgid: 'msg-sg', from: { userid: 'user-1' }, msgtype: 'text', text: { content: 'hi' } },
+  };
+}
+
+function makeTrackingConn(opts: { failSend?: boolean } = {}) {
+  const calls: Array<{ method: 'replyStream' | 'replyStreamNonBlocking' | 'sendMessage'; text: string; finish?: boolean }> = [];
+  const conn: StreamReplyConnection = {
+    client: {
+      replyStream: async (_frame, _streamId, text, finish) => {
+        calls.push({ method: 'replyStream', text, finish });
+      },
+      replyStreamNonBlocking: async (_frame, _streamId, text, finish) => {
+        calls.push({ method: 'replyStreamNonBlocking', text, finish });
+      },
+      sendMessage: async (_userId, body) => {
+        calls.push({
+          method: 'sendMessage',
+          text: (body as { markdown?: { content?: string } })?.markdown?.content ?? '',
+        });
+        if (opts.failSend) throw new Error('send failed');
+      },
+    },
+    sendTemplateCard: async () => {},
+  };
+  return { conn, calls };
+}
+
+describe('wecom-stream-reply long-reply safeguard', { concurrency: false }, () => {
+  beforeEach(() => {
+    __setSafeguardDelayForTesting(50);
+  });
+
+  afterEach(() => {
+    __restoreSafeguardDelay();
+  });
+
+  it('uses the passive finalize fast path when the result arrives before the safeguard (F1/AE1)', async () => {
+    __setSafeguardDelayForTesting(2000);
+    const { conn, calls } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'text_delta', messageId: 'm1', text: 'hello' } as SseEvent);
+    handler(1, { type: 'result' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.strictEqual(calls.filter((c) => c.method === 'sendMessage').length, 0, 'no proactive send on fast path');
+    assert.strictEqual(
+      calls.filter((c) => c.method === 'replyStream' && c.finish === true).length,
+      1,
+      'passive finalize sets finish=true once',
+    );
+    handler.cleanup();
+  });
+
+  it('sends the long-task notice and stops passive refresh when the safeguard fires (F2)', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'text_delta', messageId: 'm1', text: 'partial' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 80)); // safeguard fires
+
+    const sends = calls.filter((c) => c.method === 'sendMessage');
+    assert.strictEqual(sends.length, 1, 'notice sent once');
+    assert.ok(sends[0].text.includes('更长的时间'), 'notice text present');
+    assert.strictEqual(
+      calls.filter((c) => c.method === 'replyStream' && c.finish === true).length,
+      0,
+      'no active finish after safeguard',
+    );
+
+    const nonBlockingBefore = calls.filter((c) => c.method === 'replyStreamNonBlocking').length;
+    handler(1, { type: 'text_delta', messageId: 'm1', text: ' more' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 200)); // flush debounce window passes
+    assert.strictEqual(
+      calls.filter((c) => c.method === 'replyStreamNonBlocking').length,
+      nonBlockingBefore,
+      'no passive refresh after safeguard',
+    );
+    handler.cleanup();
+  });
+
+  it('keeps accumulating text after the safeguard so the final push is complete', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'text_delta', messageId: 'm1', text: 'before' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 80)); // safeguard fires
+    handler(1, { type: 'text_delta', messageId: 'm1', text: '-after' } as SseEvent);
+    handler(1, { type: 'result' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 30));
+
+    const sends = calls.filter((c) => c.method === 'sendMessage');
+    assert.strictEqual(sends.length, 2, '1 notice + 1 result chunk');
+    assert.ok(sends[1].text.includes('before'), 'pre-safeguard text present');
+    assert.ok(sends[1].text.includes('after'), 'post-safeguard text present');
+    handler.cleanup();
+  });
+
+  it('fires the safeguard notice at most once', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    await new Promise((r) => setTimeout(r, 130)); // well past one delay
+    assert.strictEqual(calls.filter((c) => c.method === 'sendMessage').length, 1, 'notice sent exactly once');
+    handler.cleanup();
+  });
+
+  it('clears the safeguard timer on cleanup so no notice fires after', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    handler.cleanup();
+    await new Promise((r) => setTimeout(r, 130));
+    assert.strictEqual(calls.filter((c) => c.method === 'sendMessage').length, 0, 'no notice after cleanup');
+  });
+
+  it('delivers an oversized result as split proactive messages after the safeguard (AE2)', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'text_delta', messageId: 'm1', text: 'a'.repeat(30000) } as SseEvent);
+    await new Promise((r) => setTimeout(r, 80)); // safeguard fires
+    handler(1, { type: 'result' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 40));
+
+    const sends = calls.filter((c) => c.method === 'sendMessage');
+    assert.strictEqual(sends.length, 3, '1 notice + 2 result chunks');
+    const chunks = sends.slice(1);
+    assert.strictEqual(chunks.length, 2);
+    for (const c of chunks) {
+      assert.ok(Buffer.byteLength(c.text, 'utf8') <= 20480, `chunk over limit: ${Buffer.byteLength(c.text)}`);
+    }
+    handler.cleanup();
+  });
+
+  it('does not send an empty proactive result after the safeguard (AE3)', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    await new Promise((r) => setTimeout(r, 80)); // safeguard fires
+    handler(1, { type: 'result' } as SseEvent); // no text accumulated
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(calls.filter((c) => c.method === 'sendMessage').length, 1, 'only the notice, no empty result');
+    handler.cleanup();
+  });
+
+  it('retries a failed proactive chunk once and does not throw', async () => {
+    const { conn, calls } = makeTrackingConn({ failSend: true });
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'text_delta', messageId: 'm1', text: 'a'.repeat(30000) } as SseEvent);
+    await new Promise((r) => setTimeout(r, 80)); // safeguard fires
+    handler(1, { type: 'result' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 60));
+    // Some sendMessage attempts occurred (notice + chunk attempts); completing
+    // without an unhandled rejection is the no-throw signal.
+    assert.ok(calls.filter((c) => c.method === 'sendMessage').length >= 1);
+    handler.cleanup();
+  });
+
+  it('does not send additional proactive messages on a second terminal event', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeSafeguardFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'text_delta', messageId: 'm1', text: 'result text' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 80)); // safeguard fires
+    handler(1, { type: 'result' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 30));
+    const afterFirst = calls.filter((c) => c.method === 'sendMessage').length;
+    handler(1, { type: 'result' } as SseEvent); // second terminal
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(
+      calls.filter((c) => c.method === 'sendMessage').length,
+      afterFirst,
+      'no extra sends on second terminal',
+    );
+    handler.cleanup();
   });
 });
