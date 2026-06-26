@@ -847,7 +847,20 @@ export class WeComBotService {
 
     try {
       workspaceStore.setActiveWecomSession(workspaceId, parsed.wecomUserId, targetSessionId);
+    } catch (err) {
+      console.error('[WeComBotService] failed to switch session via /resume:', err);
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+      return;
+    }
 
+    // Update the card to its terminal state FIRST. WeCom only honors a card-update
+    // response within ~5s of the template_card_event; getSession/sendMessage below
+    // can exceed that window and leave the card interactive (re-clickable).
+    await this.updateCardToTerminal(workspaceId, frame, parsed, '已恢复会话');
+
+    // Confirmation message (best-effort, after the card is updated). A failure
+    // here must not flip the already-updated card to an error state.
+    try {
       const conn = this.connections.get(workspaceId);
       const session = await chatService.getSession(targetSessionId, workspaceId);
       const title = session?.customTitle ?? session?.name ?? targetSessionId;
@@ -857,10 +870,8 @@ export class WeComBotService {
           markdown: { content: `已切换到会话：【${title}】，可继续对话` },
         });
       }
-      await this.updateCardToTerminal(workspaceId, frame, parsed, '已恢复会话');
     } catch (err) {
-      console.error('[WeComBotService] failed to switch session via /resume:', err);
-      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+      console.error('[WeComBotService] failed to send /resume confirmation:', err);
     }
   }
 
