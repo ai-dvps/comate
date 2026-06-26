@@ -107,10 +107,12 @@ describe('chat-service idle-close', { concurrency: false }, () => {
       onUnsubscribed?: () => void;
       onActivity?: () => void;
     } = {},
+    options: { isProcessing?: () => boolean } = {},
   ): SessionRuntime {
     const mock = {
       isClosed: () => false,
-      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      isProcessingTurn: () => options.isProcessing?.() ?? false,
+      getStatus: () => ({ pendingCount: 0, isProcessing: options.isProcessing?.() ?? false, workspaceId: 'ws-1' }),
       close: () => Promise.resolve(),
       subscribe: () => {
         callbacks.onSubscribed?.();
@@ -201,6 +203,48 @@ describe('chat-service idle-close', { concurrency: false }, () => {
 
     await new Promise((r) => setTimeout(r, 150));
     assert.strictEqual(service.getActiveSessionCount(), 0, 'runtime should be closed after idle timeout');
+  });
+
+  it('idle-close defers while a turn is in flight', async () => {
+    setupStoreMocks();
+    const processing = true;
+    SessionRuntime.open = () => createMockRuntime({}, { isProcessing: () => processing });
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    assert.strictEqual(service.getActiveSessionCount(), 1);
+
+    // Grace period elapses, but the runtime stays open because a turn is in flight.
+    await new Promise((r) => setTimeout(r, 150));
+    assert.strictEqual(service.getActiveSessionCount(), 1, 'runtime should stay open while a turn is in flight');
+    const timeouts = (service as unknown as { idleTimeouts: Map<string, NodeJS.Timeout> }).idleTimeouts;
+    assert.ok(timeouts.has('s1'), 'idle timer should be re-armed (deferred)');
+  });
+
+  it('idle-close fires once the in-flight turn completes', async () => {
+    setupStoreMocks();
+    let processing = true;
+    SessionRuntime.open = () => createMockRuntime({}, { isProcessing: () => processing });
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    await new Promise((r) => setTimeout(r, 150)); // deferred while processing
+    assert.strictEqual(service.getActiveSessionCount(), 1);
+
+    processing = false; // turn completes
+    await new Promise((r) => setTimeout(r, 150)); // re-armed timer now fires and closes
+    assert.strictEqual(service.getActiveSessionCount(), 0, 'runtime should close after the turn completes');
+  });
+
+  it('idle-close is a no-op when the runtime was already closed', async () => {
+    setupStoreMocks();
+    SessionRuntime.open = () => createMockRuntime();
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    // Simulate the runtime being removed by another path while the timer is pending.
+    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.delete('s1');
+
+    // The pending timer fires; it must not throw and must not resurrect the runtime.
+    await new Promise((r) => setTimeout(r, 150));
+    assert.strictEqual(service.getActiveSessionCount(), 0, 'already-closed runtime should not be tracked');
   });
 
   it('closeRuntime cancels pending idle timer before closing', async () => {
