@@ -19,6 +19,8 @@
     "reopenLastWorkspaceHint": "应用启动时自动恢复上次活动的工作区。",
     "useModifierToSubmit": "使用 Ctrl/Cmd + Enter 发送",
     "useModifierToSubmitHint": "启用后，按 Ctrl+Enter（Windows）或 Cmd+Enter（Mac）提交，单独按 Enter 插入换行。",
+    "notificationSounds": "通知提示音",
+    "notificationSoundsHint": "当 Claude 需要你响应（审批或提问）或完成任务时播放提示音。",
     "pathConfigTitle": "Claude Code PATH",
     "pathConfigHint": "此处添加的目录将被前置到传递给 Claude Code 的 PATH 中。",
     "pathConfigResolvedPath": "已解析的 PATH",
