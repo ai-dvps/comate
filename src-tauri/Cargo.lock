@@ -586,7 +586,7 @@ dependencies = [
 
 [[package]]
 name = "comate"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "log",
  "reqwest 0.12.28",
