@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Notification sounds for pending requests and task completion** — Comate now plays a short sound when Claude needs your response (a tool approval or `AskUserQuestion`) and when Claude finishes a turn and goes idle, so you don't miss these moments after switching away from the app. Two audibly distinct royalty-free clips are bundled: a "needs attention" alert and a gentler "completion" chime. A single **Notification sounds** toggle in Settings → General controls all sounds and is enabled by default. The completion sound only fires for turns longer than ~3 seconds, and rapid successive events coalesce into one sound, so ordinary back-and-forth stays quiet. Playback unlocks on the app's first click to satisfy webview autoplay rules; the dock badge continues to flag requests that were already pending at launch.
+
 ## [0.0.16] - 2026-06-26
 
 ### Added
