@@ -273,7 +273,7 @@
     "isolation": {
       "adminUsers": {
         "label": "管理员用户",
-        "hint": "被视作管理员的企业微信规范化用户 ID。管理员可使用下方列出的额外技能，且不受 Bash 白名单限制。",
+        "hint": "被视作管理员的企业微信规范化用户 ID。管理员可以使用所有工具、读写工作区内的任意文件，并执行任意技能，且不受 Bash 白名单限制。",
         "placeholder": "例如 wang@example.com"
       },
       "defaultSkills": {

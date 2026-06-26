@@ -54,6 +54,26 @@ function createMockProvider(): Provider {
   };
 }
 
+function collectDiagLogs(): { logs: string[]; restore: () => void } {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  const originalSidecar = process.env.COMATE_SIDECAR;
+  // diagLog only mirrors to console when COMATE_SIDECAR is not '1'. Tests run
+  // under the sidecar harness, so temporarily clear it so console.log captures
+  // diagnostic lines without writing them to the real log file.
+  process.env.COMATE_SIDECAR = '';
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(' '));
+  };
+  return {
+    logs,
+    restore: () => {
+      console.log = originalLog;
+      process.env.COMATE_SIDECAR = originalSidecar;
+    },
+  };
+}
+
 describe('chat-service idle-close', { concurrency: false }, () => {
   let service: ChatService;
   const originalOpen = SessionRuntime.open;
@@ -552,15 +572,24 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
 
   async function captureBotCanUseTool(
     workspaceSettingsOverrides: Record<string, unknown>,
+    identity?: {
+      botUserId?: string;
+      wecomUserId?: string | null;
+      mapping?: string | null;
+      knownUserDirNames?: string[];
+    },
   ): Promise<NonNullable<Options['canUseTool']>> {
     const mockWorkspace = createMockWorkspace('ws-1');
     Object.assign(mockWorkspace.settings, workspaceSettingsOverrides);
     workspaceStore.get = async () => mockWorkspace;
     workspaceStore.getLocalSession = () => createMockSession('s1');
     workspaceStore.getDefaultProvider = () => createMockProvider();
-    workspaceStore.getWecomUserIdBySession = () => 'wecom-user-1';
-    workspaceStore.getWecomUserMapping = () => 'user1';
-    workspaceStore.listWecomWorkspaceUsers = () => [];
+    workspaceStore.getWecomUserIdBySession = () =>
+      identity?.wecomUserId === undefined ? 'wecom-user-1' : identity.wecomUserId;
+    workspaceStore.getWecomUserMapping = () =>
+      identity?.mapping === undefined ? 'user1' : identity.mapping;
+    const knownUserDirNames = identity?.knownUserDirNames ?? [];
+    workspaceStore.listWecomWorkspaceUsers = () => knownUserDirNames.map((name) => ({ encryptedUserId: name, plaintextUserId: name }));
     workspaceStore.listWecomUserMappings = () => [];
 
     let capturedOptions: Options | undefined;
@@ -569,7 +598,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       return createMockRuntime();
     };
 
-    await service.getOrCreateRuntime('s1', 'ws-1', true);
+    await service.getOrCreateRuntime('s1', 'ws-1', true, undefined, identity?.botUserId);
     assert.ok(capturedOptions?.canUseTool, 'canUseTool must be set for bot sessions');
     return capturedOptions.canUseTool;
   }
@@ -640,12 +669,24 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    const result = await canUseTool('Bash', { command: 'ls' });
+    const { logs, restore } = collectDiagLogs();
+    let result;
+    try {
+      result = await canUseTool('Bash', { command: 'ls' });
+    } finally {
+      restore();
+    }
+
     assert.strictEqual(result.behavior, 'deny');
     if (result.behavior === 'deny') {
       assert.ok(!result.message.toLowerCase().includes('shell'), 'denial message must not leak capability name');
       assert.ok(!result.message.toLowerCase().includes('bash'), 'denial message must not leak tool name');
     }
+    assert.ok(
+      logs.some((line) => line.includes('reason=category-deny') && line.includes('tool=Bash')),
+      'expected category-deny to be logged',
+    );
+    assert.ok(!logs.some((line) => line.includes('command')), 'log line must not contain tool input');
   });
 
   it('bot session with policy allowing File Read: canUseTool returns allow for Read', async () => {
@@ -706,10 +747,193 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    const editResult = await canUseTool('Edit', { file_path: '/tmp/x' });
+    const { logs, restore } = collectDiagLogs();
+    let editResult;
+    try {
+      editResult = await canUseTool('Edit', { file_path: '/tmp/x' });
+    } finally {
+      restore();
+    }
     assert.strictEqual(editResult.behavior, 'deny');
+    assert.ok(
+      logs.some((line) => line.includes('reason=override-deny') && line.includes('tool=Edit')),
+      'expected override-deny to be logged',
+    );
+
     const writeResult = await canUseTool('Write', { file_path: '/tmp/test/data/user1/x' });
     assert.strictEqual(writeResult.behavior, 'allow');
+  });
+
+  it('bot session: missing identity denies identity-sensitive tools and logs missing-identity', async () => {
+    const canUseTool = await captureBotCanUseTool(
+      {
+        wecomBotEnabled: true,
+        wecomToolPermissions: {
+          posture: 'safe',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'allow',
+            shell: 'allow',
+            network: 'allow',
+            subagents: 'allow',
+            reply: 'allow',
+          },
+        },
+      },
+      { wecomUserId: null, mapping: null },
+    );
+
+    const { logs, restore } = collectDiagLogs();
+    let result;
+    try {
+      result = await canUseTool('Read', { file_path: '/tmp/test/data/user1/x' });
+    } finally {
+      restore();
+    }
+    assert.strictEqual(result.behavior, 'deny');
+    assert.ok(
+      logs.some((line) => line.includes('reason=missing-identity') && line.includes('tool=Read')),
+      'expected missing-identity to be logged',
+    );
+  });
+
+  it('bot session: path policy deny logs the path reason', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+        },
+      },
+    });
+
+    const { logs, restore } = collectDiagLogs();
+    let result;
+    try {
+      result = await canUseTool('Read', { file_path: '/tmp/outside-workspace' });
+    } finally {
+      restore();
+    }
+    assert.strictEqual(result.behavior, 'deny');
+    assert.ok(
+      logs.some((line) => line.includes('reason=outside-workspace') && line.includes('tool=Read')),
+      'expected outside-workspace path reason to be logged',
+    );
+    assert.ok(!logs.some((line) => line.includes('/tmp/outside-workspace')), 'log line must not contain the path');
+  });
+
+  it('bot session: skill policy deny logs the skill reason', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+        },
+      },
+      wecomBotIsolation: {
+        adminUserIds: [],
+        defaultAllowedSkills: [],
+        adminAllowedSkills: [],
+      },
+    });
+
+    const { logs, restore } = collectDiagLogs();
+    let result;
+    try {
+      result = await canUseTool('Skill', { skill_name: 'DisallowedSkill' });
+    } finally {
+      restore();
+    }
+    assert.strictEqual(result.behavior, 'deny');
+    assert.ok(
+      logs.some((line) => line.includes('reason=skill-not-allowed') && line.includes('tool=Skill')),
+      'expected skill-not-allowed to be logged',
+    );
+    assert.ok(!logs.some((line) => line.includes('DisallowedSkill')), 'log line must not contain the skill name');
+  });
+
+  it('bot session: AskUserQuestion without runtime logs missing-runtime', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+        },
+      },
+    });
+
+    // Remove the runtime so the ask path cannot find it.
+    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.delete('s1');
+
+    const { logs, restore } = collectDiagLogs();
+    let result;
+    try {
+      result = await canUseTool('AskUserQuestion', {
+        questions: [{ question: 'ok?', options: [{ label: 'yes' }] }],
+      });
+    } finally {
+      restore();
+    }
+    assert.strictEqual(result.behavior, 'deny');
+    assert.ok(
+      logs.some((line) => line.includes('reason=missing-runtime') && line.includes('tool=AskUserQuestion')),
+      'expected missing-runtime to be logged',
+    );
+    assert.ok(
+      !logs.some((line) => line.includes('ok?')),
+      'log line must not contain question text',
+    );
+  });
+
+  it('bot session: ask policy without runtime logs missing-runtime', async () => {
+    const canUseTool = await captureBotCanUseTool({
+      wecomBotEnabled: true,
+      wecomToolPermissions: {
+        posture: 'custom',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'ask',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+    });
+
+    // Remove the runtime so the ask path cannot find it.
+    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.delete('s1');
+
+    const { logs, restore } = collectDiagLogs();
+    let result;
+    try {
+      result = await canUseTool('Bash', { command: 'ls' });
+    } finally {
+      restore();
+    }
+    assert.strictEqual(result.behavior, 'deny');
+    assert.ok(
+      logs.some((line) => line.includes('reason=missing-runtime') && line.includes('tool=Bash')),
+      'expected missing-runtime to be logged',
+    );
   });
 
   it('bot session: MCP tool falls through to allow (R10)', async () => {
@@ -958,6 +1182,180 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
 
     const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
     assert.strictEqual(runtime.getStatus().pendingCount, 0, 'deny policy should not register a pending approval');
+  });
+
+  it('admin bot session bypasses tool policy denials', async () => {
+    const canUseTool = await captureBotCanUseTool(
+      {
+        wecomBotEnabled: true,
+        wecomToolPermissions: {
+          posture: 'safe',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'deny',
+            shell: 'deny',
+            network: 'deny',
+            subagents: 'deny',
+            reply: 'allow',
+          },
+        },
+        wecomBotIsolation: {
+          adminUserIds: ['user1'],
+          defaultAllowedSkills: [],
+          adminAllowedSkills: [],
+        },
+      },
+      { mapping: 'user1' },
+    );
+
+    const result = await canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-admin-tool-1', signal: new AbortController().signal });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('admin bot session reads files in another user data folder', async () => {
+    const canUseTool = await captureBotCanUseTool(
+      {
+        wecomBotEnabled: true,
+        wecomToolPermissions: {
+          posture: 'safe',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'deny',
+            shell: 'deny',
+            network: 'deny',
+            subagents: 'deny',
+            reply: 'allow',
+          },
+        },
+        wecomBotIsolation: {
+          adminUserIds: ['user1'],
+          defaultAllowedSkills: [],
+          adminAllowedSkills: [],
+        },
+      },
+      { mapping: 'user1', knownUserDirNames: ['user2'] },
+    );
+
+    const result = await canUseTool('Read', { file_path: '/tmp/test/data/user2/secret.txt' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('admin bot session writes shared workspace files', async () => {
+    const canUseTool = await captureBotCanUseTool(
+      {
+        wecomBotEnabled: true,
+        wecomToolPermissions: {
+          posture: 'safe',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'deny',
+            shell: 'deny',
+            network: 'deny',
+            subagents: 'deny',
+            reply: 'allow',
+          },
+        },
+        wecomBotIsolation: {
+          adminUserIds: ['user1'],
+          defaultAllowedSkills: [],
+          adminAllowedSkills: [],
+        },
+      },
+      { mapping: 'user1' },
+    );
+
+    const result = await canUseTool('Write', { file_path: '/tmp/test/shared/config.json' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('admin bot session invokes an unlisted skill', async () => {
+    const canUseTool = await captureBotCanUseTool(
+      {
+        wecomBotEnabled: true,
+        wecomToolPermissions: {
+          posture: 'safe',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'deny',
+            shell: 'deny',
+            network: 'deny',
+            subagents: 'deny',
+            reply: 'allow',
+          },
+        },
+        wecomBotIsolation: {
+          adminUserIds: ['user1'],
+          defaultAllowedSkills: ['allowed-skill'],
+          adminAllowedSkills: ['admin-skill'],
+        },
+      },
+      { mapping: 'user1' },
+    );
+
+    const result = await canUseTool('Skill', { skill_name: 'unlisted-skill' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('admin bot session is still blocked outside the workspace', async () => {
+    const canUseTool = await captureBotCanUseTool(
+      {
+        wecomBotEnabled: true,
+        wecomToolPermissions: {
+          posture: 'safe',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'allow',
+            shell: 'allow',
+            network: 'allow',
+            subagents: 'allow',
+            reply: 'allow',
+          },
+        },
+        wecomBotIsolation: {
+          adminUserIds: ['user1'],
+          defaultAllowedSkills: [],
+          adminAllowedSkills: [],
+        },
+      },
+      { mapping: 'user1' },
+    );
+
+    const result = await canUseTool('Read', { file_path: '/etc/passwd' });
+    assert.strictEqual(result.behavior, 'deny');
+  });
+
+  it('non-admin bot session remains restricted when admins are configured', async () => {
+    const canUseTool = await captureBotCanUseTool(
+      {
+        wecomBotEnabled: true,
+        wecomToolPermissions: {
+          posture: 'safe',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'deny',
+            shell: 'deny',
+            network: 'deny',
+            subagents: 'deny',
+            reply: 'allow',
+          },
+        },
+        wecomBotIsolation: {
+          adminUserIds: ['admin-user'],
+          defaultAllowedSkills: [],
+          adminAllowedSkills: [],
+        },
+      },
+      { mapping: 'user1', knownUserDirNames: ['user2'] },
+    );
+
+    const bashResult = await canUseTool('Bash', { command: 'ls' });
+    assert.strictEqual(bashResult.behavior, 'deny');
+
+    const readResult = await canUseTool('Read', { file_path: '/tmp/test/data/user2/secret.txt' });
+    assert.strictEqual(readResult.behavior, 'deny');
+
+    const skillResult = await canUseTool('Skill', { skill_name: 'unlisted-skill' });
+    assert.strictEqual(skillResult.behavior, 'deny');
   });
 });
 

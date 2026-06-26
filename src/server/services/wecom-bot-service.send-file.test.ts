@@ -264,17 +264,54 @@ describe('WeComBotService.sendFile', { concurrency: false }, () => {
     );
   });
 
-  it('throws when the recipient cannot be resolved', async () => {
-    workspaceStore.getEncryptedUserIdByPlaintext = () => null;
-
+  it('allows admin to send a file from a shared folder', async () => {
     const conn = createMockConnection();
     injectConnection(conn);
 
     await writeFile('docs/report.pdf', 'report content');
+    await service.sendFile('ws-1', 'ZhangWei', 'docs/report.pdf', true);
+
+    assert.strictEqual(uploadedFiles.length, 1);
+    assert.strictEqual(sentFiles.length, 1);
+  });
+
+  it('allows admin to send a file from another user data folder', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await writeFile('data/LiSi/secret.pdf', 'secret content');
+    await service.sendFile('ws-1', 'ZhangWei', 'data/LiSi/secret.pdf', true);
+
+    assert.strictEqual(uploadedFiles.length, 1);
+    assert.strictEqual(uploadedFiles[0].options.filename, 'secret.pdf');
+    assert.strictEqual(sentFiles.length, 1);
+  });
+
+  it('still denies admin files outside the workspace', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await fsPromises.symlink('/etc/passwd', path.join(tempDir, 'outside-link'));
 
     await assert.rejects(
-      async () => service.sendFile('ws-1', 'UnknownUser', 'docs/report.pdf'),
-      /WeCom user ID has not been decrypted yet/,
+      async () => service.sendFile('ws-1', 'ZhangWei', 'outside-link', true),
+      /File access denied: outside-workspace/,
+    );
+
+    assert.strictEqual(sentMessages.length, 0);
+    assert.strictEqual(uploadedFiles.length, 0);
+    assert.strictEqual(sentFiles.length, 0);
+  });
+
+  it('still denies admin directory paths', async () => {
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await fsPromises.mkdir(path.join(tempDir, 'empty-dir'));
+
+    await assert.rejects(
+      async () => service.sendFile('ws-1', 'ZhangWei', 'empty-dir', true),
+      /File access denied: not-a-file/,
     );
   });
 });

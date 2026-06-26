@@ -93,4 +93,34 @@ describe('validateSendFilePath', { concurrency: false }, () => {
     assert.strictEqual(result.allowed, false);
     assert.strictEqual(result.reason, 'other-user-dir');
   });
+
+  it('allows admin to send a shared workspace file', () => {
+    const result = validateSendFilePath(tmpDir, 'ZhangWei', 'docs/report.pdf', true);
+    assert.strictEqual(result.allowed, true);
+    assert.strictEqual(result.relativePath, path.join('docs', 'report.pdf'));
+  });
+
+  it('allows admin to send a file inside another user data folder', () => {
+    const result = validateSendFilePath(tmpDir, 'ZhangWei', 'data/LiSi/secret.pdf', true);
+    assert.strictEqual(result.allowed, true);
+    assert.strictEqual(result.relativePath, path.join('data', 'LiSi', 'secret.pdf'));
+  });
+
+  it('still denies admin paths escaping the workspace', () => {
+    const result = validateSendFilePath(tmpDir, 'ZhangWei', '../etc/passwd', true);
+    assert.strictEqual(result.allowed, false);
+    assert.strictEqual(result.reason, 'outside-workspace');
+  });
+
+  it('still denies admin symlinks pointing outside the workspace', () => {
+    const result = validateSendFilePath(tmpDir, 'ZhangWei', 'outside-link', true);
+    assert.strictEqual(result.allowed, false);
+    assert.strictEqual(result.reason, 'outside-workspace');
+  });
+
+  it('still denies admin directory paths', () => {
+    const result = validateSendFilePath(tmpDir, 'ZhangWei', 'empty-dir', true);
+    assert.strictEqual(result.allowed, false);
+    assert.strictEqual(result.reason, 'not-a-file');
+  });
 });

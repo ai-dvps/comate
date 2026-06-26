@@ -49,12 +49,25 @@ describe('evaluateSkill', () => {
     assert.equal(userResult.reason, 'skill-not-allowed');
   });
 
-  it('denies skills not in any allowlist', () => {
+  it('allows admins to invoke any skill regardless of allowlists', () => {
+    const isolation = createIsolation({ defaultAllowedSkills: ['allowed'], adminAllowedSkills: ['admin-skill'] });
+    const result = evaluateSkill({ isolation, isAdmin: true }, 'Skill', { skill_name: 'unlisted-skill' });
+    assert.equal(result.allowed, true);
+    assert.equal(result.skillName, 'unlisted-skill');
+  });
+
+  it('still rejects admins invoking a skill with an empty name', () => {
+    const isolation = createIsolation({});
+    const result = evaluateSkill({ isolation, isAdmin: true }, 'Skill', { skill_name: '' });
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, 'missing-skill-name');
+  });
+
+  it('denies non-admins skills not in any allowlist', () => {
     const isolation = createIsolation({ defaultAllowedSkills: ['allowed'] });
-    const result = evaluateSkill({ isolation, isAdmin: false }, 'Skill', { skill_name: 'other' });
+    const result = evaluateSkill({ isolation, isAdmin: false }, 'Skill', { skill_name: 'unlisted-skill' });
     assert.equal(result.allowed, false);
     assert.equal(result.reason, 'skill-not-allowed');
-    assert.equal(result.skillName, 'other');
   });
 
   it('normalizes skill names to lowercase kebab-case', () => {

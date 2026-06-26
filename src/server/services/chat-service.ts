@@ -15,11 +15,12 @@ import { resolveTranscriptDir } from './analytics-transcript-path.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
+import { diagLog } from '../utils/diag-logger.js';
 import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.js';
 import { pluginSettingsService } from './plugin-settings-service.js';
-import { evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
+import { evaluateToolPermission, getToolPermissionDenialReason, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { createPathPolicyContext, validateToolInput } from './bot-path-policy.js';
 import { evaluateSkill } from './bot-skill-policy.js';
 
@@ -1080,6 +1081,7 @@ export class ChatService {
         pathContext = createPathPolicyContext(workspace, userDirName, knownUserDirNames);
         const isolation = workspace.settings.wecomBotIsolation;
         const isAdmin = isolation?.adminUserIds?.includes(canonicalUserId) ?? false;
+        pathContext.isAdmin = isAdmin;
         skillContext = { isolation, isAdmin };
       }
 
@@ -1095,7 +1097,7 @@ export class ChatService {
           decisionReasonType?: string;
         },
       ) => {
-        const decision = evaluateToolPermission(policy, toolName);
+        const decision = evaluateToolPermission(policy, toolName, pathContext?.isAdmin ?? false);
         // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
         // without a category fit). Fall through to today's allow-all behavior
         // per R10. The brainstorm explicitly defers MCP and Skills gating.
@@ -1103,6 +1105,10 @@ export class ChatService {
           // Generic denial message — do NOT name the capability. Inbound WeCom
           // messages are an untrusted channel; naming the denied capability
           // would let an attacker probe the policy by mapping denials.
+          const reason = getToolPermissionDenialReason(policy, toolName);
+          diagLog(
+            `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${reason ?? 'deny'}`,
+          );
           return {
             behavior: 'deny' as const,
             message: "I can't do that in this workspace.",
@@ -1111,6 +1117,9 @@ export class ChatService {
 
         // Identity failure = fail closed on file/Bash/Skill tools.
         if (!canonicalUserId && IDENTITY_SENSITIVE_TOOLS.has(toolName)) {
+          diagLog(
+            `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-identity`,
+          );
           return {
             behavior: 'deny' as const,
             message: "I can't do that in this workspace.",
@@ -1120,6 +1129,9 @@ export class ChatService {
         if (FILE_TOOLS.has(toolName) && pathContext) {
           const r = validateToolInput(pathContext, toolName, input);
           if (!r.allowed) {
+            diagLog(
+              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'path-denied'}`,
+            );
             return {
               behavior: 'deny' as const,
               message: "I can't do that in this workspace.",
@@ -1130,6 +1142,9 @@ export class ChatService {
         if (toolName === 'Skill' && skillContext) {
           const r = evaluateSkill(skillContext, toolName, input);
           if (!r.allowed) {
+            diagLog(
+              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'skill-denied'}`,
+            );
             return {
               behavior: 'deny' as const,
               message: "I can't do that in this workspace.",
@@ -1141,6 +1156,9 @@ export class ChatService {
         if (toolName === 'AskUserQuestion') {
           const runtime = this.runtimes.get(session.id);
           if (!runtime) {
+            diagLog(
+              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
+            );
             return {
               behavior: 'deny' as const,
               message: "I can't do that in this workspace.",
@@ -1174,6 +1192,9 @@ export class ChatService {
         if (decision === 'ask') {
           const runtime = this.runtimes.get(session.id);
           if (!runtime) {
+            diagLog(
+              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
+            );
             return {
               behavior: 'deny' as const,
               message: "I can't do that in this workspace.",

@@ -10,6 +10,23 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { encodeButtonKey } from './wecom-template-card.js';
 
+function collectDiagLogs(): { logs: string[]; restore: () => void } {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  const originalSidecar = process.env.COMATE_SIDECAR;
+  process.env.COMATE_SIDECAR = '';
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(' '));
+  };
+  return {
+    logs,
+    restore: () => {
+      console.log = originalLog;
+      process.env.COMATE_SIDECAR = originalSidecar;
+    },
+  };
+}
+
 describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
   let service: WeComBotService;
   let tempDir: string;
@@ -421,7 +438,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
 
     resolvedApprovals = [];
     updatedCards = [];
-    pendingCardState = { type: 'approval', suggestions: [{ id: 'suggestion-1' }] };
+    pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-deny-1', suggestions: [{ id: 'suggestion-1' }] };
 
     workspaceStore.getWecomUserIdBySession = () => 'owner-1';
 
@@ -543,11 +560,27 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     injectConnection(conn);
 
     const key = encodeButtonKey('req-1', 'deny', 'sess-1');
-    await (service as any).handleTemplateCardEvent('ws-1', makeCardEvent(key));
+    const { logs, restore } = collectDiagLogs();
+    try {
+      await (service as any).handleTemplateCardEvent('ws-1', makeCardEvent(key));
+    } finally {
+      restore();
+    }
 
     assert.strictEqual(resolvedApprovals.length, 1);
     assert.strictEqual(resolvedApprovals[0].result.behavior, 'deny');
     assert.strictEqual(updatedCards[0].card.main_title.desc, '已拒绝');
+    assert.ok(
+      logs.some((line) =>
+        line.includes('reason=user-deny') &&
+        line.includes('tool=Bash') &&
+        line.includes('toolUseId=tu-deny-1') &&
+        line.includes('requestId=req-1') &&
+        line.includes('sessionId=sess-1') &&
+        line.includes('workspaceId=ws-1'),
+      ),
+      'expected user-deny reason to be logged with correlators',
+    );
   });
 
   it('ignores clicks from a non-owner user and updates card', async () => {

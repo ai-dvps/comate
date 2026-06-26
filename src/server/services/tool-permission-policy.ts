@@ -98,12 +98,23 @@ export type PermissionDecision = 'allow' | 'deny' | 'ask' | 'unknown';
  *   3. 'unknown' if the tool is not in any category (caller falls through to allow per R10)
  *
  * If the policy is undefined, returns 'unknown' so callers fall through to allow-all (the pre-feature default).
+ *
+ * NOTE: If you change this resolution order, also update `getToolPermissionDenialReason`
+ * so the two functions stay in sync.
  */
 export function evaluateToolPermission(
   policy: ToolPermissionPolicy | undefined,
   toolName: string,
+  isAdmin = false,
 ): PermissionDecision {
   if (!policy) return 'unknown';
+
+  // WeCom bot admins bypass category defaults and per-tool overrides for all
+  // categorized SDK tools and the Reply capability.
+  if (isAdmin) {
+    const category = TOOL_TO_CATEGORY.get(toolName);
+    if (category) return 'allow';
+  }
 
   // Per-tool override takes precedence
   const override = policy.overrides?.[toolName];
@@ -115,6 +126,34 @@ export function evaluateToolPermission(
   const category = TOOL_TO_CATEGORY.get(toolName);
   if (!category) return 'unknown';
   return policy.categoryDefaults[category];
+}
+
+/** Reason for a policy-level denial. Mirrors the resolution order of `evaluateToolPermission`. */
+export type ToolDenialReason = 'override-deny' | 'category-deny';
+
+/**
+ * Return the reason a tool was denied by policy, or `undefined` if it was not
+ * denied. Keeps the override-vs-category resolution logic in one place and in
+ * sync with `evaluateToolPermission`.
+ */
+export function getToolPermissionDenialReason(
+  policy: ToolPermissionPolicy | undefined,
+  toolName: string,
+): ToolDenialReason | undefined {
+  if (!policy) return undefined;
+
+  const override = policy.overrides?.[toolName];
+  if (override === 'deny') return 'override-deny';
+  // An allow/ask override means this tool is not denied at the override layer,
+  // regardless of the category default.
+  if (override === 'allow' || override === 'ask') return undefined;
+
+  const category = TOOL_TO_CATEGORY.get(toolName);
+  if (!category) return undefined;
+
+  const decision = policy.categoryDefaults[category];
+  if (decision === 'deny') return 'category-deny';
+  return undefined;
 }
 
 /** Source of an effective policy. Drives the grandfathering prompt and the policy viewer UI. */

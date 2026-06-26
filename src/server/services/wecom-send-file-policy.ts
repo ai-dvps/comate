@@ -51,6 +51,7 @@ export function validateSendFilePath(
   workspaceFolderPath: string,
   targetUserFolderName: string,
   rawFilePath: string,
+  isAdmin = false,
 ): SendFileValidationResult {
   if (typeof rawFilePath !== 'string' || rawFilePath === '') {
     return {
@@ -83,20 +84,22 @@ export function validateSendFilePath(
 
   const relativePath = path.relative(resolvedWorkspacePath, realResolved);
 
-  // Enforce data/<user-folder> isolation.
-  const segments = relativePath.split(path.sep).filter(Boolean);
-  if (segments[0]?.toLowerCase() === 'data') {
-    const folderName = segments[1];
-    if (
-      folderName === undefined ||
-      folderName.toLowerCase() !== targetUserFolderName.toLowerCase()
-    ) {
-      return {
-        allowed: false,
-        reason: 'other-user-dir',
-        absolutePath: realResolved,
-        relativePath,
-      };
+  // Enforce data/<user-folder> isolation for non-admin callers.
+  if (!isAdmin) {
+    const segments = relativePath.split(path.sep).filter(Boolean);
+    if (segments[0]?.toLowerCase() === 'data') {
+      const folderName = segments[1];
+      if (
+        folderName === undefined ||
+        folderName.toLowerCase() !== targetUserFolderName.toLowerCase()
+      ) {
+        return {
+          allowed: false,
+          reason: 'other-user-dir',
+          absolutePath: realResolved,
+          relativePath,
+        };
+      }
     }
   }
 
