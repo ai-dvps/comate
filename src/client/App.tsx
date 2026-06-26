@@ -23,6 +23,7 @@ import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
 import { isMacOS } from './lib/platform'
 import { useBadgeSync } from './lib/use-badge-sync'
+import { useNotificationSounds } from './lib/use-notification-sounds'
 import { cn } from './components/ui/utils'
 import { startPeriodicUpdateChecks, stopPeriodicUpdateChecks } from './lib/updater-api'
 import UpdateNotification from './components/UpdateNotification'
@@ -33,6 +34,7 @@ function App() {
   const { t } = useTranslation('common')
   useTheme()
   useBadgeSync()
+  useNotificationSounds()
   const { uiFontSize, autoCheckUpdates, setLastUpdateCheckAt } = useAppSettings()
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
