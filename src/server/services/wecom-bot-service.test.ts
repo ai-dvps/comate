@@ -1152,7 +1152,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
     await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
     assert.strictEqual(switchedTo.length, 1);
     assert.strictEqual(switchedTo[0].sessionId, 'sess-target');
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已恢复会话');
+    assert.strictEqual(updatedCards[0].card.replace_text, '已恢复会话');
     assert.ok(sentMessages.some((m) => m.content.includes('name-sess-target')));
   });
 
@@ -1161,7 +1161,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
     ownerBySession = (_ws, sess) => (sess === 'sess-source' ? 'owner-1' : 'owner-other');
     await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
     assert.strictEqual(switchedTo.length, 0);
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '无法操作该会话');
+    assert.strictEqual(updatedCards[0].card.replace_text, '无法操作该会话');
     assert.strictEqual(sentMessages.length, 0);
   });
 
@@ -1184,7 +1184,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
     };
     await (service as any).handleTemplateCardEvent('ws-1', frame);
     assert.strictEqual(switchedTo.length, 0);
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '无法操作该会话');
+    assert.strictEqual(updatedCards[0].card.replace_text, '无法操作该会话');
   });
 
   it('a repeat submit is handled without error (idempotent at the store layer)', async () => {
@@ -1195,7 +1195,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
     await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
     assert.strictEqual(switchedTo.length, 2);
     assert.strictEqual(switchedTo[1].sessionId, 'sess-target');
-    assert.strictEqual(updatedCards[1].card.main_title.desc, '已恢复会话');
+    assert.strictEqual(updatedCards[1].card.replace_text, '已恢复会话');
   });
 
   it('updates the card to terminal BEFORE sending the confirmation (WeCom 5s update window)', async () => {
