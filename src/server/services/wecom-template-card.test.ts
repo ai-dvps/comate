@@ -315,9 +315,20 @@ describe('wecom-template-card', () => {
     });
 
     it('works without a task_id', () => {
-      const card = buildTerminalCard('vote_interaction', '已处理');
+      const card = buildTerminalCard('button_interaction', '已处理');
       assert.strictEqual(card.card_type, 'text_notice');
       assert.strictEqual(card.task_id, undefined);
+    });
+
+    it('produces a vote_interaction terminal with replace_text + disabled checkbox (not text_notice)', () => {
+      const card = buildTerminalCard('vote_interaction', '已恢复会话', 'task-v1');
+      assert.strictEqual(card.card_type, 'vote_interaction');
+      assert.strictEqual((card as Record<string, unknown>).replace_text, '已恢复会话');
+      assert.strictEqual(
+        (card as Record<string, { disable?: boolean }>).checkbox?.disable,
+        true,
+      );
+      assert.strictEqual(card.task_id, 'task-v1');
     });
   });
 
