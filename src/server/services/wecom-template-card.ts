@@ -14,6 +14,7 @@ import type {
   ParsedCardEvent,
   ToolApprovalCardOptions,
   QuestionCardOptions,
+  SessionListCardOptions,
 } from '../types/wecom-template-card.js';
 
 const KEY_PREFIX = 'comate:1:';
@@ -148,7 +149,7 @@ export function decodeButtonKey(key: string): DecodedKeyPayload | undefined {
 }
 
 function isValidAction(a: unknown): a is ToolApprovalAction {
-  return a === 'allow' || a === 'always_allow' || a === 'deny';
+  return a === 'allow' || a === 'always_allow' || a === 'deny' || a === 'resume';
 }
 
 /**
@@ -273,6 +274,40 @@ export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
     submit_button: {
       text: '提交',
       key: encodeButtonKey(requestId, 'allow', sessionId),
+    },
+  };
+}
+
+/**
+ * Build a `vote_interaction` single-select card listing a user's sessions for
+ * the `/resume` command. The target sessionId is encoded directly in each
+ * option's `id` so the submit callback can read it statelessly — mirroring
+ * Feishu's `select_session`. The submit-button key carries action `'resume'`
+ * so `handleTemplateCardEvent` can branch a resume submit apart from approvals.
+ * No pending store: the selected option id is the source of truth on submit.
+ */
+export function buildWecomSessionListCard(options: SessionListCardOptions): TemplateCard {
+  const { requestId, sessionId, taskId, title, desc, options: sessions } = options;
+
+  return {
+    card_type: 'vote_interaction',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: {
+      title: title ?? '选择会话',
+      desc: desc ?? '请选择要恢复的会话',
+    },
+    task_id: taskId,
+    checkbox: {
+      question_key: encodeButtonKey(requestId, 'resume', sessionId),
+      mode: 0,
+      option_list: sessions.map((s) => ({
+        id: s.sessionId,
+        text: s.isActive ? `${s.label} （当前）` : s.label,
+      })),
+    },
+    submit_button: {
+      text: '恢复',
+      key: encodeButtonKey(requestId, 'resume', sessionId),
     },
   };
 }

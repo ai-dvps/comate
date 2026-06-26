@@ -4,8 +4,12 @@
 
 import type { TemplateCard } from '@wecom/aibot-node-sdk';
 
-/** Actions encoded into a button key for tool-approval cards. */
-export type ToolApprovalAction = 'allow' | 'always_allow' | 'deny';
+/**
+ * Actions encoded into a button key for interactive cards. `'resume'` is used
+ * by the `/resume` session-switch card and is branched on in
+ * `handleTemplateCardEvent` before the runtime lookup.
+ */
+export type ToolApprovalAction = 'allow' | 'always_allow' | 'deny' | 'resume';
 
 /** The decoded payload embedded in a button key. */
 export interface DecodedKeyPayload {
@@ -57,6 +61,21 @@ export interface QuestionCardOptions {
     multiSelect: boolean;
   }>;
   taskId?: string;
+}
+
+/** Options for building a session-list (`/resume`) card. */
+export interface SessionListCardOptions {
+  requestId: string;
+  /** The user's current session, encoded into the submit-button key for ownership checks. */
+  sessionId: string;
+  /** A stable task_id so later updateTemplateCard can target the card. */
+  taskId?: string;
+  /** Card main title; defaults to a generic prompt. */
+  title?: string;
+  /** Card sub-text; defaults to a generic prompt. */
+  desc?: string;
+  /** Selectable sessions. The option `id` carries the target sessionId (stateless). */
+  options: Array<{ sessionId: string; label: string; isActive?: boolean }>;
 }
 
 /** Union of all card payloads produced by this module. */
