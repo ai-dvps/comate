@@ -31,6 +31,7 @@ import {
   buildTerminalCard,
   decodeButtonKey,
   parseTemplateCardEvent,
+  verifySessionOwner,
   type NormalizedSelectedItem,
 } from './wecom-template-card.js';
 
@@ -760,6 +761,14 @@ export class WeComBotService {
       return;
     }
 
+    // /resume: stateless session switch. No runtime or pending state — the
+    // target sessionId is carried in the selected option id. Branched before the
+    // runtime lookup because /resume has no in-flight turn.
+    if (parsed.action === 'resume') {
+      await this.handleResumeSubmit(workspaceId, frame, parsed);
+      return;
+    }
+
     const runtime = chatService.getRuntimeIfExists(parsed.sessionId);
     if (!runtime) {
       await this.updateCardToTerminal(workspaceId, frame, parsed, '会话已结束或已超时');
@@ -799,6 +808,60 @@ export class WeComBotService {
       updatedInput: { questions: pending.questions, answers },
     });
     await this.updateCardToTerminal(workspaceId, frame, parsed, '已提交');
+  }
+
+  /**
+   * Handle a `/resume` card submit: switch the user's active session to the
+   * selected one. Stateless — the target sessionId is read from the selected
+   * option id; no pending store is consulted. Mirrors feishu handleSelectSession
+   * (ownership check on the TARGET session, then setActiveWecomSession).
+   * Idempotent via setActiveWecomSession's transactional single-active invariant.
+   */
+  private async handleResumeSubmit(
+    workspaceId: string,
+    frame: WsFrame<EventMessageWith<TemplateCardEventData>>,
+    parsed: {
+      wecomUserId: string;
+      cardType?: string;
+      taskId?: string;
+      selectedItems?: NormalizedSelectedItem[];
+    },
+  ): Promise<void> {
+    const targetSessionId = parsed.selectedItems?.[0]?.option_ids?.[0];
+    if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+      return;
+    }
+
+    // Verify the submitter owns the TARGET session (not just the card's source).
+    const ownsTarget = verifySessionOwner(
+      parsed.wecomUserId,
+      targetSessionId,
+      workspaceId,
+      (ws, sess) => workspaceStore.getWecomUserIdBySession(ws, sess),
+    );
+    if (!ownsTarget) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+      return;
+    }
+
+    try {
+      workspaceStore.setActiveWecomSession(workspaceId, parsed.wecomUserId, targetSessionId);
+
+      const conn = this.connections.get(workspaceId);
+      const session = await chatService.getSession(targetSessionId, workspaceId);
+      const title = session?.customTitle ?? session?.name ?? targetSessionId;
+      if (conn && conn.status === 'connected') {
+        await conn.client.sendMessage(parsed.wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: `已切换到会话：【${title}】，可继续对话` },
+        });
+      }
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '已恢复会话');
+    } catch (err) {
+      console.error('[WeComBotService] failed to switch session via /resume:', err);
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+    }
   }
 
   private buildAnswersFromCardEvent(

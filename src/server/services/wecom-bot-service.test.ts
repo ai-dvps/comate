@@ -1066,3 +1066,135 @@ describe('WeComBotService /resume command', { concurrency: false }, () => {
     assert.strictEqual(lastBody().msgtype, 'template_card');
   });
 });
+
+describe('WeComBotService /resume submit (stateless switch)', { concurrency: false }, () => {
+  let service: WeComBotService;
+  let tempDir: string;
+  let origGetOwner: typeof workspaceStore.getWecomUserIdBySession;
+  let origSetActive: typeof workspaceStore.setActiveWecomSession;
+  let origGetSession: typeof chatService.getSession;
+  let switchedTo: Array<{ wecomUserId: string; sessionId: string }>;
+  let sentMessages: Array<{ userId: string; content: string }>;
+  let updatedCards: Array<{ card: any }>;
+  let ownerBySession: (ws: string, sess: string) => string | null;
+
+  beforeEach(async () => {
+    service = new WeComBotService();
+    tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'wecom-resume-submit-'));
+    switchedTo = [];
+    sentMessages = [];
+    updatedCards = [];
+    ownerBySession = () => 'owner-1';
+
+    origGetOwner = workspaceStore.getWecomUserIdBySession.bind(workspaceStore);
+    origSetActive = workspaceStore.setActiveWecomSession.bind(workspaceStore);
+    origGetSession = chatService.getSession.bind(chatService);
+
+    workspaceStore.getWecomUserIdBySession = (ws: string, sess: string) => ownerBySession(ws, sess);
+    workspaceStore.setActiveWecomSession = (_ws: string, u: string, sid: string) => {
+      switchedTo.push({ wecomUserId: u, sessionId: sid });
+    };
+    chatService.getSession = async (id: string) =>
+      ({ id, workspaceId: 'ws-1', name: `name-${id}`, updatedAt: '2026-06-01T00:00:00.000Z' } as any);
+  });
+
+  afterEach(async () => {
+    workspaceStore.getWecomUserIdBySession = origGetOwner;
+    workspaceStore.setActiveWecomSession = origSetActive;
+    chatService.getSession = origGetSession;
+    await fsPromises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  function inject() {
+    (service as any).connections.set('ws-1', {
+      client: {
+        sendMessage: async (userId: string, body: any) => {
+          sentMessages.push({ userId, content: body.markdown?.content ?? '' });
+        },
+        updateTemplateCard: async (_frame: any, card: any) => {
+          updatedCards.push({ card });
+        },
+      },
+      workspaceId: 'ws-1',
+      botId: 'bot-1',
+      folderPath: tempDir,
+      status: 'connected' as const,
+    });
+  }
+
+  function makeResumeEvent(sourceSessionId: string, targetSessionId: string, userid = 'owner-1') {
+    const key = encodeButtonKey('req-resume', 'resume', sourceSessionId);
+    return {
+      headers: { req_id: 'r' },
+      body: {
+        msgid: 'm',
+        aibotid: 'bot-1',
+        chattype: 'single',
+        from: { userid },
+        msgtype: 'event',
+        event: {
+          eventtype: 'template_card_event',
+          template_card_event: {
+            event_key: key,
+            task_id: 'task-1',
+            card_type: 'vote_interaction',
+            selected_items: {
+              selected_item: [{ question_key: key, option_ids: { option_id: [targetSessionId] } }],
+            },
+          },
+        },
+      },
+    };
+  }
+
+  it('switches active session to the selected target and confirms (Covers AE1/F1)', async () => {
+    inject();
+    await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
+    assert.strictEqual(switchedTo.length, 1);
+    assert.strictEqual(switchedTo[0].sessionId, 'sess-target');
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已恢复会话');
+    assert.ok(sentMessages.some((m) => m.content.includes('name-sess-target')));
+  });
+
+  it('rejects when the target session is not owned by the submitter (Covers AE6/R12)', async () => {
+    inject();
+    ownerBySession = (_ws, sess) => (sess === 'sess-source' ? 'owner-1' : 'owner-other');
+    await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
+    assert.strictEqual(switchedTo.length, 0);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '无法操作该会话');
+    assert.strictEqual(sentMessages.length, 0);
+  });
+
+  it('rejects when the selected option id is missing (Covers AE6/R12)', async () => {
+    inject();
+    const key = encodeButtonKey('req-resume', 'resume', 'sess-source');
+    const frame = {
+      headers: { req_id: 'r' },
+      body: {
+        msgid: 'm',
+        aibotid: 'bot-1',
+        chattype: 'single',
+        from: { userid: 'owner-1' },
+        msgtype: 'event',
+        event: {
+          eventtype: 'template_card_event',
+          template_card_event: { event_key: key, task_id: 'task-1', card_type: 'vote_interaction' },
+        },
+      },
+    };
+    await (service as any).handleTemplateCardEvent('ws-1', frame);
+    assert.strictEqual(switchedTo.length, 0);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '无法操作该会话');
+  });
+
+  it('a repeat submit is handled without error (idempotent at the store layer)', async () => {
+    inject();
+    await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
+    // Clear the per-user rate-limit window so the second event is processed.
+    (service as any).cardClickRateLimit.clear();
+    await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
+    assert.strictEqual(switchedTo.length, 2);
+    assert.strictEqual(switchedTo[1].sessionId, 'sess-target');
+    assert.strictEqual(updatedCards[1].card.main_title.desc, '已恢复会话');
+  });
+});
