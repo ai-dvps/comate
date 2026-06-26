@@ -348,7 +348,7 @@ describe('FeishuBotService', () => {
   });
 
   describe('card commands use the user open_id', () => {
-    it('/session sends the session list card to the user open_id', async () => {
+    it('/resume sends the session list card to the user open_id', async () => {
       await (service as unknown as { handleSessionCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleSessionCommand(
         thread,
         feishuUserId,
@@ -681,13 +681,13 @@ describe('FeishuBotService', () => {
       );
     }
 
-    it('"session" sends the session-list card to the operator open_id', async () => {
+    it('"resume" sends the session-list card to the operator open_id', async () => {
       workspaceStore.listFeishuSessionsByUser = () => [
         { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
       ];
       createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
 
-      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'session');
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'resume');
 
       const interactive = interactiveCardCalls();
       assert.strictEqual(interactive.length, 1, 'should send one interactive session-list card');
@@ -702,10 +702,10 @@ describe('FeishuBotService', () => {
       );
     });
 
-    it('"session" still sends a card when the user has no sessions', async () => {
+    it('"resume" still sends a card when the user has no sessions', async () => {
       workspaceStore.listFeishuSessionsByUser = () => [];
 
-      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'session');
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'resume');
 
       assert.strictEqual(interactiveCardCalls().length, 1, 'empty-state card should still be sent');
     });

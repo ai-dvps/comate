@@ -184,7 +184,7 @@ export class FeishuBotService {
       return;
     }
 
-    if (key !== 'session' && key !== 'new') {
+    if (key !== 'resume' && key !== 'new') {
       diagLog(`[FeishuBotService] menu event: unknown key "${key}"`);
       await this.sendMenuText(larkClient, openId, '⚠️ 未知的菜单操作。');
       return;
@@ -192,7 +192,7 @@ export class FeishuBotService {
 
     diagLog(`[FeishuBotService] menu event: processing key="${key}" for ${openId}`);
     await this.runForUser(openId, async () => {
-      if (key === 'session') {
+      if (key === 'resume') {
         await this.sendSessionListCard(larkClient, workspace, openId);
       } else {
         await this.createAndNotifyNewSession(larkClient, workspace, openId);
@@ -225,7 +225,7 @@ export class FeishuBotService {
       try {
         if (text === '/workspace') {
           await this.runForUser(feishuUserId, () => this.handleWorkspaceCommand(thread, feishuUserId));
-        } else if (text === '/session') {
+        } else if (text === '/resume') {
           await this.runForUser(feishuUserId, () => this.handleSessionCommand(thread, feishuUserId));
         } else if (text === '/stop') {
           await this.runForUser(feishuUserId, () => this.handleStopCommand(thread, feishuUserId));
@@ -370,7 +370,7 @@ export class FeishuBotService {
 
     const sessionId = workspaceStore.getFeishuActiveSession(workspace.id, feishuUserId);
     if (!sessionId) {
-      await this.safePostText(thread, '没有活跃的会话可中断。请运行 /session 选择会话。');
+      await this.safePostText(thread, '没有活跃的会话可中断。请运行 /resume 选择会话。');
       return;
     }
 
@@ -446,7 +446,7 @@ export class FeishuBotService {
       const result = await this.getOrCreateSession(workspace, feishuUserId);
       sessionId = result.sessionId;
       if (result.isNew) {
-        initialHint = '已为你创建新会话。发送 /session 可切换会话，发送 /new 可创建新会话。';
+        initialHint = '已为你创建新会话。发送 /resume 可切换会话，发送 /new 可创建新会话。';
       }
     } catch (err) {
       console.error('[FeishuBotService] failed to get or create session:', err);
@@ -497,7 +497,7 @@ export class FeishuBotService {
     // drop every subsequent text_delta (handleEvent ignores events once
     // finalized). FeishuStreamReply finalizes itself when the turn's `result`
     // (or error_note / interrupted) event arrives. Returning now also lets the
-    // per-user queue advance, so the user can still run /session or /stop while
+    // per-user queue advance, so the user can still run /resume or /stop while
     // a turn — or a pending approval — is in flight.
   }
 
@@ -546,8 +546,8 @@ export class FeishuBotService {
 
   /**
    * Collect the Feishu sessions owned by a user for the session-list card.
-   * Shared by the `/session` text command (Thread-based send) and the
-   * "session" bot menu (DM-based send).
+   * Shared by the `/resume` text command (Thread-based send) and the
+   * "resume" bot menu (DM-based send).
    */
   private async collectSessionList(
     workspace: Workspace,

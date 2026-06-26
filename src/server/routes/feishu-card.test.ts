@@ -192,10 +192,10 @@ describe('feishu card route', { concurrency: false }, () => {
     it('extracts operator.operator_id.open_id and event_key', () => {
       const { openId, eventKey } = extractMenuEvent({
         operator: { operator_id: { open_id: 'ou_menu' } },
-        event_key: 'session',
+        event_key: 'resume',
       });
       assert.strictEqual(openId, 'ou_menu');
-      assert.strictEqual(eventKey, 'session');
+      assert.strictEqual(eventKey, 'resume');
     });
 
     it('returns an empty open_id when operator.operator_id.open_id is missing', () => {
@@ -215,7 +215,7 @@ describe('feishu card route', { concurrency: false }, () => {
   });
 
   describe('application.bot.menu_v6 route handling', () => {
-    function menuBody(eventKey = 'session', openId = 'ou_menu'): string {
+    function menuBody(eventKey = 'resume', openId = 'ou_menu'): string {
       return JSON.stringify({
         schema: '2.0',
         header: { event_type: 'application.bot.menu_v6' },
@@ -275,7 +275,7 @@ describe('feishu card route', { concurrency: false }, () => {
       const handler = await importHandler('/:workspaceId');
       const res = createMockRes();
       await handler(
-        { params: { workspaceId: 'ws-1' }, rawBody: menuBody('session', 'ou_menu'), headers: {} },
+        { params: { workspaceId: 'ws-1' }, rawBody: menuBody('resume', 'ou_menu'), headers: {} },
         res,
       );
 
