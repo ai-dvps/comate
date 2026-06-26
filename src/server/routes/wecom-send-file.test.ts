@@ -2,17 +2,26 @@ import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import type { Workspace } from '../models/workspace.js';
 
 describe('wecom-send-file routes', { concurrency: false }, () => {
   let originalGetWecomUserIdBySession: typeof workspaceStore.getWecomUserIdBySession;
+  let originalGet: typeof workspaceStore.get;
+  let originalGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
   let originalSendFile: (
     workspaceId: string,
     toUser: string,
     filePath: string,
+    isAdmin?: boolean,
   ) => Promise<void>;
 
   beforeEach(async () => {
     originalGetWecomUserIdBySession = workspaceStore.getWecomUserIdBySession.bind(workspaceStore);
+    originalGet = workspaceStore.get.bind(workspaceStore);
+    originalGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
+
+    workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as unknown as Workspace);
+    workspaceStore.getWecomUserMapping = () => null;
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     originalSendFile = wecomBotService.sendFile.bind(wecomBotService);
@@ -20,6 +29,8 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
 
   afterEach(() => {
     workspaceStore.getWecomUserIdBySession = originalGetWecomUserIdBySession;
+    workspaceStore.get = originalGet;
+    workspaceStore.getWecomUserMapping = originalGetWecomUserMapping;
 
     import('../services/wecom-bot-service.js').then(({ wecomBotService }) => {
       wecomBotService.sendFile = originalSendFile;
@@ -99,6 +110,72 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     assert.strictEqual(res.statusCode, 200);
     assert.deepStrictEqual(res.jsonBody, { sent: true });
     assert.strictEqual(sendFileCalled, true);
+  });
+
+  it('passes isAdmin=true to sendFile when the caller is an admin', async () => {
+    const handlers = await importRouteHandlers();
+    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
+    workspaceStore.getWecomUserMapping = () => 'alice';
+    workspaceStore.get = async () => ({
+      id: 'ws-1',
+      settings: {
+        wecomBotIsolation: {
+          adminUserIds: ['alice'],
+          defaultAllowedSkills: [],
+          adminAllowedSkills: [],
+        },
+      },
+    } as unknown as Workspace);
+
+    const { wecomBotService } = await import('../services/wecom-bot-service.js');
+    let capturedIsAdmin: boolean | undefined;
+    wecomBotService.sendFile = async (_wsId, _toUser, _filePath, isAdmin) => {
+      capturedIsAdmin = isAdmin;
+    };
+
+    const req = {
+      params: { workspaceId: 'ws-1' },
+      body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
+    };
+    const res = createMockRes();
+
+    await handlers['/'].post(req, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(capturedIsAdmin, true);
+  });
+
+  it('passes isAdmin=false to sendFile for non-admin callers', async () => {
+    const handlers = await importRouteHandlers();
+    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
+    workspaceStore.getWecomUserMapping = () => 'alice';
+    workspaceStore.get = async () => ({
+      id: 'ws-1',
+      settings: {
+        wecomBotIsolation: {
+          adminUserIds: ['admin-user'],
+          defaultAllowedSkills: [],
+          adminAllowedSkills: [],
+        },
+      },
+    } as unknown as Workspace);
+
+    const { wecomBotService } = await import('../services/wecom-bot-service.js');
+    let capturedIsAdmin: boolean | undefined;
+    wecomBotService.sendFile = async (_wsId, _toUser, _filePath, isAdmin) => {
+      capturedIsAdmin = isAdmin;
+    };
+
+    const req = {
+      params: { workspaceId: 'ws-1' },
+      body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
+    };
+    const res = createMockRes();
+
+    await handlers['/'].post(req, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(capturedIsAdmin, false);
   });
 
   it('returns 400 when sessionId is missing', async () => {

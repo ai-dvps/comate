@@ -25,6 +25,7 @@ import { createStreamReply, type StreamReplyConnection, type StreamReplyResult }
 import { saveMediaFile } from './wecom-file-storage.js';
 import { validateSendFilePath } from './wecom-send-file-policy.js';
 import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
+import { diagLog } from '../utils/diag-logger.js';
 import {
   buildTerminalCard,
   decodeButtonKey,
@@ -60,7 +61,11 @@ async function resolveStreamReplyIfNeeded<TFrame>(
   const workspace = await workspaceStore.get(workspaceId);
   if (!workspace) return undefined;
   const policy = resolveEffectivePolicy(workspace).policy;
-  if (evaluateToolPermission(policy, REPLY_TOOL_NAME) === 'deny') {
+
+  const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId;
+  const isAdmin = workspace.settings.wecomBotIsolation?.adminUserIds?.includes(plaintextUserId) ?? false;
+
+  if (evaluateToolPermission(policy, REPLY_TOOL_NAME, isAdmin) === 'deny') {
     return undefined;
   }
   return createStreamReply(
@@ -554,7 +559,7 @@ export class WeComBotService {
     });
   }
 
-  async sendFile(workspaceId: string, toUser: string, filePath: string): Promise<void> {
+  async sendFile(workspaceId: string, toUser: string, filePath: string, isAdmin = false): Promise<void> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} not found`);
@@ -572,7 +577,7 @@ export class WeComBotService {
 
     const userFolderName = workspaceStore.getWecomUserMapping(encryptedUserId) ?? encryptedUserId;
 
-    const validation = validateSendFilePath(workspace.folderPath, userFolderName, filePath.trim());
+    const validation = validateSendFilePath(workspace.folderPath, userFolderName, filePath.trim(), isAdmin);
     if (!validation.allowed) {
       if (validation.reason === 'other-user-dir') {
         await conn.client.sendMessage(encryptedUserId, {
@@ -658,6 +663,9 @@ export class WeComBotService {
 
     if (pending.type === 'approval') {
       if (parsed.action === 'deny') {
+        const toolName = pending.toolName ?? 'unknown';
+        const toolUseId = pending.toolUseId ?? 'none';
+        diagLog(`[WeComBotService] ask deny workspaceId=${workspaceId} sessionId=${parsed.sessionId} requestId=${parsed.requestId} tool=${toolName} toolUseId=${toolUseId} reason=user-deny`);
         runtime.resolveApproval(parsed.requestId, {
           behavior: 'deny',
           message: 'User denied this tool call.',

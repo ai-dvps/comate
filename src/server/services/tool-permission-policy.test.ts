@@ -7,6 +7,7 @@ import {
   REPLY_TOOL_NAME,
   SAFE_PRESET,
   evaluateToolPermission,
+  getToolPermissionDenialReason,
   resolveEffectivePolicy,
   type ToolPermissionPolicy,
 } from './tool-permission-policy.js';
@@ -103,11 +104,32 @@ describe('evaluateToolPermission', () => {
     assert.equal(evaluateToolPermission(policy, 'Edit'), 'deny');
   });
 
-  it('returns category default when no override present', () => {
-    assert.equal(evaluateToolPermission(SAFE_PRESET, 'Read'), 'allow');
+  it('admin bypass returns allow for tools in denied categories', () => {
+    assert.equal(evaluateToolPermission(SAFE_PRESET, 'Bash', true), 'allow');
+    assert.equal(evaluateToolPermission(SAFE_PRESET, 'Edit', true), 'allow');
+    assert.equal(evaluateToolPermission(SAFE_PRESET, 'WebFetch', true), 'allow');
+    assert.equal(evaluateToolPermission(SAFE_PRESET, REPLY_TOOL_NAME, true), 'allow');
+  });
+
+  it('admin bypass overrides per-tool deny overrides', () => {
+    const policy: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults },
+      overrides: { Bash: 'deny', Read: 'deny', Edit: 'ask' },
+    };
+    assert.equal(evaluateToolPermission(policy, 'Bash', true), 'allow');
+    assert.equal(evaluateToolPermission(policy, 'Read', true), 'allow');
+    assert.equal(evaluateToolPermission(policy, 'Edit', true), 'allow');
+  });
+
+  it('admin bypass still returns unknown for uncategorized tools', () => {
+    assert.equal(evaluateToolPermission(SAFE_PRESET, 'mcp__someServer__tool', true), 'unknown');
+    assert.equal(evaluateToolPermission(SAFE_PRESET, 'Skill_MySkill', true), 'unknown');
+  });
+
+  it('non-admin callers are unaffected by the admin parameter', () => {
+    assert.equal(evaluateToolPermission(SAFE_PRESET, 'Bash', false), 'deny');
     assert.equal(evaluateToolPermission(SAFE_PRESET, 'Bash'), 'deny');
-    assert.equal(evaluateToolPermission(SAFE_PRESET, 'WebFetch'), 'deny');
-    assert.equal(evaluateToolPermission(SAFE_PRESET, REPLY_TOOL_NAME), 'allow');
   });
 
   it('returns unknown for tool not in any category (MCP, Skill, future SDK tool)', () => {
@@ -158,6 +180,43 @@ describe('evaluateToolPermission', () => {
     assert.ok(CATEGORY_TOOL_MAP.subagents.includes('Agent'));
     assert.ok(CATEGORY_TOOL_MAP.subagents.includes('TaskOutput'));
     assert.deepEqual(CATEGORY_TOOL_MAP.reply, [REPLY_TOOL_NAME]);
+  });
+});
+
+describe('getToolPermissionDenialReason', () => {
+  it('returns override-deny when a per-tool override denies', () => {
+    const policy: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...ALLOW_ALL_PRESET.categoryDefaults },
+      overrides: { Edit: 'deny' },
+    };
+    assert.equal(getToolPermissionDenialReason(policy, 'Edit'), 'override-deny');
+  });
+
+  it('returns category-deny when the category default denies and there is no override', () => {
+    assert.equal(getToolPermissionDenialReason(SAFE_PRESET, 'Bash'), 'category-deny');
+    assert.equal(getToolPermissionDenialReason(SAFE_PRESET, 'Read'), undefined);
+  });
+
+  it('returns undefined when an override allows or asks a tool in a denied category', () => {
+    const allowOverride: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults },
+      overrides: { Bash: 'allow' },
+    };
+    assert.equal(getToolPermissionDenialReason(allowOverride, 'Bash'), undefined);
+
+    const askOverride: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults },
+      overrides: { Bash: 'ask' },
+    };
+    assert.equal(getToolPermissionDenialReason(askOverride, 'Bash'), undefined);
+  });
+
+  it('returns undefined for unknown tools and undefined policies', () => {
+    assert.equal(getToolPermissionDenialReason(SAFE_PRESET, 'SomeFutureTool'), undefined);
+    assert.equal(getToolPermissionDenialReason(undefined, 'Bash'), undefined);
   });
 });
 

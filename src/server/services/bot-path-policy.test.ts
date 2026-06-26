@@ -176,6 +176,99 @@ describe('validateToolInput', () => {
   });
 });
 
+describe('validateToolInput admin bypass', () => {
+  let tmpDir = '';
+  let workspace: Workspace;
+  let ctx: ReturnType<typeof createPathPolicyContext>;
+
+  before(() => {
+    tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-path-policy-admin-')));
+    const userDir = path.join(tmpDir, 'data', 'user-a');
+    const otherDir = path.join(tmpDir, 'data', 'user-b');
+    const claudeDir = path.join(tmpDir, '.claude');
+    fs.mkdirSync(userDir, { recursive: true });
+    fs.mkdirSync(otherDir, { recursive: true });
+    fs.mkdirSync(claudeDir);
+    fs.writeFileSync(path.join(userDir, 'note.txt'), 'hello');
+    fs.writeFileSync(path.join(otherDir, 'secret.txt'), 'secret');
+    fs.writeFileSync(path.join(tmpDir, 'shared.txt'), 'shared');
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), '{}');
+
+    workspace = createWorkspace({ folderPath: tmpDir });
+    ctx = createPathPolicyContext(workspace, 'user-a', ['user-b'], true);
+  });
+
+  it('allows admin to read a file inside another user directory', () => {
+    const result = validateToolInput(ctx, 'Read', { file_path: path.join(tmpDir, 'data', 'user-b', 'secret.txt') });
+    assert.equal(result.allowed, true);
+  });
+
+  it('allows admin to read a denylisted path', () => {
+    const result = validateToolInput(ctx, 'Read', { file_path: path.join(tmpDir, '.claude', 'settings.json') });
+    assert.equal(result.allowed, true);
+  });
+
+  it('allows admin to read a shared workspace file', () => {
+    const result = validateToolInput(ctx, 'Read', { file_path: path.join(tmpDir, 'shared.txt') });
+    assert.equal(result.allowed, true);
+  });
+
+  it('allows admin to write a shared workspace file', () => {
+    const result = validateToolInput(ctx, 'Write', { file_path: path.join(tmpDir, 'shared.txt') });
+    assert.equal(result.allowed, true);
+  });
+
+  it('allows admin to write a file inside another user directory', () => {
+    const result = validateToolInput(ctx, 'Edit', { file_path: path.join(tmpDir, 'data', 'user-b', 'secret.txt') });
+    assert.equal(result.allowed, true);
+  });
+
+  it('denies admin reading outside the workspace', () => {
+    const result = validateToolInput(ctx, 'Read', { file_path: '/etc/passwd' });
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, 'outside-workspace');
+  });
+
+  it('denies admin writing outside the workspace via parent traversal', () => {
+    const result = validateToolInput(ctx, 'Write', { file_path: '../outside.json' });
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, 'outside-workspace');
+  });
+
+  it('allows admin Glob patterns spanning other user directories', () => {
+    const result = validateToolInput(ctx, 'Glob', { pattern: 'data/**/*.txt' });
+    assert.equal(result.allowed, true);
+  });
+
+  it('allows admin Glob patterns targeting denylisted segments', () => {
+    const result = validateToolInput(ctx, 'Glob', { pattern: '.claude/**' });
+    assert.equal(result.allowed, true);
+  });
+
+  it('still rejects admin Glob patterns with parent traversal', () => {
+    const result = validateToolInput(ctx, 'Glob', { pattern: '../etc/*' });
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, 'invalid-pattern');
+  });
+
+  it('allows admin Grep path targeting another user directory', () => {
+    const result = validateToolInput(ctx, 'Grep', {
+      path: path.join(tmpDir, 'data', 'user-b'),
+      pattern: 'secret',
+    });
+    assert.equal(result.allowed, true);
+  });
+
+  it('allows admin Grep with denylisted glob filter', () => {
+    const result = validateToolInput(ctx, 'Grep', {
+      path: tmpDir,
+      glob: '.claude/**',
+      pattern: 'x',
+    });
+    assert.equal(result.allowed, true);
+  });
+});
+
 describe('resolveAndCheckPath', () => {
   it('allows reading a shared file and denies writing it', () => {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-resolve-')));

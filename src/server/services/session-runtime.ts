@@ -323,7 +323,9 @@ export class SessionRuntime {
   private timeoutDeny(requestId: string): void {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) return;
-    diagLog(`[Runtime ${this.sessionId}] timeout deny requestId=${requestId}`);
+    const toolName = pending.toolName ?? 'unknown';
+    const toolUseId = pending.toolUseId ?? 'none';
+    diagLog(`[Runtime ${this.sessionId}] ask deny requestId=${requestId} tool=${toolName} toolUseId=${toolUseId} reason=timeout`);
     this.emitter.emitApprovalTimeout(requestId);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
@@ -476,7 +478,7 @@ export class SessionRuntime {
   getPendingCardState(
     requestId: string,
   ):
-    | { type: 'approval'; suggestions?: PermissionUpdate[] }
+    | { type: 'approval'; toolName?: string; toolUseId?: string; suggestions?: PermissionUpdate[] }
     | { type: 'question'; questions: QuestionPayload[] }
     | undefined {
     const pending = this.pendingApprovals.get(requestId);
@@ -484,7 +486,12 @@ export class SessionRuntime {
     if (pending.type === 'question') {
       return { type: 'question', questions: pending.questions ?? [] };
     }
-    return { type: 'approval', suggestions: pending.suggestions };
+    return {
+      type: 'approval',
+      toolName: pending.toolName,
+      toolUseId: pending.toolUseId,
+      suggestions: pending.suggestions,
+    };
   }
 
   /**
@@ -589,6 +596,9 @@ export class SessionRuntime {
         const onAbort = () => {
           const pending = this.pendingApprovals.get(requestId);
           if (pending) {
+            const toolName = pending.toolName ?? 'unknown';
+            const toolUseId = pending.toolUseId ?? 'none';
+            diagLog(`[Runtime ${this.sessionId}] ask deny requestId=${requestId} tool=${toolName} toolUseId=${toolUseId} reason=abort`);
             this.clearPendingTimer(pending);
             this.pendingApprovals.delete(requestId);
             this.emitter.emitApprovalResolved(requestId);

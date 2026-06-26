@@ -6,6 +6,23 @@ import type { SdkClient } from './sdk-client.js';
 import type { Query, SDKMessage, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent } from '../types/message.js';
 
+function collectDiagLogs(): { logs: string[]; restore: () => void } {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  const originalSidecar = process.env.COMATE_SIDECAR;
+  process.env.COMATE_SIDECAR = '';
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(' '));
+  };
+  return {
+    logs,
+    restore: () => {
+      console.log = originalLog;
+      process.env.COMATE_SIDECAR = originalSidecar;
+    },
+  };
+}
+
 describe('session-runtime activity callback', { concurrency: false }, () => {
   let activityCalls: number;
   let runtime: SessionRuntime | undefined;
@@ -422,13 +439,25 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
     runtime.subscribe(createMockResponse());
 
     const callback = getCanUseToolCallback(runtime);
-    const result = await callback('Bash', { command: 'echo hi', timeout: 30 }, {
-      signal: createAbortSignal(),
-      toolUseID: 'tu-timeout',
-    });
+    const { logs, restore } = collectDiagLogs();
+    let result;
+    try {
+      result = await callback('Bash', { command: 'echo hi', timeout: 30 }, {
+        signal: createAbortSignal(),
+        toolUseID: 'tu-timeout',
+      });
+    } finally {
+      restore();
+    }
 
     assert.strictEqual(result.behavior, 'deny');
     assert.strictEqual(result.message, 'Request timed out waiting for user response.');
+    assert.ok(
+      logs.some((line) =>
+        line.includes('reason=timeout') && line.includes('tool=Bash') && line.includes('toolUseId=tu-timeout')),
+      'expected timeout reason to be logged',
+    );
+    assert.ok(!logs.some((line) => line.includes('command')), 'log line must not contain tool input');
   });
 
   it('user resolution before expiry cancels the timer', async () => {
@@ -472,11 +501,25 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
     });
 
     await new Promise((r) => setTimeout(r, 20));
-    controller.abort();
+
+    const { logs, restore } = collectDiagLogs();
+    try {
+      controller.abort();
+    } finally {
+      // Give the abort handler a tick to log before restoring console.
+      await new Promise((r) => setTimeout(r, 0));
+      restore();
+    }
 
     const result = await promise;
     assert.strictEqual(result.behavior, 'deny');
     assert.ok(result.message?.includes('aborted'));
+    assert.ok(
+      logs.some((line) =>
+        line.includes('reason=abort') && line.includes('tool=Bash') && line.includes('toolUseId=tu-abort')),
+      'expected abort reason to be logged',
+    );
+    assert.ok(!logs.some((line) => line.includes('command')), 'log line must not contain tool input');
   });
 
   it('close() cancels timers and resolves dangling requests', async () => {

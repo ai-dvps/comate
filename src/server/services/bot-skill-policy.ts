@@ -47,22 +47,18 @@ export function evaluateSkill(
     return { allowed: true, skillName };
   }
 
+  // Admins can invoke any skill.
+  if (ctx.isAdmin) {
+    return { allowed: true, skillName };
+  }
+
   const defaultSet = new Set(
     (ctx.isolation.defaultAllowedSkills ?? [])
       .map(normalizeSkillName)
       .filter((n): n is string => n !== undefined),
   );
-  const adminSet = new Set(
-    (ctx.isolation.adminAllowedSkills ?? [])
-      .map(normalizeSkillName)
-      .filter((n): n is string => n !== undefined),
-  );
 
   if (defaultSet.has(skillName)) {
-    return { allowed: true, skillName };
-  }
-
-  if (ctx.isAdmin && adminSet.has(skillName)) {
     return { allowed: true, skillName };
   }
 

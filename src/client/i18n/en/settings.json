@@ -273,7 +273,7 @@
     "isolation": {
       "adminUsers": {
         "label": "Admin users",
-        "hint": "Canonical WeCom user IDs that are treated as administrators. Admins can use the additional skills listed below and are not subject to the Bash whitelist.",
+        "hint": "Canonical WeCom user IDs that are treated as administrators. Admins can use all tools, read and write any file inside the workspace, and run any skill. They are not subject to the Bash whitelist.",
         "placeholder": "e.g. wang@example.com"
       },
       "defaultSkills": {

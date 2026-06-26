@@ -9,6 +9,7 @@ export interface PathPolicyContext {
   userDir: string;
   knownUserDirNames: string[];
   denyMatchers: ReturnType<typeof picomatch>[];
+  isAdmin: boolean;
 }
 
 export interface PathValidationResult {
@@ -38,6 +39,7 @@ export function createPathPolicyContext(
   workspace: Workspace,
   userDirName: string,
   knownUserDirNames: string[] = [],
+  isAdmin = false,
 ): PathPolicyContext {
   const workspaceFolder = path.resolve(workspace.folderPath);
   const userDir = path.join(workspaceFolder, 'data', userDirName);
@@ -49,6 +51,7 @@ export function createPathPolicyContext(
     userDir,
     knownUserDirNames: knownUserDirNames.filter((n) => n !== userDirName),
     denyMatchers,
+    isAdmin,
   };
 }
 
@@ -130,7 +133,7 @@ function checkReadPath(ctx: PathPolicyContext, resolved: string): PathValidation
   const escape = checkWorkspaceEscape(ctx, resolved);
   if (!escape.allowed) return escape;
 
-  if (isWithinUserDir(ctx, resolved)) {
+  if (ctx.isAdmin || isWithinUserDir(ctx, resolved)) {
     return { allowed: true };
   }
 
@@ -149,7 +152,7 @@ function checkWritePath(ctx: PathPolicyContext, resolved: string): PathValidatio
   const escape = checkWorkspaceEscape(ctx, resolved);
   if (!escape.allowed) return escape;
 
-  if (isWithinUserDir(ctx, resolved)) {
+  if (ctx.isAdmin || isWithinUserDir(ctx, resolved)) {
     return { allowed: true };
   }
 
@@ -194,17 +197,19 @@ function checkGlobPattern(
     return checkReadPath(ctx, resolved);
   }
 
-  // Reject explicit traversal into protected segments.
-  const segments = normalized.split(/[\\/]/).filter(Boolean);
-  if (segments[0] === '.claude' || segments[0] === 'node_modules' || segments[0] === '.git') {
-    return { allowed: false, reason: 'denylist' };
-  }
-  if (
-    segments[0] === 'data' &&
-    segments[1] !== undefined &&
-    ctx.knownUserDirNames.includes(segments[1])
-  ) {
-    return { allowed: false, reason: 'other-user-dir' };
+  if (!ctx.isAdmin) {
+    // Reject explicit traversal into protected segments.
+    const segments = normalized.split(/[\\/]/).filter(Boolean);
+    if (segments[0] === '.claude' || segments[0] === 'node_modules' || segments[0] === '.git') {
+      return { allowed: false, reason: 'denylist' };
+    }
+    if (
+      segments[0] === 'data' &&
+      segments[1] !== undefined &&
+      ctx.knownUserDirNames.includes(segments[1])
+    ) {
+      return { allowed: false, reason: 'other-user-dir' };
+    }
   }
 
   if (basePath) {
@@ -297,6 +302,6 @@ export function checkUserPath(
   const resolved = resolveRealPath(ctx, rawPath);
   const escape = checkWorkspaceEscape(ctx, resolved);
   if (!escape.allowed) return escape;
-  if (isWithinUserDir(ctx, resolved)) return { allowed: true };
+  if (ctx.isAdmin || isWithinUserDir(ctx, resolved)) return { allowed: true };
   return { allowed: false, reason: 'outside-user-dir-write' };
 }

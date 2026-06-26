@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **WeCom bot admin permissions** — users listed in `wecomBotIsolation.adminUserIds` now bypass the workspace tool-permission policy, per-user file isolation, the workspace denylist, and skill allowlists inside WeCom bot sessions. Admins can also send files from any workspace folder via the proactive send-file API. The workspace boundary and symlink resolution remain enforced for admins; GUI and Feishu bot sessions are unchanged.
+
 ### Changed
 
 - **WeCom/Feishu bot acknowledgment now rotates** — the fixed "收到，正在处理中" / "收到，正在处理..." placeholder shown right after a bot message is replaced with a small built-in pool of friendlier Chinese acknowledgments. A message is chosen at random for each incoming message, and the same pool is shared across WeCom and Feishu.

@@ -36,7 +36,16 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    await wecomBotService.sendFile(workspaceId, toUser.trim(), filePath.trim());
+    const workspace = await store.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'workspace_not_found' });
+      return;
+    }
+
+    const callerCanonicalUserId = store.getWecomUserMapping(callerUserId) ?? callerUserId;
+    const isAdmin = workspace.settings.wecomBotIsolation?.adminUserIds?.includes(callerCanonicalUserId) ?? false;
+
+    await wecomBotService.sendFile(workspaceId, toUser.trim(), filePath.trim(), isAdmin);
 
     res.status(200).json({ sent: true });
   } catch (error) {
