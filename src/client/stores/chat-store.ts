@@ -176,6 +176,12 @@ interface PendingTaskCreate {
   activeForm?: string
 }
 
+export interface TurnCompletion {
+  endedAt: number
+  isError: boolean
+  durationMs: number
+}
+
 interface ChatState {
   sessions: Record<string, ChatSession[]>
   messages: Record<string, ChatMessage[]>
@@ -184,6 +190,7 @@ interface ChatState {
   isStreaming: Record<string, boolean>
   isCompacting: Record<string, boolean>
   compactingStartTime: Record<string, number>
+  streamStartedAt: Record<string, number>
   isLoadingSessions: Record<string, boolean>
   isLoadingMessages: Record<string, boolean>
   approvalQueue: Record<string, PendingItem[]>
@@ -205,6 +212,7 @@ interface ChatState {
   sessionUsage: Record<string, SessionUsage>
   contextUsage: Record<string, ContextUsage>
   resultMeta: Record<string, ResultMeta>
+  lastCompletion: Record<string, TurnCompletion>
   domCache: Record<string, string[]>
   isRestartingRuntime: Record<string, boolean>
 
@@ -869,8 +877,9 @@ export function handleSseEvent(
       set((state) => {
         const existing = state.messages[sessionId] || []
         if (existing.some((m) => m.id === messageId)) {
-          // Reconnect replay — message already exists, just ensure isStreaming
-          return {
+          // Reconnect replay — message already exists, just ensure isStreaming.
+          const existingMsg = existing.find((m) => m.id === messageId)
+          const updates: Partial<ChatState> = {
             messages: {
               ...state.messages,
               [sessionId]: existing.map((m) =>
@@ -878,14 +887,25 @@ export function handleSseEvent(
               ),
             },
           }
+          // The prompt-send action is not replayed on reconnect, so recover the
+          // turn-start timestamp from the existing assistant message when it is
+          // missing — this keeps the duration guard working after a reconnect.
+          if (!state.streamStartedAt[sessionId]) {
+            updates.streamStartedAt = {
+              ...state.streamStartedAt,
+              [sessionId]: existingMsg?.timestamp || Date.now(),
+            }
+          }
+          return updates
         }
+        const startedAt = Date.now()
         const newMessages: ChatMessage[] = [
           ...existing,
           {
             id: messageId,
             role: 'assistant' as const,
             parts: [],
-            timestamp: Date.now(),
+            timestamp: startedAt,
             isStreaming: true,
           },
         ]
@@ -897,6 +917,11 @@ export function handleSseEvent(
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
           ...applyActivityUpdate(state, workspaceId, sessionId),
+        }
+        // Preserve an earlier prompt-send timestamp when present; otherwise
+        // capture the turn start here.
+        if (!state.streamStartedAt[sessionId]) {
+          updates.streamStartedAt = { ...state.streamStartedAt, [sessionId]: startedAt }
         }
         if (state.isCompacting[sessionId]) {
           updates.isCompacting = { ...state.isCompacting, [sessionId]: false }
@@ -1650,6 +1675,21 @@ export function handleSseEvent(
           }
         }
 
+        // Record a per-session completion so the notification hook can fire the
+        // "done" sound: only for turns long enough and without error, deduped by
+        // endedAt so reconnect replays do not re-sound.
+        const isError = data.isError === true
+        const endedAt = Date.now()
+        const startedAt = state.streamStartedAt[sessionId]
+        const durationMs = startedAt ? endedAt - startedAt : 0
+        next.lastCompletion = {
+          ...state.lastCompletion,
+          [sessionId]: { endedAt, isError, durationMs },
+        }
+        if (startedAt) {
+          next.streamStartedAt = { ...state.streamStartedAt, [sessionId]: 0 }
+        }
+
         return next
       })
       return
@@ -2129,6 +2169,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: {},
   isCompacting: {},
   compactingStartTime: {},
+  streamStartedAt: {},
   isLoadingSessions: {},
   isLoadingMessages: {},
   approvalQueue: {},
@@ -2150,6 +2191,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessionUsage: {},
   contextUsage: {},
   resultMeta: {},
+  lastCompletion: {},
   domCache: {},
   isRestartingRuntime: {},
 
@@ -2576,6 +2618,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         drafts: nextDrafts,
         sessions: { ...state.sessions, [workspaceId]: nextSessions },
         isStreaming: { ...state.isStreaming, [sessionId]: true },
+        streamStartedAt: { ...state.streamStartedAt, [sessionId]: Date.now() },
         unreadCompletions: nextUnread,
         totalMessageCount: {
           ...state.totalMessageCount,

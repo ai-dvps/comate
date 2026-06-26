@@ -6,6 +6,7 @@ import {
   decodeButtonKey,
   buildToolApprovalCard,
   buildQuestionCard,
+  buildWecomSessionListCard,
   buildTerminalCard,
   parseTemplateCardEvent,
   verifySessionOwner,
@@ -27,8 +28,8 @@ describe('wecom-template-card', () => {
       assert.strictEqual(decoded.sessionId, sessionId);
     });
 
-    it('round-trips all three actions', () => {
-      const actions = ['allow', 'always_allow', 'deny'] as const;
+    it('round-trips all actions including resume', () => {
+      const actions = ['allow', 'always_allow', 'deny', 'resume'] as const;
       for (const action of actions) {
         const key = encodeButtonKey('r1', action, 's1');
         const decoded = decodeButtonKey(key);
@@ -262,6 +263,47 @@ describe('wecom-template-card', () => {
     });
   });
 
+  describe('buildWecomSessionListCard', () => {
+    it('builds a single-select vote_interaction card whose option ids are sessionIds', () => {
+      const card = buildWecomSessionListCard({
+        requestId: 'req-r1',
+        sessionId: 'sess-current',
+        taskId: 'task-r1',
+        options: [
+          { sessionId: 'sess-a', label: '项目 A · 3小时前' },
+          { sessionId: 'sess-b', label: '项目 B · 昨天', isActive: true },
+        ],
+      });
+
+      assert.strictEqual(card.card_type, 'vote_interaction');
+      assert.ok(card.checkbox);
+      assert.strictEqual(card.checkbox?.mode, 0);
+      assert.strictEqual(card.checkbox?.option_list.length, 2);
+      // Stateless: option id IS the target sessionId.
+      assert.strictEqual(card.checkbox?.option_list[0].id, 'sess-a');
+      assert.strictEqual(card.checkbox?.option_list[1].id, 'sess-b');
+      // Active session is marked.
+      assert.strictEqual(card.checkbox?.option_list[0].text, '项目 A · 3小时前');
+      assert.ok(card.checkbox?.option_list[1].text.includes('（当前）'));
+      // Submit button key carries action 'resume'.
+      const decoded = decodeButtonKey(card.submit_button!.key);
+      assert.ok(decoded);
+      assert.strictEqual(decoded.action, 'resume');
+      assert.strictEqual(decoded.sessionId, 'sess-current');
+      assert.strictEqual(card.task_id, 'task-r1');
+    });
+
+    it('uses default title/desc and submit text when not provided', () => {
+      const card = buildWecomSessionListCard({
+        requestId: 'req-r2',
+        sessionId: 'sess-current',
+        options: [{ sessionId: 'sess-a', label: '会话 A' }],
+      });
+      assert.strictEqual(card.main_title?.title, '选择会话');
+      assert.strictEqual(card.submit_button?.text, '恢复');
+    });
+  });
+
   describe('buildTerminalCard', () => {
     it('produces a text_notice card with the given notice', () => {
       const card = buildTerminalCard('button_interaction', '该请求已过期', 'task-123');
@@ -306,6 +348,42 @@ describe('wecom-template-card', () => {
       assert.strictEqual(parsed.wecomUserId, 'user-789');
       assert.strictEqual(parsed.taskId, 'task-456');
       assert.strictEqual(parsed.cardType, 'button_interaction');
+    });
+
+    it('parses a resume action event (regression: not silently dropped)', () => {
+      // P1 regression: before 'resume' was added to the action allowlist,
+      // decodeButtonKey returned undefined and parseTemplateCardEvent dropped
+      // the entire /resume callback. The selected option id is the target sessionId.
+      const requestId = 'req-resume';
+      const sessionId = 'sess-source';
+      const key = encodeButtonKey(requestId, 'resume', sessionId);
+      const targetSessionId = 'sess-target';
+
+      const frame = {
+        headers: { req_id: 'req-123' },
+        body: {
+          from: { userid: 'user-1' },
+          event: {
+            eventtype: 'template_card_event' as const,
+            template_card_event: {
+              card_type: 'vote_interaction',
+              event_key: key,
+              task_id: 'task-1',
+              selected_items: {
+                selected_item: [
+                  { question_key: key, option_ids: { option_id: [targetSessionId] } },
+                ],
+              },
+            },
+          },
+        },
+      };
+
+      const parsed = parseTemplateCardEvent(frame as unknown as Parameters<typeof parseTemplateCardEvent>[0]);
+      assert.ok(parsed, 'resume event must not be silently dropped');
+      assert.strictEqual(parsed.action, 'resume');
+      assert.strictEqual(parsed.sessionId, sessionId);
+      assert.deepStrictEqual(parsed.selectedItems?.[0].option_ids, [targetSessionId]);
     });
 
     it('parses the raw SDK wrapper shape with nested selected_items', () => {

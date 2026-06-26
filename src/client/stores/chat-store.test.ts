@@ -348,3 +348,71 @@ describe('bot session guards', () => {
   })
 })
 
+describe('notification turn-timing metadata', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {},
+      messages: {},
+      isStreaming: {},
+      streamStartedAt: {},
+      lastCompletion: {},
+      totalMessageCount: {},
+      sessionStatus: {},
+      lastActivityAt: {},
+      activeSessionIds: {},
+      unreadCompletions: {},
+    })
+  })
+
+  it('result records a non-error completion with a positive duration and clears the start timestamp', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({ streamStartedAt: { s1: 1000 } })
+    handleSseEvent(set, 'ws-1', 's1', 'result', {
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const completion = useChatStore.getState().lastCompletion['s1']
+    assert.ok(completion, 'completion record written')
+    assert.strictEqual(completion.isError, false)
+    assert.ok(completion.durationMs > 0, 'duration is positive')
+    assert.strictEqual(useChatStore.getState().streamStartedAt['s1'], 0, 'start timestamp cleared')
+  })
+
+  it('Covers AE6: result with isError records an error completion', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({ streamStartedAt: { s1: 1000 } })
+    handleSseEvent(set, 'ws-1', 's1', 'result', { isError: true })
+    assert.strictEqual(useChatStore.getState().lastCompletion['s1'].isError, true)
+  })
+
+  it('records durationMs of 0 when no turn-start timestamp was captured', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'result', {})
+    assert.strictEqual(useChatStore.getState().lastCompletion['s1'].durationMs, 0)
+  })
+
+  it('Covers reconnect-start: assistant_start recovers streamStartedAt from an existing message on replay', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    const msgTime = 12345
+    useChatStore.setState({
+      messages: {
+        s1: [{ id: 'm1', role: 'assistant' as const, parts: [], timestamp: msgTime, isStreaming: false }],
+      },
+      streamStartedAt: {}, // fresh store — prompt-send was not replayed
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    assert.strictEqual(useChatStore.getState().streamStartedAt['s1'], msgTime)
+  })
+
+  it('assistant_start does not overwrite an existing prompt-send timestamp', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      messages: {
+        s1: [{ id: 'm1', role: 'assistant' as const, parts: [], timestamp: 999, isStreaming: false }],
+      },
+      streamStartedAt: { s1: 500 }, // prompt-send already captured the start
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    assert.strictEqual(useChatStore.getState().streamStartedAt['s1'], 500)
+  })
+})
+

@@ -15,7 +15,7 @@ import type {
 import type { QuestionPayload } from '../types/message.js';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
@@ -27,9 +27,11 @@ import { validateSendFilePath } from './wecom-send-file-policy.js';
 import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { diagLog } from '../utils/diag-logger.js';
 import {
+  buildWecomSessionListCard,
   buildTerminalCard,
   decodeButtonKey,
   parseTemplateCardEvent,
+  verifySessionOwner,
   type NormalizedSelectedItem,
 } from './wecom-template-card.js';
 
@@ -101,6 +103,36 @@ export function parseWecomNewSessionCommand(content: string): { isCommand: boole
   const firstSpace = trimmed.indexOf(' ');
   const title = firstSpace !== -1 ? trimmed.slice(firstSpace + 1).trim() : '';
   return { isCommand: true, title };
+}
+
+/**
+ * Detect the `/resume` session-switch command. Matches the exact token or a
+ * prefix followed by a space (so `/resumex` does not trigger). `/resume` takes
+ * no arguments — trailing text is ignored (switch-only).
+ */
+export function parseWecomResumeCommand(content: string): boolean {
+  const trimmed = content.trim();
+  return trimmed === '/resume' || trimmed.startsWith('/resume ');
+}
+
+/**
+ * Cap on sessions shown in the `/resume` card. WeCom `vote_interaction` has a
+ * bounded option count; 10 is a conservative default pending platform verification.
+ */
+const MAX_RESUME_SESSIONS = 10;
+
+/** Format an ISO timestamp as a short relative-time label for the `/resume` card. */
+function formatRelativeTime(iso: string): string {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return '未知时间';
+  const diffMin = Math.floor((Date.now() - then) / 60000);
+  if (diffMin < 1) return '刚刚';
+  if (diffMin < 60) return `${diffMin} 分钟前`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} 小时前`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 7) return `${diffDay} 天前`;
+  return iso.slice(0, 10);
 }
 
 export class WeComBotService {
@@ -281,6 +313,15 @@ export class WeComBotService {
       return;
     }
 
+    // /resume lists the user's sessions as a single-select card. Intercepted
+    // before the agent so the literal command is never a chat turn.
+    if (parseWecomResumeCommand(content)) {
+      const conn = this.connections.get(workspaceId);
+      if (!conn) return;
+      await this.handleResumeCommand(workspaceId, wecomUserId, conn);
+      return;
+    }
+
     const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
     if (!sessionId) return;
 
@@ -328,6 +369,77 @@ export class WeComBotService {
         await conn.client.sendMessage(wecomUserId, {
           msgtype: 'markdown',
           markdown: { content: '⚠️ 创建会话失败，请稍后重试。' },
+        });
+      } catch {
+        // Ignore secondary send failure
+      }
+    }
+  }
+
+  /**
+   * Handle `/resume`: list the user's WeCom sessions as a single-select card
+   * (title + last-activity, most-recent first, capped), letting them switch.
+   * Stateless — the target sessionId is encoded in each option's id, so the
+   * submit callback needs no pending store. Mirrors feishu-bot-service
+   * collectSessionList / sendSessionListCard.
+   */
+  private async handleResumeCommand(
+    workspaceId: string,
+    wecomUserId: string,
+    conn: BotConnection,
+  ): Promise<void> {
+    try {
+      const activeSessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
+      const rows = workspaceStore.listWecomSessionsByUser(workspaceId, wecomUserId);
+
+      type Candidate = { sessionId: string; title: string; updatedAt: string; isActive: boolean };
+      const candidates: Candidate[] = [];
+      for (const row of rows) {
+        // listWecomSessionsByUser returns only {sessionId, createdAt}; fetch
+        // title + updatedAt per row (and filter archived) like collectSessionList.
+        const session = await chatService.getSession(row.sessionId, workspaceId);
+        if (!session || session.isArchived) continue; // R8: exclude archived
+        candidates.push({
+          sessionId: session.id,
+          title: session.customTitle ?? session.name ?? row.sessionId,
+          updatedAt: session.updatedAt,
+          isActive: session.id === activeSessionId,
+        });
+      }
+
+      // Most-recent first, capped to the card's option budget.
+      candidates.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+      const capped = candidates.slice(0, MAX_RESUME_SESSIONS);
+
+      if (capped.length === 0) {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '暂无会话可恢复，发送消息即可开始新的对话。' },
+        });
+        return;
+      }
+
+      // Source session for the button key: the active one, else the first
+      // candidate (always a session the user owns, so the ownership check passes).
+      const sourceSessionId = activeSessionId ?? capped[0].sessionId;
+      const requestId = randomUUID();
+      const card = buildWecomSessionListCard({
+        requestId,
+        sessionId: sourceSessionId,
+        taskId: requestId,
+        options: capped.map((c) => ({
+          sessionId: c.sessionId,
+          label: `${c.title} · ${formatRelativeTime(c.updatedAt)}`,
+          isActive: c.isActive,
+        })),
+      });
+      await this.sendTemplateCard(workspaceId, wecomUserId, card);
+    } catch (err) {
+      console.error('[WeComBotService] failed to handle /resume:', err);
+      try {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '⚠️ 获取会话列表失败，请稍后重试。' },
         });
       } catch {
         // Ignore secondary send failure
@@ -649,6 +761,14 @@ export class WeComBotService {
       return;
     }
 
+    // /resume: stateless session switch. No runtime or pending state — the
+    // target sessionId is carried in the selected option id. Branched before the
+    // runtime lookup because /resume has no in-flight turn.
+    if (parsed.action === 'resume') {
+      await this.handleResumeSubmit(workspaceId, frame, parsed);
+      return;
+    }
+
     const runtime = chatService.getRuntimeIfExists(parsed.sessionId);
     if (!runtime) {
       await this.updateCardToTerminal(workspaceId, frame, parsed, '会话已结束或已超时');
@@ -688,6 +808,60 @@ export class WeComBotService {
       updatedInput: { questions: pending.questions, answers },
     });
     await this.updateCardToTerminal(workspaceId, frame, parsed, '已提交');
+  }
+
+  /**
+   * Handle a `/resume` card submit: switch the user's active session to the
+   * selected one. Stateless — the target sessionId is read from the selected
+   * option id; no pending store is consulted. Mirrors feishu handleSelectSession
+   * (ownership check on the TARGET session, then setActiveWecomSession).
+   * Idempotent via setActiveWecomSession's transactional single-active invariant.
+   */
+  private async handleResumeSubmit(
+    workspaceId: string,
+    frame: WsFrame<EventMessageWith<TemplateCardEventData>>,
+    parsed: {
+      wecomUserId: string;
+      cardType?: string;
+      taskId?: string;
+      selectedItems?: NormalizedSelectedItem[];
+    },
+  ): Promise<void> {
+    const targetSessionId = parsed.selectedItems?.[0]?.option_ids?.[0];
+    if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+      return;
+    }
+
+    // Verify the submitter owns the TARGET session (not just the card's source).
+    const ownsTarget = verifySessionOwner(
+      parsed.wecomUserId,
+      targetSessionId,
+      workspaceId,
+      (ws, sess) => workspaceStore.getWecomUserIdBySession(ws, sess),
+    );
+    if (!ownsTarget) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+      return;
+    }
+
+    try {
+      workspaceStore.setActiveWecomSession(workspaceId, parsed.wecomUserId, targetSessionId);
+
+      const conn = this.connections.get(workspaceId);
+      const session = await chatService.getSession(targetSessionId, workspaceId);
+      const title = session?.customTitle ?? session?.name ?? targetSessionId;
+      if (conn && conn.status === 'connected') {
+        await conn.client.sendMessage(parsed.wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: `已切换到会话：【${title}】，可继续对话` },
+        });
+      }
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '已恢复会话');
+    } catch (err) {
+      console.error('[WeComBotService] failed to switch session via /resume:', err);
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
+    }
   }
 
   private buildAnswersFromCardEvent(

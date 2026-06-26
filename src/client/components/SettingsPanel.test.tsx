@@ -305,6 +305,8 @@ describe('GeneralTab updater flow', () => {
     onUseModifierToSubmitChange: vi.fn(),
     autoCheckUpdates: false,
     onAutoCheckUpdatesChange: vi.fn(),
+    notificationSounds: false,
+    onNotificationSoundsChange: vi.fn(),
     lastUpdateCheckAt: null as string | null,
     updateStatus: 'idle' as const,
     updateError: null as string | null,

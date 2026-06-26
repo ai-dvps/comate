@@ -12,6 +12,7 @@ interface AppSettings {
   uiFontSize: FontSizePreset
   archiveThresholdDays: number
   autoCheckUpdates: boolean
+  notificationSoundsEnabled: boolean
   lastUpdateCheckAt: string | null
 }
 
@@ -35,6 +36,8 @@ export function getInitialSettings(): AppSettings {
           ? parsed.archiveThresholdDays
           : DEFAULT_ARCHIVE_THRESHOLD_DAYS
       const autoCheckUpdates = typeof parsed.autoCheckUpdates === 'boolean' ? parsed.autoCheckUpdates : true
+      const notificationSoundsEnabled =
+        typeof parsed.notificationSoundsEnabled === 'boolean' ? parsed.notificationSoundsEnabled : true
       const lastUpdateCheckAt =
         typeof parsed.lastUpdateCheckAt === 'string' && parsed.lastUpdateCheckAt
           ? parsed.lastUpdateCheckAt
@@ -48,13 +51,14 @@ export function getInitialSettings(): AppSettings {
         uiFontSize: isValidFontSize(parsed.uiFontSize) ? parsed.uiFontSize : 'medium',
         archiveThresholdDays,
         autoCheckUpdates,
+        notificationSoundsEnabled,
         lastUpdateCheckAt,
       }
     }
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium', archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS, autoCheckUpdates: true, lastUpdateCheckAt: null }
+  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium', archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS, autoCheckUpdates: true, notificationSoundsEnabled: true, lastUpdateCheckAt: null }
 }
 
 function saveSettings(settings: AppSettings) {
@@ -139,6 +143,14 @@ export function useAppSettings() {
     })
   }, [])
 
+  const setNotificationSoundsEnabled = useCallback((notificationSoundsEnabled: boolean) => {
+    setSettings((prev) => {
+      const next = { ...prev, notificationSoundsEnabled }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
   const setLastUpdateCheckAt = useCallback((lastUpdateCheckAt: string | null) => {
     setSettings((prev) => {
       const next = { ...prev, lastUpdateCheckAt }
@@ -156,6 +168,7 @@ export function useAppSettings() {
     uiFontSize: settings.uiFontSize,
     archiveThresholdDays: settings.archiveThresholdDays,
     autoCheckUpdates: settings.autoCheckUpdates,
+    notificationSoundsEnabled: settings.notificationSoundsEnabled,
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
     setDefaultModel,
     setReopenLastWorkspace,
@@ -165,6 +178,7 @@ export function useAppSettings() {
     setUiFontSize,
     setArchiveThresholdDays,
     setAutoCheckUpdates,
+    setNotificationSoundsEnabled,
     setLastUpdateCheckAt,
   }
 }

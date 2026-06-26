@@ -124,7 +124,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const storeError = useWorkspaceStore((s) => s.error)
   const isStoreLoading = useWorkspaceStore((s) => s.isLoading)
 
-  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays, autoCheckUpdates, setAutoCheckUpdates, lastUpdateCheckAt, setLastUpdateCheckAt } = useAppSettings()
+  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays, autoCheckUpdates, setAutoCheckUpdates, notificationSoundsEnabled, setNotificationSoundsEnabled, lastUpdateCheckAt, setLastUpdateCheckAt } = useAppSettings()
   const windowCap = useChatStore((s) => s.windowCap)
   const setWindowCap = useChatStore((s) => s.setWindowCap)
   const updateStatus = useUpdaterStore((s) => s.status)
@@ -145,6 +145,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
   const [appModifierSubmit, setAppModifierSubmit] = useState(useModifierToSubmit)
   const [appAutoCheckUpdates, setAppAutoCheckUpdates] = useState(autoCheckUpdates)
+  const [appNotificationSounds, setAppNotificationSounds] = useState(notificationSoundsEnabled)
   const [windowCapInput, setWindowCapInput] = useState(String(windowCap))
   const [archiveThresholdDaysInput, setArchiveThresholdDaysInput] = useState(String(archiveThresholdDays))
 
@@ -157,6 +158,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     appReopen: reopenLastWorkspace,
     appModifierSubmit: useModifierToSubmit,
     appAutoCheckUpdates: autoCheckUpdates,
+    appNotificationSounds: notificationSoundsEnabled,
     appWindowCap: windowCap,
     appArchiveThresholdDays: archiveThresholdDays,
     workspaceState: {} as Record<string, WorkspaceFormState>,
@@ -179,6 +181,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appReopen: reopenLastWorkspace,
       appModifierSubmit: useModifierToSubmit,
       appAutoCheckUpdates: autoCheckUpdates,
+      appNotificationSounds: notificationSoundsEnabled,
       appWindowCap: windowCap,
       appArchiveThresholdDays: archiveThresholdDays,
       workspaceState: JSON.parse(JSON.stringify(initial)),
@@ -187,13 +190,14 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppReopen(reopenLastWorkspace)
     setAppModifierSubmit(useModifierToSubmit)
     setAppAutoCheckUpdates(autoCheckUpdates)
+    setAppNotificationSounds(notificationSoundsEnabled)
     setWindowCapInput(String(windowCap))
     setArchiveThresholdDaysInput(String(archiveThresholdDays))
 
     if (workspaces.length > 0) {
       setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, defaultModel, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, activeWorkspaceId, windowCap, archiveThresholdDays])
+  }, [workspaces, defaultModel, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, activeWorkspaceId, windowCap, archiveThresholdDays])
 
   useEffect(() => {
     setWindowCapInput(String(windowCap))
@@ -237,10 +241,11 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     if (appReopen !== snapshotRef.current.appReopen) return true
     if (appModifierSubmit !== snapshotRef.current.appModifierSubmit) return true
     if (appAutoCheckUpdates !== snapshotRef.current.appAutoCheckUpdates) return true
+    if (appNotificationSounds !== snapshotRef.current.appNotificationSounds) return true
     if (windowCap !== snapshotRef.current.appWindowCap) return true
     if (archiveThresholdDays !== snapshotRef.current.appArchiveThresholdDays) return true
     return JSON.stringify(workspaceState) !== JSON.stringify(snapshotRef.current.workspaceState)
-  }, [appModel, appReopen, appModifierSubmit, appAutoCheckUpdates, windowCap, archiveThresholdDays, workspaceState])
+  }, [appModel, appReopen, appModifierSubmit, appAutoCheckUpdates, appNotificationSounds, windowCap, archiveThresholdDays, workspaceState])
 
   const handleClose = useCallback(() => {
     if (isDirty()) {
@@ -285,6 +290,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setReopenLastWorkspace(appReopen)
     setUseModifierToSubmit(appModifierSubmit)
     setAutoCheckUpdates(appAutoCheckUpdates)
+    setNotificationSoundsEnabled(appNotificationSounds)
     const parsedCap = parseInt(windowCapInput, 10)
     if (!isNaN(parsedCap)) {
       setWindowCap(parsedCap)
@@ -341,6 +347,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appReopen,
       appModifierSubmit,
       appAutoCheckUpdates,
+      appNotificationSounds,
       appWindowCap: windowCap,
       appArchiveThresholdDays: nextArchiveThresholdDays,
       workspaceState: JSON.parse(JSON.stringify(workspaceState)),
@@ -361,6 +368,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppReopen(snapshotRef.current.appReopen)
     setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
     setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
+    setAppNotificationSounds(snapshotRef.current.appNotificationSounds)
     setWindowCapInput(String(snapshotRef.current.appWindowCap))
     setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
@@ -372,6 +380,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppReopen(snapshotRef.current.appReopen)
     setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
     setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
+    setAppNotificationSounds(snapshotRef.current.appNotificationSounds)
     setWindowCapInput(String(snapshotRef.current.appWindowCap))
     setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
     setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
@@ -462,6 +471,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 onUseModifierToSubmitChange={setAppModifierSubmit}
                 autoCheckUpdates={appAutoCheckUpdates}
                 onAutoCheckUpdatesChange={setAppAutoCheckUpdates}
+                notificationSounds={appNotificationSounds}
+                onNotificationSoundsChange={setAppNotificationSounds}
                 lastUpdateCheckAt={lastUpdateCheckAt}
                 updateStatus={updateStatus}
                 updateError={updateError}
@@ -647,6 +658,8 @@ export function GeneralTab({
   onUseModifierToSubmitChange,
   autoCheckUpdates,
   onAutoCheckUpdatesChange,
+  notificationSounds,
+  onNotificationSoundsChange,
   lastUpdateCheckAt,
   updateStatus,
   updateError,
@@ -668,6 +681,8 @@ export function GeneralTab({
   onUseModifierToSubmitChange: (v: boolean) => void
   autoCheckUpdates: boolean
   onAutoCheckUpdatesChange: (v: boolean) => void
+  notificationSounds: boolean
+  onNotificationSoundsChange: (v: boolean) => void
   lastUpdateCheckAt: string | null
   updateStatus: import('../stores/updater-store').UpdaterStatus
   updateError: string | null
@@ -823,6 +838,29 @@ export function GeneralTab({
             <span
               className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
                 useModifierToSubmit ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between py-3 border-t border-border/50">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary">
+              {t('general.notificationSounds')}
+            </label>
+            <p className="text-[10px] text-text-tertiary mt-0.5">
+              {t('general.notificationSoundsHint')}
+            </p>
+          </div>
+          <button
+            onClick={() => onNotificationSoundsChange(!notificationSounds)}
+            className={`relative w-9 h-5 rounded-full transition-colors ${
+              notificationSounds ? 'bg-accent' : 'bg-border'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                notificationSounds ? 'translate-x-4' : 'translate-x-0'
               }`}
             />
           </button>
