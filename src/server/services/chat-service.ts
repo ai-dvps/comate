@@ -671,6 +671,16 @@ export class ChatService {
   private scheduleIdleClose(sessionId: string): void {
     this.cancelIdleClose(sessionId);
     const timeout = setTimeout(() => {
+      // Hold the runtime open while a turn is in flight (streaming or blocked
+      // on a pending approval/tool with no output). Without this guard a silent
+      // in-flight turn is reclaimed before it completes, which would break the
+      // WeCom long-reply safeguard for long-pending-approval turns.
+      const runtime = this.getRuntimeIfExists(sessionId);
+      if (runtime?.isProcessingTurn()) {
+        sidecarLog(`[ChatService] idle close deferred for ${sessionId}: turn in flight`);
+        this.scheduleIdleClose(sessionId);
+        return;
+      }
       sidecarLog(`[ChatService] idle close fired for ${sessionId}`);
       this.closeRuntime(sessionId).catch((err) => {
         console.error(`Failed to idle-close runtime ${sessionId}:`, err);
