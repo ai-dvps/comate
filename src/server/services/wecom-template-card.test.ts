@@ -264,7 +264,7 @@ describe('wecom-template-card', () => {
   });
 
   describe('buildWecomSessionListCard', () => {
-    it('builds a single-select vote_interaction card whose option ids are sessionIds', () => {
+    it('builds a single-select multiple_interaction card whose option ids are sessionIds', () => {
       const card = buildWecomSessionListCard({
         requestId: 'req-r1',
         sessionId: 'sess-current',
@@ -275,16 +275,17 @@ describe('wecom-template-card', () => {
         ],
       });
 
-      assert.strictEqual(card.card_type, 'vote_interaction');
-      assert.ok(card.checkbox);
-      assert.strictEqual(card.checkbox?.mode, 0);
-      assert.strictEqual(card.checkbox?.option_list.length, 2);
+      assert.strictEqual(card.card_type, 'multiple_interaction');
+      assert.ok(card.select_list);
+      assert.strictEqual(card.select_list?.length, 1);
+      const selector = card.select_list![0];
+      assert.strictEqual(selector.option_list.length, 2);
       // Stateless: option id IS the target sessionId.
-      assert.strictEqual(card.checkbox?.option_list[0].id, 'sess-a');
-      assert.strictEqual(card.checkbox?.option_list[1].id, 'sess-b');
+      assert.strictEqual(selector.option_list[0].id, 'sess-a');
+      assert.strictEqual(selector.option_list[1].id, 'sess-b');
       // Active session is marked.
-      assert.strictEqual(card.checkbox?.option_list[0].text, '项目 A · 3小时前');
-      assert.ok(card.checkbox?.option_list[1].text.includes('（当前）'));
+      assert.strictEqual(selector.option_list[0].text, '项目 A · 3小时前');
+      assert.ok(selector.option_list[1].text.includes('（当前）'));
       // Submit button key carries action 'resume'.
       const decoded = decodeButtonKey(card.submit_button!.key);
       assert.ok(decoded);
@@ -300,6 +301,7 @@ describe('wecom-template-card', () => {
         options: [{ sessionId: 'sess-a', label: '会话 A' }],
       });
       assert.strictEqual(card.main_title?.title, '选择会话');
+      assert.strictEqual(card.select_list?.[0].title, '可恢复的会话');
       assert.strictEqual(card.submit_button?.text, '恢复');
     });
   });
@@ -320,7 +322,7 @@ describe('wecom-template-card', () => {
       assert.strictEqual(card.task_id, undefined);
     });
 
-    it('produces a vote_interaction terminal with replace_text + disabled checkbox (not text_notice)', () => {
+    it('produces a vote_interaction terminal with replace_text + disabled checkbox + disabled submit button', () => {
       const card = buildTerminalCard('vote_interaction', '已恢复会话', 'task-v1');
       assert.strictEqual(card.card_type, 'vote_interaction');
       assert.strictEqual((card as Record<string, unknown>).replace_text, '已恢复会话');
@@ -328,7 +330,22 @@ describe('wecom-template-card', () => {
         (card as Record<string, { disable?: boolean }>).checkbox?.disable,
         true,
       );
+      assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.text, '已恢复会话');
+      assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.key, 'terminal');
       assert.strictEqual(card.task_id, 'task-v1');
+    });
+
+    it('produces a multiple_interaction terminal with replace_text + disabled selector + disabled submit button', () => {
+      const card = buildTerminalCard('multiple_interaction', '已提交', 'task-m1');
+      assert.strictEqual(card.card_type, 'multiple_interaction');
+      assert.strictEqual((card as Record<string, unknown>).replace_text, '已提交');
+      const selector = (card as Record<string, { select_list?: Array<{ disable?: boolean; selected_id?: string; title?: string }> }>).select_list?.[0];
+      assert.strictEqual(selector?.disable, true);
+      assert.strictEqual(selector?.selected_id, '0');
+      assert.strictEqual(selector?.title, '已选择');
+      assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.text, '已提交');
+      assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.key, 'terminal');
+      assert.strictEqual(card.task_id, 'task-m1');
     });
   });
 

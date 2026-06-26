@@ -994,10 +994,11 @@ describe('WeComBotService /resume command', { concurrency: false }, () => {
     await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume'));
     const card = lastCard();
     assert.ok(card);
-    assert.strictEqual(card.card_type, 'vote_interaction');
-    const ids = card.checkbox.option_list.map((o: any) => o.id);
+    assert.strictEqual(card.card_type, 'multiple_interaction');
+    const selector = card.select_list[0];
+    const ids = selector.option_list.map((o: any) => o.id);
     assert.deepStrictEqual(ids.sort(), ['sess-a', 'sess-active']);
-    const activeOpt = card.checkbox.option_list.find((o: any) => o.id === 'sess-active');
+    const activeOpt = selector.option_list.find((o: any) => o.id === 'sess-active');
     assert.ok(activeOpt?.text.includes('（当前）'));
   });
 
@@ -1031,7 +1032,7 @@ describe('WeComBotService /resume command', { concurrency: false }, () => {
       updatedAt: `2026-06-${20 - Number(id.slice(1))}T00:00:00.000Z`,
     } as any);
     await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume'));
-    assert.strictEqual(lastCard().checkbox.option_list.length, 10);
+    assert.strictEqual(lastCard().select_list[0].option_list.length, 10);
   });
 
   it('still sends a card with a single session (Covers AE2/F3)', async () => {
@@ -1047,7 +1048,7 @@ describe('WeComBotService /resume command', { concurrency: false }, () => {
       updatedAt: '2026-06-01T00:00:00.000Z',
     } as any);
     await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume'));
-    assert.strictEqual(lastCard().checkbox.option_list.length, 1);
+    assert.strictEqual(lastCard().select_list[0].option_list.length, 1);
   });
 
   it('ignores trailing text after /resume (R2)', async () => {
@@ -1137,7 +1138,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
           template_card_event: {
             event_key: key,
             task_id: 'task-1',
-            card_type: 'vote_interaction',
+            card_type: 'multiple_interaction',
             selected_items: {
               selected_item: [{ question_key: key, option_ids: { option_id: [targetSessionId] } }],
             },
@@ -1153,6 +1154,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
     assert.strictEqual(switchedTo.length, 1);
     assert.strictEqual(switchedTo[0].sessionId, 'sess-target');
     assert.strictEqual(updatedCards[0].card.replace_text, '已恢复会话');
+    assert.strictEqual(updatedCards[0].card.submit_button?.text, '已恢复会话');
     assert.ok(sentMessages.some((m) => m.content.includes('name-sess-target')));
   });
 
@@ -1162,6 +1164,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
     await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
     assert.strictEqual(switchedTo.length, 0);
     assert.strictEqual(updatedCards[0].card.replace_text, '无法操作该会话');
+    assert.strictEqual(updatedCards[0].card.submit_button?.text, '无法操作该会话');
     assert.strictEqual(sentMessages.length, 0);
   });
 
@@ -1178,7 +1181,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
         msgtype: 'event',
         event: {
           eventtype: 'template_card_event',
-          template_card_event: { event_key: key, task_id: 'task-1', card_type: 'vote_interaction' },
+          template_card_event: { event_key: key, task_id: 'task-1', card_type: 'multiple_interaction' },
         },
       },
     };
@@ -1196,6 +1199,7 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
     assert.strictEqual(switchedTo.length, 2);
     assert.strictEqual(switchedTo[1].sessionId, 'sess-target');
     assert.strictEqual(updatedCards[1].card.replace_text, '已恢复会话');
+    assert.strictEqual(updatedCards[1].card.submit_button?.text, '已恢复会话');
   });
 
   it('updates the card to terminal BEFORE sending the confirmation (WeCom 5s update window)', async () => {
