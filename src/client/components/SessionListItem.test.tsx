@@ -58,4 +58,66 @@ describe('SessionListItem', () => {
     renderWithI18n(<SessionListItem session={makeSession({ isDraft: false })} {...baseProps} />)
     expect(screen.queryByText('Draft')).toBeNull()
   })
+
+  describe('bot icon active/inactive distinction', () => {
+    it('renders the WeCom icon with an accent ring and no grayscale when active', () => {
+      renderWithI18n(
+        <SessionListItem session={makeSession({ source: 'wecom' })} {...baseProps} isActive />,
+      )
+      const img = screen.getByAltText('WeCom')
+      expect(img.className).toContain('ring-accent')
+      expect(img.className).not.toContain('grayscale')
+    })
+
+    it('renders the WeCom icon desaturated and dimmed when inactive', () => {
+      renderWithI18n(
+        <SessionListItem session={makeSession({ source: 'wecom' })} {...baseProps} />,
+      )
+      const img = screen.getByAltText('WeCom')
+      expect(img.className).toContain('grayscale')
+      expect(img.className).toContain('opacity-40')
+      expect(img.className).not.toContain('ring-accent')
+    })
+
+    it('renders the Feishu icon desaturated and dimmed when inactive', () => {
+      renderWithI18n(
+        <SessionListItem session={makeSession({ source: 'feishu' })} {...baseProps} />,
+      )
+      const img = screen.getByAltText('Feishu')
+      expect(img.className).toContain('grayscale')
+      expect(img.className).toContain('opacity-40')
+      expect(img.className).not.toContain('ring-accent')
+    })
+
+    it('renders the Feishu icon with an accent ring and no grayscale when active', () => {
+      renderWithI18n(
+        <SessionListItem session={makeSession({ source: 'feishu' })} {...baseProps} isActive />,
+      )
+      const img = screen.getByAltText('Feishu')
+      expect(img.className).toContain('ring-accent')
+      expect(img.className).not.toContain('grayscale')
+    })
+
+    it('does not render any bot icon for non-bot (gui) sessions', () => {
+      renderWithI18n(<SessionListItem session={makeSession({ source: 'gui' })} {...baseProps} />)
+      expect(screen.queryByAltText('WeCom')).toBeNull()
+      expect(screen.queryByAltText('Feishu')).toBeNull()
+    })
+
+    it('exposes aria-current on the active session row', () => {
+      const { container } = renderWithI18n(
+        <SessionListItem session={makeSession({ source: 'wecom' })} {...baseProps} isActive />,
+      )
+      const row = container.querySelector('.session-item')
+      expect(row?.getAttribute('aria-current')).toBe('true')
+    })
+
+    it('does not expose aria-current on an inactive session row', () => {
+      const { container } = renderWithI18n(
+        <SessionListItem session={makeSession({ source: 'wecom' })} {...baseProps} />,
+      )
+      const row = container.querySelector('.session-item')
+      expect(row?.getAttribute('aria-current')).toBeNull()
+    })
+  })
 })
