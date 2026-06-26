@@ -19,3 +19,4 @@ src-tauri/resources/*
 *.tsbuildinfo
 __screenshots__/
 *-test-results.json
+/.claude/wecom-context.json
