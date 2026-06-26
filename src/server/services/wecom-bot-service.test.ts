@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { WeComBotService, parseWecomNewSessionCommand } from './wecom-bot-service.js';
+import { WeComBotService, parseWecomNewSessionCommand, parseWecomResumeCommand } from './wecom-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { encodeButtonKey } from './wecom-template-card.js';
@@ -881,5 +881,188 @@ describe('WeComBotService /clear & /new commands + active lookup', { concurrency
     assert.strictEqual(createdSessions.length, 1);
     assert.strictEqual(activatedSessionIds.length, 1);
     assert.strictEqual(id, activatedSessionIds[0]);
+  });
+});
+
+describe('parseWecomResumeCommand', () => {
+  it('matches exact /resume and /resume with trailing text (ignored)', () => {
+    assert.strictEqual(parseWecomResumeCommand('/resume'), true);
+    assert.strictEqual(parseWecomResumeCommand('/resume 项目X'), true);
+    assert.strictEqual(parseWecomResumeCommand('  /resume   '), true);
+  });
+
+  it('does not trigger on /resumex or plain text', () => {
+    assert.strictEqual(parseWecomResumeCommand('/resumex'), false);
+    assert.strictEqual(parseWecomResumeCommand('/resumes'), false);
+    assert.strictEqual(parseWecomResumeCommand('hello'), false);
+  });
+});
+
+describe('WeComBotService /resume command', { concurrency: false }, () => {
+  let service: WeComBotService;
+  let sentBodies: Array<{ msgtype: string; [k: string]: unknown }>;
+  let pushedContents: string[];
+
+  let origGetActive: typeof workspaceStore.getActiveWecomSession;
+  let origListByUser: typeof workspaceStore.listWecomSessionsByUser;
+  let origGetSession: typeof chatService.getSession;
+  let origPush: typeof chatService.pushMessage;
+
+  beforeEach(() => {
+    service = new WeComBotService();
+    sentBodies = [];
+    pushedContents = [];
+
+    origGetActive = workspaceStore.getActiveWecomSession.bind(workspaceStore);
+    origListByUser = workspaceStore.listWecomSessionsByUser.bind(workspaceStore);
+    origGetSession = chatService.getSession.bind(chatService);
+    origPush = chatService.pushMessage.bind(chatService);
+
+    workspaceStore.getActiveWecomSession = () => 'sess-active';
+    workspaceStore.listWecomSessionsByUser = () => [];
+    chatService.getSession = async () => ({ id: 'sess-1', workspaceId: 'ws-1' } as any);
+    chatService.pushMessage = (async (...args: unknown[]) => {
+      pushedContents.push(args[2] as string);
+    }) as any;
+  });
+
+  afterEach(() => {
+    workspaceStore.getActiveWecomSession = origGetActive;
+    workspaceStore.listWecomSessionsByUser = origListByUser;
+    chatService.getSession = origGetSession;
+    chatService.pushMessage = origPush;
+  });
+
+  function injectConnection() {
+    (service as any).connections.set('ws-1', {
+      client: {
+        sendMessage: async (_userId: string, body: any) => {
+          sentBodies.push(body);
+        },
+      },
+      workspaceId: 'ws-1',
+      botId: 'bot-1',
+      folderPath: '/tmp',
+      status: 'connected' as const,
+    });
+  }
+
+  function makeTextFrame(content: string) {
+    return {
+      headers: { req_id: 'r' },
+      body: {
+        msgid: 'm',
+        aibotid: 'bot-1',
+        chattype: 'single',
+        from: { userid: 'enc-user-1' },
+        msgtype: 'text',
+        text: { content },
+      },
+    };
+  }
+
+  function lastBody() {
+    return sentBodies[sentBodies.length - 1];
+  }
+  function lastCard() {
+    return (lastBody() as any)?.template_card;
+  }
+
+  it('/resume is intercepted and not forwarded to the agent (Covers AE4)', async () => {
+    injectConnection();
+    workspaceStore.listWecomSessionsByUser = () => [
+      { sessionId: 'sess-a', createdAt: '2026-06-01T00:00:00.000Z' },
+    ];
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume'));
+    assert.strictEqual(pushedContents.length, 0);
+    assert.strictEqual(lastBody().msgtype, 'template_card');
+  });
+
+  it('card lists sessions with option id = sessionId and marks active (Covers AE5)', async () => {
+    injectConnection();
+    workspaceStore.listWecomSessionsByUser = () => [
+      { sessionId: 'sess-a', createdAt: '2026-06-01T00:00:00.000Z' },
+      { sessionId: 'sess-active', createdAt: '2026-06-02T00:00:00.000Z' },
+    ];
+    let calls = 0;
+    chatService.getSession = async (id: string) => ({
+      id,
+      workspaceId: 'ws-1',
+      name: id,
+      updatedAt: `2026-06-0${++calls}T00:00:00.000Z`,
+    } as any);
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume'));
+    const card = lastCard();
+    assert.ok(card);
+    assert.strictEqual(card.card_type, 'vote_interaction');
+    const ids = card.checkbox.option_list.map((o: any) => o.id);
+    assert.deepStrictEqual(ids.sort(), ['sess-a', 'sess-active']);
+    const activeOpt = card.checkbox.option_list.find((o: any) => o.id === 'sess-active');
+    assert.ok(activeOpt?.text.includes('（当前）'));
+  });
+
+  it('excludes archived sessions and degrades to a text reply when none remain', async () => {
+    injectConnection();
+    workspaceStore.listWecomSessionsByUser = () => [
+      { sessionId: 'sess-archived', createdAt: '2026-06-01T00:00:00.000Z' },
+    ];
+    chatService.getSession = async () => ({
+      id: 'sess-archived',
+      isArchived: true,
+      updatedAt: '2026-06-01T00:00:00.000Z',
+    } as any);
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume'));
+    assert.strictEqual(lastBody().msgtype, 'markdown');
+    assert.ok((lastBody() as any).markdown.content.includes('暂无会话可恢复'));
+  });
+
+  it('truncates to the cap when over N (Covers AE3/F4)', async () => {
+    injectConnection();
+    workspaceStore.listWecomSessionsByUser = () =>
+      Array.from({ length: 12 }, (_, i) => ({
+        sessionId: `s${i}`,
+        createdAt: '2026-06-01T00:00:00.000Z',
+      }));
+    workspaceStore.getActiveWecomSession = () => null;
+    chatService.getSession = async (id: string) => ({
+      id,
+      workspaceId: 'ws-1',
+      name: id,
+      updatedAt: `2026-06-${20 - Number(id.slice(1))}T00:00:00.000Z`,
+    } as any);
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume'));
+    assert.strictEqual(lastCard().checkbox.option_list.length, 10);
+  });
+
+  it('still sends a card with a single session (Covers AE2/F3)', async () => {
+    injectConnection();
+    workspaceStore.listWecomSessionsByUser = () => [
+      { sessionId: 'sess-only', createdAt: '2026-06-01T00:00:00.000Z' },
+    ];
+    workspaceStore.getActiveWecomSession = () => 'sess-only';
+    chatService.getSession = async () => ({
+      id: 'sess-only',
+      workspaceId: 'ws-1',
+      name: 'only',
+      updatedAt: '2026-06-01T00:00:00.000Z',
+    } as any);
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume'));
+    assert.strictEqual(lastCard().checkbox.option_list.length, 1);
+  });
+
+  it('ignores trailing text after /resume (R2)', async () => {
+    injectConnection();
+    workspaceStore.listWecomSessionsByUser = () => [
+      { sessionId: 'sess-a', createdAt: '2026-06-01T00:00:00.000Z' },
+    ];
+    chatService.getSession = async () => ({
+      id: 'sess-a',
+      workspaceId: 'ws-1',
+      name: 'a',
+      updatedAt: '2026-06-01T00:00:00.000Z',
+    } as any);
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/resume ignored args'));
+    assert.strictEqual(pushedContents.length, 0);
+    assert.strictEqual(lastBody().msgtype, 'template_card');
   });
 });
