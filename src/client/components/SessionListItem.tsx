@@ -79,6 +79,7 @@ export default function SessionListItem({
       key={session.id}
       onClick={() => onActivate(session.id)}
       onContextMenu={(e) => onContextMenu(e, session.id)}
+      aria-current={isActive ? 'true' : undefined}
       className={cn(
         'session-item px-3 py-2.5 cursor-pointer group transition-all mx-2 rounded-lg',
         isActive ? 'bg-surface-active' : 'hover:bg-surface-hover',
@@ -180,7 +181,10 @@ export default function SessionListItem({
               <img
                 src="/wecom-icon.svg"
                 alt="WeCom"
-                className="w-3 h-3 flex-shrink-0"
+                className={cn(
+                  'w-3 h-3 flex-shrink-0',
+                  isActive ? 'ring-2 ring-accent' : 'grayscale opacity-40',
+                )}
                 title={t('wecomBotSession')}
               />
             )}
@@ -188,7 +192,10 @@ export default function SessionListItem({
               <img
                 src="/feishu-icon.svg"
                 alt="Feishu"
-                className="w-3 h-3 flex-shrink-0"
+                className={cn(
+                  'w-3 h-3 flex-shrink-0',
+                  isActive ? 'ring-2 ring-accent' : 'grayscale opacity-40',
+                )}
                 title={t('feishuBotSession')}
               />
             )}
