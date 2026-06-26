@@ -314,16 +314,36 @@ export function buildWecomSessionListCard(options: SessionListCardOptions): Temp
 
 /**
  * Build a terminal-state card used to update an expired or resolved card.
- * Replaces interactive elements with a plain text notice.
+ *
+ * For `vote_interaction` cards, keeps the card_type and sets `replace_text`
+ * (greys out the submit button) + `checkbox.disable` (prevents re-selection) —
+ * the only reliable way to disable a vote_interaction card per WeCom doc /94888.
+ * Replacing it with a `text_notice` does NOT disable the interactive elements.
+ *
+ * For other card types (`button_interaction`, etc.), replaces with a
+ * `text_notice` carrying the same `task_id`.
  */
 export function buildTerminalCard(
   originalCardType: string,
   notice: string,
   taskId?: string,
 ): TemplateCard {
-  // For button_interaction, vote_interaction, multiple_interaction: replace
-  // with a text_notice that carries the same task_id so updateTemplateCard
-  // can target it.
+  if (originalCardType === 'vote_interaction') {
+    return {
+      card_type: 'vote_interaction',
+      source: { desc: 'Comate', desc_color: 0 },
+      main_title: { title: notice, desc: '' },
+      task_id: taskId,
+      checkbox: {
+        question_key: 'terminal',
+        mode: 0,
+        disable: true,
+        option_list: [{ id: '0', text: notice, is_checked: true }],
+      },
+      replace_text: notice,
+    } as TemplateCard;
+  }
+
   return {
     card_type: 'text_notice',
     source: { desc: 'Comate', desc_color: 0 },
