@@ -279,32 +279,35 @@ export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
 }
 
 /**
- * Build a `vote_interaction` single-select card listing a user's sessions for
- * the `/resume` command. The target sessionId is encoded directly in each
- * option's `id` so the submit callback can read it statelessly — mirroring
- * Feishu's `select_session`. The submit-button key carries action `'resume'`
- * so `handleTemplateCardEvent` can branch a resume submit apart from approvals.
- * No pending store: the selected option id is the source of truth on submit.
+ * Build a `multiple_interaction` card listing a user's sessions in a single
+ * dropdown selector for the `/resume` command. The target sessionId is encoded
+ * directly in each option's `id` so the submit callback can read it statelessly
+ * — mirroring Feishu's `select_session`. The submit-button key carries action
+ * `'resume'` so `handleTemplateCardEvent` can branch a resume submit apart from
+ * approvals. No pending store: the selected option id is the source of truth on
+ * submit.
  */
 export function buildWecomSessionListCard(options: SessionListCardOptions): TemplateCard {
   const { requestId, sessionId, taskId, title, desc, options: sessions } = options;
 
   return {
-    card_type: 'vote_interaction',
+    card_type: 'multiple_interaction',
     source: { desc: 'Comate', desc_color: 0 },
     main_title: {
       title: title ?? '选择会话',
       desc: desc ?? '请选择要恢复的会话',
     },
     task_id: taskId,
-    checkbox: {
-      question_key: encodeButtonKey(requestId, 'resume', sessionId),
-      mode: 0,
-      option_list: sessions.map((s) => ({
-        id: s.sessionId,
-        text: s.isActive ? `${s.label} （当前）` : s.label,
-      })),
-    },
+    select_list: [
+      {
+        question_key: encodeButtonKey(requestId, 'resume', sessionId),
+        title: '可恢复的会话',
+        option_list: sessions.map((s) => ({
+          id: s.sessionId,
+          text: s.isActive ? `${s.label} （当前）` : s.label,
+        })),
+      },
+    ],
     submit_button: {
       text: '恢复',
       key: encodeButtonKey(requestId, 'resume', sessionId),
@@ -315,10 +318,12 @@ export function buildWecomSessionListCard(options: SessionListCardOptions): Temp
 /**
  * Build a terminal-state card used to update an expired or resolved card.
  *
- * For `vote_interaction` cards, keeps the card_type and sets `replace_text`
- * (greys out the submit button) + `checkbox.disable` (prevents re-selection) —
- * the only reliable way to disable a vote_interaction card per WeCom doc /94888.
- * Replacing it with a `text_notice` does NOT disable the interactive elements.
+ * For `vote_interaction` and `multiple_interaction` cards, keeps the card_type
+ * and sets `replace_text` (greys out the submit button) + disables the
+ * interactive elements (`checkbox.disable` / `select_list[i].disable`). This is
+ * the only reliable way to disable these cards per WeCom doc /94888.
+ * Replacing them with a `text_notice` does NOT disable the interactive
+ * elements.
  *
  * For other card types (`button_interaction`, etc.), replaces with a
  * `text_notice` carrying the same `task_id`.
@@ -328,11 +333,15 @@ export function buildTerminalCard(
   notice: string,
   taskId?: string,
 ): TemplateCard {
+  const source = { desc: 'Comate', desc_color: 0 };
+  const mainTitle = { title: notice, desc: '' };
+  const terminalButton = { text: notice, key: 'terminal' };
+
   if (originalCardType === 'vote_interaction') {
     return {
       card_type: 'vote_interaction',
-      source: { desc: 'Comate', desc_color: 0 },
-      main_title: { title: notice, desc: '' },
+      source,
+      main_title: mainTitle,
       task_id: taskId,
       checkbox: {
         question_key: 'terminal',
@@ -340,13 +349,34 @@ export function buildTerminalCard(
         disable: true,
         option_list: [{ id: '0', text: notice, is_checked: true }],
       },
+      submit_button: terminalButton,
+      replace_text: notice,
+    } as TemplateCard;
+  }
+
+  if (originalCardType === 'multiple_interaction') {
+    return {
+      card_type: 'multiple_interaction',
+      source,
+      main_title: mainTitle,
+      task_id: taskId,
+      select_list: [
+        {
+          question_key: 'terminal',
+          title: '已选择',
+          disable: true,
+          selected_id: '0',
+          option_list: [{ id: '0', text: notice }],
+        },
+      ],
+      submit_button: terminalButton,
       replace_text: notice,
     } as TemplateCard;
   }
 
   return {
     card_type: 'text_notice',
-    source: { desc: 'Comate', desc_color: 0 },
+    source,
     main_title: {
       title: '已处理',
       desc: notice,
