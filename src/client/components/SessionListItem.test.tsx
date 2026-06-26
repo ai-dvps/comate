@@ -60,13 +60,13 @@ describe('SessionListItem', () => {
   })
 
   describe('bot icon active/inactive distinction', () => {
-    it('renders the WeCom icon with an accent ring and no grayscale when active', () => {
+    it('renders the WeCom icon at full color when active', () => {
       renderWithI18n(
         <SessionListItem session={makeSession({ source: 'wecom' })} {...baseProps} isActive />,
       )
       const img = screen.getByAltText('WeCom')
-      expect(img.className).toContain('ring-accent')
       expect(img.className).not.toContain('grayscale')
+      expect(img.className).not.toContain('opacity-40')
     })
 
     it('renders the WeCom icon desaturated and dimmed when inactive', () => {
@@ -76,7 +76,6 @@ describe('SessionListItem', () => {
       const img = screen.getByAltText('WeCom')
       expect(img.className).toContain('grayscale')
       expect(img.className).toContain('opacity-40')
-      expect(img.className).not.toContain('ring-accent')
     })
 
     it('renders the Feishu icon desaturated and dimmed when inactive', () => {
@@ -86,16 +85,15 @@ describe('SessionListItem', () => {
       const img = screen.getByAltText('Feishu')
       expect(img.className).toContain('grayscale')
       expect(img.className).toContain('opacity-40')
-      expect(img.className).not.toContain('ring-accent')
     })
 
-    it('renders the Feishu icon with an accent ring and no grayscale when active', () => {
+    it('renders the Feishu icon at full color when active', () => {
       renderWithI18n(
         <SessionListItem session={makeSession({ source: 'feishu' })} {...baseProps} isActive />,
       )
       const img = screen.getByAltText('Feishu')
-      expect(img.className).toContain('ring-accent')
       expect(img.className).not.toContain('grayscale')
+      expect(img.className).not.toContain('opacity-40')
     })
 
     it('does not render any bot icon for non-bot (gui) sessions', () => {

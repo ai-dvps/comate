@@ -183,7 +183,7 @@ export default function SessionListItem({
                 alt="WeCom"
                 className={cn(
                   'w-3 h-3 flex-shrink-0',
-                  isActive ? 'ring-2 ring-accent' : 'grayscale opacity-40',
+                  !isActive && 'grayscale opacity-40',
                 )}
                 title={t('wecomBotSession')}
               />
@@ -194,7 +194,7 @@ export default function SessionListItem({
                 alt="Feishu"
                 className={cn(
                   'w-3 h-3 flex-shrink-0',
-                  isActive ? 'ring-2 ring-accent' : 'grayscale opacity-40',
+                  !isActive && 'grayscale opacity-40',
                 )}
                 title={t('feishuBotSession')}
               />
