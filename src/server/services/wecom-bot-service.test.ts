@@ -1197,4 +1197,35 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
     assert.strictEqual(switchedTo[1].sessionId, 'sess-target');
     assert.strictEqual(updatedCards[1].card.main_title.desc, '已恢复会话');
   });
+
+  it('updates the card to terminal BEFORE sending the confirmation (WeCom 5s update window)', async () => {
+    // WeCom only honors a card-update response within ~5s of the template_card_event.
+    // The update must therefore precede any slow I/O (getSession / sendMessage).
+    const calls: string[] = [];
+    (service as any).connections.set('ws-1', {
+      client: {
+        sendMessage: async () => {
+          calls.push('send');
+        },
+        updateTemplateCard: async () => {
+          calls.push('update');
+        },
+      },
+      workspaceId: 'ws-1',
+      botId: 'bot-1',
+      folderPath: tempDir,
+      status: 'connected' as const,
+    });
+
+    await (service as any).handleTemplateCardEvent('ws-1', makeResumeEvent('sess-source', 'sess-target'));
+
+    const updateIdx = calls.indexOf('update');
+    const sendIdx = calls.indexOf('send');
+    assert.notStrictEqual(updateIdx, -1, 'updateTemplateCard must be called');
+    assert.notStrictEqual(sendIdx, -1, 'sendMessage must be called');
+    assert.ok(
+      updateIdx < sendIdx,
+      `card update must precede confirmation send; order was: ${calls.join(' -> ')}`,
+    );
+  });
 });
