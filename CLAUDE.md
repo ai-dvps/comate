@@ -113,6 +113,7 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 
 - Use `diagLog()` from `src/server/utils/diag-logger.ts` for server-side diagnostic logs.
 - Client logs can be posted to `POST /api/log`.
+- The Tauri/Rust shell writes a `main.log` to the app-data `logs/` folder (same folder as the Node logs) in both debug and release builds via `tauri-plugin-log`; use `log::` macros in `src-tauri/src/`.
 
 ## Testing
 

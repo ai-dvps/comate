@@ -295,14 +295,55 @@ pub fn run() {
             reveal_in_file_manager
         ])
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+            // Persistent file logging for both debug and release builds. In a
+            // packaged release this is the only place Rust-shell diagnostics land
+            // (Windows release has no console), so the logger installs
+            // unconditionally rather than debug-only.
+            //
+            // The file target lives in the app-data `logs/` folder — the same
+            // directory the Node sidecar writes to (the shell passes app_data_dir
+            // as COMATE_DATA_DIR) — so Rust and Node logs co-locate, and the
+            // Node-side folder cleanup bounds both.
+            let mut targets: Vec<tauri_plugin_log::Target> = if cfg!(debug_assertions) {
+                vec![tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Stdout,
+                )]
+            } else {
+                Vec::new()
+            };
+
+            // Resolve the logs directory; if it is unavailable or cannot be
+            // created, omit the file target and degrade silently rather than
+            // aborting startup.
+            let file_target = app
+                .path()
+                .app_data_dir()
+                .ok()
+                .map(|dir| dir.join("logs"))
+                .and_then(|logs_dir| std::fs::create_dir_all(&logs_dir).ok().map(|_| logs_dir))
+                .map(|logs_dir| {
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                        path: logs_dir,
+                        file_name: Some("main".to_string()),
+                    })
+                });
+            if let Some(target) = file_target {
+                targets.push(target);
             }
+
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+                    .level(log::LevelFilter::Info)
+                    .targets(targets)
+                    // Best-effort in-process bounding (max_file_size is not always
+                    // enforced — tauri-apps/plugins-workspace#707). The Node-side
+                    // folder cleanup is the authoritative bound. KeepOne avoids the
+                    // KeepAll rotation bug (#1397).
+                    .max_file_size(5 * 1024 * 1024)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                    .build(),
+            )?;
 
             // Build the tray menu. The two status items are disabled — they
             // render as read-only labels and the poller updates their text.
