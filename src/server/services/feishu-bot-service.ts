@@ -13,7 +13,7 @@ import { FeishuStreamReply } from './feishu-stream-reply.js';
 import {
   buildWorkspaceListCard,
   buildSessionListCard,
-  buildInactiveSessionCard,
+  buildDisabledSessionListCard,
   type FeishuCard,
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler, type CardActionPayload } from './feishu-card-action-handler.js';
@@ -354,7 +354,12 @@ export class FeishuBotService {
         await this.safePostActionResponse(event, content);
       }
       if (payload.action === 'select_session' && this.isSuccessToast(result)) {
-        await this.patchSessionListCardInactive(event.messageId, payload.workspaceId, resolvedSessionId!);
+        await this.patchSessionListCardInactive(
+          event.messageId,
+          payload.workspaceId,
+          resolvedSessionId!,
+          event.user.userId,
+        );
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -397,18 +402,16 @@ export class FeishuBotService {
     messageId: string,
     workspaceId: string,
     sessionId: string,
+    openId: string,
   ): Promise<void> {
     const larkClient = this.connection?.larkClient;
     if (!larkClient) return;
 
-    const [workspace, session] = await Promise.all([
-      workspaceStore.get(workspaceId),
-      chatService.getSession(sessionId, workspaceId),
-    ]);
+    const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) return;
 
-    const sessionName = session?.name ?? sessionId;
-    const card = buildInactiveSessionCard(workspace.name, sessionName);
+    const sessions = await this.collectSessionList(workspace, openId);
+    const card = buildDisabledSessionListCard(workspace.name, sessions);
 
     try {
       await larkClient.im.v1.message.patch({

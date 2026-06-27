@@ -474,10 +474,12 @@ describe('FeishuBotService', () => {
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
     });
 
-    it('handles v2 form submit select_session from form_value and patches the original card', async () => {
+    it('handles v2 form submit select_session from form_value and patches the original card disabled', async () => {
       workspaceStore.getFeishuSessionOwner = () => 'ou_form';
+      workspaceStore.listFeishuSessionsByUser = () => [{ sessionId: 'session-42' }];
       let activeSessionId: string | null = null;
       workspaceStore.setFeishuActiveSession = (ws, user, sessionId) => {
+        activeSessions.set(`${ws}:${user}`, sessionId);
         activeSessionId = sessionId;
       };
       chatService.getSession = async () =>
@@ -500,14 +502,32 @@ describe('FeishuBotService', () => {
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
 
       const patchCalls = larkCalls.filter((c) => c.method === 'im.message.patch');
-      assert.strictEqual(patchCalls.length, 1, 'should patch the original card inactive');
+      assert.strictEqual(patchCalls.length, 1, 'should patch the original card disabled');
       const patchContent = JSON.parse(
         (patchCalls[0].args as { data: { content: string } }).data.content,
       );
       assert.strictEqual(patchContent.schema, '2.0');
-      assert.ok(
-        (patchContent.body.elements[1].text.content as string).includes('Selected Session'),
-      );
+
+      const form = (patchContent.body.elements as unknown[]).find(
+        (el) => (el as Record<string, unknown>).tag === 'form',
+      ) as Record<string, unknown>;
+      assert.ok(form, 'disabled card should keep the form');
+      const formElements = form.elements as unknown[];
+
+      const select = formElements.find(
+        (el) => (el as Record<string, unknown>).tag === 'select_static',
+      ) as Record<string, unknown>;
+      assert.ok(select);
+      assert.strictEqual(select.disabled, true);
+      const options = select.options as Array<{ text: { content: string }; value: string }>;
+      assert.ok(options.some((o) => o.text.content.includes('Selected Session （当前）')));
+
+      const button = formElements.find(
+        (el) => (el as Record<string, unknown>).tag === 'button',
+      ) as Record<string, unknown>;
+      assert.ok(button);
+      assert.strictEqual(button.disabled, true);
+      assert.strictEqual(button.form_action_type, 'submit');
     });
 
     it('rejects v2 form submit when sessionId is missing from form_value', async () => {
