@@ -6,6 +6,7 @@ export const FALLBACK_TEXT = '⚠️ 处理失败，请稍后重试。';
 import {
   buildApprovalCard,
   buildQuestionCard,
+  type FeishuCard,
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler } from './feishu-card-action-handler.js';
 import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
