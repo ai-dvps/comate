@@ -56,6 +56,7 @@ describe('FeishuBotService', () => {
   let originalChatServiceCreateSession: typeof chatService.createSession;
   let originalChatServiceGetSession: typeof chatService.getSession;
   let originalChatServicePushMessage: typeof chatService.pushMessage;
+  let originalChatServiceGetRuntimeIfExists: typeof chatService.getRuntimeIfExists;
   let originalFeishuUserResolverResolveOnMessage: typeof feishuUserResolver.resolveOnMessage;
   let createdSessions: Array<{ workspaceId: string; name: string; source?: string }>;
   let activeSessions: Map<string, string>;
@@ -68,6 +69,18 @@ describe('FeishuBotService', () => {
 
   function getTextPosts(): string[] {
     return thread.posts.filter((p) => p.type === 'text').map((p) => String(p.value));
+  }
+
+  function makeMockRuntime(overrides?: {
+    isProcessingTurn?: boolean;
+    interrupt?: () => Promise<void>;
+    cancelPendingApprovals?: (message?: string) => void;
+  }) {
+    return {
+      isProcessingTurn: () => overrides?.isProcessingTurn ?? true,
+      interrupt: overrides?.interrupt ?? (async () => {}),
+      cancelPendingApprovals: overrides?.cancelPendingApprovals ?? (() => {}),
+    };
   }
 
   const workspace = {
@@ -113,6 +126,7 @@ describe('FeishuBotService', () => {
     originalChatServiceCreateSession = chatService.createSession.bind(chatService);
     originalChatServiceGetSession = chatService.getSession.bind(chatService);
     originalChatServicePushMessage = chatService.pushMessage.bind(chatService);
+    originalChatServiceGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
     originalFeishuUserResolverResolveOnMessage = feishuUserResolver.resolveOnMessage.bind(feishuUserResolver);
 
     workspaceStore.resetData();
@@ -164,6 +178,7 @@ describe('FeishuBotService', () => {
     chatService.pushMessage = async () => {
       // no-op: we only verify it was called
     };
+    chatService.getRuntimeIfExists = () => undefined;
 
     // Inject a minimal larkClient so FeishuStreamReply can be instantiated
     (service as unknown as { connection: { larkClient: MockLarkClient } }).connection = {
@@ -230,6 +245,7 @@ describe('FeishuBotService', () => {
     chatService.createSession = originalChatServiceCreateSession;
     chatService.getSession = originalChatServiceGetSession;
     chatService.pushMessage = originalChatServicePushMessage;
+    chatService.getRuntimeIfExists = originalChatServiceGetRuntimeIfExists;
     feishuUserResolver.resolveOnMessage = originalFeishuUserResolverResolveOnMessage;
   });
 
@@ -1056,6 +1072,113 @@ describe('FeishuBotService', () => {
       );
     });
 
+    it('"stop" interrupts an in-flight turn and appends 已中断 to the active stream reply', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+
+      let capturedHandler: ((id: number, event: SseEvent) => void) & { cleanup: () => void } | undefined;
+      chatService.pushMessage = async (_sessionId, _workspaceId, _text, _isBot, handler) => {
+        capturedHandler = handler as typeof capturedHandler;
+      };
+
+      await (service as unknown as { handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleChatMessage(
+        thread,
+        feishuUserId,
+        'hello',
+      );
+
+      assert.ok(capturedHandler, 'handler should be passed to pushMessage');
+      capturedHandler!(1, { type: 'assistant_start' } as SseEvent);
+      capturedHandler!(2, { type: 'text_delta', text: 'working' } as SseEvent);
+
+      let interruptCalled = false;
+      let cancelCalled = false;
+      chatService.getRuntimeIfExists = () =>
+        makeMockRuntime({
+          interrupt: async () => {
+            interruptCalled = true;
+          },
+          cancelPendingApprovals: () => {
+            cancelCalled = true;
+          },
+        });
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'stop');
+      await sleep(100);
+
+      assert.strictEqual(interruptCalled, true);
+      assert.strictEqual(cancelCalled, true);
+
+      const contentCalls = larkCalls.filter((c) => c.method === 'cardElement.content');
+      const lastContent = contentCalls[contentCalls.length - 1]?.args as {
+        data: { content: string };
+      };
+      assert.ok(lastContent?.data.content.endsWith('已中断'));
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 0, 'no standalone text should be sent when stream is active');
+    });
+
+    it('"/stop" (with leading slash) interrupts an in-flight turn and appends 已中断', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+
+      let interruptCalled = false;
+      chatService.getRuntimeIfExists = () =>
+        makeMockRuntime({
+          interrupt: async () => {
+            interruptCalled = true;
+          },
+        });
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/stop');
+
+      assert.strictEqual(interruptCalled, true);
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      const content = (text[0].args as { data: { content: string } }).data.content;
+      assert.ok(content.includes('已中断'));
+      assert.strictEqual(
+        (text[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+      );
+    });
+
+    it('"stop" replies with no active session message when none exists', async () => {
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'stop');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok((text[0].args as { data: { content: string } }).data.content.includes('没有活跃的会话'));
+      assert.strictEqual(createdSessions.length, 0);
+    });
+
+    it('"stop" replies with idle message when no turn is in flight', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      chatService.getRuntimeIfExists = () => makeMockRuntime({ isProcessingTurn: false });
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'stop');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok((text[0].args as { data: { content: string } }).data.content.includes('当前没有正在进行的对话'));
+    });
+
+    it('"stop" does not crash when the interrupt fails', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      chatService.getRuntimeIfExists = () =>
+        makeMockRuntime({
+          interrupt: async () => {
+            throw new Error('interrupt exploded');
+          },
+        });
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'stop');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok((text[0].args as { data: { content: string } }).data.content.includes('中断会话失败'));
+    });
+
     it('serializes concurrent menu new clicks for the same user (no interleaving)', async () => {
       const events: string[] = [];
       let counter = 0;
@@ -1156,6 +1279,135 @@ describe('FeishuBotService', () => {
       });
 
       assert.strictEqual(interactiveCardCalls().length, 1, 'WS menu /resume should send session-list card');
+    });
+  });
+
+  describe('/stop command', () => {
+    it('interrupts the active streaming reply and does not send a standalone text', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+
+      let capturedHandler: ((id: number, event: SseEvent) => void) & { cleanup: () => void } | undefined;
+      chatService.pushMessage = async (_sessionId, _workspaceId, _text, _isBot, handler) => {
+        capturedHandler = handler as typeof capturedHandler;
+      };
+
+      await (service as unknown as { handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleChatMessage(
+        thread,
+        feishuUserId,
+        'hello',
+      );
+
+      assert.ok(capturedHandler, 'handler should be passed to pushMessage');
+      capturedHandler!(1, { type: 'assistant_start' } as SseEvent);
+      capturedHandler!(2, { type: 'text_delta', text: 'working' } as SseEvent);
+
+      const activeMap = (service as unknown as { activeStreamReplies: Map<string, unknown> }).activeStreamReplies;
+      assert.strictEqual(activeMap.has('session-1'), true, 'stream reply should be tracked');
+
+      let interruptCalled = false;
+      let cancelMessage: string | undefined;
+      chatService.getRuntimeIfExists = () =>
+        makeMockRuntime({
+          interrupt: async () => {
+            interruptCalled = true;
+          },
+          cancelPendingApprovals: (message) => {
+            cancelMessage = message;
+          },
+        });
+
+      await (service as unknown as { handleStopCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStopCommand(
+        thread,
+        feishuUserId,
+      );
+      await sleep(100);
+
+      assert.strictEqual(interruptCalled, true, 'runtime.interrupt should be called');
+      assert.strictEqual(cancelMessage, 'Turn interrupted by user.', 'pending approvals should be cancelled');
+
+      const contentCalls = larkCalls.filter((c) => c.method === 'cardElement.content');
+      const lastContent = contentCalls[contentCalls.length - 1]?.args as {
+        data: { content: string };
+      };
+      assert.ok(lastContent?.data.content.endsWith('已中断'), 'stream should end with the interrupt marker');
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 0, 'should not send a standalone text when the stream is interrupted');
+      assert.strictEqual(activeMap.has('session-1'), false, 'stream reply should be removed after finalization');
+    });
+
+    it('sends a standalone 已中断 when there is no active stream reply', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+
+      let interruptCalled = false;
+      let cancelCalled = false;
+      chatService.getRuntimeIfExists = () =>
+        makeMockRuntime({
+          interrupt: async () => {
+            interruptCalled = true;
+          },
+          cancelPendingApprovals: () => {
+            cancelCalled = true;
+          },
+        });
+
+      await (service as unknown as { handleStopCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStopCommand(
+        thread,
+        feishuUserId,
+      );
+
+      assert.strictEqual(interruptCalled, true);
+      assert.strictEqual(cancelCalled, true);
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 1);
+      assert.strictEqual(textPosts[0], '已中断');
+    });
+
+    it('replies with a no-active-session message and does not create a session', async () => {
+      await (service as unknown as { handleStopCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStopCommand(
+        thread,
+        feishuUserId,
+      );
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 1);
+      assert.ok(textPosts[0].includes('没有活跃的会话'));
+      assert.strictEqual(createdSessions.length, 0, 'should not create a session for /stop');
+    });
+
+    it('replies with an idle message when the session has no in-flight turn', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      chatService.getRuntimeIfExists = () => makeMockRuntime({ isProcessingTurn: false });
+
+      await (service as unknown as { handleStopCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStopCommand(
+        thread,
+        feishuUserId,
+      );
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 1);
+      assert.ok(textPosts[0].includes('当前没有正在进行的对话'));
+    });
+
+    it('replies with a fallback error when the interrupt fails', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      chatService.getRuntimeIfExists = () =>
+        makeMockRuntime({
+          interrupt: async () => {
+            throw new Error('interrupt exploded');
+          },
+        });
+
+      await (service as unknown as { handleStopCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStopCommand(
+        thread,
+        feishuUserId,
+      );
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 1);
+      assert.ok(textPosts[0].includes('中断会话失败'));
     });
   });
 });

@@ -9,7 +9,7 @@ import type { ChatSession } from '../models/session.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { createFeishuSessionForUser } from './feishu-session-helpers.js';
-import { FeishuStreamReply } from './feishu-stream-reply.js';
+import { FeishuStreamReply, type FeishuStreamReplyHandle } from './feishu-stream-reply.js';
 import {
   buildWorkspaceListCard,
   buildSessionListCard,
@@ -45,6 +45,7 @@ export class FeishuBotService {
   private sessionListCardIds = new Map<string, string>();
   private cardUpdateSequences = new Map<string, number>();
   private pendingCardActionResponses = new Map<string, unknown>();
+  private activeStreamReplies = new Map<string, FeishuStreamReplyHandle>();
 
   async initialize(): Promise<void> {
     const activeWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
@@ -315,7 +316,7 @@ export class FeishuBotService {
       return;
     }
 
-    if (key !== 'resume' && key !== 'new' && key !== 'clear') {
+    if (key !== 'resume' && key !== 'new' && key !== 'clear' && key !== 'stop') {
       diagLog(`[FeishuBotService] menu event: unknown normalizedKey="${key}" (rawKey="${rawKey}")`);
       await this.sendMenuText(larkClient, openId, '⚠️ 未知的菜单操作。');
       return;
@@ -326,6 +327,9 @@ export class FeishuBotService {
       if (key === 'resume') {
         diagLog(`[FeishuBotService] menu event: sending session-list card for ${openId}`);
         await this.sendSessionListCard(larkClient, workspace, openId);
+      } else if (key === 'stop') {
+        diagLog(`[FeishuBotService] menu event: stopping turn for ${openId}`);
+        await this.handleMenuStopCommand(larkClient, workspace, openId);
       } else {
         diagLog(`[FeishuBotService] menu event: creating new session for ${openId}`);
         await this.createAndNotifyNewSession(larkClient, workspace, openId);
@@ -651,13 +655,45 @@ export class FeishuBotService {
       return;
     }
 
-    const runtime = chatService.getRuntimeIfExists(sessionId);
-    if (!runtime || !runtime.isProcessingTurn()) {
-      await this.safePostText(thread, '当前没有正在进行的对话。');
+    await this.stopTurn(sessionId, (text) => this.safePostText(thread, text));
+  }
+
+  private async handleMenuStopCommand(
+    larkClient: lark.Client,
+    workspace: Workspace,
+    openId: string,
+  ): Promise<void> {
+    const sessionId = workspaceStore.getFeishuActiveSession(workspace.id, openId);
+    if (!sessionId) {
+      await this.sendMenuText(larkClient, openId, '没有活跃的会话可中断。请运行 /resume 选择会话。');
       return;
     }
 
-    await runtime.interrupt();
+    await this.stopTurn(sessionId, (text) => this.sendMenuText(larkClient, openId, text));
+  }
+
+  private async stopTurn(
+    sessionId: string,
+    sendText: (text: string) => Promise<void>,
+  ): Promise<void> {
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    if (!runtime || !runtime.isProcessingTurn()) {
+      await sendText('当前没有正在进行的对话。');
+      return;
+    }
+
+    try {
+      const streamReply = this.activeStreamReplies.get(sessionId);
+      const interrupted = streamReply?.interrupt('已中断') ?? false;
+      await runtime.interrupt();
+      runtime.cancelPendingApprovals('Turn interrupted by user.');
+      if (!interrupted) {
+        await sendText('已中断');
+      }
+    } catch (err) {
+      console.error('[FeishuBotService] failed to interrupt session:', err);
+      await sendText('⚠️ 中断会话失败，请稍后重试。');
+    }
   }
 
   private async getOrCreateSession(
@@ -740,9 +776,17 @@ export class FeishuBotService {
     let finalize: (() => Promise<void>) | undefined;
 
     try {
-      const handle = await reply.start();
+      const handle = await reply.start({
+        onFinalized: () => {
+          this.activeStreamReplies.delete(sessionId);
+        },
+        onCleanup: () => {
+          this.activeStreamReplies.delete(sessionId);
+        },
+      });
       handler = handle.handler;
       finalize = handle.finalize;
+      this.activeStreamReplies.set(sessionId, handle);
     } catch (err) {
       console.error('[FeishuBotService] failed to start streaming reply:', err);
       await this.safePostText(thread, '⚠️ 发送消息失败，请稍后重试。');

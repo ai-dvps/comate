@@ -381,14 +381,86 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     assert.ok(card, 'timeout text should be sent');
   });
 
-  it('returns the same finish promise when finalize is called twice', async () => {
+  it('appends the interrupt marker and finalizes the streaming card', async () => {
     const reply = createReply();
-    const { handler, finalize } = await reply.start();
+    const { handler, interrupt, finalize } = await reply.start();
+
+    handler(1, { type: 'assistant_start' } as SseEvent);
+    handler(1, { type: 'text_delta', text: 'hello' } as SseEvent);
+
+    const didInterrupt = interrupt('已中断');
+    assert.strictEqual(didInterrupt, true);
+
+    await finalize();
+
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    const lastContent = contentCalls[contentCalls.length - 1]?.args as {
+      data: { content: string };
+    };
+    assert.strictEqual(lastContent?.data.content, 'hello\n\n已中断');
+  });
+
+  it('returns false and does not modify content when interrupt is called after finalize', async () => {
+    const reply = createReply();
+    const { handler, interrupt, finalize } = await reply.start();
+
+    handler(1, { type: 'text_delta', text: 'hello' } as SseEvent);
+    await finalize();
+    const contentAfterFinalize = lastContentCall()?.data.content;
+
+    const didInterrupt = interrupt('已中断');
+    assert.strictEqual(didInterrupt, false);
+    assert.strictEqual(lastContentCall()?.data.content, contentAfterFinalize);
+  });
+
+  it('clears the active placeholder before appending the interrupt marker', async () => {
+    const reply = createReply();
+    const { handler, interrupt, finalize } = await reply.start();
+
+    handler(1, { type: 'assistant_start' } as SseEvent);
+    handler(1, { type: 'tool_use_start', toolName: 'Bash' } as SseEvent);
+    await sleep(150);
+    assert.ok(lastContentCall()?.data.content.includes('🔧 Bash'));
+
+    const didInterrupt = interrupt('已中断');
+    assert.strictEqual(didInterrupt, true);
+
+    await finalize();
+    const contentCalls = calls.filter((c) => c.method === 'cardElement.content');
+    const lastContent = contentCalls[contentCalls.length - 1]?.args as {
+      data: { content: string };
+    };
+    assert.strictEqual(lastContent?.data.content, '已中断');
+    assert.ok(!lastContent?.data.content.includes('🔧'));
+  });
+
+  it('fires onFinalized once when the stream finishes', async () => {
+    let finalizedCount = 0;
+    let cleanupCount = 0;
+    const reply = createReply();
+    const { handler, finalize } = await reply.start({
+      onFinalized: () => finalizedCount++,
+      onCleanup: () => cleanupCount++,
+    });
 
     handler(1, { type: 'result', isError: false } as SseEvent);
-    const p1 = finalize();
-    const p2 = finalize();
-    assert.strictEqual(p1, p2);
-    await p1;
+    await finalize();
+    assert.strictEqual(finalizedCount, 1);
+
+    // Subsequent finalizes should not re-fire onFinalized.
+    await finalize();
+    assert.strictEqual(finalizedCount, 1);
+  });
+
+  it('fires onCleanup when the handler cleanup is invoked', async () => {
+    let cleanupCount = 0;
+    const reply = createReply();
+    const { handler } = await reply.start({
+      onCleanup: () => cleanupCount++,
+    });
+
+    handler.cleanup();
+    await sleep(150);
+    assert.strictEqual(cleanupCount, 1);
   });
 });

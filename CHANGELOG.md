@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Feishu bot `/stop` command** — Feishu bot users can now interrupt an in-flight AI turn by sending `/stop` as a text command or by configuring a bot menu with the `/stop` event key. The command cancels any pending tool approval or `AskUserQuestion` for that turn, resolves them as denied, and appends `已中断` to the ongoing streaming card reply when one is active. If no stream reply is active but a turn is still running, it sends `已中断` as a standalone message. It only affects the sender's own active Feishu session and never creates a new session. Errors during interrupt handling are caught and replied to with a fallback message.
+
 ### Changed
 
 - **Feishu interactive cards migrated to Cards v2** — all legacy Feishu interactive cards (workspace list, session switcher, tool approval, and question cards) now use Feishu Cards v2. The session-switcher card is now a compact form with a dropdown and a "确认切换" button; the previous per-session button list and the "新建会话" button have been removed. Session creation remains available via `/new`, `/clear`, and the bot menu. After a successful session switch, the original card is updated to a read-only confirmation. The streaming answer card is unchanged.
