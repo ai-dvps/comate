@@ -64,6 +64,10 @@ describe('FeishuBotService', () => {
 
   const feishuUserId = 'ou_123';
 
+  function getTextPosts(): string[] {
+    return thread.posts.filter((p) => p.type === 'text').map((p) => String(p.value));
+  }
+
   const workspace = {
     id: 'ws-1',
     name: 'Test Workspace',
@@ -240,7 +244,7 @@ describe('FeishuBotService', () => {
       assert.strictEqual(userSessions[0].sessionId, 'session-1');
       assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.strictEqual(textPosts.length, 0, 'hint should not be a separate text post');
 
       const createCalls = larkCalls.filter((c) => c.method === 'card.create');
@@ -279,7 +283,7 @@ describe('FeishuBotService', () => {
       );
 
       assert.strictEqual(createdSessions.length, 1);
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.strictEqual(textPosts.length, 0);
 
       assert.strictEqual(pushArgs[0], 'session-existing');
@@ -297,7 +301,7 @@ describe('FeishuBotService', () => {
         'hello',
       );
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('创建会话失败')));
     });
   });
@@ -328,7 +332,7 @@ describe('FeishuBotService', () => {
       // itself on the `result` event.
       await sleep(120);
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.strictEqual(textPosts.length, 0, 'hint should not be a separate text post');
 
       const createCalls = larkCalls.filter((c) => c.method === 'card.create');
@@ -415,7 +419,7 @@ describe('FeishuBotService', () => {
           (c.args as { data: { msg_type: string } }).data.msg_type === 'interactive',
       );
       assert.strictEqual(interactiveCalls.length, 0, 'no card should be sent to non-admins');
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('没有权限')));
     });
   });
@@ -436,6 +440,23 @@ describe('FeishuBotService', () => {
       };
     }
 
+    function makeFormEvent(
+      value: string,
+      formValue: Record<string, unknown>,
+      userId: string = feishuUserId,
+    ): unknown {
+      const event = makeActionEvent(value, undefined, userId);
+      (event as Record<string, unknown>).raw = {
+        raw: {
+          action: {
+            value: JSON.parse(value),
+            form_value: formValue,
+          },
+        },
+      };
+      return event;
+    }
+
     it('handles select_session and posts the toast to the thread', async () => {
       workspaceStore.getFeishuSessionOwner = () => 'ou_select';
       let activeSessionId: string | null = null;
@@ -449,7 +470,7 @@ describe('FeishuBotService', () => {
       );
 
       assert.strictEqual(activeSessionId, 'session-42');
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
     });
 
@@ -470,21 +491,12 @@ describe('FeishuBotService', () => {
         } as import('../models/session.js').ChatSession);
 
       const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
-      const event = makeActionEvent(payload, undefined, 'ou_form');
-      // Simulate the double-wrapped raw event produced when includeRawEvent is enabled.
-      (event as Record<string, unknown>).raw = {
-        raw: {
-          action: {
-            value: JSON.parse(payload),
-            form_value: { sessionId: 'session-42' },
-          },
-        },
-      };
+      const event = makeFormEvent(payload, { sessionId: 'session-42' }, 'ou_form');
 
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(event);
 
       assert.strictEqual(activeSessionId, 'session-42');
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
 
       const patchCalls = larkCalls.filter((c) => c.method === 'im.message.patch');
@@ -501,19 +513,11 @@ describe('FeishuBotService', () => {
     it('rejects v2 form submit when sessionId is missing from form_value', async () => {
       workspaceStore.getFeishuSessionOwner = () => 'ou_form';
       const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
-      const event = makeActionEvent(payload, undefined, 'ou_form');
-      (event as Record<string, unknown>).raw = {
-        raw: {
-          action: {
-            value: JSON.parse(payload),
-            form_value: {},
-          },
-        },
-      };
+      const event = makeFormEvent(payload, {}, 'ou_form');
 
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(event);
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('无法解析会话选择')));
       const patchCalls = larkCalls.filter((c) => c.method === 'im.message.patch');
       assert.strictEqual(patchCalls.length, 0);
@@ -527,7 +531,7 @@ describe('FeishuBotService', () => {
 
       assert.strictEqual(createdSessions.length, 1);
       assert.strictEqual(createdSessions[0].name, 'ou_create');
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('ou_create')));
     });
 
@@ -563,7 +567,7 @@ describe('FeishuBotService', () => {
         makeActionEvent('not-json', undefined, 'ou_parse'),
       );
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('无法解析卡片操作')));
     });
 
@@ -577,7 +581,7 @@ describe('FeishuBotService', () => {
         makeActionEvent(payload, undefined, 'ou_error'),
       );
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('处理操作失败')));
     });
   });
@@ -595,7 +599,7 @@ describe('FeishuBotService', () => {
       assert.strictEqual(createdSessions[0].source, 'feishu');
       assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes(`已创建新会话：${feishuUserId}`)));
     });
 
@@ -610,7 +614,7 @@ describe('FeishuBotService', () => {
       assert.strictEqual(createdSessions[0].name, feishuUserId);
       assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes(`已创建新会话：${feishuUserId}`)));
     });
 
@@ -625,7 +629,7 @@ describe('FeishuBotService', () => {
       assert.strictEqual(createdSessions[0].name, 'Project Planning');
       assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('已创建新会话：Project Planning')));
     });
 
@@ -640,7 +644,7 @@ describe('FeishuBotService', () => {
       assert.strictEqual(createdSessions[0].name, 'Project Planning');
       assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('已创建新会话：Project Planning')));
     });
 
@@ -677,7 +681,7 @@ describe('FeishuBotService', () => {
         '/new',
       );
 
-      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('创建会话失败')));
     });
   });

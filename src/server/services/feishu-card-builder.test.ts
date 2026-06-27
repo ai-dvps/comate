@@ -19,6 +19,16 @@ import type { Workspace } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import type { QuestionPayload } from '../types/message.js';
 
+function findByTag(elements: unknown[], tag: string): Record<string, unknown> | undefined {
+  return elements.find((el) => (el as Record<string, unknown>).tag === tag) as
+    | Record<string, unknown>
+    | undefined;
+}
+
+function findAllByTag(elements: unknown[], tag: string): Record<string, unknown>[] {
+  return elements.filter((el) => (el as Record<string, unknown>).tag === tag) as Record<string, unknown>[];
+}
+
 describe('feishu-card-builder v2 helpers', () => {
   it('markdownText produces a v2 markdown element', () => {
     assert.deepStrictEqual(markdownText('hello'), { tag: 'markdown', content: 'hello' });
@@ -95,14 +105,12 @@ describe('buildWorkspaceListCard', () => {
     assert.strictEqual(card.schema, '2.0');
     assert.strictEqual(card.body.elements.length, 5);
 
-    const buttons = card.body.elements.filter(
-      (el) => (el as Record<string, unknown>).tag === 'button',
-    );
+    const buttons = findAllByTag(card.body.elements, 'button');
     assert.strictEqual(buttons.length, 2);
-    assert.deepStrictEqual((buttons[0] as Record<string, unknown>).behaviors, [
+    assert.deepStrictEqual(buttons[0].behaviors, [
       { type: 'callback', value: { action: 'select_workspace', workspaceId: 'ws-1' } },
     ]);
-    assert.deepStrictEqual((buttons[1] as Record<string, unknown>).behaviors, [
+    assert.deepStrictEqual(buttons[1].behaviors, [
       { type: 'callback', value: { action: 'select_workspace', workspaceId: 'ws-2' } },
     ]);
   });
@@ -110,9 +118,9 @@ describe('buildWorkspaceListCard', () => {
   it('renders an empty-state hint when there are no workspaces', () => {
     const card = buildWorkspaceListCard([]);
     assert.strictEqual(card.body.elements.length, 1);
-    assert.ok(
-      (card.body.elements[0] as { content: string }).content.includes('绑定目标'),
-    );
+    const hint = findByTag(card.body.elements, 'markdown');
+    assert.ok(hint);
+    assert.ok((hint.content as string).includes('绑定目标'));
   });
 });
 
@@ -136,18 +144,15 @@ describe('buildSessionListCard', () => {
     const card = buildSessionListCard('Workspace', sessions);
     assert.strictEqual(card.schema, '2.0');
 
-    const form = card.body.elements.find(
-      (el) => (el as Record<string, unknown>).tag === 'form',
-    ) as Record<string, unknown>;
+    const form = findByTag(card.body.elements, 'form');
     assert.ok(form, 'form container should exist');
     assert.strictEqual(form.name, 'session_form');
 
     const formElements = form.elements as unknown[];
     assert.strictEqual(formElements.length, 2);
 
-    const select = formElements.find(
-      (el) => (el as Record<string, unknown>).tag === 'select_static',
-    ) as Record<string, unknown>;
+    const select = findByTag(formElements, 'select_static');
+    assert.ok(select);
     assert.strictEqual(select.name, 'sessionId');
     assert.strictEqual(select.initial_index, 1);
     const options = select.options as Array<{ text: { content: string }; value: string }>;
@@ -157,9 +162,8 @@ describe('buildSessionListCard', () => {
     assert.strictEqual(options[1].value, 's2');
     assert.strictEqual(options[1].text.content, 'Session B （当前）');
 
-    const button = formElements.find(
-      (el) => (el as Record<string, unknown>).tag === 'button',
-    ) as Record<string, unknown>;
+    const button = findByTag(formElements, 'button');
+    assert.ok(button);
     assert.strictEqual(button.form_action_type, 'submit');
     assert.deepStrictEqual(button.behaviors, [
       { type: 'callback', value: { action: 'select_session', workspaceId: 'ws-1' } },
@@ -170,14 +174,11 @@ describe('buildSessionListCard', () => {
     const card = buildSessionListCard('Workspace', []);
     assert.strictEqual(card.body.elements.length, 2);
 
-    const form = card.body.elements.find(
-      (el) => (el as Record<string, unknown>).tag === 'form',
-    );
+    const form = findByTag(card.body.elements, 'form');
     assert.strictEqual(form, undefined);
 
-    const hint = card.body.elements.find(
-      (el) => (el as Record<string, unknown>).tag === 'div',
-    ) as Record<string, unknown>;
+    const hint = findByTag(card.body.elements, 'div');
+    assert.ok(hint);
     assert.strictEqual((hint.text as { content: string }).content, '你还没有会话，发送 /new 创建新会话。');
   });
 });
@@ -187,11 +188,14 @@ describe('buildInactiveSessionCard', () => {
     const card = buildInactiveSessionCard('Workspace', 'Session B');
     assert.strictEqual(card.schema, '2.0');
     assert.strictEqual(card.body.elements.length, 2);
-    assert.ok(
-      ((card.body.elements[0] as { content: string }).content as string).includes('Workspace'),
-    );
+    const title = findByTag(card.body.elements, 'markdown');
+    assert.ok(title);
+    assert.ok((title.content as string).includes('Workspace'));
+
+    const confirmation = findByTag(card.body.elements, 'div');
+    assert.ok(confirmation);
     assert.strictEqual(
-      ((card.body.elements[1] as { text: { content: string } }).text).content,
+      (confirmation.text as { content: string }).content,
       '已切换至会话：**Session B**',
     );
   });
@@ -210,9 +214,7 @@ describe('buildApprovalCard', () => {
     });
     assert.strictEqual(card.schema, '2.0');
 
-    const buttons = card.body.elements.filter(
-      (el) => (el as Record<string, unknown>).tag === 'button',
-    ) as Array<Record<string, unknown>>;
+    const buttons = findAllByTag(card.body.elements, 'button');
     assert.strictEqual(buttons.length, 2);
 
     assert.deepStrictEqual(buttons[0].behaviors, [
@@ -259,9 +261,7 @@ describe('buildQuestionCard', () => {
     });
     assert.strictEqual(card.schema, '2.0');
 
-    const buttons = card.body.elements.filter(
-      (el) => (el as Record<string, unknown>).tag === 'button',
-    ) as Array<Record<string, unknown>>;
+    const buttons = findAllByTag(card.body.elements, 'button');
     const optionButtons = buttons.slice(0, -1);
     assert.strictEqual(optionButtons.length, 2);
     assert.deepStrictEqual(optionButtons[0].behaviors, [
@@ -308,14 +308,10 @@ describe('buildQuestionCard', () => {
       questions,
     });
 
-    const texts = card.body.elements.filter(
-      (el) => (el as Record<string, unknown>).tag === 'div',
-    ) as Array<Record<string, unknown>>;
+    const texts = findAllByTag(card.body.elements, 'div');
     assert.ok(texts.some((t) => (t.text as { content: string }).content === '（多选）'));
 
-    const buttons = card.body.elements.filter(
-      (el) => (el as Record<string, unknown>).tag === 'button',
-    ) as Array<Record<string, unknown>>;
+    const buttons = findAllByTag(card.body.elements, 'button');
     assert.strictEqual(buttons.length, 3);
     const values = buttons.map((b) => (b.behaviors as Array<{ value: unknown }>)[0].value);
     assert.deepStrictEqual(values[2], {
@@ -335,14 +331,10 @@ describe('buildQuestionCard', () => {
       questions,
     });
 
-    const buttons = card.body.elements.filter(
-      (el) => (el as Record<string, unknown>).tag === 'button',
-    );
+    const buttons = findAllByTag(card.body.elements, 'button');
     assert.strictEqual(buttons.length, 1); // submit only
 
-    const texts = card.body.elements.filter(
-      (el) => (el as Record<string, unknown>).tag === 'div',
-    ) as Array<Record<string, unknown>>;
+    const texts = findAllByTag(card.body.elements, 'div');
     assert.ok(
       texts.some((t) => (t.text as { content: string }).content === '请在聊天中直接回复该问题。'),
     );
