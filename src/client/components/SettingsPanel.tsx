@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Play,
   Loader2,
+  ChevronRight,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
@@ -124,7 +125,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const storeError = useWorkspaceStore((s) => s.error)
   const isStoreLoading = useWorkspaceStore((s) => s.isLoading)
 
-  const { defaultModel, setDefaultModel, reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays, autoCheckUpdates, setAutoCheckUpdates, notificationSoundsEnabled, setNotificationSoundsEnabled, notificationSoundsVolume, setNotificationSoundsVolume, lastUpdateCheckAt, setLastUpdateCheckAt } = useAppSettings()
+  const { reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays, autoCheckUpdates, setAutoCheckUpdates, notificationSoundsEnabled, setNotificationSoundsEnabled, notificationSoundsVolume, setNotificationSoundsVolume, lastUpdateCheckAt, setLastUpdateCheckAt } = useAppSettings()
   const windowCap = useChatStore((s) => s.windowCap)
   const setWindowCap = useChatStore((s) => s.setWindowCap)
   const updateStatus = useUpdaterStore((s) => s.status)
@@ -141,7 +142,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 
   // App-level form state
-  const [appModel, setAppModel] = useState(defaultModel)
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
   const [appModifierSubmit, setAppModifierSubmit] = useState(useModifierToSubmit)
   const [appAutoCheckUpdates, setAppAutoCheckUpdates] = useState(autoCheckUpdates)
@@ -155,7 +155,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   // Snapshot for dirty tracking
   const snapshotRef = useRef({
-    appModel: defaultModel,
     appReopen: reopenLastWorkspace,
     appModifierSubmit: useModifierToSubmit,
     appAutoCheckUpdates: autoCheckUpdates,
@@ -179,7 +178,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     })
     setWorkspaceState(initial)
     snapshotRef.current = {
-      appModel: defaultModel,
       appReopen: reopenLastWorkspace,
       appModifierSubmit: useModifierToSubmit,
       appAutoCheckUpdates: autoCheckUpdates,
@@ -189,7 +187,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appArchiveThresholdDays: archiveThresholdDays,
       workspaceState: JSON.parse(JSON.stringify(initial)),
     }
-    setAppModel(defaultModel)
     setAppReopen(reopenLastWorkspace)
     setAppModifierSubmit(useModifierToSubmit)
     setAppAutoCheckUpdates(autoCheckUpdates)
@@ -201,7 +198,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     if (workspaces.length > 0) {
       setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, defaultModel, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, windowCap, archiveThresholdDays])
+  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, windowCap, archiveThresholdDays])
 
   useEffect(() => {
     setWindowCapInput(String(windowCap))
@@ -241,7 +238,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
   const isDirty = useCallback(() => {
-    if (appModel !== snapshotRef.current.appModel) return true
     if (appReopen !== snapshotRef.current.appReopen) return true
     if (appModifierSubmit !== snapshotRef.current.appModifierSubmit) return true
     if (appAutoCheckUpdates !== snapshotRef.current.appAutoCheckUpdates) return true
@@ -250,7 +246,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     if (windowCap !== snapshotRef.current.appWindowCap) return true
     if (archiveThresholdDays !== snapshotRef.current.appArchiveThresholdDays) return true
     return JSON.stringify(workspaceState) !== JSON.stringify(snapshotRef.current.workspaceState)
-  }, [appModel, appReopen, appModifierSubmit, appAutoCheckUpdates, appNotificationSounds, appNotificationSoundsVolume, windowCap, archiveThresholdDays, workspaceState])
+  }, [appReopen, appModifierSubmit, appAutoCheckUpdates, appNotificationSounds, appNotificationSoundsVolume, windowCap, archiveThresholdDays, workspaceState])
 
   const handleClose = useCallback(() => {
     if (isDirty()) {
@@ -291,7 +287,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setIsSaving(true)
 
     // Save app settings
-    setDefaultModel(appModel)
     setReopenLastWorkspace(appReopen)
     setUseModifierToSubmit(appModifierSubmit)
     setAutoCheckUpdates(appAutoCheckUpdates)
@@ -349,7 +344,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
     // Update snapshot
     snapshotRef.current = {
-      appModel,
       appReopen,
       appModifierSubmit,
       appAutoCheckUpdates,
@@ -371,7 +365,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   const handleCancel = () => {
     // Reset to snapshot
-    setAppModel(snapshotRef.current.appModel)
     setAppReopen(snapshotRef.current.appReopen)
     setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
     setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
@@ -384,7 +377,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   }
 
   const handleDiscard = () => {
-    setAppModel(snapshotRef.current.appModel)
     setAppReopen(snapshotRef.current.appReopen)
     setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
     setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
@@ -472,8 +464,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
           <div className="flex-1 overflow-y-auto min-h-0">
             {activeTab === 'general' && (
               <GeneralTab
-                defaultModel={appModel}
-                onDefaultModelChange={setAppModel}
                 reopenLastWorkspace={appReopen}
                 onReopenLastWorkspaceChange={setAppReopen}
                 useModifierToSubmit={appModifierSubmit}
@@ -661,8 +651,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 // --- App-level tabs ---
 
 export function GeneralTab({
-  defaultModel,
-  onDefaultModelChange,
   reopenLastWorkspace,
   onReopenLastWorkspaceChange,
   useModifierToSubmit,
@@ -686,8 +674,6 @@ export function GeneralTab({
   onArchiveThresholdDaysChange,
   onArchiveThresholdDaysCommit,
 }: {
-  defaultModel: string
-  onDefaultModelChange: (v: string) => void
   reopenLastWorkspace: boolean
   onReopenLastWorkspaceChange: (v: boolean) => void
   useModifierToSubmit: boolean
@@ -752,20 +738,6 @@ export function GeneralTab({
     <div className="p-6 max-w-xl">
       <div className="space-y-5">
         <PathConfigSection />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            {t('general.defaultModel')}
-          </label>
-          <input
-            value={defaultModel}
-            onChange={(e) => onDefaultModelChange(e.target.value)}
-            placeholder={t('general.defaultModelPlaceholder')}
-            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <p className="text-[10px] text-text-tertiary mt-1">
-            {t('general.defaultModelHint')}
-          </p>
-        </div>
 
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
@@ -1169,6 +1141,7 @@ function PathConfigSection() {
   const [loading, setLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [inputError, setInputError] = useState('')
+  const [resolvedPathExpanded, setResolvedPathExpanded] = useState(false)
 
   const fetchState = useCallback(async () => {
     try {
@@ -1251,27 +1224,38 @@ function PathConfigSection() {
         <>
           {/* Resolved PATH display */}
           <div>
-            <label className="block text-[10px] font-medium text-text-tertiary mb-1">
+            <button
+              type="button"
+              onClick={() => setResolvedPathExpanded((prev) => !prev)}
+              className="flex items-center gap-1 text-[10px] font-medium text-text-tertiary mb-1 hover:text-text-secondary transition-colors"
+            >
+              <ChevronRight
+                className={`w-3 h-3 transition-transform ${resolvedPathExpanded ? 'rotate-90' : ''}`}
+              />
               {t('general.pathConfigResolvedPath')}
-            </label>
-            <div className="bg-bg border border-border rounded-lg p-2 overflow-x-auto">
-              <pre className="text-[11px] font-mono text-text-secondary whitespace-pre-wrap break-all">
-                {state.resolvedPath || '(empty)'}
-              </pre>
-            </div>
-            {/* Source breakdown */}
-            <div className="flex flex-wrap gap-2 mt-1.5">
-              {state.sources.shell && state.sources.shell.length > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent">
-                  {t('general.pathConfigSourceShell')}: {state.sources.shell.length} dirs
-                </span>
-              )}
-              {state.sources.fallback && state.sources.fallback.length > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
-                  {t('general.pathConfigSourceFallback')}: {state.sources.fallback.length} dirs
-                </span>
-              )}
-            </div>
+            </button>
+            {resolvedPathExpanded && (
+              <>
+                <div className="bg-bg border border-border rounded-lg p-2 overflow-x-auto">
+                  <pre className="text-[11px] font-mono text-text-secondary whitespace-pre-wrap break-all">
+                    {state.resolvedPath || '(empty)'}
+                  </pre>
+                </div>
+                {/* Source breakdown */}
+                <div className="flex flex-wrap gap-2 mt-1.5">
+                  {state.sources.shell && state.sources.shell.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent">
+                      {t('general.pathConfigSourceShell')}: {state.sources.shell.length} dirs
+                    </span>
+                  )}
+                  {state.sources.fallback && state.sources.fallback.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
+                      {t('general.pathConfigSourceFallback')}: {state.sources.fallback.length} dirs
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Custom paths */}
