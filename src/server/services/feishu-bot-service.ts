@@ -331,14 +331,15 @@ export class FeishuBotService {
       return;
     }
 
+    let resolvedSessionId: string | undefined;
     if (payload.action === 'select_session') {
-      const sessionId = this.resolveSessionId(payload, event);
-      if (!sessionId) {
+      resolvedSessionId = this.resolveSessionId(payload, event);
+      if (!resolvedSessionId) {
         diagLog('[FeishuBotService] select_session missing sessionId in form_value');
         await this.safePostActionResponse(event, '无法解析会话选择。');
         return;
       }
-      payload.sessionId = sessionId;
+      payload.sessionId = resolvedSessionId;
     }
 
     try {
@@ -350,7 +351,7 @@ export class FeishuBotService {
         await this.safePostActionResponse(event, content);
       }
       if (payload.action === 'select_session' && this.isSuccessToast(result)) {
-        await this.patchSessionListCardInactive(event.messageId, payload.workspaceId, payload.sessionId);
+        await this.patchSessionListCardInactive(event.messageId, payload.workspaceId, resolvedSessionId);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
