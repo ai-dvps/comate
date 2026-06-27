@@ -54,7 +54,7 @@ export function plainText(content: string): { tag: 'div'; text: { tag: 'plain_te
 
 export function actionButton(
   text: string,
-  type: 'primary' | 'default' | 'danger',
+  type: 'primary' | 'default',
   value: Record<string, unknown>,
   name?: string,
 ): unknown {
@@ -142,20 +142,21 @@ export function buildSessionListCard(
   } else {
     elements.push(plainText('选择要使用的会话：'));
 
-    const options = sessions.map(({ session, isActive }) => ({
-      text: `${session.name}${isActive ? ' （当前）' : ''}`,
-      value: session.id,
-    }));
-    const activeIndex = sessions.findIndex(({ isActive }) => isActive);
+    const options: Array<{ text: string; value: string }> = [];
+    let activeIndex: number | undefined;
+    for (const [index, { session, isActive }] of sessions.entries()) {
+      options.push({
+        text: `${session.name}${isActive ? ' （当前）' : ''}`,
+        value: session.id,
+      });
+      if (isActive) {
+        activeIndex = index;
+      }
+    }
 
     elements.push(
       formContainer('session_form', [
-        selectStatic(
-          'sessionId',
-          options,
-          activeIndex >= 0 ? activeIndex : undefined,
-          '请选择会话',
-        ),
+        selectStatic('sessionId', options, activeIndex, '请选择会话'),
         submitButton(
           '确认切换',
           'primary',
@@ -243,33 +244,19 @@ export function buildQuestionCard(params: {
     if (question.options && question.options.length > 0) {
       if (question.multiSelect) {
         elements.push(plainText('（多选）'));
-        for (const option of question.options) {
-          elements.push(
-            actionButton(option.label, 'default', {
-              action: 'question',
-              workspaceId,
-              sessionId,
-              requestId,
-              questionIndex: index,
-              answer: option.label,
-              multiSelect: true,
-            }),
-          );
-        }
-      } else {
-        for (const option of question.options) {
-          elements.push(
-            actionButton(option.label, 'default', {
-              action: 'question',
-              workspaceId,
-              sessionId,
-              requestId,
-              questionIndex: index,
-              answer: option.label,
-              multiSelect: false,
-            }),
-          );
-        }
+      }
+      for (const option of question.options) {
+        elements.push(
+          actionButton(option.label, 'default', {
+            action: 'question',
+            workspaceId,
+            sessionId,
+            requestId,
+            questionIndex: index,
+            answer: option.label,
+            multiSelect: question.multiSelect,
+          }),
+        );
       }
     } else {
       // Free-form questions are not supported via card buttons; ask the user to reply in chat.

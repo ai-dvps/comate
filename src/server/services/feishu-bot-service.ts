@@ -19,6 +19,7 @@ import {
 import { feishuCardActionHandler, type CardActionPayload } from './feishu-card-action-handler.js';
 import { feishuUserResolver } from './feishu-user-resolver.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { sendPlainTextMessage } from './feishu-message-utils.js';
 
 export type FeishuBotStatus =
   | 'not_configured'
@@ -323,24 +324,21 @@ export class FeishuBotService {
       `[FeishuBotService] card action actionId=${event.actionId} user=${event.user.userId} value=${event.value?.slice(0, 200) ?? ''}`,
     );
 
-    const payload = this.parseCardActionValue(event.value) as CardActionPayload | null;
-    if (!payload) {
+    const payload = this.parseCardActionValue(event.value);
+    if (!this.isCardActionPayload(payload)) {
       diagLog('[FeishuBotService] card action value missing or unparseable');
       await this.safePostActionResponse(event, '无法解析卡片操作。');
       return;
     }
 
     if (payload.action === 'select_session') {
-      if (!payload.sessionId) {
-        const formValue = this.extractFormValue(event);
-        const sessionId = formValue?.sessionId;
-        if (typeof sessionId !== 'string' || !sessionId) {
-          diagLog('[FeishuBotService] select_session missing sessionId in form_value');
-          await this.safePostActionResponse(event, '无法解析会话选择。');
-          return;
-        }
-        payload.sessionId = sessionId;
+      const sessionId = this.resolveSessionId(payload, event);
+      if (!sessionId) {
+        diagLog('[FeishuBotService] select_session missing sessionId in form_value');
+        await this.safePostActionResponse(event, '无法解析会话选择。');
+        return;
       }
+      payload.sessionId = sessionId;
     }
 
     try {
@@ -361,37 +359,50 @@ export class FeishuBotService {
     }
   }
 
+  private resolveSessionId(
+    payload: CardActionPayload,
+    event: ActionEvent,
+  ): string | undefined {
+    if (payload.sessionId) return payload.sessionId;
+    const formValue = this.extractFormValue(event);
+    const sessionId = formValue?.sessionId;
+    return typeof sessionId === 'string' ? sessionId : undefined;
+  }
+
   private extractFormValue(event: ActionEvent): Record<string, unknown> | undefined {
-    const normalized = event.raw as
-      | { raw?: { action?: { form_value?: Record<string, unknown> } } }
-      | undefined;
-    return normalized?.raw?.action?.form_value;
+    const raw = event.raw;
+    if (!raw || typeof raw !== 'object') return undefined;
+    const nested = (raw as Record<string, unknown>).raw;
+    if (!nested || typeof nested !== 'object') return undefined;
+    const action = (nested as Record<string, unknown>).action;
+    if (!action || typeof action !== 'object') return undefined;
+    return (action as Record<string, unknown>).form_value as Record<string, unknown> | undefined;
+  }
+
+  private getToast(result: unknown): Record<string, unknown> | undefined {
+    if (!result || typeof result !== 'object' || !('toast' in result)) return undefined;
+    const toast = (result as Record<string, unknown>).toast;
+    return toast && typeof toast === 'object' ? (toast as Record<string, unknown>) : undefined;
   }
 
   private isSuccessToast(result: unknown): boolean {
-    return (
-      !!result &&
-      typeof result === 'object' &&
-      'toast' in result &&
-      result.toast &&
-      typeof result.toast === 'object' &&
-      'type' in result.toast &&
-      result.toast.type === 'success'
-    );
+    return this.getToast(result)?.type === 'success';
   }
 
   private async patchSessionListCardInactive(
     messageId: string,
     workspaceId: string,
-    sessionId: string | undefined,
+    sessionId: string,
   ): Promise<void> {
     const larkClient = this.connection?.larkClient;
-    if (!larkClient || !sessionId) return;
+    if (!larkClient) return;
 
-    const workspace = await workspaceStore.get(workspaceId);
+    const [workspace, session] = await Promise.all([
+      workspaceStore.get(workspaceId),
+      chatService.getSession(sessionId, workspaceId),
+    ]);
     if (!workspace) return;
 
-    const session = await chatService.getSession(sessionId, workspaceId);
     const sessionName = session?.name ?? sessionId;
     const card = buildInactiveSessionCard(workspace.name, sessionName);
 
@@ -423,19 +434,19 @@ export class FeishuBotService {
     return null;
   }
 
+  private isCardActionPayload(
+    payload: Record<string, unknown> | null,
+  ): payload is CardActionPayload {
+    return (
+      !!payload &&
+      typeof payload.action === 'string' &&
+      typeof payload.workspaceId === 'string'
+    );
+  }
+
   private extractToastContent(result: unknown): string | undefined {
-    if (
-      result &&
-      typeof result === 'object' &&
-      'toast' in result &&
-      result.toast &&
-      typeof result.toast === 'object' &&
-      'content' in result.toast &&
-      typeof result.toast.content === 'string'
-    ) {
-      return result.toast.content;
-    }
-    return undefined;
+    const toast = this.getToast(result);
+    return typeof toast?.content === 'string' ? toast.content : undefined;
   }
 
   private async safePostActionResponse(event: ActionEvent, text: string): Promise<void> {
@@ -456,14 +467,7 @@ export class FeishuBotService {
     }
 
     try {
-      await larkClient.im.v1.message.create({
-        params: { receive_id_type: 'open_id' },
-        data: {
-          receive_id: openId,
-          msg_type: 'text',
-          content: JSON.stringify({ text }),
-        },
-      });
+      await sendPlainTextMessage(larkClient, openId, text);
     } catch (err) {
       console.error('[FeishuBotService] failed to send action response:', err);
     }
@@ -722,14 +726,7 @@ export class FeishuBotService {
   private async sendMenuText(larkClient: lark.Client, openId: string, text: string): Promise<void> {
     if (!openId) return;
     try {
-      await larkClient.im.v1.message.create({
-        params: { receive_id_type: 'open_id' },
-        data: {
-          receive_id: openId,
-          msg_type: 'text',
-          content: JSON.stringify({ text }),
-        },
-      });
+      await sendPlainTextMessage(larkClient, openId, text);
     } catch (err) {
       diagLog(`[FeishuBotService] failed to send menu text to ${openId}: ${err instanceof Error ? err.message : String(err)}`);
     }
