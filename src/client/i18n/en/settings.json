@@ -21,6 +21,8 @@
     "useModifierToSubmitHint": "When enabled, press Ctrl+Enter (Windows) or Cmd+Enter (Mac) to submit. Press Enter alone to insert a new line.",
     "notificationSounds": "Notification sounds",
     "notificationSoundsHint": "Play a sound when Claude needs your response (approval or question) or finishes a task.",
+    "notificationSoundsVolume": "Notification sound volume",
+    "notificationSoundsVolumeHint": "Master volume for all notification sounds.",
     "pathConfigTitle": "Claude Code PATH",
     "pathConfigHint": "Directories added here are prepended to the PATH passed to Claude Code.",
     "pathConfigResolvedPath": "Resolved PATH",

@@ -68,11 +68,13 @@ function attachGestureListeners(): void {
 // Prime on first interaction. Safe to invoke at module load.
 attachGestureListeners()
 
-export function playSound(kind: SoundKind): void {
+export function playSound(kind: SoundKind, volume = 100): void {
   if (!unlocked) return // before the first user gesture — best-effort no-op
   if (!elements[kind]) ensureElements()
   const el = elements[kind]
   if (!el) return
+  const clamped = Math.min(100, Math.max(0, volume))
+  el.volume = clamped / 100
   el.currentTime = 0
   const p = el.play()
   if (p && typeof p.catch === 'function') {
