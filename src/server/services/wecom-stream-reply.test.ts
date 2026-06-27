@@ -477,4 +477,22 @@ describe('wecom-stream-reply interrupt', { concurrency: false }, () => {
     handler.cleanup();
     assert.strictEqual(cleanupCount, 1);
   });
+
+  it('is safe to call interrupt after a runtime interrupted event has already finalized', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler, interrupt } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'text_delta', messageId: 'm1', text: 'answer' } as SseEvent);
+    handler(1, { type: 'interrupted' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const didInterrupt = interrupt('已中断');
+    assert.strictEqual(didInterrupt, false);
+    assert.strictEqual(
+      calls.filter((c) => c.method === 'replyStream' && c.finish === true).length,
+      1,
+    );
+
+    handler.cleanup();
+  });
 });
