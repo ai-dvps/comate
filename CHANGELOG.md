@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Notification sounds for pending requests and task completion** — Comate now plays a short sound when Claude needs your response (a tool approval or `AskUserQuestion`) and when Claude finishes a turn and goes idle, so you don't miss these moments after switching away from the app. Two audibly distinct royalty-free clips are bundled: a "needs attention" alert and a gentler "completion" chime. A single **Notification sounds** toggle in Settings → General controls all sounds and is enabled by default. The completion sound only fires for turns longer than ~3 seconds, and rapid successive events coalesce into one sound, so ordinary back-and-forth stays quiet. Playback unlocks on the app's first click to satisfy webview autoplay rules; the dock badge continues to flag requests that were already pending at launch.
 
+### Fixed
+
+- **WeCom bot `/stop` stream-reply tracking** — the active stream reply is now registered only after the bot event handler is attached to the runtime. Previously, when a session already had a handler from an earlier turn, `getOrCreateRuntime` cleared the old handler before adding the new one, and the old handler's cleanup deleted the new stream-reply entry before it was fully registered. That caused `/stop` to miss the active stream, send a standalone `已中断`, and leave the turn's result without a stream to finalize into. `已中断` is now correctly appended to the current stream reply whenever the passive window is still open.
+
 ## [0.0.16] - 2026-06-26
 
 ### Added

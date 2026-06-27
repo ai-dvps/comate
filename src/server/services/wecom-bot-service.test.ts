@@ -1266,6 +1266,8 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
   function createMockConnection() {
     return {
       client: {
+        replyStream: async () => {},
+        replyStreamNonBlocking: async () => {},
         sendMessage: async (userId: string, body: any) => {
           sentMessages.push({ userId, body });
         },
@@ -1473,5 +1475,71 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
 
     assert.ok(!sessionCreated);
     assert.strictEqual(sentMessages.length, 1);
+  });
+
+  it('keeps the stream reply active after replacing a stale bot handler (regression)', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as any);
+    workspaceStore.getWecomUserMapping = () => null;
+    workspaceStore.setWecomSession = () => {};
+    chatService.getSession = async () => ({ id: 'sess-1', workspaceId: 'ws-1' } as any);
+
+    let currentHandler: any;
+    let processing = false;
+    // Simulate a runtime that already holds a stale handler from a prior turn.
+    // getOrCreateRuntime clears the old handler before adding the new one, just
+    // like the real implementation.
+    const staleHandler = Object.assign(() => {}, {
+      cleanup: () => {
+        (service as any).activeStreamReplies.delete('sess-1');
+      },
+    });
+    currentHandler = staleHandler;
+
+    chatService.getOrCreateRuntime = async (
+      _sessionId: string,
+      _workspaceId: string,
+      _isBotSession?: boolean,
+      handler?: any,
+    ) => {
+      if (currentHandler) {
+        currentHandler.cleanup?.();
+      }
+      currentHandler = handler;
+      return {
+        pushMessage: () => {
+          processing = true;
+        },
+        isProcessingTurn: () => processing,
+        interrupt: async () => {},
+        cancelPendingApprovals: () => {},
+      } as any;
+    };
+    chatService.getRuntimeIfExists = () =>
+      ({
+        isProcessingTurn: () => processing,
+        interrupt: async () => {},
+        cancelPendingApprovals: () => {},
+      }) as any;
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    // First message creates a stream reply while a runtime already exists.
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('hello'));
+
+    assert.ok(
+      (service as any).activeStreamReplies.get('sess-1'),
+      'stream reply should stay active after replacing a stale handler',
+    );
+
+    // /stop should append the confirmation to that stream reply.
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(
+      sentMessages.filter((m) => m.body.markdown?.content === '已中断').length,
+      0,
+      'confirmation should be appended to the stream, not sent separately',
+    );
   });
 });

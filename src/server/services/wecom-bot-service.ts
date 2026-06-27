@@ -360,11 +360,17 @@ export class WeComBotService {
         onCleanup: () => this.activeStreamReplies.delete(sessionId),
       },
     );
+
+    try {
+      await chatService.pushMessage(sessionId, workspaceId, content, true, streamReply?.handler);
+    } catch (err) {
+      streamReply?.handler.cleanup();
+      throw err;
+    }
+
     if (streamReply) {
       this.activeStreamReplies.set(sessionId, streamReply);
     }
-
-    await chatService.pushMessage(sessionId, workspaceId, content, true, streamReply?.handler);
   }
 
   /**
@@ -573,15 +579,15 @@ export class WeComBotService {
             onCleanup: () => this.activeStreamReplies.delete(sessionId),
           },
         );
-        if (streamReply) {
-          this.activeStreamReplies.set(sessionId, streamReply);
-        }
         const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
         try {
           await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply?.handler);
         } catch (err) {
           streamReply?.handler.cleanup();
           throw err;
+        }
+        if (streamReply) {
+          this.activeStreamReplies.set(sessionId, streamReply);
         }
         return;
       }
@@ -622,9 +628,6 @@ export class WeComBotService {
           onCleanup: () => this.activeStreamReplies.delete(sessionId),
         },
       );
-      if (streamReply) {
-        this.activeStreamReplies.set(sessionId, streamReply);
-      }
       const defaultFilePrompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
       const prompt = await this.resolveFilePrompt(workspaceId, relativePath, defaultFilePrompt);
       try {
@@ -632,6 +635,9 @@ export class WeComBotService {
       } catch (err) {
         streamReply?.handler.cleanup();
         throw err;
+      }
+      if (streamReply) {
+        this.activeStreamReplies.set(sessionId, streamReply);
       }
     } catch (err) {
       console.error(`[WeComBotService] Failed to handle ${msgtype} message from ${wecomUserId}:`, err);
