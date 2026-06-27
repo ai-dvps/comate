@@ -28,6 +28,8 @@ interface MockLarkClient {
       };
       cardElement: {
         content: (args: { path: { card_id: string; element_id: string }; data: { content: string; sequence: number; uuid: string } }) => Promise<unknown>;
+        patch: (args: { path: { card_id: string; element_id: string }; data: { partial_element: string; sequence: number; uuid: string } }) => Promise<unknown>;
+        update: (args: { path: { card_id: string; element_id: string }; data: { element: string; sequence: number; uuid: string } }) => Promise<unknown>;
       };
     };
   };
@@ -181,6 +183,14 @@ describe('FeishuBotService', () => {
             cardElement: {
               content: async (args: { path: { card_id: string; element_id: string }; data: { content: string; sequence: number; uuid: string } }) => {
                 larkCalls.push({ method: 'cardElement.content', args });
+                return { data: {} };
+              },
+              patch: async (args: { path: { card_id: string; element_id: string }; data: { partial_element: string; sequence: number; uuid: string } }) => {
+                larkCalls.push({ method: 'cardElement.patch', args });
+                return { data: {} };
+              },
+              update: async (args: { path: { card_id: string; element_id: string }; data: { element: string; sequence: number; uuid: string } }) => {
+                larkCalls.push({ method: 'cardElement.update', args });
                 return { data: {} };
               },
             },
@@ -363,12 +373,17 @@ describe('FeishuBotService', () => {
         feishuUserId,
       );
 
+      const createCalls = larkCalls.filter((c) => c.method === 'card.create');
+      assert.strictEqual(createCalls.length, 1, 'should create a CardKit card');
+      const cardJson = JSON.parse((createCalls[0].args as { data: { data: string } }).data.data);
+      assert.strictEqual(cardJson.schema, '2.0');
+
       const interactiveCalls = larkCalls.filter(
         (c) =>
           c.method === 'im.message.create' &&
           (c.args as { data: { msg_type: string } }).data.msg_type === 'interactive',
       );
-      assert.strictEqual(interactiveCalls.length, 1, 'should send one interactive card');
+      assert.strictEqual(interactiveCalls.length, 1, 'should send one interactive card message');
       assert.strictEqual(
         (interactiveCalls[0].args as { params: { receive_id_type: string } }).params
           .receive_id_type,
@@ -379,6 +394,10 @@ describe('FeishuBotService', () => {
         feishuUserId,
         'must use user open_id, not chat_id',
       );
+      const messageContent = JSON.parse(
+        (interactiveCalls[0].args as { data: { content: string } }).data.content,
+      );
+      assert.deepStrictEqual(messageContent, { type: 'card', data: { card_id: 'card-1' } });
     });
 
     it('/workspace sends the workspace list card to the user open_id', async () => {
@@ -474,7 +493,7 @@ describe('FeishuBotService', () => {
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
     });
 
-    it('handles v2 form submit select_session from form_value and patches the original card disabled', async () => {
+    it('handles v2 form submit select_session from form_value and replaces the original form disabled', async () => {
       workspaceStore.getFeishuSessionOwner = () => 'ou_form';
       workspaceStore.listFeishuSessionsByUser = () => [{ sessionId: 'session-42' }];
       let activeSessionId: string | null = null;
@@ -492,6 +511,11 @@ describe('FeishuBotService', () => {
           updatedAt: Date.now(),
         } as import('../models/session.js').ChatSession);
 
+      // Seed the card-ID tracker so the handler uses CardKit form replacement.
+      (
+        service as unknown as { sessionListCardIds: Map<string, string> }
+      ).sessionListCardIds.set('msg-card-1', 'card-1');
+
       const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
       const event = makeFormEvent(payload, { sessionId: 'session-42' }, 'ou_form');
 
@@ -501,33 +525,49 @@ describe('FeishuBotService', () => {
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
 
-      const patchCalls = larkCalls.filter((c) => c.method === 'im.message.patch');
-      assert.strictEqual(patchCalls.length, 1, 'should patch the original card disabled');
-      const patchContent = JSON.parse(
-        (patchCalls[0].args as { data: { content: string } }).data.content,
-      );
-      assert.strictEqual(patchContent.schema, '2.0');
+      const updateCalls = larkCalls.filter((c) => c.method === 'cardElement.update');
+      assert.strictEqual(updateCalls.length, 1, 'should replace the session-list form disabled');
+      const updateArgs = updateCalls[0].args as {
+        path: { card_id: string; element_id: string };
+        data: { element: string; sequence: number; uuid: string };
+      };
+      assert.strictEqual(updateArgs.path.card_id, 'card-1');
+      assert.strictEqual(updateArgs.path.element_id, 'session_form');
 
-      const form = (patchContent.body.elements as unknown[]).find(
-        (el) => (el as Record<string, unknown>).tag === 'form',
-      ) as Record<string, unknown>;
-      assert.ok(form, 'disabled card should keep the form');
-      const formElements = form.elements as unknown[];
+      const formElement = JSON.parse(updateArgs.data.element);
+      assert.strictEqual(formElement.tag, 'form');
+      assert.strictEqual(formElement.element_id, 'session_form');
+      const formElements = formElement.elements as unknown[];
 
-      const select = formElements.find(
+      const selectPartial = formElements.find(
         (el) => (el as Record<string, unknown>).tag === 'select_static',
       ) as Record<string, unknown>;
-      assert.ok(select);
-      assert.strictEqual(select.disabled, true);
-      const options = select.options as Array<{ text: { content: string }; value: string }>;
-      assert.ok(options.some((o) => o.text.content.includes('Selected Session （当前）')));
+      assert.ok(selectPartial, 'updated form should include the select element');
+      assert.strictEqual(selectPartial.disabled, true);
+      assert.strictEqual(selectPartial.initial_index, 0);
+      assert.ok(
+        (selectPartial.options as Array<{ text: { content: string } }>).some((o) =>
+          o.text.content.includes('Selected Session （当前）'),
+        ),
+      );
 
-      const button = formElements.find(
+      const buttonPartial = formElements.find(
         (el) => (el as Record<string, unknown>).tag === 'button',
       ) as Record<string, unknown>;
-      assert.ok(button);
-      assert.strictEqual(button.disabled, true);
-      assert.strictEqual(button.form_action_type, 'submit');
+      assert.ok(buttonPartial, 'updated form should include the submit button');
+      assert.strictEqual(buttonPartial.disabled, true);
+
+      const pendingResponses = (service as unknown as { pendingCardActionResponses: Map<string, unknown> }).pendingCardActionResponses;
+      const response = pendingResponses.get('msg-card-1');
+      assert.ok(response, 'should store a card action response for the message');
+      assert.strictEqual((response as { toast?: { type: string } }).toast?.type, 'success');
+      assert.strictEqual((response as { card?: { type: string } }).card?.type, 'raw');
+      const responseCard = (response as { card?: { data?: { body?: { elements?: unknown[] } } } }).card?.data;
+      assert.ok(responseCard, 'response should include the disabled card');
+      const responseForm = (responseCard.body.elements as Array<Record<string, unknown>>).find(
+        (el) => el.tag === 'form',
+      );
+      assert.ok(responseForm, 'response card should contain the form');
     });
 
     it('rejects v2 form submit when sessionId is missing from form_value', async () => {
@@ -539,8 +579,8 @@ describe('FeishuBotService', () => {
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('无法解析会话选择')));
-      const patchCalls = larkCalls.filter((c) => c.method === 'im.message.patch');
-      assert.strictEqual(patchCalls.length, 0);
+      const updateCalls = larkCalls.filter((c) => c.method === 'cardElement.update');
+      assert.strictEqual(updateCalls.length, 0);
     });
 
     it('handles create_session and posts the toast to the thread', async () => {
@@ -603,6 +643,70 @@ describe('FeishuBotService', () => {
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('处理操作失败')));
+    });
+
+    it('wraps dispatcher card.action.trigger to return the disabled card response', async () => {
+      workspaceStore.getFeishuSessionOwner = () => 'ou_dispatcher';
+      workspaceStore.listFeishuSessionsByUser = () => [{ sessionId: 'session-42' }];
+      chatService.getSession = async () =>
+        ({
+          id: 'session-42',
+          workspaceId: workspace.id,
+          name: 'Selected Session',
+          source: 'feishu',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        } as import('../models/session.js').ChatSession);
+      (service as unknown as { sessionListCardIds: Map<string, string> }).sessionListCardIds.set(
+        'msg-dispatcher-1',
+        'card-dispatcher-1',
+      );
+
+      const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
+      const rawEvent = {
+        context: { open_message_id: 'msg-dispatcher-1', open_chat_id: 'chat-dispatcher-1' },
+        operator: { open_id: 'ou_dispatcher' },
+        action: { name: 'submit_session', value: JSON.parse(payload), tag: 'button', form_value: { sessionId: 'session-42' } },
+      };
+
+      let handleCardActionCalled = false;
+      const dispatcher = {
+        handles: new Map([
+          [
+            'card.action.trigger',
+            async () => {
+              handleCardActionCalled = true;
+              await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction({
+                actionId: 'submit_session',
+                messageId: 'msg-dispatcher-1',
+                threadId: 'lark:chat-dispatcher-1:root',
+                user: { userId: 'ou_dispatcher', userName: 'User', fullName: 'User', isBot: false, isMe: false },
+                value: payload,
+                raw: { raw: { action: { value: JSON.parse(payload), form_value: { sessionId: 'session-42' } } } },
+                adapter: { name: 'lark' },
+              });
+            },
+          ],
+        ]),
+      };
+      const mockAdapter = {
+        _getChannel: () => ({ dispatcher }),
+      };
+
+      (service as unknown as { registerWSCardActionResponseHandler: (adapter: unknown) => void }).registerWSCardActionResponseHandler(
+        mockAdapter,
+      );
+
+      const wrappedHandler = dispatcher.handles.get('card.action.trigger');
+      assert.ok(wrappedHandler, 'dispatcher should have a wrapped card.action.trigger handler');
+      const response = await wrappedHandler(rawEvent);
+
+      assert.strictEqual(handleCardActionCalled, true);
+      assert.ok(response, 'wrapped handler should return a response');
+      assert.strictEqual((response as { toast?: { type: string } }).toast?.type, 'success');
+      assert.strictEqual((response as { card?: { type: string } }).card?.type, 'raw');
+      const responseCard = (response as { card?: { data?: { body?: { elements?: unknown[] } } } }).card?.data;
+      assert.ok(responseCard, 'response should include the disabled card');
     });
   });
 
@@ -771,6 +875,22 @@ describe('FeishuBotService', () => {
 
     function makeMenuLarkClient(): LarkClientLike {
       return {
+        cardkit: {
+          v1: {
+            card: {
+              create: async (args: { data: { type: string; data: string } }) => {
+                larkCalls.push({ method: 'card.create', args });
+                return { data: { card_id: 'card-menu-1' } };
+              },
+            },
+            cardElement: {
+              patch: async (args: { path: { card_id: string; element_id: string }; data: { partial_element: string; sequence: number; uuid: string } }) => {
+                larkCalls.push({ method: 'cardElement.patch', args });
+                return { data: {} };
+              },
+            },
+          },
+        },
         im: {
           v1: {
             message: {

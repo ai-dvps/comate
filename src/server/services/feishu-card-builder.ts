@@ -76,6 +76,7 @@ export function selectStatic(
   initialIndex?: number,
   placeholder?: string,
   disabled?: boolean,
+  elementId?: string,
 ): unknown {
   const select: Record<string, unknown> = {
     tag: 'select_static',
@@ -94,6 +95,9 @@ export function selectStatic(
   if (disabled) {
     select.disabled = true;
   }
+  if (elementId) {
+    select.element_id = elementId;
+  }
   return select;
 }
 
@@ -103,6 +107,7 @@ export function submitButton(
   value: Record<string, unknown>,
   name: string,
   disabled?: boolean,
+  elementId?: string,
 ): unknown {
   const button: Record<string, unknown> = {
     tag: 'button',
@@ -115,11 +120,18 @@ export function submitButton(
   if (disabled) {
     button.disabled = true;
   }
+  if (elementId) {
+    button.element_id = elementId;
+  }
   return button;
 }
 
-export function formContainer(name: string, elements: unknown[]): unknown {
-  return { tag: 'form', name, elements };
+export function formContainer(name: string, elements: unknown[], elementId?: string): unknown {
+  const form: Record<string, unknown> = { tag: 'form', name, elements };
+  if (elementId) {
+    form.element_id = elementId;
+  }
+  return form;
 }
 
 export function buildWorkspaceListCard(workspaces: Workspace[]): FeishuCardV2 {
@@ -140,6 +152,10 @@ export function buildWorkspaceListCard(workspaces: Workspace[]): FeishuCardV2 {
   return cardV2(elements);
 }
 
+export const SESSION_SELECT_ELEMENT_ID = 'session_select';
+export const SESSION_SUBMIT_ELEMENT_ID = 'session_submit';
+export const SESSION_FORM_ELEMENT_ID = 'session_form';
+
 export function buildSessionListCard(
   workspaceName: string,
   sessions: Array<{ session: ChatSession; isActive: boolean }>,
@@ -152,33 +168,50 @@ export function buildSessionListCard(
   } else {
     elements.push(plainText('选择要使用的会话：'));
 
-    const options: Array<{ text: string; value: string }> = [];
-    let activeIndex: number | undefined;
-    for (const [index, { session, isActive }] of sessions.entries()) {
-      options.push({
-        text: `${session.name}${isActive ? ' （当前）' : ''}`,
-        value: session.id,
-      });
-      if (isActive) {
-        activeIndex = index;
-      }
-    }
-
-    elements.push(
-      formContainer('session_form', [
-        selectStatic('sessionId', options, activeIndex, '请选择会话', disabled),
-        submitButton(
-          '确认切换',
-          'primary',
-          { action: 'select_session', workspaceId: sessions[0].session.workspaceId },
-          'submit_session',
-          disabled,
-        ),
-      ]),
-    );
+    elements.push(buildSessionListFormElement(sessions, disabled));
   }
 
   return cardV2(elements);
+}
+
+export function buildSessionListFormElement(
+  sessions: Array<{ session: ChatSession; isActive: boolean }>,
+  disabled = false,
+): unknown {
+  const options: Array<{ text: string; value: string }> = [];
+  let activeIndex: number | undefined;
+  for (const [index, { session, isActive }] of sessions.entries()) {
+    options.push({
+      text: `${session.name}${isActive ? ' （当前）' : ''}`,
+      value: session.id,
+    });
+    if (isActive) {
+      activeIndex = index;
+    }
+  }
+
+  return formContainer(
+    'session_form',
+    [
+      selectStatic(
+        'sessionId',
+        options,
+        activeIndex,
+        '请选择会话',
+        disabled,
+        SESSION_SELECT_ELEMENT_ID,
+      ),
+      submitButton(
+        '确认切换',
+        'primary',
+        { action: 'select_session', workspaceId: sessions[0].session.workspaceId },
+        'submit_session',
+        disabled,
+        SESSION_SUBMIT_ELEMENT_ID,
+      ),
+    ],
+    SESSION_FORM_ELEMENT_ID,
+  );
 }
 
 /**
