@@ -386,3 +386,95 @@ describe('wecom-stream-reply long-reply safeguard', { concurrency: false }, () =
     handler.cleanup();
   });
 });
+
+describe('wecom-stream-reply interrupt', { concurrency: false }, () => {
+  beforeEach(() => {
+    __setSafeguardDelayForTesting(2000);
+  });
+
+  afterEach(() => {
+    __restoreSafeguardDelay();
+  });
+
+  function makeFrame(): any {
+    return {
+      headers: { req_id: 'req-int' },
+      body: { msgid: 'msg-int', from: { userid: 'user-1' }, msgtype: 'text', text: { content: 'hi' } },
+    };
+  }
+
+  it('appends the interrupt marker and finalizes the passive stream', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler, interrupt } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'text_delta', messageId: 'm1', text: 'partial answer' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const didInterrupt = interrupt('已中断');
+    assert.strictEqual(didInterrupt, true);
+
+    await new Promise((r) => setTimeout(r, 20));
+    const finalCalls = calls.filter((c) => c.method === 'replyStream' && c.finish === true);
+    assert.strictEqual(finalCalls.length, 1);
+    assert.ok(finalCalls[0].text.includes('partial answer'));
+    assert.ok(finalCalls[0].text.includes('已中断'));
+    assert.strictEqual(calls.filter((c) => c.method === 'sendMessage').length, 0);
+
+    handler.cleanup();
+  });
+
+  it('returns false when the safeguard has already fired', async () => {
+    __setSafeguardDelayForTesting(50);
+    const { conn, calls } = makeTrackingConn();
+    const { handler, interrupt } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 80)); // safeguard fires
+
+    const didInterrupt = interrupt('已中断');
+    assert.strictEqual(didInterrupt, false);
+    assert.strictEqual(
+      calls.filter((c) => c.method === 'replyStream' && c.finish === true).length,
+      0,
+    );
+
+    handler.cleanup();
+  });
+
+  it('returns false once the stream is already finalized', async () => {
+    const { conn, calls } = makeTrackingConn();
+    const { handler, interrupt } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'result' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const didInterrupt = interrupt('已中断');
+    assert.strictEqual(didInterrupt, false);
+    assert.strictEqual(
+      calls.filter((c) => c.method === 'replyStream' && c.finish === true).length,
+      1,
+    );
+
+    handler.cleanup();
+  });
+
+  it('calls onFinalized once when the stream finalizes', async () => {
+    let finalizedCount = 0;
+    let cleanupCount = 0;
+    const { conn } = makeTrackingConn();
+    const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1', {
+      onFinalized: () => finalizedCount++,
+      onCleanup: () => cleanupCount++,
+    });
+
+    handler(1, { type: 'result' } as SseEvent);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(finalizedCount, 1);
+
+    handler(1, { type: 'result' } as SseEvent); // second terminal
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(finalizedCount, 1, 'onFinalized should fire only once');
+
+    handler.cleanup();
+    assert.strictEqual(cleanupCount, 1);
+  });
+});

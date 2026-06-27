@@ -41,6 +41,18 @@ export interface StreamReplyResult {
   handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
   finalizeStream: () => void;
   setPlaceholder: (text: string, animate?: boolean) => void;
+  /**
+   * If the passive stream is still open, append the interrupt marker and
+   * finalize it. Returns `true` when the marker was written into the stream;
+   * returns `false` when the stream was already finalized or the 9-minute
+   * safeguard has fired (the caller should send the message proactively).
+   */
+  interrupt: (message: string) => boolean;
+}
+
+export interface StreamReplyCallbacks {
+  onFinalized?: () => void;
+  onCleanup?: () => void;
 }
 
 export function createStreamReply(
@@ -48,6 +60,7 @@ export function createStreamReply(
   frame: WsFrame<any>,
   sessionId: string,
   wecomUserId: string,
+  callbacks?: StreamReplyCallbacks,
 ): StreamReplyResult {
   const streamId = `${sessionId}-${Date.now()}`;
   const placeholderMessage = getRandomAcknowledgment();
@@ -62,6 +75,7 @@ export function createStreamReply(
   let currentPlaceholder: string | null = null;
   let placeholderAnimationInterval: NodeJS.Timeout | null = null;
   let safeguardTimer: NodeJS.Timeout | null = null;
+  let finalizedNotified = false;
   const sentTemplateCards = new Set<string>();
 
   const clearSafeguardTimer = () => {
@@ -69,6 +83,12 @@ export function createStreamReply(
       clearTimeout(safeguardTimer);
       safeguardTimer = null;
     }
+  };
+
+  const emitFinalized = () => {
+    if (finalizedNotified) return;
+    finalizedNotified = true;
+    callbacks?.onFinalized?.();
   };
 
   const stopAnimation = () => {
@@ -177,6 +197,7 @@ export function createStreamReply(
         });
       }
     });
+    emitFinalized();
   };
 
   // Proactive path: the safeguard already fired. Push the full accumulated
@@ -209,6 +230,7 @@ export function createStreamReply(
       .catch((err: Error) => {
         console.error('Failed to deliver WeCom proactive result:', err);
       });
+    emitFinalized();
   };
 
   // Route a terminal event to the right finalize path.
@@ -237,6 +259,17 @@ export function createStreamReply(
         console.error('Failed to send WeCom long-task notice:', err);
       });
   }
+
+  const interrupt = (message: string): boolean => {
+    if (streamFinalized || passiveClosed) return false;
+    clearPlaceholder();
+    if (responseText && !responseText.endsWith('\n\n')) {
+      responseText += '\n\n';
+    }
+    responseText += message;
+    handleTerminal();
+    return true;
+  };
 
   const handler = Object.assign(
     (id: number, event: SseEvent) => {
@@ -321,9 +354,10 @@ export function createStreamReply(
         stopPlaceholderAnimation();
         clearSafeguardTimer();
         flushStream.abort();
+        callbacks?.onCleanup?.();
       },
     },
   );
 
-  return { handler, finalizeStream, setPlaceholder };
+  return { handler, finalizeStream, setPlaceholder, interrupt };
 }

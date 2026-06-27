@@ -59,6 +59,7 @@ async function resolveStreamReplyIfNeeded<TFrame>(
   sessionId: string,
   wecomUserId: string,
   sendTemplateCard?: (card: TemplateCard) => Promise<unknown>,
+  callbacks?: { onFinalized?: () => void; onCleanup?: () => void },
 ): Promise<StreamReplyResult | undefined> {
   const workspace = await workspaceStore.get(workspaceId);
   if (!workspace) return undefined;
@@ -75,6 +76,7 @@ async function resolveStreamReplyIfNeeded<TFrame>(
     frame as WsFrame<unknown>,
     sessionId,
     wecomUserId,
+    callbacks,
   );
 }
 
@@ -149,6 +151,7 @@ export class WeComBotService {
   private botIdToWorkspaceId = new Map<string, string>();
   private serverUrl: string | null = null;
   private cardClickRateLimit = new Map<string, number>();
+  private activeStreamReplies = new Map<string, StreamReplyResult>();
 
   setServerUrl(url: string): void {
     this.serverUrl = url;
@@ -352,7 +355,14 @@ export class WeComBotService {
       sessionId,
       wecomUserId,
       (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+      {
+        onFinalized: () => this.activeStreamReplies.delete(sessionId),
+        onCleanup: () => this.activeStreamReplies.delete(sessionId),
+      },
     );
+    if (streamReply) {
+      this.activeStreamReplies.set(sessionId, streamReply);
+    }
 
     await chatService.pushMessage(sessionId, workspaceId, content, true, streamReply?.handler);
   }
@@ -493,13 +503,18 @@ export class WeComBotService {
         return;
       }
 
+      const streamReply = this.activeStreamReplies.get(sessionId);
+      const interruptedInStream = streamReply?.interrupt('已中断') ?? false;
+
       await runtime.interrupt();
       runtime.cancelPendingApprovals('Turn interrupted by user.');
 
-      await conn.client.sendMessage(wecomUserId, {
-        msgtype: 'markdown',
-        markdown: { content: '已中断' },
-      });
+      if (!interruptedInStream) {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '已中断' },
+        });
+      }
     } catch (err) {
       console.error('[WeComBotService] failed to handle /stop:', err);
       try {
@@ -549,7 +564,14 @@ export class WeComBotService {
           sessionId,
           wecomUserId,
           (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+          {
+            onFinalized: () => this.activeStreamReplies.delete(sessionId),
+            onCleanup: () => this.activeStreamReplies.delete(sessionId),
+          },
         );
+        if (streamReply) {
+          this.activeStreamReplies.set(sessionId, streamReply);
+        }
         const prompt = `a voice message transcribed as: "${voiceContent}" uploaded by ${wecomUserId}, if there is skill can process this content, process it with that skill, if no proper skill find, ask user how to handle it.`;
         try {
           await chatService.pushMessage(sessionId, workspaceId, prompt, true, streamReply?.handler);
@@ -591,7 +613,14 @@ export class WeComBotService {
         sessionId,
         wecomUserId,
         (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+        {
+          onFinalized: () => this.activeStreamReplies.delete(sessionId),
+          onCleanup: () => this.activeStreamReplies.delete(sessionId),
+        },
       );
+      if (streamReply) {
+        this.activeStreamReplies.set(sessionId, streamReply);
+      }
       const defaultFilePrompt = `a file named @${relativePath} uploaded by ${userFolderName}, if there is skill can process this file, process it with that skill, if no proper skill find, ask user how to handle it.`;
       const prompt = await this.resolveFilePrompt(workspaceId, relativePath, defaultFilePrompt);
       try {

@@ -1239,6 +1239,7 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
   let sentMessages: Array<{ userId: string; body: any }>;
   let interruptCalls: string[];
   let cancelPendingApprovalsCalls: string[];
+  let streamReplyInterruptCalls: Array<{ sessionId: string; message: string }>;
 
   let origGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
   let origGetRuntimeIfExists: typeof chatService.getRuntimeIfExists;
@@ -1248,6 +1249,7 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     sentMessages = [];
     interruptCalls = [];
     cancelPendingApprovalsCalls = [];
+    streamReplyInterruptCalls = [];
 
     origGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
     origGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
@@ -1293,6 +1295,15 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     };
   }
 
+  function injectStreamReply(sessionId: string, returnValue: boolean) {
+    (service as any).activeStreamReplies.set(sessionId, {
+      interrupt: (message: string) => {
+        streamReplyInterruptCalls.push({ sessionId, message });
+        return returnValue;
+      },
+    });
+  }
+
   function setRuntime(processing: boolean, failInterrupt = false) {
     chatService.getRuntimeIfExists = () =>
       ({
@@ -1322,9 +1333,10 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     assert.ok(!parseWecomStopCommand('/stopx'));
   });
 
-  it('interrupts an in-flight turn and sends confirmation (R1, R4, R6)', async () => {
+  it('interrupts an in-flight turn and appends confirmation to the stream reply (R1, R4, R6)', async () => {
     workspaceStore.getActiveWecomSession = () => 'sess-1';
     setRuntime(true);
+    injectStreamReply('sess-1', true);
 
     const conn = createMockConnection();
     injectConnection(conn);
@@ -1333,10 +1345,14 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
 
     assert.strictEqual(interruptCalls.length, 1);
     assert.strictEqual(cancelPendingApprovalsCalls.length, 1);
-    assert.strictEqual(sentMessages.length, 1);
-    assert.strictEqual(sentMessages[0].userId, 'enc-user-1');
-    assert.strictEqual(sentMessages[0].body.msgtype, 'markdown');
-    assert.strictEqual(sentMessages[0].body.markdown.content, '已中断');
+    assert.strictEqual(streamReplyInterruptCalls.length, 1);
+    assert.strictEqual(streamReplyInterruptCalls[0].sessionId, 'sess-1');
+    assert.strictEqual(streamReplyInterruptCalls[0].message, '已中断');
+    assert.strictEqual(
+      sentMessages.filter((m) => m.body.markdown?.content === '已中断').length,
+      0,
+      'confirmation should be appended to the stream, not sent separately',
+    );
   });
 
   it('replies with no active session message when none exists (R2)', async () => {
@@ -1383,6 +1399,7 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
   it('cancels pending approvals after interrupt (R5)', async () => {
     workspaceStore.getActiveWecomSession = () => 'sess-1';
     setRuntime(true);
+    injectStreamReply('sess-1', true);
 
     const conn = createMockConnection();
     injectConnection(conn);
@@ -1392,6 +1409,37 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     assert.strictEqual(interruptCalls.length, 1);
     assert.strictEqual(cancelPendingApprovalsCalls.length, 1);
     assert.strictEqual(cancelPendingApprovalsCalls[0], 'Turn interrupted by user.');
+  });
+
+  it('falls back to a standalone confirmation when no stream reply is active', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    setRuntime(true);
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(streamReplyInterruptCalls.length, 0);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].userId, 'enc-user-1');
+    assert.strictEqual(sentMessages[0].body.msgtype, 'markdown');
+    assert.strictEqual(sentMessages[0].body.markdown.content, '已中断');
+  });
+
+  it('falls back to a standalone confirmation when the stream reply is past the safeguard', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    setRuntime(true);
+    injectStreamReply('sess-1', false);
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(streamReplyInterruptCalls.length, 1);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].body.markdown.content, '已中断');
   });
 
   it('does not crash the bot when interrupt fails (R7)', async () => {
