@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-06-27
+
 ### Added
 
 - **Feishu bot `/stop` command** — Feishu bot users can now interrupt an in-flight AI turn by sending `/stop` as a text command or by configuring a bot menu with the `/stop` event key. The command cancels any pending tool approval or `AskUserQuestion` for that turn, resolves them as denied, and appends `已中断` to the ongoing streaming card reply when one is active. If no stream reply is active but a turn is still running, it sends `已中断` as a standalone message. It only affects the sender's own active Feishu session and never creates a new session. Errors during interrupt handling are caught and replied to with a fallback message.
