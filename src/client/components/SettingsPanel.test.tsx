@@ -297,8 +297,6 @@ describe('FeishuBotSection', () => {
 
 describe('GeneralTab updater flow', () => {
   const defaultProps = {
-    defaultModel: '',
-    onDefaultModelChange: vi.fn(),
     reopenLastWorkspace: false,
     onReopenLastWorkspaceChange: vi.fn(),
     useModifierToSubmit: false,

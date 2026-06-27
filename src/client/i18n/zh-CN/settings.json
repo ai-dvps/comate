@@ -8,9 +8,6 @@
     "wecom": "企业微信机器人"
   },
   "general": {
-    "defaultModel": "默认模型",
-    "defaultModelPlaceholder": "例如 claude-sonnet-4-5-20250929",
-    "defaultModelHint": "留空以使用系统默认模型。",
     "messageWindowCap": "消息窗口上限",
     "messageWindowCapHint": "每个会话保留在内存中的最大消息数（50–1000）。较早的消息会被裁剪，但可以通过向上滚动重新获取。",
     "archiveThresholdDays": "归档阈值（天）",
