@@ -710,8 +710,52 @@ describe('FeishuBotService', () => {
       assert.strictEqual(interactiveCardCalls().length, 1, 'empty-state card should still be sent');
     });
 
+    it('"/resume" (with leading slash) sends the session-list card to the operator open_id', async () => {
+      workspaceStore.listFeishuSessionsByUser = () => [
+        { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
+      ];
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/resume');
+
+      const interactive = interactiveCardCalls();
+      assert.strictEqual(interactive.length, 1, 'should send one interactive session-list card');
+      assert.strictEqual(
+        (interactive[0].args as { params: { receive_id_type: string } }).params.receive_id_type,
+        'open_id',
+      );
+      assert.strictEqual(
+        (interactive[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+        'card must be addressed to the operator open_id',
+      );
+    });
+
     it('"new" creates a session scoped to the operator open_id and notifies them', async () => {
       await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'new');
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+      assert.strictEqual(createdSessions[0].source, 'feishu');
+      assert.strictEqual(userSessions.length, 1);
+      assert.strictEqual(userSessions[0].feishuUserId, feishuUserId);
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok(
+        (text[0].args as { data: { content: string } }).data.content.includes(
+          `已创建新会话：${feishuUserId}`,
+        ),
+      );
+      assert.strictEqual(
+        (text[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+      );
+    });
+
+    it('"/new" (with leading slash) creates a session scoped to the operator open_id and notifies them', async () => {
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/new');
 
       assert.strictEqual(createdSessions.length, 1);
       assert.strictEqual(createdSessions[0].name, feishuUserId);

@@ -166,9 +166,10 @@ export class FeishuBotService {
     openId: string,
     eventKey: string | undefined,
   ): Promise<void> {
-    const key = (eventKey ?? '').trim();
+    const rawKey = (eventKey ?? '').trim();
+    const key = this.normalizeMenuEventKey(rawKey);
     diagLog(
-      `[FeishuBotService] menu event from=${openId || '(missing)'} key="${key}" workspace=${workspace.id}`,
+      `[FeishuBotService] menu event from=${openId || '(missing)'} rawKey="${rawKey}" normalizedKey="${key}" workspace=${workspace.id}`,
     );
 
     if (!openId) {
@@ -185,20 +186,27 @@ export class FeishuBotService {
     }
 
     if (key !== 'resume' && key !== 'new') {
-      diagLog(`[FeishuBotService] menu event: unknown key "${key}"`);
+      diagLog(`[FeishuBotService] menu event: unknown normalizedKey="${key}" (rawKey="${rawKey}")`);
       await this.sendMenuText(larkClient, openId, '⚠️ 未知的菜单操作。');
       return;
     }
 
-    diagLog(`[FeishuBotService] menu event: processing key="${key}" for ${openId}`);
+    diagLog(`[FeishuBotService] menu event: processing normalizedKey="${key}" for ${openId}`);
     await this.runForUser(openId, async () => {
       if (key === 'resume') {
+        diagLog(`[FeishuBotService] menu event: sending session-list card for ${openId}`);
         await this.sendSessionListCard(larkClient, workspace, openId);
       } else {
+        diagLog(`[FeishuBotService] menu event: creating new session for ${openId}`);
         await this.createAndNotifyNewSession(larkClient, workspace, openId);
       }
-      diagLog(`[FeishuBotService] menu event: completed key="${key}" for ${openId}`);
+      diagLog(`[FeishuBotService] menu event: completed normalizedKey="${key}" for ${openId}`);
     });
+  }
+
+  /** Strip a leading slash so menu keys configured as "/resume" match "resume". */
+  private normalizeMenuEventKey(key: string): string {
+    return key.startsWith('/') ? key.slice(1) : key;
   }
 
   private isFeishuEnabled(workspace: Workspace): boolean {

@@ -170,6 +170,9 @@ async function handleCardCallback(
         diagLog(
           `[FeishuCardRoute] menu_v6 received openId=${openId || '(missing)'} key=${(eventKey ?? '').slice(0, 40)}`,
         );
+        // Log the raw event body (no secrets expected in a menu event) to make
+        // it easy to verify what Feishu actually sent when debugging menu configs.
+        diagLog(`[FeishuCardRoute] menu_v6 payload: ${JSON.stringify(data)}`);
 
         // Credentials are guaranteed present: the route-level guard above
         // rejected menu events for workspaces missing appId/appSecret. Build a
