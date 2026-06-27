@@ -846,5 +846,37 @@ describe('FeishuBotService', () => {
         await service.handleMenuEvent(makeFailingMenuLarkClient(), workspace, feishuUserId, 'new');
       });
     });
+
+    it('registers a WS dispatcher handler that routes application.bot.menu_v6 to handleMenuEvent', async () => {
+      const registeredHandlers: Record<string, (data: Record<string, unknown>) => Promise<void> | void> = {};
+      const mockDispatcher = {
+        register: (handlers: Record<string, (data: Record<string, unknown>) => Promise<void> | void>) => {
+          Object.assign(registeredHandlers, handlers);
+        },
+      };
+      const mockAdapter = {
+        _getChannel: () => ({ dispatcher: mockDispatcher }),
+      };
+
+      (service as unknown as { registerWSMenuHandler: (adapter: unknown, ws: typeof workspace, client: MockLarkClient) => void }).registerWSMenuHandler(
+        mockAdapter,
+        workspace,
+        makeMenuLarkClient() as unknown as MockLarkClient,
+      );
+
+      assert.ok('application.bot.menu_v6' in registeredHandlers, 'should register menu_v6 handler');
+
+      workspaceStore.listFeishuSessionsByUser = () => [
+        { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
+      ];
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+
+      await registeredHandlers['application.bot.menu_v6']({
+        operator: { operator_id: { open_id: feishuUserId } },
+        event_key: '/resume',
+      });
+
+      assert.strictEqual(interactiveCardCalls().length, 1, 'WS menu /resume should send session-list card');
+    });
   });
 });

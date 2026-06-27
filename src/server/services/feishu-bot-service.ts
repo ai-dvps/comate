@@ -93,6 +93,11 @@ export class FeishuBotService {
 
     try {
       await chat.initialize();
+      // The chat adapter listens to im.message / card.action / reaction events
+      // but ignores application.bot.menu_v6. When Feishu is configured to use
+      // long-connection (WebSocket) event subscription, menu events arrive on
+      // the same WS channel, so register a handler there as well.
+      this.registerWSMenuHandler(adapter, workspace, larkClient);
       workspaceStore.setFeishuActiveWorkspace(workspace.id);
       this.connection.status = 'connected';
       diagLog(`[FeishuBotService] connected for workspace ${workspace.id}`);
@@ -100,6 +105,50 @@ export class FeishuBotService {
       this.connection.status = 'error';
       console.error(`[FeishuBotService] failed to initialize for workspace ${workspace.id}:`, err);
     }
+  }
+
+  /**
+   * Register an application.bot.menu_v6 handler on the chat adapter's underlying
+   * Lark WS dispatcher. This covers Feishu apps that use long-connection event
+   * subscription instead of the HTTP callback route.
+   */
+  private registerWSMenuHandler(
+    adapter: LarkAdapter,
+    workspace: Workspace,
+    larkClient: lark.Client,
+  ): void {
+    const channel = (adapter as unknown as { _getChannel?: () => lark.LarkChannel | null })._getChannel?.();
+    if (!channel) {
+      diagLog('[FeishuBotService] cannot register menu handler: underlying LarkChannel unavailable');
+      return;
+    }
+    const dispatcher = (channel as unknown as { dispatcher?: lark.EventDispatcher }).dispatcher;
+    if (!dispatcher) {
+      diagLog('[FeishuBotService] cannot register menu handler: LarkChannel dispatcher unavailable');
+      return;
+    }
+    diagLog('[FeishuBotService] registering application.bot.menu_v6 handler on WS dispatcher');
+    dispatcher.register({
+      'application.bot.menu_v6': async (data: Record<string, unknown>) => {
+        const { openId, eventKey } = this.extractMenuEvent(data);
+        diagLog(
+          `[FeishuBotService] ws menu_v6 received openId=${openId || '(missing)'} key=${(eventKey ?? '').slice(0, 40)}`,
+        );
+        try {
+          await this.handleMenuEvent(larkClient, workspace, openId, eventKey);
+        } catch (err) {
+          console.error('[FeishuBotService] ws menu handler error:', err);
+        }
+      },
+    });
+  }
+
+  /** Extract operator open_id and event_key from an application.bot.menu_v6 payload. */
+  private extractMenuEvent(data: Record<string, unknown>): { openId: string; eventKey: string | undefined } {
+    const operator = data.operator as { operator_id?: { open_id?: string } } | undefined;
+    const openId = operator?.operator_id?.open_id ?? '';
+    const eventKey = typeof data.event_key === 'string' ? data.event_key : undefined;
+    return { openId, eventKey };
   }
 
   disconnect(): void {
