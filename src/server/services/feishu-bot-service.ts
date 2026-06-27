@@ -1,6 +1,6 @@
 import { Chat } from 'chat';
 import { createMemoryState } from '@chat-adapter/state-memory';
-import { createLarkAdapter, type LarkAdapter } from '@larksuite/vercel-chat-adapter';
+import { createLarkAdapter, type LarkAdapter, type LarkAdapterConfig } from '@larksuite/vercel-chat-adapter';
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { Thread, Message, DirectMessageHandler, MentionHandler, ActionEvent } from 'chat';
 import type { SseEvent } from '../types/message.js';
@@ -76,7 +76,10 @@ export class FeishuBotService {
     const adapter = createLarkAdapter({
       appId,
       appSecret,
-      channelFactory: (opts) => lark.createLarkChannel({ ...opts, includeRawEvent: true }),
+      channelFactory: (((opts: lark.LarkChannelOptions) =>
+        lark.createLarkChannel({ ...opts, includeRawEvent: true })) as unknown as NonNullable<
+        LarkAdapterConfig['channelFactory']
+      >),
     });
     const chat = new Chat({
       adapters: { lark: adapter },
@@ -351,7 +354,7 @@ export class FeishuBotService {
         await this.safePostActionResponse(event, content);
       }
       if (payload.action === 'select_session' && this.isSuccessToast(result)) {
-        await this.patchSessionListCardInactive(event.messageId, payload.workspaceId, resolvedSessionId);
+        await this.patchSessionListCardInactive(event.messageId, payload.workspaceId, resolvedSessionId!);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -435,13 +438,12 @@ export class FeishuBotService {
     return null;
   }
 
-  private isCardActionPayload(
-    payload: Record<string, unknown> | null,
-  ): payload is CardActionPayload {
+  private isCardActionPayload(payload: unknown): payload is CardActionPayload {
+    if (!payload || typeof payload !== 'object') return false;
+    const record = payload as Record<string, unknown>;
     return (
-      !!payload &&
-      typeof payload.action === 'string' &&
-      typeof payload.workspaceId === 'string'
+      typeof record.action === 'string' &&
+      typeof record.workspaceId === 'string'
     );
   }
 
