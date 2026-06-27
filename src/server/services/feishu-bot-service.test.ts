@@ -511,8 +511,8 @@ describe('FeishuBotService', () => {
     });
   });
 
-  describe('/new command', () => {
-    it('creates a session with the default title when no title is supplied', async () => {
+  describe('/new and /clear commands', () => {
+    it('/new creates a session with the default title when no title is supplied', async () => {
       await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
         thread,
         feishuUserId,
@@ -528,11 +528,41 @@ describe('FeishuBotService', () => {
       assert.ok(textPosts.some((text) => String(text).includes(`已创建新会话：${feishuUserId}`)));
     });
 
-    it('creates a session with the supplied title', async () => {
+    it('/clear creates a session with the default title when no title is supplied', async () => {
+      await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
+        thread,
+        feishuUserId,
+        '/clear',
+      );
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      assert.ok(textPosts.some((text) => String(text).includes(`已创建新会话：${feishuUserId}`)));
+    });
+
+    it('/new creates a session with the supplied title', async () => {
       await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
         thread,
         feishuUserId,
         '/new Project Planning',
+      );
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, 'Project Planning');
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      assert.ok(textPosts.some((text) => String(text).includes('已创建新会话：Project Planning')));
+    });
+
+    it('/clear creates a session with the supplied title', async () => {
+      await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
+        thread,
+        feishuUserId,
+        '/clear Project Planning',
       );
 
       assert.strictEqual(createdSessions.length, 1);
@@ -548,6 +578,17 @@ describe('FeishuBotService', () => {
         thread,
         feishuUserId,
         '/new   ',
+      );
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+    });
+
+    it('/clear falls back to the default title when the supplied title is only whitespace', async () => {
+      await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
+        thread,
+        feishuUserId,
+        '/clear   ',
       );
 
       assert.strictEqual(createdSessions.length, 1);
@@ -756,6 +797,29 @@ describe('FeishuBotService', () => {
 
     it('"/new" (with leading slash) creates a session scoped to the operator open_id and notifies them', async () => {
       await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/new');
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+      assert.strictEqual(createdSessions[0].source, 'feishu');
+      assert.strictEqual(userSessions.length, 1);
+      assert.strictEqual(userSessions[0].feishuUserId, feishuUserId);
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok(
+        (text[0].args as { data: { content: string } }).data.content.includes(
+          `已创建新会话：${feishuUserId}`,
+        ),
+      );
+      assert.strictEqual(
+        (text[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+      );
+    });
+
+    it('"/clear" (with leading slash) creates a session scoped to the operator open_id and notifies them', async () => {
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/clear');
 
       assert.strictEqual(createdSessions.length, 1);
       assert.strictEqual(createdSessions[0].name, feishuUserId);

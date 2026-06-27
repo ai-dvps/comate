@@ -203,11 +203,11 @@ export class FeishuBotService {
   /**
    * Handle a Feishu bot menu event (`application.bot.menu_v6`).
    *
-   * Menu events arrive via the HTTP callback route without a chat-SDK `Thread`,
-   * so this entry point takes an explicit `larkClient` (built by the route from
-   * the workspace's credentials) and sends all responses to the operator's DM.
-   * `openId` (from `operator.operator_id.open_id`) is the trusted identity
-   * anchor; all session lookups and creation are scoped to it.
+   * Menu events arrive without a chat-SDK `Thread`, so this entry point takes an
+   * explicit `larkClient` (built from the workspace's credentials) and sends all
+   * responses to the operator's DM. `openId` (from
+   * `operator.operator_id.open_id`) is the trusted identity anchor; all session
+   * lookups and creation are scoped to it.
    */
   async handleMenuEvent(
     larkClient: lark.Client,
@@ -226,15 +226,15 @@ export class FeishuBotService {
       return;
     }
 
-    // Defensive: the route already gates on enabled + credentials, but guard
-    // against the binding being cleared/disabled between dispatch and handling.
+    // Defensive: guard against the binding being cleared/disabled between
+    // dispatch and handling.
     if (!this.isFeishuEnabled(workspace)) {
       diagLog(`[FeishuBotService] menu event: workspace ${workspace.id} not feishu-enabled`);
       await this.sendMenuText(larkClient, openId, '⚠️ 当前工作空间未启用飞书机器人。');
       return;
     }
 
-    if (key !== 'resume' && key !== 'new') {
+    if (key !== 'resume' && key !== 'new' && key !== 'clear') {
       diagLog(`[FeishuBotService] menu event: unknown normalizedKey="${key}" (rawKey="${rawKey}")`);
       await this.sendMenuText(larkClient, openId, '⚠️ 未知的菜单操作。');
       return;
@@ -256,6 +256,11 @@ export class FeishuBotService {
   /** Strip a leading slash so menu keys configured as "/resume" match "resume". */
   private normalizeMenuEventKey(key: string): string {
     return key.startsWith('/') ? key.slice(1) : key;
+  }
+
+  /** Recognize /new, /new <title>, /clear, /clear <title> as new-session commands. */
+  private isNewSessionCommand(text: string): boolean {
+    return text === '/new' || text.startsWith('/new ') || text === '/clear' || text.startsWith('/clear ');
   }
 
   private isFeishuEnabled(workspace: Workspace): boolean {
@@ -286,7 +291,7 @@ export class FeishuBotService {
           await this.runForUser(feishuUserId, () => this.handleSessionCommand(thread, feishuUserId));
         } else if (text === '/stop') {
           await this.runForUser(feishuUserId, () => this.handleStopCommand(thread, feishuUserId));
-        } else if (text === '/new' || text.startsWith('/new ')) {
+        } else if (this.isNewSessionCommand(text)) {
           await this.runForUser(feishuUserId, () => this.handleNewSessionCommand(thread, feishuUserId, text));
         } else {
           await this.runForUser(feishuUserId, () => this.handleChatMessage(thread, feishuUserId, text));
@@ -503,7 +508,7 @@ export class FeishuBotService {
       const result = await this.getOrCreateSession(workspace, feishuUserId);
       sessionId = result.sessionId;
       if (result.isNew) {
-        initialHint = '已为你创建新会话。发送 /resume 可切换会话，发送 /new 可创建新会话。';
+        initialHint = '已为你创建新会话。发送 /resume 可切换会话，发送 /new 或 /clear 可创建新会话。';
       }
     } catch (err) {
       console.error('[FeishuBotService] failed to get or create session:', err);
