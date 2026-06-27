@@ -4,7 +4,7 @@ import assert from 'node:assert';
 import {
   buildWorkspaceListCard,
   buildSessionListCard,
-  buildInactiveSessionCard,
+  buildDisabledSessionListCard,
   buildApprovalCard,
   buildQuestionCard,
   buildStreamingAnswerCard,
@@ -84,6 +84,16 @@ describe('feishu-card-builder v2 helpers', () => {
       form_action_type: 'submit',
       behaviors: [{ type: 'callback', value: { action: 'submit' } }],
     });
+  });
+
+  it('selectStatic supports disabled', () => {
+    const select = selectStatic('s1', [{ text: 'A', value: 'a' }], undefined, undefined, true);
+    assert.strictEqual(select.disabled, true);
+  });
+
+  it('submitButton supports disabled', () => {
+    const button = submitButton('提交', 'primary', { action: 'submit' }, 'submit1', true);
+    assert.strictEqual(button.disabled, true);
   });
 
   it('formContainer produces a form element', () => {
@@ -183,21 +193,38 @@ describe('buildSessionListCard', () => {
   });
 });
 
-describe('buildInactiveSessionCard', () => {
-  it('renders a read-only confirmation card', () => {
-    const card = buildInactiveSessionCard('Workspace', 'Session B');
-    assert.strictEqual(card.schema, '2.0');
-    assert.strictEqual(card.body.elements.length, 2);
-    const title = findByTag(card.body.elements, 'markdown');
-    assert.ok(title);
-    assert.ok((title.content as string).includes('Workspace'));
+describe('buildDisabledSessionListCard', () => {
+  function makeSession(id: string, name: string, workspaceId: string): ChatSession {
+    return {
+      id,
+      name,
+      workspaceId,
+      source: 'feishu',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as ChatSession;
+  }
 
-    const confirmation = findByTag(card.body.elements, 'div');
-    assert.ok(confirmation);
-    assert.strictEqual(
-      (confirmation.text as { content: string }).content,
-      '已切换至会话：**Session B**',
-    );
+  it('renders the session list with disabled dropdown and submit button', () => {
+    const sessions = [
+      { session: makeSession('s1', 'Session A', 'ws-1'), isActive: false },
+      { session: makeSession('s2', 'Session B', 'ws-1'), isActive: true },
+    ];
+    const card = buildDisabledSessionListCard('Workspace', sessions);
+    assert.strictEqual(card.schema, '2.0');
+
+    const form = findByTag(card.body.elements, 'form');
+    assert.ok(form, 'form container should exist');
+    const formElements = form.elements as unknown[];
+
+    const select = findByTag(formElements, 'select_static');
+    assert.ok(select);
+    assert.strictEqual(select.disabled, true);
+
+    const button = findByTag(formElements, 'button');
+    assert.ok(button);
+    assert.strictEqual(button.disabled, true);
+    assert.strictEqual(button.form_action_type, 'submit');
   });
 });
 

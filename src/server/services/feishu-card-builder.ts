@@ -75,6 +75,7 @@ export function selectStatic(
   options: Array<{ text: string; value: string }>,
   initialIndex?: number,
   placeholder?: string,
+  disabled?: boolean,
 ): unknown {
   const select: Record<string, unknown> = {
     tag: 'select_static',
@@ -90,6 +91,9 @@ export function selectStatic(
   if (placeholder) {
     select.placeholder = { tag: 'plain_text', content: placeholder };
   }
+  if (disabled) {
+    select.disabled = true;
+  }
   return select;
 }
 
@@ -98,8 +102,9 @@ export function submitButton(
   type: 'primary' | 'default',
   value: Record<string, unknown>,
   name: string,
+  disabled?: boolean,
 ): unknown {
-  return {
+  const button: Record<string, unknown> = {
     tag: 'button',
     type,
     text: { tag: 'plain_text', content: text },
@@ -107,6 +112,10 @@ export function submitButton(
     form_action_type: 'submit',
     behaviors: [{ type: 'callback', value }],
   };
+  if (disabled) {
+    button.disabled = true;
+  }
+  return button;
 }
 
 export function formContainer(name: string, elements: unknown[]): unknown {
@@ -134,6 +143,7 @@ export function buildWorkspaceListCard(workspaces: Workspace[]): FeishuCardV2 {
 export function buildSessionListCard(
   workspaceName: string,
   sessions: Array<{ session: ChatSession; isActive: boolean }>,
+  disabled = false,
 ): FeishuCardV2 {
   const elements: unknown[] = [markdownText(`当前工作空间：**${workspaceName}**`)];
 
@@ -156,12 +166,13 @@ export function buildSessionListCard(
 
     elements.push(
       formContainer('session_form', [
-        selectStatic('sessionId', options, activeIndex, '请选择会话'),
+        selectStatic('sessionId', options, activeIndex, '请选择会话', disabled),
         submitButton(
           '确认切换',
           'primary',
           { action: 'select_session', workspaceId: sessions[0].session.workspaceId },
           'submit_session',
+          disabled,
         ),
       ]),
     );
@@ -171,17 +182,14 @@ export function buildSessionListCard(
 }
 
 /**
- * Inactive version of the session-switcher card, rendered after a successful
- * switch so the user cannot submit the form again.
+ * Disabled version of the session-switcher card, rendered after a successful
+ * switch so the dropdown and confirm button cannot be used again.
  */
-export function buildInactiveSessionCard(
+export function buildDisabledSessionListCard(
   workspaceName: string,
-  sessionName: string,
+  sessions: Array<{ session: ChatSession; isActive: boolean }>,
 ): FeishuCardV2 {
-  return cardV2([
-    markdownText(`当前工作空间：**${workspaceName}**`),
-    plainText(`已切换至会话：**${sessionName}**`),
-  ]);
+  return buildSessionListCard(workspaceName, sessions, true);
 }
 
 export function buildApprovalCard(params: {
