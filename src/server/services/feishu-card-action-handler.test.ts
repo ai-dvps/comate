@@ -123,7 +123,7 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
 
     assert.strictEqual(added?.sessionId, 'session-new');
     assert.strictEqual(activeSessionId, 'session-new');
-    assert.ok((result as { toast: { content: string } }).toast.content.includes('Feishu Session'));
+    assert.ok((result as { toast: { content: string } }).toast.content.includes('user-1'));
   });
 
   it('approval resolves allow/deny on the runtime for the owner', async () => {

@@ -8,6 +8,7 @@ import type { Workspace } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
+import { createFeishuSessionForUser } from './feishu-session-helpers.js';
 import { FeishuStreamReply } from './feishu-stream-reply.js';
 import {
   buildWorkspaceListCard,
@@ -93,6 +94,11 @@ export class FeishuBotService {
 
     try {
       await chat.initialize();
+      // The chat adapter listens to im.message / card.action / reaction events
+      // but ignores application.bot.menu_v6. When Feishu is configured to use
+      // long-connection (WebSocket) event subscription, menu events arrive on
+      // the same WS channel, so register a handler there as well.
+      this.registerWSMenuHandler(adapter, workspace, larkClient);
       workspaceStore.setFeishuActiveWorkspace(workspace.id);
       this.connection.status = 'connected';
       diagLog(`[FeishuBotService] connected for workspace ${workspace.id}`);
@@ -100,6 +106,50 @@ export class FeishuBotService {
       this.connection.status = 'error';
       console.error(`[FeishuBotService] failed to initialize for workspace ${workspace.id}:`, err);
     }
+  }
+
+  /**
+   * Register an application.bot.menu_v6 handler on the chat adapter's underlying
+   * Lark WS dispatcher. This covers Feishu apps that use long-connection event
+   * subscription instead of the HTTP callback route.
+   */
+  private registerWSMenuHandler(
+    adapter: LarkAdapter,
+    workspace: Workspace,
+    larkClient: lark.Client,
+  ): void {
+    const channel = (adapter as unknown as { _getChannel?: () => lark.LarkChannel | null })._getChannel?.();
+    if (!channel) {
+      diagLog('[FeishuBotService] cannot register menu handler: underlying LarkChannel unavailable');
+      return;
+    }
+    const dispatcher = (channel as unknown as { dispatcher?: lark.EventDispatcher }).dispatcher;
+    if (!dispatcher) {
+      diagLog('[FeishuBotService] cannot register menu handler: LarkChannel dispatcher unavailable');
+      return;
+    }
+    diagLog('[FeishuBotService] registering application.bot.menu_v6 handler on WS dispatcher');
+    dispatcher.register({
+      'application.bot.menu_v6': async (data: Record<string, unknown>) => {
+        const { openId, eventKey } = this.extractMenuEvent(data);
+        diagLog(
+          `[FeishuBotService] ws menu_v6 received openId=${openId || '(missing)'} key=${(eventKey ?? '').slice(0, 40)}`,
+        );
+        try {
+          await this.handleMenuEvent(larkClient, workspace, openId, eventKey);
+        } catch (err) {
+          console.error('[FeishuBotService] ws menu handler error:', err);
+        }
+      },
+    });
+  }
+
+  /** Extract operator open_id and event_key from an application.bot.menu_v6 payload. */
+  private extractMenuEvent(data: Record<string, unknown>): { openId: string; eventKey: string | undefined } {
+    const operator = data.operator as { operator_id?: { open_id?: string } } | undefined;
+    const openId = operator?.operator_id?.open_id ?? '';
+    const eventKey = typeof data.event_key === 'string' ? data.event_key : undefined;
+    return { openId, eventKey };
   }
 
   disconnect(): void {
@@ -154,11 +204,11 @@ export class FeishuBotService {
   /**
    * Handle a Feishu bot menu event (`application.bot.menu_v6`).
    *
-   * Menu events arrive via the HTTP callback route without a chat-SDK `Thread`,
-   * so this entry point takes an explicit `larkClient` (built by the route from
-   * the workspace's credentials) and sends all responses to the operator's DM.
-   * `openId` (from `operator.operator_id.open_id`) is the trusted identity
-   * anchor; all session lookups and creation are scoped to it.
+   * Menu events arrive without a chat-SDK `Thread`, so this entry point takes an
+   * explicit `larkClient` (built from the workspace's credentials) and sends all
+   * responses to the operator's DM. `openId` (from
+   * `operator.operator_id.open_id`) is the trusted identity anchor; all session
+   * lookups and creation are scoped to it.
    */
   async handleMenuEvent(
     larkClient: lark.Client,
@@ -166,9 +216,10 @@ export class FeishuBotService {
     openId: string,
     eventKey: string | undefined,
   ): Promise<void> {
-    const key = (eventKey ?? '').trim();
+    const rawKey = (eventKey ?? '').trim();
+    const key = this.normalizeMenuEventKey(rawKey);
     diagLog(
-      `[FeishuBotService] menu event from=${openId || '(missing)'} key="${key}" workspace=${workspace.id}`,
+      `[FeishuBotService] menu event from=${openId || '(missing)'} rawKey="${rawKey}" normalizedKey="${key}" workspace=${workspace.id}`,
     );
 
     if (!openId) {
@@ -176,29 +227,41 @@ export class FeishuBotService {
       return;
     }
 
-    // Defensive: the route already gates on enabled + credentials, but guard
-    // against the binding being cleared/disabled between dispatch and handling.
+    // Defensive: guard against the binding being cleared/disabled between
+    // dispatch and handling.
     if (!this.isFeishuEnabled(workspace)) {
       diagLog(`[FeishuBotService] menu event: workspace ${workspace.id} not feishu-enabled`);
       await this.sendMenuText(larkClient, openId, '⚠️ 当前工作空间未启用飞书机器人。');
       return;
     }
 
-    if (key !== 'resume' && key !== 'new') {
-      diagLog(`[FeishuBotService] menu event: unknown key "${key}"`);
+    if (key !== 'resume' && key !== 'new' && key !== 'clear') {
+      diagLog(`[FeishuBotService] menu event: unknown normalizedKey="${key}" (rawKey="${rawKey}")`);
       await this.sendMenuText(larkClient, openId, '⚠️ 未知的菜单操作。');
       return;
     }
 
-    diagLog(`[FeishuBotService] menu event: processing key="${key}" for ${openId}`);
+    diagLog(`[FeishuBotService] menu event: processing normalizedKey="${key}" for ${openId}`);
     await this.runForUser(openId, async () => {
       if (key === 'resume') {
+        diagLog(`[FeishuBotService] menu event: sending session-list card for ${openId}`);
         await this.sendSessionListCard(larkClient, workspace, openId);
       } else {
+        diagLog(`[FeishuBotService] menu event: creating new session for ${openId}`);
         await this.createAndNotifyNewSession(larkClient, workspace, openId);
       }
-      diagLog(`[FeishuBotService] menu event: completed key="${key}" for ${openId}`);
+      diagLog(`[FeishuBotService] menu event: completed normalizedKey="${key}" for ${openId}`);
     });
+  }
+
+  /** Strip a leading slash so menu keys configured as "/resume" match "resume". */
+  private normalizeMenuEventKey(key: string): string {
+    return key.startsWith('/') ? key.slice(1) : key;
+  }
+
+  /** Recognize /new, /new <title>, /clear, /clear <title> as new-session commands. */
+  private isNewSessionCommand(text: string): boolean {
+    return text === '/new' || text.startsWith('/new ') || text === '/clear' || text.startsWith('/clear ');
   }
 
   private isFeishuEnabled(workspace: Workspace): boolean {
@@ -229,7 +292,7 @@ export class FeishuBotService {
           await this.runForUser(feishuUserId, () => this.handleSessionCommand(thread, feishuUserId));
         } else if (text === '/stop') {
           await this.runForUser(feishuUserId, () => this.handleStopCommand(thread, feishuUserId));
-        } else if (text === '/new' || text.startsWith('/new ')) {
+        } else if (this.isNewSessionCommand(text)) {
           await this.runForUser(feishuUserId, () => this.handleNewSessionCommand(thread, feishuUserId, text));
         } else {
           await this.runForUser(feishuUserId, () => this.handleChatMessage(thread, feishuUserId, text));
@@ -395,14 +458,7 @@ export class FeishuBotService {
       }
     }
 
-    const session = await chatService.createSession({
-      workspaceId: workspace.id,
-      name: feishuUserId,
-      source: 'feishu',
-    });
-
-    workspaceStore.addFeishuUserSession(workspace.id, feishuUserId, session.id);
-    workspaceStore.setFeishuActiveSession(workspace.id, feishuUserId, session.id);
+    const session = await createFeishuSessionForUser(workspace, feishuUserId);
 
     return { sessionId: session.id, isNew: true };
   }
@@ -426,7 +482,7 @@ export class FeishuBotService {
     }
 
     try {
-      await this.instantiateFeishuSession(workspace, feishuUserId, title);
+      await createFeishuSessionForUser(workspace, feishuUserId, title);
       await this.safePostText(thread, `已创建新会话：${title}`);
     } catch (err) {
       console.error('[FeishuBotService] failed to create session via /new:', err);
@@ -446,7 +502,7 @@ export class FeishuBotService {
       const result = await this.getOrCreateSession(workspace, feishuUserId);
       sessionId = result.sessionId;
       if (result.isNew) {
-        initialHint = '已为你创建新会话。发送 /resume 可切换会话，发送 /new 可创建新会话。';
+        initialHint = '已为你创建新会话。发送 /resume 可切换会话，发送 /new 或 /clear 可创建新会话。';
       }
     } catch (err) {
       console.error('[FeishuBotService] failed to get or create session:', err);
@@ -566,26 +622,6 @@ export class FeishuBotService {
     return sessions;
   }
 
-  /**
-   * Create a Feishu session for a user, register it, and set it active.
-   * Shared by the `/new` text command and the "new" bot menu. Returns the
-   * created session so callers can format their own confirmation message.
-   */
-  private async instantiateFeishuSession(
-    workspace: Workspace,
-    openId: string,
-    name: string,
-  ): Promise<ChatSession> {
-    const session = await chatService.createSession({
-      workspaceId: workspace.id,
-      name,
-      source: 'feishu',
-    });
-    workspaceStore.addFeishuUserSession(workspace.id, openId, session.id);
-    workspaceStore.setFeishuActiveSession(workspace.id, openId, session.id);
-    return session;
-  }
-
   /** Menu handler: send the session-list card to the operator's DM. */
   private async sendSessionListCard(
     larkClient: lark.Client,
@@ -607,7 +643,7 @@ export class FeishuBotService {
     openId: string,
   ): Promise<void> {
     try {
-      const session = await this.instantiateFeishuSession(workspace, openId, openId);
+      const session = await createFeishuSessionForUser(workspace, openId);
       await this.sendMenuText(larkClient, openId, `已创建新会话：${openId}`);
       diagLog(`[FeishuBotService] menu: created session ${session.id} and notified ${openId}`);
     } catch (err) {
