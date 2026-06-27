@@ -455,9 +455,9 @@ describe('FeishuBotService', () => {
       );
 
       assert.strictEqual(createdSessions.length, 1);
-      assert.strictEqual(createdSessions[0].name, 'Feishu Session');
+      assert.strictEqual(createdSessions[0].name, 'ou_create');
       const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
-      assert.ok(textPosts.some((text) => String(text).includes('Feishu Session')));
+      assert.ok(textPosts.some((text) => String(text).includes('ou_create')));
     });
 
     it('falls back to larkClient direct message when thread is unavailable', async () => {

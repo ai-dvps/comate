@@ -8,6 +8,7 @@ import type { Workspace } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
+import { createFeishuSessionForUser } from './feishu-session-helpers.js';
 import { FeishuStreamReply } from './feishu-stream-reply.js';
 import {
   buildWorkspaceListCard,
@@ -457,14 +458,7 @@ export class FeishuBotService {
       }
     }
 
-    const session = await chatService.createSession({
-      workspaceId: workspace.id,
-      name: feishuUserId,
-      source: 'feishu',
-    });
-
-    workspaceStore.addFeishuUserSession(workspace.id, feishuUserId, session.id);
-    workspaceStore.setFeishuActiveSession(workspace.id, feishuUserId, session.id);
+    const session = await createFeishuSessionForUser(workspace, feishuUserId);
 
     return { sessionId: session.id, isNew: true };
   }
@@ -488,7 +482,7 @@ export class FeishuBotService {
     }
 
     try {
-      await this.instantiateFeishuSession(workspace, feishuUserId, title);
+      await createFeishuSessionForUser(workspace, feishuUserId, title);
       await this.safePostText(thread, `已创建新会话：${title}`);
     } catch (err) {
       console.error('[FeishuBotService] failed to create session via /new:', err);
@@ -628,26 +622,6 @@ export class FeishuBotService {
     return sessions;
   }
 
-  /**
-   * Create a Feishu session for a user, register it, and set it active.
-   * Shared by the `/new` text command and the "new" bot menu. Returns the
-   * created session so callers can format their own confirmation message.
-   */
-  private async instantiateFeishuSession(
-    workspace: Workspace,
-    openId: string,
-    name: string,
-  ): Promise<ChatSession> {
-    const session = await chatService.createSession({
-      workspaceId: workspace.id,
-      name,
-      source: 'feishu',
-    });
-    workspaceStore.addFeishuUserSession(workspace.id, openId, session.id);
-    workspaceStore.setFeishuActiveSession(workspace.id, openId, session.id);
-    return session;
-  }
-
   /** Menu handler: send the session-list card to the operator's DM. */
   private async sendSessionListCard(
     larkClient: lark.Client,
@@ -669,7 +643,7 @@ export class FeishuBotService {
     openId: string,
   ): Promise<void> {
     try {
-      const session = await this.instantiateFeishuSession(workspace, openId, openId);
+      const session = await createFeishuSessionForUser(workspace, openId);
       await this.sendMenuText(larkClient, openId, `已创建新会话：${openId}`);
       diagLog(`[FeishuBotService] menu: created session ${session.id} and notified ${openId}`);
     } catch (err) {
