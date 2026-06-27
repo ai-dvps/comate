@@ -333,7 +333,7 @@ export function buildTerminalCard(
   notice: string,
   taskId?: string,
 ): TemplateCard {
-  const source = { desc: 'Comate', desc_color: 0 };
+  const source = { desc: 'Comate', desc_color: 0 } as const;
   const mainTitle = { title: notice, desc: '' };
   const terminalButton = { text: notice, key: 'terminal' };
 
