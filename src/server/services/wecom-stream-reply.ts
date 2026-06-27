@@ -4,6 +4,7 @@ import { debounce } from '../utils/debounce.js';
 import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { splitWecomMessage } from '../utils/wecom-message-split.js';
 import { buildToolApprovalCard, buildQuestionCard } from './wecom-template-card.js';
+import { diagLog } from '../utils/diag-logger.js';
 
 const THINKING_PLACEHOLDER = '\n\n收到，正在处理中.';
 const THINKING_PLACEHOLDER_PREFIX = '\n\n收到，正在处理中';
@@ -188,6 +189,7 @@ export function createStreamReply(
 
     conn.client.replyStream(frame, streamId, responseText, true).catch((err: Error) => {
       console.error('Failed to send WeCom stream final frame:', err);
+      diagLog(`[WeComStreamReply ${sessionId}] final replyStream failed, falling back to sendMessage`);
       if (responseText.trim()) {
         conn.client.sendMessage(wecomUserId, {
           msgtype: 'markdown',
@@ -261,12 +263,16 @@ export function createStreamReply(
   }
 
   const interrupt = (message: string): boolean => {
-    if (streamFinalized || passiveClosed) return false;
+    if (streamFinalized || passiveClosed) {
+      diagLog(`[WeComStreamReply ${sessionId}] interrupt skipped: streamFinalized=${streamFinalized}, passiveClosed=${passiveClosed}`);
+      return false;
+    }
     clearPlaceholder();
     if (responseText && !responseText.endsWith('\n\n')) {
       responseText += '\n\n';
     }
     responseText += message;
+    diagLog(`[WeComStreamReply ${sessionId}] appending interrupt marker, finalizing stream`);
     handleTerminal();
     return true;
   };

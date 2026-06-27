@@ -486,6 +486,7 @@ export class WeComBotService {
   ): Promise<void> {
     try {
       const sessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
+      diagLog(`[WeComBotService] /stop from ${wecomUserId}, activeSession=${sessionId ?? 'none'}`);
       if (!sessionId) {
         await conn.client.sendMessage(wecomUserId, {
           msgtype: 'markdown',
@@ -496,6 +497,7 @@ export class WeComBotService {
 
       const runtime = chatService.getRuntimeIfExists(sessionId);
       if (!runtime || !runtime.isProcessingTurn()) {
+        diagLog(`[WeComBotService] /stop for ${sessionId}: no runtime or not processing`);
         await conn.client.sendMessage(wecomUserId, {
           msgtype: 'markdown',
           markdown: { content: '当前没有正在进行的对话。' },
@@ -505,6 +507,7 @@ export class WeComBotService {
 
       const streamReply = this.activeStreamReplies.get(sessionId);
       const interruptedInStream = streamReply?.interrupt('已中断') ?? false;
+      diagLog(`[WeComBotService] /stop for ${sessionId}: streamReply=${streamReply ? 'present' : 'missing'}, interruptedInStream=${interruptedInStream}`);
 
       await runtime.interrupt();
       runtime.cancelPendingApprovals('Turn interrupted by user.');
@@ -514,6 +517,7 @@ export class WeComBotService {
           msgtype: 'markdown',
           markdown: { content: '已中断' },
         });
+        diagLog(`[WeComBotService] /stop for ${sessionId}: sent standalone 已中断`);
       }
     } catch (err) {
       console.error('[WeComBotService] failed to handle /stop:', err);
