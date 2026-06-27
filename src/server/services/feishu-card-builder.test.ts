@@ -157,6 +157,7 @@ describe('buildSessionListCard', () => {
     const form = findByTag(card.body.elements, 'form');
     assert.ok(form, 'form container should exist');
     assert.strictEqual(form.name, 'session_form');
+    assert.strictEqual(form.element_id, 'session_form');
 
     const formElements = form.elements as unknown[];
     assert.strictEqual(formElements.length, 2);
@@ -164,6 +165,7 @@ describe('buildSessionListCard', () => {
     const select = findByTag(formElements, 'select_static');
     assert.ok(select);
     assert.strictEqual(select.name, 'sessionId');
+    assert.strictEqual(select.element_id, 'session_select');
     assert.strictEqual(select.initial_index, 1);
     const options = select.options as Array<{ text: { content: string }; value: string }>;
     assert.strictEqual(options.length, 2);
@@ -174,6 +176,7 @@ describe('buildSessionListCard', () => {
 
     const button = findByTag(formElements, 'button');
     assert.ok(button);
+    assert.strictEqual(button.element_id, 'session_submit');
     assert.strictEqual(button.form_action_type, 'submit');
     assert.deepStrictEqual(button.behaviors, [
       { type: 'callback', value: { action: 'select_session', workspaceId: 'ws-1' } },

@@ -14,12 +14,15 @@ import {
   buildWorkspaceListCard,
   buildSessionListCard,
   buildDisabledSessionListCard,
+  buildSessionListFormElement,
+  SESSION_FORM_ELEMENT_ID,
   type FeishuCard,
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler, type CardActionPayload } from './feishu-card-action-handler.js';
 import { feishuUserResolver } from './feishu-user-resolver.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { sendPlainTextMessage } from './feishu-message-utils.js';
+import { randomUUID } from 'crypto';
 
 export type FeishuBotStatus =
   | 'not_configured'
@@ -39,6 +42,9 @@ interface Connection {
 export class FeishuBotService {
   private connection: Connection | null = null;
   private userQueues = new Map<string, Promise<unknown>>();
+  private sessionListCardIds = new Map<string, string>();
+  private cardUpdateSequences = new Map<string, number>();
+  private pendingCardActionResponses = new Map<string, unknown>();
 
   async initialize(): Promise<void> {
     const activeWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
@@ -108,6 +114,11 @@ export class FeishuBotService {
       // long-connection (WebSocket) event subscription, menu events arrive on
       // the same WS channel, so register a handler there as well.
       this.registerWSMenuHandler(adapter, workspace, larkClient);
+      // The chat adapter's card-action handler returns nothing, so the Lark SDK
+      // sends an empty WebSocket response. Feishu treats that as a reset and
+      // re-enables the form. Wrap the dispatcher so we can return an updated
+      // disabled card in the response.
+      this.registerWSCardActionResponseHandler(adapter);
       workspaceStore.setFeishuActiveWorkspace(workspace.id);
       this.connection.status = 'connected';
       diagLog(`[FeishuBotService] connected for workspace ${workspace.id}`);
@@ -153,12 +164,72 @@ export class FeishuBotService {
     });
   }
 
+  /**
+   * Wrap the Lark SDK dispatcher's card.action.trigger handler so the WebSocket
+   * response includes the updated card. The chat adapter's handler returns
+   * nothing, which makes the Lark SDK reply with `{ code: 200 }` and no data;
+   * Feishu then re-renders the original card and re-enables the form. By
+   * returning the disabled card in the response we keep the UI in sync with the
+   * submitted state.
+   */
+  private registerWSCardActionResponseHandler(adapter: LarkAdapter): void {
+    const channel = (adapter as unknown as { _getChannel?: () => lark.LarkChannel | null })._getChannel?.();
+    if (!channel) {
+      diagLog('[FeishuBotService] cannot register card action response handler: underlying LarkChannel unavailable');
+      return;
+    }
+    const dispatcher = (channel as unknown as { dispatcher?: lark.EventDispatcher }).dispatcher;
+    if (!dispatcher) {
+      diagLog('[FeishuBotService] cannot register card action response handler: LarkChannel dispatcher unavailable');
+      return;
+    }
+    const handles = (dispatcher as unknown as { handles?: Map<string, (data: unknown) => Promise<unknown> | unknown> }).handles;
+    if (!handles) {
+      diagLog('[FeishuBotService] cannot register card action response handler: dispatcher handles unavailable');
+      return;
+    }
+    const originalHandler = handles.get('card.action.trigger');
+    if (!originalHandler) {
+      diagLog('[FeishuBotService] no existing card.action.trigger handler to wrap');
+      return;
+    }
+
+    diagLog('[FeishuBotService] wrapping card.action.trigger handler to return disabled card response');
+    handles.set('card.action.trigger', async (raw: unknown) => {
+      try {
+        await originalHandler(raw);
+      } catch (err) {
+        console.error('[FeishuBotService] card action handler error:', err);
+        return {};
+      }
+
+      const messageId = this.extractCardActionMessageId(raw);
+      if (!messageId) {
+        return {};
+      }
+      const response = this.pendingCardActionResponses.get(messageId);
+      this.pendingCardActionResponses.delete(messageId);
+      return response ?? {};
+    });
+  }
+
   /** Extract operator open_id and event_key from an application.bot.menu_v6 payload. */
   private extractMenuEvent(data: Record<string, unknown>): { openId: string; eventKey: string | undefined } {
     const operator = data.operator as { operator_id?: { open_id?: string } } | undefined;
     const openId = operator?.operator_id?.open_id ?? '';
     const eventKey = typeof data.event_key === 'string' ? data.event_key : undefined;
     return { openId, eventKey };
+  }
+
+  private extractCardActionMessageId(raw: unknown): string | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const record = raw as Record<string, unknown>;
+    const context = record.context as Record<string, unknown> | undefined;
+    const fromContext = context?.open_message_id;
+    if (typeof fromContext === 'string') return fromContext;
+    const fromRoot = record.open_message_id;
+    if (typeof fromRoot === 'string') return fromRoot;
+    return undefined;
   }
 
   disconnect(): void {
@@ -354,12 +425,13 @@ export class FeishuBotService {
         await this.safePostActionResponse(event, content);
       }
       if (payload.action === 'select_session' && this.isSuccessToast(result)) {
-        await this.patchSessionListCardInactive(
+        const response = await this.buildSelectSessionActionResponse(
           event.messageId,
           payload.workspaceId,
-          resolvedSessionId!,
           event.user.userId,
         );
+        this.pendingCardActionResponses.set(event.messageId, response);
+        await this.patchSessionListCardInactive(event.messageId, payload.workspaceId, event.user.userId);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -401,7 +473,6 @@ export class FeishuBotService {
   private async patchSessionListCardInactive(
     messageId: string,
     workspaceId: string,
-    sessionId: string,
     openId: string,
   ): Promise<void> {
     const larkClient = this.connection?.larkClient;
@@ -409,6 +480,43 @@ export class FeishuBotService {
 
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) return;
+
+    const cardId = this.sessionListCardIds.get(messageId);
+    if (!cardId) {
+      diagLog(`[FeishuBotService] no cardId tracked for message=${messageId}, falling back to message patch`);
+      await this.patchSessionListCardInactiveByMessage(messageId, workspace, openId);
+      return;
+    }
+
+    const sessions = await this.collectSessionList(workspace, openId);
+    if (sessions.length === 0) return;
+
+    const form = buildSessionListFormElement(sessions, true);
+
+    try {
+      await larkClient.cardkit.v1.cardElement.update({
+        path: { card_id: cardId, element_id: SESSION_FORM_ELEMENT_ID },
+        data: {
+          element: JSON.stringify(form),
+          sequence: this.nextCardUpdateSequence(cardId),
+          uuid: randomUUID(),
+        },
+      });
+      diagLog(`[FeishuBotService] updated session-list card form disabled for card=${cardId}`);
+    } catch (err) {
+      diagLog(
+        `[FeishuBotService] failed to update session-list card form: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private async patchSessionListCardInactiveByMessage(
+    messageId: string,
+    workspace: Workspace,
+    openId: string,
+  ): Promise<void> {
+    const larkClient = this.connection?.larkClient;
+    if (!larkClient) return;
 
     const sessions = await this.collectSessionList(workspace, openId);
     const card = buildDisabledSessionListCard(workspace.name, sessions);
@@ -422,6 +530,36 @@ export class FeishuBotService {
     } catch (err) {
       diagLog(`[FeishuBotService] failed to patch session-list card: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  private async buildSelectSessionActionResponse(
+    messageId: string,
+    workspaceId: string,
+    openId: string,
+  ): Promise<unknown> {
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      diagLog(`[FeishuBotService] cannot build action response: workspace ${workspaceId} not found`);
+      return {};
+    }
+    const sessions = await this.collectSessionList(workspace, openId);
+    const disabledCard = buildDisabledSessionListCard(workspace.name, sessions);
+    return {
+      toast: {
+        type: 'success',
+        content: '会话已切换。',
+      },
+      card: {
+        type: 'raw',
+        data: disabledCard,
+      },
+    };
+  }
+
+  private nextCardUpdateSequence(cardId: string): number {
+    const next = (this.cardUpdateSequences.get(cardId) ?? 0) + 1;
+    this.cardUpdateSequences.set(cardId, next);
+    return next;
   }
 
   private parseCardActionValue(raw: unknown): Record<string, unknown> | null {
@@ -500,7 +638,7 @@ export class FeishuBotService {
 
     const sessions = await this.collectSessionList(workspace, feishuUserId);
     const card = buildSessionListCard(workspace.name, sessions);
-    await this.sendCardToThread(thread, feishuUserId, card);
+    await this.sendSessionListCardToThread(thread, feishuUserId, card);
   }
 
   private async handleStopCommand(thread: Thread, feishuUserId: string): Promise<void> {
@@ -676,6 +814,56 @@ export class FeishuBotService {
     }
   }
 
+  private async sendSessionListCardToThread(
+    thread: Thread,
+    openId: string,
+    card: FeishuCard,
+  ): Promise<void> {
+    const larkClient = this.connection?.larkClient;
+    if (!openId || !larkClient) return;
+    const result = await this.createAndSendCardKitCard(larkClient, openId, card);
+    if (!result) {
+      await this.safePostText(thread, '发送卡片失败，请稍后重试。');
+    }
+  }
+
+  private async createAndSendCardKitCard(
+    larkClient: lark.Client,
+    openId: string,
+    card: FeishuCard,
+  ): Promise<{ cardId: string; messageId: string } | null> {
+    try {
+      const createRes = (await larkClient.cardkit.v1.card.create({
+        data: { type: 'card_json', data: JSON.stringify(card) },
+      })) as unknown;
+      const cardId = (createRes as { data?: { card_id?: string } }).data?.card_id;
+      if (!cardId) {
+        diagLog('[FeishuBotService] cardkit.v1.card.create returned no card_id');
+        return null;
+      }
+
+      const sendRes = (await larkClient.im.v1.message.create({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: openId,
+          msg_type: 'interactive',
+          content: JSON.stringify({ type: 'card', data: { card_id: cardId } }),
+        },
+      })) as unknown;
+      const messageId = (sendRes as { data?: { message_id?: string } }).data?.message_id;
+      if (!messageId) {
+        diagLog('[FeishuBotService] im.v1.message.create returned no message_id');
+        return null;
+      }
+
+      this.sessionListCardIds.set(messageId, cardId);
+      return { cardId, messageId };
+    } catch (err) {
+      console.error('[FeishuBotService] failed to create/send CardKit card:', err);
+      return null;
+    }
+  }
+
   /**
    * Collect the Feishu sessions owned by a user for the session-list card.
    * Shared by the `/resume` text command (Thread-based send) and the
@@ -706,10 +894,14 @@ export class FeishuBotService {
   ): Promise<void> {
     const sessions = await this.collectSessionList(workspace, openId);
     const card = buildSessionListCard(workspace.name, sessions);
-    await this.sendMenuCard(larkClient, openId, card);
-    diagLog(
-      `[FeishuBotService] menu: sent session-list card (${sessions.length} sessions) to ${openId}`,
-    );
+    const result = await this.createAndSendCardKitCard(larkClient, openId, card);
+    if (result) {
+      diagLog(
+        `[FeishuBotService] menu: sent session-list card (${sessions.length} sessions) to ${openId}`,
+      );
+    } else {
+      await this.sendMenuText(larkClient, openId, '发送会话列表卡片失败，请稍后重试。');
+    }
   }
 
   /** Menu handler: create a session and notify the operator via DM. */
