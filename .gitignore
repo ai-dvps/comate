@@ -20,3 +20,4 @@ src-tauri/resources/*
 __screenshots__/
 *-test-results.json
 /.claude/wecom-context.json
+/.claude/settings.local.json
