@@ -28,7 +28,7 @@ const ATTENTION_DEBOUNCE_MS = 1500
  * its replay-sensitive SSE handlers free of audio concerns.
  */
 export function useNotificationSounds(): void {
-  const enabled = useAppSettings().notificationSoundsEnabled
+  const { notificationSoundsEnabled: enabled, notificationSoundsVolume: volume } = useAppSettings()
   const approvalQueue = useChatStore((s) => s.approvalQueue)
   const lastCompletion = useChatStore((s) => s.lastCompletion)
 
@@ -66,11 +66,11 @@ export function useNotificationSounds(): void {
     // Leading-edge play, then suppress for the coalesce window so a burst of
     // requests produces a single sound.
     if (debounceTimer.current) return
-    playSound('attention')
+    playSound('attention', volume)
     debounceTimer.current = setTimeout(() => {
       debounceTimer.current = null
     }, ATTENTION_DEBOUNCE_MS)
-  }, [approvalQueue, enabled])
+  }, [approvalQueue, enabled, volume])
 
   // Completion sound — fires when a session's completion advances to a
   // non-error turn that exceeded the duration guard.
@@ -86,11 +86,11 @@ export function useNotificationSounds(): void {
         !completion.isError &&
         completion.durationMs >= COMPLETION_MIN_DURATION_MS
       ) {
-        playSound('completion')
+        playSound('completion', volume)
       }
     }
     completionReady.current = true
-  }, [lastCompletion, enabled])
+  }, [lastCompletion, enabled, volume])
 
   // Clear the coalesce timer on unmount.
   useEffect(() => {
