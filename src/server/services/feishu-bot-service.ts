@@ -13,6 +13,7 @@ import { FeishuStreamReply } from './feishu-stream-reply.js';
 import {
   buildWorkspaceListCard,
   buildSessionListCard,
+  buildInactiveSessionCard,
   type FeishuCard,
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler, type CardActionPayload } from './feishu-card-action-handler.js';
@@ -71,7 +72,11 @@ export class FeishuBotService {
       appType: lark.AppType.SelfBuild,
     });
 
-    const adapter = createLarkAdapter({ appId, appSecret });
+    const adapter = createLarkAdapter({
+      appId,
+      appSecret,
+      channelFactory: (opts) => lark.createLarkChannel({ ...opts, includeRawEvent: true }),
+    });
     const chat = new Chat({
       adapters: { lark: adapter },
       state: createMemoryState(),
@@ -318,25 +323,86 @@ export class FeishuBotService {
       `[FeishuBotService] card action actionId=${event.actionId} user=${event.user.userId} value=${event.value?.slice(0, 200) ?? ''}`,
     );
 
-    const payload = this.parseCardActionValue(event.value);
+    const payload = this.parseCardActionValue(event.value) as CardActionPayload | null;
     if (!payload) {
       diagLog('[FeishuBotService] card action value missing or unparseable');
       await this.safePostActionResponse(event, '无法解析卡片操作。');
       return;
     }
 
+    if (payload.action === 'select_session') {
+      if (!payload.sessionId) {
+        const formValue = this.extractFormValue(event);
+        const sessionId = formValue?.sessionId;
+        if (typeof sessionId !== 'string' || !sessionId) {
+          diagLog('[FeishuBotService] select_session missing sessionId in form_value');
+          await this.safePostActionResponse(event, '无法解析会话选择。');
+          return;
+        }
+        payload.sessionId = sessionId;
+      }
+    }
+
     try {
-      const result = await feishuCardActionHandler.handle(event.user.userId, payload as unknown as CardActionPayload, {
+      const result = await feishuCardActionHandler.handle(event.user.userId, payload, {
         setActiveWorkspace: (workspaceId: string) => this.setActiveWorkspace(workspaceId),
       });
       const content = this.extractToastContent(result);
       if (content) {
         await this.safePostActionResponse(event, content);
       }
+      if (payload.action === 'select_session' && this.isSuccessToast(result)) {
+        await this.patchSessionListCardInactive(event.messageId, payload.workspaceId, payload.sessionId);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       diagLog(`[FeishuBotService] card action handler error: ${message}`);
       await this.safePostActionResponse(event, '处理操作失败，请稍后重试。');
+    }
+  }
+
+  private extractFormValue(event: ActionEvent): Record<string, unknown> | undefined {
+    const normalized = event.raw as
+      | { raw?: { action?: { form_value?: Record<string, unknown> } } }
+      | undefined;
+    return normalized?.raw?.action?.form_value;
+  }
+
+  private isSuccessToast(result: unknown): boolean {
+    return (
+      !!result &&
+      typeof result === 'object' &&
+      'toast' in result &&
+      result.toast &&
+      typeof result.toast === 'object' &&
+      'type' in result.toast &&
+      result.toast.type === 'success'
+    );
+  }
+
+  private async patchSessionListCardInactive(
+    messageId: string,
+    workspaceId: string,
+    sessionId: string | undefined,
+  ): Promise<void> {
+    const larkClient = this.connection?.larkClient;
+    if (!larkClient || !sessionId) return;
+
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) return;
+
+    const session = await chatService.getSession(sessionId, workspaceId);
+    const sessionName = session?.name ?? sessionId;
+    const card = buildInactiveSessionCard(workspace.name, sessionName);
+
+    try {
+      await larkClient.im.v1.message.patch({
+        path: { message_id: messageId },
+        data: { content: JSON.stringify(card) },
+      });
+      diagLog(`[FeishuBotService] patched session-list card inactive for message=${messageId}`);
+    } catch (err) {
+      diagLog(`[FeishuBotService] failed to patch session-list card: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

@@ -35,6 +35,7 @@ interface MockLarkClient {
     v1: {
       message: {
         create: (args: { params: { receive_id_type: string }; data: { receive_id: string; msg_type: string; content: string } }) => Promise<unknown>;
+        patch: (args: { path: { message_id: string }; data: { content: string } }) => Promise<unknown>;
       };
     };
   };
@@ -190,6 +191,10 @@ describe('FeishuBotService', () => {
               }) => {
                 larkCalls.push({ method: 'im.message.create', args });
                 return { data: { message_id: 'msg-1' } };
+              },
+              patch: async (args: { path: { message_id: string }; data: { content: string } }) => {
+                larkCalls.push({ method: 'im.message.patch', args });
+                return { data: {} };
               },
             },
           },
@@ -446,6 +451,72 @@ describe('FeishuBotService', () => {
       assert.strictEqual(activeSessionId, 'session-42');
       const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
+    });
+
+    it('handles v2 form submit select_session from form_value and patches the original card', async () => {
+      workspaceStore.getFeishuSessionOwner = () => 'ou_form';
+      let activeSessionId: string | null = null;
+      workspaceStore.setFeishuActiveSession = (ws, user, sessionId) => {
+        activeSessionId = sessionId;
+      };
+      chatService.getSession = async () =>
+        ({
+          id: 'session-42',
+          workspaceId: workspace.id,
+          name: 'Selected Session',
+          source: 'feishu',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        } as import('../models/session.js').ChatSession);
+
+      const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
+      const event = makeActionEvent(payload, undefined, 'ou_form');
+      // Simulate the double-wrapped raw event produced when includeRawEvent is enabled.
+      (event as Record<string, unknown>).raw = {
+        raw: {
+          action: {
+            value: JSON.parse(payload),
+            form_value: { sessionId: 'session-42' },
+          },
+        },
+      };
+
+      await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(event);
+
+      assert.strictEqual(activeSessionId, 'session-42');
+      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
+
+      const patchCalls = larkCalls.filter((c) => c.method === 'im.message.patch');
+      assert.strictEqual(patchCalls.length, 1, 'should patch the original card inactive');
+      const patchContent = JSON.parse(
+        (patchCalls[0].args as { data: { content: string } }).data.content,
+      );
+      assert.strictEqual(patchContent.schema, '2.0');
+      assert.ok(
+        (patchContent.body.elements[1].text.content as string).includes('Selected Session'),
+      );
+    });
+
+    it('rejects v2 form submit when sessionId is missing from form_value', async () => {
+      workspaceStore.getFeishuSessionOwner = () => 'ou_form';
+      const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
+      const event = makeActionEvent(payload, undefined, 'ou_form');
+      (event as Record<string, unknown>).raw = {
+        raw: {
+          action: {
+            value: JSON.parse(payload),
+            form_value: {},
+          },
+        },
+      };
+
+      await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(event);
+
+      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      assert.ok(textPosts.some((text) => String(text).includes('无法解析会话选择')));
+      const patchCalls = larkCalls.filter((c) => c.method === 'im.message.patch');
+      assert.strictEqual(patchCalls.length, 0);
     });
 
     it('handles create_session and posts the toast to the thread', async () => {

@@ -2,16 +2,20 @@ import type { Workspace } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import type { QuestionPayload } from '../types/message.js';
 
-export interface FeishuCard {
-  config: { wide_screen_mode: boolean };
-  header?: {
-    title: {
-      tag: 'plain_text';
-      content: string;
-    };
+/**
+ * Feishu Cards v2 interactive card.
+ * Legacy v1 cards used `config` / `header` / `elements` at the root.
+ * v2 cards declare `schema: "2.0"` and place elements under `body`.
+ */
+export interface FeishuCardV2 {
+  schema: '2.0';
+  body: {
+    elements: unknown[];
   };
-  elements: unknown[];
 }
+
+/** Backward-compatible alias used by existing callers. */
+export type FeishuCard = FeishuCardV2;
 
 export interface StreamingAnswerCard {
   schema: '2.0';
@@ -33,104 +37,150 @@ export interface StreamingAnswerCard {
   };
 }
 
-function baseCard(title: string, elements: unknown[]): FeishuCard {
+function cardV2(elements: unknown[]): FeishuCardV2 {
   return {
-    config: { wide_screen_mode: true },
-    header: {
-      title: { tag: 'plain_text', content: title },
-    },
-    elements,
+    schema: '2.0',
+    body: { elements },
   };
 }
 
-function plainText(text: string): unknown {
-  return { tag: 'div', text: { tag: 'plain_text', content: text } };
+export function markdownText(content: string): { tag: 'markdown'; content: string } {
+  return { tag: 'markdown', content };
 }
 
-function markdownText(text: string): unknown {
-  return { tag: 'div', text: { tag: 'lark_md', content: text } };
+export function plainText(content: string): { tag: 'div'; text: { tag: 'plain_text'; content: string } } {
+  return { tag: 'div', text: { tag: 'plain_text', content } };
 }
 
-function primaryButton(text: string, value: Record<string, unknown>): unknown {
+export function actionButton(
+  text: string,
+  type: 'primary' | 'default' | 'danger',
+  value: Record<string, unknown>,
+  name?: string,
+): unknown {
+  const button: Record<string, unknown> = {
+    tag: 'button',
+    type,
+    text: { tag: 'plain_text', content: text },
+    behaviors: [{ type: 'callback', value }],
+  };
+  if (name) {
+    button.name = name;
+  }
+  return button;
+}
+
+export function selectStatic(
+  name: string,
+  options: Array<{ text: string; value: string }>,
+  initialIndex?: number,
+  placeholder?: string,
+): unknown {
+  const select: Record<string, unknown> = {
+    tag: 'select_static',
+    name,
+    options: options.map((option) => ({
+      text: { tag: 'plain_text', content: option.text },
+      value: option.value,
+    })),
+  };
+  if (initialIndex !== undefined) {
+    select.initial_index = initialIndex;
+  }
+  if (placeholder) {
+    select.placeholder = { tag: 'plain_text', content: placeholder };
+  }
+  return select;
+}
+
+export function submitButton(
+  text: string,
+  type: 'primary' | 'default',
+  value: Record<string, unknown>,
+  name: string,
+): unknown {
   return {
     tag: 'button',
+    type,
     text: { tag: 'plain_text', content: text },
-    type: 'primary',
-    value,
+    name,
+    form_action_type: 'submit',
+    behaviors: [{ type: 'callback', value }],
   };
 }
 
-function defaultButton(text: string, value: Record<string, unknown>): unknown {
-  return {
-    tag: 'button',
-    text: { tag: 'plain_text', content: text },
-    type: 'default',
-    value,
-  };
+export function formContainer(name: string, elements: unknown[]): unknown {
+  return { tag: 'form', name, elements };
 }
 
-function actionRow(actions: unknown[]): unknown {
-  return { tag: 'action', actions };
-}
-
-export function buildWorkspaceListCard(workspaces: Workspace[]): FeishuCard {
+export function buildWorkspaceListCard(workspaces: Workspace[]): FeishuCardV2 {
   const elements: unknown[] = [
     markdownText('请选择一个工作空间作为当前 Feishu 机器人的绑定目标。'),
   ];
 
-  for (const ws of workspaces) {
+  for (const workspace of workspaces) {
     elements.push(
-      plainText(`${ws.name}  (${ws.folderPath})`),
-      actionRow([
-        primaryButton('选择', {
-          action: 'select_workspace',
-          workspaceId: ws.id,
-        }),
-      ]),
+      plainText(`${workspace.name}  (${workspace.folderPath})`),
+      actionButton('选择', 'primary', {
+        action: 'select_workspace',
+        workspaceId: workspace.id,
+      }),
     );
   }
 
-  return baseCard('切换工作空间', elements);
+  return cardV2(elements);
 }
 
 export function buildSessionListCard(
   workspaceName: string,
   sessions: Array<{ session: ChatSession; isActive: boolean }>,
-): FeishuCard {
-  const elements: unknown[] = [
-    markdownText(`当前工作空间：**${workspaceName}**`),
-  ];
+): FeishuCardV2 {
+  const elements: unknown[] = [markdownText(`当前工作空间：**${workspaceName}**`)];
 
   if (sessions.length === 0) {
-    elements.push(plainText('你还没有会话，点击下方的“新建会话”开始。'));
+    elements.push(plainText('你还没有会话，发送 /new 创建新会话。'));
   } else {
     elements.push(plainText('选择要使用的会话：'));
-    for (const { session, isActive } of sessions) {
-      const label = `${session.name}${isActive ? ' （当前）' : ''}`;
-      elements.push(
-        plainText(label),
-        actionRow([
-          primaryButton('选择', {
-            action: 'select_session',
-            workspaceId: session.workspaceId,
-            sessionId: session.id,
-          }),
-        ]),
-      );
-    }
+
+    const options = sessions.map(({ session, isActive }) => ({
+      text: `${session.name}${isActive ? ' （当前）' : ''}`,
+      value: session.id,
+    }));
+    const activeIndex = sessions.findIndex(({ isActive }) => isActive);
+
+    elements.push(
+      formContainer('session_form', [
+        selectStatic(
+          'sessionId',
+          options,
+          activeIndex >= 0 ? activeIndex : undefined,
+          '请选择会话',
+        ),
+        submitButton(
+          '确认切换',
+          'primary',
+          { action: 'select_session', workspaceId: sessions[0].session.workspaceId },
+          'submit_session',
+        ),
+      ]),
+    );
   }
 
-  elements.push(
-    { tag: 'hr' },
-    actionRow([
-      defaultButton('新建会话', {
-        action: 'create_session',
-        workspaceId: sessions[0]?.session.workspaceId ?? '',
-      }),
-    ]),
-  );
+  return cardV2(elements);
+}
 
-  return baseCard('选择会话', elements);
+/**
+ * Inactive version of the session-switcher card, rendered after a successful
+ * switch so the user cannot submit the form again.
+ */
+export function buildInactiveSessionCard(
+  workspaceName: string,
+  sessionName: string,
+): FeishuCardV2 {
+  return cardV2([
+    markdownText(`当前工作空间：**${workspaceName}**`),
+    plainText(`已切换至会话：**${sessionName}**`),
+  ]);
 }
 
 export function buildApprovalCard(params: {
@@ -141,11 +191,13 @@ export function buildApprovalCard(params: {
   title?: string;
   description?: string;
   inputSummary?: string;
-}): FeishuCard {
+}): FeishuCardV2 {
   const { requestId, workspaceId, sessionId, toolName, title, description, inputSummary } = params;
   const elements: unknown[] = [
+    markdownText('需要你的确认'),
     markdownText(`工具：**${toolName}**`),
   ];
+
   if (title) {
     elements.push(plainText(title));
   }
@@ -155,25 +207,25 @@ export function buildApprovalCard(params: {
   if (inputSummary) {
     elements.push(markdownText(`\`\`\`\n${inputSummary}\n\`\`\``));
   }
+
   elements.push(
-    actionRow([
-      primaryButton('允许', {
-        action: 'approval',
-        workspaceId,
-        sessionId,
-        requestId,
-        behavior: 'allow',
-      }),
-      defaultButton('拒绝', {
-        action: 'approval',
-        workspaceId,
-        sessionId,
-        requestId,
-        behavior: 'deny',
-      }),
-    ]),
+    actionButton('允许', 'primary', {
+      action: 'approval',
+      workspaceId,
+      sessionId,
+      requestId,
+      behavior: 'allow',
+    }),
+    actionButton('拒绝', 'default', {
+      action: 'approval',
+      workspaceId,
+      sessionId,
+      requestId,
+      behavior: 'deny',
+    }),
   );
-  return baseCard('需要你的确认', elements);
+
+  return cardV2(elements);
 }
 
 export function buildQuestionCard(params: {
@@ -181,50 +233,43 @@ export function buildQuestionCard(params: {
   workspaceId: string;
   sessionId: string;
   questions: QuestionPayload[];
-}): FeishuCard {
+}): FeishuCardV2 {
   const { requestId, workspaceId, sessionId, questions } = params;
-  const elements: unknown[] = [plainText('请回答以下问题：')];
+  const elements: unknown[] = [markdownText('需要你的回答'), plainText('请回答以下问题：')];
 
-  for (const [index, q] of questions.entries()) {
-    elements.push(plainText(q.question));
-    if (q.options && q.options.length > 0) {
-      if (q.multiSelect) {
-        elements.push({
-          tag: 'div',
-          text: { tag: 'plain_text', content: '（多选）' },
-          extra: q.options.map((opt) => ({
-            tag: 'button',
-            text: { tag: 'plain_text', content: opt.label },
-            type: 'default',
-            value: {
+  for (const [index, question] of questions.entries()) {
+    elements.push(plainText(question.question));
+
+    if (question.options && question.options.length > 0) {
+      if (question.multiSelect) {
+        elements.push(plainText('（多选）'));
+        for (const option of question.options) {
+          elements.push(
+            actionButton(option.label, 'default', {
               action: 'question',
               workspaceId,
               sessionId,
               requestId,
               questionIndex: index,
-              answer: opt.label,
+              answer: option.label,
               multiSelect: true,
-            },
-          })),
-        });
+            }),
+          );
+        }
       } else {
-        elements.push({
-          tag: 'action',
-          actions: q.options.map((opt) => ({
-            tag: 'button',
-            text: { tag: 'plain_text', content: opt.label },
-            type: 'default',
-            value: {
+        for (const option of question.options) {
+          elements.push(
+            actionButton(option.label, 'default', {
               action: 'question',
               workspaceId,
               sessionId,
               requestId,
               questionIndex: index,
-              answer: opt.label,
+              answer: option.label,
               multiSelect: false,
-            },
-          })),
-        });
+            }),
+          );
+        }
       }
     } else {
       // Free-form questions are not supported via card buttons; ask the user to reply in chat.
@@ -233,17 +278,15 @@ export function buildQuestionCard(params: {
   }
 
   elements.push(
-    actionRow([
-      primaryButton('提交', {
-        action: 'question_submit',
-        workspaceId,
-        sessionId,
-        requestId,
-      }),
-    ]),
+    actionButton('提交', 'primary', {
+      action: 'question_submit',
+      workspaceId,
+      sessionId,
+      requestId,
+    }),
   );
 
-  return baseCard('需要你的回答', elements);
+  return cardV2(elements);
 }
 
 export function buildStreamingAnswerCard(initialText: string): StreamingAnswerCard {

@@ -6,7 +6,6 @@ export const FALLBACK_TEXT = '⚠️ 处理失败，请稍后重试。';
 import {
   buildApprovalCard,
   buildQuestionCard,
-  type FeishuCard,
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler } from './feishu-card-action-handler.js';
 import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
@@ -264,11 +263,17 @@ export class FeishuStreamReply {
   }
 
   private sendText(text: string): void {
-    this.sendCard({
-      config: { wide_screen_mode: true },
-      elements: [{ tag: 'div', text: { tag: 'plain_text', content: text } }],
-    }).catch((err) => {
-      console.error('[FeishuStreamReply] Failed to send text card:', err);
-    });
+    this.larkClient.im.v1.message
+      .create({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: this.openId,
+          msg_type: 'text',
+          content: JSON.stringify({ text }),
+        },
+      })
+      .catch((err) => {
+        console.error('[FeishuStreamReply] Failed to send text:', err);
+      });
   }
 }
