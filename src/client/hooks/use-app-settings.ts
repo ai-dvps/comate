@@ -13,6 +13,7 @@ interface AppSettings {
   archiveThresholdDays: number
   autoCheckUpdates: boolean
   notificationSoundsEnabled: boolean
+  notificationSoundsVolume: number
   lastUpdateCheckAt: string | null
 }
 
@@ -38,6 +39,12 @@ export function getInitialSettings(): AppSettings {
       const autoCheckUpdates = typeof parsed.autoCheckUpdates === 'boolean' ? parsed.autoCheckUpdates : true
       const notificationSoundsEnabled =
         typeof parsed.notificationSoundsEnabled === 'boolean' ? parsed.notificationSoundsEnabled : true
+      const notificationSoundsVolume =
+        typeof parsed.notificationSoundsVolume === 'number' &&
+        parsed.notificationSoundsVolume >= 0 &&
+        parsed.notificationSoundsVolume <= 100
+          ? parsed.notificationSoundsVolume
+          : 100
       const lastUpdateCheckAt =
         typeof parsed.lastUpdateCheckAt === 'string' && parsed.lastUpdateCheckAt
           ? parsed.lastUpdateCheckAt
@@ -52,13 +59,14 @@ export function getInitialSettings(): AppSettings {
         archiveThresholdDays,
         autoCheckUpdates,
         notificationSoundsEnabled,
+        notificationSoundsVolume,
         lastUpdateCheckAt,
       }
     }
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium', archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS, autoCheckUpdates: true, notificationSoundsEnabled: true, lastUpdateCheckAt: null }
+  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium', archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS, autoCheckUpdates: true, notificationSoundsEnabled: true, notificationSoundsVolume: 100, lastUpdateCheckAt: null }
 }
 
 function saveSettings(settings: AppSettings) {
@@ -151,6 +159,15 @@ export function useAppSettings() {
     })
   }, [])
 
+  const setNotificationSoundsVolume = useCallback((notificationSoundsVolume: number) => {
+    setSettings((prev) => {
+      const clamped = Math.min(100, Math.max(0, notificationSoundsVolume))
+      const next = { ...prev, notificationSoundsVolume: clamped }
+      saveSettings(next)
+      return next
+    })
+  }, [])
+
   const setLastUpdateCheckAt = useCallback((lastUpdateCheckAt: string | null) => {
     setSettings((prev) => {
       const next = { ...prev, lastUpdateCheckAt }
@@ -169,6 +186,7 @@ export function useAppSettings() {
     archiveThresholdDays: settings.archiveThresholdDays,
     autoCheckUpdates: settings.autoCheckUpdates,
     notificationSoundsEnabled: settings.notificationSoundsEnabled,
+    notificationSoundsVolume: settings.notificationSoundsVolume,
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
     setDefaultModel,
     setReopenLastWorkspace,
@@ -179,6 +197,7 @@ export function useAppSettings() {
     setArchiveThresholdDays,
     setAutoCheckUpdates,
     setNotificationSoundsEnabled,
+    setNotificationSoundsVolume,
     setLastUpdateCheckAt,
   }
 }

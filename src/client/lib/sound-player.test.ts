@@ -11,6 +11,7 @@ class MockAudio {
   src: string
   preload = ''
   muted = false
+  volume = 1
   currentTime = 0
   playCount = 0
   paused = false
@@ -77,5 +78,43 @@ describe('sound-player', () => {
       created.some((el) => el.src === '/completion.mp3'),
       'completion maps to /completion.mp3',
     )
+  })
+
+  it('applies a 0-100 volume argument as an HTMLAudioElement 0-1 value', async () => {
+    __unlockSoundPlayer()
+    for (const el of created) el.playCount = 0
+
+    playSound('attention', 50)
+
+    const attention = created.find((el) => el.src === '/attention.mp3')
+    assert.ok(attention)
+    assert.strictEqual(attention!.volume, 0.5)
+    assert.strictEqual(attention!.playCount, 1)
+  })
+
+  it('clamps volume above 100 to 1.0 and below 0 to 0.0', async () => {
+    __unlockSoundPlayer()
+    for (const el of created) el.playCount = 0
+
+    playSound('attention', 150)
+    playSound('completion', -30)
+
+    const attention = created.find((el) => el.src === '/attention.mp3')
+    const completion = created.find((el) => el.src === '/completion.mp3')
+    assert.ok(attention && completion)
+    assert.strictEqual(attention!.volume, 1)
+    assert.strictEqual(completion!.volume, 0)
+  })
+
+  it('defaults to full volume when no volume is supplied', async () => {
+    __unlockSoundPlayer()
+    for (const el of created) el.playCount = 0
+
+    playSound('attention')
+
+    const attention = created.find((el) => el.src === '/attention.mp3')
+    assert.ok(attention)
+    assert.strictEqual(attention!.volume, 1)
+    assert.strictEqual(attention!.playCount, 1)
   })
 })
