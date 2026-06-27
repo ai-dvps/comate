@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-06-27
+
 ### Added
 
 - **WeCom bot `/stop` command** — WeCom bot users can now interrupt an in-flight AI turn by sending `/stop`. The command cancels any pending tool approval or `AskUserQuestion` for that turn, resolves them as denied, and appends `已中断` to the ongoing stream reply while it is still within WeCom's passive-reply window. If the 9-minute safeguard has already closed the passive stream, it sends `已中断` as a standalone message instead. It only affects the sender's own active WeCom session and never creates a new session. Errors during interrupt handling are logged and do not crash the bot connection.
