@@ -347,7 +347,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     } as SseEvent);
 
     assert.strictEqual(waitingCount, 1);
-    const card = findPostedCard((c) => c.header?.title?.content === '需要你的确认');
+    const card = findPostedCard((c) => c.body?.elements?.[0]?.content === '需要你的确认');
     assert.ok(card, 'approval card should be posted');
   });
 
@@ -367,7 +367,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
       ],
     } as SseEvent);
 
-    const card = findPostedCard((c) => c.header?.title?.content === '需要你的回答');
+    const card = findPostedCard((c) => c.body?.elements?.[0]?.content === '需要你的回答');
     assert.ok(card, 'question card should be posted');
   });
 
@@ -377,12 +377,8 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
 
     handler(1, { type: 'approval_timeout', requestId: 'req-3' } as SseEvent);
 
-    const card = findPostedCard((c) =>
-      Array.isArray(c.elements) &&
-      (c.elements as Array<{ text?: { content?: string } }>)[0]?.text?.content ===
-        '⏰ 请求已超时，已按拒绝处理。',
-    );
-    assert.ok(card, 'timeout card should be posted');
+    const card = findPostedCard((c) => c.text === '⏰ 请求已超时，已按拒绝处理。');
+    assert.ok(card, 'timeout text should be sent');
   });
 
   it('returns the same finish promise when finalize is called twice', async () => {

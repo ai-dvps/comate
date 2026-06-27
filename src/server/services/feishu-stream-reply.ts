@@ -11,6 +11,7 @@ import {
 import { feishuCardActionHandler } from './feishu-card-action-handler.js';
 import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
 import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
+import { sendPlainTextMessage } from './feishu-message-utils.js';
 
 export interface FeishuStreamReplyHandle {
   handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
@@ -157,7 +158,7 @@ export class FeishuStreamReply {
         this.postQuestionCard(event);
         break;
       case 'approval_timeout':
-        this.sendText('⏰ 请求已超时，已按拒绝处理。');
+        this.sendTextMessage('⏰ 请求已超时，已按拒绝处理。');
         break;
       default:
         break;
@@ -263,12 +264,9 @@ export class FeishuStreamReply {
     });
   }
 
-  private sendText(text: string): void {
-    this.sendCard({
-      config: { wide_screen_mode: true },
-      elements: [{ tag: 'div', text: { tag: 'plain_text', content: text } }],
-    }).catch((err) => {
-      console.error('[FeishuStreamReply] Failed to send text card:', err);
+  private sendTextMessage(text: string): void {
+    sendPlainTextMessage(this.larkClient, this.openId, text).catch((err) => {
+      console.error('[FeishuStreamReply] Failed to send text:', err);
     });
   }
 }
