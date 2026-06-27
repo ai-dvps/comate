@@ -307,6 +307,8 @@ describe('GeneralTab updater flow', () => {
     onAutoCheckUpdatesChange: vi.fn(),
     notificationSounds: false,
     onNotificationSoundsChange: vi.fn(),
+    notificationSoundsVolume: 100,
+    onNotificationSoundsVolumeChange: vi.fn(),
     lastUpdateCheckAt: null as string | null,
     updateStatus: 'idle' as const,
     updateError: null as string | null,
@@ -433,5 +435,44 @@ describe('GeneralTab updater flow', () => {
     });
 
     expect(updaterApi.dismissUpdate).toHaveBeenCalled();
+  });
+
+  it('renders the notification sound volume slider and calls the change handler', async () => {
+    const onNotificationSoundsVolumeChange = vi.fn();
+    await renderWithAct(
+      <I18nextProvider i18n={i18n}>
+        <GeneralTab
+          {...defaultProps}
+          notificationSounds={true}
+          notificationSoundsVolume={50}
+          onNotificationSoundsVolumeChange={onNotificationSoundsVolumeChange}
+        />
+      </I18nextProvider>,
+    );
+
+    const slider = screen.getByRole('slider', { name: /Notification sound volume/i }) as HTMLInputElement;
+    expect(slider.value).toBe('50');
+    expect(slider.disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.change(slider, { target: { value: '75' } });
+    });
+
+    expect(onNotificationSoundsVolumeChange).toHaveBeenCalledWith(75);
+  });
+
+  it('disables the volume slider when notification sounds are off', async () => {
+    await renderWithAct(
+      <I18nextProvider i18n={i18n}>
+        <GeneralTab
+          {...defaultProps}
+          notificationSounds={false}
+          notificationSoundsVolume={50}
+        />
+      </I18nextProvider>,
+    );
+
+    const slider = screen.getByRole('slider', { name: /Notification sound volume/i }) as HTMLInputElement;
+    expect(slider.disabled).toBe(true);
   });
 });
