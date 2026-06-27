@@ -626,6 +626,20 @@ export class SessionRuntime {
     }
   }
 
+  /**
+   * Resolve all pending tool approvals or questions as denied. Used when a turn
+   * is interrupted so the user lands in a clean state and reconnecting clients
+   * do not replay stale approval cards.
+   */
+  cancelPendingApprovals(message = 'Turn interrupted by user.'): void {
+    for (const [requestId, pending] of this.pendingApprovals) {
+      this.clearPendingTimer(pending);
+      this.pendingApprovals.delete(requestId);
+      this.emitter.emitApprovalResolved(requestId);
+      pending.resolve({ behavior: 'deny', message });
+    }
+  }
+
   private replayFrom(lastEventId: string, res: Response): void {
     const startIndex = this.ringBuffer.findIndex(
       (item) => item.id === lastEventId,
