@@ -929,3 +929,158 @@ describe('session-runtime context_usage emission', { concurrency: false }, () =>
     assert.ok(!events.some((e) => e.type === 'error_note'));
   });
 });
+
+describe('session-runtime cancelPendingApprovals', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(messages: SDKMessage[] = []): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+
+    const messageGen = (async function* () {
+      for (const msg of messages) {
+        yield msg;
+      }
+    })();
+
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: messageGen,
+      }),
+    } as unknown as SdkClient;
+  }
+
+  function createMockResponse(): import('express').Response {
+    return { write: () => true } as unknown as import('express').Response;
+  }
+
+  function getCanUseToolCallback(runtime: SessionRuntime) {
+    return (runtime as unknown as { buildCanUseToolCallback: () => (
+      toolName: string,
+      input: Record<string, unknown>,
+      options: {
+        signal: AbortSignal;
+        suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+        title?: string;
+        description?: string;
+        toolUseID: string;
+      },
+    ) => Promise<PermissionResult> }).buildCanUseToolCallback();
+  }
+
+  function createAbortSignal(): AbortSignal {
+    const controller = new AbortController();
+    return controller.signal;
+  }
+
+  it('resolves pending tool approvals as denied', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    runtime.subscribe(createMockResponse());
+
+    const callback = getCanUseToolCallback(runtime);
+    const promise = callback('Bash', { command: 'echo hi' }, { signal: createAbortSignal(), toolUseID: 'tu-1' });
+
+    await new Promise((r) => setTimeout(r, 20));
+    runtime.cancelPendingApprovals('Turn interrupted by user.');
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'deny');
+    assert.strictEqual(result.message, 'Turn interrupted by user.');
+  });
+
+  it('resolves pending questions as denied', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    runtime.subscribe(createMockResponse());
+
+    const callback = getCanUseToolCallback(runtime);
+    const promise = callback('AskUserQuestion', {
+      questions: [{ question: 'ok?', options: [{ label: 'yes' }], multiSelect: false }],
+    }, { signal: createAbortSignal(), toolUseID: 'tu-2' });
+
+    await new Promise((r) => setTimeout(r, 20));
+    runtime.cancelPendingApprovals('Turn interrupted by user.');
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'deny');
+    assert.strictEqual(result.message, 'Turn interrupted by user.');
+  });
+
+  it('emits approval_resolved for each pending entry', async () => {
+    const resolvedRequestIds: string[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      (_id, event) => {
+        if (event.type === 'approval_resolved') {
+          resolvedRequestIds.push((event as { requestId: string }).requestId);
+        }
+      },
+    );
+    runtime.subscribe(createMockResponse());
+
+    const callback = getCanUseToolCallback(runtime);
+    const p1 = callback('Bash', { command: 'echo hi' }, { signal: createAbortSignal(), toolUseID: 'tu-1' });
+    const p2 = callback('AskUserQuestion', {
+      questions: [{ question: 'ok?', options: [{ label: 'yes' }], multiSelect: false }],
+    }, { signal: createAbortSignal(), toolUseID: 'tu-2' });
+
+    await new Promise((r) => setTimeout(r, 20));
+    runtime.cancelPendingApprovals('Turn interrupted by user.');
+
+    await Promise.all([p1, p2]);
+    assert.deepStrictEqual(resolvedRequestIds.sort(), ['tu-1', 'tu-2']);
+  });
+
+  it('clears timeout timers for cancelled approvals', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    runtime.subscribe(createMockResponse());
+
+    const callback = getCanUseToolCallback(runtime);
+    const promise = callback('Bash', { command: 'echo hi', timeout: 60000 }, { signal: createAbortSignal(), toolUseID: 'tu-1' });
+
+    await new Promise((r) => setTimeout(r, 20));
+    const pending = (runtime as unknown as { pendingApprovals: Map<string, { timer?: NodeJS.Timeout }> }).pendingApprovals;
+    assert.ok(pending.get('tu-1')?.timer);
+
+    runtime.cancelPendingApprovals('Turn interrupted by user.');
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'deny');
+    assert.strictEqual(pending.get('tu-1')?.timer, undefined);
+  });
+
+  it('is safe to call when no approvals are pending', () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    assert.doesNotThrow(() => {
+      runtime!.cancelPendingApprovals('Turn interrupted by user.');
+    });
+  });
+
+  it('is safe to call twice on the same runtime', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    runtime.subscribe(createMockResponse());
+
+    const callback = getCanUseToolCallback(runtime);
+    const promise = callback('Bash', { command: 'echo hi' }, { signal: createAbortSignal(), toolUseID: 'tu-1' });
+
+    await new Promise((r) => setTimeout(r, 20));
+    runtime.cancelPendingApprovals('Turn interrupted by user.');
+    runtime.cancelPendingApprovals('Turn interrupted by user.');
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'deny');
+  });
+});

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { WeComBotService, parseWecomNewSessionCommand, parseWecomResumeCommand } from './wecom-bot-service.js';
+import { WeComBotService, parseWecomNewSessionCommand, parseWecomResumeCommand, parseWecomStopCommand } from './wecom-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { encodeButtonKey } from './wecom-template-card.js';
@@ -1231,5 +1231,199 @@ describe('WeComBotService /resume submit (stateless switch)', { concurrency: fal
       updateIdx < sendIdx,
       `card update must precede confirmation send; order was: ${calls.join(' -> ')}`,
     );
+  });
+});
+
+describe('WeComBotService /stop command', { concurrency: false }, () => {
+  let service: WeComBotService;
+  let sentMessages: Array<{ userId: string; body: any }>;
+  let interruptCalls: string[];
+  let cancelPendingApprovalsCalls: string[];
+
+  let origGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
+  let origGetRuntimeIfExists: typeof chatService.getRuntimeIfExists;
+
+  beforeEach(() => {
+    service = new WeComBotService();
+    sentMessages = [];
+    interruptCalls = [];
+    cancelPendingApprovalsCalls = [];
+
+    origGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
+    origGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
+
+    workspaceStore.getActiveWecomSession = () => null;
+    chatService.getRuntimeIfExists = () => undefined;
+  });
+
+  afterEach(() => {
+    workspaceStore.getActiveWecomSession = origGetActiveWecomSession;
+    chatService.getRuntimeIfExists = origGetRuntimeIfExists;
+  });
+
+  function createMockConnection() {
+    return {
+      client: {
+        sendMessage: async (userId: string, body: any) => {
+          sentMessages.push({ userId, body });
+        },
+      },
+      workspaceId: 'ws-1',
+      botId: 'bot-1',
+      folderPath: '/tmp',
+      status: 'connected' as const,
+    };
+  }
+
+  function injectConnection(conn: any) {
+    (service as any).connections.set('ws-1', conn);
+  }
+
+  function makeTextFrame(content: string) {
+    return {
+      headers: { req_id: 'req-1' },
+      body: {
+        msgid: 'msg-1',
+        aibotid: 'bot-1',
+        chattype: 'single',
+        from: { userid: 'enc-user-1' },
+        msgtype: 'text',
+        text: { content },
+      },
+    };
+  }
+
+  function setRuntime(processing: boolean, failInterrupt = false) {
+    chatService.getRuntimeIfExists = () =>
+      ({
+        isProcessingTurn: () => processing,
+        interrupt: async () => {
+          interruptCalls.push('interrupt');
+          if (failInterrupt) throw new Error('interrupt failed');
+        },
+        cancelPendingApprovals: (message?: string) => {
+          cancelPendingApprovalsCalls.push(message ?? '');
+        },
+      }) as any;
+  }
+
+  it('recognizes exact /stop as a command (U1)', () => {
+    assert.ok(parseWecomStopCommand('/stop'));
+    assert.ok(parseWecomStopCommand('  /stop  '));
+  });
+
+  it('recognizes /stop with trailing text as a command (U1)', () => {
+    assert.ok(parseWecomStopCommand('/stop now'));
+    assert.ok(parseWecomStopCommand('/stop please'));
+  });
+
+  it('does not recognize /stopping as a command (U1)', () => {
+    assert.ok(!parseWecomStopCommand('/stopping'));
+    assert.ok(!parseWecomStopCommand('/stopx'));
+  });
+
+  it('interrupts an in-flight turn and sends confirmation (R1, R4, R6)', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    setRuntime(true);
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(interruptCalls.length, 1);
+    assert.strictEqual(cancelPendingApprovalsCalls.length, 1);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].userId, 'enc-user-1');
+    assert.strictEqual(sentMessages[0].body.msgtype, 'markdown');
+    assert.strictEqual(sentMessages[0].body.markdown.content, '已中断');
+  });
+
+  it('replies with no active session message when none exists (R2)', async () => {
+    workspaceStore.getActiveWecomSession = () => null;
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(interruptCalls.length, 0);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.ok(sentMessages[0].body.markdown.content.includes('没有活跃的会话可中断'));
+  });
+
+  it('replies with nothing in flight when runtime is idle (R3)', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    setRuntime(false);
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(interruptCalls.length, 0);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.ok(sentMessages[0].body.markdown.content.includes('当前没有正在进行的对话'));
+  });
+
+  it('replies with nothing in flight when runtime is missing (R3)', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    chatService.getRuntimeIfExists = () => undefined;
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(interruptCalls.length, 0);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.ok(sentMessages[0].body.markdown.content.includes('当前没有正在进行的对话'));
+  });
+
+  it('cancels pending approvals after interrupt (R5)', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    setRuntime(true);
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(interruptCalls.length, 1);
+    assert.strictEqual(cancelPendingApprovalsCalls.length, 1);
+    assert.strictEqual(cancelPendingApprovalsCalls[0], 'Turn interrupted by user.');
+  });
+
+  it('does not crash the bot when interrupt fails (R7)', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    setRuntime(true, true);
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await assert.doesNotReject(async () => {
+      await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+    });
+
+    assert.strictEqual(interruptCalls.length, 1);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.ok(sentMessages[0].body.markdown.content.includes('中断会话失败'));
+  });
+
+  it('does not create a new session when /stop is sent (R1)', async () => {
+    workspaceStore.getActiveWecomSession = () => null;
+    let sessionCreated = false;
+    chatService.createSession = async () => {
+      sessionCreated = true;
+      return { id: 'new-sess', workspaceId: 'ws-1' } as any;
+    };
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.ok(!sessionCreated);
+    assert.strictEqual(sentMessages.length, 1);
   });
 });

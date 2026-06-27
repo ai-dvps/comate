@@ -116,6 +116,15 @@ export function parseWecomResumeCommand(content: string): boolean {
 }
 
 /**
+ * Detect the `/stop` interrupt command. Matches the exact token or a prefix
+ * followed by a space (so `/stopx` does not trigger). Trailing text is ignored.
+ */
+export function parseWecomStopCommand(content: string): boolean {
+  const trimmed = content.trim();
+  return trimmed === '/stop' || trimmed.startsWith('/stop ');
+}
+
+/**
  * Cap on sessions shown in the `/resume` card. WeCom `vote_interaction` has a
  * bounded option count; 10 is a conservative default pending platform verification.
  */
@@ -322,6 +331,14 @@ export class WeComBotService {
       return;
     }
 
+    // /stop interrupts the user's active session if it has an in-flight turn.
+    if (parseWecomStopCommand(content)) {
+      const conn = this.connections.get(workspaceId);
+      if (!conn) return;
+      await this.handleStopCommand(workspaceId, wecomUserId, conn);
+      return;
+    }
+
     const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
     if (!sessionId) return;
 
@@ -440,6 +457,55 @@ export class WeComBotService {
         await conn.client.sendMessage(wecomUserId, {
           msgtype: 'markdown',
           markdown: { content: '⚠️ 获取会话列表失败，请稍后重试。' },
+        });
+      } catch {
+        // Ignore secondary send failure
+      }
+    }
+  }
+
+  /**
+   * Handle `/stop`: interrupt the user's active WeCom session if it has an
+   * in-flight turn, resolve any pending approvals/questions as denied, and
+   * confirm the action. Mirrors feishu-bot-service handleStopCommand.
+   */
+  private async handleStopCommand(
+    workspaceId: string,
+    wecomUserId: string,
+    conn: BotConnection,
+  ): Promise<void> {
+    try {
+      const sessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
+      if (!sessionId) {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '没有活跃的会话可中断。请运行 /resume 选择会话。' },
+        });
+        return;
+      }
+
+      const runtime = chatService.getRuntimeIfExists(sessionId);
+      if (!runtime || !runtime.isProcessingTurn()) {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '当前没有正在进行的对话。' },
+        });
+        return;
+      }
+
+      await runtime.interrupt();
+      runtime.cancelPendingApprovals('Turn interrupted by user.');
+
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: { content: '已中断' },
+      });
+    } catch (err) {
+      console.error('[WeComBotService] failed to handle /stop:', err);
+      try {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '⚠️ 中断会话失败，请稍后重试。' },
         });
       } catch {
         // Ignore secondary send failure
