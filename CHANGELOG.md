@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Feishu interactive cards migrated to Cards v2** — all legacy Feishu interactive cards (workspace list, session switcher, tool approval, and question cards) now use Feishu Cards v2. The session-switcher card is now a compact form with a dropdown and a "确认切换" button; the previous per-session button list and the "新建会话" button have been removed. Session creation remains available via `/new`, `/clear`, and the bot menu. After a successful session switch, the original card is updated to a read-only confirmation. The streaming answer card is unchanged.
+
 ## [0.0.17] - 2026-06-27
 
 ### Added
