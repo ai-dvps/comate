@@ -11,13 +11,18 @@ interface RawBodyRequest extends Request {
 }
 
 function rawBodyMiddleware(req: RawBodyRequest, res: Response, next: NextFunction): void {
+  diagLog(`[FeishuCardRoute] raw body middleware started method=${req.method} path=${req.path} content-type=${req.headers['content-type'] ?? '(none)'}`);
   const chunks: Buffer[] = [];
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
     req.rawBody = Buffer.concat(chunks).toString('utf8');
+    diagLog(`[FeishuCardRoute] raw body assembled length=${req.rawBody.length}`);
     next();
   });
-  req.on('error', (err) => next(err));
+  req.on('error', (err) => {
+    diagLog(`[FeishuCardRoute] raw body stream error: ${err.message}`);
+    next(err);
+  });
 }
 
 export function parseCardActionValue(raw: unknown): Record<string, unknown> | null {
@@ -198,16 +203,19 @@ async function handleCardCallback(
       },
     });
 
+    diagLog(
+      `[FeishuCardRoute] invoking EventDispatcher with encryptKeySet=${!!encryptKey} verificationTokenSet=${!!verificationToken}`,
+    );
     const response = await dispatcher.invoke(buildDispatcherInput(req, body));
 
     if (response === undefined) {
-      diagLog('[FeishuCardRoute] EventDispatcher returned undefined (likely verification failed)');
+      diagLog('[FeishuCardRoute] EventDispatcher returned undefined (likely signature/verification failed)');
       res.json({ toast: { type: 'success', content: '已处理。' } });
       return;
     }
 
     if (typeof response === 'string' && response.startsWith('no ')) {
-      diagLog(`[FeishuCardRoute] ${response}`);
+      diagLog(`[FeishuCardRoute] EventDispatcher returned no-handler response: ${response}`);
       res.json({ toast: { type: 'success', content: '已处理。' } });
       return;
     }
@@ -224,12 +232,14 @@ const router = Router();
 
 // Backward-compatible per-workspace callback URL.
 router.post('/:workspaceId', rawBodyMiddleware, async (req: RawBodyRequest, res: Response) => {
+  diagLog(`[FeishuCardRoute] hit /:workspaceId workspaceId=${req.params.workspaceId}`);
   await handleCardCallback(req, res, req.params.workspaceId);
 });
 
 // Simple callback URL that matches the setup checklist. Uses the active Feishu
 // workspace binding's credentials for signature verification.
 router.post('/', rawBodyMiddleware, async (req: RawBodyRequest, res: Response) => {
+  diagLog('[FeishuCardRoute] hit / root callback');
   const activeWorkspaceId = store.getFeishuActiveWorkspace();
   if (!activeWorkspaceId) {
     diagLog('[FeishuCardRoute] root callback rejected: no active Feishu workspace binding');
