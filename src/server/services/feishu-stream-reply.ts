@@ -16,6 +16,7 @@ import { sendPlainTextMessage } from './feishu-message-utils.js';
 export interface FeishuStreamReplyHandle {
   handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
   finalize: () => Promise<void>;
+  interrupt: (message: string) => boolean;
 }
 
 export class FeishuStreamReply {
@@ -26,9 +27,11 @@ export class FeishuStreamReply {
   private sessionId: string;
   private onWaiting?: () => void;
   private initialHint?: string;
+  private callbacks?: { onFinalized?: () => void; onCleanup?: () => void };
 
   private controller: FeishuCardStream | null = null;
   private finalized = false;
+  private finalizedNotified = false;
   private finishPromise: Promise<void> | null = null;
   private waitingSignaled = false;
   private collecting = false;
@@ -54,8 +57,13 @@ export class FeishuStreamReply {
     this.initialHint = options?.initialHint;
   }
 
-  async start(options?: { onWaiting?: () => void }): Promise<FeishuStreamReplyHandle> {
+  async start(options?: {
+    onWaiting?: () => void;
+    onFinalized?: () => void;
+    onCleanup?: () => void;
+  }): Promise<FeishuStreamReplyHandle> {
     this.onWaiting = options?.onWaiting ?? this.onWaiting;
+    this.callbacks = { onFinalized: options?.onFinalized, onCleanup: options?.onCleanup };
 
     this.controller = new FeishuCardStream(this.larkClient, this.openId);
     try {
@@ -72,6 +80,7 @@ export class FeishuStreamReply {
       },
       {
         cleanup: () => {
+          this.callbacks?.onCleanup?.();
           void this.finalize();
         },
       },
@@ -80,6 +89,7 @@ export class FeishuStreamReply {
     return {
       handler,
       finalize: () => this.finalize(),
+      interrupt: (message: string) => this.interrupt(message),
     };
   }
 
@@ -192,6 +202,20 @@ export class FeishuStreamReply {
     this.controller.setContent(content);
   }
 
+  public interrupt(message: string): boolean {
+    if (this.finalized) {
+      return false;
+    }
+    this.clearPlaceholderState();
+    if (this.responseText && !this.responseText.endsWith('\n\n')) {
+      this.responseText += '\n\n';
+    }
+    this.responseText += message;
+    this.updateController();
+    void this.finalize();
+    return true;
+  }
+
   private signalWaiting(): void {
     if (this.waitingSignaled || !this.onWaiting) return;
     this.waitingSignaled = true;
@@ -214,11 +238,20 @@ export class FeishuStreamReply {
     if (!this.controller) {
       // If the controller was never started (should not happen in normal flow),
       // there is nothing to finalize.
+      this.emitFinalized();
       return Promise.resolve();
     }
 
-    this.finishPromise = this.controller.finish(this.responseText);
+    this.finishPromise = this.controller.finish(this.responseText).finally(() => {
+      this.emitFinalized();
+    });
     return this.finishPromise;
+  }
+
+  private emitFinalized(): void {
+    if (this.finalizedNotified) return;
+    this.finalizedNotified = true;
+    this.callbacks?.onFinalized?.();
   }
 
   private postApprovalCard(event: Extract<SseEvent, { type: 'pending_approval' }>): void {
