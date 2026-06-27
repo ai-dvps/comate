@@ -2,6 +2,7 @@ import type { Workspace } from '../models/workspace.js';
 import type { QuestionPayload } from '../types/message.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
+import { createFeishuSessionForUser } from './feishu-session-helpers.js';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 
 export interface CardActionPayload {
@@ -107,13 +108,7 @@ export class FeishuCardActionHandler {
     openId: string,
     workspace: Workspace,
   ): Promise<unknown> {
-    const session = await chatService.createSession({
-      workspaceId: workspace.id,
-      name: 'Feishu Session',
-      source: 'feishu',
-    });
-    workspaceStore.addFeishuUserSession(workspace.id, openId, session.id);
-    workspaceStore.setFeishuActiveSession(workspace.id, openId, session.id);
+    const session = await createFeishuSessionForUser(workspace, openId);
     return this.toast(`会话 “${session.name}” 已创建并选中。`);
   }
 

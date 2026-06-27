@@ -455,9 +455,9 @@ describe('FeishuBotService', () => {
       );
 
       assert.strictEqual(createdSessions.length, 1);
-      assert.strictEqual(createdSessions[0].name, 'Feishu Session');
+      assert.strictEqual(createdSessions[0].name, 'ou_create');
       const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
-      assert.ok(textPosts.some((text) => String(text).includes('Feishu Session')));
+      assert.ok(textPosts.some((text) => String(text).includes('ou_create')));
     });
 
     it('falls back to larkClient direct message when thread is unavailable', async () => {
@@ -511,8 +511,8 @@ describe('FeishuBotService', () => {
     });
   });
 
-  describe('/new command', () => {
-    it('creates a session with the default title when no title is supplied', async () => {
+  describe('/new and /clear commands', () => {
+    it('/new creates a session with the default title when no title is supplied', async () => {
       await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
         thread,
         feishuUserId,
@@ -528,11 +528,41 @@ describe('FeishuBotService', () => {
       assert.ok(textPosts.some((text) => String(text).includes(`已创建新会话：${feishuUserId}`)));
     });
 
-    it('creates a session with the supplied title', async () => {
+    it('/clear creates a session with the default title when no title is supplied', async () => {
+      await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
+        thread,
+        feishuUserId,
+        '/clear',
+      );
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      assert.ok(textPosts.some((text) => String(text).includes(`已创建新会话：${feishuUserId}`)));
+    });
+
+    it('/new creates a session with the supplied title', async () => {
       await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
         thread,
         feishuUserId,
         '/new Project Planning',
+      );
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, 'Project Planning');
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const textPosts = thread.posts.filter((p) => p.type === 'text').map((p) => p.value);
+      assert.ok(textPosts.some((text) => String(text).includes('已创建新会话：Project Planning')));
+    });
+
+    it('/clear creates a session with the supplied title', async () => {
+      await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
+        thread,
+        feishuUserId,
+        '/clear Project Planning',
       );
 
       assert.strictEqual(createdSessions.length, 1);
@@ -548,6 +578,17 @@ describe('FeishuBotService', () => {
         thread,
         feishuUserId,
         '/new   ',
+      );
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+    });
+
+    it('/clear falls back to the default title when the supplied title is only whitespace', async () => {
+      await (service as unknown as { handleNewSessionCommand: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleNewSessionCommand(
+        thread,
+        feishuUserId,
+        '/clear   ',
       );
 
       assert.strictEqual(createdSessions.length, 1);
@@ -710,8 +751,75 @@ describe('FeishuBotService', () => {
       assert.strictEqual(interactiveCardCalls().length, 1, 'empty-state card should still be sent');
     });
 
+    it('"/resume" (with leading slash) sends the session-list card to the operator open_id', async () => {
+      workspaceStore.listFeishuSessionsByUser = () => [
+        { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
+      ];
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/resume');
+
+      const interactive = interactiveCardCalls();
+      assert.strictEqual(interactive.length, 1, 'should send one interactive session-list card');
+      assert.strictEqual(
+        (interactive[0].args as { params: { receive_id_type: string } }).params.receive_id_type,
+        'open_id',
+      );
+      assert.strictEqual(
+        (interactive[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+        'card must be addressed to the operator open_id',
+      );
+    });
+
     it('"new" creates a session scoped to the operator open_id and notifies them', async () => {
       await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'new');
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+      assert.strictEqual(createdSessions[0].source, 'feishu');
+      assert.strictEqual(userSessions.length, 1);
+      assert.strictEqual(userSessions[0].feishuUserId, feishuUserId);
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok(
+        (text[0].args as { data: { content: string } }).data.content.includes(
+          `已创建新会话：${feishuUserId}`,
+        ),
+      );
+      assert.strictEqual(
+        (text[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+      );
+    });
+
+    it('"/new" (with leading slash) creates a session scoped to the operator open_id and notifies them', async () => {
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/new');
+
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].name, feishuUserId);
+      assert.strictEqual(createdSessions[0].source, 'feishu');
+      assert.strictEqual(userSessions.length, 1);
+      assert.strictEqual(userSessions[0].feishuUserId, feishuUserId);
+      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok(
+        (text[0].args as { data: { content: string } }).data.content.includes(
+          `已创建新会话：${feishuUserId}`,
+        ),
+      );
+      assert.strictEqual(
+        (text[0].args as { data: { receive_id: string } }).data.receive_id,
+        feishuUserId,
+      );
+    });
+
+    it('"/clear" (with leading slash) creates a session scoped to the operator open_id and notifies them', async () => {
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/clear');
 
       assert.strictEqual(createdSessions.length, 1);
       assert.strictEqual(createdSessions[0].name, feishuUserId);
@@ -801,6 +909,38 @@ describe('FeishuBotService', () => {
       await assert.doesNotReject(async () => {
         await service.handleMenuEvent(makeFailingMenuLarkClient(), workspace, feishuUserId, 'new');
       });
+    });
+
+    it('registers a WS dispatcher handler that routes application.bot.menu_v6 to handleMenuEvent', async () => {
+      const registeredHandlers: Record<string, (data: Record<string, unknown>) => Promise<void> | void> = {};
+      const mockDispatcher = {
+        register: (handlers: Record<string, (data: Record<string, unknown>) => Promise<void> | void>) => {
+          Object.assign(registeredHandlers, handlers);
+        },
+      };
+      const mockAdapter = {
+        _getChannel: () => ({ dispatcher: mockDispatcher }),
+      };
+
+      (service as unknown as { registerWSMenuHandler: (adapter: unknown, ws: typeof workspace, client: MockLarkClient) => void }).registerWSMenuHandler(
+        mockAdapter,
+        workspace,
+        makeMenuLarkClient() as unknown as MockLarkClient,
+      );
+
+      assert.ok('application.bot.menu_v6' in registeredHandlers, 'should register menu_v6 handler');
+
+      workspaceStore.listFeishuSessionsByUser = () => [
+        { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
+      ];
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+
+      await registeredHandlers['application.bot.menu_v6']({
+        operator: { operator_id: { open_id: feishuUserId } },
+        event_key: '/resume',
+      });
+
+      assert.strictEqual(interactiveCardCalls().length, 1, 'WS menu /resume should send session-list card');
     });
   });
 });

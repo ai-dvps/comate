@@ -18,7 +18,6 @@ import wecomSendRoutes from './routes/wecom-send.js';
 import wecomSendFileRoutes from './routes/wecom-send-file.js';
 import wecomDocRoutes from './routes/wecom-doc.js';
 import wecomSmartsheetExportRoutes from './routes/wecom-smartsheet-export.js';
-import feishuCardRoutes from './routes/feishu-card.js';
 import systemRoutes from './routes/system.js';
 import todoRoutes from './routes/todos.js';
 import providerRoutes from './routes/providers.js';
@@ -78,9 +77,6 @@ function ensureComateBuiltInMarketplace(): void {
 ensureComateBuiltInMarketplace();
 
 app.use(cors());
-// Feishu card callbacks need the raw request body for signature verification.
-// Mount this route before express.json() consumes the stream.
-app.use('/api/feishu/card', feishuCardRoutes);
 app.use(express.json());
 
 // API routes
