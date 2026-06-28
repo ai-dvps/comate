@@ -1,0 +1,371 @@
+import '../test-utils/test-env.js';
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert';
+import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { botService } from '../services/bot-service.js';
+import { wecomBotService } from '../services/wecom-bot-service.js';
+import { feishuBotService } from '../services/feishu-bot-service.js';
+import type { CreateBotInput } from '../models/bot.js';
+
+const validWecomBot: CreateBotInput = {
+  name: 'WeCom Bot',
+  activeWorkspaceId: 'ws-1',
+  providerSettings: {
+    wecom: {
+      enabled: true,
+      botId: 'wecom-bot-id',
+      botSecret: 'wecom-bot-secret',
+    },
+  },
+};
+
+function createMockRes(): {
+  statusCode: number;
+  jsonBody: unknown;
+  status(code: number): typeof res;
+  json(body: unknown): void;
+  send(): void;
+} {
+  const res = {
+    statusCode: 200,
+    jsonBody: undefined as unknown,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body: unknown) {
+      this.jsonBody = body;
+    },
+    send() {
+      // no-op
+    },
+  };
+  return res;
+}
+
+async function importRouteHandlers() {
+  const mod = await import('./bots.js');
+  const router = mod.default;
+  const layers = (router as unknown as {
+    stack: Array<{
+      route?: {
+        methods: Record<string, boolean>;
+        path: string;
+        stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }>;
+      };
+    }>;
+  }).stack;
+  const handlers: Record<
+    string,
+    Record<string, (req: unknown, res: unknown) => Promise<void>>
+  > = {};
+  for (const layer of layers) {
+    if (!layer.route) continue;
+    const path = layer.route.path;
+    const methods = Object.keys(layer.route.methods);
+    if (!handlers[path]) handlers[path] = {};
+    for (const method of methods) {
+      handlers[path][method] = layer.route.stack[0].handle;
+    }
+  }
+  return handlers;
+}
+
+describe('bots routes', { concurrency: false }, () => {
+  let originalConnectBotWecom: typeof wecomBotService.connectBot;
+  let originalDisconnectBotWecom: typeof wecomBotService.disconnectBot;
+  let originalUpdateConnectionForBotWecom: typeof wecomBotService.updateConnectionForBot;
+  let originalGetBotStatusWecom: typeof wecomBotService.getBotStatus;
+  let originalConnectBotFeishu: typeof feishuBotService.connectBot;
+  let originalDisconnectBotFeishu: typeof feishuBotService.disconnectBot;
+  let originalUpdateConnectionForBotFeishu: typeof feishuBotService.updateConnectionForBot;
+  let originalGetBotStatusFeishu: typeof feishuBotService.getBotStatus;
+
+  beforeEach(() => {
+    workspaceStore.resetData();
+
+    originalConnectBotWecom = wecomBotService.connectBot.bind(wecomBotService);
+    originalDisconnectBotWecom = wecomBotService.disconnectBot.bind(wecomBotService);
+    originalUpdateConnectionForBotWecom = wecomBotService.updateConnectionForBot.bind(wecomBotService);
+    originalGetBotStatusWecom = wecomBotService.getBotStatus.bind(wecomBotService);
+
+    originalConnectBotFeishu = feishuBotService.connectBot.bind(feishuBotService);
+    originalDisconnectBotFeishu = feishuBotService.disconnectBot.bind(feishuBotService);
+    originalUpdateConnectionForBotFeishu = feishuBotService.updateConnectionForBot.bind(feishuBotService);
+    originalGetBotStatusFeishu = feishuBotService.getBotStatus.bind(feishuBotService);
+
+    wecomBotService.connectBot = async () => {};
+    wecomBotService.disconnectBot = () => {};
+    wecomBotService.updateConnectionForBot = async () => {};
+    wecomBotService.getBotStatus = () => 'not_configured';
+
+    feishuBotService.connectBot = async () => {};
+    feishuBotService.disconnectBot = () => {};
+    feishuBotService.updateConnectionForBot = async () => {};
+    feishuBotService.getBotStatus = () => 'not_configured';
+  });
+
+  afterEach(() => {
+    wecomBotService.connectBot = originalConnectBotWecom;
+    wecomBotService.disconnectBot = originalDisconnectBotWecom;
+    wecomBotService.updateConnectionForBot = originalUpdateConnectionForBotWecom;
+    wecomBotService.getBotStatus = originalGetBotStatusWecom;
+
+    feishuBotService.connectBot = originalConnectBotFeishu;
+    feishuBotService.disconnectBot = originalDisconnectBotFeishu;
+    feishuBotService.updateConnectionForBot = originalUpdateConnectionForBotFeishu;
+    feishuBotService.getBotStatus = originalGetBotStatusFeishu;
+  });
+
+  it('GET / returns a list of bots with redacted credentials', async () => {
+    botService.createBot(validWecomBot);
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].get({}, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bots: Array<{ providerSettings: { wecom?: { botSecret?: unknown } } }> };
+    assert.strictEqual(body.bots.length, 1);
+    assert.strictEqual(body.bots[0].providerSettings.wecom?.botSecret, true);
+  });
+
+  it('POST / creates a bot and connects enabled providers', async () => {
+    let connectedBotId: string | null = null;
+    wecomBotService.connectBot = async (bot) => {
+      connectedBotId = bot.id;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].post({ body: validWecomBot }, res);
+
+    assert.strictEqual(res.statusCode, 201);
+    const body = res.jsonBody as { bot: { id: string } };
+    assert.strictEqual(body.bot.id, connectedBotId);
+  });
+
+  it('POST / returns field-level errors for invalid WeCom credentials', async () => {
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].post(
+      {
+        body: {
+          name: 'Bad Bot',
+          providerSettings: { wecom: { enabled: true } },
+        },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 400);
+    const body = res.jsonBody as { error: string };
+    assert.match(body.error, /botId is required/i);
+  });
+
+  it('POST / returns 400 when name is missing', async () => {
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].post({ body: { providerSettings: {} } }, res);
+    assert.strictEqual(res.statusCode, 400);
+    const body = res.jsonBody as { error: string };
+    assert.match(body.error, /name is required/i);
+  });
+
+  it('GET /:id returns bot and members', async () => {
+    const bot = botService.createBot(validWecomBot);
+    botService.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'owner' });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].get({ params: { id: bot.id } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { members: unknown[] };
+    assert.strictEqual(body.members.length, 1);
+  });
+
+  it('PUT /:id updates provider settings and reconnects enabled providers', async () => {
+    const bot = botService.createBot(validWecomBot);
+    let reconnectedBotId: string | null = null;
+    wecomBotService.connectBot = async (b) => {
+      reconnectedBotId = b.id;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: {
+          providerSettings: {
+            wecom: {
+              enabled: true,
+              botId: 'new-id',
+              botSecret: 'new-secret',
+            },
+          },
+        },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(reconnectedBotId, bot.id);
+    const body = res.jsonBody as { bot: { providerSettings: { wecom?: { botSecret?: unknown } } } };
+    assert.strictEqual(body.bot.providerSettings.wecom?.botSecret, true);
+  });
+
+  it('DELETE /:id disconnects providers and removes the bot', async () => {
+    const bot = botService.createBot(validWecomBot);
+    let disconnectedWecomBotId: string | null = null;
+    wecomBotService.disconnectBot = (id) => {
+      disconnectedWecomBotId = id;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].delete({ params: { id: bot.id } }, res);
+    assert.strictEqual(res.statusCode, 204);
+    assert.strictEqual(disconnectedWecomBotId, bot.id);
+    assert.strictEqual(botService.getBot(bot.id), null);
+  });
+
+  it('POST /:id/active-workspace returns 400 for already-bound workspace', async () => {
+    const workspace = await workspaceStore.create({ name: 'WS A', folderPath: '/tmp/a' });
+    const botA = botService.createBot({
+      name: 'A',
+      activeWorkspaceId: workspace.id,
+      providerSettings: { wecom: { enabled: true, botId: 'a', botSecret: 's' } },
+    });
+    const botB = botService.createBot({
+      name: 'B',
+      activeWorkspaceId: 'ws-other',
+      providerSettings: { wecom: { enabled: true, botId: 'b', botSecret: 's' } },
+    });
+    botService.addMember(botB.id, { provider: 'wecom', providerUserId: 'owner', role: 'owner' });
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/active-workspace'].post(
+      { params: { id: botB.id }, body: { workspaceId: workspace.id } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 400);
+    const body = res.jsonBody as { error: string };
+    assert.match(body.error, /已被其他 bot 激活绑定/);
+
+    // botA binding should remain untouched
+    assert.strictEqual(botService.getBot(botA.id)?.activeWorkspaceId, workspace.id);
+  });
+
+  it('POST /:id/active-workspace switches workspace and updates routing', async () => {
+    const ws1 = await workspaceStore.create({ name: 'WS 1', folderPath: '/tmp/1' });
+    const ws2 = await workspaceStore.create({ name: 'WS 2', folderPath: '/tmp/2' });
+    const bot = botService.createBot({
+      name: 'Mover',
+      activeWorkspaceId: ws1.id,
+      providerSettings: { wecom: { enabled: true, botId: 'm', botSecret: 's' } },
+    });
+
+    let routedBotId: string | null = null;
+    let routedWorkspaceId: string | null = null;
+    wecomBotService.getBotStatus = () => 'connected';
+    wecomBotService.updateConnectionForBot = async (botId, workspaceId) => {
+      routedBotId = botId;
+      routedWorkspaceId = workspaceId;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/active-workspace'].post(
+      { params: { id: bot.id }, body: { workspaceId: ws2.id } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bot: { activeWorkspaceId: string } };
+    assert.strictEqual(body.bot.activeWorkspaceId, ws2.id);
+    assert.strictEqual(routedBotId, bot.id);
+    assert.strictEqual(routedWorkspaceId, ws2.id);
+  });
+
+  it('POST /:id/members adds a member', async () => {
+    const bot = botService.createBot(validWecomBot);
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members'].post(
+      {
+        params: { id: bot.id },
+        body: { provider: 'wecom', providerUserId: 'admin-1', role: 'admin' },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 201);
+    const body = res.jsonBody as { member: { role: string } };
+    assert.strictEqual(body.member.role, 'admin');
+  });
+
+  it('POST /:id/members validates provider', async () => {
+    const bot = botService.createBot(validWecomBot);
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members'].post(
+      {
+        params: { id: bot.id },
+        body: { provider: 'slack', providerUserId: 'u-1', role: 'normal' },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 400);
+  });
+
+  it('PUT /:id/members/:providerUserId/role updates a role', async () => {
+    const bot = botService.createBot(validWecomBot);
+    botService.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'normal' });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:providerUserId/role'].put(
+      {
+        params: { id: bot.id, providerUserId: 'u-1' },
+        query: { provider: 'wecom' },
+        body: { role: 'admin' },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 204);
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'u-1'), 'admin');
+  });
+
+  it('DELETE /:id/members/:providerUserId removes a member', async () => {
+    const bot = botService.createBot(validWecomBot);
+    botService.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'normal' });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:providerUserId'].delete(
+      {
+        params: { id: bot.id, providerUserId: 'u-1' },
+        query: { provider: 'wecom' },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 204);
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'u-1'), null);
+  });
+
+  it('GET /:id/status returns provider statuses', async () => {
+    const bot = botService.createBot(validWecomBot);
+    wecomBotService.getBotStatus = () => 'connected';
+    feishuBotService.getBotStatus = () => 'not_configured';
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/status'].get({ params: { id: bot.id } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { status: { wecom: string; feishu: string } };
+    assert.strictEqual(body.status.wecom, 'connected');
+    assert.strictEqual(body.status.feishu, 'not_configured');
+  });
+
+  it('POST /migrate runs migration and reports result', async () => {
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/migrate'].post({ body: { dryRun: true } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { result: { dryRun: boolean } };
+    assert.strictEqual(body.result.dryRun, true);
+  });
+});

@@ -4,8 +4,11 @@ import { wecomBotService } from '../services/wecom-bot-service.js';
 import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 import { chatService } from '../services/chat-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
+import { botService } from '../services/bot-service.js';
 import { SAFE_PRESET } from '../services/tool-permission-policy.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
+
+import { redactProviderSettings } from '../routes/bots.js';
 
 const router = Router();
 
@@ -53,6 +56,26 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/bot
+router.get('/:id/bot', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const bot = botService.listBotsForWorkspace(req.params.id)[0] ?? null;
+    if (!bot) {
+      res.status(404).json({ error: 'No bot bound to this workspace' });
+      return;
+    }
+    res.json({ bot: { ...bot, providerSettings: redactProviderSettings(bot.providerSettings) } });
+  } catch (error) {
+    console.error('Failed to get workspace bot:', error);
+    res.status(500).json({ error: 'Failed to get workspace bot' });
+  }
+});
+
 // POST /api/workspaces/:id/open
 router.post('/:id/open', async (req, res) => {
   try {
@@ -96,30 +119,6 @@ router.put('/:id', async (req, res) => {
     if (!workspace) {
       res.status(404).json({ error: 'Workspace not found' });
       return;
-    }
-
-    // Manage WeCom bot connection based on updated settings
-    const enabled = workspace.settings.wecomBotEnabled;
-    const hasCredentials = workspace.settings.wecomBotId && workspace.settings.wecomBotSecret;
-    if (enabled && hasCredentials) {
-      await wecomBotService.connect(workspace);
-    } else {
-      wecomBotService.disconnect(workspace.id);
-    }
-
-    // Manage Feishu bot connection. Feishu uses a single global active workspace
-    // binding; enabling this workspace connects it, disabling clears the binding.
-    const feishuEnabled = workspace.settings.feishuBotEnabled;
-    const hasFeishuCredentials = workspace.settings.feishuAppId && workspace.settings.feishuAppSecret;
-    if (feishuEnabled && hasFeishuCredentials) {
-      feishuBotService.connect(workspace).catch((err) => {
-        console.error('[WorkspacesRoute] Feishu connect failed:', err);
-      });
-    } else {
-      if (store.getFeishuActiveWorkspace() === workspace.id) {
-        store.clearFeishuActiveWorkspace();
-      }
-      feishuBotService.disconnect();
     }
 
     res.json({ workspace });

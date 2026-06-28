@@ -78,7 +78,7 @@ describe('workspaces route Feishu connection', { concurrency: false }, () => {
     throw new Error('GET /:id/feishu/users handler not found');
   }
 
-  it('connects Feishu when newly enabled with credentials', async () => {
+  it('does not connect Feishu when workspace settings enable it with credentials', async () => {
     workspaceStore.get = async () => makeWorkspace({
       settings: {
         feishuBotEnabled: false,
@@ -120,7 +120,7 @@ describe('workspaces route Feishu connection', { concurrency: false }, () => {
     );
 
     assert.strictEqual(res.statusCode, 200);
-    assert.strictEqual(connectedWorkspaceId, 'ws-1');
+    assert.strictEqual(connectedWorkspaceId, null);
   });
 
   it('does not connect Feishu when enabled without credentials', async () => {
@@ -146,7 +146,7 @@ describe('workspaces route Feishu connection', { concurrency: false }, () => {
     assert.strictEqual(connectedWorkspaceId, null);
   });
 
-  it('disconnects and clears active binding when Feishu is disabled', async () => {
+  it('does not disconnect Feishu when workspace settings disable it', async () => {
     workspaceStore.get = async () => makeWorkspace({
       settings: {
         feishuBotEnabled: true,
@@ -177,8 +177,8 @@ describe('workspaces route Feishu connection', { concurrency: false }, () => {
     );
 
     assert.strictEqual(res.statusCode, 200);
-    assert.strictEqual(disconnected, true);
-    assert.strictEqual(cleared, true);
+    assert.strictEqual(disconnected, false);
+    assert.strictEqual(cleared, false);
   });
 
   describe('GET /api/workspaces/:id/feishu/users', () => {
