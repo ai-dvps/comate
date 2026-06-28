@@ -30,6 +30,8 @@ import { wecomQueueWorker } from './services/wecom-queue-worker.js';
 import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { chatService } from './services/chat-service.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
+import { BotMigrationService } from './services/bot-migration-service.js';
+import { store as workspaceStore } from './storage/sqlite-store.js';
 import { diagLog } from './utils/diag-logger.js';
 import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
 import { getStorageDir } from './storage/data-dir.js';
@@ -177,16 +179,34 @@ const server = app.listen(PORT, () => {
     console.log(JSON.stringify({ type: 'ready', port: actualPort }));
   }
 
-  // Initialize WeCom bot connections for enabled workspaces
-  wecomBotService.setServerUrl(serverUrl);
-  wecomBotService.initialize().catch((err) => {
-    console.error('Failed to initialize WeCom bot service:', err);
-  });
+  // Run bot migration before initializing provider connections so legacy
+  // workspace-embedded configs are promoted to standalone bots once.
+  (async () => {
+    try {
+      const migrationService = new BotMigrationService(workspaceStore);
+      if (!migrationService.hasMigrationRun()) {
+        const result = await migrationService.migrate();
+        if (!result.success) {
+          console.error('[BotMigration] failed:', result.errors);
+        } else {
+          diagLog(`[BotMigration] completed: ${result.createdBots} bots created`);
+        }
+      }
+    } catch (err) {
+      console.error('[BotMigration] unexpected error:', err);
+    }
 
-  // Initialize Feishu bot service for the active workspace binding
-  feishuBotService.initialize().catch((err) => {
-    console.error('Failed to initialize Feishu bot service:', err);
-  });
+    // Initialize WeCom bot connections for enabled bots/workspaces
+    wecomBotService.setServerUrl(serverUrl);
+    wecomBotService.initialize().catch((err) => {
+      console.error('Failed to initialize WeCom bot service:', err);
+    });
+
+    // Initialize Feishu bot service for the active workspace binding
+    feishuBotService.initialize().catch((err) => {
+      console.error('Failed to initialize Feishu bot service:', err);
+    });
+  })();
 
   // Wire resolver to renamer before initializing
   wecomUserResolver.setOnMappingStored(async (workspaceId, encryptedUserId) => {
