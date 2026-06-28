@@ -9,13 +9,15 @@ import type {
   UpdateBotInput,
 } from '../models/bot.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
-import { diagLog } from '../utils/diag-logger.js';
+import { BotAuditLogger } from './bot-audit-logger.js';
 
 export class BotService {
   private store: SqliteStore;
+  private auditLogger: BotAuditLogger;
 
-  constructor(store?: SqliteStore) {
+  constructor(store?: SqliteStore, auditLogger?: BotAuditLogger) {
     this.store = store ?? defaultStore;
+    this.auditLogger = auditLogger ?? new BotAuditLogger(this.store);
   }
 
   // Bot CRUD
@@ -31,7 +33,7 @@ export class BotService {
     }
 
     const bot = this.store.createBot(input);
-    this.audit(bot.id, { type: 'system' }, 'bot_created', { name: bot.name });
+    this.auditLogger.log(bot.id, { type: 'system' }, 'bot_created', { name: bot.name });
     return bot;
   }
 
@@ -74,9 +76,17 @@ export class BotService {
     }
 
     if (hadProviderChanges) {
-      this.audit(bot.id, actor, 'provider_credentials_changed', {
-        providers: Object.keys(input.providerSettings ?? {}),
-      });
+      const providers = Object.keys(input.providerSettings ?? {}) as BotProvider[];
+      this.auditLogger.logProviderCredentialsChanged(bot.id, actor, providers);
+      for (const provider of providers) {
+        const wasEnabled = existing.providerSettings[provider]?.enabled ?? false;
+        const isEnabled = input.providerSettings?.[provider]?.enabled ?? false;
+        if (!wasEnabled && isEnabled) {
+          this.auditLogger.logProviderEnabled(bot.id, actor, provider);
+        } else if (wasEnabled && !isEnabled) {
+          this.auditLogger.logProviderDisabled(bot.id, actor, provider);
+        }
+      }
     }
     return bot;
   }
@@ -88,7 +98,7 @@ export class BotService {
     this.requireOwner(bot, actor);
     const deleted = this.store.deleteBot(id);
     if (deleted) {
-      this.audit(id, actor, 'bot_deleted', { name: bot.name });
+      this.auditLogger.log(id, actor, 'bot_deleted', { name: bot.name });
     }
     return deleted;
   }
@@ -114,7 +124,7 @@ export class BotService {
       throw new BotNotFoundError(botId);
     }
 
-    this.audit(botId, actor, 'active_workspace_switched', {
+    this.auditLogger.log(botId, actor, 'active_workspace_switched', {
       previousWorkspaceId: bot.activeWorkspaceId,
       newWorkspaceId: workspaceId,
     });
@@ -146,7 +156,7 @@ export class BotService {
     }
 
     this.store.setBotMember(botId, input.provider, input.providerUserId, role);
-    this.audit(botId, actor, 'member_added', {
+    this.auditLogger.log(botId, actor, 'member_added', {
       provider: input.provider,
       providerUserId: input.providerUserId,
       role,
@@ -181,7 +191,7 @@ export class BotService {
     }
 
     this.store.setBotMember(botId, provider, providerUserId, role);
-    this.audit(botId, actor, 'member_role_changed', {
+    this.auditLogger.log(botId, actor, 'member_role_changed', {
       provider,
       providerUserId,
       previousRole: currentRole,
@@ -208,7 +218,7 @@ export class BotService {
     }
 
     this.store.removeBotMember(botId, provider, providerUserId);
-    this.audit(botId, actor, 'member_removed', {
+    this.auditLogger.log(botId, actor, 'member_removed', {
       provider,
       providerUserId,
       previousRole: currentRole,
@@ -293,25 +303,6 @@ export class BotService {
     );
     if (!otherOwner) {
       throw new BotAuthorizationError('last-owner');
-    }
-  }
-
-  private audit(
-    botId: string,
-    actor: BotActor,
-    eventType: string,
-    details: Record<string, unknown>,
-  ): void {
-    try {
-      this.store.recordAuditLog({
-        botId,
-        actorType: actor.type,
-        actorId: actor.providerUserId ?? 'system',
-        eventType,
-        details,
-      });
-    } catch (err) {
-      diagLog('Failed to record bot audit log', { botId, eventType, error: String(err) });
     }
   }
 }

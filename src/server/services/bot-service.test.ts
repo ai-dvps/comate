@@ -45,6 +45,9 @@ describe('BotService', { concurrency: false }, () => {
       const bot = service.createBot(createBotInput());
       assert.strictEqual(bot.name, 'Test Bot');
       assert.strictEqual(bot.activeWorkspaceId, 'ws-1');
+
+      const logs = store.listAuditLogs(bot.id);
+      assert.ok(logs.some((l) => l.eventType === 'bot_created' && l.details.name === 'Test Bot'));
     });
 
     it('throws when enabled WeCom credentials are missing', () => {
@@ -70,6 +73,13 @@ describe('BotService', { concurrency: false }, () => {
 
       const updated = service.setActiveWorkspace(bot.id, 'ws-2', wecomOwner);
       assert.strictEqual(updated.activeWorkspaceId, 'ws-2');
+
+      const logs = store.listAuditLogs(bot.id);
+      assert.ok(logs.some((l) =>
+        l.eventType === 'active_workspace_switched' &&
+        l.details.previousWorkspaceId === 'ws-1' &&
+        l.details.newWorkspaceId === 'ws-2'
+      ));
     });
 
     it('rejects workspace switch by non-owner', () => {
@@ -171,6 +181,23 @@ describe('BotService', { concurrency: false }, () => {
         providerSettings: { wecom: { enabled: true, botId: 'new-id', botSecret: 'new-secret' } },
       });
       assert.strictEqual(updated.providerSettings.wecom?.botId, 'new-id');
+
+      const logs = store.listAuditLogs(bot.id);
+      assert.ok(logs.some((l) => l.eventType === 'provider_credentials_changed'));
+    });
+
+    it('emits provider_enabled and provider_disabled audit events', () => {
+      const bot = service.createBot(createBotInput());
+      service.updateBot(bot.id, {
+        providerSettings: {
+          wecom: { enabled: false, botId: 'wecom-bot', botSecret: 'wecom-secret' },
+          feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' },
+        },
+      });
+
+      const logs = store.listAuditLogs(bot.id);
+      assert.ok(logs.some((l) => l.eventType === 'provider_disabled' && l.details.provider === 'wecom'));
+      assert.ok(logs.some((l) => l.eventType === 'provider_enabled' && l.details.provider === 'feishu'));
     });
 
     it('throws for invalid provider settings', () => {
@@ -191,6 +218,13 @@ describe('BotService', { concurrency: false }, () => {
       const bot = service.createBot(createBotInput());
       assert.strictEqual(service.deleteBot(bot.id), true);
       assert.strictEqual(service.getBot(bot.id), null);
+    });
+
+    it('records a bot_deleted audit log', () => {
+      const bot = service.createBot(createBotInput());
+      service.deleteBot(bot.id);
+      const logs = store.listAuditLogs(bot.id);
+      assert.ok(logs.some((l) => l.eventType === 'bot_deleted' && l.details.name === 'Test Bot'));
     });
 
     it('returns false for unknown bot', () => {
