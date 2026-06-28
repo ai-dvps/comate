@@ -131,7 +131,17 @@
     "folderPathHint": "工作区文件夹无法更改，因为 Claude Code 会话历史绑定于此路径。更改将导致现有会话重置。",
     "promptHistoryRetentionDays": "提示词历史保留（天）",
     "promptHistoryRetentionDaysPlaceholder": "30",
-    "promptHistoryRetentionDaysHint": "此工作区保留已发送提示词历史的天数。设置为 0 或负数可禁用自动清理。更改将在下次加载历史时生效。"
+    "promptHistoryRetentionDaysHint": "此工作区保留已发送提示词历史的天数。设置为 0 或负数可禁用自动清理。更改将在下次加载历史时生效。",
+    "boundBotTitle": "已绑定机器人",
+    "boundBotManage": "管理机器人",
+    "boundBotProviderWecom": "企业微信",
+    "boundBotProviderFeishu": "飞书",
+    "boundBotActiveWorkspace": "活动工作区：{{name}}",
+    "noActiveWorkspace": "无",
+    "boundBotNone": "没有机器人绑定到此工作区。",
+    "sensitiveFileDenylistTitle": "敏感文件拒绝列表",
+    "sensitiveFileDenylistHint": "普通机器人用户无法读取的文件的 Glob 模式。所有者/管理员不受此限制。",
+    "sensitiveFileDenylistPlaceholder": "*.env\n*.pem\nsecrets/*"
   },
   "mcp": {
     "serverName": "服务器名称",

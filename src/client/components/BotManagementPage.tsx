@@ -46,22 +46,21 @@ export default function BotManagementPage() {
     }
   }, [selectedBot, fetchMembers, fetchStatus]);
 
-  const handleCreate = async (input: Parameters<typeof createBot>[0]) => {
-    const bot = await createBot(input);
-    if (bot) {
-      setView('list');
-      setEditingBot(undefined);
-    }
-  };
-
-  const handleUpdate = async (input: Parameters<typeof updateBot>[1]) => {
-    if (!editingBot) return;
-    const bot = await updateBot(editingBot.id, input);
-    if (bot) {
-      setView('list');
-      setEditingBot(undefined);
-      if (selectedBot?.id === bot.id) {
-        setSelectedBot(bot);
+  const handleSubmit = async (input: Parameters<typeof updateBot>[1]) => {
+    if (editingBot) {
+      const bot = await updateBot(editingBot.id, input);
+      if (bot) {
+        setView('list');
+        setEditingBot(undefined);
+        if (selectedBot?.id === bot.id) {
+          setSelectedBot(bot);
+        }
+      }
+    } else {
+      const bot = await createBot(input as Parameters<typeof createBot>[0]);
+      if (bot) {
+        setView('list');
+        setEditingBot(undefined);
       }
     }
   };
@@ -94,7 +93,7 @@ export default function BotManagementPage() {
           workspaces={workspaces}
           isSaving={isSaving}
           error={error}
-          onSubmit={editingBot ? handleUpdate : handleCreate}
+          onSubmit={handleSubmit}
           onCancel={() => { setView('list'); setEditingBot(undefined); }}
         />
       </div>

@@ -9,9 +9,9 @@ interface BotMemberListProps {
   isLoading?: boolean;
   isSaving?: boolean;
   error?: string | null;
-  onAddMember: (input: { provider: BotProvider; providerUserId: string; role: BotRole }) => Promise<void>;
-  onSetRole: (provider: BotProvider, providerUserId: string, role: BotRole) => Promise<void>;
-  onRemoveMember: (provider: BotProvider, providerUserId: string) => Promise<void>;
+  onAddMember: (input: { provider: BotProvider; providerUserId: string; role: BotRole }) => Promise<unknown>;
+  onSetRole: (provider: BotProvider, providerUserId: string, role: BotRole) => Promise<unknown>;
+  onRemoveMember: (provider: BotProvider, providerUserId: string) => Promise<unknown>;
 }
 
 export default function BotMemberList({

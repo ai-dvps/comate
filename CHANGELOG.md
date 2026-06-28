@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Workspace settings no longer drive bot connections** — `PUT /api/workspaces/:id` no longer connects or disconnects WeCom/Feishu bots based on workspace settings. Bot lifecycle is now managed through the bot management API, while the workspace route still applies the safe tool-permission preset when WeCom is newly enabled for backward compatibility.
+- **Workspace settings no longer drive bot connections** — `PUT /api/workspaces/:id` no longer connects or disconnects WeCom/Feishu bots based on workspace settings, and the safe tool-permission preset auto-apply has been removed. Bot lifecycle is now managed entirely through the bot management API.
+
+- **Workspace settings UI cleaned up** — the workspace settings page no longer contains WeCom/Feishu connection, permission, isolation, or admin configuration panels. Those controls have moved to the dedicated **Bots** tab. The workspace page now shows a read-only **Bound Bot** card and a **Sensitive File Denylist** editor for workspace-level file isolation.
 
 ## [0.0.18] - 2026-06-27
 
