@@ -180,8 +180,9 @@ describe('FeishuBotService', () => {
     };
     chatService.getRuntimeIfExists = () => undefined;
 
-    // Inject a minimal larkClient so FeishuStreamReply can be instantiated
-    (service as unknown as { connection: { larkClient: MockLarkClient } }).connection = {
+    // Inject a minimal active connection so internal handlers can reach a mock
+    // larkClient without initializing the real Lark SDK.
+    const injectedConnection = {
       larkClient: {
         cardkit: {
           v1: {
@@ -229,9 +230,19 @@ describe('FeishuBotService', () => {
           },
         },
       },
+      workspaceId: workspace.id,
+      botId: 'feishu-bot-1',
     };
-    // Inject workspace binding so requireActiveWorkspace succeeds
-    (service as unknown as { connection: { workspaceId: string } }).connection.workspaceId = workspace.id;
+    const internals = service as unknown as {
+      connections: Map<string, { larkClient: MockLarkClient; workspaceId: string; botId: string }>;
+      activeBotId: string | null;
+      workspaceIdToBotId: Map<string, string>;
+      botIdToWorkspaceId: Map<string, string>;
+    };
+    internals.connections.set(injectedConnection.botId, injectedConnection);
+    internals.activeBotId = injectedConnection.botId;
+    internals.workspaceIdToBotId.set(workspace.id, injectedConnection.botId);
+    internals.botIdToWorkspaceId.set(injectedConnection.botId, workspace.id);
   });
 
   afterEach(() => {

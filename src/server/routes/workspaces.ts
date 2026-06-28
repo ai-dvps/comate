@@ -102,7 +102,7 @@ router.put('/:id', async (req, res) => {
     const enabled = workspace.settings.wecomBotEnabled;
     const hasCredentials = workspace.settings.wecomBotId && workspace.settings.wecomBotSecret;
     if (enabled && hasCredentials) {
-      wecomBotService.connect(workspace);
+      await wecomBotService.connect(workspace);
     } else {
       wecomBotService.disconnect(workspace.id);
     }
