@@ -1,8 +1,8 @@
-import type { WeComBotIsolationSettings } from '../models/workspace.js';
+import type { BotRolePolicy } from '../models/bot.js';
 
 export interface SkillPolicyContext {
-  isolation: WeComBotIsolationSettings | undefined;
-  isAdmin: boolean;
+  policy: BotRolePolicy | undefined;
+  isAdminOrOwner: boolean;
 }
 
 export interface SkillPolicyResult {
@@ -42,23 +42,23 @@ export function evaluateSkill(
     return { allowed: false, reason: 'missing-skill-name' };
   }
 
-  // When isolation is not configured, grandfathered behavior allows all skills.
-  if (!ctx.isolation) {
+  // When no policy is configured, grandfathered behavior allows all skills.
+  if (!ctx.policy) {
     return { allowed: true, skillName };
   }
 
-  // Admins can invoke any skill.
-  if (ctx.isAdmin) {
+  // Owners and admins can invoke any skill.
+  if (ctx.isAdminOrOwner) {
     return { allowed: true, skillName };
   }
 
-  const defaultSet = new Set(
-    (ctx.isolation.defaultAllowedSkills ?? [])
+  const allowlist = new Set(
+    (ctx.policy.skillAllowlist ?? [])
       .map(normalizeSkillName)
       .filter((n): n is string => n !== undefined),
   );
 
-  if (defaultSet.has(skillName)) {
+  if (allowlist.has(skillName)) {
     return { allowed: true, skillName };
   }
 
