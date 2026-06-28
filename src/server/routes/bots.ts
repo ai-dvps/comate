@@ -81,6 +81,28 @@ router.get('/', (_req, res) => {
   }
 });
 
+function resolveSentinelCredentials(
+  input: BotProviderSettings,
+  existing: BotProviderSettings,
+): BotProviderSettings {
+  const result: BotProviderSettings = {};
+  for (const provider of ['wecom', 'feishu'] as const) {
+    const incoming = input[provider];
+    if (!incoming) continue;
+    const current = existing[provider] ?? {};
+    const merged: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(incoming)) {
+      if (ENCRYPTED_PROVIDER_KEYS.includes(key) && value === true) {
+        merged[key] = (current as Record<string, unknown>)[key];
+      } else {
+        merged[key] = value;
+      }
+    }
+    result[provider] = merged as BotProviderSettings[typeof provider];
+  }
+  return result;
+}
+
 // POST /api/bots
 router.post('/', async (req, res) => {
   try {
@@ -120,6 +142,13 @@ router.get('/:id', (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const input = req.body as UpdateBotInput;
+    if (input.providerSettings) {
+      const existing = botService.getBot(req.params.id);
+      input.providerSettings = resolveSentinelCredentials(
+        input.providerSettings,
+        existing?.providerSettings ?? {},
+      );
+    }
     const bot = botService.updateBot(req.params.id, input, systemActor());
     await reconcileProviderConnections(bot);
     res.json({ bot: redactBot(bot) });

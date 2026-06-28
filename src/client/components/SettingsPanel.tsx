@@ -34,6 +34,7 @@ import { PermissionsSubTab } from './PermissionsSubTab'
 import { IsolationSubTab } from './IsolationSubTab'
 import WeComQueuePanel from './WeComQueuePanel'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
+import BotManagementPage from './BotManagementPage'
 
 /** Returns true if every category is denied and no override allows Reply. Triggers the save-time warning. */
 function isAllDeniedIncludingReply(policy: ToolPermissionPolicy): boolean {
@@ -55,7 +56,7 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-type SettingsTab = 'general' | 'appearance' | 'workspace' | 'providers'
+type SettingsTab = 'general' | 'appearance' | 'workspace' | 'providers' | 'bots'
 
 type WorkspaceSection = 'basic' | 'wecom' | 'feishu' | 'skills' | 'mcp' | 'hooks'
 
@@ -214,7 +215,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       activeTab !== 'general' &&
       activeTab !== 'appearance' &&
       activeTab !== 'workspace' &&
-      activeTab !== 'providers'
+      activeTab !== 'providers' &&
+      activeTab !== 'bots'
     ) {
       setActiveTab('workspace')
     }
@@ -419,6 +421,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     { id: 'appearance', label: t('tabs.appearance') },
     { id: 'workspace', label: t('tabs.workspace') },
     { id: 'providers', label: t('tabs.providers') },
+    { id: 'bots', label: t('tabs.bots') },
   ]
 
   const isWorkspaceTab = activeTab === 'workspace'
@@ -502,6 +505,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
             {activeTab === 'appearance' && <AppearanceTab />}
 
             {activeTab === 'providers' && <ProviderSection />}
+
+            {activeTab === 'bots' && <BotManagementPage />}
 
             {isWorkspaceTab && (
               <WorkspaceTabShell
