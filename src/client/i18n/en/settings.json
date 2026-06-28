@@ -131,7 +131,17 @@
     "folderPathHint": "The workspace folder cannot be changed because Claude Code session history is bound to this path. Changing it would reset existing sessions.",
     "promptHistoryRetentionDays": "Prompt History Retention (days)",
     "promptHistoryRetentionDaysPlaceholder": "30",
-    "promptHistoryRetentionDaysHint": "How many days to keep sent-prompt history for this workspace. Set to 0 or a negative number to disable pruning. Changes apply the next time the history is loaded."
+    "promptHistoryRetentionDaysHint": "How many days to keep sent-prompt history for this workspace. Set to 0 or a negative number to disable pruning. Changes apply the next time the history is loaded.",
+    "boundBotTitle": "Bound Bot",
+    "boundBotManage": "Manage bots",
+    "boundBotProviderWecom": "WeCom",
+    "boundBotProviderFeishu": "Feishu",
+    "boundBotActiveWorkspace": "Active workspace: {{name}}",
+    "noActiveWorkspace": "none",
+    "boundBotNone": "No bot is bound to this workspace.",
+    "sensitiveFileDenylistTitle": "Sensitive File Denylist",
+    "sensitiveFileDenylistHint": "Glob patterns for files that Normal bot users cannot read. Owner/Admin users are not constrained.",
+    "sensitiveFileDenylistPlaceholder": "*.env\n*.pem\nsecrets/*"
   },
   "mcp": {
     "serverName": "Server name",

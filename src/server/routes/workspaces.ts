@@ -5,7 +5,6 @@ import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 import { chatService } from '../services/chat-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { botService } from '../services/bot-service.js';
-import { SAFE_PRESET } from '../services/tool-permission-policy.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
 import { redactProviderSettings } from '../routes/bots.js';
@@ -95,25 +94,6 @@ router.post('/:id/open', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const input = req.body as UpdateWorkspaceInput;
-
-    // Detect the wecomBotEnabled false→true transition. When a workspace newly
-    // enables the bot, apply the safe preset to its tool-permission policy if no
-    // policy is set yet. This satisfies R6/AE3 ("safe preset is applied
-    // automatically") regardless of whether the request originated from the UI
-    // or a non-UI caller (curl, scripts, future API consumers).
-    const prior = await store.get(req.params.id);
-    const wasEnabled = !!prior?.settings.wecomBotEnabled;
-    const willEnable = !!input.settings?.wecomBotEnabled;
-    const hasPolicy = !!(
-      input.settings?.wecomToolPermissions ||
-      prior?.settings.wecomToolPermissions
-    );
-    if (!wasEnabled && willEnable && !hasPolicy) {
-      input.settings = {
-        ...(input.settings || {}),
-        wecomToolPermissions: SAFE_PRESET,
-      };
-    }
 
     const workspace = await store.update(req.params.id, input);
     if (!workspace) {

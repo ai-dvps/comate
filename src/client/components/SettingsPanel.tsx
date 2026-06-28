@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   X,
-  Eye,
-  EyeOff,
   Plus,
   Trash2,
   Save,
@@ -11,10 +9,9 @@ import {
   Moon,
   Monitor,
   AlertTriangle,
-  RefreshCw,
-  Play,
   Loader2,
   ChevronRight,
+  Bot,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useChatStore } from '../stores/chat-store'
@@ -24,33 +21,10 @@ import { useUpdaterStore } from '../stores/updater-store'
 import { checkForUpdates, getAppVersion, downloadAndInstallUpdate, restartToUpdate, dismissUpdate } from '../lib/updater-api'
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
-import type { ToolPermissionPolicy } from '../types/wecom-permissions'
-import type { WeComBotIsolationSettings } from '../types/wecom-isolation'
-import { SAFE_PRESET } from '../types/wecom-permissions'
-import { DEFAULT_ISOLATION_SETTINGS } from '../types/wecom-isolation'
 import ProviderSection from './ProviderSection'
 import SkillsPage from './SkillsPage'
-import { PermissionsSubTab } from './PermissionsSubTab'
-import { IsolationSubTab } from './IsolationSubTab'
-import WeComQueuePanel from './WeComQueuePanel'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 import BotManagementPage from './BotManagementPage'
-
-/** Returns true if every category is denied and no override allows Reply. Triggers the save-time warning. */
-function isAllDeniedIncludingReply(policy: ToolPermissionPolicy): boolean {
-  const all = Object.values(policy.categoryDefaults)
-  if (!all.every((v) => v === 'deny')) return false
-  // No override allows Reply (the sentinel tool name is set on the server side;
-  // on the client we check for any 'allow' override that could unlock reply).
-  // Since Reply's tool name is server-side only, treat the reply category default
-  // itself as the source of truth — if reply default is 'deny' AND no allow
-  // override exists anywhere, the bot is effectively silenced.
-  if (policy.overrides) {
-    const anyAllow = Object.values(policy.overrides).some((v) => v === 'allow')
-    if (anyAllow) return false
-  }
-  return policy.categoryDefaults.reply === 'deny'
-}
 
 interface SettingsPanelProps {
   onClose: () => void
@@ -58,7 +32,7 @@ interface SettingsPanelProps {
 
 type SettingsTab = 'general' | 'appearance' | 'workspace' | 'providers' | 'bots'
 
-type WorkspaceSection = 'basic' | 'wecom' | 'feishu' | 'skills' | 'mcp' | 'hooks'
+type WorkspaceSection = 'basic' | 'skills' | 'mcp' | 'hooks'
 
 interface WorkspaceFormState {
   name: string
@@ -67,23 +41,9 @@ interface WorkspaceFormState {
   skills: { name: string }[]
   mcpServers: { name: string; command: string; args: string }[]
   hooks: { name: string; scriptPath: string }[]
-  wecomBotId: string
-  wecomBotSecret: string
-  wecomBotEnabled: boolean
-  wecomBotName: string
-  wecomCorpId: string
-  wecomCorpSecret: string
   wecomFilePromptTemplate: string
-  wecomToolPermissions: ToolPermissionPolicy | undefined
-  wecomBotIsolation: WeComBotIsolationSettings
   promptHistoryRetentionDays: string
-  feishuAppId: string
-  feishuAppSecret: string
-  feishuEncryptKey: string
-  feishuVerificationToken: string
-  feishuBotEnabled: boolean
-  feishuBotName: string
-  feishuAdminUserIds: string[]
+  sensitiveFileDenylist: string[]
 }
 
 function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
@@ -97,23 +57,9 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
       args: m.args?.join(' ') || '',
     })),
     hooks: [...workspace.hooks],
-    wecomBotId: (workspace.settings?.wecomBotId as string) || '',
-    wecomBotSecret: (workspace.settings?.wecomBotSecret as string) || '',
-    wecomBotEnabled: (workspace.settings?.wecomBotEnabled as boolean) || false,
-    wecomBotName: (workspace.settings?.wecomBotName as string) || '',
-    wecomCorpId: (workspace.settings?.wecomCorpId as string) || '',
-    wecomCorpSecret: (workspace.settings?.wecomCorpSecret as string) || '',
     wecomFilePromptTemplate: (workspace.settings?.wecomFilePromptTemplate as string) || '',
-    wecomToolPermissions: workspace.settings?.wecomToolPermissions as ToolPermissionPolicy | undefined,
-    wecomBotIsolation: (workspace.settings?.wecomBotIsolation as WeComBotIsolationSettings | undefined) ?? { ...DEFAULT_ISOLATION_SETTINGS },
     promptHistoryRetentionDays: String(workspace.settings?.promptHistoryRetentionDays ?? 30),
-    feishuAppId: (workspace.settings?.feishuAppId as string) || '',
-    feishuAppSecret: (workspace.settings?.feishuAppSecret as string) || '',
-    feishuEncryptKey: (workspace.settings?.feishuEncryptKey as string) || '',
-    feishuVerificationToken: (workspace.settings?.feishuVerificationToken as string) || '',
-    feishuBotEnabled: (workspace.settings?.feishuBotEnabled as boolean) || false,
-    feishuBotName: (workspace.settings?.feishuBotName as string) || '',
-    feishuAdminUserIds: (workspace.settings?.feishuAdminUserIds as string[] | undefined) ?? [],
+    sensitiveFileDenylist: (workspace.settings?.sensitiveFileDenylist as string[]) || [],
   }
 }
 
@@ -139,7 +85,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [isSaving, setIsSaving] = useState(false)
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
   const [pendingClose, setPendingClose] = useState(false)
-  const [showAllDeniedConfirm, setShowAllDeniedConfirm] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 
   // App-level form state
@@ -274,18 +219,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleClose, showUnsavedDialog])
 
-  const handleSave = async (opts?: { bypassAllDeniedCheck?: boolean }) => {
-    // Save-time warning: if the workspace's policy denies every category
-    // including Reply, the bot becomes a silent failure (R11/AE6). Confirm
-    // before persisting so the admin can't accidentally lock the bot out.
-    if (!opts?.bypassAllDeniedCheck && selectedWorkspaceId && workspaceState[selectedWorkspaceId]) {
-      const ws = workspaceState[selectedWorkspaceId]
-      if (ws.wecomToolPermissions && isAllDeniedIncludingReply(ws.wecomToolPermissions)) {
-        setShowAllDeniedConfirm(true)
-        return
-      }
-    }
-
+  const handleSave = async () => {
     setIsSaving(true)
 
     // Save app settings
@@ -315,24 +249,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
         name: ws.name,
         description: ws.description,
         settings: {
-          ...selectedWorkspace?.settings,
-          wecomBotId: ws.wecomBotId || undefined,
-          wecomBotSecret: ws.wecomBotSecret || undefined,
-          wecomBotEnabled: ws.wecomBotEnabled,
-          wecomBotName: ws.wecomBotName || undefined,
-          wecomCorpId: ws.wecomCorpId || undefined,
-          wecomCorpSecret: ws.wecomCorpSecret || undefined,
           wecomFilePromptTemplate: ws.wecomFilePromptTemplate || undefined,
-          wecomToolPermissions: ws.wecomToolPermissions,
-          wecomBotIsolation: ws.wecomBotIsolation,
           promptHistoryRetentionDays,
-          feishuAppId: ws.feishuAppId || undefined,
-          feishuAppSecret: ws.feishuAppSecret || undefined,
-          feishuEncryptKey: ws.feishuEncryptKey || undefined,
-          feishuVerificationToken: ws.feishuVerificationToken || undefined,
-          feishuBotEnabled: ws.feishuBotEnabled,
-          feishuBotName: ws.feishuBotName || undefined,
-          feishuAdminUserIds: ws.feishuAdminUserIds,
+          sensitiveFileDenylist: ws.sensitiveFileDenylist,
         },
         skills: ws.skills,
         mcpServers: ws.mcpServers.map((m) => ({
@@ -515,8 +434,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 onSelectWorkspace={setSelectedWorkspaceId}
                 workspaceState={selectedWorkspaceId ? workspaceState[selectedWorkspaceId] : null}
                 onUpdateWorkspace={updateSelectedWorkspace}
-                onSave={handleSave}
                 onDelete={handleOpenDeleteDialog}
+                onManageBots={() => setActiveTab('bots')}
               />
             )}
           </div>
@@ -587,51 +506,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
               >
                 <Save className="w-3.5 h-3.5" />
                 {isSaving ? t('unsavedDialog.saving') : t('actions.save')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* All-Denied-Including-Reply Confirmation Dialog (R11/AE6) */}
-      {showAllDeniedConfirm && (
-        <div
-          className="fixed top-11 inset-x-0 bottom-0 z-[61] flex items-center justify-center"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="all-denied-dialog-title"
-        >
-          <div
-            className="absolute inset-0 bg-overlay/60 backdrop-blur-sm"
-            onClick={() => setShowAllDeniedConfirm(false)}
-          />
-          <div className="relative bg-surface border border-border rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 id="all-denied-dialog-title" className="text-sm font-medium text-text-primary">
-                  {t('wecom.saveWarning.title')}
-                </h3>
-                <p className="text-xs text-text-secondary mt-1">{t('wecom.saveWarning.body')}</p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button
-                autoFocus
-                onClick={() => setShowAllDeniedConfirm(false)}
-                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
-              >
-                {t('wecom.saveWarning.cancel')}
-              </button>
-              <button
-                onClick={() => {
-                  setShowAllDeniedConfirm(false)
-                  handleSave({ bypassAllDeniedCheck: true })
-                }}
-                disabled={isSaving}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-destructive hover:bg-destructive/90 disabled:opacity-50 text-destructive-foreground rounded-lg transition-colors"
-              >
-                {t('wecom.saveWarning.saveAnyway')}
               </button>
             </div>
           </div>
@@ -1330,16 +1204,16 @@ function WorkspaceTabShell({
   onSelectWorkspace,
   workspaceState,
   onUpdateWorkspace,
-  onSave,
   onDelete,
+  onManageBots,
 }: {
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
   workspaceState: WorkspaceFormState | null
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
-  onSave: () => Promise<void>
   onDelete: () => void
+  onManageBots: () => void
 }) {
   const { t } = useTranslation('settings')
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('basic')
@@ -1360,8 +1234,6 @@ function WorkspaceTabShell({
 
   const sections: { id: WorkspaceSection; label: string }[] = [
     { id: 'basic', label: t('workspaceSections.basic') },
-    { id: 'wecom', label: t('workspaceSections.wecom') },
-    { id: 'feishu', label: t('workspaceSections.feishu') },
     { id: 'skills', label: t('workspaceSections.skills') },
     { id: 'mcp', label: t('workspaceSections.mcp') },
     { id: 'hooks', label: t('workspaceSections.hooks') },
@@ -1421,13 +1293,13 @@ function WorkspaceTabShell({
           ) : (
             <>
               {activeSection === 'basic' && (
-                <BasicInfoSection state={workspaceState} onUpdate={onUpdateWorkspace} onDelete={onDelete} />
-              )}
-              {activeSection === 'wecom' && (
-                <WeComBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} onSave={onSave} />
-              )}
-              {activeSection === 'feishu' && (
-                <FeishuBotSection state={workspaceState} onUpdate={onUpdateWorkspace} workspaceId={selectedWorkspaceId!} />
+                <BasicInfoSection
+                  workspaceId={selectedWorkspaceId!}
+                  state={workspaceState}
+                  onUpdate={onUpdateWorkspace}
+                  onDelete={onDelete}
+                  onManageBots={onManageBots}
+                />
               )}
               {activeSection === 'skills' && (
                 <SkillsRedirectCard onOpen={() => setShowSkillsPage(true)} />
@@ -1450,17 +1322,21 @@ function WorkspaceTabShell({
 }
 
 function BasicInfoSection({
+  workspaceId,
   state,
   onUpdate,
   onDelete,
+  onManageBots,
 }: {
+  workspaceId: string
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
   onDelete: () => void
+  onManageBots: () => void
 }) {
   const { t } = useTranslation('settings')
   return (
-    <div className="max-w-xl space-y-4">
+    <div className="max-w-xl space-y-5">
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.name')}</label>
         <input
@@ -1486,6 +1362,8 @@ function BasicInfoSection({
         <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
       </div>
 
+      <BoundBotCard workspaceId={workspaceId} onManageBots={onManageBots} />
+
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.promptHistoryRetentionDays')}</label>
         <input
@@ -1497,6 +1375,23 @@ function BasicInfoSection({
         />
         <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.promptHistoryRetentionDaysHint')}</p>
       </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.filePromptTemplate')}</label>
+        <textarea
+          value={state.wecomFilePromptTemplate}
+          onChange={(e) => onUpdate({ wecomFilePromptTemplate: e.target.value })}
+          placeholder={t('wecom.filePromptTemplatePlaceholder')}
+          rows={4}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
+        />
+        <p className="text-[10px] text-text-tertiary mt-1">{t('wecom.filePromptTemplateHint')}</p>
+      </div>
+
+      <SensitiveFileDenylistEditor
+        value={state.sensitiveFileDenylist}
+        onChange={(next) => onUpdate({ sensitiveFileDenylist: next })}
+      />
 
       {/* Danger zone */}
       <div className="pt-4 border-t border-border/50">
@@ -1517,863 +1412,126 @@ function BasicInfoSection({
   )
 }
 
-interface WeComWorkspaceUser {
-  encryptedUserId: string
-  plaintextUserId?: string
-  firstSeenAt: string
-  lastSeenAt: string
-}
-
-type WeComSubTab = 'connection' | 'users' | 'prompts' | 'permissions' | 'isolation' | 'queue'
-
-type FeishuSubTab = 'connection' | 'users'
-
-interface FeishuWorkspaceUser {
-  openId: string
-  userId?: string
-  name?: string
-  firstSeenAt: string
-  lastSeenAt: string
-  namePending: boolean
-}
-
-export function FeishuBotSection({
-  state,
-  onUpdate,
-  workspaceId,
+function SensitiveFileDenylistEditor({
+  value,
+  onChange,
 }: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-  workspaceId: string
+  value: string[]
+  onChange: (next: string[]) => void
 }) {
   const { t } = useTranslation('settings')
-  const [activeSubTab, setActiveSubTab] = useState<FeishuSubTab>('connection')
-  const [showAppSecret, setShowAppSecret] = useState(false)
-  const [showEncryptKey, setShowEncryptKey] = useState(false)
-  const [showVerificationToken, setShowVerificationToken] = useState(false)
-  const [status, setStatus] = useState<string>('unknown')
-  const [newAdminId, setNewAdminId] = useState('')
-  const [users, setUsers] = useState<FeishuWorkspaceUser[]>([])
-  const [isLoadingUsers, setIsLoadingUsers] = useState(false)
-  const [usersError, setUsersError] = useState<string | null>(null)
-  const [usersRetryCount, setUsersRetryCount] = useState(0)
-
-  useEffect(() => {
-    let cancelled = false
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/feishu/status`)
-        if (!res.ok) return
-        const data = await res.json()
-        if (!cancelled) setStatus(data.status || 'unknown')
-      } catch {
-        if (!cancelled) setStatus('unknown')
-      }
-    }
-    fetchStatus()
-    const interval = setInterval(fetchStatus, 5000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [workspaceId])
-
-  // Reset sub-tab and users state when the selected workspace changes.
-  useEffect(() => {
-    setActiveSubTab('connection')
-    setUsers([])
-    setUsersError(null)
-    setUsersRetryCount(0)
-  }, [workspaceId])
-
-  // Fetch and poll the Feishu workspace user directory.
-  useEffect(() => {
-    if (activeSubTab !== 'users') return
-
-    let cancelled = false
-    const fetchUsers = async () => {
-      setIsLoadingUsers(true)
-      try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/feishu/users`)
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        const data = (await res.json()) as { users?: FeishuWorkspaceUser[] }
-        if (!cancelled) {
-          setUsers(data.users || [])
-          setUsersError(null)
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setUsersError(err instanceof Error ? err.message : String(err))
-        }
-      } finally {
-        if (!cancelled) setIsLoadingUsers(false)
-      }
-    }
-
-    fetchUsers()
-    const interval = setInterval(fetchUsers, 10000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [workspaceId, activeSubTab, usersRetryCount])
-
-  const statusColor =
-    status === 'connected'
-      ? 'text-success'
-      : status === 'error'
-        ? 'text-destructive'
-        : 'text-text-tertiary'
-
-  const addAdminId = () => {
-    const value = newAdminId.trim()
-    if (!value || state.feishuAdminUserIds.includes(value)) return
-    onUpdate({ feishuAdminUserIds: [...state.feishuAdminUserIds, value] })
-    setNewAdminId('')
-  }
-
-  const removeAdminId = (value: string) => {
-    onUpdate({ feishuAdminUserIds: state.feishuAdminUserIds.filter((id) => id !== value) })
-  }
-
-  const subTabs: { id: FeishuSubTab; label: string }[] = [
-    { id: 'connection', label: t('feishu.tabs.connection') },
-    { id: 'users', label: t('feishu.tabs.users') },
-  ]
+  const text = value.join('\n')
 
   return (
-    <div className="space-y-0">
-      <div className="flex border-b border-border/50 flex-shrink-0 -mx-6 px-6">
-        {subTabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveSubTab(tab.id)}
-            className={`py-2 px-3 text-[11px] font-medium transition-all ${
-              activeSubTab === tab.id
-                ? 'text-text-primary border-b-2 border-accent'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {activeSubTab === 'connection' && (
-        <div className="max-w-xl space-y-4 pt-4">
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary">
-                {t('feishu.enableBot')}
-              </label>
-              <p className="text-[10px] text-text-tertiary mt-0.5">{t('feishu.enableBotHint')}</p>
-            </div>
-            <button
-              onClick={() => onUpdate({ feishuBotEnabled: !state.feishuBotEnabled })}
-              className={`relative w-9 h-5 rounded-full transition-colors ${
-                state.feishuBotEnabled ? 'bg-accent' : 'bg-border'
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                  state.feishuBotEnabled ? 'translate-x-4' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.botName')}</label>
-            <input
-              value={state.feishuBotName}
-              onChange={(e) => onUpdate({ feishuBotName: e.target.value })}
-              placeholder={t('feishu.botNamePlaceholder')}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-            <p className="text-[10px] text-text-tertiary mt-1">{t('feishu.botNameHint')}</p>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.appId')}</label>
-            <input
-              value={state.feishuAppId}
-              onChange={(e) => onUpdate({ feishuAppId: e.target.value })}
-              placeholder={t('feishu.appIdPlaceholder')}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.appSecret')}</label>
-            <div className="flex gap-2">
-              <input
-                type={showAppSecret ? 'text' : 'password'}
-                value={state.feishuAppSecret}
-                onChange={(e) => onUpdate({ feishuAppSecret: e.target.value })}
-                placeholder={t('feishu.appSecretPlaceholder')}
-                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-              <button
-                onClick={() => setShowAppSecret(!showAppSecret)}
-                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-              >
-                {showAppSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.encryptKey')}</label>
-            <div className="flex gap-2">
-              <input
-                type={showEncryptKey ? 'text' : 'password'}
-                value={state.feishuEncryptKey}
-                onChange={(e) => onUpdate({ feishuEncryptKey: e.target.value })}
-                placeholder={t('feishu.encryptKeyPlaceholder')}
-                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-              <button
-                onClick={() => setShowEncryptKey(!showEncryptKey)}
-                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-              >
-                {showEncryptKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.verificationToken')}</label>
-            <div className="flex gap-2">
-              <input
-                type={showVerificationToken ? 'text' : 'password'}
-                value={state.feishuVerificationToken}
-                onChange={(e) => onUpdate({ feishuVerificationToken: e.target.value })}
-                placeholder={t('feishu.verificationTokenPlaceholder')}
-                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-              <button
-                onClick={() => setShowVerificationToken(!showVerificationToken)}
-                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-              >
-                {showVerificationToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('feishu.adminUsers.label')}</label>
-            <p className="text-[10px] text-text-tertiary mb-2">{t('feishu.adminUsers.hint')}</p>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {state.feishuAdminUserIds.map((id) => (
-                <span
-                  key={id}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] bg-bg border border-border rounded"
-                >
-                  <code className="font-mono text-text-secondary">{id}</code>
-                  <button
-                    type="button"
-                    onClick={() => removeAdminId(id)}
-                    className="text-text-tertiary hover:text-destructive"
-                    aria-label={t('feishu.adminUsers.remove')}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </span>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <input
-                value={newAdminId}
-                onChange={(e) => setNewAdminId(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    addAdminId()
-                  }
-                }}
-                placeholder={t('feishu.adminUsers.placeholder')}
-                className="flex-1 px-3 py-1.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-              <button
-                type="button"
-                onClick={addAdminId}
-                className="px-3 py-1.5 text-xs font-medium bg-accent text-accent-foreground rounded hover:bg-accent-hover"
-              >
-                {t('feishu.adminUsers.add')}
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 pt-2">
-            <span className="text-[11px] font-medium text-text-secondary">{t('feishu.status')}</span>
-            <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
-          </div>
-
-          <div className="text-[10px] text-text-tertiary pt-2">
-            <p>{t('feishu.botSessionNote')}</p>
-          </div>
-        </div>
-      )}
-
-      {activeSubTab === 'users' && (
-        <div className="max-w-xl pt-4">
-          <h3 className="text-xs font-medium text-text-secondary mb-3">{t('feishu.usersTitle')}</h3>
-
-          {isLoadingUsers && users.length === 0 && (
-            <p className="text-[11px] text-text-tertiary">{t('feishu.usersLoading')}</p>
-          )}
-
-          {usersError && (
-            <div className="space-y-2">
-              <p className="text-[11px] text-destructive">
-                {t('feishu.usersError')}: {usersError}
-              </p>
-              <button
-                type="button"
-                onClick={() => setUsersRetryCount((c) => c + 1)}
-                className="px-3 py-1.5 text-[11px] font-medium bg-accent text-accent-foreground rounded hover:bg-accent-hover"
-              >
-                {t('feishu.usersRetry')}
-              </button>
-            </div>
-          )}
-
-          {!isLoadingUsers && !usersError && users.length === 0 && (
-            <p className="text-[11px] text-text-tertiary">{t('feishu.usersEmpty')}</p>
-          )}
-
-          {users.length > 0 && (
-            <div className="space-y-2">
-              {users.map((user) => (
-                <div
-                  key={user.openId}
-                  className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-text-primary">
-                      {user.name || user.openId}
-                    </span>
-                    {user.namePending && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
-                        {t('feishu.userPending')}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[10px] text-text-tertiary mt-1 break-all">
-                    {user.openId}
-                  </div>
-                  <div className="flex items-center gap-4 mt-1">
-                    <span className="text-[10px] text-text-tertiary">
-                      {t('feishu.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
-                    </span>
-                    <span className="text-[10px] text-text-tertiary">
-                      {t('feishu.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+    <div>
+      <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.sensitiveFileDenylistTitle')}</label>
+      <p className="text-[10px] text-text-tertiary mb-2">{t('workspace.sensitiveFileDenylistHint')}</p>
+      <textarea
+        value={text}
+        onChange={(e) => {
+          const lines = e.target.value
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+          onChange(lines)
+        }}
+        placeholder={t('workspace.sensitiveFileDenylistPlaceholder')}
+        rows={6}
+        className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
+      />
     </div>
   )
 }
 
-export function WeComBotSection({
-  state,
-  onUpdate,
-  workspaceId,
-  onSave,
-}: {
-  state: WorkspaceFormState
-  onUpdate: (updates: Partial<WorkspaceFormState>) => void
-  workspaceId: string
-  onSave: () => Promise<void>
-}) {
+interface BoundBot {
+  id: string
+  name: string
+  activeWorkspaceId: string | null
+  providerSettings: {
+    wecom?: { enabled?: boolean }
+    feishu?: { enabled?: boolean }
+  }
+}
+
+function BoundBotCard({ workspaceId, onManageBots }: { workspaceId: string; onManageBots: () => void }) {
   const { t } = useTranslation('settings')
-  const [activeSubTab, setActiveSubTab] = useState<WeComSubTab>('connection')
-  const [showSecret, setShowSecret] = useState(false)
-  const [showCorpSecret, setShowCorpSecret] = useState(false)
-  const [status, setStatus] = useState<string>('unknown')
-  const [users, setUsers] = useState<WeComWorkspaceUser[]>([])
-  const [usersIsLoading, setUsersIsLoading] = useState(false)
-  const [usersError, setUsersError] = useState<string | null>(null)
-  const [usersRetryCount, setUsersRetryCount] = useState(0)
-  const [editingUserId, setEditingUserId] = useState<string | null>(null)
-  const [draftPlaintext, setDraftPlaintext] = useState('')
-  const [editError, setEditError] = useState<string | null>(null)
-  const [resolveBusy, setResolveBusy] = useState(false)
-  const [resolveResult, setResolveResult] = useState<{ resolved: number; failed: number } | null>(null)
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const [bot, setBot] = useState<BoundBot | null>(null)
+  const [loading, setLoading] = useState(false)
 
-  // Fetch connection status
   useEffect(() => {
+    if (!workspaceId) return
     let cancelled = false
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/bot/status`)
-        if (!res.ok) return
-        const data = await res.json()
-        if (!cancelled) setStatus(data.status || 'unknown')
-      } catch {
-        if (!cancelled) setStatus('unknown')
-      }
-    }
-    fetchStatus()
-    const interval = setInterval(fetchStatus, 5000)
+    setLoading(true)
+    fetch(`/api/workspaces/${workspaceId}/bot`)
+      .then(async (res) => {
+        if (!cancelled) {
+          if (res.ok) {
+            const data = (await res.json()) as { bot: BoundBot }
+            setBot(data.bot)
+          } else {
+            setBot(null)
+          }
+          setLoading(false)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBot(null)
+          setLoading(false)
+        }
+      })
     return () => {
       cancelled = true
-      clearInterval(interval)
     }
   }, [workspaceId])
 
-  // Reset users state when the selected workspace changes.
-  useEffect(() => {
-    setUsers([])
-    setUsersError(null)
-    setUsersRetryCount(0)
-    setEditingUserId(null)
-    setDraftPlaintext('')
-    setEditError(null)
-    setResolveResult(null)
-  }, [workspaceId])
-
-  // Fetch and poll WeCom workspace users.
-  useEffect(() => {
-    if (activeSubTab !== 'users') return
-
-    let cancelled = false
-    const fetchUsers = async () => {
-      setUsersIsLoading(true)
-      try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/wecom/users`)
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        const data = (await res.json()) as { users?: WeComWorkspaceUser[] }
-        if (!cancelled) {
-          setUsers(data.users || [])
-          setUsersError(null)
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setUsersError(err instanceof Error ? err.message : String(err))
-        }
-      } finally {
-        if (!cancelled) setUsersIsLoading(false)
-      }
-    }
-
-    fetchUsers()
-    const interval = setInterval(fetchUsers, 10000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [workspaceId, activeSubTab, usersRetryCount])
-
-  const handleReloadUsers = () => {
-    setUsersRetryCount((c) => c + 1)
-  }
-
-  const handleResolvePending = async () => {
-    setResolveBusy(true)
-    setResolveResult(null)
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/wecom/resolve-pending`, {
-        method: 'POST',
-      })
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`)
-      }
-      const result = (await res.json()) as { resolved: number; failed: number }
-      setResolveResult(result)
-      // Refresh the user list so any newly resolved IDs appear.
-      setUsersRetryCount((c) => c + 1)
-    } catch (err) {
-      setResolveResult({ resolved: 0, failed: 0 })
-    } finally {
-      setResolveBusy(false)
-    }
-  }
-
-  const startEdit = (user: WeComWorkspaceUser) => {
-    setEditingUserId(user.encryptedUserId)
-    setDraftPlaintext(user.plaintextUserId || '')
-    setEditError(null)
-  }
-
-  const cancelEdit = () => {
-    setEditingUserId(null)
-    setDraftPlaintext('')
-    setEditError(null)
-  }
-
-  const submitEdit = async (user: WeComWorkspaceUser) => {
-    const trimmed = draftPlaintext.trim()
-    if (!trimmed) {
-      setEditError(t('wecom.userPlaintextRequired'))
-      return
-    }
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/wecom/users/${encodeURIComponent(user.encryptedUserId)}/plaintext`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plaintextUserId: trimmed }),
-      })
-      if (res.status === 409) {
-        setEditError(t('wecom.userDuplicate'))
-        return
-      }
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string }
-        throw new Error(data.error || `HTTP ${res.status}`)
-      }
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.encryptedUserId === user.encryptedUserId ? { ...u, plaintextUserId: trimmed } : u,
-        ),
-      )
-      cancelEdit()
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const statusColor =
-    status === 'connected'
-      ? 'text-success'
-      : status === 'error'
-        ? 'text-destructive'
-        : 'text-text-tertiary'
-
-  const subTabs: { id: WeComSubTab; label: string }[] = [
-    { id: 'connection', label: t('wecom.tabs.connection') },
-    { id: 'users', label: t('wecom.tabs.users') },
-    { id: 'prompts', label: t('wecom.tabs.prompts') },
-    { id: 'permissions', label: t('wecom.tabs.permissions') },
-    { id: 'isolation', label: t('wecom.tabs.isolation') },
-    { id: 'queue', label: t('wecom.tabs.queue') },
-  ]
+  const activeWorkspace = workspaces.find((w) => w.id === bot?.activeWorkspaceId)
 
   return (
-    <div className="space-y-0">
-      {/* Secondary tab bar */}
-      <div className="flex border-b border-border/50 flex-shrink-0 -mx-6 px-6">
-        {subTabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveSubTab(tab.id)}
-            className={`py-2 px-3 text-[11px] font-medium transition-all ${
-              activeSubTab === tab.id
-                ? 'text-text-primary border-b-2 border-accent'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+    <div className="border border-border rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
+          <Bot className="w-3.5 h-3.5" />
+          {t('workspace.boundBotTitle')}
+        </h4>
+        <button
+          type="button"
+          onClick={onManageBots}
+          className="text-[11px] text-accent hover:text-accent-hover underline underline-offset-2"
+        >
+          {t('workspace.boundBotManage')}
+        </button>
       </div>
 
-      {/* Connection tab */}
-      {activeSubTab === 'connection' && (
-        <div className="max-w-xl space-y-4 pt-4">
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary">
-                {t('wecom.enableBot')}
-              </label>
-              <p className="text-[10px] text-text-tertiary mt-0.5">
-                {t('wecom.enableBotHint')}
-              </p>
-            </div>
-            <button
-              onClick={() => onUpdate({ wecomBotEnabled: !state.wecomBotEnabled })}
-              className={`relative w-9 h-5 rounded-full transition-colors ${
-                state.wecomBotEnabled ? 'bg-accent' : 'bg-border'
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                  state.wecomBotEnabled ? 'translate-x-4' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botName')}</label>
-            <input
-              value={state.wecomBotName}
-              onChange={(e) => onUpdate({ wecomBotName: e.target.value })}
-              placeholder={t('wecom.botNamePlaceholder')}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-            <p className="text-[10px] text-text-tertiary mt-1">{t('wecom.botNameHint')}</p>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botId')}</label>
-            <input
-              value={state.wecomBotId}
-              onChange={(e) => onUpdate({ wecomBotId: e.target.value })}
-              placeholder={t('wecom.botIdPlaceholder')}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.botSecret')}</label>
-            <div className="flex gap-2">
-              <input
-                type={showSecret ? 'text' : 'password'}
-                value={state.wecomBotSecret}
-                onChange={(e) => onUpdate({ wecomBotSecret: e.target.value })}
-                placeholder={t('wecom.botSecretPlaceholder')}
-                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-              <button
-                onClick={() => setShowSecret(!showSecret)}
-                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-              >
-                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div className="pt-4 border-t border-border/50">
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpId')}</label>
-            <input
-              value={state.wecomCorpId}
-              onChange={(e) => onUpdate({ wecomCorpId: e.target.value })}
-              placeholder={t('wecom.corpIdPlaceholder')}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.corpSecret')}</label>
-            <div className="flex gap-2">
-              <input
-                type={showCorpSecret ? 'text' : 'password'}
-                value={state.wecomCorpSecret}
-                onChange={(e) => onUpdate({ wecomCorpSecret: e.target.value })}
-                placeholder={t('wecom.corpSecretPlaceholder')}
-                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-              <button
-                onClick={() => setShowCorpSecret(!showCorpSecret)}
-                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-              >
-                {showCorpSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 pt-2">
-            <span className="text-[11px] font-medium text-text-secondary">{t('wecom.status')}</span>
-            <span className={`text-[11px] font-medium capitalize ${statusColor}`}>{status}</span>
-          </div>
-
-          <div className="text-[10px] text-text-tertiary pt-2">
-            <p>{t('wecom.botSessionNote')}</p>
-          </div>
+      {loading ? (
+        <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          {t('common.loading', 'Loading...')}
         </div>
-      )}
-
-      {/* Users tab */}
-      {activeSubTab === 'users' && (
-        <div className="max-w-xl pt-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs font-medium text-text-secondary">{t('wecom.usersTitle')}</h3>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleReloadUsers}
-                disabled={usersIsLoading}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${usersIsLoading ? 'animate-spin' : ''}`} />
-                {t('wecom.usersReload')}
-              </button>
-              <button
-                type="button"
-                onClick={handleResolvePending}
-                disabled={resolveBusy || !state.wecomCorpId || !state.wecomCorpSecret}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-              >
-                {resolveBusy ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Play className="w-3.5 h-3.5" />
-                )}
-                {t('wecom.usersResolvePending')}
-              </button>
+      ) : bot ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-text-primary">{bot.name}</span>
+            <div className="flex items-center gap-1.5">
+              {bot.providerSettings.wecom?.enabled && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-success/10 text-success">
+                  {t('workspace.boundBotProviderWecom')}
+                </span>
+              )}
+              {bot.providerSettings.feishu?.enabled && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-info/10 text-info">
+                  {t('workspace.boundBotProviderFeishu')}
+                </span>
+              )}
             </div>
           </div>
-
-          {(!state.wecomCorpId || !state.wecomCorpSecret) && (
-            <p className="text-[11px] text-text-tertiary mb-3">{t('wecom.usersResolvePendingDisabled')}</p>
-          )}
-
-          {resolveResult && (
-            <p className="text-[11px] text-text-secondary mb-3">
-              {t('wecom.usersResolvePendingResult', {
-                resolved: resolveResult.resolved,
-                failed: resolveResult.failed,
-              })}
-            </p>
-          )}
-
-          {usersIsLoading && users.length === 0 && (
-            <p className="text-[11px] text-text-tertiary">{t('wecom.usersLoading')}</p>
-          )}
-
-          {usersError && (
-            <div className="space-y-2">
-              <p className="text-[11px] text-destructive">
-                {t('wecom.usersError')}: {usersError}
-              </p>
-              <button
-                type="button"
-                onClick={handleReloadUsers}
-                className="px-3 py-1.5 text-[11px] font-medium bg-accent text-accent-foreground rounded hover:bg-accent-hover"
-              >
-                {t('wecom.usersRetry')}
-              </button>
-            </div>
-          )}
-
-          {!usersIsLoading && !usersError && users.length === 0 && (
-            <p className="text-[11px] text-text-tertiary">{t('wecom.usersEmpty')}</p>
-          )}
-
-          {users.length > 0 && (
-            <div className="space-y-2">
-              {users.map((user) => {
-                const isEditing = editingUserId === user.encryptedUserId
-                return (
-                  <div
-                    key={user.encryptedUserId}
-                    className="px-3 py-2.5 bg-bg rounded-lg border border-border/50"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-text-primary">
-                        {user.plaintextUserId || user.encryptedUserId}
-                      </span>
-                      {!user.plaintextUserId && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
-                          {t('wecom.userPending')}
-                      </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-text-tertiary mt-1 break-all">
-                      {t('wecom.userEncryptedId')}: {user.encryptedUserId}
-                    </div>
-                    <div className="flex items-center gap-4 mt-1">
-                      <span className="text-[10px] text-text-tertiary">
-                        {t('wecom.firstSeen')}: {new Date(user.firstSeenAt).toLocaleString()}
-                      </span>
-                      <span className="text-[10px] text-text-tertiary">
-                        {t('wecom.lastSeen')}: {new Date(user.lastSeenAt).toLocaleString()}
-                      </span>
-                    </div>
-                    {isEditing ? (
-                      <div className="mt-2 space-y-2">
-                        <input
-                          value={draftPlaintext}
-                          onChange={(e) => {
-                            setDraftPlaintext(e.target.value)
-                            setEditError(null)
-                          }}
-                          placeholder={t('wecom.userPlaintextPlaceholder')}
-                          className="w-full px-3 py-1.5 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                        />
-                        {editError && <p className="text-[11px] text-destructive">{editError}</p>}
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => submitEdit(user)}
-                            className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded transition-colors"
-                          >
-                            {t('wecom.userSave')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={cancelEdit}
-                            className="px-3 py-1.5 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded transition-colors"
-                          >
-                            {t('wecom.userCancel')}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => startEdit(user)}
-                        className="mt-2 text-[11px] text-accent hover:text-accent-hover underline underline-offset-2"
-                      >
-                        {user.plaintextUserId ? t('wecom.userEdit') : t('wecom.userAddPlaintext')}
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
+          <p className="text-[11px] text-text-secondary">
+            {t('workspace.boundBotActiveWorkspace', { name: activeWorkspace?.name ?? t('workspace.noActiveWorkspace') })}
+          </p>
         </div>
-      )}
-
-      {/* Prompts tab */}
-      {activeSubTab === 'prompts' && (
-        <div className="max-w-xl space-y-4 pt-4">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              {t('wecom.filePromptTemplate')}
-            </label>
-            <textarea
-              value={state.wecomFilePromptTemplate}
-              onChange={(e) => onUpdate({ wecomFilePromptTemplate: e.target.value })}
-              placeholder={t('wecom.filePromptTemplatePlaceholder')}
-              rows={4}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
-            />
-            <p className="text-[10px] text-text-tertiary mt-1">
-              {t('wecom.filePromptTemplateHint')}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Permissions tab */}
-      {activeSubTab === 'permissions' && (
-        <div className="max-w-xl">
-          <PermissionsSubTab
-            policy={state.wecomToolPermissions}
-            onUpdate={(next) => onUpdate({ wecomToolPermissions: next })}
-            workspaceId={workspaceId}
-            needsUpgradePrompt={!state.wecomToolPermissions && state.wecomBotEnabled}
-            onApplySafePreset={async () => {
-              onUpdate({ wecomToolPermissions: SAFE_PRESET })
-              await onSave()
-            }}
-          />
-        </div>
-      )}
-
-      {/* Isolation tab */}
-      {activeSubTab === 'isolation' && (
-        <IsolationSubTab
-          isolation={state.wecomBotIsolation}
-          onUpdate={(next) => onUpdate({ wecomBotIsolation: next })}
-        />
-      )}
-
-      {/* Queue tab */}
-      {activeSubTab === 'queue' && (
-        <WeComQueuePanel workspaceId={workspaceId} botEnabled={state.wecomBotEnabled} />
+      ) : (
+        <p className="text-[11px] text-text-tertiary">{t('workspace.boundBotNone')}</p>
       )}
     </div>
   )

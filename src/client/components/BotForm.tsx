@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Eye, EyeOff, Save, Bot, Loader2, AlertTriangle } from 'lucide-react';
+import { X, Eye, EyeOff, Save, Bot as BotIcon, Loader2, AlertTriangle } from 'lucide-react';
 import type { Bot, CreateBotInput, UpdateBotInput } from '../stores/bot-store';
 import type { Workspace } from '../stores/workspace-store';
 
@@ -70,7 +70,7 @@ interface BotFormProps {
   workspaces: Workspace[];
   isSaving?: boolean;
   error?: string | null;
-  onSubmit: (input: CreateBotInput | UpdateBotInput) => void;
+  onSubmit: (input: CreateBotInput | UpdateBotInput) => void | Promise<void>;
   onCancel: () => void;
 }
 
@@ -216,7 +216,7 @@ export default function BotForm({ bot, workspaces, isSaving, error, onSubmit, on
     <div className="border border-border rounded-lg p-4 space-y-4">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
-          <Bot className="w-3.5 h-3.5" />
+          <BotIcon className="w-3.5 h-3.5" />
           {isEditing ? t('bots.editBot') : t('bots.createBot')}
         </h4>
         <button
