@@ -21,6 +21,8 @@ export interface WorkspaceSettings {
   wecomBotIsolation?: WeComBotIsolationSettings;
   /** Number of days to retain sent-prompt history for this workspace. Zero or negative disables pruning. */
   promptHistoryRetentionDays?: number;
+  /** Configurable glob list of sensitive files that Normal bot users cannot read. Owner/Admin are not constrained. */
+  sensitiveFileDenylist?: string[];
   /** Feishu (Lark) bot app credentials and admin list. */
   feishuAppId?: string;
   feishuAppSecret?: string;
