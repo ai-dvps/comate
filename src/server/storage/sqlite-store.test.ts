@@ -881,3 +881,222 @@ describe('SqliteStore wecom active session backfill', { concurrency: false }, ()
     assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), null);
   });
 });
+
+describe('SqliteStore bot management', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  function createBotInput(overrides: Partial<{
+    name: string;
+    activeWorkspaceId: string;
+  }> = {}) {
+    return {
+      name: overrides.name ?? 'Test Bot',
+      activeWorkspaceId: overrides.activeWorkspaceId,
+      providerSettings: {
+        wecom: {
+          botId: 'wecom-bot-id',
+          botSecret: 'wecom-bot-secret',
+          corpSecret: 'wecom-corp-secret',
+        },
+        feishu: {
+          appId: 'feishu-app-id',
+          appSecret: 'feishu-app-secret',
+          encryptKey: 'feishu-encrypt-key',
+          verificationToken: 'feishu-verification-token',
+        },
+      },
+      rolePolicy: {
+        normalToolPolicy: {
+          posture: 'safe' as const,
+          categoryDefaults: {
+            fileRead: 'allow' as const,
+            fileWrite: 'deny' as const,
+            shell: 'deny' as const,
+            network: 'deny' as const,
+            subagents: 'deny' as const,
+            reply: 'allow' as const,
+          },
+        },
+        skillAllowlist: [],
+        bashWhitelist: [],
+      },
+    };
+  }
+
+  it('createBot persists a bot and returns it', () => {
+    const bot = store.createBot(createBotInput({ name: 'WeCom Bot' }));
+
+    assert.strictEqual(bot.name, 'WeCom Bot');
+    assert.ok(bot.id);
+    assert.ok(bot.createdAt);
+    assert.ok(bot.updatedAt);
+    assert.deepStrictEqual(bot.providerSettings, createBotInput().providerSettings);
+  });
+
+  it('getBot returns a persisted bot by id', () => {
+    const bot = store.createBot(createBotInput());
+    const found = store.getBot(bot.id);
+
+    assert.ok(found);
+    assert.strictEqual(found!.name, bot.name);
+    assert.strictEqual(found!.activeWorkspaceId, bot.activeWorkspaceId);
+    assert.deepStrictEqual(found!.providerSettings, bot.providerSettings);
+  });
+
+  it('getBot returns null for unknown id', () => {
+    assert.strictEqual(store.getBot('unknown'), null);
+  });
+
+  it('listBots returns all bots', () => {
+    store.createBot(createBotInput({ name: 'A' }));
+    store.createBot(createBotInput({ name: 'B' }));
+
+    const bots = store.listBots();
+    assert.strictEqual(bots.length, 2);
+    assert.ok(bots.some((b) => b.name === 'A'));
+    assert.ok(bots.some((b) => b.name === 'B'));
+  });
+
+  it('listBotsForWorkspace filters by active workspace', () => {
+    store.createBot(createBotInput({ name: 'In WS1', activeWorkspaceId: 'ws-1' }));
+    store.createBot(createBotInput({ name: 'In WS2', activeWorkspaceId: 'ws-2' }));
+    store.createBot(createBotInput({ name: 'Unbound' }));
+
+    const ws1Bots = store.listBotsForWorkspace('ws-1');
+    assert.strictEqual(ws1Bots.length, 1);
+    assert.strictEqual(ws1Bots[0].name, 'In WS1');
+  });
+
+  it('updateBot modifies name, workspace, settings and policy', () => {
+    const bot = store.createBot(createBotInput());
+    const updated = store.updateBot(bot.id, {
+      name: 'Renamed',
+      activeWorkspaceId: 'ws-updated',
+      providerSettings: { wecom: { botId: 'new-id' } },
+      rolePolicy: {
+        normalToolPolicy: {
+          posture: 'allow-all' as const,
+          categoryDefaults: {
+            fileRead: 'allow' as const,
+            fileWrite: 'allow' as const,
+            shell: 'deny' as const,
+            network: 'deny' as const,
+            subagents: 'deny' as const,
+            reply: 'allow' as const,
+          },
+        },
+        skillAllowlist: ['skill-a'],
+        bashWhitelist: ['ls'],
+      },
+    });
+
+    assert.ok(updated);
+    assert.strictEqual(updated!.name, 'Renamed');
+    assert.strictEqual(updated!.activeWorkspaceId, 'ws-updated');
+    assert.deepStrictEqual(updated!.providerSettings, { wecom: { botId: 'new-id' } });
+    assert.deepStrictEqual(updated!.rolePolicy.skillAllowlist, ['skill-a']);
+
+    const fromDb = store.getBot(bot.id);
+    assert.strictEqual(fromDb!.name, 'Renamed');
+  });
+
+  it('updateBot returns null for unknown id', () => {
+    const updated = store.updateBot('unknown', { name: 'X' });
+    assert.strictEqual(updated, null);
+  });
+
+  it('deleteBot removes the bot and its members and audit logs', () => {
+    const bot = store.createBot(createBotInput());
+    store.setBotMember(bot.id, 'wecom', 'user-1', 'owner');
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'test', eventType: 'created' });
+
+    assert.strictEqual(store.deleteBot(bot.id), true);
+    assert.strictEqual(store.getBot(bot.id), null);
+    assert.strictEqual(store.listBotMembers(bot.id).length, 0);
+    assert.strictEqual(store.listAuditLogs(bot.id).length, 0);
+  });
+
+  it('deleteBot returns false for unknown id', () => {
+    assert.strictEqual(store.deleteBot('unknown'), false);
+  });
+
+  it('setBotMember creates and updates member roles', () => {
+    const bot = store.createBot(createBotInput());
+    store.setBotMember(bot.id, 'wecom', 'user-1', 'owner');
+    assert.strictEqual(store.getBotMemberRole(bot.id, 'wecom', 'user-1'), 'owner');
+
+    store.setBotMember(bot.id, 'wecom', 'user-1', 'admin');
+    assert.strictEqual(store.getBotMemberRole(bot.id, 'wecom', 'user-1'), 'admin');
+
+    const members = store.listBotMembers(bot.id);
+    assert.strictEqual(members.length, 1);
+    assert.strictEqual(members[0].providerUserId, 'user-1');
+  });
+
+  it('removeBotMember deletes a member', () => {
+    const bot = store.createBot(createBotInput());
+    store.setBotMember(bot.id, 'feishu', 'user-2', 'normal');
+    store.removeBotMember(bot.id, 'feishu', 'user-2');
+
+    assert.strictEqual(store.getBotMemberRole(bot.id, 'feishu', 'user-2'), null);
+    assert.strictEqual(store.listBotMembers(bot.id).length, 0);
+  });
+
+  it('getBotMemberRole returns null for unknown member', () => {
+    const bot = store.createBot(createBotInput());
+    assert.strictEqual(store.getBotMemberRole(bot.id, 'wecom', 'nobody'), null);
+  });
+
+  it('recordAuditLog creates entries ordered newest-first', () => {
+    const bot = store.createBot(createBotInput());
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'one' });
+    store.recordAuditLog({ botId: bot.id, actorType: 'user', actorId: 'b', eventType: 'two' });
+
+    const logs = store.listAuditLogs(bot.id);
+    assert.strictEqual(logs.length, 2);
+    assert.strictEqual(logs[0].eventType, 'two');
+    assert.strictEqual(logs[1].eventType, 'one');
+    assert.strictEqual(logs[0].actorType, 'user');
+  });
+
+  it('migration state stores and retrieves version and snapshot', () => {
+    assert.strictEqual(store.getMigrationVersion(), null);
+
+    store.setMigrationState(1, new Date().toISOString(), { workspaces: 3 });
+    assert.strictEqual(store.getMigrationVersion(), 1);
+  });
+
+  it('setSessionBotId links sessions to a bot', () => {
+    const bot = store.createBot(createBotInput({ activeWorkspaceId: 'ws-1' }));
+    const session = store.createLocalSession('ws-1', 'Test');
+
+    store.setSessionBotId(session.id, bot.id);
+    const botSessions = store.listSessionsForBot(bot.id);
+    assert.strictEqual(botSessions.length, 1);
+    assert.strictEqual(botSessions[0].id, session.id);
+    assert.strictEqual(botSessions[0].botId, bot.id);
+  });
+
+  it('encrypts and decrypts sensitive provider settings at rest', () => {
+    const settings = createBotInput().providerSettings;
+    const bot = store.createBot({ name: 'Encrypted', providerSettings: settings });
+    const found = store.getBot(bot.id);
+
+    assert.deepStrictEqual(found!.providerSettings, settings);
+
+    // Verify the raw DB does not contain plaintext secrets.
+    const row = (store as unknown as { db: { prepare: (sql: string) => { get: (id: string) => { provider_settings_json: string } | undefined } } }).db
+      .prepare('SELECT provider_settings_json FROM bots WHERE id = ?')
+      .get(bot.id);
+    assert.ok(row);
+    const json = JSON.parse(row!.provider_settings_json);
+    assert.notStrictEqual(json.wecom.botSecret, 'wecom-bot-secret');
+    assert.notStrictEqual(json.feishu.appSecret, 'feishu-app-secret');
+  });
+});
+

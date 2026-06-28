@@ -4,6 +4,18 @@ import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 import type { ChatSession, ApprovalMode } from '../models/session.js';
+import type {
+  Bot,
+  BotMember,
+  BotRole,
+  CreateBotInput,
+  CreateBotAuditLogInput,
+  UpdateBotInput,
+  BotProviderSettings,
+  BotRolePolicy,
+  BotAuditLogEntry,
+} from '../models/bot.js';
+import { encryptProviderSettings, decryptProviderSettings } from '../utils/bot-provider-crypto.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
@@ -148,6 +160,51 @@ export class SqliteStore {
     `);
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bots (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        active_workspace_id TEXT UNIQUE,
+        provider_settings_json TEXT NOT NULL DEFAULT '{}',
+        role_policy_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_members (
+        bot_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_user_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (bot_id, provider, provider_user_id)
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_audit_logs (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        actor_type TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        details_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_migration_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        version INTEGER NOT NULL,
+        run_at TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL DEFAULT '{}'
+      )
+    `);
+
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
@@ -163,7 +220,8 @@ export class SqliteStore {
         last_modified INTEGER,
         first_prompt TEXT,
         git_branch TEXT,
-        custom_title TEXT
+        custom_title TEXT,
+        bot_id TEXT
       )
     `);
 
@@ -176,6 +234,11 @@ export class SqliteStore {
     // Migration: add provider_id column to existing sessions table
     if (!sessionColumns.some(col => col.name === 'provider_id')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
+    }
+
+    // Migration: add bot_id column to existing sessions table
+    if (!sessionColumns.some(col => col.name === 'bot_id')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN bot_id TEXT');
     }
 
     // Migration: add is_archived column to existing sessions table
@@ -1109,6 +1172,7 @@ export class SqliteStore {
     providerId?: string,
     source?: 'gui' | 'wecom' | 'feishu',
     customTitle?: string,
+    botId?: string,
   ): ChatSession {
     const now = new Date().toISOString();
     const mode = approvalMode ?? 'manual';
@@ -1119,14 +1183,15 @@ export class SqliteStore {
       isDraft: true,
       source,
       approvalMode: mode as ChatSession['approvalMode'],
+      botId,
       createdAt: now,
       updatedAt: now,
       customTitle,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, created_at, updated_at, custom_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, providerId ?? null, session.createdAt, session.updatedAt, customTitle ?? null);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, bot_id, created_at, updated_at, custom_title)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null);
     return session;
   }
 
@@ -1617,6 +1682,208 @@ export class SqliteStore {
     `).run(workspaceId, cutoff);
     return result.changes as number;
   }
+
+  // Bot management
+
+  createBot(input: CreateBotInput): Bot {
+    const now = new Date().toISOString();
+    const bot: Bot = {
+      id: uuidv4(),
+      name: input.name,
+      activeWorkspaceId: input.activeWorkspaceId ?? null,
+      providerSettings: input.providerSettings ?? {},
+      rolePolicy: input.rolePolicy ?? {
+        normalToolPolicy: {
+          posture: 'safe',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'deny',
+            shell: 'deny',
+            network: 'deny',
+            subagents: 'deny',
+            reply: 'allow',
+          },
+        },
+        skillAllowlist: [],
+        bashWhitelist: [],
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const encryptedSettings = encryptProviderSettings(bot.providerSettings);
+    this.db.prepare(`
+      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      bot.id,
+      bot.name,
+      bot.activeWorkspaceId,
+      JSON.stringify(encryptedSettings),
+      JSON.stringify(bot.rolePolicy),
+      bot.createdAt,
+      bot.updatedAt,
+    );
+
+    return bot;
+  }
+
+  getBot(id: string): Bot | null {
+    const row = this.db.prepare('SELECT * FROM bots WHERE id = ?').get(id) as RawBotRow | undefined;
+    return row ? parseBotRow(row) : null;
+  }
+
+  listBots(): Bot[] {
+    const rows = this.db.prepare('SELECT * FROM bots ORDER BY created_at').all() as RawBotRow[];
+    return rows.map(parseBotRow);
+  }
+
+  listBotsForWorkspace(workspaceId: string): Bot[] {
+    const rows = this.db
+      .prepare('SELECT * FROM bots WHERE active_workspace_id = ? ORDER BY created_at')
+      .all(workspaceId) as RawBotRow[];
+    return rows.map(parseBotRow);
+  }
+
+  updateBot(id: string, input: UpdateBotInput): Bot | null {
+    const existing = this.getBot(id);
+    if (!existing) return null;
+
+    const bot: Bot = {
+      ...existing,
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.activeWorkspaceId !== undefined && { activeWorkspaceId: input.activeWorkspaceId }),
+      ...(input.providerSettings !== undefined && { providerSettings: input.providerSettings }),
+      ...(input.rolePolicy !== undefined && { rolePolicy: input.rolePolicy }),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const encryptedSettings = encryptProviderSettings(bot.providerSettings);
+    this.db.prepare(`
+      UPDATE bots
+      SET name = ?, active_workspace_id = ?, provider_settings_json = ?, role_policy_json = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      bot.name,
+      bot.activeWorkspaceId,
+      JSON.stringify(encryptedSettings),
+      JSON.stringify(bot.rolePolicy),
+      bot.updatedAt,
+      id,
+    );
+
+    return bot;
+  }
+
+  deleteBot(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM bots WHERE id = ?').run(id);
+    if (result.changes > 0) {
+      this.db.prepare('DELETE FROM bot_members WHERE bot_id = ?').run(id);
+      this.db.prepare('DELETE FROM bot_audit_logs WHERE bot_id = ?').run(id);
+    }
+    return result.changes > 0;
+  }
+
+  // Bot members
+
+  setBotMember(botId: string, provider: string, providerUserId: string, role: BotRole): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO bot_members (bot_id, provider, provider_user_id, role, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(bot_id, provider, provider_user_id) DO UPDATE SET
+        role = excluded.role,
+        updated_at = excluded.updated_at
+    `).run(botId, provider, providerUserId, role, now, now);
+  }
+
+  removeBotMember(botId: string, provider: string, providerUserId: string): void {
+    this.db.prepare(`
+      DELETE FROM bot_members WHERE bot_id = ? AND provider = ? AND provider_user_id = ?
+    `).run(botId, provider, providerUserId);
+  }
+
+  getBotMemberRole(botId: string, provider: string, providerUserId: string): BotRole | null {
+    const row = this.db
+      .prepare('SELECT role FROM bot_members WHERE bot_id = ? AND provider = ? AND provider_user_id = ?')
+      .get(botId, provider, providerUserId) as { role: BotRole } | undefined;
+    return row?.role ?? null;
+  }
+
+  listBotMembers(botId: string): BotMember[] {
+    const rows = this.db
+      .prepare('SELECT * FROM bot_members WHERE bot_id = ? ORDER BY created_at')
+      .all(botId) as RawBotMemberRow[];
+    return rows.map(parseBotMemberRow);
+  }
+
+  // Bot audit logs
+
+  recordAuditLog(input: CreateBotAuditLogInput): BotAuditLogEntry {
+    const now = new Date().toISOString();
+    const entry: BotAuditLogEntry = {
+      id: uuidv4(),
+      botId: input.botId,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      eventType: input.eventType,
+      details: input.details ?? {},
+      createdAt: now,
+    };
+    this.db.prepare(`
+      INSERT INTO bot_audit_logs (id, bot_id, actor_type, actor_id, event_type, details_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.id,
+      entry.botId,
+      entry.actorType,
+      entry.actorId,
+      entry.eventType,
+      JSON.stringify(entry.details),
+      entry.createdAt,
+    );
+    return entry;
+  }
+
+  listAuditLogs(botId: string): BotAuditLogEntry[] {
+    const rows = this.db
+      .prepare('SELECT * FROM bot_audit_logs WHERE bot_id = ? ORDER BY created_at DESC, rowid DESC')
+      .all(botId) as RawAuditLogRow[];
+    return rows.map(parseAuditLogRow);
+  }
+
+  // Bot migration state
+
+  getMigrationVersion(): number | null {
+    const row = this.db
+      .prepare('SELECT version FROM bot_migration_state WHERE id = 1')
+      .get() as { version: number } | undefined;
+    return row?.version ?? null;
+  }
+
+  setMigrationState(version: number, runAt: string, snapshot: Record<string, unknown>): void {
+    this.db.prepare(`
+      INSERT INTO bot_migration_state (id, version, run_at, snapshot_json)
+      VALUES (1, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        version = excluded.version,
+        run_at = excluded.run_at,
+        snapshot_json = excluded.snapshot_json
+    `).run(version, runAt, JSON.stringify(snapshot));
+  }
+
+  // Session bot_id backfill
+
+  setSessionBotId(sessionId: string, botId: string): void {
+    this.db.prepare('UPDATE sessions SET bot_id = ? WHERE id = ?').run(botId, sessionId);
+  }
+
+  listSessionsForBot(botId: string): ChatSession[] {
+    const rows = this.db
+      .prepare('SELECT * FROM sessions WHERE bot_id = ? ORDER BY created_at')
+      .all(botId) as RawSessionRow[];
+    return rows.map(parseSessionRow);
+  }
 }
 
 export interface WorkspacePromptHistoryEntry {
@@ -1667,6 +1934,7 @@ interface RawSessionRow {
   source: string | null;
   approval_mode: string | null;
   provider_id: string | null;
+  bot_id: string | null;
   created_at: string;
   updated_at: string;
   summary: string | null;
@@ -1687,6 +1955,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     source: (row.source as 'gui' | 'wecom') ?? undefined,
     approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
     providerId: row.provider_id ?? undefined,
+    botId: row.bot_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     summary: row.summary ?? undefined,
@@ -1694,6 +1963,85 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     firstPrompt: row.first_prompt ?? undefined,
     gitBranch: row.git_branch ?? undefined,
     customTitle: row.custom_title ?? undefined,
+  };
+}
+
+interface RawBotRow {
+  id: string;
+  name: string;
+  active_workspace_id: string | null;
+  provider_settings_json: string;
+  role_policy_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseBotRow(row: RawBotRow): Bot {
+  const encryptedSettings = safeJsonParse(row.provider_settings_json, {} as BotProviderSettings);
+  return {
+    id: row.id,
+    name: row.name,
+    activeWorkspaceId: row.active_workspace_id,
+    providerSettings: decryptProviderSettings(encryptedSettings),
+    rolePolicy: safeJsonParse(row.role_policy_json, {
+      normalToolPolicy: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+      skillAllowlist: [],
+      bashWhitelist: [],
+    } as BotRolePolicy),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface RawBotMemberRow {
+  bot_id: string;
+  provider: string;
+  provider_user_id: string;
+  role: BotRole;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseBotMemberRow(row: RawBotMemberRow): BotMember {
+  return {
+    botId: row.bot_id,
+    provider: row.provider as BotMember['provider'],
+    providerUserId: row.provider_user_id,
+    role: row.role,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface RawAuditLogRow {
+  id: string;
+  bot_id: string;
+  actor_type: string;
+  actor_id: string;
+  event_type: string;
+  details_json: string;
+  created_at: string;
+}
+
+function parseAuditLogRow(row: RawAuditLogRow): BotAuditLogEntry {
+  return {
+    id: row.id,
+    botId: row.bot_id,
+    actorType: row.actor_type as BotAuditLogEntry['actorType'],
+    actorId: row.actor_id,
+    eventType: row.event_type,
+    details: safeJsonParse(row.details_json, {}),
+    createdAt: row.created_at,
   };
 }
 

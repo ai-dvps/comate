@@ -10,6 +10,8 @@ export interface ChatSession {
   source?: 'gui' | 'wecom' | 'feishu';
   approvalMode?: ApprovalMode;
   providerId?: string;
+  /** Bot that created this session, if any. */
+  botId?: string;
   createdAt: string;
   updatedAt: string;
   // SDK-derived fields (populated when discovered via listSessions)
@@ -27,6 +29,8 @@ export interface CreateSessionInput {
   providerId?: string;
   source?: 'gui' | 'wecom' | 'feishu';
   customTitle?: string;
+  /** Bot that created this session, if any. */
+  botId?: string;
 }
 
 export interface UpdateSessionInput {
