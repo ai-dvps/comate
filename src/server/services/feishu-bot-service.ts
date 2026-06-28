@@ -431,6 +431,27 @@ export class FeishuBotService {
     }
   }
 
+  /**
+   * Update an existing Feishu connection's workspace binding after the active
+   * workspace has been changed through the API or another orchestrator. This is
+   * a routing-only update: it does not persist the binding and does not create
+   * a new Lark client.
+   */
+  async updateConnectionForBot(botId: string, workspaceId: string): Promise<void> {
+    const connection = this.connections.get(botId);
+    if (!connection) return;
+
+    const previousWorkspaceId = this.botIdToWorkspaceId.get(botId);
+    connection.workspaceId = workspaceId;
+    this.activeBotId = botId;
+    if (previousWorkspaceId) {
+      this.workspaceIdToBotId.delete(previousWorkspaceId);
+    }
+    this.workspaceIdToBotId.set(workspaceId, botId);
+    this.botIdToWorkspaceId.set(botId, workspaceId);
+    workspaceStore.setFeishuActiveWorkspace(workspaceId);
+  }
+
   /** Best-effort send a plain-text DM via a bot connection. */
   private async sendProactiveMessage(botId: string, openId: string, message: string): Promise<void> {
     const connection = this.connections.get(botId);

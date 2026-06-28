@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bot management REST API** — new `src/server/routes/bots.ts` exposes `GET /api/bots`, `POST /api/bots`, `GET/PUT/DELETE /api/bots/:id`, `POST /api/bots/:id/active-workspace`, member routes, `GET /api/bots/:id/status`, and `POST /api/bots/migrate`. Provider credentials are redacted in responses (sensitive fields appear as `true` when set). Workspace-bound bots can be retrieved via `GET /api/workspaces/:id/bot`.
+
+### Changed
+
+- **Workspace settings no longer drive bot connections** — `PUT /api/workspaces/:id` no longer connects or disconnects WeCom/Feishu bots based on workspace settings. Bot lifecycle is now managed through the bot management API, while the workspace route still applies the safe tool-permission preset when WeCom is newly enabled for backward compatibility.
+
 ## [0.0.18] - 2026-06-27
 
 ### Added

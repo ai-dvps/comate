@@ -945,6 +945,32 @@ export class WeComBotService {
     return this.botIdToWorkspaceId.get(botId);
   }
 
+  /**
+   * Update an existing connection's workspace binding after the active workspace
+   * has been changed through the API or another orchestrator. This is a
+   * routing-only update: it does not persist the binding (that is BotService's
+   * responsibility) and it does not re-authenticate the WeCom client.
+   */
+  async updateConnectionForBot(botId: string, workspaceId: string): Promise<void> {
+    const conn = this.connections.get(botId);
+    if (!conn) return;
+
+    const previousWorkspaceId = this.botIdToWorkspaceId.get(botId);
+    conn.workspaceId = workspaceId;
+    this.botIdToWorkspaceId.set(botId, workspaceId);
+    if (previousWorkspaceId) {
+      this.workspaceIdToBotId.delete(previousWorkspaceId);
+    }
+    this.workspaceIdToBotId.set(workspaceId, botId);
+
+    const workspace = await workspaceStore.get(workspaceId);
+    if (workspace) {
+      this.writeContextFile(workspace, conn.botId).catch((err) => {
+        console.warn(`Failed to write WeCom context file for workspace ${workspaceId}:`, err);
+      });
+    }
+  }
+
   async sendProactiveMessage(botId: string, toUser: string, message: string): Promise<void> {
     const workspaceId = this.botIdToWorkspaceId.get(botId);
     if (!workspaceId) {
