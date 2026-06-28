@@ -184,8 +184,11 @@ export class FeishuBotService {
     return this.activeBotId ? this.connections.get(this.activeBotId) ?? null : null;
   }
 
+  private getBotIdForWorkspace(workspaceId: string): string | undefined {
+    return this.workspaceIdToBotId.get(workspaceId) ?? this.activeBotId ?? undefined;
+  }
+
   /**
-   * Register an application.bot.menu_v6 handler on the chat adapter's underlying
    * Lark WS dispatcher. This covers Feishu apps that use long-connection event
    * subscription instead of the HTTP callback route.
    */
@@ -834,7 +837,8 @@ export class FeishuBotService {
       }
     }
 
-    const session = await createFeishuSessionForUser(workspace, feishuUserId);
+    const botId = this.getBotIdForWorkspace(workspace.id);
+    const session = await createFeishuSessionForUser(workspace, feishuUserId, undefined, botId);
 
     return { sessionId: session.id, isNew: true };
   }
@@ -858,7 +862,8 @@ export class FeishuBotService {
     }
 
     try {
-      await createFeishuSessionForUser(workspace, feishuUserId, title);
+      const botId = this.getBotIdForWorkspace(workspace.id);
+      await createFeishuSessionForUser(workspace, feishuUserId, title, botId);
       await this.safePostText(thread, `已创建新会话：${title}`);
     } catch (err) {
       console.error('[FeishuBotService] failed to create session via /new:', err);
@@ -1081,7 +1086,8 @@ export class FeishuBotService {
     openId: string,
   ): Promise<void> {
     try {
-      const session = await createFeishuSessionForUser(workspace, openId);
+      const botId = this.getBotIdForWorkspace(workspace.id);
+      const session = await createFeishuSessionForUser(workspace, openId, undefined, botId);
       await this.sendMenuText(larkClient, openId, `已创建新会话：${openId}`);
       diagLog(`[FeishuBotService] menu: created session ${session.id} and notified ${openId}`);
     } catch (err) {

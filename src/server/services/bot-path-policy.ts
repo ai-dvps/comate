@@ -9,7 +9,7 @@ export interface PathPolicyContext {
   userDir: string;
   knownUserDirNames: string[];
   denyMatchers: ReturnType<typeof picomatch>[];
-  isAdmin: boolean;
+  isAdminOrOwner: boolean;
 }
 
 export interface PathValidationResult {
@@ -33,25 +33,28 @@ const DEFAULT_DENY_GLOBS = [
  *
  * @param workspace - the workspace being accessed
  * @param userDirName - directory name for the current user (plaintext id or encrypted id fallback)
- * @param knownUserDirNames - directory names of other WeCom users in this workspace, used to block cross-user access
+ * @param knownUserDirNames - directory names of other bot users in this workspace, used to block cross-user access
+ * @param isAdminOrOwner - whether the user bypasses the denylist and cross-user restrictions
+ * @param workspaceDenyGlobs - additional workspace-specific globs that Normal users cannot read
  */
 export function createPathPolicyContext(
   workspace: Workspace,
   userDirName: string,
   knownUserDirNames: string[] = [],
-  isAdmin = false,
+  isAdminOrOwner = false,
+  workspaceDenyGlobs: string[] = [],
 ): PathPolicyContext {
   const workspaceFolder = path.resolve(workspace.folderPath);
   const userDir = path.join(workspaceFolder, 'data', userDirName);
-  // Future: merge a configurable workspace denylist here.
-  const denyMatchers = DEFAULT_DENY_GLOBS.map((g) => picomatch(g));
+  const globs = [...DEFAULT_DENY_GLOBS, ...(workspaceDenyGlobs ?? [])];
+  const denyMatchers = globs.map((g) => picomatch(g));
   return {
     workspaceFolder,
     userDirName,
     userDir,
     knownUserDirNames: knownUserDirNames.filter((n) => n !== userDirName),
     denyMatchers,
-    isAdmin,
+    isAdminOrOwner,
   };
 }
 
@@ -133,7 +136,7 @@ function checkReadPath(ctx: PathPolicyContext, resolved: string): PathValidation
   const escape = checkWorkspaceEscape(ctx, resolved);
   if (!escape.allowed) return escape;
 
-  if (ctx.isAdmin || isWithinUserDir(ctx, resolved)) {
+  if (ctx.isAdminOrOwner) {
     return { allowed: true };
   }
 
@@ -145,6 +148,10 @@ function checkReadPath(ctx: PathPolicyContext, resolved: string): PathValidation
     return { allowed: false, reason: 'denylist' };
   }
 
+  if (isWithinUserDir(ctx, resolved)) {
+    return { allowed: true };
+  }
+
   return { allowed: true };
 }
 
@@ -152,7 +159,15 @@ function checkWritePath(ctx: PathPolicyContext, resolved: string): PathValidatio
   const escape = checkWorkspaceEscape(ctx, resolved);
   if (!escape.allowed) return escape;
 
-  if (ctx.isAdmin || isWithinUserDir(ctx, resolved)) {
+  if (ctx.isAdminOrOwner) {
+    return { allowed: true };
+  }
+
+  if (matchesDenylist(ctx, resolved)) {
+    return { allowed: false, reason: 'denylist' };
+  }
+
+  if (isWithinUserDir(ctx, resolved)) {
     return { allowed: true };
   }
 
@@ -197,7 +212,7 @@ function checkGlobPattern(
     return checkReadPath(ctx, resolved);
   }
 
-  if (!ctx.isAdmin) {
+  if (!ctx.isAdminOrOwner) {
     // Reject explicit traversal into protected segments.
     const segments = normalized.split(/[\\/]/).filter(Boolean);
     if (segments[0] === '.claude' || segments[0] === 'node_modules' || segments[0] === '.git') {
@@ -302,6 +317,6 @@ export function checkUserPath(
   const resolved = resolveRealPath(ctx, rawPath);
   const escape = checkWorkspaceEscape(ctx, resolved);
   if (!escape.allowed) return escape;
-  if (ctx.isAdmin || isWithinUserDir(ctx, resolved)) return { allowed: true };
+  if (ctx.isAdminOrOwner || isWithinUserDir(ctx, resolved)) return { allowed: true };
   return { allowed: false, reason: 'outside-user-dir-write' };
 }

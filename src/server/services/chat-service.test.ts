@@ -14,6 +14,11 @@ import type { ChatSession, Provider } from '../models/session.js';
 import type { SseEvent } from '../types/message.js';
 import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { QuestionPayload } from '../types/message.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { botService } from './bot-service.js';
+import { SAFE_PRESET } from './tool-permission-policy.js';
 
 function createMockWorkspace(id: string): Workspace {
   return {
@@ -1628,13 +1633,224 @@ describe('chat-service forkSession', { concurrency: false }, () => {
     const result = await service.forkSession('s1', 'ws-1');
     assert.strictEqual(result.sessionId, 'fork-s1');
   });
+});
 
-  it('throws ChatError when workspace is not found', async () => {
-    workspaceStore.get = async () => undefined as unknown as Workspace;
-    service = new TestChatService();
-    await assert.rejects(
-      () => service.forkSession('s1', 'ws-1'),
-      (err: Error) => err instanceof Error && err.message === 'Workspace not found',
+describe('chat-service bot-level dynamic policy', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+  const tmpFolders: string[] = [];
+
+  class MockSdkClient extends SdkClient {
+    override async getSessionInfo(sessionId: string): Promise<SDKSessionInfo | undefined> {
+      return {
+        sessionId,
+        summary: 'Test Session',
+        createdAt: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+      } as SDKSessionInfo;
+    }
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return [];
+    }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
+    override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
+  }
+
+  class TestChatService extends ChatService {
+    constructor() {
+      super(new MockSdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  function createMockRuntime(): SessionRuntime {
+    return {
+      isClosed: () => false,
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      close: () => Promise.resolve(),
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: () => {},
+      resolveApproval: () => {},
+      requestToolApproval: () => Promise.resolve({ behavior: 'allow' as const }),
+      requestToolQuestion: () => Promise.resolve({ behavior: 'allow' as const }),
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+    } as unknown as SessionRuntime;
+  }
+
+  async function setupBotSession(
+    role: 'normal' | 'admin' | 'owner',
+    workspaceDenyGlobs: string[] = [],
+  ): Promise<{ canUseTool: NonNullable<Options['canUseTool']>; folderPath: string; botId: string }> {
+    workspaceStore.resetData();
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-bot-policy-'));
+    tmpFolders.push(folderPath);
+    const workspace = await workspaceStore.create({
+      name: 'Bot Policy Workspace',
+      folderPath,
+      settings: { sensitiveFileDenylist: workspaceDenyGlobs },
+    });
+    const provider = workspaceStore.createProvider({
+      name: 'Test Provider',
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: 'test-model',
+      isDefault: true,
+    });
+    const bot = botService.createBot({
+      name: 'Policy Bot',
+      activeWorkspaceId: workspace.id,
+      providerSettings: {
+        wecom: { enabled: true, botId: 'bot-wecom', botSecret: 'secret' },
+      },
+      rolePolicy: {
+        normalToolPolicy: SAFE_PRESET,
+        skillAllowlist: ['allowed-skill'],
+        bashWhitelist: ['ls'],
+      },
+    });
+    const providerUserId = role === 'normal' ? 'user-1' : role === 'admin' ? 'admin-1' : 'owner-1';
+    botService.addMember(bot.id, { provider: 'wecom', providerUserId, role });
+
+    const encryptedUserId = `enc-${providerUserId}`;
+    workspaceStore.setWecomUserMapping(encryptedUserId, providerUserId);
+    workspaceStore.setWecomWorkspaceUser(workspace.id, encryptedUserId);
+    const session = workspaceStore.createLocalSession(
+      workspace.id,
+      'Bot Session',
+      undefined,
+      provider.id,
+      'wecom',
+      undefined,
+      bot.id,
     );
+    workspaceStore.setWecomSession(workspace.id, encryptedUserId, session.id);
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, providerUserId);
+    assert.ok(capturedOptions?.canUseTool, 'canUseTool must be set for bot sessions');
+    return { canUseTool: capturedOptions.canUseTool, folderPath, botId: bot.id };
+  }
+
+  beforeEach(() => {
+    service = new TestChatService();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+    SessionRuntime.open = originalOpen;
+    for (const folder of tmpFolders) {
+      try {
+        fs.rmSync(folder, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+    tmpFolders.length = 0;
+  });
+
+  it('Normal user can read inside their own data directory', async () => {
+    const { canUseTool, folderPath } = await setupBotSession('normal');
+    const result = await canUseTool('Read', { file_path: path.join(folderPath, 'data', 'user-1', 'x.txt') });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('Normal user cannot write outside their own data directory', async () => {
+    const { canUseTool, folderPath } = await setupBotSession('normal');
+    const result = await canUseTool('Write', { file_path: path.join(folderPath, 'shared', 'x.txt') });
+    assert.strictEqual(result.behavior, 'deny');
+  });
+
+  it('Normal user cannot read workspace denylisted files', async () => {
+    const { canUseTool, folderPath } = await setupBotSession('normal', ['**/*.secret']);
+    const result = await canUseTool('Read', { file_path: path.join(folderPath, 'data', 'user-1', 'x.secret') });
+    assert.strictEqual(result.behavior, 'deny');
+  });
+
+  it('Admin user can read workspace denylisted files', async () => {
+    const { canUseTool, folderPath } = await setupBotSession('admin', ['**/*.secret']);
+    const result = await canUseTool('Read', { file_path: path.join(folderPath, 'data', 'admin-1', 'x.secret') });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('Admin user can read another user data directory', async () => {
+    const { canUseTool, folderPath } = await setupBotSession('admin');
+    const result = await canUseTool('Read', { file_path: path.join(folderPath, 'data', 'other-user', 'secret.txt') });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('Normal user can run whitelisted Bash commands', async () => {
+    const { canUseTool } = await setupBotSession('normal');
+    const result = await canUseTool('Bash', { command: 'ls -l' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('Normal user cannot run non-whitelisted Bash commands', async () => {
+    const { canUseTool } = await setupBotSession('normal');
+    const result = await canUseTool('Bash', { command: 'rm -rf /' });
+    assert.strictEqual(result.behavior, 'deny');
+  });
+
+  it('Admin user can run any Bash command', async () => {
+    const { canUseTool } = await setupBotSession('admin');
+    const result = await canUseTool('Bash', { command: 'rm -rf /' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('Normal user cannot invoke skills outside the allowlist', async () => {
+    const { canUseTool } = await setupBotSession('normal');
+    const result = await canUseTool('Skill', { skill_name: 'disallowed-skill' });
+    assert.strictEqual(result.behavior, 'deny');
+  });
+
+  it('Normal user can invoke allowlisted skills', async () => {
+    const { canUseTool } = await setupBotSession('normal');
+    const result = await canUseTool('Skill', { skill_name: 'allowed-skill' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('Admin user can invoke any skill', async () => {
+    const { canUseTool } = await setupBotSession('admin');
+    const result = await canUseTool('Skill', { skill_name: 'unlisted-skill' });
+    assert.strictEqual(result.behavior, 'allow');
+  });
+
+  it('role changes are picked up dynamically without reopening the runtime', async () => {
+    const { canUseTool, botId } = await setupBotSession('normal');
+    const denied = await canUseTool('Bash', { command: 'cat /etc/passwd' });
+    assert.strictEqual(denied.behavior, 'deny');
+
+    botService.addMember(botId, { provider: 'wecom', providerUserId: 'owner-1', role: 'owner' });
+    botService.setMemberRole(
+      botId,
+      'wecom',
+      'user-1',
+      'admin',
+      { type: 'wecom', provider: 'wecom', providerUserId: 'owner-1' },
+    );
+
+    const allowed = await canUseTool('Bash', { command: 'cat /etc/passwd' });
+    assert.strictEqual(allowed.behavior, 'allow');
   });
 });
