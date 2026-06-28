@@ -17,14 +17,16 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Workspace } from '../models/workspace.js';
+import type { Bot } from '../models/bot.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { wecomSessionRenamer } from './wecom-session-renamer.js';
 import { createStreamReply, type StreamReplyConnection, type StreamReplyResult } from './wecom-stream-reply.js';
 import { saveMediaFile } from './wecom-file-storage.js';
 import { validateSendFilePath } from './wecom-send-file-policy.js';
-import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
+import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy, SAFE_PRESET } from './tool-permission-policy.js';
 import { diagLog } from '../utils/diag-logger.js';
 import {
   buildWecomSessionListCard,
@@ -149,6 +151,7 @@ function formatRelativeTime(iso: string): string {
 export class WeComBotService {
   private connections = new Map<string, BotConnection>();
   private botIdToWorkspaceId = new Map<string, string>();
+  private workspaceIdToBotId = new Map<string, string>();
   private serverUrl: string | null = null;
   private cardClickRateLimit = new Map<string, number>();
   private activeStreamReplies = new Map<string, StreamReplyResult>();
@@ -159,91 +162,113 @@ export class WeComBotService {
 
   async initialize(): Promise<void> {
     await this.cleanupStaleContextFiles();
+
+    const bots = botService.listBots().filter((b) => b.providerSettings.wecom?.enabled);
+    if (bots.length > 0) {
+      for (const bot of bots) {
+        await this.connectBot(bot);
+      }
+      return;
+    }
+
+    // Pre-migration fallback: connect workspaces that still embed WeCom settings.
     const workspaces = await workspaceStore.list();
     for (const ws of workspaces) {
       if (ws.settings.wecomBotEnabled && ws.settings.wecomBotId && ws.settings.wecomBotSecret) {
-        this.connect(ws);
+        await this.connect(ws);
       }
     }
   }
 
-  connect(workspace: Workspace): void {
-    this.disconnect(workspace.id);
+  async connectBot(bot: Bot): Promise<void> {
+    this.disconnectBot(bot.id);
 
-    const botId = workspace.settings.wecomBotId!;
-    const secret = workspace.settings.wecomBotSecret!;
-
-    if (this.botIdToWorkspaceId.has(botId)) {
-      console.error(`WeCom bot ID ${botId} is already in use by workspace ${this.botIdToWorkspaceId.get(botId)}. Skipping connect for workspace ${workspace.id}.`);
+    const wecom = bot.providerSettings.wecom;
+    if (!wecom?.enabled || !wecom.botId || !wecom.botSecret) {
+      diagLog(`[WeComBotService] skipping connect for bot ${bot.id}: missing WeCom credentials`);
       return;
     }
+    const wecomBotId = wecom.botId;
+
+    const workspace = bot.activeWorkspaceId ? await workspaceStore.get(bot.activeWorkspaceId) : null;
+    const workspaceId = bot.activeWorkspaceId ?? '';
+    const folderPath = workspace?.folderPath ?? '';
 
     const client = new AiBot.WSClient({
-      botId,
-      secret,
+      botId: wecomBotId,
+      secret: wecom.botSecret,
       maxReconnectAttempts: -1,
     });
 
     const conn: BotConnection = {
       client,
-      workspaceId: workspace.id,
-      botId,
-      folderPath: workspace.folderPath,
+      workspaceId,
+      botId: bot.id,
+      folderPath,
       status: 'connecting',
     };
 
-    this.connections.set(workspace.id, conn);
+    this.connections.set(bot.id, conn);
 
-    client.on('authenticated', () => {
+    client.on('authenticated', async () => {
       conn.status = 'connected';
-      this.botIdToWorkspaceId.set(botId, workspace.id);
-      this.writeContextFile(workspace, botId).catch((err) => {
-        console.warn(`Failed to write WeCom context file for workspace ${workspace.id}:`, err);
-      });
+      const freshBot = workspaceStore.getBot(bot.id);
+      const activeWorkspaceId = freshBot?.activeWorkspaceId ?? workspaceId;
+      conn.workspaceId = activeWorkspaceId;
+      this.botIdToWorkspaceId.set(bot.id, activeWorkspaceId);
+      if (activeWorkspaceId) {
+        this.workspaceIdToBotId.set(activeWorkspaceId, bot.id);
+      }
+      const ws = activeWorkspaceId ? await workspaceStore.get(activeWorkspaceId) : null;
+      if (ws) {
+        this.writeContextFile(ws, wecomBotId).catch((err) => {
+          console.warn(`Failed to write WeCom context file for workspace ${activeWorkspaceId}:`, err);
+        });
+      }
     });
 
     client.on('disconnected', (reason) => {
       conn.status = 'disconnected';
-      console.log(`WeCom bot disconnected for workspace ${workspace.id}: ${reason}`);
+      console.log(`WeCom bot ${bot.id} disconnected: ${reason}`);
     });
 
     client.on('error', (err) => {
       conn.status = 'error';
-      console.error(`WeCom bot error for workspace ${workspace.id}:`, err);
+      console.error(`WeCom bot ${bot.id} error:`, err);
     });
 
     client.on('message.text', (frame: WsFrame<TextMessage>) => {
-      this.handleTextMessage(workspace.id, frame).catch((err) => {
+      this.handleTextMessage(conn.workspaceId, frame).catch((err) => {
         console.error('Failed to handle WeCom text message:', err);
       });
     });
 
     client.on('message.file', (frame: WsFrame<FileMessage>) => {
-      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+      this.handleMediaMessage(conn.workspaceId, frame).catch((err) => {
         console.error('Failed to handle WeCom file message:', err);
       });
     });
 
     client.on('message.image', (frame: WsFrame<ImageMessage>) => {
-      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+      this.handleMediaMessage(conn.workspaceId, frame).catch((err) => {
         console.error('Failed to handle WeCom image message:', err);
       });
     });
 
     client.on('message.voice', (frame: WsFrame<VoiceMessage>) => {
-      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+      this.handleMediaMessage(conn.workspaceId, frame).catch((err) => {
         console.error('Failed to handle WeCom voice message:', err);
       });
     });
 
     client.on('message.video', (frame: WsFrame<VideoMessage>) => {
-      this.handleMediaMessage(workspace.id, frame).catch((err) => {
+      this.handleMediaMessage(conn.workspaceId, frame).catch((err) => {
         console.error('Failed to handle WeCom video message:', err);
       });
     });
 
     client.on('event.template_card_event', (frame: WsFrame<EventMessageWith<TemplateCardEventData>>) => {
-      this.handleTemplateCardEvent(workspace.id, frame).catch((err) => {
+      this.handleTemplateCardEvent(conn.workspaceId, frame).catch((err) => {
         console.error('Failed to handle WeCom template card event:', err);
       });
     });
@@ -251,25 +276,80 @@ export class WeComBotService {
     client.connect();
   }
 
-  disconnect(workspaceId: string): void {
-    const conn = this.connections.get(workspaceId);
+  /** Backward-compatible workspace-scoped connect (pre-migration). */
+  async connect(workspace: Workspace): Promise<void> {
+    const bot: Bot = {
+      id: workspace.settings.wecomBotId!,
+      name: workspace.settings.wecomBotName ?? workspace.name,
+      activeWorkspaceId: workspace.id,
+      providerSettings: {
+        wecom: {
+          enabled: workspace.settings.wecomBotEnabled,
+          botId: workspace.settings.wecomBotId,
+          botSecret: workspace.settings.wecomBotSecret,
+          botName: workspace.settings.wecomBotName,
+          corpId: workspace.settings.wecomCorpId,
+          corpSecret: workspace.settings.wecomCorpSecret,
+        },
+      },
+      rolePolicy: {
+        normalToolPolicy: SAFE_PRESET,
+        skillAllowlist: workspace.settings.wecomBotIsolation?.defaultAllowedSkills ?? [],
+        bashWhitelist: [],
+      },
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+    };
+    await this.connectBot(bot);
+  }
+
+  disconnectBot(botId: string): void {
+    const conn = this.connections.get(botId);
     if (!conn) return;
     conn.client.disconnect();
-    this.connections.delete(workspaceId);
-    this.botIdToWorkspaceId.delete(conn.botId);
-    this.removeContextFile(workspaceId).catch((err) => {
-      console.warn(`Failed to remove WeCom context file for workspace ${workspaceId}:`, err);
+    this.connections.delete(botId);
+    this.botIdToWorkspaceId.delete(botId);
+    this.workspaceIdToBotId.delete(conn.workspaceId);
+    this.removeContextFile(conn.workspaceId).catch((err) => {
+      console.warn(`Failed to remove WeCom context file for workspace ${conn.workspaceId}:`, err);
     });
   }
 
-  disconnectAll(): void {
-    for (const [workspaceId] of this.connections) {
-      this.disconnect(workspaceId);
+  /** Backward-compatible workspace-scoped disconnect (pre-migration). */
+  disconnect(workspaceId: string): void {
+    const botId = this.workspaceIdToBotId.get(workspaceId);
+    if (botId) {
+      this.disconnectBot(botId);
+      return;
+    }
+    // Fallback: legacy connection keyed by workspaceId may still exist if
+    // initialize() connected pre-migration workspaces before any bots existed.
+    const legacy = Array.from(this.connections.values()).find((c) => c.workspaceId === workspaceId);
+    if (legacy) {
+      this.disconnectBot(legacy.botId);
     }
   }
 
+  private getConnectionByWorkspaceId(workspaceId: string): BotConnection | undefined {
+    const botId = this.workspaceIdToBotId.get(workspaceId);
+    return botId ? this.connections.get(botId) : undefined;
+  }
+
+  disconnectAll(): void {
+    for (const botId of Array.from(this.connections.keys())) {
+      this.disconnectBot(botId);
+    }
+  }
+
+  getBotStatus(botId: string): 'connected' | 'disconnected' | 'error' | 'not_configured' {
+    const conn = this.connections.get(botId);
+    if (!conn) return 'not_configured';
+    if (conn.status === 'connecting') return 'disconnected';
+    return conn.status;
+  }
+
   getStatus(workspaceId: string): 'connected' | 'disconnected' | 'error' | 'not_configured' {
-    const conn = this.connections.get(workspaceId);
+    const conn = this.getConnectionByWorkspaceId(workspaceId);
     if (!conn) return 'not_configured';
     if (conn.status === 'connecting') return 'disconnected';
     return conn.status;
@@ -278,26 +358,35 @@ export class WeComBotService {
   async getAggregateStatus(): Promise<{
     state: 'connected' | 'partial' | 'disconnected' | 'not_configured';
   }> {
-    let workspaces: Workspace[];
-    try {
-      workspaces = await workspaceStore.list();
-    } catch {
-      return { state: 'not_configured' };
+    let bots = botService.listBots().filter((b) => b.providerSettings.wecom?.enabled);
+
+    // Pre-migration fallback: treat workspace-embedded WeCom configs as bots.
+    if (bots.length === 0) {
+      try {
+        const workspaces = await workspaceStore.list();
+        bots = workspaces
+          .filter((ws) => ws.settings.wecomBotEnabled && ws.settings.wecomBotId && ws.settings.wecomBotSecret)
+          .map((ws) => ({
+            id: ws.settings.wecomBotId!,
+            name: ws.settings.wecomBotName ?? ws.name,
+            activeWorkspaceId: ws.id,
+            providerSettings: { wecom: { enabled: true, botId: ws.settings.wecomBotId!, botSecret: ws.settings.wecomBotSecret! } },
+            rolePolicy: { normalToolPolicy: SAFE_PRESET, skillAllowlist: [], bashWhitelist: [] },
+            createdAt: ws.createdAt,
+            updatedAt: ws.updatedAt,
+          }));
+      } catch {
+        return { state: 'not_configured' };
+      }
     }
 
-    const configured = workspaces.filter(
-      (ws) =>
-        ws.settings.wecomBotEnabled &&
-        ws.settings.wecomBotId &&
-        ws.settings.wecomBotSecret,
-    );
-    if (configured.length === 0) return { state: 'not_configured' };
+    if (bots.length === 0) return { state: 'not_configured' };
 
     let connectedCount = 0;
-    for (const ws of configured) {
-      if (this.getStatus(ws.id) === 'connected') connectedCount += 1;
+    for (const bot of bots) {
+      if (this.getBotStatus(bot.id) === 'connected') connectedCount += 1;
     }
-    if (connectedCount === configured.length) return { state: 'connected' };
+    if (connectedCount === bots.length) return { state: 'connected' };
     if (connectedCount === 0) return { state: 'disconnected' };
     return { state: 'partial' };
   }

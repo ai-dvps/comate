@@ -5,9 +5,12 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import type { Thread, Message, DirectMessageHandler, MentionHandler, ActionEvent } from 'chat';
 import type { SseEvent } from '../types/message.js';
 import type { Workspace } from '../models/workspace.js';
+import type { Bot } from '../models/bot.js';
 import type { ChatSession } from '../models/session.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
+import { SAFE_PRESET } from './tool-permission-policy.js';
 import { createFeishuSessionForUser } from './feishu-session-helpers.js';
 import { FeishuStreamReply, type FeishuStreamReplyHandle } from './feishu-stream-reply.js';
 import {
@@ -36,11 +39,15 @@ interface Connection {
   adapter: LarkAdapter;
   larkClient: lark.Client;
   workspaceId: string;
+  botId: string;
   status: FeishuBotStatus;
 }
 
 export class FeishuBotService {
-  private connection: Connection | null = null;
+  private connections = new Map<string, Connection>();
+  private activeBotId: string | null = null;
+  private workspaceIdToBotId = new Map<string, string>();
+  private botIdToWorkspaceId = new Map<string, string>();
   private userQueues = new Map<string, Promise<unknown>>();
   private sessionListCardIds = new Map<string, string>();
   private cardUpdateSequences = new Map<string, number>();
@@ -48,6 +55,17 @@ export class FeishuBotService {
   private activeStreamReplies = new Map<string, FeishuStreamReplyHandle>();
 
   async initialize(): Promise<void> {
+    const feishuBots = botService.listBots().filter((b) => b.providerSettings.feishu?.enabled);
+
+    if (feishuBots.length > 0) {
+      const storedActiveWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
+      const activeBot =
+        feishuBots.find((b) => b.activeWorkspaceId === storedActiveWorkspaceId) ?? feishuBots[0];
+      await this.connectBot(activeBot);
+      return;
+    }
+
+    // Pre-migration fallback: connect the workspace stored in the global binding.
     const activeWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
     if (!activeWorkspaceId) {
       diagLog('[FeishuBotService] no active workspace binding on startup');
@@ -64,15 +82,19 @@ export class FeishuBotService {
     await this.connect(workspace);
   }
 
-  async connect(workspace: Workspace): Promise<void> {
-    this.disconnect();
+  async connectBot(bot: Bot): Promise<void> {
+    this.disconnectBot(bot.id);
 
-    const appId = workspace.settings.feishuAppId?.trim();
-    const appSecret = workspace.settings.feishuAppSecret?.trim();
+    const feishu = bot.providerSettings.feishu;
+    const appId = feishu?.appId?.trim();
+    const appSecret = feishu?.appSecret?.trim();
     if (!appId || !appSecret) {
-      diagLog(`[FeishuBotService] workspace ${workspace.id} missing Feishu credentials`);
+      diagLog(`[FeishuBotService] bot ${bot.id} missing Feishu credentials`);
       return;
     }
+
+    const workspace = bot.activeWorkspaceId ? await workspaceStore.get(bot.activeWorkspaceId) : null;
+    const workspaceId = bot.activeWorkspaceId ?? '';
 
     const larkClient = new lark.Client({
       appId,
@@ -100,33 +122,66 @@ export class FeishuBotService {
     chat.onNewMention(handler);
     chat.onAction((event) => this.handleCardAction(event));
 
-    this.connection = {
+    const connection: Connection = {
       chat,
       adapter,
       larkClient,
-      workspaceId: workspace.id,
+      workspaceId,
+      botId: bot.id,
       status: 'connecting',
     };
+    this.connections.set(bot.id, connection);
+    this.activeBotId = bot.id;
+    if (workspaceId) {
+      this.workspaceIdToBotId.set(workspaceId, bot.id);
+      this.botIdToWorkspaceId.set(bot.id, workspaceId);
+    }
 
     try {
       await chat.initialize();
-      // The chat adapter listens to im.message / card.action / reaction events
-      // but ignores application.bot.menu_v6. When Feishu is configured to use
-      // long-connection (WebSocket) event subscription, menu events arrive on
-      // the same WS channel, so register a handler there as well.
-      this.registerWSMenuHandler(adapter, workspace, larkClient);
-      // The chat adapter's card-action handler returns nothing, so the Lark SDK
-      // sends an empty WebSocket response. Feishu treats that as a reset and
-      // re-enables the form. Wrap the dispatcher so we can return an updated
-      // disabled card in the response.
+      if (workspace) {
+        this.registerWSMenuHandler(adapter, workspace, larkClient);
+      }
       this.registerWSCardActionResponseHandler(adapter);
-      workspaceStore.setFeishuActiveWorkspace(workspace.id);
-      this.connection.status = 'connected';
-      diagLog(`[FeishuBotService] connected for workspace ${workspace.id}`);
+      if (workspace) {
+        workspaceStore.setFeishuActiveWorkspace(workspace.id);
+      }
+      connection.status = 'connected';
+      diagLog(`[FeishuBotService] connected bot ${bot.id} for workspace ${workspaceId}`);
     } catch (err) {
-      this.connection.status = 'error';
-      console.error(`[FeishuBotService] failed to initialize for workspace ${workspace.id}:`, err);
+      connection.status = 'error';
+      console.error(`[FeishuBotService] failed to initialize bot ${bot.id}:`, err);
     }
+  }
+
+  /** Backward-compatible workspace-scoped connect (pre-migration). */
+  async connect(workspace: Workspace): Promise<void> {
+    const bot: Bot = {
+      id: workspace.settings.feishuAppId!,
+      name: workspace.name,
+      activeWorkspaceId: workspace.id,
+      providerSettings: {
+        feishu: {
+          enabled: workspace.settings.feishuBotEnabled,
+          appId: workspace.settings.feishuAppId,
+          appSecret: workspace.settings.feishuAppSecret,
+          encryptKey: workspace.settings.feishuEncryptKey,
+          verificationToken: workspace.settings.feishuVerificationToken,
+        },
+      },
+      rolePolicy: {
+        normalToolPolicy: SAFE_PRESET,
+        skillAllowlist: [],
+        bashWhitelist: [],
+      },
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+    };
+    await this.connectBot(bot);
+  }
+
+  private getActiveConnection(): Connection | null {
+    return this.activeBotId ? this.connections.get(this.activeBotId) ?? null : null;
   }
 
   /**
@@ -233,39 +288,71 @@ export class FeishuBotService {
     return undefined;
   }
 
-  disconnect(): void {
-    if (!this.connection) return;
-    const { chat, workspaceId } = this.connection;
-    this.connection = null;
-    chat
+  disconnectBot(botId: string): void {
+    const connection = this.connections.get(botId);
+    if (!connection) return;
+
+    this.connections.delete(botId);
+    this.workspaceIdToBotId.delete(connection.workspaceId);
+    this.botIdToWorkspaceId.delete(botId);
+    if (this.activeBotId === botId) {
+      this.activeBotId = null;
+      workspaceStore.clearFeishuActiveWorkspace();
+    }
+
+    connection.chat
       .shutdown()
       .then(() => {
-        diagLog(`[FeishuBotService] disconnected from workspace ${workspaceId}`);
+        diagLog(`[FeishuBotService] disconnected bot ${botId} from workspace ${connection.workspaceId}`);
       })
       .catch((err) => {
-        console.error('[FeishuBotService] error during shutdown:', err);
+        console.error(`[FeishuBotService] error during shutdown of bot ${botId}:`, err);
       });
   }
 
-  getStatus(workspaceId: string): FeishuBotStatus {
-    if (!this.connection || this.connection.workspaceId !== workspaceId) {
-      return 'not_configured';
+  /** Disconnect the currently active bot (backward-compatible pre-migration). */
+  disconnect(): void {
+    if (this.activeBotId) {
+      this.disconnectBot(this.activeBotId);
+      return;
     }
-    return this.connection.status;
+    // Fallback: disconnect any remaining connection keyed by workspaceId.
+    const fallback = Array.from(this.connections.values())[0];
+    if (fallback) {
+      this.disconnectBot(fallback.botId);
+    }
+  }
+
+  getBotStatus(botId: string): FeishuBotStatus {
+    const connection = this.connections.get(botId);
+    return connection?.status ?? 'not_configured';
+  }
+
+  getStatus(workspaceId: string): FeishuBotStatus {
+    const botId = this.workspaceIdToBotId.get(workspaceId);
+    if (!botId) return 'not_configured';
+    return this.getBotStatus(botId);
   }
 
   async reconnectIfActive(workspaceId: string): Promise<void> {
-    const activeWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
-    if (activeWorkspaceId !== workspaceId) return;
+    const botId = this.workspaceIdToBotId.get(workspaceId);
+    if (!botId) return;
+
+    const connection = this.connections.get(botId);
+    if (!connection) return;
 
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace || !this.isFeishuEnabled(workspace)) {
-      this.disconnect();
-      workspaceStore.clearFeishuActiveWorkspace();
+      this.disconnectBot(botId);
       return;
     }
 
-    await this.connect(workspace);
+    const bot = botService.getBot(botId);
+    if (bot) {
+      await this.connectBot(bot);
+    } else {
+      await this.connect(workspace);
+    }
   }
 
   /**
@@ -279,7 +366,46 @@ export class FeishuBotService {
       this.disconnect();
       return;
     }
-    await this.connect(workspace);
+
+    // Prefer a real bot bound to this workspace; otherwise fall back to the
+    // workspace's embedded Feishu config (pre-migration).
+    const boundBots = botService.listBotsForWorkspace(workspaceId).filter((b) => b.providerSettings.feishu?.enabled);
+    const bot = boundBots[0] ?? this.botFromWorkspace(workspace);
+    if (!bot) {
+      workspaceStore.clearFeishuActiveWorkspace();
+      this.disconnect();
+      return;
+    }
+
+    await this.connectBot(bot);
+  }
+
+  /** Build an ephemeral Bot from a workspace's embedded Feishu config. */
+  private botFromWorkspace(workspace: Workspace): Bot | null {
+    const appId = workspace.settings.feishuAppId?.trim();
+    const appSecret = workspace.settings.feishuAppSecret?.trim();
+    if (!appId || !appSecret) return null;
+    return {
+      id: appId,
+      name: workspace.name,
+      activeWorkspaceId: workspace.id,
+      providerSettings: {
+        feishu: {
+          enabled: workspace.settings.feishuBotEnabled,
+          appId,
+          appSecret,
+          encryptKey: workspace.settings.feishuEncryptKey,
+          verificationToken: workspace.settings.feishuVerificationToken,
+        },
+      },
+      rolePolicy: {
+        normalToolPolicy: SAFE_PRESET,
+        skillAllowlist: [],
+        bashWhitelist: [],
+      },
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+    };
   }
 
   /**
@@ -359,10 +485,10 @@ export class FeishuBotService {
       const feishuUserId = message.author.userId;
       const text = (message.text ?? '').trim();
 
-      const workspaceId = this.connection?.workspaceId;
+      const workspaceId = this.getActiveConnection()?.workspaceId;
       if (workspaceId) {
         workspaceStore.setFeishuWorkspaceUser(workspaceId, feishuUserId);
-        void feishuUserResolver.resolveOnMessage(workspaceId, feishuUserId, this.connection!.larkClient);
+        void feishuUserResolver.resolveOnMessage(workspaceId, feishuUserId, this.getActiveConnection()!.larkClient);
       }
 
       diagLog(
@@ -479,7 +605,7 @@ export class FeishuBotService {
     workspaceId: string,
     openId: string,
   ): Promise<void> {
-    const larkClient = this.connection?.larkClient;
+    const larkClient = this.getActiveConnection()?.larkClient;
     if (!larkClient) return;
 
     const workspace = await workspaceStore.get(workspaceId);
@@ -519,7 +645,7 @@ export class FeishuBotService {
     workspace: Workspace,
     openId: string,
   ): Promise<void> {
-    const larkClient = this.connection?.larkClient;
+    const larkClient = this.getActiveConnection()?.larkClient;
     if (!larkClient) return;
 
     const sessions = await this.collectSessionList(workspace, openId);
@@ -607,7 +733,7 @@ export class FeishuBotService {
       }
     }
 
-    const larkClient = this.connection?.larkClient;
+    const larkClient = this.getActiveConnection()?.larkClient;
     const openId = event.user.userId;
     if (!larkClient || !openId) {
       diagLog('[FeishuBotService] no thread or larkClient available to send action response');
@@ -760,7 +886,7 @@ export class FeishuBotService {
       return;
     }
 
-    const larkClient = this.connection?.larkClient;
+    const larkClient = this.getActiveConnection()?.larkClient;
     if (!larkClient) return;
 
     const reply = new FeishuStreamReply(
@@ -841,7 +967,7 @@ export class FeishuBotService {
   }
 
   private async sendCardToThread(thread: Thread, openId: string, card: FeishuCard): Promise<void> {
-    const larkClient = this.connection?.larkClient;
+    const larkClient = this.getActiveConnection()?.larkClient;
     if (!openId || !larkClient) return;
     try {
       await larkClient.im.v1.message.create({
@@ -863,7 +989,7 @@ export class FeishuBotService {
     openId: string,
     card: FeishuCard,
   ): Promise<void> {
-    const larkClient = this.connection?.larkClient;
+    const larkClient = this.getActiveConnection()?.larkClient;
     if (!openId || !larkClient) return;
     const result = await this.createAndSendCardKitCard(larkClient, openId, card);
     if (!result) {
