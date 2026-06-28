@@ -359,10 +359,18 @@ export class FeishuBotService {
   }
 
   /**
-   * Set the active workspace binding and (re)connect the adapter.
-   * Called from the card callback route when an admin selects a workspace.
+   * Set the active workspace binding and update routing.
+   *
+   * - When called from a card callback, `botId` and `actorUserId` are provided and
+   *   the switch is persisted through `BotService` after an Owner check.
+   * - When called from reconnect/fallback paths, only `workspaceId` is provided;
+   *   the first bound bot or workspace-embedded config is used.
    */
-  async setActiveWorkspace(workspaceId: string): Promise<void> {
+  async setActiveWorkspace(
+    workspaceId: string,
+    botId?: string,
+    actorUserId?: string,
+  ): Promise<void> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace || !this.isFeishuEnabled(workspace)) {
       workspaceStore.clearFeishuActiveWorkspace();
@@ -370,17 +378,64 @@ export class FeishuBotService {
       return;
     }
 
-    // Prefer a real bot bound to this workspace; otherwise fall back to the
-    // workspace's embedded Feishu config (pre-migration).
-    const boundBots = botService.listBotsForWorkspace(workspaceId).filter((b) => b.providerSettings.feishu?.enabled);
-    const bot = boundBots[0] ?? this.botFromWorkspace(workspace);
+    let bot: Bot | null = null;
+    if (botId) {
+      bot = botService.getBot(botId);
+    }
+    if (!bot) {
+      const boundBots = botService.listBotsForWorkspace(workspaceId).filter((b) => b.providerSettings.feishu?.enabled);
+      bot = boundBots[0] ?? this.botFromWorkspace(workspace);
+    }
     if (!bot) {
       workspaceStore.clearFeishuActiveWorkspace();
       this.disconnect();
       return;
     }
 
-    await this.connectBot(bot);
+    if (botId && actorUserId) {
+      botService.setActiveWorkspace(botId, workspaceId, {
+        type: 'feishu',
+        provider: 'feishu',
+        providerUserId: actorUserId,
+      });
+    }
+
+    const previousWorkspaceId = this.botIdToWorkspaceId.get(bot.id);
+    const existingConnection = this.connections.get(bot.id);
+    if (existingConnection) {
+      existingConnection.workspaceId = workspaceId;
+      this.activeBotId = bot.id;
+      if (previousWorkspaceId) {
+        this.workspaceIdToBotId.delete(previousWorkspaceId);
+      }
+      this.workspaceIdToBotId.set(workspaceId, bot.id);
+      this.botIdToWorkspaceId.set(bot.id, workspaceId);
+      workspaceStore.setFeishuActiveWorkspace(workspaceId);
+      diagLog(`[FeishuBotService] switched bot ${bot.id} to workspace ${workspaceId}`);
+    } else {
+      await this.connectBot(bot);
+      return;
+    }
+
+    if (previousWorkspaceId && previousWorkspaceId !== workspaceId) {
+      const users = workspaceStore.listFeishuWorkspaceUsers(previousWorkspaceId);
+      const message = `当前机器人已切换到工作空间“${workspace.name}”。你正在进行的任务仍在原工作空间继续。`;
+      for (const user of users) {
+        this.sendProactiveMessage(bot.id, user.openId, message).catch((err) => {
+          diagLog(
+            `[FeishuBotService] failed to notify user ${user.openId} of workspace switch:`,
+            err,
+          );
+        });
+      }
+    }
+  }
+
+  /** Best-effort send a plain-text DM via a bot connection. */
+  private async sendProactiveMessage(botId: string, openId: string, message: string): Promise<void> {
+    const connection = this.connections.get(botId);
+    if (!connection?.larkClient) return;
+    await sendPlainTextMessage(connection.larkClient, openId, message);
   }
 
   /** Build an ephemeral Bot from a workspace's embedded Feishu config. */
@@ -551,7 +606,8 @@ export class FeishuBotService {
 
     try {
       const result = await feishuCardActionHandler.handle(event.user.userId, payload, {
-        setActiveWorkspace: (workspaceId: string) => this.setActiveWorkspace(workspaceId),
+        setActiveWorkspace: (workspaceId: string, botId: string, actorUserId: string) =>
+          this.setActiveWorkspace(workspaceId, botId, actorUserId),
       });
       const content = this.extractToastContent(result);
       if (content) {
@@ -754,14 +810,19 @@ export class FeishuBotService {
     const workspace = await this.requireActiveWorkspace(thread);
     if (!workspace) return;
 
-    const admins = workspace.settings.feishuAdminUserIds ?? [];
-    if (!admins.includes(feishuUserId)) {
+    const connection = this.getActiveConnection();
+    if (!connection) {
+      await this.safePostText(thread, '机器人尚未建立连接，请稍后重试。');
+      return;
+    }
+
+    if (botService.getMemberRole(connection.botId, 'feishu', feishuUserId) !== 'owner') {
       await this.safePostText(thread, '你没有权限切换工作空间。');
       return;
     }
 
     const workspaces = await workspaceStore.list();
-    const card = buildWorkspaceListCard(workspaces);
+    const card = buildWorkspaceListCard(connection.botId, workspaces, connection.workspaceId);
     await this.sendCardToThread(thread, feishuUserId, card);
   }
 

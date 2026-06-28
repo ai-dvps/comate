@@ -3,11 +3,16 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { FeishuCardActionHandler, type CardActionPayload } from './feishu-card-action-handler.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
 import type { Workspace } from '../models/workspace.js';
 
 describe('FeishuCardActionHandler', { concurrency: false }, () => {
   let handler: FeishuCardActionHandler;
+  let botId: string;
+  const ownerUserId = 'owner-1';
+  const nonOwnerUserId = 'user-1';
+
   const originalGet = workspaceStore.get.bind(workspaceStore);
   const originalGetOwner = workspaceStore.getFeishuSessionOwner.bind(workspaceStore);
   const originalGetActiveSession = workspaceStore.getFeishuActiveSession.bind(workspaceStore);
@@ -33,50 +38,67 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
       folderPath: '/tmp/test',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      settings: {
-        feishuAdminUserIds: ['admin-1'],
-      },
+      settings: {},
       ...overrides,
     } as Workspace;
   }
 
   beforeEach(() => {
+    workspaceStore.resetData();
     handler = new FeishuCardActionHandler();
+
+    const bot = botService.createBot({
+      name: 'Test Bot',
+      activeWorkspaceId: 'ws-1',
+      providerSettings: {
+        feishu: {
+          enabled: true,
+          appId: 'app-id',
+          appSecret: 'app-secret',
+        },
+      },
+    });
+    botId = bot.id;
+    botService.addMember(botId, { provider: 'feishu', providerUserId: ownerUserId, role: 'owner' });
+    botService.addMember(botId, { provider: 'feishu', providerUserId: nonOwnerUserId, role: 'normal' });
   });
 
   it('rejects rapid repeated actions via rate limit', async () => {
     workspaceStore.get = async () => makeWorkspace();
 
-    const payload: CardActionPayload = { action: 'select_workspace', workspaceId: 'ws-1' };
-    const first = await handler.handle('admin-1', payload);
-    const second = await handler.handle('admin-1', payload);
+    const payload: CardActionPayload = { action: 'select_workspace', workspaceId: 'ws-1', botId };
+    const first = await handler.handle(ownerUserId, payload);
+    const second = await handler.handle(ownerUserId, payload);
 
     assert.strictEqual((first as { toast: { type: string } }).toast.type, 'success');
     assert.strictEqual((second as { toast: { type: string } }).toast.type, 'error');
   });
 
-  it('select_workspace requires admin permission', async () => {
+  it('select_workspace requires Owner permission', async () => {
     workspaceStore.get = async () => makeWorkspace();
 
-    const payload: CardActionPayload = { action: 'select_workspace', workspaceId: 'ws-1' };
-    const result = await handler.handle('user-1', payload);
+    const payload: CardActionPayload = { action: 'select_workspace', workspaceId: 'ws-1', botId };
+    const result = await handler.handle(nonOwnerUserId, payload);
     assert.strictEqual((result as { toast: { content: string } }).toast.content, '你没有权限切换工作空间。');
   });
 
-  it('select_workspace invokes the setActiveWorkspace callback for admins', async () => {
+  it('select_workspace invokes the setActiveWorkspace callback for Owners', async () => {
     workspaceStore.get = async () => makeWorkspace();
 
-    let calledWorkspaceId: string | null = null;
+    let called: { workspaceId: string; botId: string; actorUserId: string } | null = null;
     const callbacks = {
-      setActiveWorkspace: async (workspaceId: string) => {
-        calledWorkspaceId = workspaceId;
+      setActiveWorkspace: async (workspaceId: string, botId: string, actorUserId: string) => {
+        called = { workspaceId, botId, actorUserId };
       },
     };
 
-    const payload: CardActionPayload = { action: 'select_workspace', workspaceId: 'ws-1' };
-    const result = await handler.handle('admin-1', payload, callbacks);
+    const payload: CardActionPayload = { action: 'select_workspace', workspaceId: 'ws-1', botId };
+    const result = await handler.handle(ownerUserId, payload, callbacks);
 
-    assert.strictEqual(calledWorkspaceId, 'ws-1');
+    assert.ok(called);
+    assert.strictEqual(called!.workspaceId, 'ws-1');
+    assert.strictEqual(called!.botId, botId);
+    assert.strictEqual(called!.actorUserId, ownerUserId);
     assert.strictEqual((result as { toast: { content: string } }).toast.content, '工作空间已切换。');
   });
 

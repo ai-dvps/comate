@@ -1,6 +1,7 @@
 import type { Workspace } from '../models/workspace.js';
 import type { QuestionPayload } from '../types/message.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
 import { createFeishuSessionForUser } from './feishu-session-helpers.js';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
@@ -8,6 +9,7 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 export interface CardActionPayload {
   action: string;
   workspaceId: string;
+  botId?: string;
   sessionId?: string;
   requestId?: string;
   behavior?: 'allow' | 'deny';
@@ -17,7 +19,7 @@ export interface CardActionPayload {
 }
 
 export interface CardActionCallbacks {
-  setActiveWorkspace?: (workspaceId: string) => Promise<void>;
+  setActiveWorkspace?: (workspaceId: string, botId: string, actorUserId: string) => Promise<void>;
 }
 
 interface PendingQuestionState {
@@ -68,22 +70,27 @@ export class FeishuCardActionHandler {
     }
   }
 
-  private handleSelectWorkspace(
+  private async handleSelectWorkspace(
     openId: string,
     workspace: Workspace,
     payload: CardActionPayload,
     callbacks?: CardActionCallbacks,
-  ): unknown {
-    const admins = workspace.settings.feishuAdminUserIds ?? [];
-    if (!admins.includes(openId)) {
+  ): Promise<unknown> {
+    if (!payload.botId) {
+      return this.toast('缺少机器人信息。', 'error');
+    }
+    if (botService.getMemberRole(payload.botId, 'feishu', openId) !== 'owner') {
       return this.toast('你没有权限切换工作空间。', 'error');
     }
     if (!payload.workspaceId) {
       return this.toast('缺少工作空间信息。', 'error');
     }
-    callbacks?.setActiveWorkspace?.(payload.workspaceId).catch((err) => {
+    try {
+      await callbacks?.setActiveWorkspace?.(payload.workspaceId, payload.botId, openId);
+    } catch (err) {
       console.error('[FeishuCardActionHandler] setActiveWorkspace failed:', err);
-    });
+      return this.toast('切换工作空间失败。', 'error');
+    }
     return this.toast('工作空间已切换。');
   }
 

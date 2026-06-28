@@ -3,6 +3,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { FeishuBotService } from './feishu-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
 import { feishuUserResolver } from './feishu-user-resolver.js';
 import type { SseEvent } from '../types/message.js';
@@ -64,6 +65,7 @@ describe('FeishuBotService', () => {
   let resolverCalls: Array<{ workspaceId: string; openId: string }>;
 
   let larkCalls: Array<{ method: string; args: unknown }>;
+  let botId: string;
 
   const feishuUserId = 'ou_123';
 
@@ -130,6 +132,21 @@ describe('FeishuBotService', () => {
     originalFeishuUserResolverResolveOnMessage = feishuUserResolver.resolveOnMessage.bind(feishuUserResolver);
 
     workspaceStore.resetData();
+
+    const bot = botService.createBot({
+      name: 'Test Bot',
+      activeWorkspaceId: workspace.id,
+      providerSettings: {
+        feishu: {
+          enabled: true,
+          appId: 'app-id',
+          appSecret: 'app-secret',
+        },
+      },
+    });
+    botId = bot.id;
+    botService.addMember(botId, { provider: 'feishu', providerUserId: feishuUserId, role: 'owner' });
+
     feishuUserResolver.resolveOnMessage = async (workspaceId: string, openId: string) => {
       resolverCalls.push({ workspaceId, openId });
     };
@@ -231,7 +248,7 @@ describe('FeishuBotService', () => {
         },
       },
       workspaceId: workspace.id,
-      botId: 'feishu-bot-1',
+      botId,
     };
     const internals = service as unknown as {
       connections: Map<string, { larkClient: MockLarkClient; workspaceId: string; botId: string }>;
@@ -239,7 +256,7 @@ describe('FeishuBotService', () => {
       workspaceIdToBotId: Map<string, string>;
       botIdToWorkspaceId: Map<string, string>;
     };
-    internals.connections.set(injectedConnection.botId, injectedConnection);
+    internals.connections.set(botId, injectedConnection);
     internals.activeBotId = injectedConnection.botId;
     internals.workspaceIdToBotId.set(workspace.id, injectedConnection.botId);
     internals.botIdToWorkspaceId.set(injectedConnection.botId, workspace.id);
@@ -451,12 +468,13 @@ describe('FeishuBotService', () => {
       );
     });
 
-    it('/workspace denies non-admin users before sending any card', async () => {
-      workspace.settings.feishuAdminUserIds = ['ou_other'];
+    it('/workspace denies non-Owner users before sending any card', async () => {
+      const nonOwnerId = 'ou_non_owner';
+      botService.addMember(botId, { provider: 'feishu', providerUserId: nonOwnerId, role: 'normal' });
 
       await (service as unknown as { handleWorkspaceCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleWorkspaceCommand(
         thread,
-        feishuUserId,
+        nonOwnerId,
       );
 
       const interactiveCalls = larkCalls.filter(
@@ -464,7 +482,7 @@ describe('FeishuBotService', () => {
           c.method === 'im.message.create' &&
           (c.args as { data: { msg_type: string } }).data.msg_type === 'interactive',
       );
-      assert.strictEqual(interactiveCalls.length, 0, 'no card should be sent to non-admins');
+      assert.strictEqual(interactiveCalls.length, 0, 'no card should be sent to non-Owners');
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('没有权限')));
     });
@@ -670,6 +688,29 @@ describe('FeishuBotService', () => {
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('处理操作失败')));
+    });
+
+    it('select_workspace switches the active workspace and updates routing maps', async () => {
+      workspaceStore.get = async () => workspace;
+      workspaceStore.getFeishuActiveWorkspace = originalGetFeishuActiveWorkspace;
+
+      const payload = JSON.stringify({ action: 'select_workspace', workspaceId: 'ws-2', botId });
+      await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
+        makeActionEvent(payload, undefined, feishuUserId),
+      );
+
+      const internals = service as unknown as {
+        connections: Map<string, { workspaceId: string; botId: string }>;
+        workspaceIdToBotId: Map<string, string>;
+      };
+      const connection = internals.connections.get(botId);
+      assert.ok(connection);
+      assert.strictEqual(connection.workspaceId, 'ws-2');
+      assert.strictEqual(internals.workspaceIdToBotId.get('ws-2'), botId);
+      assert.strictEqual(workspaceStore.getFeishuActiveWorkspace(), 'ws-2');
+
+      const textPosts = getTextPosts();
+      assert.ok(textPosts.some((text) => String(text).includes('工作空间已切换')));
     });
 
     it('wraps dispatcher card.action.trigger to return the disabled card response', async () => {
