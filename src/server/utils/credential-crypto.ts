@@ -2,6 +2,7 @@ import { randomBytes, createCipheriv, createDecipheriv, scryptSync } from 'crypt
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { getStorageDir } from '../storage/data-dir.js';
+import { diagLog } from './diag-logger.js';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -75,15 +76,23 @@ export function encryptCredential(plaintext: string): string {
  * been tampered with or the key is incorrect.
  */
 export function decryptCredential(ciphertext: string): string {
-  const key = getCredentialKey();
-  const combined = Buffer.from(ciphertext, 'base64');
-  if (combined.length < IV_LENGTH + AUTH_TAG_LENGTH) {
-    throw new Error('Credential ciphertext is too short');
+  try {
+    const key = getCredentialKey();
+    const combined = Buffer.from(ciphertext, 'base64');
+    if (combined.length < IV_LENGTH + AUTH_TAG_LENGTH) {
+      throw new Error('Credential ciphertext is too short');
+    }
+    const iv = combined.subarray(0, IV_LENGTH);
+    const authTag = combined.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+    const encrypted = combined.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+    const decipher = createDecipheriv(ALGORITHM, key, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf-8');
+  } catch (err) {
+    diagLog('Credential decryption failed', {
+      error: err instanceof Error ? err.message : String(err),
+      ciphertextLength: ciphertext.length,
+    });
+    throw new Error('Failed to decrypt credential');
   }
-  const iv = combined.subarray(0, IV_LENGTH);
-  const authTag = combined.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
-  const encrypted = combined.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(authTag);
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf-8');
 }

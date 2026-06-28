@@ -24,6 +24,7 @@ import { evaluateToolPermission, getToolPermissionDenialReason, resolveEffective
 import { createPathPolicyContext, validateToolInput } from './bot-path-policy.js';
 import { evaluateSkill } from './bot-skill-policy.js';
 import { botService } from './bot-service.js';
+import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
@@ -1187,6 +1188,26 @@ export class ChatService {
                 diagLog(
                   `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'path-denied'}`,
                 );
+                if (session.botId && provider && providerUserId) {
+                  botAuditLogger.logFileAccessDenied(
+                    session.botId,
+                    { type: provider, provider, providerUserId },
+                    {
+                      sessionId: session.id,
+                      toolName,
+                      reason: r.reason ?? 'path-denied',
+                      path: typeof input.file_path === 'string'
+                        ? input.file_path
+                        : typeof input.notebook_path === 'string'
+                          ? input.notebook_path
+                          : typeof input.pattern === 'string'
+                            ? input.pattern
+                            : typeof input.path === 'string'
+                              ? input.path
+                              : undefined,
+                    },
+                  );
+                }
                 return {
                   behavior: 'deny' as const,
                   message: "I can't do that in this workspace.",
@@ -1352,6 +1373,26 @@ export class ChatService {
               diagLog(
                 `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'path-denied'}`,
               );
+              if (session.botId && canonicalUserId && (session.source === 'wecom' || session.source === 'feishu')) {
+                botAuditLogger.logFileAccessDenied(
+                  session.botId,
+                  { type: session.source, provider: session.source, providerUserId: canonicalUserId },
+                  {
+                    sessionId: session.id,
+                    toolName,
+                    reason: r.reason ?? 'path-denied',
+                    path: typeof input.file_path === 'string'
+                      ? input.file_path
+                      : typeof input.notebook_path === 'string'
+                        ? input.notebook_path
+                        : typeof input.pattern === 'string'
+                          ? input.pattern
+                          : typeof input.path === 'string'
+                            ? input.path
+                            : undefined,
+                  },
+                );
+              }
               return {
                 behavior: 'deny' as const,
                 message: "I can't do that in this workspace.",

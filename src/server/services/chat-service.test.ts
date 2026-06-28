@@ -1783,9 +1783,16 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
   });
 
   it('Normal user cannot read workspace denylisted files', async () => {
-    const { canUseTool, folderPath } = await setupBotSession('normal', ['**/*.secret']);
+    const { canUseTool, folderPath, botId } = await setupBotSession('normal', ['**/*.secret']);
     const result = await canUseTool('Read', { file_path: path.join(folderPath, 'data', 'user-1', 'x.secret') });
     assert.strictEqual(result.behavior, 'deny');
+
+    const logs = workspaceStore.listAuditLogs(botId);
+    assert.ok(logs.some((l) =>
+      l.eventType === 'file_access_denied' &&
+      l.details.toolName === 'Read' &&
+      typeof l.details.reason === 'string',
+    ));
   });
 
   it('Admin user can read workspace denylisted files', async () => {

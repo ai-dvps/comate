@@ -1,4 +1,9 @@
 import '../test-utils/test-env.js';
+
+// Force diagnostic logs to mirror to console so this test can inspect the log
+// output without depending on asynchronous file-stream flushing.
+process.env.COMATE_SIDECAR = '0';
+
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
@@ -71,5 +76,35 @@ describe('credential-crypto', { concurrency: false }, () => {
       decryptCredential(encryptCredential('中文 🔐 \n multi-line')),
       '中文 🔐 \n multi-line',
     );
+  });
+
+  it('does not leak ciphertext in the error or diagnostic log on decrypt failure', () => {
+    const keyA = deriveKeyFromPassphrase('passphrase-a');
+    const keyB = deriveKeyFromPassphrase('passphrase-b');
+
+    __setCredentialKey(keyA);
+    const ciphertext = encryptCredential('do-not-leak');
+
+    __setCredentialKey(keyB);
+    let thrown: Error | undefined;
+    const logged: unknown[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logged.push(args);
+    try {
+      decryptCredential(ciphertext);
+    } catch (err) {
+      thrown = err as Error;
+    } finally {
+      console.log = originalLog;
+    }
+
+    assert.ok(thrown, 'expected decrypt to throw');
+    assert.strictEqual(thrown.message, 'Failed to decrypt credential');
+    assert.ok(!thrown.message.includes(ciphertext));
+
+    const logText = logged.map((a) => (Array.isArray(a) ? a.join(' ') : String(a))).join('\n');
+    assert.ok(logText.includes('Credential decryption failed'));
+    assert.ok(logText.includes(`ciphertextLength: ${ciphertext.length}`));
+    assert.ok(!logText.includes(ciphertext));
   });
 });
