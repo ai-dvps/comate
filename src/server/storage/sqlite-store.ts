@@ -1257,13 +1257,14 @@ export class SqliteStore {
 
   syncSdkSession(session: ChatSession): void {
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, bot_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         is_draft = excluded.is_draft,
-        source = excluded.source,
+        source = COALESCE(excluded.source, sessions.source),
         provider_id = COALESCE(excluded.provider_id, sessions.provider_id),
+        bot_id = COALESCE(excluded.bot_id, sessions.bot_id),
         updated_at = excluded.updated_at,
         summary = excluded.summary,
         last_modified = excluded.last_modified,
@@ -1279,6 +1280,7 @@ export class SqliteStore {
       0,
       session.source ?? null,
       session.providerId ?? null,
+      session.botId ?? null,
       session.createdAt,
       session.updatedAt,
       session.summary ?? null,

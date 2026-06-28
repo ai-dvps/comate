@@ -12,11 +12,13 @@ export async function createFeishuSessionForUser(
   workspace: Workspace,
   openId: string,
   name?: string,
+  botId?: string,
 ): Promise<ChatSession> {
   const session = await chatService.createSession({
     workspaceId: workspace.id,
     name: name ?? openId,
     source: 'feishu',
+    botId,
   });
   workspaceStore.addFeishuUserSession(workspace.id, openId, session.id);
   workspaceStore.setFeishuActiveSession(workspace.id, openId, session.id);

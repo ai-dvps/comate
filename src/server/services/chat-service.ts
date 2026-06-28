@@ -23,6 +23,8 @@ import { pluginSettingsService } from './plugin-settings-service.js';
 import { evaluateToolPermission, getToolPermissionDenialReason, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { createPathPolicyContext, validateToolInput } from './bot-path-policy.js';
 import { evaluateSkill } from './bot-skill-policy.js';
+import { botService } from './bot-service.js';
+import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 
@@ -167,7 +169,15 @@ export class ChatService {
   }
 
   async createSession(input: CreateSessionInput): Promise<ChatSession> {
-    return workspaceStore.createLocalSession(input.workspaceId, input.name, input.approvalMode, input.providerId, input.source, input.customTitle);
+    return workspaceStore.createLocalSession(
+      input.workspaceId,
+      input.name,
+      input.approvalMode,
+      input.providerId,
+      input.source,
+      input.customTitle,
+      input.botId,
+    );
   }
 
   async getSession(id: string, workspaceId: string): Promise<ChatSession | null> {
@@ -184,6 +194,8 @@ export class ChatService {
           session.isWip = localSession?.isWip;
           session.isArchived = localSession?.isArchived;
           session.approvalMode = localSession?.approvalMode;
+          session.botId = localSession?.botId;
+          session.source = localSession?.source;
           workspaceStore.syncSdkSession(session);
           return session;
         }
@@ -1053,14 +1065,6 @@ export class ChatService {
     };
 
     if (isBotSession) {
-      // Resolve the workspace's tool permission policy once at runtime creation.
-      // The policy is snapshotted for the lifetime of this cached runtime; policy
-      // changes apply to the next runtime open, not mid-conversation. See
-      // docs/brainstorms/2026-06-14-wecom-bot-tool-permissions-requirements.md
-      // and plan KTD "Policy changes apply to the next bot session".
-      const resolved = resolveEffectivePolicy(workspace);
-      const policy = resolved.policy;
-
       // Sanitize the child process environment for bot sessions: remove WeCom
       // and non-Anthropic cloud credentials. Anthropic provider keys are kept
       // because the SDK child needs them to call the API.
@@ -1071,165 +1075,364 @@ export class ChatService {
       // Ensure the returned options point to the sanitized env.
       options.env = env;
 
-      // Resolve the canonical bot user identity for this session. Prefer the
-      // explicitly supplied Feishu user ID, otherwise fall back to the existing
-      // WeCom user mapping for backward compatibility.
-      const wecomUserId = workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
-      const canonicalUserId = botUserId
-        ?? (wecomUserId
-          ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId)
-          : undefined);
-
-      let pathContext: import('./bot-path-policy.js').PathPolicyContext | undefined;
-      let skillContext: import('./bot-skill-policy.js').SkillPolicyContext | undefined;
-
-      if (canonicalUserId) {
-        const userDirName = canonicalUserId;
-        const wsUsers = workspaceStore.listWecomWorkspaceUsers(workspace.id);
-        const mappings = workspaceStore.listWecomUserMappings();
-        const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
-        const knownUserDirNames = wsUsers.map((u) => mappingMap.get(u.encryptedUserId) ?? u.encryptedUserId);
-
-        pathContext = createPathPolicyContext(workspace, userDirName, knownUserDirNames);
-        const isolation = workspace.settings.wecomBotIsolation;
-        const isAdmin = isolation?.adminUserIds?.includes(canonicalUserId) ?? false;
-        pathContext.isAdmin = isAdmin;
-        const skillPolicy: BotRolePolicy = {
-          normalToolPolicy: SAFE_PRESET,
-          skillAllowlist: isolation?.defaultAllowedSkills ?? [],
-          bashWhitelist: [],
-        };
-        skillContext = { policy: skillPolicy, isAdminOrOwner: isAdmin };
+      // Resolve the canonical provider identity for this session.
+      const provider = session.source === 'wecom' || session.source === 'feishu' ? session.source : undefined;
+      let providerUserId: string | undefined;
+      if (provider === 'wecom') {
+        const wecomUserId = workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
+        providerUserId = wecomUserId ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId) : undefined;
+      } else if (provider === 'feishu') {
+        providerUserId = botUserId;
       }
 
-      options.canUseTool = async (
-        toolName: string,
-        input: Record<string, unknown>,
-        sdkOptions: {
-          signal: AbortSignal;
-          suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
-          title?: string;
-          description?: string;
-          toolUseID: string;
-          decisionReasonType?: string;
-        },
-      ) => {
-        const decision = evaluateToolPermission(policy, toolName, pathContext?.isAdmin ?? false);
-        // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
-        // without a category fit). Fall through to today's allow-all behavior
-        // per R10. The brainstorm explicitly defers MCP and Skills gating.
-        if (decision === 'deny') {
-          // Generic denial message — do NOT name the capability. Inbound WeCom
-          // messages are an untrusted channel; naming the denied capability
-          // would let an attacker probe the policy by mapping denials.
-          const reason = getToolPermissionDenialReason(policy, toolName);
-          diagLog(
-            `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${reason ?? 'deny'}`,
+      let pathContext: import('./bot-path-policy.js').PathPolicyContext | undefined;
+
+      if (session.botId) {
+        // Dynamic bot-level policy: role is resolved at call time so membership
+        // and role changes take effect on the next tool use without restarting
+        // the runtime. See plan KTD3.
+        const bot = botService.getBot(session.botId);
+        if (bot) {
+          const isAdminOrOwnerForContext = provider && providerUserId
+            ? isOwnerOrAdmin(botService.getMemberRole(bot.id, provider, providerUserId))
+            : false;
+
+          const knownUserDirNames: string[] = [];
+          if (provider === 'wecom') {
+            const wsUsers = workspaceStore.listWecomWorkspaceUsers(workspace.id);
+            const mappings = workspaceStore.listWecomUserMappings();
+            const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
+            for (const u of wsUsers) {
+              knownUserDirNames.push(mappingMap.get(u.encryptedUserId) ?? u.encryptedUserId);
+            }
+          } else if (provider === 'feishu') {
+            for (const u of workspaceStore.listFeishuWorkspaceUsers(workspace.id)) {
+              knownUserDirNames.push(u.openId);
+            }
+          }
+
+          const userDirName = providerUserId ?? 'anonymous';
+          pathContext = createPathPolicyContext(
+            workspace,
+            userDirName,
+            knownUserDirNames,
+            isAdminOrOwnerForContext,
+            workspace.settings.sensitiveFileDenylist ?? [],
           );
-          return {
-            behavior: 'deny' as const,
-            message: "I can't do that in this workspace.",
+
+          options.canUseTool = async (
+            toolName: string,
+            input: Record<string, unknown>,
+            sdkOptions: {
+              signal: AbortSignal;
+              suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+              title?: string;
+              description?: string;
+              toolUseID: string;
+              decisionReasonType?: string;
+            },
+          ) => {
+            // Resolve role dynamically on every tool use so membership/role changes
+            // take effect without restarting the runtime.
+            const role = provider && providerUserId
+              ? botService.getMemberRole(bot.id, provider, providerUserId)
+              : null;
+            const decision = evaluateBotToolPermission(bot, role, toolName);
+            // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
+            // without a category fit). Fall through to today's allow-all behavior
+            // per R10. The brainstorm explicitly defers MCP and Skills gating.
+            // Identity failure = fail closed on file/Bash/Skill tools.
+            if (!providerUserId && IDENTITY_SENSITIVE_TOOLS.has(toolName)) {
+              diagLog(
+                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-identity`,
+              );
+              return {
+                behavior: 'deny' as const,
+                message: "I can't do that in this workspace.",
+              };
+            }
+
+            // Bash whitelist overrides the Shell category for Normal users; Owner/Admin
+            // bypass the whitelist entirely.
+            if (toolName === 'Bash' && typeof input.command === 'string' && providerUserId) {
+              if (isBashCommandAllowed(bot, role, input.command)) {
+                return { behavior: 'allow' as const, updatedInput: input };
+              }
+              diagLog(
+                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=bash-whitelist`,
+              );
+              return {
+                behavior: 'deny' as const,
+                message: "I can't do that in this workspace.",
+              };
+            }
+
+            if (decision === 'deny') {
+              // Generic denial message — do NOT name the capability. Inbound bot
+              // messages are an untrusted channel; naming the denied capability
+              // would let an attacker probe the policy by mapping denials.
+              const reason = getToolPermissionDenialReason(bot.rolePolicy.normalToolPolicy, toolName);
+              diagLog(
+                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${reason ?? 'deny'}`,
+              );
+              return {
+                behavior: 'deny' as const,
+                message: "I can't do that in this workspace.",
+              };
+            }
+
+            if (FILE_TOOLS.has(toolName) && pathContext) {
+              const r = validateToolInput(pathContext, toolName, input);
+              if (!r.allowed) {
+                diagLog(
+                  `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'path-denied'}`,
+                );
+                return {
+                  behavior: 'deny' as const,
+                  message: "I can't do that in this workspace.",
+                };
+              }
+            }
+
+            if (toolName === 'Skill') {
+              const r = evaluateBotSkill(bot, role, toolName, input);
+              if (!r.allowed) {
+                diagLog(
+                  `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'skill-denied'}`,
+                );
+                return {
+                  behavior: 'deny' as const,
+                  message: "I can't do that in this workspace.",
+                };
+              }
+            }
+
+            // AskUserQuestion always requires user input, regardless of policy
+            if (toolName === 'AskUserQuestion') {
+              const runtime = this.runtimes.get(session.id);
+              if (!runtime) {
+                diagLog(
+                  `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
+                );
+                return {
+                  behavior: 'deny' as const,
+                  message: "I can't do that in this workspace.",
+                };
+              }
+              const questions = (input.questions as unknown[] ?? []).map((q: unknown) => {
+                const qx = q as Record<string, unknown>;
+                return {
+                  question: typeof qx.question === 'string' ? qx.question : '',
+                  header: typeof qx.header === 'string' ? qx.header : undefined,
+                  options: Array.isArray(qx.options)
+                    ? qx.options.map((o: unknown) => {
+                        const ox = o as Record<string, unknown>;
+                        return {
+                          label: typeof ox.label === 'string' ? ox.label : '',
+                          description: typeof ox.description === 'string' ? ox.description : undefined,
+                          preview: typeof ox.preview === 'string' ? ox.preview : undefined,
+                        };
+                      })
+                    : [],
+                  multiSelect: qx.multiSelect === true,
+                };
+              });
+              const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+              return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
+                timeout,
+                signal: sdkOptions.signal,
+              });
+            }
+
+            if (decision === 'ask') {
+              const runtime = this.runtimes.get(session.id);
+              if (!runtime) {
+                diagLog(
+                  `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
+                );
+                return {
+                  behavior: 'deny' as const,
+                  message: "I can't do that in this workspace.",
+                };
+              }
+              const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+              return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
+                title: sdkOptions.title,
+                description: sdkOptions.description,
+                suggestions: sdkOptions.suggestions,
+                timeout,
+                signal: sdkOptions.signal,
+                decisionReasonType: sdkOptions.decisionReasonType,
+              });
+            }
+
+            return { behavior: 'allow' as const, updatedInput: input };
           };
         }
+      }
 
-        // Identity failure = fail closed on file/Bash/Skill tools.
-        if (!canonicalUserId && IDENTITY_SENSITIVE_TOOLS.has(toolName)) {
-          diagLog(
-            `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-identity`,
+      // Legacy workspace-scoped fallback for bot sessions created before migration
+      // or without an explicit bot binding.
+      if (!options.canUseTool) {
+        const resolved = resolveEffectivePolicy(workspace);
+        const policy = resolved.policy;
+        const wecomUserId = workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
+        const canonicalUserId = botUserId
+          ?? (wecomUserId
+            ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId)
+            : undefined);
+
+        let skillContext: import('./bot-skill-policy.js').SkillPolicyContext | undefined;
+
+        if (canonicalUserId) {
+          const userDirName = canonicalUserId;
+          const wsUsers = workspaceStore.listWecomWorkspaceUsers(workspace.id);
+          const mappings = workspaceStore.listWecomUserMappings();
+          const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
+          const knownUserDirNames = wsUsers.map((u) => mappingMap.get(u.encryptedUserId) ?? u.encryptedUserId);
+
+          pathContext = createPathPolicyContext(
+            workspace,
+            userDirName,
+            knownUserDirNames,
+            false,
+            workspace.settings.sensitiveFileDenylist ?? [],
           );
-          return {
-            behavior: 'deny' as const,
-            message: "I can't do that in this workspace.",
+          const isolation = workspace.settings.wecomBotIsolation;
+          const isAdmin = isolation?.adminUserIds?.includes(canonicalUserId) ?? false;
+          pathContext = {
+            ...pathContext,
+            isAdminOrOwner: isAdmin,
           };
+          const skillPolicy: BotRolePolicy = {
+            normalToolPolicy: SAFE_PRESET,
+            skillAllowlist: isolation?.defaultAllowedSkills ?? [],
+            bashWhitelist: [],
+          };
+          skillContext = { policy: skillPolicy, isAdminOrOwner: isAdmin };
         }
 
-        if (FILE_TOOLS.has(toolName) && pathContext) {
-          const r = validateToolInput(pathContext, toolName, input);
-          if (!r.allowed) {
+        options.canUseTool = async (
+          toolName: string,
+          input: Record<string, unknown>,
+          sdkOptions: {
+            signal: AbortSignal;
+            suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+            title?: string;
+            description?: string;
+            toolUseID: string;
+            decisionReasonType?: string;
+          },
+        ) => {
+          const decision = evaluateToolPermission(policy, toolName, pathContext?.isAdminOrOwner ?? false);
+          if (decision === 'deny') {
+            const reason = getToolPermissionDenialReason(policy, toolName);
             diagLog(
-              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'path-denied'}`,
+              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${reason ?? 'deny'}`,
             );
             return {
               behavior: 'deny' as const,
               message: "I can't do that in this workspace.",
             };
           }
-        }
 
-        if (toolName === 'Skill' && skillContext) {
-          const r = evaluateSkill(skillContext, toolName, input);
-          if (!r.allowed) {
+          if (!canonicalUserId && IDENTITY_SENSITIVE_TOOLS.has(toolName)) {
             diagLog(
-              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'skill-denied'}`,
+              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-identity`,
             );
             return {
               behavior: 'deny' as const,
               message: "I can't do that in this workspace.",
             };
           }
-        }
 
-        // AskUserQuestion always requires user input, regardless of policy
-        if (toolName === 'AskUserQuestion') {
-          const runtime = this.runtimes.get(session.id);
-          if (!runtime) {
-            diagLog(
-              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
-            );
-            return {
-              behavior: 'deny' as const,
-              message: "I can't do that in this workspace.",
-            };
+          if (FILE_TOOLS.has(toolName) && pathContext) {
+            const r = validateToolInput(pathContext, toolName, input);
+            if (!r.allowed) {
+              diagLog(
+                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'path-denied'}`,
+              );
+              return {
+                behavior: 'deny' as const,
+                message: "I can't do that in this workspace.",
+              };
+            }
           }
-          const questions = (input.questions as unknown[] ?? []).map((q: unknown) => {
-            const qx = q as Record<string, unknown>;
-            return {
-              question: typeof qx.question === 'string' ? qx.question : '',
-              header: typeof qx.header === 'string' ? qx.header : undefined,
-              options: Array.isArray(qx.options)
-                ? qx.options.map((o: unknown) => {
-                    const ox = o as Record<string, unknown>;
-                    return {
-                      label: typeof ox.label === 'string' ? ox.label : '',
-                      description: typeof ox.description === 'string' ? ox.description : undefined,
-                      preview: typeof ox.preview === 'string' ? ox.preview : undefined,
-                    };
-                  })
-                : [],
-              multiSelect: qx.multiSelect === true,
-            };
-          });
-          const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
-          return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
-            timeout,
-            signal: sdkOptions.signal,
-          });
-        }
 
-        if (decision === 'ask') {
-          const runtime = this.runtimes.get(session.id);
-          if (!runtime) {
-            diagLog(
-              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
-            );
-            return {
-              behavior: 'deny' as const,
-              message: "I can't do that in this workspace.",
-            };
+          if (toolName === 'Skill' && skillContext) {
+            const r = evaluateSkill(skillContext, toolName, input);
+            if (!r.allowed) {
+              diagLog(
+                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'skill-denied'}`,
+              );
+              return {
+                behavior: 'deny' as const,
+                message: "I can't do that in this workspace.",
+              };
+            }
           }
-          const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
-          return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
-            title: sdkOptions.title,
-            description: sdkOptions.description,
-            suggestions: sdkOptions.suggestions,
-            timeout,
-            signal: sdkOptions.signal,
-            decisionReasonType: sdkOptions.decisionReasonType,
-          });
-        }
 
-        return { behavior: 'allow' as const, updatedInput: input };
-      };
+          if (toolName === 'AskUserQuestion') {
+            const runtime = this.runtimes.get(session.id);
+            if (!runtime) {
+              diagLog(
+                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
+              );
+              return {
+                behavior: 'deny' as const,
+                message: "I can't do that in this workspace.",
+              };
+            }
+            const questions = (input.questions as unknown[] ?? []).map((q: unknown) => {
+              const qx = q as Record<string, unknown>;
+              return {
+                question: typeof qx.question === 'string' ? qx.question : '',
+                header: typeof qx.header === 'string' ? qx.header : undefined,
+                options: Array.isArray(qx.options)
+                  ? qx.options.map((o: unknown) => {
+                      const ox = o as Record<string, unknown>;
+                      return {
+                        label: typeof ox.label === 'string' ? ox.label : '',
+                        description: typeof ox.description === 'string' ? ox.description : undefined,
+                        preview: typeof ox.preview === 'string' ? ox.preview : undefined,
+                      };
+                    })
+                  : [],
+                multiSelect: qx.multiSelect === true,
+              };
+            });
+            const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+            return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
+              timeout,
+              signal: sdkOptions.signal,
+            });
+          }
+
+          if (decision === 'ask') {
+            const runtime = this.runtimes.get(session.id);
+            if (!runtime) {
+              diagLog(
+                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
+              );
+              return {
+                behavior: 'deny' as const,
+                message: "I can't do that in this workspace.",
+              };
+            }
+            const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+            return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
+              title: sdkOptions.title,
+              description: sdkOptions.description,
+              suggestions: sdkOptions.suggestions,
+              timeout,
+              signal: sdkOptions.signal,
+              decisionReasonType: sdkOptions.decisionReasonType,
+            });
+          }
+
+          return { behavior: 'allow' as const, updatedInput: input };
+        };
+      }
     }
 
     if (session.isDraft) {

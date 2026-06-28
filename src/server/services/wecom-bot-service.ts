@@ -209,6 +209,10 @@ export class WeComBotService {
     };
 
     this.connections.set(bot.id, conn);
+    if (workspaceId) {
+      this.workspaceIdToBotId.set(workspaceId, bot.id);
+      this.botIdToWorkspaceId.set(bot.id, workspaceId);
+    }
 
     client.on('authenticated', async () => {
       conn.status = 'connected';
@@ -783,11 +787,13 @@ export class WeComBotService {
     name: string,
     customTitle?: string,
   ): Promise<string> {
+    const botId = this.workspaceIdToBotId.get(workspaceId) ?? undefined;
     const session = await chatService.createSession({
       workspaceId,
       name,
       source: 'wecom',
       customTitle,
+      botId,
     });
     workspaceStore.setWecomSession(workspaceId, wecomUserId, session.id);
     workspaceStore.setActiveWecomSession(workspaceId, wecomUserId, session.id);
