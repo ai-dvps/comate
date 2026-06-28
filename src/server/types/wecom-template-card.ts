@@ -9,7 +9,7 @@ import type { TemplateCard } from '@wecom/aibot-node-sdk';
  * by the `/resume` session-switch card and is branched on in
  * `handleTemplateCardEvent` before the runtime lookup.
  */
-export type ToolApprovalAction = 'allow' | 'always_allow' | 'deny' | 'resume';
+export type ToolApprovalAction = 'allow' | 'always_allow' | 'deny' | 'resume' | 'select_workspace';
 
 /** The decoded payload embedded in a button key. */
 export interface DecodedKeyPayload {
@@ -61,6 +61,17 @@ export interface QuestionCardOptions {
     multiSelect: boolean;
   }>;
   taskId?: string;
+}
+
+/** Options for building a workspace-switch (`/workspace`) card. */
+export interface WorkspaceListCardOptions {
+  requestId: string;
+  /** The bot whose active workspace is being selected; encoded into the submit key. */
+  botId: string;
+  /** A stable task_id so later updateTemplateCard can target the card. */
+  taskId?: string;
+  /** Workspaces available for binding. The option `id` carries the workspaceId (stateless). */
+  workspaces: Array<{ workspaceId: string; name: string; isActive: boolean }>;
 }
 
 /** Options for building a session-list (`/resume`) card. */

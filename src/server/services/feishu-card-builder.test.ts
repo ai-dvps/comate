@@ -111,23 +111,23 @@ describe('buildWorkspaceListCard', () => {
       { id: 'ws-1', name: 'A', folderPath: '/a' } as Workspace,
       { id: 'ws-2', name: 'B', folderPath: '/b' } as Workspace,
     ];
-    const card = buildWorkspaceListCard(workspaces);
+    const card = buildWorkspaceListCard('bot-1', workspaces, 'ws-1');
     assert.strictEqual(card.schema, '2.0');
     assert.strictEqual(card.body.elements.length, 5);
 
     const buttons = findAllByTag(card.body.elements, 'button');
     assert.strictEqual(buttons.length, 2);
     assert.deepStrictEqual(buttons[0].behaviors, [
-      { type: 'callback', value: { action: 'select_workspace', workspaceId: 'ws-1' } },
+      { type: 'callback', value: { action: 'select_workspace', botId: 'bot-1', workspaceId: 'ws-1' } },
     ]);
     assert.deepStrictEqual(buttons[1].behaviors, [
-      { type: 'callback', value: { action: 'select_workspace', workspaceId: 'ws-2' } },
+      { type: 'callback', value: { action: 'select_workspace', botId: 'bot-1', workspaceId: 'ws-2' } },
     ]);
   });
 
   it('renders an empty-state hint when there are no workspaces', () => {
-    const card = buildWorkspaceListCard([]);
-    assert.strictEqual(card.body.elements.length, 1);
+    const card = buildWorkspaceListCard('bot-1', []);
+    assert.strictEqual(card.body.elements.length, 2);
     const hint = findByTag(card.body.elements, 'markdown');
     assert.ok(hint);
     assert.ok((hint.content as string).includes('绑定目标'));

@@ -134,16 +134,27 @@ export function formContainer(name: string, elements: unknown[], elementId?: str
   return form;
 }
 
-export function buildWorkspaceListCard(workspaces: Workspace[]): FeishuCardV2 {
+export function buildWorkspaceListCard(
+  botId: string,
+  workspaces: Workspace[],
+  activeWorkspaceId?: string,
+): FeishuCardV2 {
   const elements: unknown[] = [
     markdownText('请选择一个工作空间作为当前 Feishu 机器人的绑定目标。'),
   ];
 
+  if (workspaces.length === 0) {
+    elements.push(plainText('暂无可用的工作空间。'));
+    return cardV2(elements);
+  }
+
   for (const workspace of workspaces) {
+    const isActive = workspace.id === activeWorkspaceId;
     elements.push(
-      plainText(`${workspace.name}  (${workspace.folderPath})`),
-      actionButton('选择', 'primary', {
+      plainText(`${workspace.name}  (${workspace.folderPath})${isActive ? ' （当前）' : ''}`),
+      actionButton('选择', isActive ? 'default' : 'primary', {
         action: 'select_workspace',
+        botId,
         workspaceId: workspace.id,
       }),
     );

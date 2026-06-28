@@ -15,6 +15,7 @@ import type {
   ToolApprovalCardOptions,
   QuestionCardOptions,
   SessionListCardOptions,
+  WorkspaceListCardOptions,
 } from '../types/wecom-template-card.js';
 
 const KEY_PREFIX = 'comate:1:';
@@ -149,7 +150,13 @@ export function decodeButtonKey(key: string): DecodedKeyPayload | undefined {
 }
 
 function isValidAction(a: unknown): a is ToolApprovalAction {
-  return a === 'allow' || a === 'always_allow' || a === 'deny' || a === 'resume';
+  return (
+    a === 'allow' ||
+    a === 'always_allow' ||
+    a === 'deny' ||
+    a === 'resume' ||
+    a === 'select_workspace'
+  );
 }
 
 /**
@@ -311,6 +318,37 @@ export function buildWecomSessionListCard(options: SessionListCardOptions): Temp
     submit_button: {
       text: '恢复',
       key: encodeButtonKey(requestId, 'resume', sessionId),
+    },
+  };
+}
+
+/**
+ * Build a `vote_interaction` card listing workspaces for the `/workspace` command.
+ * The target workspaceId is carried in each option's `id`; the submit key encodes
+ * the botId and action so the callback can verify the caller is the bot Owner.
+ */
+export function buildWecomWorkspaceListCard(options: WorkspaceListCardOptions): TemplateCard {
+  const { requestId, botId, taskId, workspaces } = options;
+
+  return {
+    card_type: 'vote_interaction',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: {
+      title: '选择当前工作空间',
+      desc: '请选择该机器人要绑定的工作空间',
+    },
+    task_id: taskId,
+    checkbox: {
+      question_key: encodeButtonKey(requestId, 'select_workspace', botId),
+      mode: 0,
+      option_list: workspaces.map((ws) => ({
+        id: ws.workspaceId,
+        text: ws.isActive ? `${ws.name} （当前）` : ws.name,
+      })),
+    },
+    submit_button: {
+      text: '切换',
+      key: encodeButtonKey(requestId, 'select_workspace', botId),
     },
   };
 }

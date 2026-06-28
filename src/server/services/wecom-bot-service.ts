@@ -30,6 +30,7 @@ import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy, SAFE_P
 import { diagLog } from '../utils/diag-logger.js';
 import {
   buildWecomSessionListCard,
+  buildWecomWorkspaceListCard,
   buildTerminalCard,
   decodeButtonKey,
   parseTemplateCardEvent,
@@ -129,9 +130,14 @@ export function parseWecomStopCommand(content: string): boolean {
 }
 
 /**
- * Cap on sessions shown in the `/resume` card. WeCom `vote_interaction` has a
- * bounded option count; 10 is a conservative default pending platform verification.
+ * Detect the `/workspace` workspace-switch command. Matches the exact token or a
+ * prefix followed by a space (so `/workspacex` does not trigger). Trailing text
+ * is ignored — the selection happens through the reply card.
  */
+export function parseWecomWorkspaceCommand(content: string): boolean {
+  const trimmed = content.trim();
+  return trimmed === '/workspace' || trimmed.startsWith('/workspace ');
+}
 const MAX_RESUME_SESSIONS = 10;
 
 /** Format an ISO timestamp as a short relative-time label for the `/resume` card. */
@@ -339,6 +345,20 @@ export class WeComBotService {
     return botId ? this.connections.get(botId) : undefined;
   }
 
+  /**
+   * Resolve a live connection for a workspace. Connections are keyed by botId,
+   * but legacy tests and pre-migration call sites may still key by workspaceId.
+   * Prefer the explicit workspace map; fall back to a direct lookup.
+   */
+  private getConnectionForWorkspace(workspaceId: string): BotConnection | undefined {
+    return this.connections.get(workspaceId) ?? this.getConnectionByWorkspaceId(workspaceId);
+  }
+
+  private getBotIdForWorkspace(workspaceId: string): string | undefined {
+    return this.workspaceIdToBotId.get(workspaceId) ??
+      Array.from(this.connections.values()).find((c) => c.workspaceId === workspaceId)?.botId;
+  }
+
   disconnectAll(): void {
     for (const botId of Array.from(this.connections.keys())) {
       this.disconnectBot(botId);
@@ -412,7 +432,7 @@ export class WeComBotService {
     // message reaches the agent so the literal command is never a chat turn.
     const command = parseWecomNewSessionCommand(content);
     if (command.isCommand) {
-      const conn = this.connections.get(workspaceId);
+      const conn = this.getConnectionForWorkspace(workspaceId);
       if (!conn) return;
       await this.handleNewSessionCommand(workspaceId, wecomUserId, command.title, conn);
       return;
@@ -421,7 +441,7 @@ export class WeComBotService {
     // /resume lists the user's sessions as a single-select card. Intercepted
     // before the agent so the literal command is never a chat turn.
     if (parseWecomResumeCommand(content)) {
-      const conn = this.connections.get(workspaceId);
+      const conn = this.getConnectionForWorkspace(workspaceId);
       if (!conn) return;
       await this.handleResumeCommand(workspaceId, wecomUserId, conn);
       return;
@@ -429,16 +449,22 @@ export class WeComBotService {
 
     // /stop interrupts the user's active session if it has an in-flight turn.
     if (parseWecomStopCommand(content)) {
-      const conn = this.connections.get(workspaceId);
+      const conn = this.getConnectionForWorkspace(workspaceId);
       if (!conn) return;
       await this.handleStopCommand(workspaceId, wecomUserId, conn);
+      return;
+    }
+
+    // /workspace lets a Bot Owner switch the bot's active workspace.
+    if (parseWecomWorkspaceCommand(content)) {
+      await this.handleWorkspaceCommand(workspaceId, wecomUserId);
       return;
     }
 
     const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
     if (!sessionId) return;
 
-    const conn = this.connections.get(workspaceId);
+    const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn) return;
 
     const streamReply = await resolveStreamReplyIfNeeded(
@@ -631,6 +657,97 @@ export class WeComBotService {
     }
   }
 
+  /**
+   * Handle `/workspace`: let a Bot Owner switch the active workspace.
+   * Rejects non-Owners immediately; Owners receive a workspace-list card.
+   */
+  private async handleWorkspaceCommand(workspaceId: string, wecomUserId: string): Promise<void> {
+    const botId = this.getBotIdForWorkspace(workspaceId);
+    if (!botId) return;
+    const conn = this.connections.get(botId);
+    if (!conn) return;
+
+    if (botService.getMemberRole(botId, 'wecom', wecomUserId) !== 'owner') {
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: { content: '你没有权限切换工作空间。' },
+      });
+      return;
+    }
+
+    const workspaces = await workspaceStore.list();
+    const activeWorkspaceId = botService.resolveActiveWorkspace(botId) ?? workspaceId;
+    const card = buildWecomWorkspaceListCard({
+      requestId: randomUUID(),
+      botId,
+      workspaces: workspaces.map((ws) => ({
+        workspaceId: ws.id,
+        name: ws.name,
+        isActive: ws.id === activeWorkspaceId,
+      })),
+    });
+    await this.sendTemplateCard(workspaceId, wecomUserId, card);
+  }
+
+  /**
+   * Switch a bot's active workspace after an Owner selects one from a card.
+   * Updates the connection's routing in place, persists via BotService, and
+   * best-effort notifies users in the previous workspace.
+   */
+  private async switchActiveWorkspace(
+    botId: string,
+    workspaceId: string,
+    wecomUserId: string,
+  ): Promise<void> {
+    const conn = this.connections.get(botId);
+    if (!conn) return;
+
+    const previousWorkspaceId = this.botIdToWorkspaceId.get(botId);
+    if (previousWorkspaceId === workspaceId) {
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: { content: '该工作空间已经是当前绑定目标。' },
+      });
+      return;
+    }
+
+    botService.setActiveWorkspace(botId, workspaceId, {
+      type: 'wecom',
+      provider: 'wecom',
+      providerUserId: wecomUserId,
+    });
+
+    conn.workspaceId = workspaceId;
+    this.botIdToWorkspaceId.set(botId, workspaceId);
+    if (previousWorkspaceId) {
+      this.workspaceIdToBotId.delete(previousWorkspaceId);
+    }
+    this.workspaceIdToBotId.set(workspaceId, botId);
+
+    const workspace = await workspaceStore.get(workspaceId);
+    if (workspace) {
+      this.writeContextFile(workspace, conn.botId).catch((err) => {
+        console.warn(`Failed to write WeCom context file for workspace ${workspaceId}:`, err);
+      });
+    }
+
+    const workspaceName = workspace?.name ?? workspaceId;
+    await conn.client.sendMessage(wecomUserId, {
+      msgtype: 'markdown',
+      markdown: { content: `已切换到工作空间：**${workspaceName}**。新消息将路由到该工作空间；进行中的任务仍在原工作空间继续。` },
+    });
+
+    if (previousWorkspaceId) {
+      const users = workspaceStore.listWecomWorkspaceUsers(previousWorkspaceId);
+      const message = `当前机器人已切换到工作空间“${workspaceName}”。你正在进行的任务仍在原工作空间继续。`;
+      for (const user of users) {
+        this.sendProactiveMessage(botId, user.encryptedUserId, message).catch((err) => {
+          diagLog(`[WeComBotService] failed to notify user ${user.encryptedUserId} of workspace switch:`, err);
+        });
+      }
+    }
+  }
+
   private async handleMediaMessage(workspaceId: string, frame: WsFrame<BaseMessage>): Promise<void> {
     if (!frame.body) return;
     const wecomUserId = frame.body.from.userid;
@@ -640,7 +757,7 @@ export class WeComBotService {
     wecomUserResolver.resolveOnMessage(workspaceId, wecomUserId).catch(() => {});
     wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
 
-    const conn = this.connections.get(workspaceId);
+    const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn) return;
 
     try {
@@ -833,7 +950,7 @@ export class WeComBotService {
     if (!workspaceId) {
       throw new Error(`Unknown bot ID: ${botId}`);
     }
-    const conn = this.connections.get(workspaceId);
+    const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn || conn.status !== 'connected') {
       throw new Error(`Bot ${botId} is not connected`);
     }
@@ -848,7 +965,7 @@ export class WeComBotService {
     toUser: string,
     message: string,
   ): Promise<void> {
-    const conn = this.connections.get(workspaceId);
+    const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn || conn.status !== 'connected') {
       throw new Error(`Bot for workspace ${workspaceId} is not connected`);
     }
@@ -861,7 +978,7 @@ export class WeComBotService {
   }
 
   async sendTemplateCard(workspaceId: string, toUser: string, card: TemplateCard): Promise<void> {
-    const conn = this.connections.get(workspaceId);
+    const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn || conn.status !== 'connected') {
       return;
     }
@@ -877,7 +994,7 @@ export class WeComBotService {
       throw new Error(`Workspace ${workspaceId} not found`);
     }
 
-    const conn = this.connections.get(workspaceId);
+    const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn || conn.status !== 'connected') {
       throw new Error(`Bot for workspace ${workspaceId} is not connected`);
     }
@@ -953,6 +1070,14 @@ export class WeComBotService {
     const last = this.cardClickRateLimit.get(rateLimitKey) ?? 0;
     if (now - last < 1000) return;
     this.cardClickRateLimit.set(rateLimitKey, now);
+
+    // /workspace: bot Owner selects a new active workspace from the card.
+    // Must branch before the session-ownership check because sessionId in the
+    // decoded key is actually the botId for this action.
+    if (parsed.action === 'select_workspace') {
+      await this.handleWorkspaceSubmit(workspaceId, frame, parsed);
+      return;
+    }
 
     // Verify the clicking user owns the session.
     const ownerWecomUserId = workspaceStore.getWecomUserIdBySession(workspaceId, parsed.sessionId);
@@ -1061,7 +1186,7 @@ export class WeComBotService {
     // Confirmation message (best-effort, after the card is updated). A failure
     // here must not flip the already-updated card to an error state.
     try {
-      const conn = this.connections.get(workspaceId);
+      const conn = this.getConnectionForWorkspace(workspaceId);
       const session = await chatService.getSession(targetSessionId, workspaceId);
       const title = session?.customTitle ?? session?.name ?? targetSessionId;
       if (conn && conn.status === 'connected') {
@@ -1073,6 +1198,48 @@ export class WeComBotService {
     } catch (err) {
       console.error('[WeComBotService] failed to send /resume confirmation:', err);
     }
+  }
+
+  /**
+   * Handle a `/workspace` card submit: verify the caller is the bot Owner and
+   * switch the bot's active workspace. The selected workspaceId is carried in the
+   * option id; the decoded sessionId is the botId.
+   */
+  private async handleWorkspaceSubmit(
+    workspaceId: string,
+    frame: WsFrame<EventMessageWith<TemplateCardEventData>>,
+    parsed: {
+      wecomUserId: string;
+      sessionId: string;
+      cardType?: string;
+      taskId?: string;
+      selectedItems?: NormalizedSelectedItem[];
+    },
+  ): Promise<void> {
+    const botId = parsed.sessionId;
+    const targetWorkspaceId = parsed.selectedItems?.[0]?.option_ids?.[0];
+
+    if (typeof targetWorkspaceId !== 'string' || targetWorkspaceId.length === 0) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '缺少工作空间信息');
+      return;
+    }
+
+    if (botService.getMemberRole(botId, 'wecom', parsed.wecomUserId) !== 'owner') {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '你没有权限切换工作空间');
+      return;
+    }
+
+    const workspace = await workspaceStore.get(targetWorkspaceId);
+    // Update the card to terminal BEFORE changing routing maps: after the switch
+    // getConnectionForWorkspace(workspaceId) would no longer resolve the
+    // original workspace connection, and WeCom only honors updates within ~5s.
+    await this.updateCardToTerminal(
+      workspaceId,
+      frame,
+      parsed,
+      `已切换到工作空间：${workspace?.name ?? targetWorkspaceId}`,
+    );
+    await this.switchActiveWorkspace(botId, targetWorkspaceId, parsed.wecomUserId);
   }
 
   private buildAnswersFromCardEvent(
@@ -1113,7 +1280,7 @@ export class WeComBotService {
     parsed: { cardType?: string; taskId?: string },
     notice: string,
   ): Promise<void> {
-    const conn = this.connections.get(workspaceId);
+    const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn || conn.status !== 'connected' || !frame.body) return;
 
     const card = buildTerminalCard(parsed.cardType ?? 'button_interaction', notice, parsed.taskId);

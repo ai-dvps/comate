@@ -5,9 +5,16 @@ import assert from 'node:assert/strict';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { WeComBotService, parseWecomNewSessionCommand, parseWecomResumeCommand, parseWecomStopCommand } from './wecom-bot-service.js';
+import {
+  WeComBotService,
+  parseWecomNewSessionCommand,
+  parseWecomResumeCommand,
+  parseWecomStopCommand,
+  parseWecomWorkspaceCommand,
+} from './wecom-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
+import { botService } from './bot-service.js';
 import { encodeButtonKey } from './wecom-template-card.js';
 
 function collectDiagLogs(): { logs: string[]; restore: () => void } {
@@ -1541,5 +1548,185 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
       0,
       'confirmation should be appended to the stream, not sent separately',
     );
+  });
+});
+
+describe('WeComBotService /workspace command', { concurrency: false }, () => {
+  let service: WeComBotService;
+  let tempDirA: string;
+  let tempDirB: string;
+  let workspaceA: { id: string; name: string; folderPath: string };
+  let workspaceB: { id: string; name: string; folderPath: string };
+  let botId: string;
+  const ownerUserId = 'owner-1';
+  const nonOwnerUserId = 'user-1';
+
+  let sentMessages: Array<{ userId: string; body: any }>;
+  let updatedCards: Array<{ card: any }>;
+
+  beforeEach(async () => {
+    workspaceStore.resetData();
+    service = new WeComBotService();
+    sentMessages = [];
+    updatedCards = [];
+
+    tempDirA = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'wecom-ws-a-'));
+    tempDirB = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'wecom-ws-b-'));
+
+    workspaceA = await workspaceStore.create({ name: 'Workspace A', folderPath: tempDirA });
+    workspaceB = await workspaceStore.create({ name: 'Workspace B', folderPath: tempDirB });
+
+    const bot = botService.createBot({
+      name: 'Test Bot',
+      activeWorkspaceId: workspaceA.id,
+      providerSettings: {
+        wecom: {
+          enabled: true,
+          botId: 'wecom-bot-id',
+          botSecret: 'wecom-bot-secret',
+        },
+      },
+    });
+    botId = bot.id;
+    botService.addMember(botId, { provider: 'wecom', providerUserId: ownerUserId, role: 'owner' });
+    botService.addMember(botId, { provider: 'wecom', providerUserId: nonOwnerUserId, role: 'normal' });
+  });
+
+  afterEach(async () => {
+    await fsPromises.rm(tempDirA, { recursive: true, force: true }).catch(() => {});
+    await fsPromises.rm(tempDirB, { recursive: true, force: true }).catch(() => {});
+  });
+
+  function injectConnection() {
+    const conn = {
+      client: {
+        sendMessage: async (userId: string, body: any) => {
+          sentMessages.push({ userId, body });
+        },
+        updateTemplateCard: async (_frame: any, card: any) => {
+          updatedCards.push({ card });
+        },
+      },
+      workspaceId: workspaceA.id,
+      botId,
+      folderPath: workspaceA.folderPath,
+      status: 'connected' as const,
+    };
+    (service as any).connections.set(botId, conn);
+    (service as any).workspaceIdToBotId.set(workspaceA.id, botId);
+    (service as any).botIdToWorkspaceId.set(botId, workspaceA.id);
+  }
+
+  function makeTextFrame(content: string, userid = ownerUserId) {
+    return {
+      headers: { req_id: 'req-1' },
+      body: {
+        msgid: 'msg-1',
+        aibotid: 'wecom-bot-id',
+        chattype: 'single',
+        from: { userid },
+        msgtype: 'text',
+        text: { content },
+      },
+    };
+  }
+
+  function makeWorkspaceSubmitEvent(targetWorkspaceId: string, userid = ownerUserId) {
+    const requestId = 'req-workspace';
+    const key = encodeButtonKey(requestId, 'select_workspace', botId);
+    return {
+      headers: { req_id: 'r' },
+      body: {
+        msgid: 'm',
+        aibotid: 'wecom-bot-id',
+        chattype: 'single',
+        from: { userid },
+        msgtype: 'event',
+        event: {
+          eventtype: 'template_card_event',
+          template_card_event: {
+            event_key: key,
+            task_id: 'task-1',
+            card_type: 'vote_interaction',
+            selected_items: {
+              selected_item: [{ question_key: key, option_ids: { option_id: [targetWorkspaceId] } }],
+            },
+          },
+        },
+      },
+    };
+  }
+
+  it('recognizes /workspace and /workspace with trailing text as commands', () => {
+    assert.ok(parseWecomWorkspaceCommand('/workspace'));
+    assert.ok(parseWecomWorkspaceCommand('  /workspace  '));
+    assert.ok(parseWecomWorkspaceCommand('/workspace ignored args'));
+  });
+
+  it('does not recognize /workspacex as a command', () => {
+    assert.ok(!parseWecomWorkspaceCommand('/workspacex'));
+    assert.ok(!parseWecomWorkspaceCommand('/workspaceX'));
+  });
+
+  it('/workspace rejects non-Owners and does not send a card', async () => {
+    injectConnection();
+
+    await (service as any).handleTextMessage(workspaceA.id, makeTextFrame('/workspace', nonOwnerUserId));
+
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].body.msgtype, 'markdown');
+    assert.ok(sentMessages[0].body.markdown.content.includes('没有权限'));
+  });
+
+  it('/workspace sends a workspace list card to Owners with the active workspace highlighted', async () => {
+    injectConnection();
+
+    await (service as any).handleTextMessage(workspaceA.id, makeTextFrame('/workspace', ownerUserId));
+
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].body.msgtype, 'template_card');
+    const card = sentMessages[0].body.template_card;
+    assert.strictEqual(card.card_type, 'vote_interaction');
+    assert.strictEqual(card.checkbox.option_list.length, 2);
+    const activeOption = card.checkbox.option_list.find((o: any) => o.id === workspaceA.id);
+    assert.ok(activeOption.text.includes('（当前）'));
+  });
+
+  it('select_workspace switches the active workspace, updates routing maps, and confirms', async () => {
+    injectConnection();
+
+    await (service as any).handleTemplateCardEvent(workspaceA.id, makeWorkspaceSubmitEvent(workspaceB.id));
+
+    assert.strictEqual(botService.resolveActiveWorkspace(botId), workspaceB.id);
+    assert.strictEqual((service as any).botIdToWorkspaceId.get(botId), workspaceB.id);
+    assert.strictEqual((service as any).workspaceIdToBotId.get(workspaceB.id), botId);
+    assert.strictEqual((service as any).connections.get(botId).workspaceId, workspaceB.id);
+
+    assert.strictEqual(updatedCards.length, 1);
+    assert.ok(updatedCards[0].card.replace_text.includes('已切换到工作空间'));
+    assert.ok(sentMessages.some((m) => m.body.markdown?.content.includes('已切换到工作空间')));
+  });
+
+  it('select_workspace rejects non-Owners', async () => {
+    injectConnection();
+
+    await (service as any).handleTemplateCardEvent(
+      workspaceA.id,
+      makeWorkspaceSubmitEvent(workspaceB.id, nonOwnerUserId),
+    );
+
+    assert.strictEqual(botService.resolveActiveWorkspace(botId), workspaceA.id);
+    assert.strictEqual(updatedCards[0].card.replace_text, '你没有权限切换工作空间');
+  });
+
+  it('select_workspace best-effort notifies users in the previous workspace', async () => {
+    workspaceStore.setWecomWorkspaceUser(workspaceA.id, 'prev-user-1');
+    injectConnection();
+
+    await (service as any).handleTemplateCardEvent(workspaceA.id, makeWorkspaceSubmitEvent(workspaceB.id));
+
+    const notification = sentMessages.find((m) => m.userId === 'prev-user-1');
+    assert.ok(notification);
+    assert.ok(notification.body.markdown.content.includes('当前机器人已切换到'));
   });
 });
