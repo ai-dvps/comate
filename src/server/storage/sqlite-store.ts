@@ -360,6 +360,11 @@ export class SqliteStore {
     wipe();
   }
 
+  runInTransaction<T>(fn: () => T): T {
+    const run = this.db.transaction(fn);
+    return run();
+  }
+
   private migrateTodoDetailColumn(): void {
     const tableInfo = this.db.prepare("PRAGMA table_info(todos)").all() as Array<{ name: string }>;
     const hasDetail = tableInfo.some((col) => col.name === 'detail');
