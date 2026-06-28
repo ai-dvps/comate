@@ -23,6 +23,8 @@ import { pluginSettingsService } from './plugin-settings-service.js';
 import { evaluateToolPermission, getToolPermissionDenialReason, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { createPathPolicyContext, validateToolInput } from './bot-path-policy.js';
 import { evaluateSkill } from './bot-skill-policy.js';
+import type { BotRolePolicy } from '../models/bot.js';
+import { SAFE_PRESET } from './tool-permission-policy.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -1092,7 +1094,12 @@ export class ChatService {
         const isolation = workspace.settings.wecomBotIsolation;
         const isAdmin = isolation?.adminUserIds?.includes(canonicalUserId) ?? false;
         pathContext.isAdmin = isAdmin;
-        skillContext = { isolation, isAdmin };
+        const skillPolicy: BotRolePolicy = {
+          normalToolPolicy: SAFE_PRESET,
+          skillAllowlist: isolation?.defaultAllowedSkills ?? [],
+          bashWhitelist: [],
+        };
+        skillContext = { policy: skillPolicy, isAdminOrOwner: isAdmin };
       }
 
       options.canUseTool = async (
