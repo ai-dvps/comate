@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bot management page padding matches other settings tabs** — `BotManagementPage` now wraps its list, form, and member views in `p-6 max-w-xl` so the content inset matches `GeneralTab` and `AppearanceTab` instead of touching the panel edges.
+
 - **Workspace tabs and switcher show bot status again** — after the bot-workspace decoupling migration removed `wecomBotEnabled`/`feishuBotEnabled` from workspace settings, the `useBotStatuses` hook stopped polling status endpoints and the bot connection icons disappeared from `WorkspaceTabs` and `WorkspaceSwitcher`. The hook now polls every candidate workspace and omits `not_configured` statuses, so icons appear only for workspaces with a bound bot.
 
 ## [0.0.18] - 2026-06-27
