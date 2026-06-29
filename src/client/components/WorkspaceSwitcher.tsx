@@ -25,8 +25,8 @@ export default function WorkspaceSwitcher({ open, onOpenChange }: WorkspaceSwitc
 
   // All workspace ids (memoized so the polling effects do not restart every render).
   const allWorkspaceIds = useMemo(() => workspaces.map((w) => w.id), [workspaces])
-  const wecomStatuses = useBotStatuses(allWorkspaceIds, workspaces, 'wecomBotEnabled', '/bot/status')
-  const feishuStatuses = useBotStatuses(allWorkspaceIds, workspaces, 'feishuBotEnabled', '/feishu/status')
+  const wecomStatuses = useBotStatuses(allWorkspaceIds, '/bot/status')
+  const feishuStatuses = useBotStatuses(allWorkspaceIds, '/feishu/status')
 
   const handleSelect = (id: string) => {
     openWorkspace(id)

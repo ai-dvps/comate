@@ -34,36 +34,31 @@ export function getBotStatusLabel(status: BotStatus, t: (key: string) => string,
 }
 
 /**
- * Polls a bot status endpoint for bot-enabled workspaces on a fixed cadence.
+ * Polls a bot status endpoint for the given workspaces on a fixed cadence.
  * Shared by every bot indicator surface so they use identical polling
- * lifecycle semantics (fetch on mount + interval, clear when none enabled).
+ * lifecycle semantics (fetch on mount + interval, clear when empty).
  *
- * `workspaceIds` are the candidate ids; only those whose workspace has the
- * `enabledKey` flag set are actually polled. Callers should pass a stable
+ * The hook queries the server for every candidate workspace and returns a
+ * status only when a bot is actually bound (`not_configured` is omitted so
+ * callers can simply check `statuses[ws.id]`). Callers should pass a stable
  * array (e.g. a store slice or a useMemo'd list) so the effect does not
  * restart on every render.
  */
 export function useBotStatuses(
   workspaceIds: string[],
-  workspaces: Array<{ id: string; settings: Record<string, unknown> }>,
-  enabledKey: 'wecomBotEnabled' | 'feishuBotEnabled',
   endpoint: string,
 ): Record<string, BotStatus> {
   const [statuses, setStatuses] = useState<Record<string, BotStatus>>({})
 
   useEffect(() => {
-    const enabledIds = workspaceIds.filter((id) => {
-      const ws = workspaces.find((w) => w.id === id)
-      return ws?.settings[enabledKey]
-    })
-    if (enabledIds.length === 0) {
+    if (workspaceIds.length === 0) {
       setStatuses({})
       return
     }
 
     const fetchStatuses = async () => {
       const results = await Promise.all(
-        enabledIds.map(async (id) => {
+        workspaceIds.map(async (id) => {
           try {
             const res = await fetch(`/api/workspaces/${id}${endpoint}`)
             if (!res.ok) return { id, status: 'error' as BotStatus }
@@ -76,7 +71,9 @@ export function useBotStatuses(
       )
       const next: Record<string, BotStatus> = {}
       for (const { id, status } of results) {
-        next[id] = status
+        if (status !== 'not_configured') {
+          next[id] = status
+        }
       }
       setStatuses(next)
     }
@@ -84,7 +81,7 @@ export function useBotStatuses(
     fetchStatuses()
     const interval = setInterval(fetchStatuses, 5000)
     return () => clearInterval(interval)
-  }, [workspaceIds, workspaces, enabledKey, endpoint])
+  }, [workspaceIds, endpoint])
 
   return statuses
 }

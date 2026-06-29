@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workspace settings UI cleaned up** — the workspace settings page no longer contains WeCom/Feishu connection, permission, isolation, or admin configuration panels. Those controls have moved to the dedicated **Bots** tab. The workspace page now shows a read-only **Bound Bot** card and a **Sensitive File Denylist** editor for workspace-level file isolation.
 
+### Fixed
+
+- **Workspace tabs and switcher show bot status again** — after the bot-workspace decoupling migration removed `wecomBotEnabled`/`feishuBotEnabled` from workspace settings, the `useBotStatuses` hook stopped polling status endpoints and the bot connection icons disappeared from `WorkspaceTabs` and `WorkspaceSwitcher`. The hook now polls every candidate workspace and omits `not_configured` statuses, so icons appear only for workspaces with a bound bot.
+
 ## [0.0.18] - 2026-06-27
 
 ### Added
