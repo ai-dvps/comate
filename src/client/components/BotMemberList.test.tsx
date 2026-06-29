@@ -13,6 +13,9 @@ function renderWithI18n(ui: React.ReactElement) {
 describe('BotMemberList', () => {
   beforeEach(() => {
     cleanup();
+    baseProps.onAddMember.mockClear();
+    baseProps.onSetRole.mockClear();
+    baseProps.onRemoveMember.mockClear();
   });
 
   afterEach(() => {

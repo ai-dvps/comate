@@ -41,6 +41,18 @@ const chatStoreMock = vi.hoisted(() => {
     listeners.forEach((l) => l())
   }
 
+  function useChatStore(selector?: (s: typeof state) => unknown) {
+    const [, forceRender] = React.useReducer((x: number) => x + 1, 0)
+    React.useEffect(() => {
+      const unsubscribe = chatStoreMock.subscribe(forceRender)
+      return () => {
+        unsubscribe()
+      }
+    }, [])
+    return selector ? selector(state) : state
+  }
+  useChatStore.getState = () => state
+
   return {
     getState: () => state,
     subscribe: (listener: Listener) => {
@@ -56,21 +68,12 @@ const chatStoreMock = vi.hoisted(() => {
       state.promptHistory[workspaceId] = prompts
       notify()
     },
+    useChatStore,
   }
 })
 
 vi.mock('../stores/chat-store', () => ({
-  useChatStore: (selector?: (s: ReturnType<typeof chatStoreMock.getState>) => unknown) => {
-    const [, forceRender] = React.useReducer((x: number) => x + 1, 0)
-    React.useEffect(() => {
-      const unsubscribe = chatStoreMock.subscribe(forceRender)
-      return () => {
-        unsubscribe()
-      }
-    }, [])
-    const state = chatStoreMock.getState()
-    return selector ? selector(state) : state
-  },
+  useChatStore: chatStoreMock.useChatStore,
 }))
 
 vi.mock('../stores/commands-store', () => ({
