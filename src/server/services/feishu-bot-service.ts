@@ -554,7 +554,10 @@ export class FeishuBotService {
   }
 
   private isFeishuEnabled(workspace: Workspace): boolean {
-    return !!workspace.settings.feishuBotEnabled;
+    // In the decoupled bot architecture, Feishu is enabled at the bot level.
+    // Keep the legacy workspace flag as a fallback for pre-migration setups.
+    if (workspace.settings.feishuBotEnabled) return true;
+    return botService.listBotsForWorkspace(workspace.id).some((b) => b.providerSettings.feishu?.enabled);
   }
 
   private createDispatchHandler(): DirectMessageHandler & MentionHandler {

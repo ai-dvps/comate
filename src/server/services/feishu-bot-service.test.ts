@@ -358,6 +358,22 @@ describe('FeishuBotService', () => {
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('创建会话失败')));
     });
+
+    it('works after migration when the workspace no longer has feishuBotEnabled', async () => {
+      workspace.settings.feishuBotEnabled = false;
+      chatService.pushMessage = async () => {};
+
+      await (service as unknown as { handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void> }).handleChatMessage(
+        thread,
+        feishuUserId,
+        'hello after migration',
+      );
+
+      const textPosts = getTextPosts();
+      assert.ok(!textPosts.some((text) => String(text).includes('工作空间已失效')));
+      assert.strictEqual(createdSessions.length, 1);
+      assert.strictEqual(createdSessions[0].workspaceId, workspace.id);
+    });
   });
 
   describe('stream delivery after auto-create', () => {
@@ -1269,6 +1285,7 @@ describe('FeishuBotService', () => {
     it('sends an error text when the workspace is not Feishu-enabled', async () => {
       const disabledWorkspace = {
         ...workspace,
+        id: 'ws-disabled',
         settings: { ...workspace.settings, feishuBotEnabled: false },
       } as import('../models/workspace.js').Workspace;
 
