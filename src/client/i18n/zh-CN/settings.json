@@ -198,6 +198,13 @@
     "roleAdmin": "管理员",
     "roleOwner": "所有者",
     "membersOf": "{{name}} 的成员",
+    "manageRoles": "管理角色权限",
+    "roles": {
+      "title": "角色权限",
+      "description": "以下权限根据成员角色生效。Owner 和 Admin 不受限制。",
+      "ownerDescription": "Owner 可以管理机器人、切换工作区、管理成员，并使用所有工具、Skill 和 Bash 命令。",
+      "adminDescription": "Admin 在活动工作区拥有完整的工具、Skill、Bash 和文件权限。"
+    },
     "rolePermissions": {
       "title": "角色权限",
       "description": "以下设置仅对 Normal 角色生效。Owner 和 Admin 不受限制。",
