@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Eye, EyeOff, Save, Bot as BotIcon, Loader2, AlertTriangle } from 'lucide-react';
 import type { Bot, CreateBotInput, UpdateBotInput } from '../stores/bot-store';
 import type { Workspace } from '../stores/workspace-store';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 interface BotFormData {
   name: string;
@@ -86,11 +87,6 @@ export default function BotForm({ bot, workspaces, isSaving, error, onSubmit, on
   }, [bot]);
 
   const isEditing = !!bot;
-
-  const activeWorkspaceName = useMemo(() => {
-    if (!form.activeWorkspaceId) return t('bots.noActiveWorkspace');
-    return workspaces.find((w) => w.id === form.activeWorkspaceId)?.name || form.activeWorkspaceId;
-  }, [form.activeWorkspaceId, workspaces, t]);
 
   const updateForm = (patch: Partial<BotFormData>) => {
     setForm((prev) => ({ ...prev, ...patch }));
@@ -251,21 +247,22 @@ export default function BotForm({ bot, workspaces, isSaving, error, onSubmit, on
         <label className="block text-[11px] font-medium text-text-tertiary mb-1">
           {t('bots.activeWorkspace')}
         </label>
-        <select
+        <Select
           value={form.activeWorkspaceId}
-          onChange={(e) => updateForm({ activeWorkspaceId: e.target.value })}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
+          onValueChange={(value) => updateForm({ activeWorkspaceId: value })}
         >
-          <option value="">{t('bots.noActiveWorkspace')}</option>
-          {workspaces.map((ws) => (
-            <option key={ws.id} value={ws.id}>
-              {ws.name}
-            </option>
-          ))}
-        </select>
-        {form.activeWorkspaceId && (
-          <p className="text-[10px] text-text-tertiary mt-1">{activeWorkspaceName}</p>
-        )}
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder={t('bots.noActiveWorkspace')} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">{t('bots.noActiveWorkspace')}</SelectItem>
+            {workspaces.map((ws) => (
+              <SelectItem key={ws.id} value={ws.id}>
+                {ws.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* WeCom */}

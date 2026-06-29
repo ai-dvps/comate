@@ -6,6 +6,7 @@ import { useWorkspaceStore } from '../stores/workspace-store';
 import { Button } from './ui/button';
 import BotForm from './BotForm';
 import BotMemberList from './BotMemberList';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 export default function BotManagementPage() {
   const { t } = useTranslation('settings');
@@ -210,17 +211,21 @@ export default function BotManagementPage() {
                     </p>
 
                     <div className="flex items-center gap-3">
-                      <select
+                      <Select
                         value={bot.activeWorkspaceId || ''}
-                        onChange={(e) => handleSwitchWorkspace(bot.id, e.target.value)}
+                        onValueChange={(workspaceId) => handleSwitchWorkspace(bot.id, workspaceId)}
                         disabled={isSaving}
-                        className="text-xs px-2 py-1 bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary disabled:opacity-50"
                       >
-                        <option value="">{t('bots.selectWorkspace')}</option>
-                        {workspaces.map((ws) => (
-                          <option key={ws.id} value={ws.id}>{ws.name}</option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="w-auto min-w-[140px] text-xs py-1.5 px-2 h-auto">
+                          <SelectValue placeholder={t('bots.selectWorkspace')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">{t('bots.selectWorkspace')}</SelectItem>
+                          {workspaces.map((ws) => (
+                            <SelectItem key={ws.id} value={ws.id}>{ws.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       {status && (
                         <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
                           <Activity className="w-3 h-3" />
