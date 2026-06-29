@@ -117,12 +117,10 @@
     "fontSizeLarge": "大"
   },
   "workspaceSections": {
-    "basic": "基本信息",
-    "wecom": "企业微信机器人",
-    "feishu": "飞书机器人",
-    "skills": "技能",
-    "mcp": "MCP",
-    "hooks": "钩子"
+    "general": "基本信息",
+    "bot": "机器人",
+    "security": "安全",
+    "danger": "危险区"
   },
   "workspace": {
     "name": "名称",
@@ -142,27 +140,6 @@
     "sensitiveFileDenylistTitle": "敏感文件拒绝列表",
     "sensitiveFileDenylistHint": "普通机器人用户无法读取的文件的 Glob 模式。所有者/管理员不受此限制。",
     "sensitiveFileDenylistPlaceholder": "*.env\n*.pem\nsecrets/*"
-  },
-  "mcp": {
-    "serverName": "服务器名称",
-    "command": "命令（例如 node）",
-    "arguments": "参数（空格分隔）",
-    "addServer": "添加 MCP 服务器",
-    "noServers": "尚未添加 MCP 服务器"
-  },
-  "hooks": {
-    "hookName": "钩子名称",
-    "scriptPath": "脚本路径",
-    "addHook": "添加钩子",
-    "noHooks": "尚未添加钩子"
-  },
-  "placeholder": {
-    "comingSoon": "即将推出",
-    "contact": "有想法或需求？请联系 spearwang 分享您的想法。",
-    "skillsTitle": "技能",
-    "mcpTitle": "MCP 服务器",
-    "hooksTitle": "钩子",
-    "pluginRedirect": "插件管理技能、MCP 服务器和钩子。请使用工作区侧边栏中的插件管理器。"
   },
   "bots": {
     "title": "机器人",
@@ -220,7 +197,18 @@
     "roleNormal": "普通",
     "roleAdmin": "管理员",
     "roleOwner": "所有者",
-    "membersOf": "{{name}} 的成员"
+    "membersOf": "{{name}} 的成员",
+    "rolePermissions": {
+      "title": "角色权限",
+      "description": "以下设置仅对 Normal 角色生效。Owner 和 Admin 不受限制。",
+      "toolPolicy": "Normal 工具策略",
+      "skillAllowlist": "Skill 白名单",
+      "skillAllowlistPlaceholder": "例如 my-skill",
+      "skillAllowlistHint": "每行一个 Skill 名称。只有这些 Skill 可以被 Normal 成员调用。",
+      "bashWhitelist": "Bash 白名单",
+      "bashWhitelistPlaceholder": "例如 npm run",
+      "bashWhitelistHint": "每行一个命令前缀。Normal 成员只能运行以这些前缀开头的命令。"
+    }
   },
   "wecom": {
     "enableBot": "启用企业微信机器人",
