@@ -97,6 +97,9 @@ describe('BotForm', () => {
       botId: 'bid-1',
       botSecret: 'secret-1',
     });
+    expect(submitted.rolePolicy?.normalToolPolicy.posture).toBe('safe');
+    expect(submitted.rolePolicy?.skillAllowlist).toEqual([]);
+    expect(submitted.rolePolicy?.bashWhitelist).toEqual([]);
   });
 
   it('uses true sentinel for unchanged secrets in edit mode', async () => {
@@ -123,6 +126,71 @@ describe('BotForm', () => {
 
     const submitted = onSubmit.mock.calls[0][0] as CreateBotInput;
     expect(submitted.providerSettings?.wecom?.botSecret).toBe(true);
+  });
+
+  it('submits skill and bash allowlists parsed from textareas', async () => {
+    const onSubmit = vi.fn();
+    renderWithI18n(<BotForm workspaces={workspaces} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+    const nameInput = screen.getByPlaceholderText('My Bot');
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, 'New Bot');
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. my-skill'), 'skill-a\nskill-b');
+    await userEvent.type(screen.getByPlaceholderText('e.g. npm run'), 'npm run\nnode ');
+
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    const submitted = onSubmit.mock.calls[0][0] as CreateBotInput;
+    expect(submitted.rolePolicy?.skillAllowlist).toEqual(['skill-a', 'skill-b']);
+    expect(submitted.rolePolicy?.bashWhitelist).toEqual(['npm run', 'node']);
+  });
+
+  it('preserves existing role policy values in edit mode', async () => {
+    const onSubmit = vi.fn();
+    const bot: Bot = {
+      id: 'bot-1',
+      name: 'Existing Bot',
+      activeWorkspaceId: null,
+      providerSettings: {},
+      rolePolicy: {
+        normalToolPolicy: {
+          posture: 'custom',
+          categoryDefaults: {
+            fileRead: 'allow',
+            fileWrite: 'allow',
+            shell: 'deny',
+            network: 'deny',
+            subagents: 'deny',
+            reply: 'allow',
+          },
+        },
+        skillAllowlist: ['existing-skill'],
+        bashWhitelist: ['git'],
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    renderWithI18n(<BotForm bot={bot} workspaces={workspaces} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+    expect(screen.getByDisplayValue('existing-skill')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('git')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    const submitted = onSubmit.mock.calls[0][0] as CreateBotInput;
+    expect(submitted.rolePolicy?.skillAllowlist).toEqual(['existing-skill']);
+    expect(submitted.rolePolicy?.bashWhitelist).toEqual(['git']);
+    expect(submitted.rolePolicy?.normalToolPolicy.posture).toBe('custom');
   });
 
   it('shows validation error when name is missing', async () => {

@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **GUI Bot Management page** — Settings now has a **Bots** tab with a dedicated bot-management surface. It lists bots, shows active workspace and provider status, lets admins create/edit bots with WeCom/Feishu credentials, switch a bot's active workspace, manage per-bot members and roles, and run the workspace-to-bot migration. New components: `src/client/components/BotManagementPage.tsx`, `BotForm.tsx`, `BotMemberList.tsx`; state is managed by `src/client/stores/bot-store.ts`. i18n keys added for English and Simplified Chinese.
 
+- **Bot role permission editor** — the bot form now lets operators configure the Normal-role tool policy, Skill allowlist, and Bash whitelist for each bot. The existing `PermissionsSubTab` is reused for the tool-policy editor, and Skill/Bash lists are edited as one item per line. i18n keys added for English and Simplified Chinese.
+
 - **Bot management REST API** — new `src/server/routes/bots.ts` exposes `GET /api/bots`, `POST /api/bots`, `GET/PUT/DELETE /api/bots/:id`, `POST /api/bots/:id/active-workspace`, member routes, `GET /api/bots/:id/status`, and `POST /api/bots/migrate`. Provider credentials are redacted in responses (sensitive fields appear as `true` when set). Workspace-bound bots can be retrieved via `GET /api/workspaces/:id/bot`.
 
 ### Changed

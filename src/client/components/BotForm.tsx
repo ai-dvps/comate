@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Eye, EyeOff, Save, Bot as BotIcon, Loader2, AlertTriangle } from 'lucide-react';
-import type { Bot, CreateBotInput, UpdateBotInput } from '../stores/bot-store';
+import type { Bot, BotRolePolicy, CreateBotInput, UpdateBotInput } from '../stores/bot-store';
 import type { Workspace } from '../stores/workspace-store';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { PermissionsSubTab } from './PermissionsSubTab';
+import { SAFE_PRESET, type ToolPermissionPolicy } from '../types/wecom-permissions';
 
 interface BotFormData {
   name: string;
@@ -20,6 +22,9 @@ interface BotFormData {
   feishuEncryptKey: string;
   feishuVerificationToken: string;
   feishuBotName: string;
+  normalToolPolicy: ToolPermissionPolicy;
+  skillAllowlist: string;
+  bashWhitelist: string;
 }
 
 function emptyForm(): BotFormData {
@@ -38,12 +43,23 @@ function emptyForm(): BotFormData {
     feishuEncryptKey: '',
     feishuVerificationToken: '',
     feishuBotName: '',
+    normalToolPolicy: SAFE_PRESET,
+    skillAllowlist: '',
+    bashWhitelist: '',
   };
 }
 
 function botToForm(bot: Bot): BotFormData {
   const wecom = bot.providerSettings.wecom;
   const feishu = bot.providerSettings.feishu;
+  const storedPolicy = bot.rolePolicy?.normalToolPolicy;
+  const normalToolPolicy: ToolPermissionPolicy =
+    storedPolicy &&
+    typeof storedPolicy === 'object' &&
+    'posture' in storedPolicy &&
+    'categoryDefaults' in storedPolicy
+      ? ((storedPolicy as unknown) as ToolPermissionPolicy)
+      : SAFE_PRESET;
   return {
     name: bot.name,
     activeWorkspaceId: bot.activeWorkspaceId || '',
@@ -59,6 +75,9 @@ function botToForm(bot: Bot): BotFormData {
     feishuEncryptKey: typeof feishu?.encryptKey === 'string' ? feishu.encryptKey : '',
     feishuVerificationToken: typeof feishu?.verificationToken === 'string' ? feishu.verificationToken : '',
     feishuBotName: typeof feishu?.botName === 'string' ? feishu.botName : '',
+    normalToolPolicy,
+    skillAllowlist: (bot.rolePolicy?.skillAllowlist ?? []).join('\n'),
+    bashWhitelist: (bot.rolePolicy?.bashWhitelist ?? []).join('\n'),
   };
 }
 
@@ -162,10 +181,23 @@ export default function BotForm({ bot, workspaces, isSaving, error, onSubmit, on
       );
     }
 
+    const parseLines = (value: string) =>
+      value
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+    const rolePolicy: BotRolePolicy = {
+      normalToolPolicy: (form.normalToolPolicy as unknown) as Record<string, unknown>,
+      skillAllowlist: parseLines(form.skillAllowlist),
+      bashWhitelist: parseLines(form.bashWhitelist),
+    };
+
     const input: CreateBotInput | UpdateBotInput = {
       name: form.name.trim(),
       activeWorkspaceId: form.activeWorkspaceId || null,
       providerSettings,
+      rolePolicy,
     };
 
     onSubmit(input);
@@ -416,6 +448,55 @@ export default function BotForm({ bot, workspaces, isSaving, error, onSubmit, on
             </div>
           </div>
         )}
+      </div>
+
+      {/* Role permissions */}
+      <div className="pt-2 border-t border-border/50 space-y-4">
+        <div>
+          <h4 className="text-xs font-medium text-text-secondary">{t('bots.rolePermissions.title')}</h4>
+          <p className="text-[10px] text-text-tertiary mt-0.5">{t('bots.rolePermissions.description')}</p>
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-medium text-text-tertiary mb-2">
+            {t('bots.rolePermissions.toolPolicy')}
+          </label>
+          <PermissionsSubTab
+            policy={form.normalToolPolicy}
+            onUpdate={(next) => updateForm({ normalToolPolicy: next })}
+            workspaceId={bot?.id || 'new-bot'}
+            needsUpgradePrompt={false}
+            onApplySafePreset={async () => updateForm({ normalToolPolicy: SAFE_PRESET })}
+          />
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-medium text-text-tertiary mb-1">
+            {t('bots.rolePermissions.skillAllowlist')}
+          </label>
+          <textarea
+            value={form.skillAllowlist}
+            onChange={(e) => updateForm({ skillAllowlist: e.target.value })}
+            placeholder={t('bots.rolePermissions.skillAllowlistPlaceholder')}
+            rows={3}
+            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">{t('bots.rolePermissions.skillAllowlistHint')}</p>
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-medium text-text-tertiary mb-1">
+            {t('bots.rolePermissions.bashWhitelist')}
+          </label>
+          <textarea
+            value={form.bashWhitelist}
+            onChange={(e) => updateForm({ bashWhitelist: e.target.value })}
+            placeholder={t('bots.rolePermissions.bashWhitelistPlaceholder')}
+            rows={3}
+            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">{t('bots.rolePermissions.bashWhitelistHint')}</p>
+        </div>
       </div>
 
       <div className="flex items-center justify-end gap-2 pt-2">

@@ -117,12 +117,10 @@
     "fontSizeLarge": "Large"
   },
   "workspaceSections": {
-    "basic": "Basic Info",
-    "wecom": "WeCom Bot",
-    "feishu": "Feishu Bot",
-    "skills": "Skills",
-    "mcp": "MCP",
-    "hooks": "Hooks"
+    "general": "Basic Info",
+    "bot": "Bot",
+    "security": "Security",
+    "danger": "Danger Zone"
   },
   "workspace": {
     "name": "Name",
@@ -142,27 +140,6 @@
     "sensitiveFileDenylistTitle": "Sensitive File Denylist",
     "sensitiveFileDenylistHint": "Glob patterns for files that Normal bot users cannot read. Owner/Admin users are not constrained.",
     "sensitiveFileDenylistPlaceholder": "*.env\n*.pem\nsecrets/*"
-  },
-  "mcp": {
-    "serverName": "Server name",
-    "command": "Command (e.g. node)",
-    "arguments": "Arguments (space-separated)",
-    "addServer": "Add MCP Server",
-    "noServers": "No MCP servers added"
-  },
-  "hooks": {
-    "hookName": "Hook name",
-    "scriptPath": "Script path",
-    "addHook": "Add Hook",
-    "noHooks": "No hooks added"
-  },
-  "placeholder": {
-    "comingSoon": "Coming Soon",
-    "contact": "Have ideas or requirements? Contact spearwang to share them.",
-    "skillsTitle": "Skills",
-    "mcpTitle": "MCP Servers",
-    "hooksTitle": "Hooks",
-    "pluginRedirect": "Plugins manage skills, MCP servers, and hooks. Use the Plugin Manager in the workspace sidebar."
   },
   "bots": {
     "title": "Bots",
@@ -220,7 +197,18 @@
     "roleNormal": "Normal",
     "roleAdmin": "Admin",
     "roleOwner": "Owner",
-    "membersOf": "Members of {{name}}"
+    "membersOf": "Members of {{name}}",
+    "rolePermissions": {
+      "title": "Role Permissions",
+      "description": "These settings apply only to Normal members. Owners and Admins are unrestricted.",
+      "toolPolicy": "Normal tool policy",
+      "skillAllowlist": "Skill allowlist",
+      "skillAllowlistPlaceholder": "e.g. my-skill",
+      "skillAllowlistHint": "One skill name per line. Only these skills can be invoked by Normal members.",
+      "bashWhitelist": "Bash whitelist",
+      "bashWhitelistPlaceholder": "e.g. npm run",
+      "bashWhitelistHint": "One command prefix per line. Normal members can only run commands that start with one of these prefixes."
+    }
   },
   "wecom": {
     "enableBot": "Enable WeCom Bot",
