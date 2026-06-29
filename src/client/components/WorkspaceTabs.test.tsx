@@ -77,11 +77,11 @@ describe('WorkspaceTabs bot indicators', () => {
     cleanup()
   })
 
-  it('renders the Feishu indicator with the connected title for a Feishu-enabled workspace', async () => {
-    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Feishu WS', { feishuBotEnabled: true })]
+  it('renders the Feishu indicator when the server reports a connected Feishu bot', async () => {
+    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Feishu WS', {})]
     mockWorkspaceStore.openWorkspaceIds = ['ws1']
     mockWorkspaceStore.activeWorkspaceId = 'ws1'
-    mockFetchByStatus({ '/feishu/status': 'connected' })
+    mockFetchByStatus({ '/feishu/status': 'connected', '/bot/status': 'not_configured' })
 
     renderWithI18n(<WorkspaceTabs />)
 
@@ -90,10 +90,8 @@ describe('WorkspaceTabs bot indicators', () => {
     })
   })
 
-  it('renders both WeCom and Feishu indicators when both bots are enabled', async () => {
-    mockWorkspaceStore.workspaces = [
-      makeWorkspace('ws1', 'Both', { wecomBotEnabled: true, feishuBotEnabled: true }),
-    ]
+  it('renders both WeCom and Feishu indicators when both bots are bound', async () => {
+    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Both', {})]
     mockWorkspaceStore.openWorkspaceIds = ['ws1']
     mockWorkspaceStore.activeWorkspaceId = 'ws1'
     mockFetchByStatus({ '/bot/status': 'connected', '/feishu/status': 'connected' })
@@ -107,10 +105,10 @@ describe('WorkspaceTabs bot indicators', () => {
   })
 
   it('maps the connecting status to the connecting title (distinct from connected/error)', async () => {
-    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Feishu WS', { feishuBotEnabled: true })]
+    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Feishu WS', {})]
     mockWorkspaceStore.openWorkspaceIds = ['ws1']
     mockWorkspaceStore.activeWorkspaceId = 'ws1'
-    mockFetchByStatus({ '/feishu/status': 'connecting' })
+    mockFetchByStatus({ '/feishu/status': 'connecting', '/bot/status': 'not_configured' })
 
     renderWithI18n(<WorkspaceTabs />)
 
@@ -120,11 +118,11 @@ describe('WorkspaceTabs bot indicators', () => {
     expect(screen.queryByRole('img', { name: 'Feishu bot connected' })).not.toBeInTheDocument()
   })
 
-  it('renders no Feishu indicator when the workspace is not Feishu-enabled', async () => {
-    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Plain', { wecomBotEnabled: true })]
+  it('renders no Feishu indicator for a workspace with only a WeCom bot', async () => {
+    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'WeCom only', {})]
     mockWorkspaceStore.openWorkspaceIds = ['ws1']
     mockWorkspaceStore.activeWorkspaceId = 'ws1'
-    mockFetchByStatus({ '/bot/status': 'connected' })
+    mockFetchByStatus({ '/bot/status': 'connected', '/feishu/status': 'not_configured' })
 
     renderWithI18n(<WorkspaceTabs />)
 
@@ -132,6 +130,20 @@ describe('WorkspaceTabs bot indicators', () => {
       expect(screen.getByRole('img', { name: 'WeCom bot connected' })).toBeInTheDocument()
     })
     expect(screen.queryByRole('img', { name: /Feishu bot/ })).not.toBeInTheDocument()
+  })
+
+  it('renders no bot indicator when the server reports not_configured', async () => {
+    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Plain', {})]
+    mockWorkspaceStore.openWorkspaceIds = ['ws1']
+    mockWorkspaceStore.activeWorkspaceId = 'ws1'
+    mockFetchByStatus({ '/bot/status': 'not_configured', '/feishu/status': 'not_configured' })
+
+    renderWithI18n(<WorkspaceTabs />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Plain')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('img', { name: /bot/ })).not.toBeInTheDocument()
   })
 
   it('polls the Feishu status endpoint on mount', async () => {
@@ -146,7 +158,7 @@ describe('WorkspaceTabs bot indicators', () => {
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
-    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Feishu WS', { feishuBotEnabled: true })]
+    mockWorkspaceStore.workspaces = [makeWorkspace('ws1', 'Feishu WS', {})]
     mockWorkspaceStore.openWorkspaceIds = ['ws1']
     mockWorkspaceStore.activeWorkspaceId = 'ws1'
 

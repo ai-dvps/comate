@@ -63,11 +63,11 @@ describe('WorkspaceSwitcher bot indicators', () => {
     cleanup()
   })
 
-  it('renders the Feishu status icon for a Feishu-enabled workspace', async () => {
-    mockStore.workspaces = [makeWorkspace('ws1', 'Feishu WS', { feishuBotEnabled: true })]
+  it('renders the Feishu status icon when the server reports a connected Feishu bot', async () => {
+    mockStore.workspaces = [makeWorkspace('ws1', 'Feishu WS', {})]
     mockStore.openWorkspaceIds = ['ws1']
     mockStore.activeWorkspaceId = 'ws1'
-    mockFetchByStatus({ '/feishu/status': 'connected' })
+    mockFetchByStatus({ '/feishu/status': 'connected', '/bot/status': 'not_configured' })
 
     renderWithI18n(<WorkspaceSwitcher open onOpenChange={() => {}} />)
 
@@ -76,11 +76,11 @@ describe('WorkspaceSwitcher bot indicators', () => {
     })
   })
 
-  it('renders the WeCom status icon for a WeCom-enabled workspace', async () => {
-    mockStore.workspaces = [makeWorkspace('ws1', 'WeCom WS', { wecomBotEnabled: true })]
+  it('renders the WeCom status icon when the server reports a connected WeCom bot', async () => {
+    mockStore.workspaces = [makeWorkspace('ws1', 'WeCom WS', {})]
     mockStore.openWorkspaceIds = ['ws1']
     mockStore.activeWorkspaceId = 'ws1'
-    mockFetchByStatus({ '/bot/status': 'connected' })
+    mockFetchByStatus({ '/bot/status': 'connected', '/feishu/status': 'not_configured' })
 
     renderWithI18n(<WorkspaceSwitcher open onOpenChange={() => {}} />)
 
@@ -89,10 +89,8 @@ describe('WorkspaceSwitcher bot indicators', () => {
     })
   })
 
-  it('renders both icons when both bots are enabled on one workspace', async () => {
-    mockStore.workspaces = [
-      makeWorkspace('ws1', 'Both', { wecomBotEnabled: true, feishuBotEnabled: true }),
-    ]
+  it('renders both icons when both bots are bound to one workspace', async () => {
+    mockStore.workspaces = [makeWorkspace('ws1', 'Both', {})]
     mockStore.openWorkspaceIds = ['ws1']
     mockStore.activeWorkspaceId = 'ws1'
     mockFetchByStatus({ '/bot/status': 'connected', '/feishu/status': 'connected' })
@@ -105,11 +103,11 @@ describe('WorkspaceSwitcher bot indicators', () => {
     expect(screen.getByRole('img', { name: 'Feishu bot connected' })).toBeInTheDocument()
   })
 
-  it('renders no bot icons for a workspace without bots enabled', async () => {
+  it('renders no bot icons when the server reports not_configured', async () => {
     mockStore.workspaces = [makeWorkspace('ws1', 'Plain', {})]
     mockStore.openWorkspaceIds = ['ws1']
     mockStore.activeWorkspaceId = 'ws1'
-    mockFetchByStatus({})
+    mockFetchByStatus({ '/bot/status': 'not_configured', '/feishu/status': 'not_configured' })
 
     renderWithI18n(<WorkspaceSwitcher open onOpenChange={() => {}} />)
 

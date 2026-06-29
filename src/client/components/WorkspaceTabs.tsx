@@ -103,8 +103,8 @@ export default function WorkspaceTabs() {
     [openWorkspaceIds, workspaces]
   )
 
-  const wecomBotStatuses = useBotStatuses(openWorkspaceIds, workspaces, 'wecomBotEnabled', '/bot/status')
-  const feishuBotStatuses = useBotStatuses(openWorkspaceIds, workspaces, 'feishuBotEnabled', '/feishu/status')
+  const wecomBotStatuses = useBotStatuses(openWorkspaceIds, '/bot/status')
+  const feishuBotStatuses = useBotStatuses(openWorkspaceIds, '/feishu/status')
 
   // Scroll active tab into view when it changes
   useEffect(() => {
