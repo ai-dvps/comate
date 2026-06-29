@@ -83,7 +83,7 @@ export default function BotManagementPage() {
 
   if (view === 'form') {
     return (
-      <div className="space-y-4">
+      <div className="p-6 max-w-xl space-y-4">
         <div className="flex items-center gap-2 mb-4">
           <Button variant="ghost" size="sm" onClick={() => { setView('list'); setEditingBot(undefined); }} className="text-text-secondary">
             ← {t('bots.backToList')}
@@ -103,7 +103,7 @@ export default function BotManagementPage() {
 
   if (view === 'members' && selectedBot) {
     return (
-      <div className="space-y-4">
+      <div className="p-6 max-w-xl space-y-4">
         <div className="flex items-center gap-2 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setView('list')} className="text-text-secondary">
             ← {t('bots.backToList')}
@@ -143,7 +143,7 @@ export default function BotManagementPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 max-w-xl space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Bot className="w-5 h-5 text-text-secondary" />
