@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, UserPlus, AlertTriangle, Loader2 } from 'lucide-react';
 import type { BotMember, BotProvider, BotRole } from '../stores/bot-store';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 interface BotMemberListProps {
   botId: string;
@@ -79,29 +80,31 @@ export default function BotMemberList({
 
       <div className="border border-border rounded-lg p-3 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-          <select
-            value={provider}
-            onChange={(e) => setProvider(e.target.value as BotProvider)}
-            className="px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
-          >
-            <option value="wecom">{t('bots.providerWecom')}</option>
-            <option value="feishu">{t('bots.providerFeishu')}</option>
-          </select>
+          <Select value={provider} onValueChange={(value) => setProvider(value as BotProvider)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="wecom">{t('bots.providerWecom')}</SelectItem>
+              <SelectItem value="feishu">{t('bots.providerFeishu')}</SelectItem>
+            </SelectContent>
+          </Select>
           <input
             value={providerUserId}
             onChange={(e) => setProviderUserId(e.target.value)}
             placeholder={t('bots.memberUserIdPlaceholder')}
             className="sm:col-span-2 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
           />
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value as BotRole)}
-            className="px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
-          >
-            <option value="normal">{t('bots.roleNormal')}</option>
-            <option value="admin">{t('bots.roleAdmin')}</option>
-            <option value="owner">{t('bots.roleOwner')}</option>
-          </select>
+          <Select value={role} onValueChange={(value) => setRole(value as BotRole)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
+              <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
+              <SelectItem value="owner">{t('bots.roleOwner')}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <button
           type="button"
@@ -142,18 +145,22 @@ export default function BotMemberList({
                     {member.provider}
                   </span>
                   <span className="text-xs text-text-primary font-mono">{member.providerUserId}</span>
-                  <select
+                  <Select
                     value={member.role}
-                    onChange={(e) =>
-                      onSetRole(member.provider, member.providerUserId, e.target.value as BotRole)
+                    onValueChange={(value) =>
+                      onSetRole(member.provider, member.providerUserId, value as BotRole)
                     }
                     disabled={isSaving}
-                    className="text-xs px-2 py-1 bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary disabled:opacity-50"
                   >
-                    <option value="normal">{t('bots.roleNormal')}</option>
-                    <option value="admin">{t('bots.roleAdmin')}</option>
-                    <option value="owner">{t('bots.roleOwner')}</option>
-                  </select>
+                    <SelectTrigger className="w-auto min-w-[80px] text-xs py-1 px-2 h-auto">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
+                      <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
+                      <SelectItem value="owner">{t('bots.roleOwner')}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <button
                   type="button"

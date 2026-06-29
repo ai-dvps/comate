@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../i18n';
 import BotMemberList from './BotMemberList';
@@ -77,9 +78,10 @@ describe('BotMemberList', () => {
     ];
     renderWithI18n(<BotMemberList {...baseProps} members={members} />);
 
-    const selects = screen.getAllByDisplayValue('Normal');
-    const memberRoleSelect = selects[selects.length - 1];
-    fireEvent.change(memberRoleSelect, { target: { value: 'admin' } });
+    const triggers = screen.getAllByRole('combobox');
+    const memberRoleTrigger = triggers[triggers.length - 1];
+    await userEvent.click(memberRoleTrigger);
+    await userEvent.click(screen.getByRole('option', { name: 'Admin' }));
 
     await waitFor(() => {
       expect(baseProps.onSetRole).toHaveBeenCalledWith('wecom', 'u-1', 'admin');

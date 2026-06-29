@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bot `/status` command for Feishu and WeCom** — users can now send `/status` in a Feishu DM or WeCom chat to see the current Comate workspace name and their own active session name. The reply is a single plain-text message in Chinese. If no workspace is bound or no active session exists, the bot replies with a plain-language message instead of empty values or internal IDs. The command requires no special permissions and is implemented independently in `src/server/services/feishu-bot-service.ts` and `src/server/services/wecom-bot-service.ts` with matching response shapes.
+
 - **Bot audit logging and security hardening** — bot security events are now written to a dedicated `bot_audit_logs` table via `src/server/services/bot-audit-logger.ts`. Audited events include provider credential changes, provider enable/disable, active-workspace switches, member additions/removals, member role changes, and file-access denials. Details are sanitized before persistence so long values (likely secrets or ciphertext) are replaced with `<redacted>`. Decryption failures in `src/server/utils/credential-crypto.ts` log only the ciphertext length and error message, never the ciphertext itself.
 
 - **Bot integration test coverage** — expanded server tests verify end-to-end bot/workspace behavior: migration dry-run and rollback, active-workspace switching through the WeCom/Feishu chat apps and the REST API, dynamic role changes during in-flight sessions, workspace denylist enforcement, and audit-log emission for security events.
@@ -21,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workspace settings no longer drive bot connections** — `PUT /api/workspaces/:id` no longer connects or disconnects WeCom/Feishu bots based on workspace settings, and the safe tool-permission preset auto-apply has been removed. Bot lifecycle is now managed entirely through the bot management API.
 
-- **Workspace settings UI cleaned up** — the workspace settings page no longer contains WeCom/Feishu connection, permission, isolation, or admin configuration panels. Those controls have moved to the dedicated **Bots** tab. The workspace page now shows a read-only **Bound Bot** card and a **Sensitive File Denylist** editor for workspace-level file isolation.
+- **Unified Select component for bot configuration dropdowns** — the bot management surface (`BotManagementPage`, `BotForm`, and `BotMemberList`) now uses a shared `src/client/components/ui/select.tsx` primitive built on `@radix-ui/react-select`. All workspace-switcher, provider, and role dropdowns render with consistent trigger and menu styling instead of native `<select>` elements.
 
 ### Fixed
 
