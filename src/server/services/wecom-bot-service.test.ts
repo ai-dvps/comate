@@ -10,6 +10,7 @@ import {
   parseWecomNewSessionCommand,
   parseWecomResumeCommand,
   parseWecomStopCommand,
+  parseWecomStatusCommand,
   parseWecomWorkspaceCommand,
 } from './wecom-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
@@ -1730,3 +1731,149 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
     assert.ok(notification.body.markdown.content.includes('当前机器人已切换到'));
   });
 });
+
+  describe('parseWecomStatusCommand', () => {
+    it('matches exact /status and /status with trailing text', () => {
+      assert.ok(parseWecomStatusCommand('/status'));
+      assert.ok(parseWecomStatusCommand('/status ignored args'));
+      assert.ok(parseWecomStatusCommand('  /status  '));
+    });
+
+    it('does not trigger on /statusx or plain text', () => {
+      assert.ok(!parseWecomStatusCommand('/statusx'));
+      assert.ok(!parseWecomStatusCommand('/statuses'));
+      assert.ok(!parseWecomStatusCommand('hello'));
+    });
+  });
+
+  describe('WeComBotService /status command', { concurrency: false }, () => {
+    let service: WeComBotService;
+    let sentMessages: Array<{ userId: string; body: any }>;
+
+    let origGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
+    let origGetSession: typeof chatService.getSession;
+    let origGet: typeof workspaceStore.get;
+
+    beforeEach(() => {
+      service = new WeComBotService();
+      sentMessages = [];
+
+      origGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
+      origGetSession = chatService.getSession.bind(chatService);
+      origGet = workspaceStore.get.bind(workspaceStore);
+
+      workspaceStore.getActiveWecomSession = () => null;
+      workspaceStore.get = async () => ({ id: 'ws-1', name: 'Test Workspace', settings: {} } as any);
+      chatService.getSession = async () => ({ id: 'sess-1', workspaceId: 'ws-1' } as any);
+    });
+
+    afterEach(() => {
+      workspaceStore.getActiveWecomSession = origGetActiveWecomSession;
+      chatService.getSession = origGetSession;
+      workspaceStore.get = origGet;
+    });
+
+    function injectConnection() {
+      (service as any).connections.set('ws-1', {
+        client: {
+          sendMessage: async (userId: string, body: any) => {
+            sentMessages.push({ userId, body });
+          },
+        },
+        workspaceId: 'ws-1',
+        botId: 'bot-1',
+        folderPath: '/tmp',
+        status: 'connected' as const,
+      });
+    }
+
+    function makeTextFrame(content: string) {
+      return {
+        headers: { req_id: 'r' },
+        body: {
+          msgid: 'm',
+          aibotid: 'bot-1',
+          chattype: 'single',
+          from: { userid: 'enc-user-1' },
+          msgtype: 'text',
+          text: { content },
+        },
+      };
+    }
+
+    it('/status replies with workspace name and active session name', async () => {
+      injectConnection();
+      workspaceStore.getActiveWecomSession = () => 'sess-active';
+      chatService.getSession = async (id: string) =>
+        ({ id, workspaceId: 'ws-1', name: 'Active Session', customTitle: 'Active Custom' } as any);
+
+      await (service as any).handleTextMessage('ws-1', makeTextFrame('/status'));
+
+      assert.strictEqual(sentMessages.length, 1);
+      assert.strictEqual(sentMessages[0].body.msgtype, 'markdown');
+      const content = sentMessages[0].body.markdown.content;
+      assert.ok(content.includes('Test Workspace'));
+      assert.ok(content.includes('Active Custom'));
+      assert.ok(!content.includes('Active Session'));
+    });
+
+    it('/status falls back to session name when customTitle is absent', async () => {
+      injectConnection();
+      workspaceStore.getActiveWecomSession = () => 'sess-active';
+      chatService.getSession = async (id: string) =>
+        ({ id, workspaceId: 'ws-1', name: 'Active Session' } as any);
+
+      await (service as any).handleTextMessage('ws-1', makeTextFrame('/status'));
+
+      assert.ok(sentMessages[0].body.markdown.content.includes('Active Session'));
+    });
+
+    it('/status replies with no active session message when none exists', async () => {
+      injectConnection();
+
+      await (service as any).handleTextMessage('ws-1', makeTextFrame('/status'));
+
+      assert.strictEqual(sentMessages.length, 1);
+      const content = sentMessages[0].body.markdown.content;
+      assert.ok(content.includes('Test Workspace'));
+      assert.ok(content.includes('暂无活跃会话'));
+    });
+
+    it('/status replies with binding hint when workspace is missing', async () => {
+      injectConnection();
+      workspaceStore.get = async () => null;
+
+      await (service as any).handleTextMessage('ws-1', makeTextFrame('/status'));
+
+      assert.strictEqual(sentMessages.length, 1);
+      assert.ok(sentMessages[0].body.markdown.content.includes('机器人尚未绑定工作空间'));
+    });
+
+    it('/status replies with a fallback error when session lookup fails', async () => {
+      injectConnection();
+      workspaceStore.getActiveWecomSession = () => 'sess-active';
+      chatService.getSession = async () => {
+        throw new Error('db down');
+      };
+
+      await (service as any).handleTextMessage('ws-1', makeTextFrame('/status'));
+
+      assert.strictEqual(sentMessages.length, 1);
+      const content = sentMessages[0].body.markdown.content;
+      assert.ok(content.includes('Test Workspace'));
+      assert.ok(content.includes('读取会话失败'));
+    });
+
+    it('/status is intercepted and not forwarded to the agent', async () => {
+      injectConnection();
+      let pushed = false;
+      chatService.pushMessage = (async () => {
+        pushed = true;
+      }) as any;
+
+      await (service as any).handleTextMessage('ws-1', makeTextFrame('/status'));
+
+      assert.strictEqual(sentMessages.length, 1);
+      assert.ok(!pushed);
+    });
+  });

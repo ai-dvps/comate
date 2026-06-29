@@ -1479,4 +1479,94 @@ describe('FeishuBotService', () => {
       assert.ok(textPosts[0].includes('中断会话失败'));
     });
   });
+
+  describe('/status command', () => {
+    it('replies with workspace name and active session name', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-status');
+      chatService.getSession = async (sessionId: string, workspaceId: string) =>
+        ({
+          id: sessionId,
+          workspaceId,
+          name: 'Status Session',
+          customTitle: 'Custom Status Title',
+          source: 'feishu',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        } as import('../models/session.js').ChatSession);
+
+      await (service as unknown as { handleStatusCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStatusCommand(
+        thread,
+        feishuUserId,
+      );
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 1);
+      assert.ok(textPosts[0].includes(workspace.name));
+      assert.ok(textPosts[0].includes('Custom Status Title'));
+      assert.ok(!textPosts[0].includes('Status Session'));
+    });
+
+    it('falls back to session name when customTitle is absent', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-status');
+      chatService.getSession = async (sessionId: string, workspaceId: string) =>
+        ({
+          id: sessionId,
+          workspaceId,
+          name: 'Status Session',
+          source: 'feishu',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        } as import('../models/session.js').ChatSession);
+
+      await (service as unknown as { handleStatusCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStatusCommand(
+        thread,
+        feishuUserId,
+      );
+
+      const textPosts = getTextPosts();
+      assert.ok(textPosts[0].includes('Status Session'));
+    });
+
+    it('replies with no active session message when none exists', async () => {
+      await (service as unknown as { handleStatusCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStatusCommand(
+        thread,
+        feishuUserId,
+      );
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 1);
+      assert.ok(textPosts[0].includes(workspace.name));
+      assert.ok(textPosts[0].includes('暂无活跃会话'));
+    });
+
+    it('replies with the binding hint when no workspace is active', async () => {
+      workspaceStore.getFeishuActiveWorkspace = () => null;
+
+      await (service as unknown as { handleStatusCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStatusCommand(
+        thread,
+        feishuUserId,
+      );
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 1);
+      assert.ok(textPosts[0].includes('机器人尚未绑定工作空间'));
+    });
+
+    it('replies with a fallback error when session lookup fails', async () => {
+      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-status');
+      chatService.getSession = async () => {
+        throw new Error('db down');
+      };
+
+      await (service as unknown as { handleStatusCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStatusCommand(
+        thread,
+        feishuUserId,
+      );
+
+      const textPosts = getTextPosts();
+      assert.strictEqual(textPosts.length, 1);
+      assert.ok(textPosts[0].includes(workspace.name));
+      assert.ok(textPosts[0].includes('读取会话失败'));
+    });
+  });
 });

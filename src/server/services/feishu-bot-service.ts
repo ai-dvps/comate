@@ -584,6 +584,8 @@ export class FeishuBotService {
           await this.runForUser(feishuUserId, () => this.handleSessionCommand(thread, feishuUserId));
         } else if (text === '/stop') {
           await this.runForUser(feishuUserId, () => this.handleStopCommand(thread, feishuUserId));
+        } else if (text === '/status') {
+          await this.runForUser(feishuUserId, () => this.handleStatusCommand(thread, feishuUserId));
         } else if (this.isNewSessionCommand(text)) {
           await this.runForUser(feishuUserId, () => this.handleNewSessionCommand(thread, feishuUserId, text));
         } else {
@@ -870,6 +872,30 @@ export class FeishuBotService {
     }
 
     await this.stopTurn(sessionId, (text) => this.safePostText(thread, text));
+  }
+
+  private async handleStatusCommand(thread: Thread, feishuUserId: string): Promise<void> {
+    const workspace = await this.requireActiveWorkspace(thread);
+    if (!workspace) return;
+
+    const sessionId = workspaceStore.getFeishuActiveSession(workspace.id, feishuUserId);
+    let sessionName = '暂无活跃会话';
+    if (sessionId) {
+      try {
+        const session = await chatService.getSession(sessionId, workspace.id);
+        if (session) {
+          sessionName = session.customTitle ?? session.name ?? sessionId;
+        }
+      } catch (err) {
+        console.error('[FeishuBotService] failed to read session for /status:', err);
+        sessionName = '读取会话失败';
+      }
+    }
+
+    await this.safePostText(
+      thread,
+      `当前工作空间：${workspace.name}\n当前会话：${sessionName}`,
+    );
   }
 
   private async handleMenuStopCommand(
