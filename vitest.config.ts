@@ -10,4 +10,7 @@ export default defineConfig({
       '@server': path.resolve(__dirname, './src/server'),
     },
   },
+  test: {
+    projects: ['./vitest.jsdom.config.ts', './vitest.browser.config.ts'],
+  },
 })
