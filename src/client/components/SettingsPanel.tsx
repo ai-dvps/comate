@@ -22,7 +22,6 @@ import { checkForUpdates, getAppVersion, downloadAndInstallUpdate, restartToUpda
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
 import ProviderSection from './ProviderSection'
-import SkillsPage from './SkillsPage'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 import BotManagementPage from './BotManagementPage'
 
@@ -32,7 +31,7 @@ interface SettingsPanelProps {
 
 type SettingsTab = 'general' | 'appearance' | 'workspace' | 'providers' | 'bots'
 
-type WorkspaceSection = 'basic' | 'skills' | 'mcp' | 'hooks'
+type WorkspaceSection = 'general' | 'bot' | 'security' | 'danger'
 
 interface WorkspaceFormState {
   name: string
@@ -1216,12 +1215,11 @@ function WorkspaceTabShell({
   onManageBots: () => void
 }) {
   const { t } = useTranslation('settings')
-  const [activeSection, setActiveSection] = useState<WorkspaceSection>('basic')
-  const [showSkillsPage, setShowSkillsPage] = useState(false)
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>('general')
 
-  // Reset to Basic Info when switching workspaces
+  // Reset to General when switching workspaces
   useEffect(() => {
-    setActiveSection('basic')
+    setActiveSection('general')
   }, [selectedWorkspaceId])
 
   if (workspaces.length === 0) {
@@ -1233,10 +1231,10 @@ function WorkspaceTabShell({
   }
 
   const sections: { id: WorkspaceSection; label: string }[] = [
-    { id: 'basic', label: t('workspaceSections.basic') },
-    { id: 'skills', label: t('workspaceSections.skills') },
-    { id: 'mcp', label: t('workspaceSections.mcp') },
-    { id: 'hooks', label: t('workspaceSections.hooks') },
+    { id: 'general', label: t('workspaceSections.general') },
+    { id: 'bot', label: t('workspaceSections.bot') },
+    { id: 'security', label: t('workspaceSections.security') },
+    { id: 'danger', label: t('workspaceSections.danger') },
   ]
 
   return (
@@ -1292,47 +1290,35 @@ function WorkspaceTabShell({
             </div>
           ) : (
             <>
-              {activeSection === 'basic' && (
-                <BasicInfoSection
+              {activeSection === 'general' && (
+                <GeneralSection state={workspaceState} onUpdate={onUpdateWorkspace} />
+              )}
+              {activeSection === 'bot' && (
+                <BotSection
                   workspaceId={selectedWorkspaceId!}
                   state={workspaceState}
                   onUpdate={onUpdateWorkspace}
-                  onDelete={onDelete}
                   onManageBots={onManageBots}
                 />
               )}
-              {activeSection === 'skills' && (
-                <SkillsRedirectCard onOpen={() => setShowSkillsPage(true)} />
+              {activeSection === 'security' && (
+                <SecuritySection state={workspaceState} onUpdate={onUpdateWorkspace} />
               )}
-              {activeSection === 'mcp' && <PluginRedirectPlaceholder type="mcp" />}
-              {activeSection === 'hooks' && <PluginRedirectPlaceholder type="hooks" />}
+              {activeSection === 'danger' && <DangerSection onDelete={onDelete} />}
             </>
           )}
         </div>
       </div>
-
-      {showSkillsPage && selectedWorkspaceId && (
-        <SkillsPage
-          workspaceId={selectedWorkspaceId}
-          onClose={() => setShowSkillsPage(false)}
-        />
-      )}
     </div>
   )
 }
 
-function BasicInfoSection({
-  workspaceId,
+function GeneralSection({
   state,
   onUpdate,
-  onDelete,
-  onManageBots,
 }: {
-  workspaceId: string
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
-  onDelete: () => void
-  onManageBots: () => void
 }) {
   const { t } = useTranslation('settings')
   return (
@@ -1361,20 +1347,25 @@ function BasicInfoSection({
         </div>
         <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
       </div>
+    </div>
+  )
+}
 
+function BotSection({
+  workspaceId,
+  state,
+  onUpdate,
+  onManageBots,
+}: {
+  workspaceId: string
+  state: WorkspaceFormState
+  onUpdate: (updates: Partial<WorkspaceFormState>) => void
+  onManageBots: () => void
+}) {
+  const { t } = useTranslation('settings')
+  return (
+    <div className="max-w-xl space-y-5">
       <BoundBotCard workspaceId={workspaceId} onManageBots={onManageBots} />
-
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.promptHistoryRetentionDays')}</label>
-        <input
-          type="number"
-          value={state.promptHistoryRetentionDays}
-          onChange={(e) => onUpdate({ promptHistoryRetentionDays: e.target.value })}
-          placeholder={t('workspace.promptHistoryRetentionDaysPlaceholder')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-        />
-        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.promptHistoryRetentionDaysHint')}</p>
-      </div>
 
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('wecom.filePromptTemplate')}</label>
@@ -1388,13 +1379,43 @@ function BasicInfoSection({
         <p className="text-[10px] text-text-tertiary mt-1">{t('wecom.filePromptTemplateHint')}</p>
       </div>
 
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.promptHistoryRetentionDays')}</label>
+        <input
+          type="number"
+          value={state.promptHistoryRetentionDays}
+          onChange={(e) => onUpdate({ promptHistoryRetentionDays: e.target.value })}
+          placeholder={t('workspace.promptHistoryRetentionDaysPlaceholder')}
+          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+        />
+        <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.promptHistoryRetentionDaysHint')}</p>
+      </div>
+    </div>
+  )
+}
+
+function SecuritySection({
+  state,
+  onUpdate,
+}: {
+  state: WorkspaceFormState
+  onUpdate: (updates: Partial<WorkspaceFormState>) => void
+}) {
+  return (
+    <div className="max-w-xl space-y-5">
       <SensitiveFileDenylistEditor
         value={state.sensitiveFileDenylist}
         onChange={(next) => onUpdate({ sensitiveFileDenylist: next })}
       />
+    </div>
+  )
+}
 
-      {/* Danger zone */}
-      <div className="pt-4 border-t border-border/50">
+function DangerSection({ onDelete }: { onDelete: () => void }) {
+  const { t } = useTranslation('settings')
+  return (
+    <div className="max-w-xl space-y-5">
+      <div>
         <h3 className="text-xs font-medium text-text-secondary mb-2 flex items-center gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
           {t('deleteWorkspace.title')}
@@ -1537,40 +1558,5 @@ function BoundBotCard({ workspaceId, onManageBots }: { workspaceId: string; onMa
   )
 }
 
-function PluginRedirectPlaceholder({ type }: { type: 'skills' | 'mcp' | 'hooks' }) {
-  const { t } = useTranslation('settings')
-  return (
-    <div className="max-w-xl flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
-      <div className="space-y-1">
-        <h3 className="text-sm font-medium text-text-primary">{t(`placeholder.${type}Title`)}</h3>
-        <p className="text-xs text-text-secondary max-w-sm">{t('placeholder.pluginRedirect')}</p>
-      </div>
-    </div>
-  )
-}
 
-/**
- * Card shown in the workspace-settings Skills tab. The new Skills page is a
- * top-level surface, so this card is a launcher — clicking Open mounts the
- * SkillsPage overlay (with the active workspace context).
- */
-function SkillsRedirectCard({ onOpen }: { onOpen: () => void }) {
-  const { t } = useTranslation('settings')
-  return (
-    <div className="max-w-xl flex flex-col items-center justify-center h-full min-h-[200px] text-center space-y-3">
-      <div className="space-y-1">
-        <h3 className="text-sm font-medium text-text-primary">{t('placeholder.skillsTitle')}</h3>
-        <p className="text-xs text-text-secondary max-w-sm">
-          {t('placeholder.skillsRedirect', 'The Skills page is now available as a top-level surface in the session list. Click below to open it for this workspace.')}
-        </p>
-      </div>
-      <button
-        onClick={onOpen}
-        className="px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
-      >
-        {t('skills.openFromSettings', 'Open Skills page')}
-      </button>
-    </div>
-  )
-}
 
