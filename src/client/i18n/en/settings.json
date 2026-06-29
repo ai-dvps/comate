@@ -198,6 +198,13 @@
     "roleAdmin": "Admin",
     "roleOwner": "Owner",
     "membersOf": "Members of {{name}}",
+    "manageRoles": "Manage roles",
+    "roles": {
+      "title": "Role Permissions",
+      "description": "These permissions apply to members based on their role. Owner and Admin are unrestricted.",
+      "ownerDescription": "Owners can manage the bot, switch workspaces, manage members, and use all tools, Skills, and Bash commands.",
+      "adminDescription": "Admins have full tool, Skill, Bash, and file permissions in the active workspace."
+    },
     "rolePermissions": {
       "title": "Role Permissions",
       "description": "These settings apply only to Normal members. Owners and Admins are unrestricted.",
