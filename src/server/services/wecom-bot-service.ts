@@ -138,6 +138,15 @@ export function parseWecomWorkspaceCommand(content: string): boolean {
   const trimmed = content.trim();
   return trimmed === '/workspace' || trimmed.startsWith('/workspace ');
 }
+/**
+ * Detect the `/status` command. Matches the exact token or a prefix followed by a
+ * space (so `/statusx` does not trigger). Trailing text is ignored.
+ */
+export function parseWecomStatusCommand(content: string): boolean {
+  const trimmed = content.trim();
+  return trimmed === '/status' || trimmed.startsWith('/status ');
+}
+
 const MAX_RESUME_SESSIONS = 10;
 
 /** Format an ISO timestamp as a short relative-time label for the `/resume` card. */
@@ -461,6 +470,14 @@ export class WeComBotService {
       return;
     }
 
+    // /status reports the current workspace and the user's active session.
+    if (parseWecomStatusCommand(content)) {
+      const conn = this.getConnectionForWorkspace(workspaceId);
+      if (!conn) return;
+      await this.handleStatusCommand(workspaceId, wecomUserId, conn);
+      return;
+    }
+
     const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
     if (!sessionId) return;
 
@@ -687,6 +704,58 @@ export class WeComBotService {
       })),
     });
     await this.sendTemplateCard(workspaceId, wecomUserId, card);
+  }
+
+  /**
+   * Handle `/status`: report the current workspace name and the user's active
+   * session name as a plain-text markdown message.
+   */
+  private async handleStatusCommand(
+    workspaceId: string,
+    wecomUserId: string,
+    conn: BotConnection,
+  ): Promise<void> {
+    try {
+      const workspace = await workspaceStore.get(workspaceId);
+      if (!workspace) {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '机器人尚未绑定工作空间，请联系管理员进行设置。' },
+        });
+        return;
+      }
+
+      const sessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
+      let sessionName = '暂无活跃会话';
+      if (sessionId) {
+        try {
+          const session = await chatService.getSession(sessionId, workspaceId);
+          if (session) {
+            sessionName = session.customTitle ?? session.name ?? sessionId;
+          }
+        } catch (err) {
+          console.error('[WeComBotService] failed to read session for /status:', err);
+          sessionName = '读取会话失败';
+        }
+      }
+
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: {
+          content: `当前工作空间：**${workspace.name}**\n当前会话：**${sessionName}**`,
+        },
+      });
+    } catch (err) {
+      console.error('[WeComBotService] failed to handle /status:', err);
+      try {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '⚠️ 获取状态失败，请稍后重试。' },
+        });
+      } catch {
+        // Ignore secondary send failure
+      }
+    }
   }
 
   /**
