@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workspace tabs and switcher show bot status again** — after the bot-workspace decoupling migration removed `wecomBotEnabled`/`feishuBotEnabled` from workspace settings, the `useBotStatuses` hook stopped polling status endpoints and the bot connection icons disappeared from `WorkspaceTabs` and `WorkspaceSwitcher`. The hook now polls every candidate workspace and omits `not_configured` statuses, so icons appear only for workspaces with a bound bot.
 
+### Security
+
+- **Dependency security upgrade** — upgraded npm dependencies flagged by `npm audit` and added `overrides` to patch transitive vulnerabilities. Direct upgrades: `dompurify` ^3.4.11, `uuid` ^11.1.1, `ws` ^8.21.0, `esbuild` ^0.28.1, `playwright` ^1.55.1, `vite` ^6.4.3, `@vitejs/plugin-react` ^5.0.4, and `@vitest/browser-playwright` ^4.1.9. Transitive overrides: `@babel/core` ^7.29.6, `axios` ^1.18.1, `form-data` ^4.0.6, `hono` ^4.12.25, `js-yaml` ^4.1.2, `qs` ^6.15.3, `shell-quote` ^1.8.4, `tar` ^7.5.16, and `uuid` ^11.1.1. Vitest workspace configuration was migrated to the Vitest 4 `test.projects` format (`vitest.jsdom.config.ts` and `vitest.browser.config.ts`). `npm audit` now reports zero vulnerabilities. Test mocks were updated for Vitest 4 / browser-mode compatibility.
+
+### Residual risk
+
+`@larksuiteoapi/node-sdk` declares `axios: ~1.13.3`; the `axios` override forces it to 1.18.1 to satisfy `npm audit`. This is outside the package's declared semver range. Automated tests, the production build, and the full Tauri release build all pass, but runtime behavior of the Lark/Feishu SDK should be monitored in staging.
+
 ## [0.0.18] - 2026-06-27
 
 ### Added
