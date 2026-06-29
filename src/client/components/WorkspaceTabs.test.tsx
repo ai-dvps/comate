@@ -58,11 +58,11 @@ function mockFetchByStatus(map: Record<string, string>) {
 
 describe('WorkspaceTabs bot indicators', () => {
   beforeAll(() => {
-    globalThis.ResizeObserver = vi.fn(() => ({
-      observe: vi.fn(),
-      unobserve: vi.fn(),
-      disconnect: vi.fn(),
-    })) as unknown as typeof ResizeObserver
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
   })
 
   beforeEach(() => {

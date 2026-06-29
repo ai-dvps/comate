@@ -57,11 +57,11 @@ async function selectFilter(user: ReturnType<typeof userEvent.setup>, label: str
 
 describe('SessionList', () => {
   beforeAll(() => {
-    globalThis.ResizeObserver = vi.fn(() => ({
-      observe: vi.fn(),
-      unobserve: vi.fn(),
-      disconnect: vi.fn(),
-    })) as unknown as typeof ResizeObserver
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
   })
 
   beforeEach(() => {
