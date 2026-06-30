@@ -81,7 +81,7 @@ describe('FilePath', () => {
     expect(onOpenFile.mock.calls[0][1]).toBe('utils.ts')
   })
 
-  it('copies absolute path when copy button is clicked', async () => {
+  it('copies relative path when copy button is clicked inside workspace', async () => {
     renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
       workspacePath: '/workspace',
     })
@@ -89,8 +89,28 @@ describe('FilePath', () => {
     const copyButton = screen.getByRole('button', { name: 'Copy path' })
     await userEvent.click(copyButton)
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      '/workspace/src/components/Button.tsx',
+      'src/components/Button.tsx',
     )
+  })
+
+  it('falls back to absolute path when copy button is clicked outside workspace', async () => {
+    renderWithContext(<FilePath path="/etc/passwd" />, {
+      workspacePath: '/workspace',
+    })
+
+    const copyButton = screen.getByRole('button', { name: 'Copy path' })
+    await userEvent.click(copyButton)
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/etc/passwd')
+  })
+
+  it('copies workspace root as relative dot when copy button is clicked', async () => {
+    renderWithContext(<FilePath path="/workspace" />, {
+      workspacePath: '/workspace',
+    })
+
+    const copyButton = screen.getByRole('button', { name: 'Copy path' })
+    await userEvent.click(copyButton)
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('.')
   })
 
   it('truncates long relative paths from the start', () => {
