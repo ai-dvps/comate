@@ -42,6 +42,9 @@ describe('BotPersonaEditor', () => {
     expect(screen.getByText('Bot Persona')).toBeInTheDocument();
     expect(screen.getByText('Append to Claude Code default')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...')).toBeInTheDocument();
+
+    const saveButton = screen.getByRole('button', { name: 'Saved' });
+    expect(saveButton).toBeDisabled();
   });
 
   it('populates existing persona values', () => {
@@ -52,6 +55,9 @@ describe('BotPersonaEditor', () => {
 
     expect(screen.getByDisplayValue('Existing prompt')).toBeInTheDocument();
     expect(screen.getByText('Replace Claude Code default')).toHaveClass('bg-surface-active');
+
+    const saveButton = screen.getByRole('button', { name: 'Saved' });
+    expect(saveButton).toBeDisabled();
   });
 
   it('switches mode when buttons are clicked', async () => {
@@ -61,6 +67,9 @@ describe('BotPersonaEditor', () => {
 
     expect(screen.getByText('Replace Claude Code default')).toHaveClass('bg-surface-active');
     expect(screen.getByText('Append to Claude Code default')).not.toHaveClass('bg-surface-active');
+
+    const saveButton = screen.getByRole('button', { name: 'Save changes' });
+    expect(saveButton).toBeEnabled();
   });
 
   it('calls onSave with persona when form is submitted', async () => {
@@ -71,7 +80,10 @@ describe('BotPersonaEditor', () => {
       screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...'),
       'You are a test persona.',
     );
-    fireEvent.click(screen.getByText('Save persona'));
+
+    const saveButton = screen.getByRole('button', { name: 'Save changes' });
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
@@ -90,7 +102,10 @@ describe('BotPersonaEditor', () => {
 
     const textarea = screen.getByDisplayValue('To be cleared');
     await userEvent.clear(textarea);
-    fireEvent.click(screen.getByText('Save persona'));
+
+    const saveButton = screen.getByRole('button', { name: 'Save changes' });
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
@@ -109,5 +124,24 @@ describe('BotPersonaEditor', () => {
     );
 
     expect(screen.getByText(/Long prompts increase token usage/)).toBeInTheDocument();
+  });
+
+  it('reflects saved state after a successful save', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={onSave} />);
+
+    await userEvent.type(
+      screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...'),
+      'You are a test persona.',
+    );
+
+    const saveButton = screen.getByRole('button', { name: 'Save changes' });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByRole('button', { name: 'Saved' })).toBeDisabled();
   });
 });

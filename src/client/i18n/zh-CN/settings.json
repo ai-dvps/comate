@@ -229,7 +229,9 @@
       "modeReplaceHint": "用你自己的提示词替换 Claude Code 的默认系统提示词。",
       "lengthWarning": "提示词越长，消耗的 Token 越多。建议保持简洁。",
       "freezeHint": "更改在下一次机器人会话生效，不影响正在进行的对话。",
-      "save": "保存人设"
+      "save": "保存人设",
+      "saveChanges": "保存更改",
+      "saved": "已保存"
     }
   },
   "wecom": {

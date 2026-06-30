@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Save, Loader2, AlertTriangle, Sparkles } from 'lucide-react';
+import { Save, Check, Loader2, AlertTriangle, Sparkles } from 'lucide-react';
 import type { Bot, BotPersona } from '../stores/bot-store';
 import { cn } from './ui/utils';
 
@@ -22,22 +22,32 @@ export default function BotPersonaEditor({
   const { t } = useTranslation('settings');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<'append' | 'replace'>('append');
+  const [savedPrompt, setSavedPrompt] = useState('');
+  const [savedMode, setSavedMode] = useState<'append' | 'replace'>('append');
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
-    setPrompt(bot.persona?.prompt ?? '');
-    setMode(bot.persona?.mode ?? 'append');
+    const initialPrompt = bot.persona?.prompt ?? '';
+    const initialMode = bot.persona?.mode ?? 'append';
+    setPrompt(initialPrompt);
+    setMode(initialMode);
+    setSavedPrompt(initialPrompt);
+    setSavedMode(initialMode);
     setSaveError(null);
   }, [bot]);
 
+  const trimmedPrompt = prompt.trim();
+  const isDirty = trimmedPrompt !== savedPrompt.trim() || mode !== savedMode;
+
   const handleSave = async () => {
     setSaveError(null);
-    const trimmed = prompt.trim();
-    const persona: BotPersona | null = trimmed
-      ? { prompt: trimmed, mode }
+    const persona: BotPersona | null = trimmedPrompt
+      ? { prompt: trimmedPrompt, mode }
       : null;
     try {
       await onSave(persona);
+      setSavedPrompt(trimmedPrompt);
+      setSavedMode(mode);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     }
@@ -118,18 +128,28 @@ export default function BotPersonaEditor({
         <button
           type="button"
           onClick={handleSave}
-          disabled={isSaving}
-          className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+          disabled={isSaving || !isDirty}
+          className={cn(
+            'flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
+            isDirty
+              ? 'bg-accent hover:bg-accent-hover text-accent-foreground'
+              : 'bg-surface-active text-text-secondary',
+          )}
         >
           {isSaving ? (
             <>
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               {t('actions.saving')}
             </>
-          ) : (
+          ) : isDirty ? (
             <>
               <Save className="w-3.5 h-3.5" />
-              {t('bots.persona.save')}
+              {t('bots.persona.saveChanges')}
+            </>
+          ) : (
+            <>
+              <Check className="w-3.5 h-3.5" />
+              {t('bots.persona.saved')}
             </>
           )}
         </button>
