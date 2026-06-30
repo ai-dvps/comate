@@ -16,6 +16,7 @@ import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, Permiss
 import type { BotPersona, BotRole } from '../models/bot.js';
 import type { QuestionPayload } from '../types/message.js';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { botService } from './bot-service.js';
@@ -1905,10 +1906,14 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   }
 
   function createMockRuntime(): SessionRuntime {
+    let closed = false;
     return {
-      isClosed: () => false,
+      isClosed: () => closed,
       getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
-      close: () => Promise.resolve(),
+      close: () => {
+        closed = true;
+        return Promise.resolve();
+      },
       subscribe: () => {},
       unsubscribe: () => {},
       pushMessage: () => {},
@@ -1946,11 +1951,11 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       folderPath,
     });
     const provider = workspaceStore.createProvider({
-      name: 'Test Provider',
+      name: `Test Provider ${crypto.randomUUID()}`,
       baseUrl: 'http://test',
       authToken: 'test',
       model: 'test-model',
-      isDefault: true,
+      isDefault: false,
     });
     const bot = botService.createBot({
       name: 'Persona Bot',
@@ -1990,7 +1995,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
 
     await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, providerUserId);
     assert.ok(capturedOptions, 'options must be captured');
-    return { options: capturedOptions, bot, session, workspace };
+    return { options: capturedOptions, bot, session, workspace, provider };
   }
 
   it('append persona sets preset-with-append systemPrompt', async () => {
@@ -2017,7 +2022,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   });
 
   it('GUI session does not inherit bot persona', async () => {
-    const { workspace, bot } = await setupBotSession({
+    const { workspace, bot, provider } = await setupBotSession({
       persona: { prompt: 'You are a bot persona.', mode: 'append' },
     });
     await service.closeAllRuntimes();
@@ -2026,7 +2031,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       workspace.id,
       'GUI Session',
       undefined,
-      undefined,
+      provider.id,
       'gui',
       undefined,
       bot.id,
@@ -2044,7 +2049,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   });
 
   it('persona changes take effect on the next newly created bot session', async () => {
-    const { workspace, bot } = await setupBotSession({
+    const { workspace, bot, provider } = await setupBotSession({
       persona: { prompt: 'Original persona.', mode: 'append' },
     });
 
@@ -2054,7 +2059,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       workspace.id,
       'Next Persona Session',
       undefined,
-      undefined,
+      provider.id,
       'wecom',
       undefined,
       bot.id,
@@ -2136,5 +2141,27 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       preset: 'claude_code',
       append: 'Owner append.',
     });
+  });
+
+  it('closeRuntimesForBot closes only runtimes for the target bot', async () => {
+    const { session: sessionA } = await setupBotSession({
+      persona: { prompt: 'Bot A.', mode: 'replace' },
+    });
+
+    const { bot: botB, session: sessionB } = await setupBotSession({
+      persona: { prompt: 'Bot B.', mode: 'replace' },
+    });
+
+    const runtimeA = service.getRuntimeIfExists(sessionA.id);
+    const runtimeB = service.getRuntimeIfExists(sessionB.id);
+    assert.ok(runtimeA);
+    assert.ok(runtimeB);
+    assert.strictEqual(runtimeA?.isClosed(), false);
+    assert.strictEqual(runtimeB?.isClosed(), false);
+
+    await service.closeRuntimesForBot(botB.id);
+
+    assert.strictEqual(runtimeA?.isClosed(), false);
+    assert.strictEqual(runtimeB?.isClosed(), true);
   });
 });

@@ -6,6 +6,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from '../services/bot-service.js';
+import { chatService } from '../services/chat-service.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { PluginSettingsService } from '../services/plugin-settings-service.js';
@@ -84,6 +85,7 @@ describe('bots routes', { concurrency: false }, () => {
   let originalDisconnectBotFeishu: typeof feishuBotService.disconnectBot;
   let originalUpdateConnectionForBotFeishu: typeof feishuBotService.updateConnectionForBot;
   let originalGetBotStatusFeishu: typeof feishuBotService.getBotStatus;
+  let originalCloseRuntimesForBot: typeof chatService.closeRuntimesForBot;
 
   beforeEach(() => {
     workspaceStore.resetData();
@@ -98,6 +100,8 @@ describe('bots routes', { concurrency: false }, () => {
     originalUpdateConnectionForBotFeishu = feishuBotService.updateConnectionForBot.bind(feishuBotService);
     originalGetBotStatusFeishu = feishuBotService.getBotStatus.bind(feishuBotService);
 
+    originalCloseRuntimesForBot = chatService.closeRuntimesForBot.bind(chatService);
+
     wecomBotService.connectBot = async () => {};
     wecomBotService.disconnectBot = () => {};
     wecomBotService.updateConnectionForBot = async () => {};
@@ -107,6 +111,8 @@ describe('bots routes', { concurrency: false }, () => {
     feishuBotService.disconnectBot = () => {};
     feishuBotService.updateConnectionForBot = async () => {};
     feishuBotService.getBotStatus = () => 'not_configured';
+
+    chatService.closeRuntimesForBot = async () => {};
   });
 
   afterEach(() => {
@@ -119,6 +125,8 @@ describe('bots routes', { concurrency: false }, () => {
     feishuBotService.disconnectBot = originalDisconnectBotFeishu;
     feishuBotService.updateConnectionForBot = originalUpdateConnectionForBotFeishu;
     feishuBotService.getBotStatus = originalGetBotStatusFeishu;
+
+    chatService.closeRuntimesForBot = originalCloseRuntimesForBot;
   });
 
   it('GET / returns a list of bots with redacted credentials', async () => {
@@ -467,6 +475,165 @@ describe('bots routes', { concurrency: false }, () => {
     );
     assert.strictEqual(res.statusCode, 204);
     assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'u-1'), null);
+  });
+
+  it('PUT /:id with persona change triggers runtime invalidation', async () => {
+    const bot = botService.createBot(validWecomBot);
+    let invalidatedBotId: string | null = null;
+    chatService.closeRuntimesForBot = async (botId) => {
+      invalidatedBotId = botId;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: { persona: { prompt: 'Updated', mode: 'replace' } },
+      },
+      res,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(invalidatedBotId, bot.id);
+  });
+
+  it('PUT /:id with rolePersonas change triggers runtime invalidation', async () => {
+    const bot = botService.createBot(validWecomBot);
+    let invalidatedBotId: string | null = null;
+    chatService.closeRuntimesForBot = async (botId) => {
+      invalidatedBotId = botId;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: { rolePersonas: { owner: { prompt: 'Owner', mode: 'append' } } },
+      },
+      res,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(invalidatedBotId, bot.id);
+  });
+
+  it('PUT /:id with rolePolicy change triggers runtime invalidation', async () => {
+    const bot = botService.createBot(validWecomBot);
+    let invalidatedBotId: string | null = null;
+    chatService.closeRuntimesForBot = async (botId) => {
+      invalidatedBotId = botId;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: {
+          rolePolicy: {
+            normalToolPolicy: {
+              posture: 'deny-all',
+              categoryDefaults: {},
+            },
+            skillAllowlist: [],
+            bashWhitelist: [],
+          },
+        },
+      },
+      res,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(invalidatedBotId, bot.id);
+  });
+
+  it('PUT /:id with name change does not trigger runtime invalidation', async () => {
+    const bot = botService.createBot(validWecomBot);
+    let invalidatedBotId: string | null = 'not-called';
+    chatService.closeRuntimesForBot = async (botId) => {
+      invalidatedBotId = botId;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: { name: 'Renamed' },
+      },
+      res,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(invalidatedBotId, 'not-called');
+  });
+
+  it('POST /:id/members triggers runtime invalidation', async () => {
+    const bot = botService.createBot(validWecomBot);
+    let invalidatedBotId: string | null = null;
+    chatService.closeRuntimesForBot = async (botId) => {
+      invalidatedBotId = botId;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members'].post(
+      {
+        params: { id: bot.id },
+        body: { provider: 'wecom', providerUserId: 'admin-1', role: 'admin' },
+      },
+      res,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(invalidatedBotId, bot.id);
+  });
+
+  it('PUT /:id/members/:providerUserId/role triggers runtime invalidation', async () => {
+    const bot = botService.createBot(validWecomBot);
+    botService.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'normal' });
+    let invalidatedBotId: string | null = null;
+    chatService.closeRuntimesForBot = async (botId) => {
+      invalidatedBotId = botId;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:providerUserId/role'].put(
+      {
+        params: { id: bot.id, providerUserId: 'u-1' },
+        query: { provider: 'wecom' },
+        body: { role: 'admin' },
+      },
+      res,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(invalidatedBotId, bot.id);
+  });
+
+  it('DELETE /:id/members/:providerUserId triggers runtime invalidation', async () => {
+    const bot = botService.createBot(validWecomBot);
+    botService.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'normal' });
+    let invalidatedBotId: string | null = null;
+    chatService.closeRuntimesForBot = async (botId) => {
+      invalidatedBotId = botId;
+    };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:providerUserId'].delete(
+      {
+        params: { id: bot.id, providerUserId: 'u-1' },
+        query: { provider: 'wecom' },
+      },
+      res,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.strictEqual(invalidatedBotId, bot.id);
   });
 
   it('GET /:id/status returns provider statuses', async () => {
