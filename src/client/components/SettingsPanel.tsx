@@ -23,7 +23,7 @@ import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
 import ProviderSection from './ProviderSection'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
-import BotManagementPage from './BotManagementPage'
+import BotManagementPage, { type BotManagementPageHandle } from './BotManagementPage'
 
 interface SettingsPanelProps {
   onClose: () => void
@@ -85,6 +85,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
   const [pendingClose, setPendingClose] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const botPageRef = useRef<BotManagementPageHandle>(null)
 
   // App-level form state
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
@@ -184,6 +185,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
   const isDirty = useCallback(() => {
+    if (activeTab === 'bots' && botPageRef.current?.isDirty()) return true
     if (appReopen !== snapshotRef.current.appReopen) return true
     if (appModifierSubmit !== snapshotRef.current.appModifierSubmit) return true
     if (appAutoCheckUpdates !== snapshotRef.current.appAutoCheckUpdates) return true
@@ -192,7 +194,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     if (windowCap !== snapshotRef.current.appWindowCap) return true
     if (archiveThresholdDays !== snapshotRef.current.appArchiveThresholdDays) return true
     return JSON.stringify(workspaceState) !== JSON.stringify(snapshotRef.current.workspaceState)
-  }, [appReopen, appModifierSubmit, appAutoCheckUpdates, appNotificationSounds, appNotificationSoundsVolume, windowCap, archiveThresholdDays, workspaceState])
+  }, [activeTab, appReopen, appModifierSubmit, appAutoCheckUpdates, appNotificationSounds, appNotificationSoundsVolume, windowCap, archiveThresholdDays, workspaceState])
 
   const handleClose = useCallback(() => {
     if (isDirty()) {
@@ -220,6 +222,17 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   const handleSave = async () => {
     setIsSaving(true)
+
+    if (activeTab === 'bots') {
+      await botPageRef.current?.save()
+      setIsSaving(false)
+      if (pendingClose) {
+        setPendingClose(false)
+        setShowUnsavedDialog(false)
+        onClose()
+      }
+      return
+    }
 
     // Save app settings
     setReopenLastWorkspace(appReopen)
@@ -297,14 +310,18 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   }
 
   const handleDiscard = () => {
-    setAppReopen(snapshotRef.current.appReopen)
-    setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
-    setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
-    setAppNotificationSounds(snapshotRef.current.appNotificationSounds)
-    setAppNotificationSoundsVolume(snapshotRef.current.appNotificationSoundsVolume)
-    setWindowCapInput(String(snapshotRef.current.appWindowCap))
-    setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
-    setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
+    if (activeTab === 'bots') {
+      botPageRef.current?.discard()
+    } else {
+      setAppReopen(snapshotRef.current.appReopen)
+      setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
+      setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
+      setAppNotificationSounds(snapshotRef.current.appNotificationSounds)
+      setAppNotificationSoundsVolume(snapshotRef.current.appNotificationSoundsVolume)
+      setWindowCapInput(String(snapshotRef.current.appWindowCap))
+      setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
+      setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
+    }
     setShowUnsavedDialog(false)
     setPendingClose(false)
     onClose()
@@ -424,7 +441,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
             {activeTab === 'providers' && <ProviderSection />}
 
-            {activeTab === 'bots' && <BotManagementPage />}
+            {activeTab === 'bots' && <BotManagementPage ref={botPageRef} />}
 
             {isWorkspaceTab && (
               <WorkspaceTabShell

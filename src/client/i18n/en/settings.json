@@ -232,6 +232,26 @@
       "save": "Save persona",
       "saveChanges": "Save changes",
       "saved": "Saved"
+    },
+    "sections": {
+      "general": "General",
+      "providers": "Providers",
+      "members": "Members",
+      "roles": "Roles",
+      "persona": "Persona",
+      "danger": "Danger"
+    },
+    "newBotName": "New bot",
+    "danger": {
+      "title": "Danger Zone",
+      "deleteTitle": "Delete bot?",
+      "deleteDescription": "Deleting this bot will disconnect its WeCom and Feishu providers. Existing sessions in workspaces will remain available.",
+      "confirmWarning": "This will permanently delete the bot \"{{botName}}\" and disconnect its providers. This action cannot be undone.",
+      "sessionsRemain": "Existing sessions in workspaces will not be affected.",
+      "inputLabel": "Type the bot name to confirm",
+      "inputPlaceholder": "Type the bot name",
+      "nameMismatch": "Name does not match.",
+      "deleting": "Deleting..."
     }
   },
   "wecom": {

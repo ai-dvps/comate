@@ -1,351 +1,540 @@
-import { useEffect, useState } from 'react';
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useImperativeHandle,
+  forwardRef,
+  useMemo,
+} from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Plus, RefreshCw, AlertTriangle, Loader2, Trash2, Pencil, Users, Activity, Shield, Sparkles } from 'lucide-react';
+import { Loader2, AlertTriangle } from 'lucide-react';
 import { useBotStore, type Bot as BotType } from '../stores/bot-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
-import { Button } from './ui/button';
-import BotForm from './BotForm';
+import BotTabShell, { BotEmptyState } from './BotTabShell';
+import BotGeneralSection from './BotGeneralSection';
+import BotProvidersSection from './BotProvidersSection';
 import BotMemberList from './BotMemberList';
 import BotRolePermissions from './BotRolePermissions';
 import BotPersonaEditor from './BotPersonaEditor';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import BotDangerSection from './BotDangerSection';
+import { emptyForm, botToForm, validateBotForm, buildBotInput, type BotFormData } from './bot-form-utils';
 
-export default function BotManagementPage() {
-  const { t } = useTranslation('settings');
-  const {
-    bots,
-    membersByBotId,
-    statusByBotId,
-    isLoading,
-    isSaving,
-    error,
-    fetchBots,
-    createBot,
-    updateBot,
-    deleteBot,
-    switchWorkspace,
-    fetchMembers,
-    addMember,
-    setMemberRole,
-    removeMember,
-    fetchStatus,
-    clearError,
-  } = useBotStore();
-  const { workspaces, fetchWorkspaces } = useWorkspaceStore();
+export type BotSectionId = 'general' | 'providers' | 'members' | 'roles' | 'persona' | 'danger';
 
-  const [editingBot, setEditingBot] = useState<BotType | null | undefined>(undefined);
-  const [selectedBot, setSelectedBot] = useState<BotType | null>(null);
-  const [view, setView] = useState<'list' | 'form' | 'members' | 'roles' | 'persona'>('list');
+export interface BotManagementPageHandle {
+  isDirty: () => boolean;
+  save: () => Promise<void>;
+  discard: () => void;
+}
 
-  useEffect(() => {
-    void fetchBots();
-    void fetchWorkspaces();
-  }, [fetchBots, fetchWorkspaces]);
+interface BotManagementPageProps {}
 
-  useEffect(() => {
-    if (selectedBot) {
-      void fetchMembers(selectedBot.id);
-      void fetchStatus(selectedBot.id);
-    }
-  }, [selectedBot, fetchMembers, fetchStatus]);
+const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageProps>(
+  function BotManagementPage(_props, ref) {
+    const { t } = useTranslation('settings');
+    const {
+      bots: storeBots,
+      membersByBotId,
+      isLoading,
+      error: storeError,
+      fetchBots,
+      createBot,
+      updateBot,
+      deleteBot,
+      fetchMembers,
+      addMember,
+      setMemberRole,
+      removeMember,
+      fetchStatus,
+      clearError,
+    } = useBotStore();
+    const { workspaces, fetchWorkspaces } = useWorkspaceStore();
 
-  const handleSubmit = async (input: Parameters<typeof updateBot>[1]) => {
-    if (editingBot) {
-      const bot = await updateBot(editingBot.id, input);
-      if (bot) {
-        setView('list');
-        setEditingBot(undefined);
-        if (selectedBot?.id === bot.id) {
-          setSelectedBot(bot);
+    const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+    const [activeSection, setActiveSection] = useState<BotSectionId>('general');
+    const [drafts, setDrafts] = useState<Record<string, BotFormData>>({});
+    const [snapshots, setSnapshots] = useState<Record<string, BotFormData>>({});
+    const [tempBot, setTempBot] = useState<BotType | null>(null);
+    const [previousBotId, setPreviousBotId] = useState<string | null>(null);
+    const [pendingBotId, setPendingBotId] = useState<string | null>(null);
+    const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+    const [pageError, setPageError] = useState<string | null>(null);
+    const [isSavingBasic, setIsSavingBasic] = useState(false);
+
+    const displayBots = useMemo(() => {
+      return tempBot ? [...storeBots, tempBot] : storeBots;
+    }, [storeBots, tempBot]);
+
+    const selectedBot = useMemo(() => {
+      return displayBots.find((b) => b.id === selectedBotId) || null;
+    }, [displayBots, selectedBotId]);
+
+    // Fetch data on mount.
+    useEffect(() => {
+      void fetchBots();
+      void fetchWorkspaces();
+    }, [fetchBots, fetchWorkspaces]);
+
+    // Initialize selected bot once bots are available.
+    useEffect(() => {
+      if (selectedBotId) return;
+      if (storeBots.length > 0) {
+        setSelectedBotId(storeBots[0].id);
+      }
+    }, [storeBots, selectedBotId]);
+
+    // Keep drafts/snapshots in sync with store bots.
+    useEffect(() => {
+      setDrafts((prev) => {
+        const next = { ...prev };
+        storeBots.forEach((bot) => {
+          // Do not overwrite the draft of the currently selected bot.
+          if (bot.id === selectedBotId && next[bot.id]) return;
+          next[bot.id] = botToForm(bot);
+        });
+        return next;
+      });
+      setSnapshots((prev) => {
+        const next: Record<string, BotFormData> = {};
+        storeBots.forEach((bot) => {
+          next[bot.id] = botToForm(bot);
+        });
+        // Preserve snapshots for temp bots so dirty detection still works.
+        if (tempBot && prev[tempBot.id]) {
+          next[tempBot.id] = prev[tempBot.id];
+        }
+        return next;
+      });
+    }, [storeBots, selectedBotId, tempBot]);
+
+    // Handle deletion of the currently selected bot.
+    useEffect(() => {
+      if (!selectedBotId) return;
+      if (!displayBots.some((b) => b.id === selectedBotId)) {
+        const fallback = displayBots[0]?.id ?? null;
+        setSelectedBotId(fallback);
+        setActiveSection('general');
+        setDrafts((prev) => {
+          const next = { ...prev };
+          delete next[selectedBotId];
+          return next;
+        });
+        setSnapshots((prev) => {
+          const next = { ...prev };
+          delete next[selectedBotId];
+          return next;
+        });
+      }
+    }, [displayBots, selectedBotId]);
+
+    // Reset to General when switching bots.
+    useEffect(() => {
+      setActiveSection('general');
+      setPageError(null);
+    }, [selectedBotId]);
+
+    // Fetch members/status when the selected bot changes.
+    useEffect(() => {
+      if (selectedBotId && !tempBot?.id.startsWith('temp-')) {
+        void fetchMembers(selectedBotId);
+        void fetchStatus(selectedBotId);
+      }
+    }, [selectedBotId, tempBot, fetchMembers, fetchStatus]);
+
+    const isDirty = useCallback(() => {
+      if (!selectedBotId) return false;
+      if (tempBot?.id === selectedBotId) return true;
+      const draft = drafts[selectedBotId];
+      const snapshot = snapshots[selectedBotId];
+      if (!draft || !snapshot) return false;
+      return JSON.stringify(draft) !== JSON.stringify(snapshot);
+    }, [drafts, snapshots, selectedBotId, tempBot]);
+
+    const handleUpdate = useCallback((patch: Partial<BotFormData>) => {
+      if (!selectedBotId) return;
+      setDrafts((prev) => ({
+        ...prev,
+        [selectedBotId]: { ...prev[selectedBotId]!, ...patch },
+      }));
+      setPageError(null);
+    }, [selectedBotId]);
+
+    const handleSaveBasic = useCallback(async () => {
+      if (!selectedBotId || !selectedBot) return;
+      const draft = drafts[selectedBotId];
+      if (!draft) return;
+
+      setPageError(null);
+      const validationError = validateBotForm(draft, !tempBot, t);
+      if (validationError) {
+        setPageError(validationError);
+        return;
+      }
+
+      setIsSavingBasic(true);
+      const input = buildBotInput(draft, tempBot ? null : selectedBot);
+
+      if (tempBot) {
+        const bot = await createBot(input);
+        if (bot) {
+          setTempBot(null);
+          setSelectedBotId(bot.id);
+          setSnapshots((prev) => ({
+            ...prev,
+            [bot.id]: botToForm(bot),
+          }));
+          setDrafts((prev) => ({
+            ...prev,
+            [bot.id]: botToForm(bot),
+          }));
+          setPageError(null);
+        } else {
+          setPageError(storeError || t('common:unknownError'));
+        }
+      } else {
+        const bot = await updateBot(selectedBotId, input);
+        if (bot) {
+          setSnapshots((prev) => ({
+            ...prev,
+            [selectedBotId]: botToForm(bot),
+          }));
+          setDrafts((prev) => ({
+            ...prev,
+            [selectedBotId]: botToForm(bot),
+          }));
+          setPageError(null);
+        } else {
+          setPageError(storeError || t('common:unknownError'));
         }
       }
-    } else {
-      const bot = await createBot(input as Parameters<typeof createBot>[0]);
-      if (bot) {
-        setView('list');
-        setEditingBot(undefined);
+      setIsSavingBasic(false);
+    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t]);
+
+    const handleCancelBasic = useCallback(() => {
+      if (!selectedBotId) return;
+      if (tempBot && selectedBotId === tempBot.id) {
+        setTempBot(null);
+        setDrafts((prev) => {
+          const next = { ...prev };
+          delete next[selectedBotId];
+          return next;
+        });
+        setSnapshots((prev) => {
+          const next = { ...prev };
+          delete next[selectedBotId];
+          return next;
+        });
+        setSelectedBotId(previousBotId);
+        setPreviousBotId(null);
+      } else {
+        setDrafts((prev) => ({
+          ...prev,
+          [selectedBotId]: snapshots[selectedBotId] ? { ...snapshots[selectedBotId]! } : prev[selectedBotId]!,
+        }));
       }
-    }
-  };
+      setPageError(null);
+    }, [selectedBotId, tempBot, previousBotId, snapshots]);
 
-  const handleDelete = async (bot: BotType) => {
-    if (!confirm(t('bots.deleteConfirm', { name: bot.name }))) return;
-    const ok = await deleteBot(bot.id);
-    if (ok && selectedBot?.id === bot.id) {
-      setSelectedBot(null);
-    }
-  };
+    const handleSelectBot = useCallback((id: string) => {
+      if (id === selectedBotId) return;
+      if (isDirty()) {
+        setPendingBotId(id);
+        setShowUnsavedDialog(true);
+        return;
+      }
+      setSelectedBotId(id);
+    }, [selectedBotId, isDirty]);
 
-  const handleSwitchWorkspace = async (botId: string, workspaceId: string) => {
-    const bot = await switchWorkspace(botId, workspaceId);
-    if (bot && selectedBot?.id === bot.id) {
-      setSelectedBot(bot);
-    }
-  };
+    const handleCreateBot = useCallback(() => {
+      const tempId = `temp-${crypto.randomUUID()}`;
+      const bot: BotType = {
+        id: tempId,
+        name: t('bots.newBotName'),
+        activeWorkspaceId: null,
+        providerSettings: {},
+        rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      setPreviousBotId(selectedBotId);
+      setTempBot(bot);
+      setDrafts((prev) => ({
+        ...prev,
+        [tempId]: emptyForm(),
+      }));
+      setSnapshots((prev) => ({
+        ...prev,
+        [tempId]: emptyForm(),
+      }));
+      setSelectedBotId(tempId);
+      setActiveSection('general');
+      setPageError(null);
+    }, [selectedBotId, t]);
 
-  const handleSaveRolePolicy = async (rolePolicy: Parameters<typeof updateBot>[1]['rolePolicy']) => {
-    if (!selectedBot) return;
-    const bot = await updateBot(selectedBot.id, { rolePolicy });
-    if (bot) {
-      setSelectedBot(bot);
-    }
-  };
-
-  const handleSavePersona = async (persona: Parameters<typeof updateBot>[1]['persona']) => {
-    if (!selectedBot) return;
-    const bot = await updateBot(selectedBot.id, { persona });
-    if (bot) {
-      setSelectedBot(bot);
-    }
-  };
-
-  if (view === 'form') {
-    return (
-      <div className="p-6 max-w-xl space-y-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => { setView('list'); setEditingBot(undefined); }} className="text-text-secondary">
-            ← {t('bots.backToList')}
-          </Button>
-        </div>
-        <BotForm
-          bot={editingBot}
-          workspaces={workspaces}
-          isSaving={isSaving}
-          error={error}
-          onSubmit={handleSubmit}
-          onCancel={() => { setView('list'); setEditingBot(undefined); }}
-        />
-      </div>
+    const handleSaveRolePolicy = useCallback(
+      async (rolePolicy: Parameters<typeof updateBot>[1]['rolePolicy']) => {
+        if (!selectedBot || tempBot?.id === selectedBot.id) return;
+        const bot = await updateBot(selectedBot.id, { rolePolicy });
+        if (!bot) {
+          throw new Error(storeError || t('common:unknownError'));
+        }
+      },
+      [selectedBot, tempBot, updateBot, storeError, t],
     );
-  }
 
-  if (view === 'members' && selectedBot) {
-    return (
-      <div className="p-6 max-w-xl space-y-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setView('list')} className="text-text-secondary">
-            ← {t('bots.backToList')}
-          </Button>
+    const handleSavePersona = useCallback(
+      async (persona: Parameters<typeof updateBot>[1]['persona']) => {
+        if (!selectedBot || tempBot?.id === selectedBot.id) return;
+        const bot = await updateBot(selectedBot.id, { persona });
+        if (!bot) {
+          throw new Error(storeError || t('common:unknownError'));
+        }
+      },
+      [selectedBot, tempBot, updateBot, storeError, t],
+    );
+
+    const handleDeleteBot = useCallback(async () => {
+      if (!selectedBot || tempBot?.id === selectedBot.id) return;
+      const ok = await deleteBot(selectedBot.id);
+      if (!ok) {
+        setPageError(storeError || t('common:unknownError'));
+      }
+    }, [selectedBot, tempBot, deleteBot, storeError, t]);
+
+    const handleDialogSave = useCallback(async () => {
+      await handleSaveBasic();
+      if (pendingBotId) {
+        setSelectedBotId(pendingBotId);
+        setPendingBotId(null);
+      }
+      setShowUnsavedDialog(false);
+    }, [handleSaveBasic, pendingBotId]);
+
+    const handleDialogDiscard = useCallback(() => {
+      handleCancelBasic();
+      if (pendingBotId) {
+        setSelectedBotId(pendingBotId);
+        setPendingBotId(null);
+      }
+      setShowUnsavedDialog(false);
+    }, [handleCancelBasic, pendingBotId]);
+
+    const handleDialogKeepEditing = useCallback(() => {
+      setPendingBotId(null);
+      setShowUnsavedDialog(false);
+    }, []);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        isDirty,
+        save: handleSaveBasic,
+        discard: handleCancelBasic,
+      }),
+      [isDirty, handleSaveBasic, handleCancelBasic],
+    );
+
+    const sections = useMemo(
+      () => [
+        { id: 'general' as BotSectionId, label: t('bots.sections.general') },
+        { id: 'providers' as BotSectionId, label: t('bots.sections.providers') },
+        { id: 'members' as BotSectionId, label: t('bots.sections.members') },
+        { id: 'roles' as BotSectionId, label: t('bots.sections.roles') },
+        { id: 'persona' as BotSectionId, label: t('bots.sections.persona') },
+        { id: 'danger' as BotSectionId, label: t('bots.sections.danger') },
+      ],
+      [t],
+    );
+
+    const draft = selectedBotId ? drafts[selectedBotId] : null;
+    const dirty = isDirty();
+    const isNew = !!tempBot && selectedBotId === tempBot.id;
+
+    const footer = dirty ? (
+      <>
+        <span className="text-[11px] text-text-tertiary">{t('unsavedDialog.message')}</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCancelBasic}
+            disabled={isSavingBasic}
+            className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
+          >
+            {t('actions.cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveBasic}
+            disabled={isSavingBasic}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+          >
+            {isSavingBasic ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                {t('unsavedDialog.saving')}
+              </>
+            ) : (
+              t('actions.save')
+            )}
+          </button>
         </div>
+      </>
+    ) : null;
 
-        <div className="border border-border rounded-lg p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-text-primary flex items-center gap-2">
-              <Users className="w-4 h-4" />
-              {t('bots.membersOf', { name: selectedBot.name })}
-            </h3>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={() => fetchMembers(selectedBot.id)} className="text-text-tertiary">
-                <RefreshCw className="w-3.5 h-3.5" />
-              </Button>
-            </div>
+    const renderContent = () => {
+      if (!selectedBot || !draft) {
+        return (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-6 h-6 animate-spin text-text-tertiary" />
           </div>
+        );
+      }
 
-          <BotMemberList
-            botId={selectedBot.id}
-            members={membersByBotId[selectedBot.id] || []}
-            isLoading={isLoading}
-            isSaving={isSaving}
-            error={error}
-            onAddMember={(input) => addMember(selectedBot.id, input)}
-            onSetRole={(provider, providerUserId, role) =>
-              setMemberRole(selectedBot.id, provider, providerUserId, role)
-            }
-            onRemoveMember={(provider, providerUserId) =>
-              removeMember(selectedBot.id, provider, providerUserId)
-            }
-          />
-        </div>
-      </div>
-    );
-  }
+      return (
+        <>
+          {(storeError || pageError) && (
+            <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-destructive">{pageError || storeError}</p>
+              <button
+                onClick={clearError}
+                className="text-[10px] text-destructive underline ml-auto"
+              >
+                {t('actions.dismiss')}
+              </button>
+            </div>
+          )}
 
-  if (view === 'roles' && selectedBot) {
+          {activeSection === 'general' && (
+            <BotGeneralSection
+              form={draft}
+              onUpdate={handleUpdate}
+              workspaces={workspaces}
+            />
+          )}
+
+          {activeSection === 'providers' && (
+            <BotProvidersSection
+              form={draft}
+              onUpdate={handleUpdate}
+              originalBot={isNew ? null : selectedBot}
+            />
+          )}
+
+          {activeSection === 'members' && !isNew && (
+            <BotMemberList
+              botId={selectedBot.id}
+              members={membersByBotId[selectedBot.id] || []}
+              isLoading={isLoading}
+              isSaving={isSavingBasic}
+              error={storeError}
+              onAddMember={(input) => addMember(selectedBot.id, input)}
+              onSetRole={(provider, providerUserId, role) => setMemberRole(selectedBot.id, provider, providerUserId, role)}
+              onRemoveMember={(provider, providerUserId) => removeMember(selectedBot.id, provider, providerUserId)}
+            />
+          )}
+
+          {activeSection === 'roles' && !isNew && (
+            <BotRolePermissions
+              bot={selectedBot}
+              isSaving={isSavingBasic}
+              error={storeError}
+              onSave={handleSaveRolePolicy}
+            />
+          )}
+
+          {activeSection === 'persona' && !isNew && (
+            <BotPersonaEditor
+              bot={selectedBot}
+              isSaving={isSavingBasic}
+              error={storeError}
+              onSave={handleSavePersona}
+            />
+          )}
+
+          {activeSection === 'danger' && !isNew && (
+            <BotDangerSection
+              botName={selectedBot.name}
+              onDelete={handleDeleteBot}
+              isLoading={isSavingBasic}
+              error={storeError}
+            />
+          )}
+        </>
+      );
+    };
+
     return (
-      <div className="p-6 max-w-xl space-y-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setView('list')} className="text-text-secondary">
-            ← {t('bots.backToList')}
-          </Button>
-        </div>
+      <>
+        <BotTabShell
+          bots={displayBots}
+          selectedBotId={selectedBotId}
+          onSelectBot={handleSelectBot}
+          onCreateBot={handleCreateBot}
+          sections={sections}
+          activeSection={activeSection}
+          onSelectSection={(id) => setActiveSection(id as BotSectionId)}
+          footer={footer}
+          emptyState={
+            <BotEmptyState
+              onCreateBot={() => {
+                setPreviousBotId(selectedBotId);
+                handleCreateBot();
+              }}
+            />
+          }
+        >
+          {renderContent()}
+        </BotTabShell>
 
-        <BotRolePermissions
-          bot={selectedBot}
-          isSaving={isSaving}
-          error={error}
-          onSave={handleSaveRolePolicy}
-        />
-      </div>
-    );
-  }
-
-  if (view === 'persona' && selectedBot) {
-    return (
-      <div className="p-6 max-w-xl space-y-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setView('list')} className="text-text-secondary">
-            ← {t('bots.backToList')}
-          </Button>
-        </div>
-
-        <BotPersonaEditor
-          bot={selectedBot}
-          isSaving={isSaving}
-          error={error}
-          onSave={handleSavePersona}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-6 max-w-xl space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Bot className="w-5 h-5 text-text-secondary" />
-          <h2 className="text-base font-semibold text-text-primary">{t('bots.title')}</h2>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => fetchBots()} className="text-text-tertiary">
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-          </Button>
-          <Button size="sm" onClick={() => { setEditingBot(null); setView('form'); }} className="gap-1">
-            <Plus className="w-3.5 h-3.5" />
-            {t('bots.create')}
-          </Button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-destructive">{error}</p>
-          <button onClick={clearError} className="text-[10px] text-destructive underline ml-auto">{t('actions.dismiss')}</button>
-        </div>
-      )}
-
-      {isLoading && bots.length === 0 && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 animate-spin text-text-tertiary" />
-        </div>
-      )}
-
-      {!isLoading && bots.length === 0 && (
-        <div className="text-center py-12 border border-dashed border-border rounded-lg">
-          <Bot className="w-10 h-10 text-text-tertiary mx-auto mb-3" />
-          <p className="text-sm text-text-secondary mb-1">{t('bots.emptyTitle')}</p>
-          <p className="text-xs text-text-tertiary mb-4">{t('bots.emptyDescription')}</p>
-          <Button size="sm" onClick={() => { setEditingBot(null); setView('form'); }}>
-            <Plus className="w-3.5 h-3.5 mr-1" />
-            {t('bots.create')}
-          </Button>
-        </div>
-      )}
-
-      {bots.length > 0 && (
-        <div className="border border-border rounded-lg divide-y divide-border/50">
-          {bots.map((bot) => {
-            const status = statusByBotId[bot.id];
-            const activeWorkspace = workspaces.find((w) => w.id === bot.activeWorkspaceId);
-            return (
-              <div key={bot.id} className="p-4 hover:bg-surface-hover/50 transition-colors">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium text-text-primary truncate">{bot.name}</span>
-                      {bot.providerSettings.wecom?.enabled && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400">WeCom</span>
-                      )}
-                      {bot.providerSettings.feishu?.enabled && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">Feishu</span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-text-tertiary mb-2">
-                      {activeWorkspace
-                        ? t('bots.activeWorkspaceLabel', { name: activeWorkspace.name })
-                        : t('bots.noActiveWorkspace')}
-                    </p>
-
-                    <div className="flex items-center gap-3">
-                      <Select
-                        value={bot.activeWorkspaceId || ''}
-                        onValueChange={(workspaceId) => handleSwitchWorkspace(bot.id, workspaceId)}
-                        disabled={isSaving}
-                      >
-                        <SelectTrigger className="w-auto min-w-[140px] text-xs py-1.5 px-2 h-auto">
-                          <SelectValue placeholder={t('bots.selectWorkspace')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="">{t('bots.selectWorkspace')}</SelectItem>
-                          {workspaces.map((ws) => (
-                            <SelectItem key={ws.id} value={ws.id}>{ws.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {status && (
-                        <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
-                          <Activity className="w-3 h-3" />
-                          <span>{status.wecom || '—'}</span>
-                          <span className="text-border">/</span>
-                          <span>{status.feishu || '—'}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => { setSelectedBot(bot); setView('persona'); }}
-                      className="text-text-tertiary"
-                      title={t('bots.persona.tab')}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => { setSelectedBot(bot); setView('roles'); }}
-                      className="text-text-tertiary"
-                      title={t('bots.manageRoles')}
-                    >
-                      <Shield className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => { setSelectedBot(bot); setView('members'); }}
-                      className="text-text-tertiary"
-                      title={t('bots.manageMembers')}
-                    >
-                      <Users className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => { setEditingBot(bot); setView('form'); }}
-                      className="text-text-tertiary"
-                      title={t('bots.edit')}
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDelete(bot)}
-                      className="text-text-tertiary hover:text-destructive"
-                      title={t('bots.delete')}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
+        {showUnsavedDialog && (
+          <div className="fixed top-11 inset-x-0 bottom-0 z-[60] flex items-center justify-center">
+            <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={handleDialogKeepEditing} />
+            <div className="relative bg-surface border border-border rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-sm font-medium text-text-primary">{t('unsavedDialog.title')}</h3>
+                  <p className="text-xs text-text-secondary mt-1">{t('unsavedDialog.message')}</p>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  type="button"
+                  onClick={handleDialogKeepEditing}
+                  className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
+                >
+                  {t('unsavedDialog.keepEditing')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDialogDiscard}
+                  className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
+                >
+                  {t('unsavedDialog.discard')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDialogSave}
+                  disabled={isSavingBasic}
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+                >
+                  {isSavingBasic ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      {t('unsavedDialog.saving')}
+                    </>
+                  ) : (
+                    t('unsavedDialog.saveChanges')
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  },
+);
+
+export default BotManagementPage;

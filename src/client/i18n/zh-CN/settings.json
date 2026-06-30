@@ -232,6 +232,26 @@
       "save": "保存人设",
       "saveChanges": "保存更改",
       "saved": "已保存"
+    },
+    "sections": {
+      "general": "通用",
+      "providers": "服务商",
+      "members": "成员",
+      "roles": "角色权限",
+      "persona": "人设",
+      "danger": "危险区"
+    },
+    "newBotName": "新机器人",
+    "danger": {
+      "title": "危险区",
+      "deleteTitle": "删除机器人？",
+      "deleteDescription": "删除此机器人将断开其企业微信和飞书服务商连接。工作区中的现有会话将保持可用。",
+      "confirmWarning": "这将永久删除机器人 \"{{botName}}\" 并断开其服务商连接。此操作无法撤销。",
+      "sessionsRemain": "工作区中的现有会话不会受到影响。",
+      "inputLabel": "输入机器人名称以确认",
+      "inputPlaceholder": "输入机器人名称",
+      "nameMismatch": "名称不匹配。",
+      "deleting": "正在删除..."
     }
   },
   "wecom": {
