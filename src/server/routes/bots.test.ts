@@ -210,6 +210,66 @@ describe('bots routes', { concurrency: false }, () => {
     assert.strictEqual(body.bot.providerSettings.wecom?.botSecret, true);
   });
 
+  it('POST / creates a bot with a persona and returns it', async () => {
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].post(
+      {
+        body: {
+          ...validWecomBot,
+          persona: { prompt: 'Hello, I am a bot', mode: 'append' as const },
+        },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 201);
+    const body = res.jsonBody as { bot: { persona: { prompt: string; mode: string } } };
+    assert.deepStrictEqual(body.bot.persona, { prompt: 'Hello, I am a bot', mode: 'append' });
+  });
+
+  it('PUT /:id updates the bot persona and returns it', async () => {
+    const bot = botService.createBot(validWecomBot);
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: { persona: { prompt: 'Updated persona', mode: 'replace' as const } },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bot: { persona: { prompt: string; mode: string } } };
+    assert.deepStrictEqual(body.bot.persona, { prompt: 'Updated persona', mode: 'replace' });
+  });
+
+  it('GET /:id returns the bot persona', async () => {
+    const bot = botService.createBot({
+      ...validWecomBot,
+      persona: { prompt: 'Intro persona', mode: 'append' as const },
+    });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].get({ params: { id: bot.id } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bot: { persona: { prompt: string; mode: string } } };
+    assert.deepStrictEqual(body.bot.persona, { prompt: 'Intro persona', mode: 'append' });
+  });
+
+  it('GET / returns bots with persona unredacted', async () => {
+    botService.createBot({
+      ...validWecomBot,
+      persona: { prompt: 'Listed persona', mode: 'replace' as const },
+    });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].get({}, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bots: Array<{ persona: { prompt: string; mode: string } }> };
+    assert.strictEqual(body.bots.length, 1);
+    assert.deepStrictEqual(body.bots[0].persona, { prompt: 'Listed persona', mode: 'replace' });
+  });
+
   it('DELETE /:id disconnects providers and removes the bot', async () => {
     const bot = botService.createBot(validWecomBot);
     let disconnectedWecomBotId: string | null = null;
