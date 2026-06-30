@@ -1094,6 +1094,21 @@ export class ChatService {
         // the runtime. See plan KTD3.
         const bot = botService.getBot(session.botId);
         if (bot) {
+          // Inject the Bot persona into the SDK system prompt for WeCom/Feishu
+          // sessions. GUI sessions never reach this branch because isBotSession
+          // is false. Changes apply to the next newly created runtime.
+          if (bot.persona) {
+            if (bot.persona.mode === 'append') {
+              options.systemPrompt = {
+                type: 'preset',
+                preset: 'claude_code',
+                append: bot.persona.prompt,
+              };
+            } else {
+              options.systemPrompt = bot.persona.prompt;
+            }
+          }
+
           const isAdminOrOwnerForContext = provider && providerUserId
             ? isOwnerOrAdmin(botService.getMemberRole(bot.id, provider, providerUserId))
             : false;
