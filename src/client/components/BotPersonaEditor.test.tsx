@@ -215,6 +215,21 @@ describe('BotPersonaEditor', () => {
     expect(screen.queryByText(/No persona configured for this role/)).not.toBeInTheDocument();
   });
 
+  it('notifies parent when dirty state changes', async () => {
+    const user = userEvent.setup();
+    const onDirtyChange = vi.fn();
+    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={vi.fn()} onDirtyChange={onDirtyChange} />);
+
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+
+    await user.type(
+      screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...'),
+      'x',
+    );
+
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  });
+
   it('cancels unsaved changes and reverts to the last saved state', async () => {
     const user = userEvent.setup();
     renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={vi.fn()} />);
