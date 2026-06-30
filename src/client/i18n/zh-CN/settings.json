@@ -215,6 +215,21 @@
       "bashWhitelist": "Bash 白名单",
       "bashWhitelistPlaceholder": "例如 npm run",
       "bashWhitelistHint": "每行一个命令前缀。Normal 成员只能运行以这些前缀开头的命令。"
+    },
+    "persona": {
+      "tab": "人设",
+      "title": "机器人人设",
+      "description": "企业微信或飞书用户与该机器人对话时使用的自定义系统提示词。",
+      "promptLabel": "系统提示词",
+      "promptPlaceholder": "例如：你是一位乐于助人的运维助手……",
+      "modeLabel": "模式",
+      "modeAppend": "追加到 Claude Code 默认提示词",
+      "modeReplace": "替换 Claude Code 默认提示词",
+      "modeAppendHint": "保留 Claude Code 的默认行为，并在其后追加你的提示词。",
+      "modeReplaceHint": "用你自己的提示词替换 Claude Code 的默认系统提示词。",
+      "lengthWarning": "提示词越长，消耗的 Token 越多。建议保持简洁。",
+      "freezeHint": "更改在下一次机器人会话生效，不影响正在进行的对话。",
+      "save": "保存人设"
     }
   },
   "wecom": {
