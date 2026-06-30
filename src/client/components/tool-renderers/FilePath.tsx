@@ -59,7 +59,7 @@ export default function FilePath({
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(displayAbsolute)
+      await navigator.clipboard.writeText(relativePath ?? displayAbsolute)
     } catch (err) {
       console.error('Failed to copy path:', err)
     }

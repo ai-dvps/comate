@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ReactElement } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -24,6 +24,20 @@ function renderWithProviders(
 }
 
 describe('ToolHeader', () => {
+  const originalClipboard = navigator.clipboard
+
+  beforeEach(() => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    })
+  })
+
+  afterEach(() => {
+    Object.assign(navigator, { clipboard: originalClipboard })
+  })
+
   it('renders path summary as relative path with absolute tooltip', () => {
     renderWithProviders(
       <ToolHeader
@@ -51,6 +65,20 @@ describe('ToolHeader', () => {
 
     fireEvent.click(screen.getByText('src/components/Button.tsx'), { metaKey: true })
     expect(onOpenFile).toHaveBeenCalledWith('src/components/Button.tsx', 'Button.tsx')
+  })
+
+  it('copies relative path when copy button in path summary is clicked', async () => {
+    renderWithProviders(
+      <ToolHeader
+        type="tool-Read"
+        state="output-available"
+        summary="/workspace/src/components/Button.tsx"
+      />,
+    )
+
+    const copyButton = screen.getByRole('button', { name: 'Copy path' })
+    await userEvent.click(copyButton)
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('src/components/Button.tsx')
   })
 
   it('renders path summary as-is and non-clickable when outside workspace', async () => {
