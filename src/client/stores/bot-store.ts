@@ -34,12 +34,20 @@ export interface BotRolePolicy {
   bashWhitelist: string[];
 }
 
+export type BotPersonaMode = 'append' | 'replace';
+
+export interface BotPersona {
+  prompt: string;
+  mode: BotPersonaMode;
+}
+
 export interface Bot {
   id: string;
   name: string;
   activeWorkspaceId: string | null;
   providerSettings: BotProviderSettings;
   rolePolicy: BotRolePolicy;
+  persona?: BotPersona;
   createdAt: string;
   updatedAt: string;
 }
@@ -58,6 +66,7 @@ export interface CreateBotInput {
   activeWorkspaceId?: string;
   providerSettings?: BotProviderSettings;
   rolePolicy?: BotRolePolicy;
+  persona?: BotPersona;
 }
 
 export interface UpdateBotInput {
@@ -65,6 +74,7 @@ export interface UpdateBotInput {
   activeWorkspaceId?: string | null;
   providerSettings?: BotProviderSettings;
   rolePolicy?: BotRolePolicy;
+  persona?: BotPersona | null;
 }
 
 export interface BotStatus {

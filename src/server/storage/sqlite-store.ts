@@ -13,6 +13,7 @@ import type {
   UpdateBotInput,
   BotProviderSettings,
   BotRolePolicy,
+  BotPersona,
   BotAuditLogEntry,
 } from '../models/bot.js';
 import { encryptProviderSettings, decryptProviderSettings } from '../utils/bot-provider-crypto.js';
@@ -166,10 +167,17 @@ export class SqliteStore {
         active_workspace_id TEXT UNIQUE,
         provider_settings_json TEXT NOT NULL DEFAULT '{}',
         role_policy_json TEXT NOT NULL DEFAULT '{}',
+        persona_json TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
     `);
+
+    // Migration: add persona_json column to existing bots table
+    const botColumns = this.db.prepare("PRAGMA table_info(bots)").all() as { name: string }[];
+    if (!botColumns.some(col => col.name === 'persona_json')) {
+      this.db.exec('ALTER TABLE bots ADD COLUMN persona_json TEXT');
+    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bot_members (
@@ -1714,20 +1722,22 @@ export class SqliteStore {
         skillAllowlist: [],
         bashWhitelist: [],
       },
+      persona: input.persona,
       createdAt: now,
       updatedAt: now,
     };
 
     const encryptedSettings = encryptProviderSettings(bot.providerSettings);
     this.db.prepare(`
-      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       bot.id,
       bot.name,
       bot.activeWorkspaceId,
       JSON.stringify(encryptedSettings),
       JSON.stringify(bot.rolePolicy),
+      bot.persona ? JSON.stringify(bot.persona) : null,
       bot.createdAt,
       bot.updatedAt,
     );
@@ -1762,19 +1772,21 @@ export class SqliteStore {
       ...(input.activeWorkspaceId !== undefined && { activeWorkspaceId: input.activeWorkspaceId }),
       ...(input.providerSettings !== undefined && { providerSettings: input.providerSettings }),
       ...(input.rolePolicy !== undefined && { rolePolicy: input.rolePolicy }),
+      ...(input.persona !== undefined && { persona: input.persona ?? undefined }),
       updatedAt: new Date().toISOString(),
     };
 
     const encryptedSettings = encryptProviderSettings(bot.providerSettings);
     this.db.prepare(`
       UPDATE bots
-      SET name = ?, active_workspace_id = ?, provider_settings_json = ?, role_policy_json = ?, updated_at = ?
+      SET name = ?, active_workspace_id = ?, provider_settings_json = ?, role_policy_json = ?, persona_json = ?, updated_at = ?
       WHERE id = ?
     `).run(
       bot.name,
       bot.activeWorkspaceId,
       JSON.stringify(encryptedSettings),
       JSON.stringify(bot.rolePolicy),
+      bot.persona ? JSON.stringify(bot.persona) : null,
       bot.updatedAt,
       id,
     );
@@ -1979,6 +1991,7 @@ interface RawBotRow {
   active_workspace_id: string | null;
   provider_settings_json: string;
   role_policy_json: string;
+  persona_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2005,6 +2018,7 @@ function parseBotRow(row: RawBotRow): Bot {
       skillAllowlist: [],
       bashWhitelist: [],
     } as BotRolePolicy),
+    persona: row.persona_json ? safeJsonParse(row.persona_json, undefined as unknown as BotPersona) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

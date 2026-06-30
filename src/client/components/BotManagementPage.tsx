@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Plus, RefreshCw, AlertTriangle, Loader2, Trash2, Pencil, Users, Activity, Shield } from 'lucide-react';
+import { Bot, Plus, RefreshCw, AlertTriangle, Loader2, Trash2, Pencil, Users, Activity, Shield, Sparkles } from 'lucide-react';
 import { useBotStore, type Bot as BotType } from '../stores/bot-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
 import { Button } from './ui/button';
 import BotForm from './BotForm';
 import BotMemberList from './BotMemberList';
 import BotRolePermissions from './BotRolePermissions';
+import BotPersonaEditor from './BotPersonaEditor';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 export default function BotManagementPage() {
@@ -34,7 +35,7 @@ export default function BotManagementPage() {
 
   const [editingBot, setEditingBot] = useState<BotType | null | undefined>(undefined);
   const [selectedBot, setSelectedBot] = useState<BotType | null>(null);
-  const [view, setView] = useState<'list' | 'form' | 'members' | 'roles'>('list');
+  const [view, setView] = useState<'list' | 'form' | 'members' | 'roles' | 'persona'>('list');
 
   useEffect(() => {
     void fetchBots();
@@ -85,6 +86,14 @@ export default function BotManagementPage() {
   const handleSaveRolePolicy = async (rolePolicy: Parameters<typeof updateBot>[1]['rolePolicy']) => {
     if (!selectedBot) return;
     const bot = await updateBot(selectedBot.id, { rolePolicy });
+    if (bot) {
+      setSelectedBot(bot);
+    }
+  };
+
+  const handleSavePersona = async (persona: Parameters<typeof updateBot>[1]['persona']) => {
+    if (!selectedBot) return;
+    const bot = await updateBot(selectedBot.id, { persona });
     if (bot) {
       setSelectedBot(bot);
     }
@@ -165,6 +174,25 @@ export default function BotManagementPage() {
           isSaving={isSaving}
           error={error}
           onSave={handleSaveRolePolicy}
+        />
+      </div>
+    );
+  }
+
+  if (view === 'persona' && selectedBot) {
+    return (
+      <div className="p-6 max-w-xl space-y-4">
+        <div className="flex items-center gap-2 mb-4">
+          <Button variant="ghost" size="sm" onClick={() => setView('list')} className="text-text-secondary">
+            ← {t('bots.backToList')}
+          </Button>
+        </div>
+
+        <BotPersonaEditor
+          bot={selectedBot}
+          isSaving={isSaving}
+          error={error}
+          onSave={handleSavePersona}
         />
       </div>
     );
@@ -266,6 +294,15 @@ export default function BotManagementPage() {
                   </div>
 
                   <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { setSelectedBot(bot); setView('persona'); }}
+                      className="text-text-tertiary"
+                      title={t('bots.persona.tab')}
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

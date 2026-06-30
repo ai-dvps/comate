@@ -3,6 +3,7 @@ import { botService } from '../services/bot-service.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { BotMigrationService } from '../services/bot-migration-service.js';
+import { builtinPluginService } from '../services/builtin-plugin-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { ENCRYPTED_PROVIDER_KEYS } from '../models/bot.js';
 import type { BotProviderSettings, CreateBotInput, UpdateBotInput } from '../models/bot.js';
@@ -319,6 +320,7 @@ router.post('/migrate', async (req, res) => {
 });
 
 async function connectEnabledProviders(bot: import('../models/bot.js').Bot): Promise<void> {
+  await ensureWecomPluginForBot(bot);
   if (bot.providerSettings.wecom?.enabled) {
     await wecomBotService.connectBot(bot).catch((err) => {
       console.error(`[BotsRoute] WeCom connect failed for bot ${bot.id}:`, err);
@@ -332,6 +334,7 @@ async function connectEnabledProviders(bot: import('../models/bot.js').Bot): Pro
 }
 
 async function reconcileProviderConnections(bot: import('../models/bot.js').Bot): Promise<void> {
+  await ensureWecomPluginForBot(bot);
   if (bot.providerSettings.wecom?.enabled) {
     const status = wecomBotService.getBotStatus(bot.id);
     if (status === 'not_configured') {
@@ -356,6 +359,20 @@ async function reconcileProviderConnections(bot: import('../models/bot.js').Bot)
     }
   } else {
     feishuBotService.disconnectBot(bot.id);
+  }
+}
+
+async function ensureWecomPluginForBot(bot: import('../models/bot.js').Bot): Promise<void> {
+  if (!bot.providerSettings.wecom?.enabled || !bot.activeWorkspaceId) {
+    return;
+  }
+  try {
+    await builtinPluginService.ensureWecomPluginInstalled(bot.activeWorkspaceId);
+  } catch (err) {
+    console.error(
+      `[BotsRoute] Failed to ensure wecom plugin for bot ${bot.id} / workspace ${bot.activeWorkspaceId}:`,
+      err,
+    );
   }
 }
 

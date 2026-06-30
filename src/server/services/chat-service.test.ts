@@ -1861,3 +1861,200 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
     assert.strictEqual(allowed.behavior, 'allow');
   });
 });
+
+describe('chat-service buildSdkOptions persona injection', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+  const originalGetLocalSession = workspaceStore.getLocalSession.bind(workspaceStore);
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+
+  class MockSdkClient extends SdkClient {
+    override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+      return {
+        sessionId: 's1',
+        summary: 'Test Session',
+        createdAt: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+      } as SDKSessionInfo;
+    }
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return [];
+    }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
+    override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
+  }
+
+  class TestChatService extends ChatService {
+    constructor() {
+      super(new MockSdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  function createMockRuntime(): SessionRuntime {
+    return {
+      isClosed: () => false,
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      close: () => Promise.resolve(),
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: () => {},
+      resolveApproval: () => {},
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+    } as unknown as SessionRuntime;
+  }
+
+  beforeEach(() => {
+    workspaceStore.resetData();
+    service = new TestChatService();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+    SessionRuntime.open = originalOpen;
+    workspaceStore.get = originalGet;
+    workspaceStore.getLocalSession = originalGetLocalSession;
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+  });
+
+  async function setupBotSession(persona?: { prompt: string; mode: 'append' | 'replace' }) {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-persona-'));
+    const workspace = await workspaceStore.create({
+      name: 'Persona Workspace',
+      folderPath,
+    });
+    const provider = workspaceStore.createProvider({
+      name: 'Test Provider',
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: 'test-model',
+      isDefault: true,
+    });
+    const bot = botService.createBot({
+      name: 'Persona Bot',
+      activeWorkspaceId: workspace.id,
+      providerSettings: {
+        wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'secret' },
+      },
+      persona,
+    });
+    const session = workspaceStore.createLocalSession(
+      workspace.id,
+      'Persona Session',
+      undefined,
+      provider.id,
+      'wecom',
+      undefined,
+      bot.id,
+    );
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime(session.id, workspace.id, true);
+    assert.ok(capturedOptions, 'options must be captured');
+    return { options: capturedOptions, bot, session, workspace };
+  }
+
+  it('append persona sets preset-with-append systemPrompt', async () => {
+    const { options } = await setupBotSession({
+      prompt: 'You are an operations assistant.',
+      mode: 'append',
+    });
+    assert.deepStrictEqual(options.systemPrompt, {
+      type: 'preset',
+      preset: 'claude_code',
+      append: 'You are an operations assistant.',
+    });
+  });
+
+  it('replace persona sets prompt string systemPrompt', async () => {
+    const { options } = await setupBotSession({
+      prompt: 'You are a replacement persona.',
+      mode: 'replace',
+    });
+    assert.strictEqual(options.systemPrompt, 'You are a replacement persona.');
+  });
+
+  it('bot session with no persona leaves systemPrompt unset', async () => {
+    const { options } = await setupBotSession();
+    assert.strictEqual(options.systemPrompt, undefined);
+  });
+
+  it('GUI session does not inherit bot persona', async () => {
+    const { workspace, bot } = await setupBotSession({
+      prompt: 'You are a bot persona.',
+      mode: 'append',
+    });
+    await service.closeAllRuntimes();
+
+    const guiSession = workspaceStore.createLocalSession(
+      workspace.id,
+      'GUI Session',
+      undefined,
+      undefined,
+      'gui',
+      undefined,
+      bot.id,
+    );
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime(guiSession.id, workspace.id);
+    assert.ok(capturedOptions, 'options must be captured');
+    assert.strictEqual(capturedOptions.systemPrompt, undefined);
+  });
+
+  it('persona changes take effect on the next newly created bot session', async () => {
+    const { workspace, bot } = await setupBotSession({
+      prompt: 'Original persona.',
+      mode: 'append',
+    });
+
+    botService.updateBot(bot.id, { persona: { prompt: 'Updated persona.', mode: 'replace' } });
+
+    const nextSession = workspaceStore.createLocalSession(
+      workspace.id,
+      'Next Persona Session',
+      undefined,
+      undefined,
+      'wecom',
+      undefined,
+      bot.id,
+    );
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime(nextSession.id, workspace.id, true);
+    assert.ok(capturedOptions, 'options must be captured');
+    assert.strictEqual(capturedOptions.systemPrompt, 'Updated persona.');
+  });
+});
