@@ -761,6 +761,34 @@ export class ChatService {
     );
   }
 
+  /**
+   * Close all cached runtimes that belong to a specific Bot. Called when the
+   * bot's persona, member roles, or role policy change so the next user turn
+   * recreates the runtime with the updated configuration.
+   */
+  async closeRuntimesForBot(botId: string): Promise<void> {
+    const targets: string[] = [];
+    for (const sessionId of this.runtimes.keys()) {
+      try {
+        const session = workspaceStore.getLocalSession(sessionId);
+        if (session && session.botId === botId) {
+          targets.push(sessionId);
+        }
+      } catch {
+        // ignore — getLocalSession can fail for stale sessions
+      }
+    }
+    if (targets.length === 0) return;
+    sidecarLog(`[ChatService] closing ${targets.length} runtimes for bot ${botId}`);
+    await Promise.all(
+      targets.map((sessionId) =>
+        this.closeRuntime(sessionId).catch((err) => {
+          console.error(`Failed to close runtime ${sessionId} during bot invalidation:`, err);
+        }),
+      ),
+    );
+  }
+
   async pushMessage(
     sessionId: string,
     workspaceId: string,
