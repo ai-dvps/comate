@@ -18,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Auto-install wecom plugin for WeCom-enabled workspaces** — creating or updating a bot with WeCom enabled, switching a bot's active workspace, or running the workspace-to-bot migration now automatically installs the built-in `wecom` Claude Code plugin in the workspace's project scope if it is not already installed in user, project, or local scope. This restores the previous behavior where WeCom workspaces received the necessary skill automatically.
-
 ## [0.0.19] - 2026-06-29
 
 ### Added
