@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import type { BotPersona } from '../models/bot.js';
 import { SqliteStore } from './sqlite-store.js';
 
 const testDbDir = mkdtempSync(join(tmpdir(), 'sqlite-store-test-'));
@@ -893,10 +894,12 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
   function createBotInput(overrides: Partial<{
     name: string;
     activeWorkspaceId: string;
+    persona: BotPersona;
   }> = {}) {
     return {
       name: overrides.name ?? 'Test Bot',
       activeWorkspaceId: overrides.activeWorkspaceId,
+      persona: overrides.persona,
       providerSettings: {
         wecom: {
           botId: 'wecom-bot-id',
@@ -936,6 +939,69 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     assert.ok(bot.createdAt);
     assert.ok(bot.updatedAt);
     assert.deepStrictEqual(bot.providerSettings, createBotInput().providerSettings);
+  });
+
+  it('createBot stores and returns a persona', () => {
+    const persona = { prompt: '你是运维助手', mode: 'append' as const };
+    const bot = store.createBot(createBotInput({ name: 'Persona Bot', persona }));
+
+    assert.deepStrictEqual(bot.persona, persona);
+    const found = store.getBot(bot.id);
+    assert.deepStrictEqual(found?.persona, persona);
+  });
+
+  it('getBot returns persona undefined when none is configured', () => {
+    const bot = store.createBot(createBotInput());
+    const found = store.getBot(bot.id);
+
+    assert.strictEqual(found?.persona, undefined);
+  });
+
+  it('updateBot clears the persona when persona is null', () => {
+    const persona = { prompt: '你是运维助手', mode: 'append' as const };
+    const bot = store.createBot(createBotInput({ persona }));
+    assert.deepStrictEqual(store.getBot(bot.id)?.persona, persona);
+
+    const updated = store.updateBot(bot.id, { persona: null });
+    assert.strictEqual(updated?.persona, undefined);
+    assert.strictEqual(store.getBot(bot.id)?.persona, undefined);
+  });
+
+  it('migrates existing bots rows to include persona_json on store construction', () => {
+    const dbPath = join(testDbDir, 'persona-migration.db');
+
+    // Create a store with the current schema and a bot.
+    const firstStore = new SqliteStore(dbPath);
+    firstStore.resetData();
+    const bot = firstStore.createBot(createBotInput({ name: 'Pre-migration Bot' }));
+
+    // Simulate a pre-migration database by dropping the persona_json column.
+    const db = (firstStore as unknown as { db: { exec: (sql: string) => void } }).db;
+    db.exec('ALTER TABLE bots RENAME TO bots_old');
+    db.exec(`
+      CREATE TABLE bots (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        active_workspace_id TEXT UNIQUE,
+        provider_settings_json TEXT NOT NULL DEFAULT '{}',
+        role_policy_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    db.exec(`
+      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, created_at, updated_at)
+      SELECT id, name, active_workspace_id, provider_settings_json, role_policy_json, created_at, updated_at
+      FROM bots_old
+    `);
+    db.exec('DROP TABLE bots_old');
+
+    // Re-opening the database should run the migration and load the bot without error.
+    const migratedStore = new SqliteStore(dbPath);
+    const found = migratedStore.getBot(bot.id);
+    assert.ok(found);
+    assert.strictEqual(found!.name, 'Pre-migration Bot');
+    assert.strictEqual(found!.persona, undefined);
   });
 
   it('getBot returns a persisted bot by id', () => {
