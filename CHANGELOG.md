@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Bot persona / system prompt** — bots now have a per-bot editable persona that is injected into Claude Code Agent SDK sessions created for WeCom and Feishu users. The persona is stored on the Bot record (`persona_json`), edited through a new **Persona** tab in Bot Management, and translated into the SDK `Options.systemPrompt` field at runtime. The default mode appends the persona to Claude Code's default system prompt; an optional **replace** mode substitutes it entirely. GUI/desktop sessions do not inherit bot personas, and changes take effect on the next newly created bot session. English and Simplified Chinese i18n keys added.
+- **Per-role Bot personas** — bots now have a Default persona plus optional Owner, Admin, and Normal role personas, each with its own append/replace mode. When a role-specific persona is unset, the Bot falls back to the Default persona; users without a member record are treated as Normal. Personas are stored on the Bot record (`persona_json` for Default and `role_personas_json` for role overrides), edited through a redesigned **Persona** tab in Bot Management with role sub-tabs and a single page-level Save, and translated into the SDK `Options.systemPrompt` field at runtime. Active Bot runtimes are closed when persona, member role, or role-permission policy changes, so the next user turn recreates the runtime with the updated persona. English and Simplified Chinese i18n keys added.
 
 ### Changed
 
-- **Bot Persona editor save-button state** — the save button in the Bot Persona editor now reflects whether there are unsaved changes: it is highlighted and labeled "Save changes" when the prompt or mode differs from the saved bot persona, and switches to a disabled "Saved" state after a successful save.
+- **Bot Persona editor** — the persona editor now has Default, Owner, Admin, and Normal sub-tabs, a shared Save/Cancel bar, per-tab descriptions and fallback hints, and over-budget indicators in the tab list. The save button is enabled only when any tab differs from the last saved state.
 
 ### Fixed
 
