@@ -215,6 +215,21 @@
       "bashWhitelist": "Bash whitelist",
       "bashWhitelistPlaceholder": "e.g. npm run",
       "bashWhitelistHint": "One command prefix per line. Normal members can only run commands that start with one of these prefixes."
+    },
+    "persona": {
+      "tab": "Persona",
+      "title": "Bot Persona",
+      "description": "Custom system prompt used when WeCom or Feishu users talk to this bot.",
+      "promptLabel": "System prompt",
+      "promptPlaceholder": "e.g. You are a helpful DevOps assistant...",
+      "modeLabel": "Mode",
+      "modeAppend": "Append to Claude Code default",
+      "modeReplace": "Replace Claude Code default",
+      "modeAppendHint": "Keeps Claude Code's default behavior and adds your prompt after it.",
+      "modeReplaceHint": "Substitutes Claude Code's default system prompt with your prompt.",
+      "lengthWarning": "Long prompts increase token usage. Consider keeping it concise.",
+      "freezeHint": "Changes apply to the next bot session, not to active conversations.",
+      "save": "Save persona"
     }
   },
   "wecom": {
