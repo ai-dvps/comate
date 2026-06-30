@@ -33,6 +33,8 @@ import { chatService } from './services/chat-service.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
 import { BotMigrationService } from './services/bot-migration-service.js';
 import { store as workspaceStore } from './storage/sqlite-store.js';
+import { botService } from './services/bot-service.js';
+import { builtinPluginService } from './services/builtin-plugin-service.js';
 import { diagLog } from './utils/diag-logger.js';
 import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
 import { getStorageDir } from './storage/data-dir.js';
@@ -196,6 +198,24 @@ const server = app.listen(PORT, () => {
       }
     } catch (err) {
       console.error('[BotMigration] unexpected error:', err);
+    }
+
+    // Backfill the built-in wecom plugin for any existing WeCom-enabled bots.
+    // This repairs workspaces that were created after the skill-to-plugin refactor
+    // but before auto-install was added.
+    try {
+      for (const bot of botService.listBots()) {
+        if (bot.providerSettings.wecom?.enabled && bot.activeWorkspaceId) {
+          await builtinPluginService.ensureWecomPluginInstalled(bot.activeWorkspaceId).catch((err) => {
+            console.error(
+              `[Startup] failed to backfill wecom plugin for workspace ${bot.activeWorkspaceId}:`,
+              err,
+            );
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[Startup] unexpected error during wecom plugin backfill:', err);
     }
 
     // Initialize WeCom bot connections for enabled bots/workspaces
