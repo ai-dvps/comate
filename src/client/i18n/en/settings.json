@@ -229,7 +229,9 @@
       "modeReplaceHint": "Substitutes Claude Code's default system prompt with your prompt.",
       "lengthWarning": "Long prompts increase token usage. Consider keeping it concise.",
       "freezeHint": "Changes apply to the next bot session, not to active conversations.",
-      "save": "Save persona"
+      "save": "Save persona",
+      "saveChanges": "Save changes",
+      "saved": "Saved"
     }
   },
   "wecom": {
