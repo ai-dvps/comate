@@ -73,7 +73,11 @@ const BotPersonaEditor = forwardRef<BotPersonaEditorHandle, BotPersonaEditorProp
       setSaveError(null);
     }, [bot]);
 
+    const previousTabRef = useRef<PersonaTab>(activeTab);
+
     useEffect(() => {
+      if (previousTabRef.current === activeTab) return;
+      previousTabRef.current = activeTab;
       const idx = TABS.indexOf(activeTab);
       tabRefs.current[idx]?.focus();
     }, [activeTab]);
