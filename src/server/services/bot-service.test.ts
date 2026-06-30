@@ -50,6 +50,13 @@ describe('BotService', { concurrency: false }, () => {
       assert.ok(logs.some((l) => l.eventType === 'bot_created' && l.details.name === 'Test Bot'));
     });
 
+    it('creates a bot with a persona', () => {
+      const persona = { prompt: 'You are an operations assistant.', mode: 'append' as const };
+      const bot = service.createBot(createBotInput({ persona }));
+      assert.deepStrictEqual(bot.persona, persona);
+      assert.deepStrictEqual(service.getBot(bot.id)?.persona, persona);
+    });
+
     it('throws when enabled WeCom credentials are missing', () => {
       assert.throws(
         () => service.createBot(createBotInput({ providerSettings: { wecom: { enabled: true } } })),
@@ -184,6 +191,25 @@ describe('BotService', { concurrency: false }, () => {
 
       const logs = store.listAuditLogs(bot.id);
       assert.ok(logs.some((l) => l.eventType === 'provider_credentials_changed'));
+    });
+
+    it('updates the bot persona', () => {
+      const persona = { prompt: 'Original.', mode: 'append' as const };
+      const bot = service.createBot(createBotInput({ persona }));
+
+      const updated = service.updateBot(bot.id, {
+        persona: { prompt: 'Updated.', mode: 'replace' as const },
+      });
+      assert.deepStrictEqual(updated.persona, { prompt: 'Updated.', mode: 'replace' });
+      assert.deepStrictEqual(service.getBot(bot.id)?.persona, { prompt: 'Updated.', mode: 'replace' });
+    });
+
+    it('clears the bot persona when persona is null', () => {
+      const bot = service.createBot(createBotInput({ persona: { prompt: 'To clear.', mode: 'append' as const } }));
+
+      const updated = service.updateBot(bot.id, { persona: null });
+      assert.strictEqual(updated.persona, undefined);
+      assert.strictEqual(service.getBot(bot.id)?.persona, undefined);
     });
 
     it('emits provider_enabled and provider_disabled audit events', () => {
