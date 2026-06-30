@@ -26,7 +26,7 @@ import { evaluateSkill } from './bot-skill-policy.js';
 import { botService } from './bot-service.js';
 import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
-import type { BotRolePolicy } from '../models/bot.js';
+import type { BotRole, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
@@ -1097,15 +1097,21 @@ export class ChatService {
           // Inject the Bot persona into the SDK system prompt for WeCom/Feishu
           // sessions. GUI sessions never reach this branch because isBotSession
           // is false. Changes apply to the next newly created runtime.
-          if (bot.persona) {
-            if (bot.persona.mode === 'append') {
+          const roleForPersona: BotRole | undefined = provider && providerUserId
+            ? botService.getMemberRole(bot.id, provider, providerUserId) ?? 'normal'
+            : undefined;
+          const persona = roleForPersona
+            ? bot.rolePersonas?.[roleForPersona] ?? bot.persona
+            : bot.persona;
+          if (persona) {
+            if (persona.mode === 'append') {
               options.systemPrompt = {
                 type: 'preset',
                 preset: 'claude_code',
-                append: bot.persona.prompt,
+                append: persona.prompt,
               };
             } else {
-              options.systemPrompt = bot.persona.prompt;
+              options.systemPrompt = persona.prompt;
             }
           }
 
