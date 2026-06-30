@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bot, Plus, RefreshCw, AlertTriangle, Loader2, Trash2, Pencil, Users, Activity, Shield, Sparkles } from 'lucide-react';
-import { useBotStore, type Bot as BotType } from '../stores/bot-store';
+import { useBotStore, type Bot as BotType, type BotPersona, type BotRole } from '../stores/bot-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
 import { Button } from './ui/button';
 import BotForm from './BotForm';
 import BotMemberList from './BotMemberList';
 import BotRolePermissions from './BotRolePermissions';
-import BotPersonaEditor from './BotPersonaEditor';
+import BotPersonaEditor, { type BotPersonaEditorHandle } from './BotPersonaEditor';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 export default function BotManagementPage() {
@@ -36,6 +36,9 @@ export default function BotManagementPage() {
   const [editingBot, setEditingBot] = useState<BotType | null | undefined>(undefined);
   const [selectedBot, setSelectedBot] = useState<BotType | null>(null);
   const [view, setView] = useState<'list' | 'form' | 'members' | 'roles' | 'persona'>('list');
+  const [isPersonaDirty, setIsPersonaDirty] = useState(false);
+  const [pendingView, setPendingView] = useState<'list' | null>(null);
+  const personaEditorRef = useRef<BotPersonaEditorHandle>(null);
 
   useEffect(() => {
     void fetchBots();
@@ -91,11 +94,41 @@ export default function BotManagementPage() {
     }
   };
 
-  const handleSavePersona = async (persona: Parameters<typeof updateBot>[1]['persona']) => {
+  const handleSavePersona = async (payload: {
+    persona: BotPersona | null;
+    rolePersonas: Partial<Record<BotRole, BotPersona>>;
+  }) => {
     if (!selectedBot) return;
-    const bot = await updateBot(selectedBot.id, { persona });
+    const bot = await updateBot(selectedBot.id, payload);
     if (bot) {
       setSelectedBot(bot);
+    }
+  };
+
+  const handleRequestLeavePersona = (nextView: 'list') => {
+    if (isPersonaDirty) {
+      setPendingView(nextView);
+    } else {
+      setView(nextView);
+    }
+  };
+
+  const handleDiscardPersonaChanges = () => {
+    setPendingView(null);
+    if (pendingView) {
+      setView(pendingView);
+    }
+  };
+
+  const handleSavePersonaAndLeave = async () => {
+    try {
+      await personaEditorRef.current?.save();
+      setPendingView(null);
+      if (pendingView) {
+        setView(pendingView);
+      }
+    } catch {
+      // Save error is already surfaced inside the editor.
     }
   };
 
@@ -183,17 +216,54 @@ export default function BotManagementPage() {
     return (
       <div className="p-6 max-w-xl space-y-4">
         <div className="flex items-center gap-2 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setView('list')} className="text-text-secondary">
+          <Button variant="ghost" size="sm" onClick={() => handleRequestLeavePersona('list')} className="text-text-secondary">
             ← {t('bots.backToList')}
           </Button>
         </div>
 
         <BotPersonaEditor
+          ref={personaEditorRef}
           bot={selectedBot}
           isSaving={isSaving}
           error={error}
           onSave={handleSavePersona}
+          onDirtyChange={setIsPersonaDirty}
         />
+
+        {!!pendingView && (
+          <div className="fixed top-11 inset-x-0 bottom-0 z-50 flex items-start justify-center pt-16">
+            <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={() => setPendingView(null)} />
+            <div className="relative bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md flex flex-col">
+              <div className="px-5 py-4 border-b border-border/50 flex-shrink-0">
+                <h2 className="text-sm font-medium text-text-primary">{t('unsavedDialog.title')}</h2>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-xs text-text-secondary">{t('unsavedDialog.message')}</p>
+              </div>
+              <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border/50 flex-shrink-0">
+                <button
+                  onClick={() => setPendingView(null)}
+                  className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
+                >
+                  {t('unsavedDialog.keepEditing')}
+                </button>
+                <button
+                  onClick={handleDiscardPersonaChanges}
+                  className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
+                >
+                  {t('unsavedDialog.discard')}
+                </button>
+                <button
+                  onClick={handleSavePersonaAndLeave}
+                  disabled={isSaving}
+                  className="px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+                >
+                  {isSaving ? t('unsavedDialog.saving') : t('unsavedDialog.saveChanges')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
