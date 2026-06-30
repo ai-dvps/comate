@@ -4,7 +4,7 @@ import assert from 'node:assert';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import type { BotPersona } from '../models/bot.js';
+import type { BotPersona, BotRole } from '../models/bot.js';
 import { SqliteStore } from './sqlite-store.js';
 
 const testDbDir = mkdtempSync(join(tmpdir(), 'sqlite-store-test-'));
@@ -895,11 +895,13 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     name: string;
     activeWorkspaceId: string;
     persona: BotPersona;
+    rolePersonas: Partial<Record<BotRole, BotPersona>>;
   }> = {}) {
     return {
       name: overrides.name ?? 'Test Bot',
       activeWorkspaceId: overrides.activeWorkspaceId,
       persona: overrides.persona,
+      rolePersonas: overrides.rolePersonas,
       providerSettings: {
         wecom: {
           botId: 'wecom-bot-id',
@@ -1002,6 +1004,100 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     assert.ok(found);
     assert.strictEqual(found!.name, 'Pre-migration Bot');
     assert.strictEqual(found!.persona, undefined);
+  });
+
+  it('createBot stores and returns rolePersonas', () => {
+    const rolePersonas: Partial<Record<BotRole, BotPersona>> = {
+      owner: { prompt: 'Owner persona', mode: 'append' as const },
+      admin: { prompt: 'Admin persona', mode: 'replace' as const },
+    };
+    const bot = store.createBot(createBotInput({ name: 'Role Persona Bot', rolePersonas }));
+
+    assert.deepStrictEqual(bot.rolePersonas, rolePersonas);
+    const found = store.getBot(bot.id);
+    assert.deepStrictEqual(found?.rolePersonas, rolePersonas);
+  });
+
+  it('getBot returns rolePersonas undefined when none is configured', () => {
+    const bot = store.createBot(createBotInput());
+    const found = store.getBot(bot.id);
+
+    assert.strictEqual(found?.rolePersonas, undefined);
+  });
+
+  it('updateBot replaces rolePersonas', () => {
+    const initial: Partial<Record<BotRole, BotPersona>> = {
+      owner: { prompt: 'Owner v1', mode: 'append' as const },
+    };
+    const bot = store.createBot(createBotInput({ rolePersonas: initial }));
+
+    const next: Partial<Record<BotRole, BotPersona>> = {
+      admin: { prompt: 'Admin v2', mode: 'replace' as const },
+      normal: { prompt: 'Normal v2', mode: 'append' as const },
+    };
+    const updated = store.updateBot(bot.id, { rolePersonas: next });
+
+    assert.deepStrictEqual(updated?.rolePersonas, next);
+    assert.deepStrictEqual(store.getBot(bot.id)?.rolePersonas, next);
+  });
+
+  it('updateBot clears rolePersonas when set to null', () => {
+    const rolePersonas: Partial<Record<BotRole, BotPersona>> = {
+      owner: { prompt: 'Owner', mode: 'append' as const },
+    };
+    const bot = store.createBot(createBotInput({ rolePersonas }));
+    assert.deepStrictEqual(store.getBot(bot.id)?.rolePersonas, rolePersonas);
+
+    const updated = store.updateBot(bot.id, { rolePersonas: null });
+    assert.strictEqual(updated?.rolePersonas, undefined);
+    assert.strictEqual(store.getBot(bot.id)?.rolePersonas, undefined);
+  });
+
+  it('migrates existing bots rows to include role_personas_json on store construction', () => {
+    const dbPath = join(testDbDir, 'role-personas-migration.db');
+
+    const firstStore = new SqliteStore(dbPath);
+    firstStore.resetData();
+    const bot = firstStore.createBot(
+      createBotInput({ name: 'Pre-role-personas Bot', persona: { prompt: 'Default', mode: 'append' as const } }),
+    );
+
+    const db = (firstStore as unknown as { db: { exec: (sql: string) => void } }).db;
+    db.exec('ALTER TABLE bots RENAME TO bots_old');
+    db.exec(`
+      CREATE TABLE bots (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        active_workspace_id TEXT UNIQUE,
+        provider_settings_json TEXT NOT NULL DEFAULT '{}',
+        role_policy_json TEXT NOT NULL DEFAULT '{}',
+        persona_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    db.exec(`
+      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, created_at, updated_at)
+      SELECT id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, created_at, updated_at
+      FROM bots_old
+    `);
+    db.exec('DROP TABLE bots_old');
+
+    const migratedStore = new SqliteStore(dbPath);
+    const found = migratedStore.getBot(bot.id);
+    assert.ok(found);
+    assert.strictEqual(found!.name, 'Pre-role-personas Bot');
+    assert.deepStrictEqual(found!.persona, { prompt: 'Default', mode: 'append' });
+    assert.strictEqual(found!.rolePersonas, undefined);
+  });
+
+  it('existing bot with only persona keeps persona as Default and has no role personas', () => {
+    const persona = { prompt: 'Legacy default', mode: 'replace' as const };
+    const bot = store.createBot(createBotInput({ name: 'Legacy Bot', persona }));
+
+    const found = store.getBot(bot.id);
+    assert.deepStrictEqual(found?.persona, persona);
+    assert.strictEqual(found?.rolePersonas, undefined);
   });
 
   it('getBot returns a persisted bot by id', () => {

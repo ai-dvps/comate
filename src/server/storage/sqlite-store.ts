@@ -168,6 +168,7 @@ export class SqliteStore {
         provider_settings_json TEXT NOT NULL DEFAULT '{}',
         role_policy_json TEXT NOT NULL DEFAULT '{}',
         persona_json TEXT,
+        role_personas_json TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
@@ -177,6 +178,11 @@ export class SqliteStore {
     const botColumns = this.db.prepare("PRAGMA table_info(bots)").all() as { name: string }[];
     if (!botColumns.some(col => col.name === 'persona_json')) {
       this.db.exec('ALTER TABLE bots ADD COLUMN persona_json TEXT');
+    }
+
+    // Migration: add role_personas_json column to existing bots table
+    if (!botColumns.some(col => col.name === 'role_personas_json')) {
+      this.db.exec('ALTER TABLE bots ADD COLUMN role_personas_json TEXT');
     }
 
     this.db.exec(`
@@ -1723,14 +1729,15 @@ export class SqliteStore {
         bashWhitelist: [],
       },
       persona: input.persona,
+      rolePersonas: input.rolePersonas,
       createdAt: now,
       updatedAt: now,
     };
 
     const encryptedSettings = encryptProviderSettings(bot.providerSettings);
     this.db.prepare(`
-      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, role_personas_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       bot.id,
       bot.name,
@@ -1738,6 +1745,7 @@ export class SqliteStore {
       JSON.stringify(encryptedSettings),
       JSON.stringify(bot.rolePolicy),
       bot.persona ? JSON.stringify(bot.persona) : null,
+      bot.rolePersonas ? JSON.stringify(bot.rolePersonas) : null,
       bot.createdAt,
       bot.updatedAt,
     );
@@ -1773,13 +1781,14 @@ export class SqliteStore {
       ...(input.providerSettings !== undefined && { providerSettings: input.providerSettings }),
       ...(input.rolePolicy !== undefined && { rolePolicy: input.rolePolicy }),
       ...(input.persona !== undefined && { persona: input.persona ?? undefined }),
+      ...(input.rolePersonas !== undefined && { rolePersonas: input.rolePersonas ?? undefined }),
       updatedAt: new Date().toISOString(),
     };
 
     const encryptedSettings = encryptProviderSettings(bot.providerSettings);
     this.db.prepare(`
       UPDATE bots
-      SET name = ?, active_workspace_id = ?, provider_settings_json = ?, role_policy_json = ?, persona_json = ?, updated_at = ?
+      SET name = ?, active_workspace_id = ?, provider_settings_json = ?, role_policy_json = ?, persona_json = ?, role_personas_json = ?, updated_at = ?
       WHERE id = ?
     `).run(
       bot.name,
@@ -1787,6 +1796,7 @@ export class SqliteStore {
       JSON.stringify(encryptedSettings),
       JSON.stringify(bot.rolePolicy),
       bot.persona ? JSON.stringify(bot.persona) : null,
+      bot.rolePersonas ? JSON.stringify(bot.rolePersonas) : null,
       bot.updatedAt,
       id,
     );
@@ -1992,6 +2002,7 @@ interface RawBotRow {
   provider_settings_json: string;
   role_policy_json: string;
   persona_json: string | null;
+  role_personas_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2019,6 +2030,7 @@ function parseBotRow(row: RawBotRow): Bot {
       bashWhitelist: [],
     } as BotRolePolicy),
     persona: row.persona_json ? safeJsonParse(row.persona_json, undefined as unknown as BotPersona) : undefined,
+    rolePersonas: row.role_personas_json ? safeJsonParse(row.role_personas_json, undefined as unknown as Partial<Record<BotRole, BotPersona>>) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
