@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.20] - 2026-06-30
+
+### Added
+
+- **Bot persona / system prompt** — bots now have a per-bot editable persona that is injected into Claude Code Agent SDK sessions created for WeCom and Feishu users. The persona is stored on the Bot record (`persona_json`), edited through a new **Persona** tab in Bot Management, and translated into the SDK `Options.systemPrompt` field at runtime. The default mode appends the persona to Claude Code's default system prompt; an optional **replace** mode substitutes it entirely. GUI/desktop sessions do not inherit bot personas, and changes take effect on the next newly created bot session. English and Simplified Chinese i18n keys added.
+
 ## [0.0.19] - 2026-06-29
 
 ### Added
