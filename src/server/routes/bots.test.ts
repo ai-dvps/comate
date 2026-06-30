@@ -1,10 +1,14 @@
 import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from '../services/bot-service.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
+import { PluginSettingsService } from '../services/plugin-settings-service.js';
 import type { CreateBotInput } from '../models/bot.js';
 
 const validWecomBot: CreateBotInput = {
@@ -143,6 +147,65 @@ describe('bots routes', { concurrency: false }, () => {
     assert.strictEqual(body.bot.id, connectedBotId);
   });
 
+  it('POST / installs the built-in wecom plugin when creating a WeCom-enabled bot bound to a workspace', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'comate-bots-plugin-test-'));
+    const originalHome = process.env.HOME;
+    const originalTauriResourceDir = process.env.TAURI_RESOURCE_DIR;
+
+    process.env.HOME = join(tempDir, 'user');
+    process.env.TAURI_RESOURCE_DIR = tempDir;
+
+    const marketplacePath = join(tempDir, 'claude-code-plugin');
+    const workspacePath = join(tempDir, 'workspace');
+
+    try {
+      mkdirSync(join(tempDir, 'user', '.claude'), { recursive: true });
+      mkdirSync(join(marketplacePath, 'plugins', 'wecom', '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(marketplacePath, 'plugins', 'wecom', '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'wecom', version: '0.1.0' }),
+      );
+      mkdirSync(join(workspacePath, '.claude'), { recursive: true });
+
+      const workspace = await workspaceStore.create({ name: 'WeCom Workspace', folderPath: workspacePath });
+
+      const handlers = await importRouteHandlers();
+      const res = createMockRes();
+      await handlers['/'].post(
+        {
+          body: {
+            name: 'Auto Plugin Bot',
+            activeWorkspaceId: workspace.id,
+            providerSettings: {
+              wecom: { enabled: true, botId: 'wecom-bot-id', botSecret: 'wecom-bot-secret' },
+            },
+          },
+        },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 201);
+
+      const settingsService = new PluginSettingsService();
+      const plugin = settingsService.getInstalledPlugin('project', 'wecom', workspacePath);
+      assert.ok(plugin);
+      assert.strictEqual(plugin!.id, 'wecom');
+      assert.strictEqual(plugin!.enabled, true);
+    } finally {
+      if (originalHome !== undefined) {
+        process.env.HOME = originalHome;
+      } else {
+        delete process.env.HOME;
+      }
+      if (originalTauriResourceDir !== undefined) {
+        process.env.TAURI_RESOURCE_DIR = originalTauriResourceDir;
+      } else {
+        delete process.env.TAURI_RESOURCE_DIR;
+      }
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('POST / returns field-level errors for invalid WeCom credentials', async () => {
     const handlers = await importRouteHandlers();
     const res = createMockRes();
@@ -208,6 +271,66 @@ describe('bots routes', { concurrency: false }, () => {
     assert.strictEqual(reconnectedBotId, bot.id);
     const body = res.jsonBody as { bot: { providerSettings: { wecom?: { botSecret?: unknown } } } };
     assert.strictEqual(body.bot.providerSettings.wecom?.botSecret, true);
+  });
+
+  it('POST / creates a bot with a persona and returns it', async () => {
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].post(
+      {
+        body: {
+          ...validWecomBot,
+          persona: { prompt: 'Hello, I am a bot', mode: 'append' as const },
+        },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 201);
+    const body = res.jsonBody as { bot: { persona: { prompt: string; mode: string } } };
+    assert.deepStrictEqual(body.bot.persona, { prompt: 'Hello, I am a bot', mode: 'append' });
+  });
+
+  it('PUT /:id updates the bot persona and returns it', async () => {
+    const bot = botService.createBot(validWecomBot);
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: { persona: { prompt: 'Updated persona', mode: 'replace' as const } },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bot: { persona: { prompt: string; mode: string } } };
+    assert.deepStrictEqual(body.bot.persona, { prompt: 'Updated persona', mode: 'replace' });
+  });
+
+  it('GET /:id returns the bot persona', async () => {
+    const bot = botService.createBot({
+      ...validWecomBot,
+      persona: { prompt: 'Intro persona', mode: 'append' as const },
+    });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].get({ params: { id: bot.id } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bot: { persona: { prompt: string; mode: string } } };
+    assert.deepStrictEqual(body.bot.persona, { prompt: 'Intro persona', mode: 'append' });
+  });
+
+  it('GET / returns bots with persona unredacted', async () => {
+    botService.createBot({
+      ...validWecomBot,
+      persona: { prompt: 'Listed persona', mode: 'replace' as const },
+    });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].get({}, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bots: Array<{ persona: { prompt: string; mode: string } }> };
+    assert.strictEqual(body.bots.length, 1);
+    assert.deepStrictEqual(body.bots[0].persona, { prompt: 'Listed persona', mode: 'replace' });
   });
 
   it('DELETE /:id disconnects providers and removes the bot', async () => {

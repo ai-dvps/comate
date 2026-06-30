@@ -1,8 +1,13 @@
 import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { SqliteStore } from '../storage/sqlite-store.js';
 import { BotMigrationService } from './bot-migration-service.js';
+import { PluginSettingsService } from './plugin-settings-service.js';
+import { BuiltinPluginService } from './builtin-plugin-service.js';
 import type { CreateWorkspaceInput } from '../models/workspace.js';
 
 function createWorkspaceInput(overrides: Partial<CreateWorkspaceInput> = {}): CreateWorkspaceInput {
@@ -46,7 +51,7 @@ describe('BotMigrationService', { concurrency: false }, () => {
   beforeEach(() => {
     store = new SqliteStore(':memory:');
     store.resetData();
-    service = new BotMigrationService(store);
+    service = new BotMigrationService(store, new BuiltinPluginService(store));
   });
 
   it('reports that migration has not run initially', () => {
@@ -169,5 +174,53 @@ describe('BotMigrationService', { concurrency: false }, () => {
 
     const unchanged = await store.get(workspace.id);
     assert.strictEqual(unchanged?.settings.wecomBotId, 'wecom-bot-1');
+  });
+
+  it('backfills the wecom plugin for migrated WeCom workspaces', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'comate-migration-plugin-test-'));
+    const originalHome = process.env.HOME;
+    const originalTauriResourceDir = process.env.TAURI_RESOURCE_DIR;
+
+    process.env.HOME = join(tempDir, 'user');
+    process.env.TAURI_RESOURCE_DIR = tempDir;
+
+    const marketplacePath = join(tempDir, 'claude-code-plugin');
+    const workspacePath = join(tempDir, 'workspace');
+
+    try {
+      mkdirSync(join(tempDir, 'user', '.claude'), { recursive: true });
+      mkdirSync(join(marketplacePath, 'plugins', 'wecom', '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(marketplacePath, 'plugins', 'wecom', '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'wecom', version: '0.1.0' }),
+      );
+      mkdirSync(join(workspacePath, '.claude'), { recursive: true });
+
+      const workspace = await store.create(createWorkspaceInput({ folderPath: workspacePath }));
+      const result = await service.migrate();
+
+      assert.strictEqual(result.success, true);
+
+      const settingsService = new PluginSettingsService();
+      const plugin = settingsService.getInstalledPlugin('project', 'wecom', workspacePath);
+      assert.ok(plugin);
+      assert.strictEqual(plugin!.id, 'wecom');
+      assert.strictEqual(plugin!.enabled, true);
+
+      const migratedWorkspace = await store.get(workspace.id);
+      assert.ok(migratedWorkspace);
+    } finally {
+      if (originalHome !== undefined) {
+        process.env.HOME = originalHome;
+      } else {
+        delete process.env.HOME;
+      }
+      if (originalTauriResourceDir !== undefined) {
+        process.env.TAURI_RESOURCE_DIR = originalTauriResourceDir;
+      } else {
+        delete process.env.TAURI_RESOURCE_DIR;
+      }
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
