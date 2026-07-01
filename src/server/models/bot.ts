@@ -1,10 +1,10 @@
 import type { ToolPermissionPolicy } from '../services/tool-permission-policy.js';
 
-export type BotProvider = 'wecom' | 'feishu';
+export type BotChannel = 'wecom' | 'feishu';
 
 export type BotRole = 'owner' | 'admin' | 'normal';
 
-export interface WeComProviderConfig {
+export interface WeComChannelConfig {
   botId?: string;
   botSecret?: string;
   botName?: string;
@@ -13,7 +13,7 @@ export interface WeComProviderConfig {
   enabled?: boolean;
 }
 
-export interface FeishuProviderConfig {
+export interface FeishuChannelConfig {
   appId?: string;
   appSecret?: string;
   encryptKey?: string;
@@ -22,9 +22,9 @@ export interface FeishuProviderConfig {
   enabled?: boolean;
 }
 
-export interface BotProviderSettings {
-  wecom?: WeComProviderConfig;
-  feishu?: FeishuProviderConfig;
+export interface BotChannelSettings {
+  wecom?: WeComChannelConfig;
+  feishu?: FeishuChannelConfig;
 }
 
 export interface BotRolePolicy {
@@ -45,8 +45,8 @@ export interface BotPersona {
 
 export interface BotMember {
   botId: string;
-  provider: BotProvider;
-  providerUserId: string;
+  channel: BotChannel;
+  channelUserId: string;
   role: BotRole;
   createdAt: string;
   updatedAt: string;
@@ -56,7 +56,7 @@ export interface Bot {
   id: string;
   name: string;
   activeWorkspaceId: string | null;
-  providerSettings: BotProviderSettings;
+  channelSettings: BotChannelSettings;
   rolePolicy: BotRolePolicy;
   persona?: BotPersona;
   rolePersonas?: Partial<Record<BotRole, BotPersona>>;
@@ -67,7 +67,7 @@ export interface Bot {
 export interface CreateBotInput {
   name: string;
   activeWorkspaceId?: string;
-  providerSettings?: BotProviderSettings;
+  channelSettings?: BotChannelSettings;
   rolePolicy?: BotRolePolicy;
   persona?: BotPersona;
   rolePersonas?: Partial<Record<BotRole, BotPersona>>;
@@ -76,15 +76,15 @@ export interface CreateBotInput {
 export interface UpdateBotInput {
   name?: string;
   activeWorkspaceId?: string | null;
-  providerSettings?: BotProviderSettings;
+  channelSettings?: BotChannelSettings;
   rolePolicy?: BotRolePolicy;
   persona?: BotPersona | null;
   rolePersonas?: Partial<Record<BotRole, BotPersona>> | null;
 }
 
 export interface CreateBotMemberInput {
-  provider: BotProvider;
-  providerUserId: string;
+  channel: BotChannel;
+  channelUserId: string;
   role: BotRole;
 }
 
@@ -106,8 +106,8 @@ export interface CreateBotAuditLogInput {
   details?: Record<string, unknown>;
 }
 
-/** Keys within provider configs whose values must be encrypted at rest. */
-export const ENCRYPTED_PROVIDER_KEYS: ReadonlyArray<string> = [
+/** Keys within channel configs whose values must be encrypted at rest. */
+export const ENCRYPTED_CHANNEL_KEYS: ReadonlyArray<string> = [
   'botSecret',
   'corpSecret',
   'appSecret',

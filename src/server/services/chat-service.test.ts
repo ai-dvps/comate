@@ -1718,7 +1718,7 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
     const bot = botService.createBot({
       name: 'Policy Bot',
       activeWorkspaceId: workspace.id,
-      providerSettings: {
+      channelSettings: {
         wecom: { enabled: true, botId: 'bot-wecom', botSecret: 'secret' },
       },
       rolePolicy: {
@@ -1727,11 +1727,11 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
         bashWhitelist: ['ls'],
       },
     });
-    const providerUserId = role === 'normal' ? 'user-1' : role === 'admin' ? 'admin-1' : 'owner-1';
-    botService.addMember(bot.id, { provider: 'wecom', providerUserId, role });
+    const channelUserId = role === 'normal' ? 'user-1' : role === 'admin' ? 'admin-1' : 'owner-1';
+    botService.addMember(bot.id, { channel: 'wecom', channelUserId, role });
 
-    const encryptedUserId = `enc-${providerUserId}`;
-    workspaceStore.setWecomUserMapping(encryptedUserId, providerUserId);
+    const encryptedUserId = `enc-${channelUserId}`;
+    workspaceStore.setWecomUserMapping(encryptedUserId, channelUserId);
     workspaceStore.setWecomWorkspaceUser(workspace.id, encryptedUserId);
     const session = workspaceStore.createLocalSession(
       workspace.id,
@@ -1750,7 +1750,7 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
       return createMockRuntime();
     };
 
-    await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, providerUserId);
+    await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, channelUserId);
     assert.ok(capturedOptions?.canUseTool, 'canUseTool must be set for bot sessions');
     return { canUseTool: capturedOptions.canUseTool, folderPath, botId: bot.id };
   }
@@ -1850,13 +1850,13 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
     const denied = await canUseTool('Bash', { command: 'cat /etc/passwd' });
     assert.strictEqual(denied.behavior, 'deny');
 
-    botService.addMember(botId, { provider: 'wecom', providerUserId: 'owner-1', role: 'owner' });
+    botService.addMember(botId, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
     botService.setMemberRole(
       botId,
       'wecom',
       'user-1',
       'admin',
-      { type: 'wecom', provider: 'wecom', providerUserId: 'owner-1' },
+      { type: 'wecom', channel: 'wecom', channelUserId: 'owner-1' },
     );
 
     const allowed = await canUseTool('Bash', { command: 'cat /etc/passwd' });
@@ -1960,20 +1960,20 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     const bot = botService.createBot({
       name: 'Persona Bot',
       activeWorkspaceId: workspace.id,
-      providerSettings: {
+      channelSettings: {
         wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'secret' },
       },
       persona: config.persona,
       rolePersonas: config.rolePersonas,
     });
 
-    const providerUserId = config.memberRole === 'normal' ? 'user-1' : config.memberRole === 'admin' ? 'admin-1' : 'owner-1';
+    const channelUserId = config.memberRole === 'normal' ? 'user-1' : config.memberRole === 'admin' ? 'admin-1' : 'owner-1';
     if (config.memberRole) {
-      botService.addMember(bot.id, { provider: 'wecom', providerUserId, role: config.memberRole });
+      botService.addMember(bot.id, { channel: 'wecom', channelUserId, role: config.memberRole });
     }
 
-    const encryptedUserId = `enc-${providerUserId}`;
-    workspaceStore.setWecomUserMapping(encryptedUserId, providerUserId);
+    const encryptedUserId = `enc-${channelUserId}`;
+    workspaceStore.setWecomUserMapping(encryptedUserId, channelUserId);
     workspaceStore.setWecomWorkspaceUser(workspace.id, encryptedUserId);
 
     const session = workspaceStore.createLocalSession(
@@ -1993,7 +1993,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       return createMockRuntime();
     };
 
-    await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, providerUserId);
+    await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, channelUserId);
     assert.ok(capturedOptions, 'options must be captured');
     return { options: capturedOptions, bot, session, workspace, provider };
   }

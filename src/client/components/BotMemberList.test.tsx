@@ -35,17 +35,17 @@ describe('BotMemberList', () => {
     expect(screen.getByText('No members yet.')).toBeInTheDocument();
   });
 
-  it('lists members sorted by role', () => {
+  it('groups members by channel and sorts each group by role', () => {
     const members: BotMember[] = [
-      { botId: 'bot-1', provider: 'wecom', providerUserId: 'u-normal', role: 'normal', createdAt: '', updatedAt: '' },
-      { botId: 'bot-1', provider: 'wecom', providerUserId: 'u-owner', role: 'owner', createdAt: '', updatedAt: '' },
-      { botId: 'bot-1', provider: 'feishu', providerUserId: 'u-admin', role: 'admin', createdAt: '', updatedAt: '' },
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-normal', role: 'normal', createdAt: '', updatedAt: '' },
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-owner', role: 'owner', createdAt: '', updatedAt: '' },
+      { botId: 'bot-1', channel: 'feishu', channelUserId: 'u-admin', role: 'admin', createdAt: '', updatedAt: '' },
     ];
 
     renderWithI18n(<BotMemberList {...baseProps} members={members} />);
 
     const ids = screen.getAllByText(/u-/).map((el) => el.textContent);
-    expect(ids).toEqual(['u-owner', 'u-admin', 'u-normal']);
+    expect(ids).toEqual(['u-owner', 'u-normal', 'u-admin']);
   });
 
   it('adds a member when form is filled and submitted', async () => {
@@ -57,8 +57,8 @@ describe('BotMemberList', () => {
 
     await waitFor(() => {
       expect(baseProps.onAddMember).toHaveBeenCalledWith({
-        provider: 'wecom',
-        providerUserId: 'new-user',
+        channel: 'wecom',
+        channelUserId: 'new-user',
         role: 'normal',
       });
     });
@@ -70,14 +70,14 @@ describe('BotMemberList', () => {
     fireEvent.click(screen.getByText('Add member'));
 
     await waitFor(() => {
-      expect(screen.getByText('Provider user ID is required.')).toBeInTheDocument();
+      expect(screen.getByText('Channel user ID is required.')).toBeInTheDocument();
     });
     expect(baseProps.onAddMember).not.toHaveBeenCalled();
   });
 
   it('updates role when select changes', async () => {
     const members: BotMember[] = [
-      { botId: 'bot-1', provider: 'wecom', providerUserId: 'u-1', role: 'normal', createdAt: '', updatedAt: '' },
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-1', role: 'normal', createdAt: '', updatedAt: '' },
     ];
     renderWithI18n(<BotMemberList {...baseProps} members={members} />);
 
@@ -89,5 +89,79 @@ describe('BotMemberList', () => {
     await waitFor(() => {
       expect(baseProps.onSetRole).toHaveBeenCalledWith('wecom', 'u-1', 'admin');
     });
+  });
+
+  it('renders owner badge and no role select for owner rows', () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-owner', role: 'owner', createdAt: '', updatedAt: '' },
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-normal', role: 'normal', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    expect(screen.getAllByText('Owner').length).toBeGreaterThanOrEqual(1);
+    // One channel selector, one add-form role selector, and one role selector for the normal member.
+    expect(screen.getAllByRole('combobox')).toHaveLength(3);
+  });
+
+  it('shows owner assigned status when channel has an owner', () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-owner', role: 'owner', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    expect(screen.getByText('Owner assigned')).toBeInTheDocument();
+  });
+
+  it('shows owner-less warning for channels without an owner', () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-normal', role: 'normal', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    expect(screen.getByText('Owner-less channel')).toBeInTheDocument();
+  });
+
+  it('shows inline confirmation before removing the last owner', async () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-owner', role: 'owner', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    const buttons = screen.getAllByRole('button');
+    fireEvent.click(buttons[buttons.length - 1]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Removing the last owner will leave this channel unmanageable. Are you sure?')).toBeInTheDocument();
+    });
+    expect(baseProps.onRemoveMember).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Confirm'));
+
+    await waitFor(() => {
+      expect(baseProps.onRemoveMember).toHaveBeenCalledWith('wecom', 'u-owner');
+    });
+  });
+
+  it('disables owner option in add form when channel already has an owner', async () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-owner', role: 'owner', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    const triggers = screen.getAllByRole('combobox');
+    const addRoleTrigger = triggers[triggers.length - 1];
+    await userEvent.click(addRoleTrigger);
+
+    const ownerOption = screen.getByRole('option', { name: 'Owner' });
+    expect(ownerOption).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('shows no-members-in-channel placeholder for empty channels', () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-normal', role: 'normal', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    expect(screen.getByText('No members in this channel yet.')).toBeInTheDocument();
   });
 });

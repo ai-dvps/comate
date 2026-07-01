@@ -50,7 +50,7 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
     const bot = botService.createBot({
       name: 'Test Bot',
       activeWorkspaceId: 'ws-1',
-      providerSettings: {
+      channelSettings: {
         feishu: {
           enabled: true,
           appId: 'app-id',
@@ -59,8 +59,8 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
       },
     });
     botId = bot.id;
-    botService.addMember(botId, { provider: 'feishu', providerUserId: ownerUserId, role: 'owner' });
-    botService.addMember(botId, { provider: 'feishu', providerUserId: nonOwnerUserId, role: 'normal' });
+    botService.addMember(botId, { channel: 'feishu', channelUserId: ownerUserId, role: 'owner' });
+    botService.addMember(botId, { channel: 'feishu', channelUserId: nonOwnerUserId, role: 'normal' });
   });
 
   it('rejects rapid repeated actions via rate limit', async () => {

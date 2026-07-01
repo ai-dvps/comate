@@ -73,7 +73,7 @@ describe('BotMigrationService', { concurrency: false }, () => {
     const preview = result.preview![0];
     assert.strictEqual(preview.workspaceId, workspace.id);
     assert.strictEqual(preview.botName, 'Legacy WeCom Bot');
-    assert.deepStrictEqual(preview.providers.sort(), ['feishu', 'wecom']);
+    assert.deepStrictEqual(preview.channels.sort(), ['feishu', 'wecom']);
 
     assert.strictEqual(store.listBots().length, 0);
     assert.strictEqual(service.hasMigrationRun(), false);
@@ -95,17 +95,17 @@ describe('BotMigrationService', { concurrency: false }, () => {
     const bot = bots[0];
     assert.strictEqual(bot.name, 'Legacy WeCom Bot');
     assert.strictEqual(bot.activeWorkspaceId, workspace.id);
-    assert.strictEqual(bot.providerSettings.wecom?.enabled, true);
-    assert.strictEqual(bot.providerSettings.wecom?.botId, 'wecom-bot-1');
-    assert.strictEqual(bot.providerSettings.feishu?.enabled, true);
-    assert.strictEqual(bot.providerSettings.feishu?.appId, 'feishu-app-1');
+    assert.strictEqual(bot.channelSettings.wecom?.enabled, true);
+    assert.strictEqual(bot.channelSettings.wecom?.botId, 'wecom-bot-1');
+    assert.strictEqual(bot.channelSettings.feishu?.enabled, true);
+    assert.strictEqual(bot.channelSettings.feishu?.appId, 'feishu-app-1');
     assert.deepStrictEqual(bot.rolePolicy.skillAllowlist, ['skill-a', 'skill-b']);
 
     const members = store.listBotMembers(bot.id);
-    assert.ok(members.some((m) => m.provider === 'wecom' && m.providerUserId === 'admin-1' && m.role === 'admin'));
-    assert.ok(members.some((m) => m.provider === 'wecom' && m.providerUserId === 'user-1' && m.role === 'normal'));
-    assert.ok(members.some((m) => m.provider === 'feishu' && m.providerUserId === 'feishu-admin-1' && m.role === 'admin'));
-    assert.ok(members.some((m) => m.provider === 'feishu' && m.providerUserId === 'feishu-user-1' && m.role === 'normal'));
+    assert.ok(members.some((m) => m.channel === 'wecom' && m.channelUserId === 'admin-1' && m.role === 'admin'));
+    assert.ok(members.some((m) => m.channel === 'wecom' && m.channelUserId === 'user-1' && m.role === 'normal'));
+    assert.ok(members.some((m) => m.channel === 'feishu' && m.channelUserId === 'feishu-admin-1' && m.role === 'admin'));
+    assert.ok(members.some((m) => m.channel === 'feishu' && m.channelUserId === 'feishu-user-1' && m.role === 'normal'));
 
     const migratedWorkspace = await store.get(workspace.id);
     assert.ok(migratedWorkspace);

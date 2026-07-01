@@ -7,7 +7,7 @@ import { feishuBotService } from '../services/feishu-bot-service.js';
 import { botService } from '../services/bot-service.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
-import { redactProviderSettings } from '../routes/bots.js';
+import { redactChannelSettings } from '../routes/bots.js';
 
 const router = Router();
 
@@ -68,7 +68,7 @@ router.get('/:id/bot', async (req, res) => {
       res.status(404).json({ error: 'No bot bound to this workspace' });
       return;
     }
-    res.json({ bot: { ...bot, providerSettings: redactProviderSettings(bot.providerSettings) } });
+    res.json({ bot: { ...bot, channelSettings: redactChannelSettings(bot.channelSettings) } });
   } catch (error) {
     console.error('Failed to get workspace bot:', error);
     res.status(500).json({ error: 'Failed to get workspace bot' });

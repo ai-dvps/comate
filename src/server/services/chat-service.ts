@@ -1104,14 +1104,14 @@ export class ChatService {
       // Ensure the returned options point to the sanitized env.
       options.env = env;
 
-      // Resolve the canonical provider identity for this session.
-      const provider = session.source === 'wecom' || session.source === 'feishu' ? session.source : undefined;
-      let providerUserId: string | undefined;
-      if (provider === 'wecom') {
+      // Resolve the canonical channel identity for this session.
+      const channel = session.source === 'wecom' || session.source === 'feishu' ? session.source : undefined;
+      let channelUserId: string | undefined;
+      if (channel === 'wecom') {
         const wecomUserId = workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
-        providerUserId = wecomUserId ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId) : undefined;
-      } else if (provider === 'feishu') {
-        providerUserId = botUserId;
+        channelUserId = wecomUserId ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId) : undefined;
+      } else if (channel === 'feishu') {
+        channelUserId = botUserId;
       }
 
       let pathContext: import('./bot-path-policy.js').PathPolicyContext | undefined;
@@ -1125,8 +1125,8 @@ export class ChatService {
           // Inject the Bot persona into the SDK system prompt for WeCom/Feishu
           // sessions. GUI sessions never reach this branch because isBotSession
           // is false. Changes apply to the next newly created runtime.
-          const roleForPersona: BotRole | undefined = provider && providerUserId
-            ? botService.getMemberRole(bot.id, provider, providerUserId) ?? 'normal'
+          const roleForPersona: BotRole | undefined = channel && channelUserId
+            ? botService.getMemberRole(bot.id, channel, channelUserId) ?? 'normal'
             : undefined;
           const persona = roleForPersona
             ? bot.rolePersonas?.[roleForPersona] ?? bot.persona
@@ -1143,25 +1143,25 @@ export class ChatService {
             }
           }
 
-          const isAdminOrOwnerForContext = provider && providerUserId
-            ? isOwnerOrAdmin(botService.getMemberRole(bot.id, provider, providerUserId))
+          const isAdminOrOwnerForContext = channel && channelUserId
+            ? isOwnerOrAdmin(botService.getMemberRole(bot.id, channel, channelUserId))
             : false;
 
           const knownUserDirNames: string[] = [];
-          if (provider === 'wecom') {
+          if (channel === 'wecom') {
             const wsUsers = workspaceStore.listWecomWorkspaceUsers(workspace.id);
             const mappings = workspaceStore.listWecomUserMappings();
             const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
             for (const u of wsUsers) {
               knownUserDirNames.push(mappingMap.get(u.encryptedUserId) ?? u.encryptedUserId);
             }
-          } else if (provider === 'feishu') {
+          } else if (channel === 'feishu') {
             for (const u of workspaceStore.listFeishuWorkspaceUsers(workspace.id)) {
               knownUserDirNames.push(u.openId);
             }
           }
 
-          const userDirName = providerUserId ?? 'anonymous';
+          const userDirName = channelUserId ?? 'anonymous';
           pathContext = createPathPolicyContext(
             workspace,
             userDirName,
@@ -1184,15 +1184,15 @@ export class ChatService {
           ) => {
             // Resolve role dynamically on every tool use so membership/role changes
             // take effect without restarting the runtime.
-            const role = provider && providerUserId
-              ? botService.getMemberRole(bot.id, provider, providerUserId)
+            const role = channel && channelUserId
+              ? botService.getMemberRole(bot.id, channel, channelUserId)
               : null;
             const decision = evaluateBotToolPermission(bot, role, toolName);
             // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
             // without a category fit). Fall through to today's allow-all behavior
             // per R10. The brainstorm explicitly defers MCP and Skills gating.
             // Identity failure = fail closed on file/Bash/Skill tools.
-            if (!providerUserId && IDENTITY_SENSITIVE_TOOLS.has(toolName)) {
+            if (!channelUserId && IDENTITY_SENSITIVE_TOOLS.has(toolName)) {
               diagLog(
                 `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-identity`,
               );
@@ -1204,7 +1204,7 @@ export class ChatService {
 
             // Bash whitelist overrides the Shell category for Normal users; Owner/Admin
             // bypass the whitelist entirely.
-            if (toolName === 'Bash' && typeof input.command === 'string' && providerUserId) {
+            if (toolName === 'Bash' && typeof input.command === 'string' && channelUserId) {
               if (isBashCommandAllowed(bot, role, input.command)) {
                 return { behavior: 'allow' as const, updatedInput: input };
               }
@@ -1237,10 +1237,10 @@ export class ChatService {
                 diagLog(
                   `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'path-denied'}`,
                 );
-                if (session.botId && provider && providerUserId) {
+                if (session.botId && channel && channelUserId) {
                   botAuditLogger.logFileAccessDenied(
                     session.botId,
-                    { type: provider, provider, providerUserId },
+                    { type: channel, channel, channelUserId },
                     {
                       sessionId: session.id,
                       toolName,
@@ -1425,7 +1425,7 @@ export class ChatService {
               if (session.botId && canonicalUserId && (session.source === 'wecom' || session.source === 'feishu')) {
                 botAuditLogger.logFileAccessDenied(
                   session.botId,
-                  { type: session.source, provider: session.source, providerUserId: canonicalUserId },
+                  { type: session.source, channel: session.source, channelUserId: canonicalUserId },
                   {
                     sessionId: session.id,
                     toolName,

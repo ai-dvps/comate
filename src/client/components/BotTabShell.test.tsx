@@ -14,7 +14,7 @@ function makeBot(overrides?: Partial<Bot>): Bot {
     id: 'bot-1',
     name: 'TeamBot',
     activeWorkspaceId: null,
-    providerSettings: {},
+    channelSettings: {},
     rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -24,7 +24,7 @@ function makeBot(overrides?: Partial<Bot>): Bot {
 
 const sections = [
   { id: 'general', label: 'General' },
-  { id: 'providers', label: 'Providers' },
+  { id: 'channels', label: 'Channels' },
 ];
 
 describe('BotTabShell', () => {
@@ -55,7 +55,7 @@ describe('BotTabShell', () => {
 
     expect(screen.getByText('TeamBot')).toBeInTheDocument();
     expect(screen.getByText('General')).toBeInTheDocument();
-    expect(screen.getByText('Providers')).toBeInTheDocument();
+    expect(screen.getByText('Channels')).toBeInTheDocument();
     expect(screen.getByTestId('content')).toBeInTheDocument();
     expect(screen.getByTestId('footer')).toBeInTheDocument();
   });
@@ -68,7 +68,7 @@ describe('BotTabShell', () => {
         onSelectBot={vi.fn()}
         onCreateBot={vi.fn()}
         sections={sections}
-        activeSection="providers"
+        activeSection="channels"
         onSelectSection={vi.fn()}
         emptyState={<div>Empty</div>}
       >
@@ -79,7 +79,7 @@ describe('BotTabShell', () => {
     const selectedBot = screen.getByText('DevOps Bot').closest('button');
     expect(selectedBot?.className).toContain('bg-accent/10');
 
-    const activeTab = screen.getByText('Providers');
+    const activeTab = screen.getByText('Channels');
     expect(activeTab.className).toContain('border-b-2');
   });
 

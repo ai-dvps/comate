@@ -902,7 +902,7 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
       activeWorkspaceId: overrides.activeWorkspaceId,
       persona: overrides.persona,
       rolePersonas: overrides.rolePersonas,
-      providerSettings: {
+      channelSettings: {
         wecom: {
           botId: 'wecom-bot-id',
           botSecret: 'wecom-bot-secret',
@@ -940,7 +940,7 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     assert.ok(bot.id);
     assert.ok(bot.createdAt);
     assert.ok(bot.updatedAt);
-    assert.deepStrictEqual(bot.providerSettings, createBotInput().providerSettings);
+    assert.deepStrictEqual(bot.channelSettings, createBotInput().channelSettings);
   });
 
   it('createBot stores and returns a persona', () => {
@@ -977,8 +977,12 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     firstStore.resetData();
     const bot = firstStore.createBot(createBotInput({ name: 'Pre-migration Bot' }));
 
-    // Simulate a pre-migration database by dropping the persona_json column.
-    const db = (firstStore as unknown as { db: { exec: (sql: string) => void } }).db;
+    // Simulate a pre-persona database by dropping the persona_json column.
+    // The simulated table uses the old provider_settings_json column name so
+    // the channel-settings migration also runs on re-open.
+    const db = (firstStore as unknown as { db: { exec: (sql: string) => void; prepare: (sql: string) => { get: (id: string) => Record<string, unknown> | undefined } } }).db;
+    const row = db.prepare('SELECT * FROM bots WHERE id = ?').get(bot.id);
+    assert.ok(row);
     db.exec('ALTER TABLE bots RENAME TO bots_old');
     db.exec(`
       CREATE TABLE bots (
@@ -991,11 +995,18 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
         updated_at TEXT NOT NULL
       )
     `);
-    db.exec(`
+    db.prepare(`
       INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, created_at, updated_at)
-      SELECT id, name, active_workspace_id, provider_settings_json, role_policy_json, created_at, updated_at
-      FROM bots_old
-    `);
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.id,
+      row.name,
+      row.active_workspace_id,
+      row.channel_settings_json,
+      row.role_policy_json,
+      row.created_at,
+      row.updated_at,
+    );
     db.exec('DROP TABLE bots_old');
 
     // Re-opening the database should run the migration and load the bot without error.
@@ -1062,7 +1073,9 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
       createBotInput({ name: 'Pre-role-personas Bot', persona: { prompt: 'Default', mode: 'append' as const } }),
     );
 
-    const db = (firstStore as unknown as { db: { exec: (sql: string) => void } }).db;
+    const db = (firstStore as unknown as { db: { exec: (sql: string) => void; prepare: (sql: string) => { get: (id: string) => Record<string, unknown> | undefined } } }).db;
+    const row = db.prepare('SELECT * FROM bots WHERE id = ?').get(bot.id);
+    assert.ok(row);
     db.exec('ALTER TABLE bots RENAME TO bots_old');
     db.exec(`
       CREATE TABLE bots (
@@ -1076,11 +1089,19 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
         updated_at TEXT NOT NULL
       )
     `);
-    db.exec(`
+    db.prepare(`
       INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, created_at, updated_at)
-      SELECT id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, created_at, updated_at
-      FROM bots_old
-    `);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.id,
+      row.name,
+      row.active_workspace_id,
+      row.channel_settings_json,
+      row.role_policy_json,
+      row.persona_json,
+      row.created_at,
+      row.updated_at,
+    );
     db.exec('DROP TABLE bots_old');
 
     const migratedStore = new SqliteStore(dbPath);
@@ -1107,7 +1128,7 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     assert.ok(found);
     assert.strictEqual(found!.name, bot.name);
     assert.strictEqual(found!.activeWorkspaceId, bot.activeWorkspaceId);
-    assert.deepStrictEqual(found!.providerSettings, bot.providerSettings);
+    assert.deepStrictEqual(found!.channelSettings, bot.channelSettings);
   });
 
   it('getBot returns null for unknown id', () => {
@@ -1139,7 +1160,7 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     const updated = store.updateBot(bot.id, {
       name: 'Renamed',
       activeWorkspaceId: 'ws-updated',
-      providerSettings: { wecom: { botId: 'new-id' } },
+      channelSettings: { wecom: { botId: 'new-id' } },
       rolePolicy: {
         normalToolPolicy: {
           posture: 'allow-all' as const,
@@ -1160,7 +1181,7 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     assert.ok(updated);
     assert.strictEqual(updated!.name, 'Renamed');
     assert.strictEqual(updated!.activeWorkspaceId, 'ws-updated');
-    assert.deepStrictEqual(updated!.providerSettings, { wecom: { botId: 'new-id' } });
+    assert.deepStrictEqual(updated!.channelSettings, { wecom: { botId: 'new-id' } });
     assert.deepStrictEqual(updated!.rolePolicy.skillAllowlist, ['skill-a']);
 
     const fromDb = store.getBot(bot.id);
@@ -1197,7 +1218,7 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
 
     const members = store.listBotMembers(bot.id);
     assert.strictEqual(members.length, 1);
-    assert.strictEqual(members[0].providerUserId, 'user-1');
+    assert.strictEqual(members[0].channelUserId, 'user-1');
   });
 
   it('removeBotMember deletes a member', () => {
@@ -1212,6 +1233,49 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
   it('getBotMemberRole returns null for unknown member', () => {
     const bot = store.createBot(createBotInput());
     assert.strictEqual(store.getBotMemberRole(bot.id, 'wecom', 'nobody'), null);
+  });
+
+  it('migrates bot_members from provider columns to channel columns', () => {
+    const dbPath = join(testDbDir, 'bot-members-migration.db');
+
+    const firstStore = new SqliteStore(dbPath);
+    firstStore.resetData();
+    const bot = firstStore.createBot(createBotInput({ name: 'Legacy Members Bot' }));
+    firstStore.setBotMember(bot.id, 'wecom', 'legacy-owner', 'owner');
+
+    const db = (firstStore as unknown as { db: { exec: (sql: string) => void; prepare: (sql: string) => { get: (id: string) => Record<string, unknown> | undefined; run: (...args: unknown[]) => void } } }).db;
+    const row = db.prepare('SELECT * FROM bot_members WHERE bot_id = ?').get(bot.id);
+    assert.ok(row);
+
+    db.exec('ALTER TABLE bot_members RENAME TO bot_members_old');
+    db.exec(`
+      CREATE TABLE bot_members (
+        bot_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_user_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (bot_id, provider, provider_user_id)
+      )
+    `);
+    db.prepare(`
+      INSERT INTO bot_members (bot_id, provider, provider_user_id, role, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(row.bot_id, row.channel, row.channel_user_id, row.role, row.created_at, row.updated_at);
+    db.exec('DROP TABLE bot_members_old');
+
+    const migratedStore = new SqliteStore(dbPath);
+    const members = migratedStore.listBotMembers(bot.id);
+    assert.strictEqual(members.length, 1);
+    assert.strictEqual(members[0].channel, 'wecom');
+    assert.strictEqual(members[0].channelUserId, 'legacy-owner');
+    assert.strictEqual(members[0].role, 'owner');
+
+    assert.throws(
+      () => migratedStore.setBotMember(bot.id, 'wecom', 'second-owner', 'owner'),
+      /UNIQUE constraint failed/,
+    );
   });
 
   it('recordAuditLog creates entries ordered newest-first', () => {
@@ -1244,19 +1308,19 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     assert.strictEqual(botSessions[0].botId, bot.id);
   });
 
-  it('encrypts and decrypts sensitive provider settings at rest', () => {
-    const settings = createBotInput().providerSettings;
-    const bot = store.createBot({ name: 'Encrypted', providerSettings: settings });
+  it('encrypts and decrypts sensitive channel settings at rest', () => {
+    const settings = createBotInput().channelSettings;
+    const bot = store.createBot({ name: 'Encrypted', channelSettings: settings });
     const found = store.getBot(bot.id);
 
-    assert.deepStrictEqual(found!.providerSettings, settings);
+    assert.deepStrictEqual(found!.channelSettings, settings);
 
     // Verify the raw DB does not contain plaintext secrets.
-    const row = (store as unknown as { db: { prepare: (sql: string) => { get: (id: string) => { provider_settings_json: string } | undefined } } }).db
-      .prepare('SELECT provider_settings_json FROM bots WHERE id = ?')
+    const row = (store as unknown as { db: { prepare: (sql: string) => { get: (id: string) => { channel_settings_json: string } | undefined } } }).db
+      .prepare('SELECT channel_settings_json FROM bots WHERE id = ?')
       .get(bot.id);
     assert.ok(row);
-    const json = JSON.parse(row!.provider_settings_json);
+    const json = JSON.parse(row!.channel_settings_json);
     assert.notStrictEqual(json.wecom.botSecret, 'wecom-bot-secret');
     assert.notStrictEqual(json.feishu.appSecret, 'feishu-app-secret');
   });

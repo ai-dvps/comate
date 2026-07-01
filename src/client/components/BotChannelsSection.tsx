@@ -3,13 +3,13 @@ import type { Bot } from '../stores/bot-store';
 import { type BotFormData } from './bot-form-utils';
 import SecretInput from './SecretInput';
 
-interface BotProvidersSectionProps {
+interface BotChannelsSectionProps {
   form: BotFormData;
   onUpdate: (patch: Partial<BotFormData>) => void;
   originalBot?: Bot | null;
 }
 
-export default function BotProvidersSection({ form, onUpdate, originalBot }: BotProvidersSectionProps) {
+export default function BotChannelsSection({ form, onUpdate, originalBot }: BotChannelsSectionProps) {
   const { t } = useTranslation('settings');
 
   const Toggle = ({
@@ -26,6 +26,7 @@ export default function BotProvidersSection({ form, onUpdate, originalBot }: Bot
       <button
         type="button"
         onClick={() => onChange(!checked)}
+        aria-label={label}
         className={`relative w-9 h-5 rounded-full transition-colors ${
           checked ? 'bg-accent' : 'bg-border'
         }`}
@@ -43,7 +44,7 @@ export default function BotProvidersSection({ form, onUpdate, originalBot }: Bot
     <div className="max-w-xl space-y-6">
       {/* WeCom */}
       <div className="border border-border rounded-lg p-4 space-y-4">
-        <h4 className="text-xs font-medium text-text-secondary">{t('bots.providerWecom')}</h4>
+        <h4 className="text-xs font-medium text-text-secondary">{t('bots.channelWecom')}</h4>
         <Toggle
           label={t('bots.wecomEnable')}
           checked={form.wecomEnabled}
@@ -81,7 +82,7 @@ export default function BotProvidersSection({ form, onUpdate, originalBot }: Bot
               label={`${t('bots.wecomBotSecret')}${originalBot ? '' : ' *'}`}
               value={form.wecomBotSecret}
               placeholder={t('bots.wecomBotSecretPlaceholder')}
-              original={originalBot?.providerSettings.wecom?.botSecret}
+              original={originalBot?.channelSettings.wecom?.botSecret}
               onChange={(value) => onUpdate({ wecomBotSecret: value })}
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -101,17 +102,31 @@ export default function BotProvidersSection({ form, onUpdate, originalBot }: Bot
                 label={t('bots.wecomCorpSecret')}
                 value={form.wecomCorpSecret}
                 placeholder={t('bots.wecomCorpSecretPlaceholder')}
-                original={originalBot?.providerSettings.wecom?.corpSecret}
+                original={originalBot?.channelSettings.wecom?.corpSecret}
                 onChange={(value) => onUpdate({ wecomCorpSecret: value })}
               />
             </div>
+            {!originalBot && (
+              <div>
+                <label className="block text-[11px] font-medium text-text-tertiary mb-1">
+                  {t('bots.wecomOwnerUserId')} *
+                </label>
+                <input
+                  value={form.wecomOwnerUserId}
+                  onChange={(e) => onUpdate({ wecomOwnerUserId: e.target.value })}
+                  placeholder={t('bots.wecomOwnerUserIdPlaceholder')}
+                  className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                />
+                <p className="mt-1 text-[10px] text-text-tertiary">{t('bots.ownerUserIdHint')}</p>
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* Feishu */}
       <div className="border border-border rounded-lg p-4 space-y-4">
-        <h4 className="text-xs font-medium text-text-secondary">{t('bots.providerFeishu')}</h4>
+        <h4 className="text-xs font-medium text-text-secondary">{t('bots.channelFeishu')}</h4>
         <Toggle
           label={t('bots.feishuEnable')}
           checked={form.feishuEnabled}
@@ -149,7 +164,7 @@ export default function BotProvidersSection({ form, onUpdate, originalBot }: Bot
               label={`${t('bots.feishuAppSecret')}${originalBot ? '' : ' *'}`}
               value={form.feishuAppSecret}
               placeholder={t('bots.feishuAppSecretPlaceholder')}
-              original={originalBot?.providerSettings.feishu?.appSecret}
+              original={originalBot?.channelSettings.feishu?.appSecret}
               onChange={(value) => onUpdate({ feishuAppSecret: value })}
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -158,7 +173,7 @@ export default function BotProvidersSection({ form, onUpdate, originalBot }: Bot
                 label={t('bots.feishuEncryptKey')}
                 value={form.feishuEncryptKey}
                 placeholder={t('bots.feishuEncryptKeyPlaceholder')}
-                original={originalBot?.providerSettings.feishu?.encryptKey}
+                original={originalBot?.channelSettings.feishu?.encryptKey}
                 onChange={(value) => onUpdate({ feishuEncryptKey: value })}
               />
               <SecretInput
@@ -166,10 +181,24 @@ export default function BotProvidersSection({ form, onUpdate, originalBot }: Bot
                 label={t('bots.feishuVerificationToken')}
                 value={form.feishuVerificationToken}
                 placeholder={t('bots.feishuVerificationTokenPlaceholder')}
-                original={originalBot?.providerSettings.feishu?.verificationToken}
+                original={originalBot?.channelSettings.feishu?.verificationToken}
                 onChange={(value) => onUpdate({ feishuVerificationToken: value })}
               />
             </div>
+            {!originalBot && (
+              <div>
+                <label className="block text-[11px] font-medium text-text-tertiary mb-1">
+                  {t('bots.feishuOwnerUserId')} *
+                </label>
+                <input
+                  value={form.feishuOwnerUserId}
+                  onChange={(e) => onUpdate({ feishuOwnerUserId: e.target.value })}
+                  placeholder={t('bots.feishuOwnerUserIdPlaceholder')}
+                  className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                />
+                <p className="mt-1 text-[10px] text-text-tertiary">{t('bots.ownerUserIdHint')}</p>
+              </div>
+            )}
           </div>
         )}
       </div>

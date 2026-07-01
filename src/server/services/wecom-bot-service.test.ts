@@ -1580,7 +1580,7 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
     const bot = botService.createBot({
       name: 'Test Bot',
       activeWorkspaceId: workspaceA.id,
-      providerSettings: {
+      channelSettings: {
         wecom: {
           enabled: true,
           botId: 'wecom-bot-id',
@@ -1589,8 +1589,8 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
       },
     });
     botId = bot.id;
-    botService.addMember(botId, { provider: 'wecom', providerUserId: ownerUserId, role: 'owner' });
-    botService.addMember(botId, { provider: 'wecom', providerUserId: nonOwnerUserId, role: 'normal' });
+    botService.addMember(botId, { channel: 'wecom', channelUserId: ownerUserId, role: 'owner' });
+    botService.addMember(botId, { channel: 'wecom', channelUserId: nonOwnerUserId, role: 'normal' });
   });
 
   afterEach(async () => {

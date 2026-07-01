@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import i18next from 'i18next';
 
-export type BotProvider = 'wecom' | 'feishu';
+export type BotChannel = 'wecom' | 'feishu';
 
 export type BotRole = 'owner' | 'admin' | 'normal';
 
-export interface WeComProviderConfig {
+export interface WeComChannelConfig {
   enabled?: boolean;
   botId?: string;
   botSecret?: string | true;
@@ -14,7 +14,7 @@ export interface WeComProviderConfig {
   corpSecret?: string | true;
 }
 
-export interface FeishuProviderConfig {
+export interface FeishuChannelConfig {
   enabled?: boolean;
   appId?: string;
   appSecret?: string | true;
@@ -23,9 +23,9 @@ export interface FeishuProviderConfig {
   botName?: string;
 }
 
-export interface BotProviderSettings {
-  wecom?: WeComProviderConfig;
-  feishu?: FeishuProviderConfig;
+export interface BotChannelSettings {
+  wecom?: WeComChannelConfig;
+  feishu?: FeishuChannelConfig;
 }
 
 export interface BotRolePolicy {
@@ -45,7 +45,7 @@ export interface Bot {
   id: string;
   name: string;
   activeWorkspaceId: string | null;
-  providerSettings: BotProviderSettings;
+  channelSettings: BotChannelSettings;
   rolePolicy: BotRolePolicy;
   persona?: BotPersona;
   rolePersonas?: Partial<Record<BotRole, BotPersona>>;
@@ -55,8 +55,8 @@ export interface Bot {
 
 export interface BotMember {
   botId: string;
-  provider: BotProvider;
-  providerUserId: string;
+  channel: BotChannel;
+  channelUserId: string;
   role: BotRole;
   createdAt: string;
   updatedAt: string;
@@ -65,7 +65,7 @@ export interface BotMember {
 export interface CreateBotInput {
   name: string;
   activeWorkspaceId?: string;
-  providerSettings?: BotProviderSettings;
+  channelSettings?: BotChannelSettings;
   rolePolicy?: BotRolePolicy;
   persona?: BotPersona;
   rolePersonas?: Partial<Record<BotRole, BotPersona>>;
@@ -74,7 +74,7 @@ export interface CreateBotInput {
 export interface UpdateBotInput {
   name?: string;
   activeWorkspaceId?: string | null;
-  providerSettings?: BotProviderSettings;
+  channelSettings?: BotChannelSettings;
   rolePolicy?: BotRolePolicy;
   persona?: BotPersona | null;
   rolePersonas?: Partial<Record<BotRole, BotPersona>> | null;
@@ -96,12 +96,12 @@ export interface MigrationResult {
     workspaceId: string;
     workspaceName: string;
     botName: string;
-    providers: string[];
-    members: Array<{ provider: BotProvider; providerUserId: string; role: Exclude<BotRole, 'owner'> }>;
+    channels: BotChannel[];
+    members: Array<{ channel: BotChannel; channelUserId: string; role: Exclude<BotRole, 'owner'> }>;
   }>;
 }
 
-interface BotState {
+export interface BotState {
   bots: Bot[];
   membersByBotId: Record<string, BotMember[]>;
   statusByBotId: Record<string, BotStatus>;
@@ -116,9 +116,9 @@ interface BotState {
   deleteBot: (id: string) => Promise<boolean>;
   switchWorkspace: (botId: string, workspaceId: string) => Promise<Bot | null>;
   fetchMembers: (botId: string) => Promise<void>;
-  addMember: (botId: string, input: { provider: BotProvider; providerUserId: string; role: BotRole }) => Promise<BotMember | null>;
-  setMemberRole: (botId: string, provider: BotProvider, providerUserId: string, role: BotRole) => Promise<boolean>;
-  removeMember: (botId: string, provider: BotProvider, providerUserId: string) => Promise<boolean>;
+  addMember: (botId: string, input: { channel: BotChannel; channelUserId: string; role: BotRole }) => Promise<BotMember | null>;
+  setMemberRole: (botId: string, channel: BotChannel, channelUserId: string, role: BotRole) => Promise<boolean>;
+  removeMember: (botId: string, channel: BotChannel, channelUserId: string) => Promise<boolean>;
   fetchStatus: (botId: string) => Promise<void>;
   runMigration: (dryRun?: boolean) => Promise<MigrationResult | null>;
   clearError: () => void;
@@ -267,11 +267,11 @@ export const useBotStore = create<BotState>((set, get) => ({
     }
   },
 
-  setMemberRole: async (botId, provider, providerUserId, role) => {
+  setMemberRole: async (botId, channel, channelUserId, role) => {
     set({ isSaving: true, error: null });
     try {
       const res = await fetch(
-        `${API_BASE}/bots/${botId}/members/${encodeURIComponent(providerUserId)}/role?provider=${provider}`,
+        `${API_BASE}/bots/${botId}/members/${encodeURIComponent(channelUserId)}/role?channel=${channel}`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -284,7 +284,7 @@ export const useBotStore = create<BotState>((set, get) => ({
         membersByBotId: {
           ...get().membersByBotId,
           [botId]: current.map((m) =>
-            m.provider === provider && m.providerUserId === providerUserId ? { ...m, role } : m,
+            m.channel === channel && m.channelUserId === channelUserId ? { ...m, role } : m,
           ),
         },
         isSaving: false,
@@ -296,11 +296,11 @@ export const useBotStore = create<BotState>((set, get) => ({
     }
   },
 
-  removeMember: async (botId, provider, providerUserId) => {
+  removeMember: async (botId, channel, channelUserId) => {
     set({ isSaving: true, error: null });
     try {
       const res = await fetch(
-        `${API_BASE}/bots/${botId}/members/${encodeURIComponent(providerUserId)}?provider=${provider}`,
+        `${API_BASE}/bots/${botId}/members/${encodeURIComponent(channelUserId)}?channel=${channel}`,
         { method: 'DELETE' },
       );
       if (!res.ok) throw new Error(await handleError(res));
@@ -309,7 +309,7 @@ export const useBotStore = create<BotState>((set, get) => ({
         membersByBotId: {
           ...get().membersByBotId,
           [botId]: current.filter(
-            (m) => !(m.provider === provider && m.providerUserId === providerUserId),
+            (m) => !(m.channel === channel && m.channelUserId === channelUserId),
           ),
         },
         isSaving: false,

@@ -2,14 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../i18n';
-import BotProvidersSection from './BotProvidersSection';
+import type { Bot } from '../stores/bot-store';
+import BotChannelsSection from './BotChannelsSection';
 import { emptyForm } from './bot-form-utils';
 
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>);
 }
 
-describe('BotProvidersSection', () => {
+describe('BotChannelsSection', () => {
   beforeEach(() => {
     cleanup();
   });
@@ -21,7 +22,7 @@ describe('BotProvidersSection', () => {
   it('toggles WeCom and shows credential fields', () => {
     const onUpdate = vi.fn();
     renderWithI18n(
-      <BotProvidersSection form={emptyForm()} onUpdate={onUpdate} />,
+      <BotChannelsSection form={emptyForm()} onUpdate={onUpdate} />,
     );
 
     expect(screen.queryByPlaceholderText('your-bot-id')).not.toBeInTheDocument();
@@ -34,7 +35,7 @@ describe('BotProvidersSection', () => {
 
   it('shows WeCom fields when enabled', () => {
     renderWithI18n(
-      <BotProvidersSection form={{ ...emptyForm(), wecomEnabled: true }} onUpdate={vi.fn()} />,
+      <BotChannelsSection form={{ ...emptyForm(), wecomEnabled: true }} onUpdate={vi.fn()} />,
     );
 
     expect(screen.getByPlaceholderText('your-bot-id')).toBeInTheDocument();
@@ -42,18 +43,18 @@ describe('BotProvidersSection', () => {
   });
 
   it('renders secret placeholder for unchanged secret in edit mode', () => {
-    const originalBot = {
+    const originalBot: Bot = {
       id: 'bot-1',
       name: 'Bot',
       activeWorkspaceId: null,
-      providerSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
       rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
       createdAt: '',
       updatedAt: '',
     };
 
     renderWithI18n(
-      <BotProvidersSection
+      <BotChannelsSection
         form={{ ...emptyForm(), wecomEnabled: true }}
         onUpdate={vi.fn()}
         originalBot={originalBot}

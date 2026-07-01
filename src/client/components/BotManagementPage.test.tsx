@@ -3,6 +3,7 @@ import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-libra
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../i18n';
 import BotManagementPage from './BotManagementPage';
+import { useBotStore, type BotState } from '../stores/bot-store';
 import type { Bot } from '../stores/bot-store';
 import type { Workspace } from '../stores/workspace-store';
 
@@ -15,7 +16,7 @@ function makeBot(overrides?: Partial<Bot>): Bot {
     id: 'bot-1',
     name: 'TeamBot',
     activeWorkspaceId: null,
-    providerSettings: {},
+    channelSettings: {},
     rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -36,7 +37,7 @@ const workspace: Workspace = {
   settings: {},
 };
 
-const mockState: ReturnType<typeof import('../stores/bot-store').useBotStore> = {
+const mockState: BotState = {
   bots: [makeBot()],
   membersByBotId: {},
   statusByBotId: {},
@@ -74,8 +75,6 @@ vi.mock('../stores/workspace-store', async () => {
     })),
   };
 });
-
-import { useBotStore } from '../stores/bot-store';
 
 describe('BotManagementPage', () => {
   beforeEach(() => {
@@ -176,6 +175,71 @@ describe('BotManagementPage', () => {
     await waitFor(() => {
       expect(screen.queryByText('New bot')).not.toBeInTheDocument();
       expect(screen.getByText('TeamBot')).toBeInTheDocument();
+    });
+
+    vi.unstubAllGlobals();
+  });
+
+  it('creates a bot and adds initial channel owners when saving a new bot', async () => {
+    vi.stubGlobal('crypto', { randomUUID: () => 'temp-uuid' });
+
+    const newBot = makeBot({
+      id: 'new-bot',
+      name: 'New Bot',
+      channelSettings: {
+        wecom: { enabled: true, botId: 'wecom-bot-id', botSecret: 'wecom-secret' },
+      },
+    });
+    const createBot = vi.fn().mockResolvedValue(newBot);
+    const addMember = vi.fn().mockResolvedValue(undefined);
+    (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      ...mockState,
+      createBot,
+      addMember,
+    });
+
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+
+    fireEvent.click(screen.getByText('Create Bot'));
+    await waitFor(() => expect(screen.getByText('New bot')).toBeInTheDocument());
+
+    // Set the bot name first so validation passes while the General section is visible.
+    fireEvent.change(screen.getByPlaceholderText('My Bot'), { target: { value: 'New Bot' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Channels/i }));
+    await waitFor(() => expect(screen.getByText('WeCom')).toBeInTheDocument());
+
+    // Enable WeCom.
+    const toggles = screen.getAllByRole('button', { name: /WeCom|Feishu/i });
+    fireEvent.click(toggles[0]);
+
+    await waitFor(() => expect(screen.getByPlaceholderText('your-bot-id')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('your-bot-id'), { target: { value: 'wecom-bot-id' } });
+    fireEvent.change(screen.getByPlaceholderText('your-bot-secret'), { target: { value: 'wecom-secret' } });
+    fireEvent.change(screen.getByPlaceholderText('owner-user-id'), { target: { value: 'owner-1' } });
+
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(createBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'New Bot',
+          channelSettings: {
+            wecom: expect.objectContaining({ enabled: true, botId: 'wecom-bot-id' }),
+          },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(addMember).toHaveBeenCalledWith('new-bot', {
+        channel: 'wecom',
+        channelUserId: 'owner-1',
+        role: 'owner',
+      });
     });
 
     vi.unstubAllGlobals();

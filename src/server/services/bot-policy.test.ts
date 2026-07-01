@@ -33,7 +33,7 @@ function createBot(policy: BotRolePolicy = createPolicy()): Bot {
     id: 'bot-1',
     name: 'Test Bot',
     activeWorkspaceId: 'ws-1',
-    providerSettings: {},
+    channelSettings: {},
     rolePolicy: policy,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
