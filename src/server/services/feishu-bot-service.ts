@@ -55,7 +55,7 @@ export class FeishuBotService {
   private activeStreamReplies = new Map<string, FeishuStreamReplyHandle>();
 
   async initialize(): Promise<void> {
-    const feishuBots = botService.listBots().filter((b) => b.providerSettings.feishu?.enabled);
+    const feishuBots = botService.listBots().filter((b) => b.channelSettings.feishu?.enabled);
 
     if (feishuBots.length > 0) {
       const storedActiveWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
@@ -85,7 +85,7 @@ export class FeishuBotService {
   async connectBot(bot: Bot): Promise<void> {
     this.disconnectBot(bot.id);
 
-    const feishu = bot.providerSettings.feishu;
+    const feishu = bot.channelSettings.feishu;
     const appId = feishu?.appId?.trim();
     const appSecret = feishu?.appSecret?.trim();
     if (!appId || !appSecret) {
@@ -160,7 +160,7 @@ export class FeishuBotService {
       id: workspace.settings.feishuAppId!,
       name: workspace.name,
       activeWorkspaceId: workspace.id,
-      providerSettings: {
+      channelSettings: {
         feishu: {
           enabled: workspace.settings.feishuBotEnabled,
           appId: workspace.settings.feishuAppId,
@@ -383,7 +383,7 @@ export class FeishuBotService {
       bot = botService.getBot(botId);
     }
     if (!bot) {
-      const boundBots = botService.listBotsForWorkspace(workspaceId).filter((b) => b.providerSettings.feishu?.enabled);
+      const boundBots = botService.listBotsForWorkspace(workspaceId).filter((b) => b.channelSettings.feishu?.enabled);
       bot = boundBots[0] ?? this.botFromWorkspace(workspace);
     }
     if (!bot) {
@@ -395,8 +395,8 @@ export class FeishuBotService {
     if (botId && actorUserId) {
       botService.setActiveWorkspace(botId, workspaceId, {
         type: 'feishu',
-        provider: 'feishu',
-        providerUserId: actorUserId,
+        channel: 'feishu',
+        channelUserId: actorUserId,
       });
     }
 
@@ -468,7 +468,7 @@ export class FeishuBotService {
       id: appId,
       name: workspace.name,
       activeWorkspaceId: workspace.id,
-      providerSettings: {
+      channelSettings: {
         feishu: {
           enabled: workspace.settings.feishuBotEnabled,
           appId,
@@ -557,7 +557,7 @@ export class FeishuBotService {
     // In the decoupled bot architecture, Feishu is enabled at the bot level.
     // Keep the legacy workspace flag as a fallback for pre-migration setups.
     if (workspace.settings.feishuBotEnabled) return true;
-    return botService.listBotsForWorkspace(workspace.id).some((b) => b.providerSettings.feishu?.enabled);
+    return botService.listBotsForWorkspace(workspace.id).some((b) => b.channelSettings.feishu?.enabled);
   }
 
   private createDispatchHandler(): DirectMessageHandler & MentionHandler {

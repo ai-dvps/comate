@@ -183,7 +183,7 @@ const server = app.listen(PORT, () => {
     console.log(JSON.stringify({ type: 'ready', port: actualPort }));
   }
 
-  // Run bot migration before initializing provider connections so legacy
+  // Run bot migration before initializing channel connections so legacy
   // workspace-embedded configs are promoted to standalone bots once.
   (async () => {
     try {
@@ -205,7 +205,7 @@ const server = app.listen(PORT, () => {
     // but before auto-install was added.
     try {
       for (const bot of botService.listBots()) {
-        if (bot.providerSettings.wecom?.enabled && bot.activeWorkspaceId) {
+        if (bot.channelSettings.wecom?.enabled && bot.activeWorkspaceId) {
           await builtinPluginService.ensureWecomPluginInstalled(bot.activeWorkspaceId).catch((err) => {
             console.error(
               `[Startup] failed to backfill wecom plugin for workspace ${bot.activeWorkspaceId}:`,

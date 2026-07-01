@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Bot channel ownership model** — the bot "Provider" concept has been renamed to "Channel" across TypeScript models, the Express API, SQLite storage, and the React UI. Bot ownership is now scoped per channel: each enabled WeCom/Feishu channel has exactly one owner, channel owners can manage members of their own channel and switch the bot's active workspace, but they cannot update/delete the bot or manage other channels. The GUI bypasses ownership checks via the system actor. Existing databases are migrated automatically; promoting owners in already-migrated databases is left to the GUI. English and Simplified Chinese i18n keys added.
+
 ## [0.0.20] - 2026-06-30
 
 ### Added

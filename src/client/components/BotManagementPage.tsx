@@ -13,14 +13,14 @@ import { useBotStore, type Bot as BotType, type BotPersona, type BotRole } from 
 import { useWorkspaceStore } from '../stores/workspace-store';
 import BotTabShell, { BotEmptyState } from './BotTabShell';
 import BotGeneralSection from './BotGeneralSection';
-import BotProvidersSection from './BotProvidersSection';
+import BotChannelsSection from './BotChannelsSection';
 import BotMemberList from './BotMemberList';
 import BotRolePermissions from './BotRolePermissions';
 import BotPersonaEditor, { type BotPersonaEditorHandle } from './BotPersonaEditor';
 import BotDangerSection from './BotDangerSection';
-import { emptyForm, botToForm, validateBotForm, buildBotInput, type BotFormData } from './bot-form-utils';
+import { emptyForm, botToForm, validateBotForm, buildCreateBotInput, buildUpdateBotInput, type BotFormData } from './bot-form-utils';
 
-export type BotSectionId = 'general' | 'providers' | 'members' | 'roles' | 'persona' | 'danger';
+export type BotSectionId = 'general' | 'channels' | 'members' | 'roles' | 'persona' | 'danger';
 
 export interface BotManagementPageHandle {
   isDirty: () => boolean;
@@ -180,11 +180,32 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       }
 
       setIsSavingBasic(true);
-      const input = buildBotInput(draft, tempBot ? null : selectedBot);
 
       if (tempBot) {
+        const input = buildCreateBotInput(draft);
         const bot = await createBot(input);
         if (bot) {
+          const ownerAdds: Promise<unknown>[] = [];
+          if (draft.wecomEnabled && draft.wecomOwnerUserId.trim()) {
+            ownerAdds.push(
+              addMember(bot.id, {
+                channel: 'wecom',
+                channelUserId: draft.wecomOwnerUserId.trim(),
+                role: 'owner',
+              }),
+            );
+          }
+          if (draft.feishuEnabled && draft.feishuOwnerUserId.trim()) {
+            ownerAdds.push(
+              addMember(bot.id, {
+                channel: 'feishu',
+                channelUserId: draft.feishuOwnerUserId.trim(),
+                role: 'owner',
+              }),
+            );
+          }
+          await Promise.all(ownerAdds);
+
           setTempBot(null);
           setSelectedBotId(bot.id);
           setSnapshots((prev) => ({
@@ -200,6 +221,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
           setPageError(storeError || t('common:unknownError'));
         }
       } else {
+        const input = buildUpdateBotInput(draft, selectedBot);
         const bot = await updateBot(selectedBotId, input);
         if (bot) {
           setSnapshots((prev) => ({
@@ -216,7 +238,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
         }
       }
       setIsSavingBasic(false);
-    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t]);
+    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t, addMember]);
 
     const handleCancelBasic = useCallback(() => {
       if (!selectedBotId) return;
@@ -273,7 +295,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
         id: tempId,
         name: t('bots.newBotName'),
         activeWorkspaceId: null,
-        providerSettings: {},
+        channelSettings: {},
         rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -362,7 +384,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const sections = useMemo(
       () => [
         { id: 'general' as BotSectionId, label: t('bots.sections.general') },
-        { id: 'providers' as BotSectionId, label: t('bots.sections.providers') },
+        { id: 'channels' as BotSectionId, label: t('bots.sections.channels') },
         { id: 'members' as BotSectionId, label: t('bots.sections.members') },
         { id: 'roles' as BotSectionId, label: t('bots.sections.roles') },
         { id: 'persona' as BotSectionId, label: t('bots.sections.persona') },
@@ -438,8 +460,8 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
             />
           )}
 
-          {activeSection === 'providers' && (
-            <BotProvidersSection
+          {activeSection === 'channels' && (
+            <BotChannelsSection
               form={draft}
               onUpdate={handleUpdate}
               originalBot={isNew ? null : selectedBot}
@@ -454,8 +476,8 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
               isSaving={isSavingBasic}
               error={storeError}
               onAddMember={(input) => addMember(selectedBot.id, input)}
-              onSetRole={(provider, providerUserId, role) => setMemberRole(selectedBot.id, provider, providerUserId, role)}
-              onRemoveMember={(provider, providerUserId) => removeMember(selectedBot.id, provider, providerUserId)}
+              onSetRole={(channel, channelUserId, role) => setMemberRole(selectedBot.id, channel, channelUserId, role)}
+              onRemoveMember={(channel, channelUserId) => removeMember(selectedBot.id, channel, channelUserId)}
             />
           )}
 

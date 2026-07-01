@@ -23,13 +23,13 @@ describe('BotAuditLogger', { concurrency: false }, () => {
   });
 
   it('redacts long string values that may be secrets', () => {
-    logger.log('bot-1', { type: 'system' }, 'provider_credentials_changed', {
-      providers: ['wecom'],
+    logger.log('bot-1', { type: 'system' }, 'channel_credentials_changed', {
+      channels: ['wecom'],
       secret: 'a'.repeat(64),
     });
     const [entry] = store.listAuditLogs('bot-1');
     assert.strictEqual(entry.details.secret, '<redacted>');
-    assert.deepStrictEqual(entry.details.providers, ['wecom']);
+    assert.deepStrictEqual(entry.details.channels, ['wecom']);
   });
 
   it('redacts nested long string values', () => {
@@ -43,9 +43,9 @@ describe('BotAuditLogger', { concurrency: false }, () => {
   });
 
   it('leaves short values unchanged', () => {
-    logger.log('bot-1', { type: 'wecom', provider: 'wecom', providerUserId: 'u-1' }, 'member_added', {
-      provider: 'wecom',
-      providerUserId: 'u-1',
+    logger.log('bot-1', { type: 'wecom', channel: 'wecom', channelUserId: 'u-1' }, 'member_added', {
+      channel: 'wecom',
+      channelUserId: 'u-1',
       role: 'normal',
     });
     const [entry] = store.listAuditLogs('bot-1');
@@ -54,11 +54,11 @@ describe('BotAuditLogger', { concurrency: false }, () => {
     assert.strictEqual(entry.details.role, 'normal');
   });
 
-  it('records provider credential change events', () => {
-    logger.logProviderCredentialsChanged('bot-1', { type: 'system' }, ['wecom', 'feishu']);
+  it('records channel credential change events', () => {
+    logger.logChannelCredentialsChanged('bot-1', { type: 'system' }, ['wecom', 'feishu']);
     const [entry] = store.listAuditLogs('bot-1');
-    assert.strictEqual(entry.eventType, 'provider_credentials_changed');
-    assert.deepStrictEqual(entry.details.providers, ['wecom', 'feishu']);
+    assert.strictEqual(entry.eventType, 'channel_credentials_changed');
+    assert.deepStrictEqual(entry.details.channels, ['wecom', 'feishu']);
   });
 
   it('records active workspace switch events', () => {
@@ -72,7 +72,7 @@ describe('BotAuditLogger', { concurrency: false }, () => {
   it('records member role change events', () => {
     logger.logMemberRoleChanged(
       'bot-1',
-      { type: 'wecom', provider: 'wecom', providerUserId: 'owner-1' },
+      { type: 'wecom', channel: 'wecom', channelUserId: 'owner-1' },
       'wecom',
       'u-1',
       'normal',
@@ -80,8 +80,8 @@ describe('BotAuditLogger', { concurrency: false }, () => {
     );
     const [entry] = store.listAuditLogs('bot-1');
     assert.strictEqual(entry.eventType, 'member_role_changed');
-    assert.strictEqual(entry.details.provider, 'wecom');
-    assert.strictEqual(entry.details.providerUserId, 'u-1');
+    assert.strictEqual(entry.details.channel, 'wecom');
+    assert.strictEqual(entry.details.channelUserId, 'u-1');
     assert.strictEqual(entry.details.previousRole, 'normal');
     assert.strictEqual(entry.details.newRole, 'admin');
   });
@@ -89,7 +89,7 @@ describe('BotAuditLogger', { concurrency: false }, () => {
   it('records file access denied events', () => {
     logger.logFileAccessDenied(
       'bot-1',
-      { type: 'wecom', provider: 'wecom', providerUserId: 'u-1' },
+      { type: 'wecom', channel: 'wecom', channelUserId: 'u-1' },
       {
         sessionId: 's-1',
         toolName: 'Read',

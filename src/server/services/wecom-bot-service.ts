@@ -178,7 +178,7 @@ export class WeComBotService {
   async initialize(): Promise<void> {
     await this.cleanupStaleContextFiles();
 
-    const bots = botService.listBots().filter((b) => b.providerSettings.wecom?.enabled);
+    const bots = botService.listBots().filter((b) => b.channelSettings.wecom?.enabled);
     if (bots.length > 0) {
       for (const bot of bots) {
         await this.connectBot(bot);
@@ -198,7 +198,7 @@ export class WeComBotService {
   async connectBot(bot: Bot): Promise<void> {
     this.disconnectBot(bot.id);
 
-    const wecom = bot.providerSettings.wecom;
+    const wecom = bot.channelSettings.wecom;
     if (!wecom?.enabled || !wecom.botId || !wecom.botSecret) {
       diagLog(`[WeComBotService] skipping connect for bot ${bot.id}: missing WeCom credentials`);
       return;
@@ -301,7 +301,7 @@ export class WeComBotService {
       id: workspace.settings.wecomBotId!,
       name: workspace.settings.wecomBotName ?? workspace.name,
       activeWorkspaceId: workspace.id,
-      providerSettings: {
+      channelSettings: {
         wecom: {
           enabled: workspace.settings.wecomBotEnabled,
           botId: workspace.settings.wecomBotId,
@@ -391,7 +391,7 @@ export class WeComBotService {
   async getAggregateStatus(): Promise<{
     state: 'connected' | 'partial' | 'disconnected' | 'not_configured';
   }> {
-    let bots = botService.listBots().filter((b) => b.providerSettings.wecom?.enabled);
+    let bots = botService.listBots().filter((b) => b.channelSettings.wecom?.enabled);
 
     // Pre-migration fallback: treat workspace-embedded WeCom configs as bots.
     if (bots.length === 0) {
@@ -403,7 +403,7 @@ export class WeComBotService {
             id: ws.settings.wecomBotId!,
             name: ws.settings.wecomBotName ?? ws.name,
             activeWorkspaceId: ws.id,
-            providerSettings: { wecom: { enabled: true, botId: ws.settings.wecomBotId!, botSecret: ws.settings.wecomBotSecret! } },
+            channelSettings: { wecom: { enabled: true, botId: ws.settings.wecomBotId!, botSecret: ws.settings.wecomBotSecret! } },
             rolePolicy: { normalToolPolicy: SAFE_PRESET, skillAllowlist: [], bashWhitelist: [] },
             createdAt: ws.createdAt,
             updatedAt: ws.updatedAt,
@@ -782,8 +782,8 @@ export class WeComBotService {
 
     botService.setActiveWorkspace(botId, workspaceId, {
       type: 'wecom',
-      provider: 'wecom',
-      providerUserId: wecomUserId,
+      channel: 'wecom',
+      channelUserId: wecomUserId,
     });
 
     conn.workspaceId = workspaceId;

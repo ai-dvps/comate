@@ -27,7 +27,7 @@ const bot: Bot = {
   id: 'bot-1',
   name: 'TeamBot',
   activeWorkspaceId: null,
-  providerSettings: {},
+  channelSettings: {},
   rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),

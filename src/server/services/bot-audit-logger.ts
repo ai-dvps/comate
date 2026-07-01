@@ -1,14 +1,14 @@
 import type { BotActor } from './bot-service.js';
-import type { BotProvider } from '../models/bot.js';
+import type { BotChannel } from '../models/bot.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 
 export type BotAuditEventType =
   | 'bot_created'
   | 'bot_deleted'
-  | 'provider_credentials_changed'
-  | 'provider_enabled'
-  | 'provider_disabled'
+  | 'channel_credentials_changed'
+  | 'channel_enabled'
+  | 'channel_disabled'
   | 'active_workspace_switched'
   | 'member_added'
   | 'member_removed'
@@ -61,38 +61,38 @@ export class BotAuditLogger {
       this.store.recordAuditLog({
         botId,
         actorType: actor.type,
-        actorId: actor.providerUserId ?? 'system',
+        actorId: actor.channelUserId ?? 'system',
         eventType,
         details: safeDetails,
       });
-      diagLog(`[BotAudit] ${eventType}`, { botId, actorType: actor.type, actorId: actor.providerUserId, ...safeDetails });
+      diagLog(`[BotAudit] ${eventType}`, { botId, actorType: actor.type, actorId: actor.channelUserId, ...safeDetails });
     } catch (err) {
       diagLog('Failed to record bot audit log', { botId, eventType, error: String(err) });
     }
   }
 
-  logProviderCredentialsChanged(
+  logChannelCredentialsChanged(
     botId: string,
     actor: BotActor,
-    providers: string[],
+    channels: string[],
   ): void {
-    this.log(botId, actor, 'provider_credentials_changed', { providers });
+    this.log(botId, actor, 'channel_credentials_changed', { channels });
   }
 
-  logProviderEnabled(
+  logChannelEnabled(
     botId: string,
     actor: BotActor,
-    provider: BotProvider,
+    channel: BotChannel,
   ): void {
-    this.log(botId, actor, 'provider_enabled', { provider });
+    this.log(botId, actor, 'channel_enabled', { channel });
   }
 
-  logProviderDisabled(
+  logChannelDisabled(
     botId: string,
     actor: BotActor,
-    provider: BotProvider,
+    channel: BotChannel,
   ): void {
-    this.log(botId, actor, 'provider_disabled', { provider });
+    this.log(botId, actor, 'channel_disabled', { channel });
   }
 
   logActiveWorkspaceSwitched(
@@ -110,14 +110,14 @@ export class BotAuditLogger {
   logMemberRoleChanged(
     botId: string,
     actor: BotActor,
-    provider: BotProvider,
-    providerUserId: string,
+    channel: BotChannel,
+    channelUserId: string,
     previousRole: string | null,
     newRole: string,
   ): void {
     this.log(botId, actor, 'member_role_changed', {
-      provider,
-      providerUserId,
+      channel,
+      channelUserId,
       previousRole,
       newRole,
     });

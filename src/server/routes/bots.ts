@@ -6,8 +6,8 @@ import { feishuBotService } from '../services/feishu-bot-service.js';
 import { BotMigrationService } from '../services/bot-migration-service.js';
 import { builtinPluginService } from '../services/builtin-plugin-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import { ENCRYPTED_PROVIDER_KEYS } from '../models/bot.js';
-import type { BotProviderSettings, CreateBotInput, UpdateBotInput } from '../models/bot.js';
+import { ENCRYPTED_CHANNEL_KEYS } from '../models/bot.js';
+import type { BotChannelSettings, CreateBotInput, UpdateBotInput } from '../models/bot.js';
 import {
   BotAuthorizationError,
   BotNotFoundError,
@@ -37,7 +37,7 @@ function invalidateBotRuntimesIfNeeded(botId: string, input: UpdateBotInput): vo
 function redactProviderConfig(config: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
-    if (ENCRYPTED_PROVIDER_KEYS.includes(key)) {
+    if (ENCRYPTED_CHANNEL_KEYS.includes(key)) {
       result[key] = typeof value === 'string' && value.length > 0 ? true : undefined;
     } else {
       result[key] = value;
@@ -46,13 +46,13 @@ function redactProviderConfig(config: Record<string, unknown>): Record<string, u
   return result;
 }
 
-export function redactProviderSettings(settings: BotProviderSettings): BotProviderSettings {
-  const result: BotProviderSettings = {};
+export function redactChannelSettings(settings: BotChannelSettings): BotChannelSettings {
+  const result: BotChannelSettings = {};
   if (isPlainObject(settings.wecom)) {
-    result.wecom = redactProviderConfig(settings.wecom) as BotProviderSettings['wecom'];
+    result.wecom = redactProviderConfig(settings.wecom) as BotChannelSettings['wecom'];
   }
   if (isPlainObject(settings.feishu)) {
-    result.feishu = redactProviderConfig(settings.feishu) as BotProviderSettings['feishu'];
+    result.feishu = redactProviderConfig(settings.feishu) as BotChannelSettings['feishu'];
   }
   return result;
 }
@@ -60,7 +60,7 @@ export function redactProviderSettings(settings: BotProviderSettings): BotProvid
 function redactBot(bot: import('../models/bot.js').Bot) {
   return {
     ...bot,
-    providerSettings: redactProviderSettings(bot.providerSettings),
+    channelSettings: redactChannelSettings(bot.channelSettings),
   };
 }
 
@@ -92,23 +92,23 @@ router.get('/', (_req, res) => {
 });
 
 function resolveSentinelCredentials(
-  input: BotProviderSettings,
-  existing: BotProviderSettings,
-): BotProviderSettings {
-  const result: BotProviderSettings = {};
-  for (const provider of ['wecom', 'feishu'] as const) {
-    const incoming = input[provider];
+  input: BotChannelSettings,
+  existing: BotChannelSettings,
+): BotChannelSettings {
+  const result: BotChannelSettings = {};
+  for (const channel of ['wecom', 'feishu'] as const) {
+    const incoming = input[channel];
     if (!incoming) continue;
-    const current = existing[provider] ?? {};
+    const current = existing[channel] ?? {};
     const merged: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(incoming)) {
-      if (ENCRYPTED_PROVIDER_KEYS.includes(key) && value === true) {
+      if (ENCRYPTED_CHANNEL_KEYS.includes(key) && value === true) {
         merged[key] = (current as Record<string, unknown>)[key];
       } else {
         merged[key] = value;
       }
     }
-    result[provider] = merged as BotProviderSettings[typeof provider];
+    result[channel] = merged as BotChannelSettings[typeof channel];
   }
   return result;
 }
@@ -123,7 +123,7 @@ router.post('/', async (req, res) => {
     }
 
     const bot = botService.createBot(input);
-    await connectEnabledProviders(bot);
+    await connectEnabledChannels(bot);
     res.status(201).json({ bot: redactBot(bot) });
   } catch (error) {
     const mapped = mapBotError(error);
@@ -152,16 +152,16 @@ router.get('/:id', (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const input = req.body as UpdateBotInput;
-    if (input.providerSettings) {
+    if (input.channelSettings) {
       const existing = botService.getBot(req.params.id);
-      input.providerSettings = resolveSentinelCredentials(
-        input.providerSettings,
-        existing?.providerSettings ?? {},
+      input.channelSettings = resolveSentinelCredentials(
+        input.channelSettings,
+        existing?.channelSettings ?? {},
       );
     }
     const bot = botService.updateBot(req.params.id, input, systemActor());
     invalidateBotRuntimesIfNeeded(bot.id, input);
-    await reconcileProviderConnections(bot);
+    await reconcileChannelConnections(bot);
     res.json({ bot: redactBot(bot) });
   } catch (error) {
     const mapped = mapBotError(error);
@@ -205,7 +205,7 @@ router.post('/:id/active-workspace', async (req, res) => {
     }
 
     const bot = botService.setActiveWorkspace(req.params.id, workspaceId, systemActor());
-    await reconcileProviderConnections(bot);
+    await reconcileChannelConnections(bot);
     res.json({ bot: redactBot(bot) });
   } catch (error) {
     const mapped = mapBotError(error);
@@ -217,17 +217,17 @@ router.post('/:id/active-workspace', async (req, res) => {
 // POST /api/bots/:id/members
 router.post('/:id/members', (req, res) => {
   try {
-    const { provider, providerUserId, role } = req.body as {
-      provider?: unknown;
-      providerUserId?: unknown;
+    const { channel, channelUserId, role } = req.body as {
+      channel?: unknown;
+      channelUserId?: unknown;
       role?: unknown;
     };
-    if (!provider || (provider !== 'wecom' && provider !== 'feishu')) {
-      res.status(400).json({ error: 'provider must be wecom or feishu' });
+    if (!channel || (channel !== 'wecom' && channel !== 'feishu')) {
+      res.status(400).json({ error: 'channel must be wecom or feishu' });
       return;
     }
-    if (!providerUserId || typeof providerUserId !== 'string') {
-      res.status(400).json({ error: 'providerUserId is required' });
+    if (!channelUserId || typeof channelUserId !== 'string') {
+      res.status(400).json({ error: 'channelUserId is required' });
       return;
     }
     if (!role || (role !== 'owner' && role !== 'admin' && role !== 'normal')) {
@@ -237,7 +237,7 @@ router.post('/:id/members', (req, res) => {
 
     const member = botService.addMember(
       req.params.id,
-      { provider, providerUserId, role },
+      { channel, channelUserId, role },
       systemActor(),
     );
     chatService.closeRuntimesForBot(req.params.id).catch((err) => {
@@ -251,8 +251,8 @@ router.post('/:id/members', (req, res) => {
   }
 });
 
-// PUT /api/bots/:id/members/:providerUserId/role
-router.put('/:id/members/:providerUserId/role', (req, res) => {
+// PUT /api/bots/:id/members/:channelUserId/role
+router.put('/:id/members/:channelUserId/role', (req, res) => {
   try {
     const { role } = req.body as { role?: unknown };
     if (!role || (role !== 'owner' && role !== 'admin' && role !== 'normal')) {
@@ -260,16 +260,16 @@ router.put('/:id/members/:providerUserId/role', (req, res) => {
       return;
     }
 
-    const { provider } = req.query as { provider?: unknown };
-    if (!provider || (provider !== 'wecom' && provider !== 'feishu')) {
-      res.status(400).json({ error: 'provider query parameter must be wecom or feishu' });
+    const { channel } = req.query as { channel?: unknown };
+    if (!channel || (channel !== 'wecom' && channel !== 'feishu')) {
+      res.status(400).json({ error: 'channel query parameter must be wecom or feishu' });
       return;
     }
 
     botService.setMemberRole(
       req.params.id,
-      provider,
-      req.params.providerUserId,
+      channel,
+      req.params.channelUserId,
       role,
       systemActor(),
     );
@@ -284,16 +284,16 @@ router.put('/:id/members/:providerUserId/role', (req, res) => {
   }
 });
 
-// DELETE /api/bots/:id/members/:providerUserId
-router.delete('/:id/members/:providerUserId', (req, res) => {
+// DELETE /api/bots/:id/members/:channelUserId
+router.delete('/:id/members/:channelUserId', (req, res) => {
   try {
-    const { provider } = req.query as { provider?: unknown };
-    if (!provider || (provider !== 'wecom' && provider !== 'feishu')) {
-      res.status(400).json({ error: 'provider query parameter must be wecom or feishu' });
+    const { channel } = req.query as { channel?: unknown };
+    if (!channel || (channel !== 'wecom' && channel !== 'feishu')) {
+      res.status(400).json({ error: 'channel query parameter must be wecom or feishu' });
       return;
     }
 
-    botService.removeMember(req.params.id, provider, req.params.providerUserId, systemActor());
+    botService.removeMember(req.params.id, channel, req.params.channelUserId, systemActor());
     chatService.closeRuntimesForBot(req.params.id).catch((err) => {
       console.error(`Failed to invalidate runtimes for bot ${req.params.id}:`, err);
     });
@@ -338,23 +338,23 @@ router.post('/migrate', async (req, res) => {
   }
 });
 
-async function connectEnabledProviders(bot: import('../models/bot.js').Bot): Promise<void> {
+async function connectEnabledChannels(bot: import('../models/bot.js').Bot): Promise<void> {
   await ensureWecomPluginForBot(bot);
-  if (bot.providerSettings.wecom?.enabled) {
+  if (bot.channelSettings.wecom?.enabled) {
     await wecomBotService.connectBot(bot).catch((err) => {
       console.error(`[BotsRoute] WeCom connect failed for bot ${bot.id}:`, err);
     });
   }
-  if (bot.providerSettings.feishu?.enabled) {
+  if (bot.channelSettings.feishu?.enabled) {
     await feishuBotService.connectBot(bot).catch((err) => {
       console.error(`[BotsRoute] Feishu connect failed for bot ${bot.id}:`, err);
     });
   }
 }
 
-async function reconcileProviderConnections(bot: import('../models/bot.js').Bot): Promise<void> {
+async function reconcileChannelConnections(bot: import('../models/bot.js').Bot): Promise<void> {
   await ensureWecomPluginForBot(bot);
-  if (bot.providerSettings.wecom?.enabled) {
+  if (bot.channelSettings.wecom?.enabled) {
     const status = wecomBotService.getBotStatus(bot.id);
     if (status === 'not_configured') {
       await wecomBotService.connectBot(bot).catch((err) => {
@@ -367,7 +367,7 @@ async function reconcileProviderConnections(bot: import('../models/bot.js').Bot)
     wecomBotService.disconnectBot(bot.id);
   }
 
-  if (bot.providerSettings.feishu?.enabled) {
+  if (bot.channelSettings.feishu?.enabled) {
     const status = feishuBotService.getBotStatus(bot.id);
     if (status === 'not_configured') {
       await feishuBotService.connectBot(bot).catch((err) => {
@@ -382,7 +382,7 @@ async function reconcileProviderConnections(bot: import('../models/bot.js').Bot)
 }
 
 async function ensureWecomPluginForBot(bot: import('../models/bot.js').Bot): Promise<void> {
-  if (!bot.providerSettings.wecom?.enabled || !bot.activeWorkspaceId) {
+  if (!bot.channelSettings.wecom?.enabled || !bot.activeWorkspaceId) {
     return;
   }
   try {

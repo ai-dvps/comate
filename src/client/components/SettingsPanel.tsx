@@ -1485,7 +1485,7 @@ interface BoundBot {
   id: string
   name: string
   activeWorkspaceId: string | null
-  providerSettings: {
+  channelSettings: {
     wecom?: { enabled?: boolean }
     feishu?: { enabled?: boolean }
   }
@@ -1552,14 +1552,14 @@ function BoundBotCard({ workspaceId, onManageBots }: { workspaceId: string; onMa
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-text-primary">{bot.name}</span>
             <div className="flex items-center gap-1.5">
-              {bot.providerSettings.wecom?.enabled && (
+              {bot.channelSettings.wecom?.enabled && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-success/10 text-success">
-                  {t('workspace.boundBotProviderWecom')}
+                  {t('workspace.boundBotChannelWecom')}
                 </span>
               )}
-              {bot.providerSettings.feishu?.enabled && (
+              {bot.channelSettings.feishu?.enabled && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-info/10 text-info">
-                  {t('workspace.boundBotProviderFeishu')}
+                  {t('workspace.boundBotChannelFeishu')}
                 </span>
               )}
             </div>

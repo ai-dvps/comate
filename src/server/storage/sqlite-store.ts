@@ -11,12 +11,12 @@ import type {
   CreateBotInput,
   CreateBotAuditLogInput,
   UpdateBotInput,
-  BotProviderSettings,
+  BotChannelSettings,
   BotRolePolicy,
   BotPersona,
   BotAuditLogEntry,
 } from '../models/bot.js';
-import { encryptProviderSettings, decryptProviderSettings } from '../utils/bot-provider-crypto.js';
+import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
@@ -165,7 +165,7 @@ export class SqliteStore {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         active_workspace_id TEXT UNIQUE,
-        provider_settings_json TEXT NOT NULL DEFAULT '{}',
+        channel_settings_json TEXT NOT NULL DEFAULT '{}',
         role_policy_json TEXT NOT NULL DEFAULT '{}',
         persona_json TEXT,
         role_personas_json TEXT,
@@ -188,12 +188,12 @@ export class SqliteStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bot_members (
         bot_id TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        provider_user_id TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        channel_user_id TEXT NOT NULL,
         role TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        PRIMARY KEY (bot_id, provider, provider_user_id)
+        PRIMARY KEY (bot_id, channel, channel_user_id)
       )
     `);
 
@@ -341,6 +341,8 @@ export class SqliteStore {
     this.migrateDraftSessions();
     this.migrateSessionMetadataToSessions();
     this.backfillWeComSessionSource();
+    this.migrateBotSettingsColumn();
+    this.migrateBotMembersChannelColumns();
   }
 
   /**
@@ -405,6 +407,79 @@ export class SqliteStore {
     } catch (err) {
       console.error('[SqliteStore] Failed to migrate todos table:', err);
     }
+  }
+
+  private migrateBotSettingsColumn(): void {
+    const tableInfo = this.db.prepare("PRAGMA table_info(bots)").all() as Array<{
+      name: string;
+      type: string;
+      notnull: number;
+      dflt_value: string | null;
+    }>;
+    if (!tableInfo.some((col) => col.name === 'provider_settings_json')) return;
+
+    try {
+      const oldColumns = tableInfo.map((col) => col.name);
+      const columnDefs = tableInfo.map((col) => {
+        const name = col.name === 'provider_settings_json' ? 'channel_settings_json' : col.name;
+        const notNull = col.notnull ? ' NOT NULL' : '';
+        const defaultClause = col.dflt_value !== null ? ` DEFAULT ${col.dflt_value}` : '';
+        return `"${name}" ${col.type}${notNull}${defaultClause}`;
+      });
+      const newColumns = oldColumns.map((col) => (col === 'provider_settings_json' ? 'channel_settings_json' : col));
+      const selectColumns = oldColumns.map((col) => `"${col}"`).join(', ');
+      const insertColumns = newColumns.map((col) => `"${col}"`).join(', ');
+
+      this.db.exec(`
+        ALTER TABLE bots RENAME TO bots_old;
+        CREATE TABLE bots (
+          ${columnDefs.join(', ')},
+          PRIMARY KEY (id),
+          UNIQUE (active_workspace_id)
+        );
+        INSERT INTO bots (${insertColumns})
+        SELECT ${selectColumns}
+        FROM bots_old;
+        DROP TABLE bots_old;
+      `);
+      console.log('[SqliteStore] Migrated bots table: renamed provider_settings_json to channel_settings_json');
+    } catch (err) {
+      console.error('[SqliteStore] Failed to migrate bots table:', err);
+    }
+  }
+
+  private migrateBotMembersChannelColumns(): void {
+    const tableInfo = this.db.prepare("PRAGMA table_info(bot_members)").all() as Array<{ name: string }>;
+    const hasOldColumns = tableInfo.some((col) => col.name === 'provider');
+    if (!hasOldColumns) return;
+
+    try {
+      this.db.exec(`
+        ALTER TABLE bot_members RENAME TO bot_members_old;
+        CREATE TABLE bot_members (
+          bot_id TEXT NOT NULL,
+          channel TEXT NOT NULL,
+          channel_user_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (bot_id, channel, channel_user_id)
+        );
+        INSERT INTO bot_members (bot_id, channel, channel_user_id, role, created_at, updated_at)
+        SELECT bot_id, provider, provider_user_id, role, created_at, updated_at
+        FROM bot_members_old;
+        DROP TABLE bot_members_old;
+      `);
+      console.log('[SqliteStore] Migrated bot_members table: renamed provider columns to channel columns');
+    } catch (err) {
+      console.error('[SqliteStore] Failed to migrate bot_members table:', err);
+    }
+
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_members_owner_per_channel
+      ON bot_members (bot_id, channel)
+      WHERE role = 'owner'
+    `);
   }
 
   /**
@@ -1712,7 +1787,7 @@ export class SqliteStore {
       id: uuidv4(),
       name: input.name,
       activeWorkspaceId: input.activeWorkspaceId ?? null,
-      providerSettings: input.providerSettings ?? {},
+      channelSettings: input.channelSettings ?? {},
       rolePolicy: input.rolePolicy ?? {
         normalToolPolicy: {
           posture: 'safe',
@@ -1734,9 +1809,9 @@ export class SqliteStore {
       updatedAt: now,
     };
 
-    const encryptedSettings = encryptProviderSettings(bot.providerSettings);
+    const encryptedSettings = encryptChannelSettings(bot.channelSettings);
     this.db.prepare(`
-      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, role_personas_json, created_at, updated_at)
+      INSERT INTO bots (id, name, active_workspace_id, channel_settings_json, role_policy_json, persona_json, role_personas_json, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       bot.id,
@@ -1778,17 +1853,17 @@ export class SqliteStore {
       ...existing,
       ...(input.name !== undefined && { name: input.name }),
       ...(input.activeWorkspaceId !== undefined && { activeWorkspaceId: input.activeWorkspaceId }),
-      ...(input.providerSettings !== undefined && { providerSettings: input.providerSettings }),
+      ...(input.channelSettings !== undefined && { channelSettings: input.channelSettings }),
       ...(input.rolePolicy !== undefined && { rolePolicy: input.rolePolicy }),
       ...(input.persona !== undefined && { persona: input.persona ?? undefined }),
       ...(input.rolePersonas !== undefined && { rolePersonas: input.rolePersonas ?? undefined }),
       updatedAt: new Date().toISOString(),
     };
 
-    const encryptedSettings = encryptProviderSettings(bot.providerSettings);
+    const encryptedSettings = encryptChannelSettings(bot.channelSettings);
     this.db.prepare(`
       UPDATE bots
-      SET name = ?, active_workspace_id = ?, provider_settings_json = ?, role_policy_json = ?, persona_json = ?, role_personas_json = ?, updated_at = ?
+      SET name = ?, active_workspace_id = ?, channel_settings_json = ?, role_policy_json = ?, persona_json = ?, role_personas_json = ?, updated_at = ?
       WHERE id = ?
     `).run(
       bot.name,
@@ -1815,27 +1890,27 @@ export class SqliteStore {
 
   // Bot members
 
-  setBotMember(botId: string, provider: string, providerUserId: string, role: BotRole): void {
+  setBotMember(botId: string, channel: string, channelUserId: string, role: BotRole): void {
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO bot_members (bot_id, provider, provider_user_id, role, created_at, updated_at)
+      INSERT INTO bot_members (bot_id, channel, channel_user_id, role, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(bot_id, provider, provider_user_id) DO UPDATE SET
+      ON CONFLICT(bot_id, channel, channel_user_id) DO UPDATE SET
         role = excluded.role,
         updated_at = excluded.updated_at
-    `).run(botId, provider, providerUserId, role, now, now);
+    `).run(botId, channel, channelUserId, role, now, now);
   }
 
-  removeBotMember(botId: string, provider: string, providerUserId: string): void {
+  removeBotMember(botId: string, channel: string, channelUserId: string): void {
     this.db.prepare(`
-      DELETE FROM bot_members WHERE bot_id = ? AND provider = ? AND provider_user_id = ?
-    `).run(botId, provider, providerUserId);
+      DELETE FROM bot_members WHERE bot_id = ? AND channel = ? AND channel_user_id = ?
+    `).run(botId, channel, channelUserId);
   }
 
-  getBotMemberRole(botId: string, provider: string, providerUserId: string): BotRole | null {
+  getBotMemberRole(botId: string, channel: string, channelUserId: string): BotRole | null {
     const row = this.db
-      .prepare('SELECT role FROM bot_members WHERE bot_id = ? AND provider = ? AND provider_user_id = ?')
-      .get(botId, provider, providerUserId) as { role: BotRole } | undefined;
+      .prepare('SELECT role FROM bot_members WHERE bot_id = ? AND channel = ? AND channel_user_id = ?')
+      .get(botId, channel, channelUserId) as { role: BotRole } | undefined;
     return row?.role ?? null;
   }
 
@@ -1999,7 +2074,7 @@ interface RawBotRow {
   id: string;
   name: string;
   active_workspace_id: string | null;
-  provider_settings_json: string;
+  channel_settings_json: string;
   role_policy_json: string;
   persona_json: string | null;
   role_personas_json: string | null;
@@ -2008,12 +2083,12 @@ interface RawBotRow {
 }
 
 function parseBotRow(row: RawBotRow): Bot {
-  const encryptedSettings = safeJsonParse(row.provider_settings_json, {} as BotProviderSettings);
+  const encryptedSettings = safeJsonParse(row.channel_settings_json, {} as BotChannelSettings);
   return {
     id: row.id,
     name: row.name,
     activeWorkspaceId: row.active_workspace_id,
-    providerSettings: decryptProviderSettings(encryptedSettings),
+    channelSettings: decryptChannelSettings(encryptedSettings),
     rolePolicy: safeJsonParse(row.role_policy_json, {
       normalToolPolicy: {
         posture: 'safe',
@@ -2038,8 +2113,8 @@ function parseBotRow(row: RawBotRow): Bot {
 
 interface RawBotMemberRow {
   bot_id: string;
-  provider: string;
-  provider_user_id: string;
+  channel: string;
+  channel_user_id: string;
   role: BotRole;
   created_at: string;
   updated_at: string;
@@ -2048,8 +2123,8 @@ interface RawBotMemberRow {
 function parseBotMemberRow(row: RawBotMemberRow): BotMember {
   return {
     botId: row.bot_id,
-    provider: row.provider as BotMember['provider'],
-    providerUserId: row.provider_user_id,
+    channel: row.channel as BotMember['channel'],
+    channelUserId: row.channel_user_id,
     role: row.role,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

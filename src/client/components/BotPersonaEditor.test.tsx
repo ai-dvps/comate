@@ -15,7 +15,7 @@ function makeBot(overrides?: Partial<Bot>): Bot {
     id: 'bot-1',
     name: 'Test Bot',
     activeWorkspaceId: null,
-    providerSettings: {},
+    channelSettings: {},
     rolePolicy: {
       normalToolPolicy: { posture: 'safe', categoryDefaults: {} },
       skillAllowlist: [],

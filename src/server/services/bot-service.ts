@@ -1,8 +1,8 @@
 import type {
   Bot,
   BotMember,
-  BotProvider,
-  BotProviderSettings,
+  BotChannel,
+  BotChannelSettings,
   BotRole,
   CreateBotInput,
   CreateBotMemberInput,
@@ -23,7 +23,7 @@ export class BotService {
   // Bot CRUD
 
   createBot(input: CreateBotInput): Bot {
-    const errors = this.validateCredentials(input.providerSettings ?? {});
+    const errors = this.validateCredentials(input.channelSettings ?? {});
     if (errors.length > 0) {
       throw new BotValidationError(errors.join('; '));
     }
@@ -55,36 +55,37 @@ export class BotService {
       throw new BotNotFoundError(id);
     }
 
-    if (input.providerSettings) {
-      const errors = this.validateCredentials(input.providerSettings);
+    this.requireSystemOrUserActor(actor);
+
+    if (input.channelSettings) {
+      const errors = this.validateCredentials(input.channelSettings);
       if (errors.length > 0) {
         throw new BotValidationError(errors.join('; '));
       }
     }
 
     if (input.activeWorkspaceId !== undefined && input.activeWorkspaceId !== existing.activeWorkspaceId) {
-      this.requireOwner(existing, actor);
       if (input.activeWorkspaceId) {
         this.ensureWorkspaceNotBound(input.activeWorkspaceId, id);
       }
     }
 
-    const hadProviderChanges = input.providerSettings !== undefined;
+    const hadChannelChanges = input.channelSettings !== undefined;
     const bot = this.store.updateBot(id, input);
     if (!bot) {
       throw new BotNotFoundError(id);
     }
 
-    if (hadProviderChanges) {
-      const providers = Object.keys(input.providerSettings ?? {}) as BotProvider[];
-      this.auditLogger.logProviderCredentialsChanged(bot.id, actor, providers);
-      for (const provider of providers) {
-        const wasEnabled = existing.providerSettings[provider]?.enabled ?? false;
-        const isEnabled = input.providerSettings?.[provider]?.enabled ?? false;
+    if (hadChannelChanges) {
+      const channels = Object.keys(input.channelSettings ?? {}) as BotChannel[];
+      this.auditLogger.logChannelCredentialsChanged(bot.id, actor, channels);
+      for (const channel of channels) {
+        const wasEnabled = existing.channelSettings[channel]?.enabled ?? false;
+        const isEnabled = input.channelSettings?.[channel]?.enabled ?? false;
         if (!wasEnabled && isEnabled) {
-          this.auditLogger.logProviderEnabled(bot.id, actor, provider);
+          this.auditLogger.logChannelEnabled(bot.id, actor, channel);
         } else if (wasEnabled && !isEnabled) {
-          this.auditLogger.logProviderDisabled(bot.id, actor, provider);
+          this.auditLogger.logChannelDisabled(bot.id, actor, channel);
         }
       }
     }
@@ -95,7 +96,7 @@ export class BotService {
     const bot = this.store.getBot(id);
     if (!bot) return false;
 
-    this.requireOwner(bot, actor);
+    this.requireSystemOrUserActor(actor);
     const deleted = this.store.deleteBot(id);
     if (deleted) {
       this.auditLogger.log(id, actor, 'bot_deleted', { name: bot.name });
@@ -111,7 +112,9 @@ export class BotService {
       throw new BotNotFoundError(botId);
     }
 
-    this.requireOwner(bot, actor);
+    if (actor.type !== 'system') {
+      this.requireChannelOwner(botId, actor.channel as BotChannel, actor);
+    }
 
     if (bot.activeWorkspaceId === workspaceId) {
       return bot;
@@ -148,28 +151,28 @@ export class BotService {
       throw new BotNotFoundError(botId);
     }
 
-    this.requireOwner(bot, actor);
+    this.requireChannelOwner(botId, input.channel, actor);
 
     const role = input.role ?? 'normal';
     if (role === 'owner') {
-      this.ensureNoExistingOwner(botId);
+      this.ensureNoExistingChannelOwner(botId, input.channel);
     }
 
-    this.store.setBotMember(botId, input.provider, input.providerUserId, role);
+    this.store.setBotMember(botId, input.channel, input.channelUserId, role);
     this.auditLogger.log(botId, actor, 'member_added', {
-      provider: input.provider,
-      providerUserId: input.providerUserId,
+      channel: input.channel,
+      channelUserId: input.channelUserId,
       role,
     });
     return this.store.listBotMembers(botId).find(
-      (m) => m.provider === input.provider && m.providerUserId === input.providerUserId,
+      (m) => m.channel === input.channel && m.channelUserId === input.channelUserId,
     )!;
   }
 
   setMemberRole(
     botId: string,
-    provider: BotProvider,
-    providerUserId: string,
+    channel: BotChannel,
+    channelUserId: string,
     role: BotRole,
     actor: BotActor = systemActor(),
   ): void {
@@ -178,22 +181,22 @@ export class BotService {
       throw new BotNotFoundError(botId);
     }
 
-    this.requireOwner(bot, actor);
+    this.requireChannelOwner(botId, channel, actor);
 
-    const currentRole = this.store.getBotMemberRole(botId, provider, providerUserId);
+    const currentRole = this.store.getBotMemberRole(botId, channel, channelUserId);
 
     if (role === 'owner' && currentRole !== 'owner') {
-      this.ensureNoExistingOwner(botId);
+      this.ensureNoExistingChannelOwner(botId, channel);
     }
 
     if (currentRole === 'owner' && role !== 'owner') {
-      this.ensureAnotherOwnerExists(botId, provider, providerUserId);
+      this.ensureAnotherChannelOwnerExists(botId, channel, channelUserId);
     }
 
-    this.store.setBotMember(botId, provider, providerUserId, role);
+    this.store.setBotMember(botId, channel, channelUserId, role);
     this.auditLogger.log(botId, actor, 'member_role_changed', {
-      provider,
-      providerUserId,
+      channel,
+      channelUserId,
       previousRole: currentRole,
       newRole: role,
     });
@@ -201,8 +204,8 @@ export class BotService {
 
   removeMember(
     botId: string,
-    provider: BotProvider,
-    providerUserId: string,
+    channel: BotChannel,
+    channelUserId: string,
     actor: BotActor = systemActor(),
   ): void {
     const bot = this.store.getBot(botId);
@@ -210,39 +213,39 @@ export class BotService {
       throw new BotNotFoundError(botId);
     }
 
-    this.requireOwner(bot, actor);
+    this.requireChannelOwner(botId, channel, actor);
 
-    const currentRole = this.store.getBotMemberRole(botId, provider, providerUserId);
+    const currentRole = this.store.getBotMemberRole(botId, channel, channelUserId);
     if (currentRole === 'owner') {
-      this.ensureAnotherOwnerExists(botId, provider, providerUserId);
+      this.ensureAnotherChannelOwnerExists(botId, channel, channelUserId);
     }
 
-    this.store.removeBotMember(botId, provider, providerUserId);
+    this.store.removeBotMember(botId, channel, channelUserId);
     this.auditLogger.log(botId, actor, 'member_removed', {
-      provider,
-      providerUserId,
+      channel,
+      channelUserId,
       previousRole: currentRole,
     });
   }
 
-  getMemberRole(botId: string, provider: BotProvider, providerUserId: string): BotRole | null {
-    return this.store.getBotMemberRole(botId, provider, providerUserId);
+  getMemberRole(botId: string, channel: BotChannel, channelUserId: string): BotRole | null {
+    return this.store.getBotMemberRole(botId, channel, channelUserId);
   }
 
   listMembers(botId: string): BotMember[] {
     return this.store.listBotMembers(botId);
   }
 
-  resolveMemberRole(botId: string, provider: BotProvider, providerUserId: string): BotRole | null {
-    return this.store.getBotMemberRole(botId, provider, providerUserId);
+  resolveMemberRole(botId: string, channel: BotChannel, channelUserId: string): BotRole | null {
+    return this.store.getBotMemberRole(botId, channel, channelUserId);
   }
 
   // Credential validation
 
-  validateCredentials(providerSettings: BotProviderSettings): string[] {
+  validateCredentials(channelSettings: BotChannelSettings): string[] {
     const errors: string[] = [];
-    const wecom = providerSettings.wecom;
-    const feishu = providerSettings.feishu;
+    const wecom = channelSettings.wecom;
+    const feishu = channelSettings.feishu;
 
     if (wecom?.enabled === true) {
       if (!wecom.botId || typeof wecom.botId !== 'string' || wecom.botId.trim() === '') {
@@ -267,11 +270,21 @@ export class BotService {
 
   // Authorization helpers
 
-  private requireOwner(bot: Bot, actor: BotActor): void {
-    if (actor.type === 'system') {
+  private requireSystemOrUserActor(actor: BotActor): void {
+    if (actor.type === 'system' || actor.type === 'user') {
       return;
     }
-    const role = this.store.getBotMemberRole(bot.id, actor.provider as BotProvider, actor.providerUserId as string);
+    throw new BotAuthorizationError('only-system');
+  }
+
+  private requireChannelOwner(botId: string, channel: BotChannel, actor: BotActor): void {
+    if (actor.type === 'system' || actor.type === 'user') {
+      return;
+    }
+    if (actor.channel !== channel) {
+      throw new BotAuthorizationError('only-owner');
+    }
+    const role = this.store.getBotMemberRole(botId, channel, actor.channelUserId as string);
     if (role !== 'owner') {
       throw new BotAuthorizationError('only-owner');
     }
@@ -285,21 +298,21 @@ export class BotService {
     }
   }
 
-  private ensureNoExistingOwner(botId: string): void {
+  private ensureNoExistingChannelOwner(botId: string, channel: BotChannel): void {
     const members = this.store.listBotMembers(botId);
-    if (members.some((m) => m.role === 'owner')) {
+    if (members.some((m) => m.channel === channel && m.role === 'owner')) {
       throw new BotAuthorizationError('owner-already-exists');
     }
   }
 
-  private ensureAnotherOwnerExists(
+  private ensureAnotherChannelOwnerExists(
     botId: string,
-    provider: BotProvider,
-    providerUserId: string,
+    channel: BotChannel,
+    channelUserId: string,
   ): void {
     const members = this.store.listBotMembers(botId);
     const otherOwner = members.some(
-      (m) => m.role === 'owner' && (m.provider !== provider || m.providerUserId !== providerUserId),
+      (m) => m.channel === channel && m.role === 'owner' && m.channelUserId !== channelUserId,
     );
     if (!otherOwner) {
       throw new BotAuthorizationError('last-owner');
@@ -309,8 +322,8 @@ export class BotService {
 
 export interface BotActor {
   type: 'system' | 'user' | 'wecom' | 'feishu';
-  provider?: BotProvider;
-  providerUserId?: string;
+  channel?: BotChannel;
+  channelUserId?: string;
 }
 
 function systemActor(): BotActor {

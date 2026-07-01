@@ -1,4 +1,4 @@
-import type { BotProviderSettings, BotRolePolicy, CreateBotInput } from '../models/bot.js';
+import type { BotChannelSettings, BotRolePolicy, CreateBotInput } from '../models/bot.js';
 import type { Workspace } from '../models/workspace.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { ALLOW_ALL_PRESET } from './tool-permission-policy.js';
@@ -15,15 +15,15 @@ export interface MigrationResult {
     workspaceId: string;
     workspaceName: string;
     botName: string;
-    providers: string[];
-    members: Array<{ provider: 'wecom' | 'feishu'; providerUserId: string; role: 'admin' | 'normal' }>;
+    channels: string[];
+    members: Array<{ channel: 'wecom' | 'feishu'; channelUserId: string; role: 'admin' | 'normal' }>;
   }>;
 }
 
 interface MigrationItem {
   workspace: Workspace;
   botName: string;
-  providerSettings: BotProviderSettings;
+  channelSettings: BotChannelSettings;
   rolePolicy: BotRolePolicy;
   adminUserIds: Map<'wecom' | 'feishu', Set<string>>;
   normalUserIds: Map<'wecom' | 'feishu', Set<string>>;
@@ -90,7 +90,7 @@ export class BotMigrationService {
         workspaceId: item.workspace.id,
         workspaceName: item.workspace.name,
         botName: item.botName,
-        providers: Object.keys(item.providerSettings),
+        channels: Object.keys(item.channelSettings),
         members: this.flattenMembers(item.adminUserIds, item.normalUserIds),
       }));
       result.createdBots = items.length;
@@ -117,7 +117,7 @@ export class BotMigrationService {
     // Backfill the built-in wecom plugin for any migrated workspace that has
     // WeCom enabled. This is best-effort and must not fail the migration.
     for (const item of items) {
-      if (item.providerSettings.wecom) {
+      if (item.channelSettings.wecom) {
         await this.builtinPluginService.ensureWecomPluginInstalled(item.workspace.id).catch((err) => {
           console.error(`[BotMigration] failed to install wecom plugin for ${item.workspace.id}:`, err);
         });
@@ -131,21 +131,21 @@ export class BotMigrationService {
     const input: CreateBotInput = {
       name: item.botName,
       activeWorkspaceId: item.workspace.id,
-      providerSettings: item.providerSettings,
+      channelSettings: item.channelSettings,
       rolePolicy: item.rolePolicy,
     };
 
     const bot = this.store.createBot(input);
 
-    for (const [provider, userIds] of item.adminUserIds) {
+    for (const [channel, userIds] of item.adminUserIds) {
       for (const userId of userIds) {
-        this.store.setBotMember(bot.id, provider, userId, 'admin');
+        this.store.setBotMember(bot.id, channel, userId, 'admin');
       }
     }
 
-    for (const [provider, userIds] of item.normalUserIds) {
+    for (const [channel, userIds] of item.normalUserIds) {
       for (const userId of userIds) {
-        this.store.setBotMember(bot.id, provider, userId, 'normal');
+        this.store.setBotMember(bot.id, channel, userId, 'normal');
       }
     }
 
@@ -165,9 +165,9 @@ export class BotMigrationService {
       return null;
     }
 
-    const providerSettings: BotProviderSettings = {};
-    if (wecom) providerSettings.wecom = wecom;
-    if (feishu) providerSettings.feishu = feishu;
+    const channelSettings: BotChannelSettings = {};
+    if (wecom) channelSettings.wecom = wecom;
+    if (feishu) channelSettings.feishu = feishu;
 
     const isolation = workspace.settings.wecomBotIsolation;
     const wecomAdmins = new Set(isolation?.adminUserIds ?? []);
@@ -180,9 +180,9 @@ export class BotMigrationService {
       adminUserIds.set('wecom', new Set(wecomAdmins));
       normalUserIds.set('wecom', new Set());
       for (const row of this.store.listWecomWorkspaceUsers(workspace.id)) {
-        const providerUserId = this.store.getWecomUserMapping(row.encryptedUserId) ?? row.encryptedUserId;
-        if (wecomAdmins.has(providerUserId)) continue;
-        normalUserIds.get('wecom')!.add(providerUserId);
+        const channelUserId = this.store.getWecomUserMapping(row.encryptedUserId) ?? row.encryptedUserId;
+        if (wecomAdmins.has(channelUserId)) continue;
+        normalUserIds.get('wecom')!.add(channelUserId);
       }
     }
 
@@ -212,7 +212,7 @@ export class BotMigrationService {
     return {
       workspace,
       botName,
-      providerSettings,
+      channelSettings,
       rolePolicy,
       adminUserIds,
       normalUserIds,
@@ -280,16 +280,16 @@ export class BotMigrationService {
   private flattenMembers(
     adminUserIds: Map<'wecom' | 'feishu', Set<string>>,
     normalUserIds: Map<'wecom' | 'feishu', Set<string>>,
-  ): Array<{ provider: 'wecom' | 'feishu'; providerUserId: string; role: 'admin' | 'normal' }> {
-    const members: Array<{ provider: 'wecom' | 'feishu'; providerUserId: string; role: 'admin' | 'normal' }> = [];
-    for (const [provider, userIds] of adminUserIds) {
+  ): Array<{ channel: 'wecom' | 'feishu'; channelUserId: string; role: 'admin' | 'normal' }> {
+    const members: Array<{ channel: 'wecom' | 'feishu'; channelUserId: string; role: 'admin' | 'normal' }> = [];
+    for (const [channel, userIds] of adminUserIds) {
       for (const userId of userIds) {
-        members.push({ provider, providerUserId: userId, role: 'admin' });
+        members.push({ channel, channelUserId: userId, role: 'admin' });
       }
     }
-    for (const [provider, userIds] of normalUserIds) {
+    for (const [channel, userIds] of normalUserIds) {
       for (const userId of userIds) {
-        members.push({ provider, providerUserId: userId, role: 'normal' });
+        members.push({ channel, channelUserId: userId, role: 'normal' });
       }
     }
     return members;

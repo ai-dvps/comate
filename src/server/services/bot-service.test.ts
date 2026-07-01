@@ -12,14 +12,14 @@ import {
 import type { BotRole, CreateBotInput } from '../models/bot.js';
 
 const systemActor = { type: 'system' as const };
-const wecomOwner = { type: 'wecom' as const, provider: 'wecom' as const, providerUserId: 'owner-1' };
-const wecomNormal = { type: 'wecom' as const, provider: 'wecom' as const, providerUserId: 'normal-1' };
+const wecomOwner = { type: 'wecom' as const, channel: 'wecom' as const, channelUserId: 'owner-1' };
+const wecomNormal = { type: 'wecom' as const, channel: 'wecom' as const, channelUserId: 'normal-1' };
 
 function createBotInput(overrides: Partial<CreateBotInput> = {}): CreateBotInput {
   return {
     name: 'Test Bot',
     activeWorkspaceId: 'ws-1',
-    providerSettings: {
+    channelSettings: {
       wecom: {
         enabled: true,
         botId: 'wecom-bot',
@@ -69,7 +69,7 @@ describe('BotService', { concurrency: false }, () => {
 
     it('throws when enabled WeCom credentials are missing', () => {
       assert.throws(
-        () => service.createBot(createBotInput({ providerSettings: { wecom: { enabled: true } } })),
+        () => service.createBot(createBotInput({ channelSettings: { wecom: { enabled: true } } })),
         BotValidationError,
       );
     });
@@ -86,7 +86,7 @@ describe('BotService', { concurrency: false }, () => {
   describe('setActiveWorkspace', () => {
     it('switches active workspace when actor is owner', () => {
       const bot = service.createBot(createBotInput());
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'owner-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
 
       const updated = service.setActiveWorkspace(bot.id, 'ws-2', wecomOwner);
       assert.strictEqual(updated.activeWorkspaceId, 'ws-2');
@@ -101,8 +101,8 @@ describe('BotService', { concurrency: false }, () => {
 
     it('rejects workspace switch by non-owner', () => {
       const bot = service.createBot(createBotInput());
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'owner-1', role: 'owner' });
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'normal-1', role: 'normal' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'normal-1', role: 'normal' });
 
       assert.throws(
         () => service.setActiveWorkspace(bot.id, 'ws-2', wecomNormal),
@@ -113,10 +113,10 @@ describe('BotService', { concurrency: false }, () => {
     it('rejects binding an already-bound workspace', () => {
       service.createBot(createBotInput({ activeWorkspaceId: 'ws-shared' }));
       const botB = service.createBot(createBotInput({ name: 'B', activeWorkspaceId: 'ws-2' }));
-      service.addMember(botB.id, { provider: 'wecom', providerUserId: 'owner-2', role: 'owner' });
+      service.addMember(botB.id, { channel: 'wecom', channelUserId: 'owner-2', role: 'owner' });
 
       assert.throws(
-        () => service.setActiveWorkspace(botB.id, 'ws-shared', { type: 'wecom', provider: 'wecom', providerUserId: 'owner-2' }),
+        () => service.setActiveWorkspace(botB.id, 'ws-shared', { type: 'wecom', channel: 'wecom', channelUserId: 'owner-2' }),
         BotWorkspaceBoundError,
       );
     });
@@ -125,24 +125,24 @@ describe('BotService', { concurrency: false }, () => {
   describe('member roles', () => {
     it('defaults new members to normal', () => {
       const bot = service.createBot(createBotInput());
-      const member = service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1' });
+      const member = service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-1' });
       assert.strictEqual(member.role, 'normal');
     });
 
     it('allows only one owner', () => {
       const bot = service.createBot(createBotInput());
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'owner-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
 
       assert.throws(
-        () => service.addMember(bot.id, { provider: 'wecom', providerUserId: 'owner-2', role: 'owner' }),
+        () => service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-2', role: 'owner' }),
         BotAuthorizationError,
       );
     });
 
     it('rejects promoting a second owner before demoting the first', () => {
       const bot = service.createBot(createBotInput());
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'owner' });
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-2', role: 'admin' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-2', role: 'admin' });
 
       assert.throws(
         () => service.setMemberRole(bot.id, 'wecom', 'u-2', 'owner', systemActor),
@@ -152,8 +152,8 @@ describe('BotService', { concurrency: false }, () => {
 
     it('allows changing a non-owner role', () => {
       const bot = service.createBot(createBotInput());
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'owner' });
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-2', role: 'normal' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-2', role: 'normal' });
 
       service.setMemberRole(bot.id, 'wecom', 'u-2', 'admin', systemActor);
       assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'u-2'), 'admin');
@@ -161,7 +161,7 @@ describe('BotService', { concurrency: false }, () => {
 
     it('rejects demoting the only owner', () => {
       const bot = service.createBot(createBotInput());
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-1', role: 'owner' });
 
       assert.throws(
         () => service.setMemberRole(bot.id, 'wecom', 'u-1', 'admin', systemActor),
@@ -171,7 +171,7 @@ describe('BotService', { concurrency: false }, () => {
 
     it('rejects removing the only owner', () => {
       const bot = service.createBot(createBotInput());
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-1', role: 'owner' });
 
       assert.throws(
         () => service.removeMember(bot.id, 'wecom', 'u-1', systemActor),
@@ -181,8 +181,8 @@ describe('BotService', { concurrency: false }, () => {
 
     it('records audit logs for member changes', () => {
       const bot = service.createBot(createBotInput());
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-1', role: 'owner' });
-      service.addMember(bot.id, { provider: 'wecom', providerUserId: 'u-2', role: 'normal' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-2', role: 'normal' });
       service.setMemberRole(bot.id, 'wecom', 'u-2', 'admin', systemActor);
 
       const logs = store.listAuditLogs(bot.id);
@@ -192,15 +192,15 @@ describe('BotService', { concurrency: false }, () => {
   });
 
   describe('updateBot', () => {
-    it('updates provider settings', () => {
+    it('updates channel settings', () => {
       const bot = service.createBot(createBotInput());
       const updated = service.updateBot(bot.id, {
-        providerSettings: { wecom: { enabled: true, botId: 'new-id', botSecret: 'new-secret' } },
+        channelSettings: { wecom: { enabled: true, botId: 'new-id', botSecret: 'new-secret' } },
       });
-      assert.strictEqual(updated.providerSettings.wecom?.botId, 'new-id');
+      assert.strictEqual(updated.channelSettings.wecom?.botId, 'new-id');
 
       const logs = store.listAuditLogs(bot.id);
-      assert.ok(logs.some((l) => l.eventType === 'provider_credentials_changed'));
+      assert.ok(logs.some((l) => l.eventType === 'channel_credentials_changed'));
     });
 
     it('updates the bot persona', () => {
@@ -247,24 +247,24 @@ describe('BotService', { concurrency: false }, () => {
       assert.strictEqual(service.getBot(bot.id)?.rolePersonas, undefined);
     });
 
-    it('emits provider_enabled and provider_disabled audit events', () => {
+    it('emits channel_enabled and channel_disabled audit events', () => {
       const bot = service.createBot(createBotInput());
       service.updateBot(bot.id, {
-        providerSettings: {
+        channelSettings: {
           wecom: { enabled: false, botId: 'wecom-bot', botSecret: 'wecom-secret' },
           feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' },
         },
       });
 
       const logs = store.listAuditLogs(bot.id);
-      assert.ok(logs.some((l) => l.eventType === 'provider_disabled' && l.details.provider === 'wecom'));
-      assert.ok(logs.some((l) => l.eventType === 'provider_enabled' && l.details.provider === 'feishu'));
+      assert.ok(logs.some((l) => l.eventType === 'channel_disabled' && l.details.channel === 'wecom'));
+      assert.ok(logs.some((l) => l.eventType === 'channel_enabled' && l.details.channel === 'feishu'));
     });
 
-    it('throws for invalid provider settings', () => {
+    it('throws for invalid channel settings', () => {
       const bot = service.createBot(createBotInput());
       assert.throws(
-        () => service.updateBot(bot.id, { providerSettings: { wecom: { enabled: true } } }),
+        () => service.updateBot(bot.id, { channelSettings: { wecom: { enabled: true } } }),
         BotValidationError,
       );
     });
@@ -290,6 +290,100 @@ describe('BotService', { concurrency: false }, () => {
 
     it('returns false for unknown bot', () => {
       assert.strictEqual(service.deleteBot('unknown'), false);
+    });
+  });
+
+  describe('per-channel authorization', () => {
+    const feishuOwner = { type: 'feishu' as const, channel: 'feishu' as const, channelUserId: 'owner-f' };
+
+    it('allows one owner in each channel independently', () => {
+      const bot = service.createBot(createBotInput());
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'feishu', channelUserId: 'owner-f', role: 'owner' });
+
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'owner-1'), 'owner');
+      assert.strictEqual(service.getMemberRole(bot.id, 'feishu', 'owner-f'), 'owner');
+    });
+
+    it('allows any channel owner to switch active workspace', () => {
+      const bot = service.createBot(createBotInput());
+      service.addMember(bot.id, { channel: 'feishu', channelUserId: 'owner-f', role: 'owner' });
+
+      const updated = service.setActiveWorkspace(bot.id, 'ws-2', feishuOwner);
+      assert.strictEqual(updated.activeWorkspaceId, 'ws-2');
+    });
+
+    it('isolates ownership between channels', () => {
+      const bot = service.createBot(createBotInput());
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'feishu', channelUserId: 'owner-f', role: 'owner' });
+
+      assert.throws(
+        () => service.addMember(bot.id, { channel: 'feishu', channelUserId: 'added-by-wecom', role: 'normal' }, wecomOwner),
+        BotAuthorizationError,
+      );
+      assert.throws(
+        () => service.setMemberRole(bot.id, 'feishu', 'owner-f', 'admin', wecomOwner),
+        BotAuthorizationError,
+      );
+      assert.throws(
+        () => service.removeMember(bot.id, 'feishu', 'owner-f', wecomOwner),
+        BotAuthorizationError,
+      );
+    });
+
+    it('rejects channel owner from bot-level update and delete', () => {
+      const bot = service.createBot(createBotInput());
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+
+      assert.throws(
+        () => service.updateBot(bot.id, { name: 'Hacked' }, wecomOwner),
+        BotAuthorizationError,
+      );
+      assert.throws(
+        () => service.deleteBot(bot.id, wecomOwner),
+        BotAuthorizationError,
+      );
+    });
+
+    it('rejects cross-channel workspace switch', () => {
+      const bot = service.createBot(createBotInput());
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+
+      assert.throws(
+        () => service.setActiveWorkspace(bot.id, 'ws-2', feishuOwner),
+        BotAuthorizationError,
+      );
+    });
+
+    it('protects the last owner of a channel even when another channel has an owner', () => {
+      const bot = service.createBot(createBotInput());
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'feishu', channelUserId: 'owner-f', role: 'owner' });
+
+      assert.throws(
+        () => service.setMemberRole(bot.id, 'wecom', 'owner-1', 'admin', systemActor),
+        BotAuthorizationError,
+      );
+      assert.throws(
+        () => service.removeMember(bot.id, 'wecom', 'owner-1', systemActor),
+        BotAuthorizationError,
+      );
+    });
+
+    it('rejects non-owner channel member for member management', () => {
+      const bot = service.createBot(createBotInput());
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-2', role: 'normal' });
+
+      assert.throws(
+        () => service.addMember(bot.id, { channel: 'wecom', channelUserId: 'added-by-normal', role: 'normal' }, wecomNormal),
+        BotAuthorizationError,
+      );
+      assert.throws(
+        () => service.setMemberRole(bot.id, 'wecom', 'u-2', 'admin', wecomNormal),
+        BotAuthorizationError,
+      );
     });
   });
 });
