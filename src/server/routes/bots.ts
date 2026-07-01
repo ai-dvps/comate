@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { botService } from '../services/bot-service.js';
+import { chatService } from '../services/chat-service.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { BotMigrationService } from '../services/bot-migration-service.js';
@@ -23,6 +24,14 @@ function systemActor(): BotActor {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function invalidateBotRuntimesIfNeeded(botId: string, input: UpdateBotInput): void {
+  if (input.persona !== undefined || input.rolePersonas !== undefined || input.rolePolicy !== undefined) {
+    chatService.closeRuntimesForBot(botId).catch((err) => {
+      console.error(`Failed to invalidate runtimes for bot ${botId}:`, err);
+    });
+  }
 }
 
 function redactProviderConfig(config: Record<string, unknown>): Record<string, unknown> {
@@ -151,6 +160,7 @@ router.put('/:id', async (req, res) => {
       );
     }
     const bot = botService.updateBot(req.params.id, input, systemActor());
+    invalidateBotRuntimesIfNeeded(bot.id, input);
     await reconcileProviderConnections(bot);
     res.json({ bot: redactBot(bot) });
   } catch (error) {
@@ -230,6 +240,9 @@ router.post('/:id/members', (req, res) => {
       { provider, providerUserId, role },
       systemActor(),
     );
+    chatService.closeRuntimesForBot(req.params.id).catch((err) => {
+      console.error(`Failed to invalidate runtimes for bot ${req.params.id}:`, err);
+    });
     res.status(201).json({ member });
   } catch (error) {
     const mapped = mapBotError(error);
@@ -260,6 +273,9 @@ router.put('/:id/members/:providerUserId/role', (req, res) => {
       role,
       systemActor(),
     );
+    chatService.closeRuntimesForBot(req.params.id).catch((err) => {
+      console.error(`Failed to invalidate runtimes for bot ${req.params.id}:`, err);
+    });
     res.status(204).send();
   } catch (error) {
     const mapped = mapBotError(error);
@@ -278,6 +294,9 @@ router.delete('/:id/members/:providerUserId', (req, res) => {
     }
 
     botService.removeMember(req.params.id, provider, req.params.providerUserId, systemActor());
+    chatService.closeRuntimesForBot(req.params.id).catch((err) => {
+      console.error(`Failed to invalidate runtimes for bot ${req.params.id}:`, err);
+    });
     res.status(204).send();
   } catch (error) {
     const mapped = mapBotError(error);

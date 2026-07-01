@@ -13,8 +13,10 @@ import type { Workspace, McpServer } from '../models/workspace.js';
 import type { ChatSession, Provider } from '../models/session.js';
 import type { SseEvent } from '../types/message.js';
 import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { BotPersona, BotRole } from '../models/bot.js';
 import type { QuestionPayload } from '../types/message.js';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { botService } from './bot-service.js';
@@ -1870,9 +1872,9 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
 
   class MockSdkClient extends SdkClient {
-    override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+    override async getSessionInfo(sessionId: string): Promise<SDKSessionInfo | undefined> {
       return {
-        sessionId: 's1',
+        sessionId,
         summary: 'Test Session',
         createdAt: new Date().toISOString(),
         lastModified: new Date().toISOString(),
@@ -1904,10 +1906,14 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   }
 
   function createMockRuntime(): SessionRuntime {
+    let closed = false;
     return {
-      isClosed: () => false,
+      isClosed: () => closed,
       getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
-      close: () => Promise.resolve(),
+      close: () => {
+        closed = true;
+        return Promise.resolve();
+      },
       subscribe: () => {},
       unsubscribe: () => {},
       pushMessage: () => {},
@@ -1934,18 +1940,22 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     workspaceStore.getDefaultProvider = originalGetDefaultProvider;
   });
 
-  async function setupBotSession(persona?: { prompt: string; mode: 'append' | 'replace' }) {
+  async function setupBotSession(config: {
+    persona?: BotPersona;
+    rolePersonas?: Partial<Record<BotRole, BotPersona>>;
+    memberRole?: BotRole;
+  } = {}) {
     const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-persona-'));
     const workspace = await workspaceStore.create({
       name: 'Persona Workspace',
       folderPath,
     });
     const provider = workspaceStore.createProvider({
-      name: 'Test Provider',
+      name: `Test Provider ${crypto.randomUUID()}`,
       baseUrl: 'http://test',
       authToken: 'test',
       model: 'test-model',
-      isDefault: true,
+      isDefault: false,
     });
     const bot = botService.createBot({
       name: 'Persona Bot',
@@ -1953,8 +1963,19 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       providerSettings: {
         wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'secret' },
       },
-      persona,
+      persona: config.persona,
+      rolePersonas: config.rolePersonas,
     });
+
+    const providerUserId = config.memberRole === 'normal' ? 'user-1' : config.memberRole === 'admin' ? 'admin-1' : 'owner-1';
+    if (config.memberRole) {
+      botService.addMember(bot.id, { provider: 'wecom', providerUserId, role: config.memberRole });
+    }
+
+    const encryptedUserId = `enc-${providerUserId}`;
+    workspaceStore.setWecomUserMapping(encryptedUserId, providerUserId);
+    workspaceStore.setWecomWorkspaceUser(workspace.id, encryptedUserId);
+
     const session = workspaceStore.createLocalSession(
       workspace.id,
       'Persona Session',
@@ -1964,6 +1985,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       undefined,
       bot.id,
     );
+    workspaceStore.setWecomSession(workspace.id, encryptedUserId, session.id);
 
     let capturedOptions: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {
@@ -1971,15 +1993,14 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       return createMockRuntime();
     };
 
-    await service.getOrCreateRuntime(session.id, workspace.id, true);
+    await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, providerUserId);
     assert.ok(capturedOptions, 'options must be captured');
-    return { options: capturedOptions, bot, session, workspace };
+    return { options: capturedOptions, bot, session, workspace, provider };
   }
 
   it('append persona sets preset-with-append systemPrompt', async () => {
     const { options } = await setupBotSession({
-      prompt: 'You are an operations assistant.',
-      mode: 'append',
+      persona: { prompt: 'You are an operations assistant.', mode: 'append' },
     });
     assert.deepStrictEqual(options.systemPrompt, {
       type: 'preset',
@@ -1990,8 +2011,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
 
   it('replace persona sets prompt string systemPrompt', async () => {
     const { options } = await setupBotSession({
-      prompt: 'You are a replacement persona.',
-      mode: 'replace',
+      persona: { prompt: 'You are a replacement persona.', mode: 'replace' },
     });
     assert.strictEqual(options.systemPrompt, 'You are a replacement persona.');
   });
@@ -2002,9 +2022,8 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   });
 
   it('GUI session does not inherit bot persona', async () => {
-    const { workspace, bot } = await setupBotSession({
-      prompt: 'You are a bot persona.',
-      mode: 'append',
+    const { workspace, bot, provider } = await setupBotSession({
+      persona: { prompt: 'You are a bot persona.', mode: 'append' },
     });
     await service.closeAllRuntimes();
 
@@ -2012,7 +2031,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       workspace.id,
       'GUI Session',
       undefined,
-      undefined,
+      provider.id,
       'gui',
       undefined,
       bot.id,
@@ -2030,9 +2049,8 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   });
 
   it('persona changes take effect on the next newly created bot session', async () => {
-    const { workspace, bot } = await setupBotSession({
-      prompt: 'Original persona.',
-      mode: 'append',
+    const { workspace, bot, provider } = await setupBotSession({
+      persona: { prompt: 'Original persona.', mode: 'append' },
     });
 
     botService.updateBot(bot.id, { persona: { prompt: 'Updated persona.', mode: 'replace' } });
@@ -2041,7 +2059,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       workspace.id,
       'Next Persona Session',
       undefined,
-      undefined,
+      provider.id,
       'wecom',
       undefined,
       bot.id,
@@ -2056,5 +2074,94 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     await service.getOrCreateRuntime(nextSession.id, workspace.id, true);
     assert.ok(capturedOptions, 'options must be captured');
     assert.strictEqual(capturedOptions.systemPrompt, 'Updated persona.');
+  });
+
+  it('owner member receives the owner role persona', async () => {
+    const { options } = await setupBotSession({
+      persona: { prompt: 'Default persona.', mode: 'append' },
+      rolePersonas: {
+        owner: { prompt: 'Owner persona.', mode: 'replace' },
+      },
+      memberRole: 'owner',
+    });
+    assert.strictEqual(options.systemPrompt, 'Owner persona.');
+  });
+
+  it('normal member receives the normal role persona', async () => {
+    const { options } = await setupBotSession({
+      persona: { prompt: 'Default persona.', mode: 'append' },
+      rolePersonas: {
+        normal: { prompt: 'Normal persona.', mode: 'replace' },
+      },
+      memberRole: 'normal',
+    });
+    assert.strictEqual(options.systemPrompt, 'Normal persona.');
+  });
+
+  it('non-member is treated as normal and receives the normal persona', async () => {
+    const { options } = await setupBotSession({
+      persona: { prompt: 'Default persona.', mode: 'append' },
+      rolePersonas: {
+        normal: { prompt: 'Normal fallback persona.', mode: 'replace' },
+      },
+    });
+    assert.strictEqual(options.systemPrompt, 'Normal fallback persona.');
+  });
+
+  it('falls back to default persona when role persona is unset', async () => {
+    const { options } = await setupBotSession({
+      persona: { prompt: 'Default persona.', mode: 'replace' },
+      rolePersonas: {
+        normal: { prompt: 'Normal persona.', mode: 'append' },
+      },
+      memberRole: 'owner',
+    });
+    assert.strictEqual(options.systemPrompt, 'Default persona.');
+  });
+
+  it('uses role persona when default is unset', async () => {
+    const { options } = await setupBotSession({
+      rolePersonas: {
+        admin: { prompt: 'Admin-only persona.', mode: 'replace' },
+      },
+      memberRole: 'admin',
+    });
+    assert.strictEqual(options.systemPrompt, 'Admin-only persona.');
+  });
+
+  it('owner role persona can use append mode', async () => {
+    const { options } = await setupBotSession({
+      rolePersonas: {
+        owner: { prompt: 'Owner append.', mode: 'append' },
+      },
+      memberRole: 'owner',
+    });
+    assert.deepStrictEqual(options.systemPrompt, {
+      type: 'preset',
+      preset: 'claude_code',
+      append: 'Owner append.',
+    });
+  });
+
+  it('closeRuntimesForBot closes only runtimes for the target bot', async () => {
+    const { session: sessionA } = await setupBotSession({
+      persona: { prompt: 'Bot A.', mode: 'replace' },
+    });
+
+    const { bot: botB, session: sessionB } = await setupBotSession({
+      persona: { prompt: 'Bot B.', mode: 'replace' },
+    });
+
+    const runtimeA = service.getRuntimeIfExists(sessionA.id);
+    const runtimeB = service.getRuntimeIfExists(sessionB.id);
+    assert.ok(runtimeA);
+    assert.ok(runtimeB);
+    assert.strictEqual(runtimeA?.isClosed(), false);
+    assert.strictEqual(runtimeB?.isClosed(), false);
+
+    await service.closeRuntimesForBot(botB.id);
+
+    assert.strictEqual(runtimeA?.isClosed(), false);
+    assert.strictEqual(runtimeB?.isClosed(), true);
   });
 });

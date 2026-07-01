@@ -59,6 +59,7 @@ export interface Bot {
   providerSettings: BotProviderSettings;
   rolePolicy: BotRolePolicy;
   persona?: BotPersona;
+  rolePersonas?: Partial<Record<BotRole, BotPersona>>;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,6 +70,7 @@ export interface CreateBotInput {
   providerSettings?: BotProviderSettings;
   rolePolicy?: BotRolePolicy;
   persona?: BotPersona;
+  rolePersonas?: Partial<Record<BotRole, BotPersona>>;
 }
 
 export interface UpdateBotInput {
@@ -77,6 +79,7 @@ export interface UpdateBotInput {
   providerSettings?: BotProviderSettings;
   rolePolicy?: BotRolePolicy;
   persona?: BotPersona | null;
+  rolePersonas?: Partial<Record<BotRole, BotPersona>> | null;
 }
 
 export interface CreateBotMemberInput {

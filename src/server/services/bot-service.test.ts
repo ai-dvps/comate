@@ -9,7 +9,7 @@ import {
   BotValidationError,
   BotWorkspaceBoundError,
 } from './bot-service.js';
-import type { CreateBotInput } from '../models/bot.js';
+import type { BotRole, CreateBotInput } from '../models/bot.js';
 
 const systemActor = { type: 'system' as const };
 const wecomOwner = { type: 'wecom' as const, provider: 'wecom' as const, providerUserId: 'owner-1' };
@@ -55,6 +55,16 @@ describe('BotService', { concurrency: false }, () => {
       const bot = service.createBot(createBotInput({ persona }));
       assert.deepStrictEqual(bot.persona, persona);
       assert.deepStrictEqual(service.getBot(bot.id)?.persona, persona);
+    });
+
+    it('creates a bot with role personas', () => {
+      const rolePersonas: Partial<Record<BotRole, { prompt: string; mode: 'append' | 'replace' }>> = {
+        owner: { prompt: 'Owner persona.', mode: 'append' },
+        normal: { prompt: 'Normal persona.', mode: 'replace' },
+      };
+      const bot = service.createBot(createBotInput({ rolePersonas }));
+      assert.deepStrictEqual(bot.rolePersonas, rolePersonas);
+      assert.deepStrictEqual(service.getBot(bot.id)?.rolePersonas, rolePersonas);
     });
 
     it('throws when enabled WeCom credentials are missing', () => {
@@ -210,6 +220,31 @@ describe('BotService', { concurrency: false }, () => {
       const updated = service.updateBot(bot.id, { persona: null });
       assert.strictEqual(updated.persona, undefined);
       assert.strictEqual(service.getBot(bot.id)?.persona, undefined);
+    });
+
+    it('updates the bot role personas', () => {
+      const initial: Partial<Record<BotRole, { prompt: string; mode: 'append' | 'replace' }>> = {
+        owner: { prompt: 'Owner v1.', mode: 'append' },
+      };
+      const bot = service.createBot(createBotInput({ rolePersonas: initial }));
+
+      const next: Partial<Record<BotRole, { prompt: string; mode: 'append' | 'replace' }>> = {
+        admin: { prompt: 'Admin v2.', mode: 'replace' },
+      };
+      const updated = service.updateBot(bot.id, { rolePersonas: next });
+      assert.deepStrictEqual(updated.rolePersonas, next);
+      assert.deepStrictEqual(service.getBot(bot.id)?.rolePersonas, next);
+    });
+
+    it('clears role personas when rolePersonas is null', () => {
+      const rolePersonas: Partial<Record<BotRole, { prompt: string; mode: 'append' | 'replace' }>> = {
+        owner: { prompt: 'Owner.', mode: 'append' },
+      };
+      const bot = service.createBot(createBotInput({ rolePersonas }));
+
+      const updated = service.updateBot(bot.id, { rolePersonas: null });
+      assert.strictEqual(updated.rolePersonas, undefined);
+      assert.strictEqual(service.getBot(bot.id)?.rolePersonas, undefined);
     });
 
     it('emits provider_enabled and provider_disabled audit events', () => {
