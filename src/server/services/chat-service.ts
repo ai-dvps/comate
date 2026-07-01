@@ -26,7 +26,7 @@ import { evaluateSkill } from './bot-skill-policy.js';
 import { botService } from './bot-service.js';
 import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
-import type { BotRolePolicy } from '../models/bot.js';
+import type { BotRole, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
@@ -761,6 +761,34 @@ export class ChatService {
     );
   }
 
+  /**
+   * Close all cached runtimes that belong to a specific Bot. Called when the
+   * bot's persona, member roles, or role policy change so the next user turn
+   * recreates the runtime with the updated configuration.
+   */
+  async closeRuntimesForBot(botId: string): Promise<void> {
+    const targets: string[] = [];
+    for (const sessionId of this.runtimes.keys()) {
+      try {
+        const session = workspaceStore.getLocalSession(sessionId);
+        if (session && session.botId === botId) {
+          targets.push(sessionId);
+        }
+      } catch {
+        // ignore — getLocalSession can fail for stale sessions
+      }
+    }
+    if (targets.length === 0) return;
+    sidecarLog(`[ChatService] closing ${targets.length} runtimes for bot ${botId}`);
+    await Promise.all(
+      targets.map((sessionId) =>
+        this.closeRuntime(sessionId).catch((err) => {
+          console.error(`Failed to close runtime ${sessionId} during bot invalidation:`, err);
+        }),
+      ),
+    );
+  }
+
   async pushMessage(
     sessionId: string,
     workspaceId: string,
@@ -1097,15 +1125,21 @@ export class ChatService {
           // Inject the Bot persona into the SDK system prompt for WeCom/Feishu
           // sessions. GUI sessions never reach this branch because isBotSession
           // is false. Changes apply to the next newly created runtime.
-          if (bot.persona) {
-            if (bot.persona.mode === 'append') {
+          const roleForPersona: BotRole | undefined = provider && providerUserId
+            ? botService.getMemberRole(bot.id, provider, providerUserId) ?? 'normal'
+            : undefined;
+          const persona = roleForPersona
+            ? bot.rolePersonas?.[roleForPersona] ?? bot.persona
+            : bot.persona;
+          if (persona) {
+            if (persona.mode === 'append') {
               options.systemPrompt = {
                 type: 'preset',
                 preset: 'claude_code',
-                append: bot.persona.prompt,
+                append: persona.prompt,
               };
             } else {
-              options.systemPrompt = bot.persona.prompt;
+              options.systemPrompt = persona.prompt;
             }
           }
 

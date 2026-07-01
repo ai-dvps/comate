@@ -5,17 +5,18 @@ import {
   useImperativeHandle,
   forwardRef,
   useMemo,
+  useRef,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, AlertTriangle } from 'lucide-react';
-import { useBotStore, type Bot as BotType } from '../stores/bot-store';
+import { useBotStore, type Bot as BotType, type BotPersona, type BotRole } from '../stores/bot-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
 import BotTabShell, { BotEmptyState } from './BotTabShell';
 import BotGeneralSection from './BotGeneralSection';
 import BotProvidersSection from './BotProvidersSection';
 import BotMemberList from './BotMemberList';
 import BotRolePermissions from './BotRolePermissions';
-import BotPersonaEditor from './BotPersonaEditor';
+import BotPersonaEditor, { type BotPersonaEditorHandle } from './BotPersonaEditor';
 import BotDangerSection from './BotDangerSection';
 import { emptyForm, botToForm, validateBotForm, buildBotInput, type BotFormData } from './bot-form-utils';
 
@@ -60,6 +61,8 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
     const [pageError, setPageError] = useState<string | null>(null);
     const [isSavingBasic, setIsSavingBasic] = useState(false);
+    const [isPersonaDirty, setIsPersonaDirty] = useState(false);
+    const personaEditorRef = useRef<BotPersonaEditorHandle>(null);
 
     const displayBots = useMemo(() => {
       return tempBot ? [...storeBots, tempBot] : storeBots;
@@ -131,6 +134,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     useEffect(() => {
       setActiveSection('general');
       setPageError(null);
+      setIsPersonaDirty(false);
     }, [selectedBotId]);
 
     // Fetch members/status when the selected bot changes.
@@ -141,7 +145,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       }
     }, [selectedBotId, tempBot, fetchMembers, fetchStatus]);
 
-    const isDirty = useCallback(() => {
+    const isBasicDirty = useCallback(() => {
       if (!selectedBotId) return false;
       if (tempBot?.id === selectedBotId) return true;
       const draft = drafts[selectedBotId];
@@ -149,6 +153,10 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       if (!draft || !snapshot) return false;
       return JSON.stringify(draft) !== JSON.stringify(snapshot);
     }, [drafts, snapshots, selectedBotId, tempBot]);
+
+    const isDirty = useCallback(() => {
+      return isBasicDirty() || isPersonaDirty;
+    }, [isBasicDirty, isPersonaDirty]);
 
     const handleUpdate = useCallback((patch: Partial<BotFormData>) => {
       if (!selectedBotId) return;
@@ -235,6 +243,20 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       setPageError(null);
     }, [selectedBotId, tempBot, previousBotId, snapshots]);
 
+    const handleSaveAll = useCallback(async () => {
+      if (isBasicDirty()) {
+        await handleSaveBasic();
+      }
+      if (personaEditorRef.current?.isDirty()) {
+        await personaEditorRef.current.save();
+      }
+    }, [isBasicDirty, handleSaveBasic]);
+
+    const handleDiscardAll = useCallback(() => {
+      handleCancelBasic();
+      personaEditorRef.current?.discard();
+    }, [handleCancelBasic]);
+
     const handleSelectBot = useCallback((id: string) => {
       if (id === selectedBotId) return;
       if (isDirty()) {
@@ -283,9 +305,12 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     );
 
     const handleSavePersona = useCallback(
-      async (persona: Parameters<typeof updateBot>[1]['persona']) => {
+      async (payload: {
+        persona: BotPersona | null;
+        rolePersonas: Partial<Record<BotRole, BotPersona>>;
+      }) => {
         if (!selectedBot || tempBot?.id === selectedBot.id) return;
-        const bot = await updateBot(selectedBot.id, { persona });
+        const bot = await updateBot(selectedBot.id, payload);
         if (!bot) {
           throw new Error(storeError || t('common:unknownError'));
         }
@@ -302,22 +327,22 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     }, [selectedBot, tempBot, deleteBot, storeError, t]);
 
     const handleDialogSave = useCallback(async () => {
-      await handleSaveBasic();
+      await handleSaveAll();
       if (pendingBotId) {
         setSelectedBotId(pendingBotId);
         setPendingBotId(null);
       }
       setShowUnsavedDialog(false);
-    }, [handleSaveBasic, pendingBotId]);
+    }, [handleSaveAll, pendingBotId]);
 
     const handleDialogDiscard = useCallback(() => {
-      handleCancelBasic();
+      handleDiscardAll();
       if (pendingBotId) {
         setSelectedBotId(pendingBotId);
         setPendingBotId(null);
       }
       setShowUnsavedDialog(false);
-    }, [handleCancelBasic, pendingBotId]);
+    }, [handleDiscardAll, pendingBotId]);
 
     const handleDialogKeepEditing = useCallback(() => {
       setPendingBotId(null);
@@ -328,10 +353,10 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       ref,
       () => ({
         isDirty,
-        save: handleSaveBasic,
-        discard: handleCancelBasic,
+        save: handleSaveAll,
+        discard: handleDiscardAll,
       }),
-      [isDirty, handleSaveBasic, handleCancelBasic],
+      [isDirty, handleSaveAll, handleDiscardAll],
     );
 
     const sections = useMemo(
@@ -347,10 +372,10 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     );
 
     const draft = selectedBotId ? drafts[selectedBotId] : null;
-    const dirty = isDirty();
+    const basicDirty = isBasicDirty();
     const isNew = !!tempBot && selectedBotId === tempBot.id;
 
-    const footer = dirty ? (
+    const footer = basicDirty ? (
       <>
         <span className="text-[11px] text-text-tertiary">{t('unsavedDialog.message')}</span>
         <div className="flex items-center gap-2">
@@ -445,10 +470,12 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
 
           {activeSection === 'persona' && !isNew && (
             <BotPersonaEditor
+              ref={personaEditorRef}
               bot={selectedBot}
               isSaving={isSavingBasic}
               error={storeError}
               onSave={handleSavePersona}
+              onDirtyChange={setIsPersonaDirty}
             />
           )}
 

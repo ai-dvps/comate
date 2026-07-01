@@ -181,7 +181,7 @@ describe('BotManagementPage', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows unsaved-changes dialog when switching bots with dirty basic config', async () => {
+  it('shows unsaved-changes dialog when switching bots with dirty persona config', async () => {
     (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       ...mockState,
       bots: [makeBot(), makeBot({ id: 'bot-2', name: 'DevOps Bot' })],
@@ -191,15 +191,46 @@ describe('BotManagementPage', () => {
       renderWithI18n(<BotManagementPage />);
     });
 
-    await waitFor(() => expect(screen.getByText('DevOps Bot')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Persona/i }));
+    await waitFor(() => expect(screen.getByPlaceholderText(/You are a helpful DevOps assistant/i)).toBeInTheDocument());
 
-    const nameInput = screen.getByPlaceholderText('My Bot');
-    fireEvent.change(nameInput, { target: { value: 'Changed' } });
+    fireEvent.change(screen.getByPlaceholderText(/You are a helpful DevOps assistant/i), { target: { value: 'Friendly' } });
 
     fireEvent.click(screen.getByText('DevOps Bot'));
 
     await waitFor(() => {
       expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    });
+  });
+
+  it('delegates persona save through global save and calls updateBot with rolePersonas', async () => {
+    const updateBot = vi.fn().mockResolvedValue(makeBot({ persona: { prompt: 'Friendly', mode: 'append' } }));
+    (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      ...mockState,
+      updateBot,
+    });
+
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Persona/i }));
+    await waitFor(() => expect(screen.getByPlaceholderText(/You are a helpful DevOps assistant/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText(/You are a helpful DevOps assistant/i), { target: { value: 'Friendly' } });
+
+    // The persona editor's own Save button should appear.
+    await waitFor(() => expect(screen.getByText('Save persona')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Save persona'));
+
+    await waitFor(() => {
+      expect(updateBot).toHaveBeenCalledWith(
+        'bot-1',
+        expect.objectContaining({
+          persona: { prompt: 'Friendly', mode: 'append' },
+          rolePersonas: {},
+        }),
+      );
     });
   });
 });
