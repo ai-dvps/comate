@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
   DEFAULT_DEAD_LOOP_DETECTION_SETTINGS,
+  ReadLoopDetector,
+  isWastedCall,
   resolveDeadLoopDetectionSettings,
   validateDeadLoopDetectionSettings,
 } from './dead-loop-detector.js';
@@ -75,5 +77,64 @@ describe('dead-loop-detector settings', () => {
       validateDeadLoopDetectionSettings({ line2: { windowSize: 0 } }),
       'deadLoopDetection.line2.windowSize must be a positive number',
     );
+  });
+});
+
+describe('ReadLoopDetector', () => {
+  const FILE = '/workspace/a.txt';
+
+  it('allows the first read of a file', () => {
+    const detector = new ReadLoopDetector({ warnThreshold: 2, blockThreshold: 4 });
+    assert.deepStrictEqual(detector.beforeRead(FILE), { type: 'allow' });
+  });
+
+  it('blocks after the block threshold is crossed and returns cached content', () => {
+    const detector = new ReadLoopDetector({ warnThreshold: 1, blockThreshold: 2 });
+    detector.recordReadResult(FILE, 'hello');
+    detector.recordReadResult(FILE, 'Wasted call');
+    detector.recordReadResult(FILE, 'Wasted call');
+
+    const action = detector.beforeRead(FILE);
+    assert.strictEqual(action.type, 'block');
+    assert.strictEqual((action as { type: 'block'; cachedResult: unknown }).cachedResult, 'hello');
+  });
+
+  it('warns when the warning threshold is reached', () => {
+    const detector = new ReadLoopDetector({ warnThreshold: 1, blockThreshold: 3 });
+    detector.recordReadResult(FILE, 'hello');
+    detector.recordReadResult(FILE, 'Wasted call');
+
+    const action = detector.beforeRead(FILE);
+    assert.strictEqual(action.type, 'warn');
+    assert.ok(
+      (action as { type: 'warn'; guidance: string }).guidance.includes('already been read'),
+    );
+  });
+
+  it('resets the counter when a read returns new content', () => {
+    const detector = new ReadLoopDetector({ warnThreshold: 1, blockThreshold: 2 });
+    detector.recordReadResult(FILE, 'hello');
+    detector.recordReadResult(FILE, 'Wasted call');
+    detector.recordReadResult(FILE, 'new content');
+
+    assert.deepStrictEqual(detector.beforeRead(FILE), { type: 'allow' });
+  });
+
+  it('does not reset counters for a different file', () => {
+    const detector = new ReadLoopDetector({ warnThreshold: 1, blockThreshold: 2 });
+    detector.recordReadResult(FILE, 'hello');
+    detector.recordReadResult(FILE, 'Wasted call');
+
+    detector.recordReadResult('/workspace/b.txt', 'other');
+    const action = detector.beforeRead(FILE);
+    assert.strictEqual(action.type, 'warn');
+  });
+
+  it('recognizes wasted-call signal variants', () => {
+    assert.strictEqual(isWastedCall('Wasted call — file unchanged'), true);
+    assert.strictEqual(isWastedCall({ type: 'file_unchanged' }), true);
+    assert.strictEqual(isWastedCall('{"type":"file_unchanged"}'), true);
+    assert.strictEqual(isWastedCall('hello'), false);
+    assert.strictEqual(isWastedCall({ content: 'hello' }), false);
   });
 });

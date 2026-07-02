@@ -136,3 +136,96 @@ function validateLine2Settings(value: unknown): string | undefined {
   }
   return undefined;
 }
+
+export type ReadLoopAction =
+  | { type: 'allow' }
+  | { type: 'warn'; guidance: string }
+  | { type: 'block'; cachedResult: unknown };
+
+export interface ReadLoopDetectorOptions {
+  warnThreshold: number;
+  blockThreshold: number;
+}
+
+interface FileReadState {
+  cachedResult: unknown;
+  wastedCount: number;
+}
+
+export class ReadLoopDetector {
+  private readonly options: ReadLoopDetectorOptions;
+  private readonly state = new Map<string, FileReadState>();
+
+  constructor(options: ReadLoopDetectorOptions) {
+    this.options = options;
+  }
+
+  beforeRead(filePath: string): ReadLoopAction {
+    const fileState = this.state.get(filePath);
+    if (!fileState) {
+      return { type: 'allow' };
+    }
+
+    if (fileState.wastedCount >= this.options.blockThreshold) {
+      if (fileState.cachedResult !== undefined) {
+        return { type: 'block', cachedResult: fileState.cachedResult };
+      }
+      // Cannot block without a cached result; fall back to allowing the read.
+      return { type: 'allow' };
+    }
+
+    if (fileState.wastedCount >= this.options.warnThreshold) {
+      return {
+        type: 'warn',
+        guidance:
+          'This file has already been read and its content has not changed since the last read. Consider moving on rather than reading it again.',
+      };
+    }
+
+    return { type: 'allow' };
+  }
+
+  recordReadResult(filePath: string, result: unknown): void {
+    if (isWastedCall(result)) {
+      const existing = this.state.get(filePath);
+      if (existing) {
+        existing.wastedCount += 1;
+      } else {
+        // Edge case: first read of this file in the session was already flagged
+        // as wasted. Cache the result so a future block has something to return.
+        this.state.set(filePath, { cachedResult: result, wastedCount: 1 });
+      }
+      return;
+    }
+
+    this.state.set(filePath, { cachedResult: result, wastedCount: 0 });
+  }
+}
+
+export function isWastedCall(result: unknown): boolean {
+  if (typeof result === 'string') {
+    if (result.includes('Wasted call')) {
+      return true;
+    }
+    try {
+      const parsed = JSON.parse(result) as unknown;
+      if (isFileUnchangedObject(parsed)) {
+        return true;
+      }
+    } catch {
+      // Not JSON; ignore parse errors.
+    }
+    return false;
+  }
+
+  return isFileUnchangedObject(result);
+}
+
+function isFileUnchangedObject(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).type === 'file_unchanged'
+  );
+}
