@@ -8,6 +8,8 @@ import type {
   Query,
   SDKRateLimitInfo,
   SDKControlGetContextUsageResponse,
+  HookCallback,
+  HookJSONOutput,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent, QuestionPayload } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
@@ -15,6 +17,7 @@ import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { ReadLoopDetector, type ResolvedDeadLoopDetectionSettings } from './dead-loop-detector.js';
 
 
 const RING_BUFFER_CAP = 500;
@@ -76,6 +79,7 @@ export class SessionRuntime {
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
     onActivity?: () => void,
+    deadLoopSettings?: ResolvedDeadLoopDetectionSettings,
   ): SessionRuntime {
     const input = new PushableIterator<SDKUserMessage>();
     const runtime = new SessionRuntime(
@@ -88,6 +92,7 @@ export class SessionRuntime {
       onSubscribed,
       onUnsubscribed,
       onActivity,
+      deadLoopSettings,
     );
     if (botEventHandler) {
       runtime.botEventHandlers.add(botEventHandler);
@@ -120,6 +125,8 @@ export class SessionRuntime {
     return this.approvalMode;
   }
 
+  private readLoopDetector?: ReadLoopDetector;
+
   private constructor(
     sessionId: string,
     workspaceId: string,
@@ -130,6 +137,7 @@ export class SessionRuntime {
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
     onActivity?: () => void,
+    deadLoopSettings?: ResolvedDeadLoopDetectionSettings,
   ) {
     diagLog(`[Runtime ${sessionId}] constructed`);
     this.sessionId = sessionId;
@@ -141,6 +149,9 @@ export class SessionRuntime {
     this.onSubscribed = onSubscribed;
     this.onUnsubscribed = onUnsubscribed;
     this.onActivity = onActivity;
+    if (deadLoopSettings?.enabled) {
+      this.readLoopDetector = new ReadLoopDetector(deadLoopSettings.line1);
+    }
     this.emitter = new SseEmitter(null, (id, event) => {
       if (event.type === 'assistant_start') {
         this.currentMessageStartId = String(id);
@@ -168,9 +179,19 @@ export class SessionRuntime {
 
   private start(): void {
     diagLog(`[Runtime ${this.sessionId}] start (hasCustomCanUseTool=${!!this.options.canUseTool})`);
+    const baseCanUseTool = this.options.canUseTool ?? this.buildCanUseToolCallback();
+    const canUseTool = this.readLoopDetector
+      ? this.wrapCanUseToolWithDeadLoop(baseCanUseTool)
+      : baseCanUseTool;
     const optionsWithCallback: Options = {
       ...this.options,
-      canUseTool: this.options.canUseTool ?? this.buildCanUseToolCallback(),
+      canUseTool,
+      hooks: this.readLoopDetector
+        ? {
+            PreToolUse: [{ matcher: 'Read', hooks: [this.createPreToolUseHook()] }],
+            PostToolUse: [{ matcher: 'Read', hooks: [this.createPostToolUseHook()] }],
+          }
+        : this.options.hooks,
     };
     const { query, messages } = this.sdkClient.createStreamingQuery(
       this.input,
@@ -275,6 +296,90 @@ export class SessionRuntime {
         decisionReasonType: options.decisionReasonType,
       });
     };
+  }
+
+  private wrapCanUseToolWithDeadLoop(
+    baseCanUseTool: (
+      toolName: string,
+      input: Record<string, unknown>,
+      options: {
+        signal: AbortSignal;
+        suggestions?: PermissionUpdate[];
+        title?: string;
+        description?: string;
+        toolUseID: string;
+        decisionReasonType?: string;
+      },
+    ) => Promise<PermissionResult>,
+  ): (
+    toolName: string,
+    input: Record<string, unknown>,
+    options: {
+      signal: AbortSignal;
+      suggestions?: PermissionUpdate[];
+      title?: string;
+      description?: string;
+      toolUseID: string;
+      decisionReasonType?: string;
+    },
+  ) => Promise<PermissionResult> {
+    return async (toolName, input, options) => {
+      if (toolName === 'Read' && typeof input.file_path === 'string' && this.readLoopDetector) {
+        const action = this.readLoopDetector.beforeRead(input.file_path);
+        if (action.type === 'block') {
+          diagLog(
+            `[Runtime ${this.sessionId}] dead-loop block tool=Read path=${input.file_path} toolUseId=${options.toolUseID}`,
+          );
+          return {
+            behavior: 'deny',
+            message: this.formatCachedResult(action.cachedResult),
+          };
+        }
+      }
+      return baseCanUseTool(toolName, input, options);
+    };
+  }
+
+  private createPreToolUseHook(): HookCallback {
+    return async (input) => {
+      if (input.hook_event_name !== 'PreToolUse') return {};
+      if (input.tool_name !== 'Read') return {};
+      const filePath = (input.tool_input as Record<string, unknown>)?.file_path;
+      if (typeof filePath !== 'string' || !this.readLoopDetector) return {};
+
+      const action = this.readLoopDetector.beforeRead(filePath);
+      if (action.type === 'warn') {
+        diagLog(`[Runtime ${this.sessionId}] dead-loop warn tool=Read path=${filePath}`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            additionalContext: action.guidance,
+          },
+        };
+      }
+      return {};
+    };
+  }
+
+  private createPostToolUseHook(): HookCallback {
+    return async (input) => {
+      if (input.hook_event_name !== 'PostToolUse') return {};
+      if (input.tool_name !== 'Read') return {};
+      const filePath = (input.tool_input as Record<string, unknown>)?.file_path;
+      if (typeof filePath !== 'string' || !this.readLoopDetector) return {};
+
+      this.readLoopDetector.recordReadResult(filePath, input.tool_response);
+      return {};
+    };
+  }
+
+  private formatCachedResult(result: unknown): string {
+    if (typeof result === 'string') return result;
+    try {
+      return JSON.stringify(result);
+    } catch {
+      return String(result);
+    }
   }
 
   private parseAskUserQuestion(

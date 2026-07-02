@@ -5,6 +5,7 @@ import { SessionRuntime } from './session-runtime.js';
 import type { SdkClient } from './sdk-client.js';
 import type { Query, SDKMessage, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent } from '../types/message.js';
+import type { ResolvedDeadLoopDetectionSettings } from './dead-loop-detector.js';
 
 function collectDiagLogs(): { logs: string[]; restore: () => void } {
   const logs: string[] = [];
@@ -1082,5 +1083,215 @@ describe('session-runtime cancelPendingApprovals', { concurrency: false }, () =>
 
     const result = await promise;
     assert.strictEqual(result.behavior, 'deny');
+  });
+});
+
+describe('session-runtime dead-loop detection', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(): SdkClient & { capturedOptions?: Options } {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+
+    const client = {
+      createStreamingQuery: (_input: unknown, options: Options) => {
+        client.capturedOptions = options;
+        return {
+          query: mockQuery,
+          messages: (async function* () {})(),
+        };
+      },
+    } as SdkClient & { capturedOptions?: Options };
+
+    return client;
+  }
+
+  function createAbortSignal(): AbortSignal {
+    return new AbortController().signal;
+  }
+
+  function makeDeadLoopSettings(
+    overrides?: Partial<ResolvedDeadLoopDetectionSettings['line1']>,
+  ): ResolvedDeadLoopDetectionSettings {
+    return {
+      enabled: true,
+      line1: {
+        warnThreshold: 1,
+        blockThreshold: 2,
+        ...overrides,
+      },
+      line2: {
+        windowSize: 20,
+        threshold: 5,
+        pollIntervalMs: 5000,
+        interruptTimeoutMs: 30000,
+      },
+    };
+  }
+
+  it('blocks repeated Read and returns cached content', async () => {
+    const mockSdkClient = createMockSdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      mockSdkClient,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      makeDeadLoopSettings({ warnThreshold: 0, blockThreshold: 1 }),
+    );
+    runtime.setApprovalMode('readonly');
+
+    const options = mockSdkClient.capturedOptions!;
+    const signal = createAbortSignal();
+    const postHook = options.hooks!.PostToolUse![0].hooks[0];
+
+    // First read succeeds and caches content.
+    let permission = await options.canUseTool!(
+      'Read',
+      { file_path: '/a.txt' },
+      { signal, toolUseID: 'tu-1' },
+    );
+    assert.strictEqual(permission.behavior, 'allow');
+
+    await postHook(
+      {
+        hook_event_name: 'PostToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: '/a.txt' },
+        tool_response: 'cached content',
+        tool_use_id: 'tu-1',
+      },
+      'tu-1',
+      { signal },
+    );
+
+    // Second read is wasted.
+    await postHook(
+      {
+        hook_event_name: 'PostToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: '/a.txt' },
+        tool_response: 'Wasted call',
+        tool_use_id: 'tu-2',
+      },
+      'tu-2',
+      { signal },
+    );
+
+    // Third read should be blocked and return cached content.
+    permission = await options.canUseTool!(
+      'Read',
+      { file_path: '/a.txt' },
+      { signal, toolUseID: 'tu-3' },
+    );
+    assert.strictEqual(permission.behavior, 'deny');
+    assert.strictEqual((permission as { message: string }).message, 'cached content');
+  });
+
+  it('warns when the warning threshold is reached', async () => {
+    const mockSdkClient = createMockSdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      mockSdkClient,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      makeDeadLoopSettings(),
+    );
+    runtime.setApprovalMode('readonly');
+
+    const options = mockSdkClient.capturedOptions!;
+    const signal = createAbortSignal();
+    const postHook = options.hooks!.PostToolUse![0].hooks[0];
+    const preHook = options.hooks!.PreToolUse![0].hooks[0];
+
+    await postHook(
+      {
+        hook_event_name: 'PostToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: '/a.txt' },
+        tool_response: 'cached content',
+        tool_use_id: 'tu-1',
+      },
+      'tu-1',
+      { signal },
+    );
+
+    await postHook(
+      {
+        hook_event_name: 'PostToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: '/a.txt' },
+        tool_response: 'Wasted call',
+        tool_use_id: 'tu-2',
+      },
+      'tu-2',
+      { signal },
+    );
+
+    const preResult = await preHook(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: '/a.txt' },
+        tool_use_id: 'tu-3',
+      },
+      'tu-3',
+      { signal },
+    );
+
+    assert.strictEqual(preResult.hookSpecificOutput?.hookEventName, 'PreToolUse');
+    assert.ok(
+      typeof preResult.hookSpecificOutput?.additionalContext === 'string' &&
+        preResult.hookSpecificOutput.additionalContext.includes('already been read'),
+    );
+  });
+
+  it('does not block when dead-loop detection is disabled', async () => {
+    const mockSdkClient = createMockSdkClient();
+    const settings = makeDeadLoopSettings();
+    settings.enabled = false;
+
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      mockSdkClient,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      settings,
+    );
+    runtime.setApprovalMode('readonly');
+
+    const options = mockSdkClient.capturedOptions!;
+    assert.strictEqual(options.hooks, undefined);
+
+    const signal = createAbortSignal();
+    const permission = await options.canUseTool!(
+      'Read',
+      { file_path: '/a.txt' },
+      { signal, toolUseID: 'tu-1' },
+    );
+    assert.strictEqual(permission.behavior, 'allow');
   });
 });
