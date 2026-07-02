@@ -20,7 +20,7 @@
     "notificationSounds": "通知提示音",
     "notificationSoundsHint": "当 Claude 需要你响应（审批或提问）或完成任务时播放提示音。",
     "notificationSoundsVolume": "通知提示音音量",
-    "notificationSoundsVolumeHint": "所有通知提示音的主音量。",
+    "notificationSoundsVolumeHint": "所有通知提示音的主音量；提示音已放大，因此 100% 比原始播放更响。",
     "pathConfigTitle": "Claude Code PATH",
     "pathConfigHint": "此处添加的目录将被前置到传递给 Claude Code 的 PATH 中。",
     "pathConfigResolvedPath": "已解析的 PATH",
