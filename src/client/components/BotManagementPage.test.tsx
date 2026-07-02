@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../i18n';
 import BotManagementPage from './BotManagementPage';
@@ -295,6 +296,199 @@ describe('BotManagementPage', () => {
           rolePersonas: {},
         }),
       );
+    });
+  });
+
+  describe('search filter', () => {
+    it('filters the bot list and shows the match count after pressing Enter', async () => {
+      const user = userEvent.setup();
+      (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        ...mockState,
+        bots: [makeBot(), makeBot({ id: 'bot-2', name: 'DevOps Bot' })],
+      });
+
+      await act(async () => {
+        renderWithI18n(<BotManagementPage />);
+      });
+
+      expect(screen.getByText('TeamBot')).toBeInTheDocument();
+      expect(screen.getByText('DevOps Bot')).toBeInTheDocument();
+
+      const input = screen.getByPlaceholderText('Search bots...');
+      await user.type(input, 'dev');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(screen.queryByText('TeamBot')).not.toBeInTheDocument();
+        expect(screen.getByText('DevOps Bot')).toBeInTheDocument();
+        expect(screen.getByText('1 bot')).toBeInTheDocument();
+      });
+    });
+
+    it('switches selection to the first visible match when the selected bot is filtered out', async () => {
+      const user = userEvent.setup();
+      (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        ...mockState,
+        bots: [makeBot(), makeBot({ id: 'bot-2', name: 'DevOps Bot' })],
+      });
+
+      await act(async () => {
+        renderWithI18n(<BotManagementPage />);
+      });
+
+      const input = screen.getByPlaceholderText('Search bots...');
+      await user.type(input, 'dev');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByText('DevOps Bot')).toBeInTheDocument();
+      });
+
+      const selectedBot = screen.getByText('DevOps Bot').closest('button');
+      expect(selectedBot?.className).toContain('bg-accent/10');
+    });
+
+    it('restores the full list and preserves the current selection when clearing the search', async () => {
+      const user = userEvent.setup();
+      (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        ...mockState,
+        bots: [makeBot(), makeBot({ id: 'bot-2', name: 'DevOps Bot' })],
+      });
+
+      await act(async () => {
+        renderWithI18n(<BotManagementPage />);
+      });
+
+      const input = screen.getByPlaceholderText('Search bots...');
+      await user.type(input, 'dev');
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(screen.getByText('DevOps Bot')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Clear search' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('TeamBot')).toBeInTheDocument();
+        expect(screen.getByText('DevOps Bot')).toBeInTheDocument();
+      });
+
+      const selectedBot = screen.getByText('DevOps Bot').closest('button');
+      expect(selectedBot?.className).toContain('bg-accent/10');
+    });
+
+    it('shows no matching bots empty state when the query matches nothing', async () => {
+      const user = userEvent.setup();
+      (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        ...mockState,
+        bots: [makeBot()],
+      });
+
+      await act(async () => {
+        renderWithI18n(<BotManagementPage />);
+      });
+
+      const input = screen.getByPlaceholderText('Search bots...');
+      await user.type(input, 'xyz');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByText('No bots found')).toBeInTheDocument();
+        expect(screen.getByText('0 bots')).toBeInTheDocument();
+      });
+
+      // The right pane should still show the previously selected bot.
+      expect(screen.getByDisplayValue('TeamBot')).toBeInTheDocument();
+    });
+
+    it('opens a Save/Discard dialog when filtering out a dirty bot', async () => {
+      const user = userEvent.setup();
+      (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        ...mockState,
+        bots: [makeBot(), makeBot({ id: 'bot-2', name: 'DevOps Bot' })],
+      });
+
+      await act(async () => {
+        renderWithI18n(<BotManagementPage />);
+      });
+
+      const nameInput = screen.getByPlaceholderText('My Bot') as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: 'TeamBot v2' } });
+      await waitFor(() => expect(screen.getByText('Save')).toBeInTheDocument());
+
+      const input = screen.getByPlaceholderText('Search bots...');
+      await user.type(input, 'dev');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByRole('button', { name: 'Keep editing' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    });
+
+    it('saves changes and switches to the first visible bot when Save is chosen', async () => {
+      const user = userEvent.setup();
+      const updateBot = vi.fn().mockResolvedValue(makeBot({ name: 'TeamBot v2' }));
+      (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        ...mockState,
+        bots: [makeBot(), makeBot({ id: 'bot-2', name: 'DevOps Bot' })],
+        updateBot,
+      });
+
+      await act(async () => {
+        renderWithI18n(<BotManagementPage />);
+      });
+
+      const nameInput = screen.getByPlaceholderText('My Bot') as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: 'TeamBot v2' } });
+      await waitFor(() => expect(screen.getByText('Save')).toBeInTheDocument());
+
+      const input = screen.getByPlaceholderText('Search bots...');
+      await user.type(input, 'dev');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      await waitFor(() => {
+        expect(updateBot).toHaveBeenCalledWith('bot-1', expect.objectContaining({ name: 'TeamBot v2' }));
+        expect(screen.getByText('DevOps Bot')).toBeInTheDocument();
+      });
+
+      const selectedBot = screen.getByText('DevOps Bot').closest('button');
+      expect(selectedBot?.className).toContain('bg-accent/10');
+    });
+
+    it('discards changes and switches to the first visible bot when Discard is chosen', async () => {
+      const user = userEvent.setup();
+      (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        ...mockState,
+        bots: [makeBot(), makeBot({ id: 'bot-2', name: 'DevOps Bot' })],
+      });
+
+      await act(async () => {
+        renderWithI18n(<BotManagementPage />);
+      });
+
+      const nameInput = screen.getByPlaceholderText('My Bot') as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: 'TeamBot v2' } });
+      await waitFor(() => expect(screen.getByText('Save')).toBeInTheDocument());
+
+      const input = screen.getByPlaceholderText('Search bots...');
+      await user.type(input, 'dev');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+      await waitFor(() => {
+        expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+        expect(screen.getByText('DevOps Bot')).toBeInTheDocument();
+      });
+
+      const selectedBot = screen.getByText('DevOps Bot').closest('button');
+      expect(selectedBot?.className).toContain('bg-accent/10');
     });
   });
 });
