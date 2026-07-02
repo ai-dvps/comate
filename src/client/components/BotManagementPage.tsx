@@ -19,6 +19,7 @@ import BotRolePermissions from './BotRolePermissions';
 import BotPersonaEditor, { type BotPersonaEditorHandle } from './BotPersonaEditor';
 import BotDangerSection from './BotDangerSection';
 import { emptyForm, botToForm, validateBotForm, buildCreateBotInput, buildUpdateBotInput, type BotFormData } from './bot-form-utils';
+import { filterBotsByName } from '../lib/bot-filter';
 
 export type BotSectionId = 'general' | 'channels' | 'members' | 'roles' | 'persona' | 'danger';
 
@@ -52,6 +53,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const { workspaces, fetchWorkspaces } = useWorkspaceStore();
 
     const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
     const [activeSection, setActiveSection] = useState<BotSectionId>('general');
     const [drafts, setDrafts] = useState<Record<string, BotFormData>>({});
     const [snapshots, setSnapshots] = useState<Record<string, BotFormData>>({});
@@ -59,6 +61,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const [previousBotId, setPreviousBotId] = useState<string | null>(null);
     const [pendingBotId, setPendingBotId] = useState<string | null>(null);
     const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+    const [pendingSwitchSource, setPendingSwitchSource] = useState<'manual' | 'filter' | null>(null);
     const [pageError, setPageError] = useState<string | null>(null);
     const [isSavingBasic, setIsSavingBasic] = useState(false);
     const [isPersonaDirty, setIsPersonaDirty] = useState(false);
@@ -67,6 +70,10 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const displayBots = useMemo(() => {
       return tempBot ? [...storeBots, tempBot] : storeBots;
     }, [storeBots, tempBot]);
+
+    const trimmedQuery = searchQuery.trim();
+    const filteredBots = useMemo(() => filterBotsByName(displayBots, trimmedQuery), [displayBots, trimmedQuery]);
+    const matchCount = filteredBots.length;
 
     const selectedBot = useMemo(() => {
       return displayBots.find((b) => b.id === selectedBotId) || null;
@@ -157,6 +164,23 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const isDirty = useCallback(() => {
       return isBasicDirty() || isPersonaDirty;
     }, [isBasicDirty, isPersonaDirty]);
+
+    // When the active filter hides the selected bot, fall back to the first visible match.
+    useEffect(() => {
+      if (!selectedBotId) return;
+      if (filteredBots.some((b) => b.id === selectedBotId)) return;
+      const fallback = filteredBots[0];
+      if (!fallback) return;
+
+      if (isDirty()) {
+        setPendingBotId(fallback.id);
+        setPendingSwitchSource('filter');
+        setShowUnsavedDialog(true);
+      } else {
+        setSelectedBotId(fallback.id);
+        setActiveSection('general');
+      }
+    }, [filteredBots, selectedBotId, isDirty]);
 
     const handleUpdate = useCallback((patch: Partial<BotFormData>) => {
       if (!selectedBotId) return;
@@ -283,6 +307,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       if (id === selectedBotId) return;
       if (isDirty()) {
         setPendingBotId(id);
+        setPendingSwitchSource('manual');
         setShowUnsavedDialog(true);
         return;
       }
@@ -352,8 +377,10 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       await handleSaveAll();
       if (pendingBotId) {
         setSelectedBotId(pendingBotId);
+        setActiveSection('general');
         setPendingBotId(null);
       }
+      setPendingSwitchSource(null);
       setShowUnsavedDialog(false);
     }, [handleSaveAll, pendingBotId]);
 
@@ -361,13 +388,16 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       handleDiscardAll();
       if (pendingBotId) {
         setSelectedBotId(pendingBotId);
+        setActiveSection('general');
         setPendingBotId(null);
       }
+      setPendingSwitchSource(null);
       setShowUnsavedDialog(false);
     }, [handleDiscardAll, pendingBotId]);
 
     const handleDialogKeepEditing = useCallback(() => {
       setPendingBotId(null);
+      setPendingSwitchSource(null);
       setShowUnsavedDialog(false);
     }, []);
 
@@ -516,7 +546,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     return (
       <>
         <BotTabShell
-          bots={displayBots}
+          bots={filteredBots}
           selectedBotId={selectedBotId}
           onSelectBot={handleSelectBot}
           onCreateBot={handleCreateBot}
@@ -524,6 +554,9 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
           activeSection={activeSection}
           onSelectSection={(id) => setActiveSection(id as BotSectionId)}
           footer={footer}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          matchCount={matchCount}
           emptyState={
             <BotEmptyState
               onCreateBot={() => {
@@ -548,13 +581,15 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
                 </div>
               </div>
               <div className="flex justify-end gap-2 mt-5">
-                <button
-                  type="button"
-                  onClick={handleDialogKeepEditing}
-                  className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
-                >
-                  {t('unsavedDialog.keepEditing')}
-                </button>
+                {pendingSwitchSource !== 'filter' && (
+                  <button
+                    type="button"
+                    onClick={handleDialogKeepEditing}
+                    className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
+                  >
+                    {t('unsavedDialog.keepEditing')}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleDialogDiscard}
