@@ -105,6 +105,28 @@ describe('HistoryPicker', () => {
     expect(screen.getByText(/No sent prompts yet/i)).toBeInTheDocument()
   })
 
+  it('applies contentWidth to the popover', () => {
+    mockPrompts = ['only prompt']
+    renderPicker({ contentWidth: 480 })
+    const input = screen.getByPlaceholderText(/Search history/i)
+    const popover = input.parentElement
+
+    expect(popover).toHaveClass('w-full')
+    expect(popover).not.toHaveClass('w-[360px]')
+    expect(popover).toHaveStyle({ width: '480px', boxSizing: 'border-box' })
+  })
+
+  it('falls back to fixed width when contentWidth is omitted', () => {
+    mockPrompts = ['only prompt']
+    renderPicker()
+    const input = screen.getByPlaceholderText(/Search history/i)
+    const popover = input.parentElement
+
+    expect(popover).toHaveClass('w-[360px]')
+    expect(popover).not.toHaveClass('w-full')
+    expect(popover).not.toHaveStyle({ width: '480px' })
+  })
+
   it('exposes moveDown / moveUp / commitActive via ref', () => {
     mockPrompts = ['a', 'b']
     const { handleSelect, ref } = renderPicker()
