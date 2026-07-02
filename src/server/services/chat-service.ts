@@ -28,6 +28,7 @@ import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotRole, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
+import { resolveDeadLoopDetectionSettings } from './dead-loop-detector.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -638,6 +639,7 @@ export class ChatService {
 
       const options = this.buildSdkOptions(workspace, session, isBotSession, botUserId);
       await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
+      const deadLoopSettings = resolveDeadLoopDetectionSettings(workspace.settings);
       const runtime = SessionRuntime.open(
         sessionId,
         workspaceId,
@@ -648,6 +650,7 @@ export class ChatService {
         () => this.cancelIdleClose(sessionId),
         () => {},
         () => this.scheduleIdleClose(sessionId),
+        deadLoopSettings,
       );
       this.runtimes.set(sessionId, runtime);
       this.scheduleIdleClose(sessionId);
