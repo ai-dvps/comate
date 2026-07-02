@@ -9,7 +9,6 @@ import type {
   SDKRateLimitInfo,
   SDKControlGetContextUsageResponse,
   HookCallback,
-  HookJSONOutput,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent, QuestionPayload } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
@@ -126,6 +125,16 @@ export class SessionRuntime {
   }
 
   private readLoopDetector?: ReadLoopDetector;
+  private deadLoopSettings?: ResolvedDeadLoopDetectionSettings;
+  private subagentLoopAlert?: {
+    agentId: string;
+    toolName: string;
+    fingerprint: string;
+    count: number;
+    detectedAt: number;
+    guidanceSent: boolean;
+  };
+  private subagentInterruptFired = false;
 
   private constructor(
     sessionId: string,
@@ -149,6 +158,7 @@ export class SessionRuntime {
     this.onSubscribed = onSubscribed;
     this.onUnsubscribed = onUnsubscribed;
     this.onActivity = onActivity;
+    this.deadLoopSettings = deadLoopSettings;
     if (deadLoopSettings?.enabled) {
       this.readLoopDetector = new ReadLoopDetector(deadLoopSettings.line1);
     }
@@ -183,15 +193,22 @@ export class SessionRuntime {
     const canUseTool = this.readLoopDetector
       ? this.wrapCanUseToolWithDeadLoop(baseCanUseTool)
       : baseCanUseTool;
+    const hooks: Options['hooks'] = { ...this.options.hooks };
+    if (this.readLoopDetector) {
+      hooks.PreToolUse = [{ matcher: 'Read', hooks: [this.createPreToolUseHook()] }];
+      hooks.PostToolUse = [{ matcher: 'Read', hooks: [this.createPostToolUseHook()] }];
+    }
+    if (this.deadLoopSettings?.enabled) {
+      hooks.Stop = [{ hooks: [this.createStopHook()] }];
+      hooks.PostToolUse = [
+        ...(hooks.PostToolUse ?? []),
+        { hooks: [this.createSubagentPostToolUseHook()] },
+      ];
+    }
     const optionsWithCallback: Options = {
       ...this.options,
       canUseTool,
-      hooks: this.readLoopDetector
-        ? {
-            PreToolUse: [{ matcher: 'Read', hooks: [this.createPreToolUseHook()] }],
-            PostToolUse: [{ matcher: 'Read', hooks: [this.createPostToolUseHook()] }],
-          }
-        : this.options.hooks,
+      ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     };
     const { query, messages } = this.sdkClient.createStreamingQuery(
       this.input,
@@ -380,6 +397,90 @@ export class SessionRuntime {
     } catch {
       return String(result);
     }
+  }
+
+  setSubagentLoopAlert(alert: {
+    agentId: string;
+    toolName: string;
+    fingerprint: string;
+    count: number;
+  }): void {
+    const existing = this.subagentLoopAlert;
+    if (
+      existing &&
+      existing.agentId === alert.agentId &&
+      existing.fingerprint === alert.fingerprint
+    ) {
+      existing.count = alert.count;
+      return;
+    }
+    this.subagentLoopAlert = { ...alert, detectedAt: Date.now(), guidanceSent: false };
+    this.subagentInterruptFired = false;
+  }
+
+  clearSubagentLoopAlert(): void {
+    this.subagentLoopAlert = undefined;
+    this.subagentInterruptFired = false;
+  }
+
+  getSubagentLoopAlert():
+    | {
+        agentId: string;
+        toolName: string;
+        fingerprint: string;
+        count: number;
+        detectedAt: number;
+        guidanceSent: boolean;
+      }
+    | undefined {
+    return this.subagentLoopAlert;
+  }
+
+  hasSubagentInterruptFired(): boolean {
+    return this.subagentInterruptFired;
+  }
+
+  markSubagentInterruptFired(): void {
+    this.subagentInterruptFired = true;
+  }
+
+  private getSubagentLoopGuidance(): string | undefined {
+    const alert = this.subagentLoopAlert;
+    if (!alert || alert.guidanceSent) {
+      return undefined;
+    }
+    alert.guidanceSent = true;
+    return `Subagent ${alert.agentId} appears to be stuck in a loop calling ${alert.toolName} with the same arguments (${alert.count} repetitions in the trailing window). Consider using TaskStop to stop it.`;
+  }
+
+  private createStopHook(): HookCallback {
+    return async (input) => {
+      if (input.hook_event_name !== 'Stop') return {};
+      const guidance = this.getSubagentLoopGuidance();
+      if (!guidance) return {};
+      diagLog(`[Runtime ${this.sessionId}] dead-loop subagent guidance via Stop hook`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'Stop',
+          additionalContext: guidance,
+        },
+      };
+    };
+  }
+
+  private createSubagentPostToolUseHook(): HookCallback {
+    return async (input) => {
+      if (input.hook_event_name !== 'PostToolUse') return {};
+      const guidance = this.getSubagentLoopGuidance();
+      if (!guidance) return {};
+      diagLog(`[Runtime ${this.sessionId}] dead-loop subagent guidance via PostToolUse hook`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PostToolUse',
+          additionalContext: guidance,
+        },
+      };
+    };
   }
 
   private parseAskUserQuestion(

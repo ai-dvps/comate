@@ -4,11 +4,14 @@ import assert from 'node:assert';
 import {
   DEFAULT_DEAD_LOOP_DETECTION_SETTINGS,
   ReadLoopDetector,
+  computeFingerprint,
+  detectSubagentLoop,
   isWastedCall,
   resolveDeadLoopDetectionSettings,
   validateDeadLoopDetectionSettings,
 } from './dead-loop-detector.js';
 import type { WorkspaceSettings } from '../models/workspace.js';
+import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 
 describe('dead-loop-detector settings', () => {
   it('returns global defaults when workspace settings are empty', () => {
@@ -136,5 +139,81 @@ describe('ReadLoopDetector', () => {
     assert.strictEqual(isWastedCall('{"type":"file_unchanged"}'), true);
     assert.strictEqual(isWastedCall('hello'), false);
     assert.strictEqual(isWastedCall({ content: 'hello' }), false);
+  });
+});
+
+describe('detectSubagentLoop', () => {
+  function makeToolUseMessage(toolName: string, input: unknown): SessionMessage {
+    return {
+      uuid: crypto.randomUUID(),
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', name: toolName, input, id: crypto.randomUUID() }],
+      },
+    } as SessionMessage;
+  }
+
+  it('detects a loop when the same tool+input repeats in the window', () => {
+    const messages: SessionMessage[] = [];
+    for (let i = 0; i < 6; i++) {
+      messages.push(makeToolUseMessage('Read', { file_path: '/x/y.txt' }));
+    }
+
+    const result = detectSubagentLoop(messages, 20, 5);
+    assert.ok(result);
+    assert.strictEqual(result?.toolName, 'Read');
+    assert.strictEqual(result?.count, 6);
+  });
+
+  it('does not flag a loop below the threshold', () => {
+    const messages: SessionMessage[] = [];
+    for (let i = 0; i < 4; i++) {
+      messages.push(makeToolUseMessage('Read', { file_path: '/x/y.txt' }));
+    }
+
+    const result = detectSubagentLoop(messages, 20, 5);
+    assert.strictEqual(result, undefined);
+  });
+
+  it('ignores repeats outside the trailing window', () => {
+    const messages: SessionMessage[] = [];
+    for (let i = 0; i < 10; i++) {
+      messages.push(makeToolUseMessage('Read', { file_path: '/x/y.txt' }));
+    }
+
+    const result = detectSubagentLoop(messages, 5, 6);
+    assert.strictEqual(result, undefined);
+  });
+
+  it('treats equivalent inputs with different key order as the same fingerprint', () => {
+    const messages: SessionMessage[] = [
+      makeToolUseMessage('Read', { file_path: '/x/y.txt', offset: 0 }),
+      makeToolUseMessage('Read', { offset: 0, file_path: '/x/y.txt' }),
+    ];
+
+    const result = detectSubagentLoop(messages, 20, 2);
+    assert.ok(result);
+    assert.strictEqual(result?.count, 2);
+  });
+
+  it('does not flag alternating tools with different inputs', () => {
+    const messages: SessionMessage[] = [];
+    for (let i = 0; i < 8; i++) {
+      messages.push(
+        makeToolUseMessage(i % 2 === 0 ? 'Read' : 'Grep', {
+          pattern: i % 2 === 0 ? 'foo' : 'bar',
+        }),
+      );
+    }
+
+    const result = detectSubagentLoop(messages, 20, 5);
+    assert.strictEqual(result, undefined);
+  });
+
+  it('computes stable fingerprints', () => {
+    const fp1 = computeFingerprint('Read', { file_path: '/a.txt', offset: 0 });
+    const fp2 = computeFingerprint('Read', { offset: 0, file_path: '/a.txt' });
+    assert.strictEqual(fp1, fp2);
   });
 });

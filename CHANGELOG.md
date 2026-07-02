@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dead-loop detection** — server-side detection and silent intervention for two common runaway patterns. Main-agent `Read` loops on unchanged files are blocked after a configurable threshold and return the cached file content as the tool result, with a warning injected before the block. Subagent tight tool-call loops are detected by polling subagent transcripts; when a loop is found, guidance is injected into the main session prompting the model to stop the subagent, and the query is interrupted if the loop persists past the configured timeout. Thresholds, poll intervals, and timeouts are configurable per workspace via `WorkspaceSettings.deadLoopDetection` with global defaults; detection is enabled by default and emits no user-facing notifications.
+
 ### Changed
 
 - **Bot channel ownership model** — the bot "Provider" concept has been renamed to "Channel" across TypeScript models, the Express API, SQLite storage, and the React UI. Bot ownership is now scoped per channel: each enabled WeCom/Feishu channel has exactly one owner, channel owners can manage members of their own channel and switch the bot's active workspace, but they cannot update/delete the bot or manage other channels. The GUI bypasses ownership checks via the system actor. Existing databases are migrated automatically; promoting owners in already-migrated databases is left to the GUI. English and Simplified Chinese i18n keys added.

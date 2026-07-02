@@ -28,7 +28,7 @@ import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotRole, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
-import { resolveDeadLoopDetectionSettings } from './dead-loop-detector.js';
+import { resolveDeadLoopDetectionSettings, detectSubagentLoop, type ResolvedDeadLoopDetectionSettings } from './dead-loop-detector.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -65,6 +65,8 @@ export class ChatService {
   private runtimes = new Map<string, SessionRuntime>();
   private creatingRuntimes = new Map<string, Promise<SessionRuntime>>();
   private idleTimeouts = new Map<string, NodeJS.Timeout>();
+  private subagentLoopPoller?: NodeJS.Timeout;
+  private lastSubagentLoopPollBySession = new Map<string, number>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   constructor(sdkClient?: SdkClient) {
@@ -654,6 +656,7 @@ export class ChatService {
       );
       this.runtimes.set(sessionId, runtime);
       this.scheduleIdleClose(sessionId);
+      this.ensureSubagentLoopPoller();
 
       // Set initial approval mode from session data
       if (!isBotSession && session.approvalMode) {
@@ -676,6 +679,10 @@ export class ChatService {
     if (!runtime) return;
     this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
+    this.lastSubagentLoopPollBySession.delete(sessionId);
+    if (this.runtimes.size === 0) {
+      this.stopSubagentLoopPoller();
+    }
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
     await runtime.close();
   }
@@ -735,6 +742,109 @@ export class ChatService {
     );
     this.runtimes.clear();
     this.idleTimeouts.clear();
+    this.lastSubagentLoopPollBySession.clear();
+    this.stopSubagentLoopPoller();
+  }
+
+  private ensureSubagentLoopPoller(): void {
+    if (this.subagentLoopPoller) return;
+    const intervalMs = 1000;
+    this.subagentLoopPoller = setInterval(() => {
+      this.pollSubagentLoops().catch((err) => {
+        console.error('Subagent loop poller failed:', err);
+      });
+    }, intervalMs);
+    sidecarLog(`[ChatService] subagent loop poller started (${intervalMs}ms)`);
+  }
+
+  private stopSubagentLoopPoller(): void {
+    if (!this.subagentLoopPoller) return;
+    clearInterval(this.subagentLoopPoller);
+    this.subagentLoopPoller = undefined;
+    sidecarLog('[ChatService] subagent loop poller stopped');
+  }
+
+  private async pollSubagentLoops(): Promise<void> {
+    const now = Date.now();
+    const entries = Array.from(this.runtimes.entries());
+
+    for (const [sessionId, runtime] of entries) {
+      if (runtime.isClosed()) continue;
+      let workspace: Workspace | null = null;
+      try {
+        workspace = await workspaceStore.get(runtime.getStatus().workspaceId);
+      } catch {
+        continue;
+      }
+      if (!workspace) continue;
+
+      const settings = resolveDeadLoopDetectionSettings(workspace.settings);
+      if (!settings.enabled) continue;
+
+      const lastPoll = this.lastSubagentLoopPollBySession.get(sessionId) ?? 0;
+      if (now - lastPoll < settings.line2.pollIntervalMs) continue;
+      this.lastSubagentLoopPollBySession.set(sessionId, now);
+
+      await this.checkSubagentLoopsForSession(sessionId, runtime, workspace, settings);
+    }
+  }
+
+  private async checkSubagentLoopsForSession(
+    sessionId: string,
+    runtime: SessionRuntime,
+    workspace: Workspace,
+    settings: ResolvedDeadLoopDetectionSettings,
+  ): Promise<void> {
+    let agentIds: string[] = [];
+    try {
+      agentIds = await this.sdkClient.listSubagents(sessionId, { dir: normalizeWindowsPath(workspace.folderPath) });
+    } catch (err) {
+      sidecarLog(`[ChatService] failed to list subagents for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+
+    let anyLoop = false;
+    for (const agentId of agentIds) {
+      let messages: import('@anthropic-ai/claude-agent-sdk').SessionMessage[] = [];
+      try {
+        messages = await this.sdkClient.getSubagentMessages(sessionId, agentId, {
+          dir: normalizeWindowsPath(workspace.folderPath),
+        });
+      } catch (err) {
+        sidecarLog(`[ChatService] failed to load subagent ${agentId} for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+
+      const loop = detectSubagentLoop(messages, settings.line2.windowSize, settings.line2.threshold);
+      if (loop) {
+        anyLoop = true;
+        runtime.setSubagentLoopAlert({
+          agentId,
+          toolName: loop.toolName,
+          fingerprint: loop.fingerprint,
+          count: loop.count,
+        });
+
+        const alert = runtime.getSubagentLoopAlert();
+        if (
+          alert &&
+          !runtime.hasSubagentInterruptFired() &&
+          Date.now() - alert.detectedAt >= settings.line2.interruptTimeoutMs
+        ) {
+          diagLog(`[ChatService] subagent loop timeout; interrupting session ${sessionId} agent ${agentId}`);
+          runtime.markSubagentInterruptFired();
+          try {
+            await runtime.interrupt();
+          } catch (err) {
+            sidecarLog(`[ChatService] interrupt failed for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
+    }
+
+    if (!anyLoop) {
+      runtime.clearSubagentLoopAlert();
+    }
   }
 
   /**
