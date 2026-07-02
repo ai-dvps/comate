@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../i18n';
 import BotTabShell, { BotEmptyState } from './BotTabShell';
@@ -143,5 +144,201 @@ describe('BotTabShell', () => {
 
     expect(screen.getByText('No bots yet')).toBeInTheDocument();
     expect(screen.queryByText('General')).not.toBeInTheDocument();
+  });
+
+  describe('search filter', () => {
+    it('renders the search input with placeholder', () => {
+      renderWithI18n(
+        <BotTabShell
+          bots={[makeBot()]}
+          selectedBotId="bot-1"
+          onSelectBot={vi.fn()}
+          onCreateBot={vi.fn()}
+          sections={sections}
+          activeSection="general"
+          onSelectSection={vi.fn()}
+          emptyState={<div>Empty</div>}
+          searchQuery=""
+          onSearchQueryChange={vi.fn()}
+        >
+          <div>Content</div>
+        </BotTabShell>,
+      );
+
+      expect(screen.getByPlaceholderText('Search bots...')).toBeInTheDocument();
+    });
+
+    it('calls onSearchQueryChange with the query when Enter is pressed', async () => {
+      const user = userEvent.setup();
+      const onSearchQueryChange = vi.fn();
+      renderWithI18n(
+        <BotTabShell
+          bots={[makeBot()]}
+          selectedBotId="bot-1"
+          onSelectBot={vi.fn()}
+          onCreateBot={vi.fn()}
+          sections={sections}
+          activeSection="general"
+          onSelectSection={vi.fn()}
+          emptyState={<div>Empty</div>}
+          searchQuery=""
+          onSearchQueryChange={onSearchQueryChange}
+        >
+          <div>Content</div>
+        </BotTabShell>,
+      );
+
+      const input = screen.getByPlaceholderText('Search bots...');
+      await user.type(input, 'dev');
+      await user.keyboard('{Enter}');
+
+      expect(onSearchQueryChange).toHaveBeenCalledTimes(1);
+      expect(onSearchQueryChange).toHaveBeenCalledWith('dev');
+    });
+
+    it('clears the query when Escape is pressed', async () => {
+      const user = userEvent.setup();
+      const onSearchQueryChange = vi.fn();
+      renderWithI18n(
+        <BotTabShell
+          bots={[makeBot()]}
+          selectedBotId="bot-1"
+          onSelectBot={vi.fn()}
+          onCreateBot={vi.fn()}
+          sections={sections}
+          activeSection="general"
+          onSelectSection={vi.fn()}
+          emptyState={<div>Empty</div>}
+          searchQuery="dev"
+          onSearchQueryChange={onSearchQueryChange}
+        >
+          <div>Content</div>
+        </BotTabShell>,
+      );
+
+      const input = screen.getByPlaceholderText('Search bots...') as HTMLInputElement;
+      expect(input.value).toBe('dev');
+
+      input.focus();
+      await user.keyboard('{Escape}');
+
+      expect(input.value).toBe('');
+      expect(onSearchQueryChange).toHaveBeenCalledWith('');
+    });
+
+    it('shows the clear button when a query is present and clears on click', async () => {
+      const user = userEvent.setup();
+      const onSearchQueryChange = vi.fn();
+      renderWithI18n(
+        <BotTabShell
+          bots={[makeBot()]}
+          selectedBotId="bot-1"
+          onSelectBot={vi.fn()}
+          onCreateBot={vi.fn()}
+          sections={sections}
+          activeSection="general"
+          onSelectSection={vi.fn()}
+          emptyState={<div>Empty</div>}
+          searchQuery="dev"
+          onSearchQueryChange={onSearchQueryChange}
+        >
+          <div>Content</div>
+        </BotTabShell>,
+      );
+
+      const clearButton = screen.getByRole('button', { name: 'Clear search' });
+      expect(clearButton).toBeInTheDocument();
+
+      await user.click(clearButton);
+
+      expect(onSearchQueryChange).toHaveBeenCalledWith('');
+      expect((screen.getByPlaceholderText('Search bots...') as HTMLInputElement).value).toBe('');
+    });
+
+    it('does not show the clear button when the query is empty', () => {
+      renderWithI18n(
+        <BotTabShell
+          bots={[makeBot()]}
+          selectedBotId="bot-1"
+          onSelectBot={vi.fn()}
+          onCreateBot={vi.fn()}
+          sections={sections}
+          activeSection="general"
+          onSelectSection={vi.fn()}
+          emptyState={<div>Empty</div>}
+          searchQuery=""
+          onSearchQueryChange={vi.fn()}
+        >
+          <div>Content</div>
+        </BotTabShell>,
+      );
+
+      expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument();
+    });
+
+    it('renders the match count when a filter is active', () => {
+      renderWithI18n(
+        <BotTabShell
+          bots={[makeBot()]}
+          selectedBotId="bot-1"
+          onSelectBot={vi.fn()}
+          onCreateBot={vi.fn()}
+          sections={sections}
+          activeSection="general"
+          onSelectSection={vi.fn()}
+          emptyState={<div>Empty</div>}
+          searchQuery="dev"
+          matchCount={1}
+        >
+          <div>Content</div>
+        </BotTabShell>,
+      );
+
+      expect(screen.getByText('1 bot')).toBeInTheDocument();
+    });
+
+    it('renders no matching bots empty state when filtered list is empty', () => {
+      renderWithI18n(
+        <BotTabShell
+          bots={[]}
+          selectedBotId={null}
+          onSelectBot={vi.fn()}
+          onCreateBot={vi.fn()}
+          sections={sections}
+          activeSection="general"
+          onSelectSection={vi.fn()}
+          emptyState={<BotEmptyState onCreateBot={vi.fn()} />}
+          searchQuery="xyz"
+          matchCount={0}
+        >
+          <div>Content</div>
+        </BotTabShell>,
+      );
+
+      expect(screen.getByText('No bots found')).toBeInTheDocument();
+      expect(screen.getByText('Create Bot')).toBeInTheDocument();
+    });
+
+    it('keeps the right pane visible when the filter hides every bot', () => {
+      renderWithI18n(
+        <BotTabShell
+          bots={[]}
+          selectedBotId="bot-1"
+          onSelectBot={vi.fn()}
+          onCreateBot={vi.fn()}
+          sections={sections}
+          activeSection="general"
+          onSelectSection={vi.fn()}
+          emptyState={<BotEmptyState onCreateBot={vi.fn()} />}
+          searchQuery="xyz"
+          matchCount={0}
+        >
+          <div data-testid="content">Content</div>
+        </BotTabShell>,
+      );
+
+      expect(screen.queryByText('No bots yet')).not.toBeInTheDocument();
+      expect(screen.getByTestId('content')).toBeInTheDocument();
+    });
   });
 });
