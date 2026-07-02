@@ -20,7 +20,7 @@
     "notificationSounds": "Notification sounds",
     "notificationSoundsHint": "Play a sound when Claude needs your response (approval or question) or finishes a task.",
     "notificationSoundsVolume": "Notification sound volume",
-    "notificationSoundsVolumeHint": "Master volume for all notification sounds.",
+    "notificationSoundsVolumeHint": "Master volume for all notification sounds; sounds are amplified so 100% is louder than raw playback.",
     "pathConfigTitle": "Claude Code PATH",
     "pathConfigHint": "Directories added here are prepended to the PATH passed to Claude Code.",
     "pathConfigResolvedPath": "Resolved PATH",
