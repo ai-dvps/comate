@@ -229,3 +229,77 @@ function isFileUnchangedObject(value: unknown): boolean {
     (value as Record<string, unknown>).type === 'file_unchanged'
   );
 }
+
+export interface SubagentLoopResult {
+  toolName: string;
+  fingerprint: string;
+  count: number;
+}
+
+export function detectSubagentLoop(
+  messages: import('@anthropic-ai/claude-agent-sdk').SessionMessage[],
+  windowSize: number,
+  threshold: number,
+): SubagentLoopResult | undefined {
+  const fingerprints: Array<{ toolName: string; fingerprint: string }> = [];
+
+  for (const msg of messages) {
+    const type = (msg as unknown as { type?: string }).type;
+    if (type !== 'assistant') continue;
+
+    const content = (msg.message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) continue;
+
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const b = block as { type?: unknown; name?: unknown; input?: unknown };
+      if (b.type !== 'tool_use') continue;
+
+      const toolName = typeof b.name === 'string' ? b.name : '';
+      const fingerprint = computeFingerprint(toolName, b.input);
+      fingerprints.push({ toolName, fingerprint });
+    }
+  }
+
+  if (fingerprints.length === 0) {
+    return undefined;
+  }
+
+  const window = fingerprints.slice(-windowSize);
+  const counts = new Map<string, { toolName: string; count: number }>();
+
+  for (const item of window) {
+    const existing = counts.get(item.fingerprint);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      counts.set(item.fingerprint, { toolName: item.toolName, count: 1 });
+    }
+  }
+
+  for (const [fingerprint, { toolName, count }] of counts) {
+    if (count >= threshold) {
+      return { toolName, fingerprint, count };
+    }
+  }
+
+  return undefined;
+}
+
+export function computeFingerprint(toolName: string, input: unknown): string {
+  return `${toolName}|${stableJson(input)}`;
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      return Object.keys(val)
+        .sort()
+        .reduce<Record<string, unknown>>((sorted, key) => {
+          sorted[key] = val[key];
+          return sorted;
+        }, {});
+    }
+    return val;
+  });
+}
