@@ -143,6 +143,11 @@
   },
   "bots": {
     "title": "Bots",
+    "searchPlaceholder": "Search bots...",
+    "clearSearch": "Clear search",
+    "noMatchingBots": "No bots found",
+    "matchingBotCount_one": "{{count}} bot",
+    "matchingBotCount_other": "{{count}} bots",
     "create": "Create Bot",
     "emptyTitle": "No bots yet",
     "emptyDescription": "Create a bot to connect WeCom or Feishu and bind it to workspaces.",

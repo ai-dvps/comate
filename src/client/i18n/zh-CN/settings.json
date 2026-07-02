@@ -143,6 +143,11 @@
   },
   "bots": {
     "title": "机器人",
+    "searchPlaceholder": "搜索机器人...",
+    "clearSearch": "清除搜索",
+    "noMatchingBots": "未找到机器人",
+    "matchingBotCount_one": "{{count}} 个机器人",
+    "matchingBotCount_other": "{{count}} 个机器人",
     "create": "创建机器人",
     "emptyTitle": "还没有机器人",
     "emptyDescription": "创建一个机器人以连接企业微信或飞书，并绑定到工作区。",
