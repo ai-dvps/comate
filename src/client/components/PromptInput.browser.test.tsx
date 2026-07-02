@@ -150,6 +150,14 @@ describe('PromptInput browser', () => {
     return page.getByRole('textbox')
   }
 
+  function inputCardElement() {
+    return editableElement().parentElement?.parentElement as HTMLDivElement
+  }
+
+  function popoverForPlaceholder(placeholder: RegExp) {
+    return screen.getByPlaceholderText(placeholder).parentElement as HTMLDivElement
+  }
+
   it('renders the WeCom bot bar with user info when isBotSession is true', () => {
     renderWithI18n(
       <PromptInput
@@ -566,6 +574,61 @@ describe('PromptInput browser', () => {
 
     await userEvent.keyboard('{Meta>}{Shift>}z{/Shift}{/Meta}')
     await waitFor(() => expect(editableElement().textContent).toBe('hello'))
+  })
+
+  it('sizes the command picker popover to the input card width', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const card = inputCardElement()
+
+    await userEvent.click(screen.getByRole('button', { name: /Skills/i }))
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(/Search commands/i)).toBeInTheDocument(),
+    )
+
+    const popover = popoverForPlaceholder(/Search commands/i)
+    expect(popover.offsetWidth).toBe(card.offsetWidth)
+    expect(popover.getBoundingClientRect().left).toBeCloseTo(
+      card.getBoundingClientRect().left,
+      0,
+    )
+  })
+
+  it('sizes the file picker popover to the input card width', async () => {
+    filesMock.results = [{ path: 'src/main.ts' }]
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const card = inputCardElement()
+
+    await userEvent.click(screen.getByRole('button', { name: /Files/i }))
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(/Search files/i)).toBeInTheDocument(),
+    )
+
+    const popover = popoverForPlaceholder(/Search files/i)
+    expect(popover.offsetWidth).toBe(card.offsetWidth)
+    expect(popover.getBoundingClientRect().left).toBeCloseTo(
+      card.getBoundingClientRect().left,
+      0,
+    )
+  })
+
+  it('sizes the history picker popover to the input card width', async () => {
+    seedHistory(['first', 'second', 'third'])
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+    const card = inputCardElement()
+
+    await input.click()
+    await userEvent.keyboard('{Alt>}h{/Alt}')
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(/Search history/i)).toBeInTheDocument(),
+    )
+
+    const popover = popoverForPlaceholder(/Search history/i)
+    expect(popover.offsetWidth).toBe(card.offsetWidth)
+    expect(popover.getBoundingClientRect().left).toBeCloseTo(
+      card.getBoundingClientRect().left,
+      0,
+    )
   })
 
   it('undoes a paste operation with Cmd+Z', async () => {

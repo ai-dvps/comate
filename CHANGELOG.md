@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Picker popovers follow the input-card width** — the skill, file, and history pickers in the normal-session `PromptInput` now open at the same width as the input-card container and resize with it. The popovers are left-aligned to the input card; when `contentWidth` is not provided (e.g., outside `PromptInput`) they keep the previous fixed `360px` width.
+
 - **Bot channel ownership model** — the bot "Provider" concept has been renamed to "Channel" across TypeScript models, the Express API, SQLite storage, and the React UI. Bot ownership is now scoped per channel: each enabled WeCom/Feishu channel has exactly one owner, channel owners can manage members of their own channel and switch the bot's active workspace, but they cannot update/delete the bot or manage other channels. The GUI bypasses ownership checks via the system actor. Existing databases are migrated automatically; promoting owners in already-migrated databases is left to the GUI. English and Simplified Chinese i18n keys added.
 
 ## [0.0.20] - 2026-06-30
