@@ -10,6 +10,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
+import { cn } from './ui/utils'
 import { useCommands, type SlashCommandDto } from '../stores/commands-store'
 import { filterItems } from '../lib/picker-filter'
 
@@ -30,6 +31,7 @@ interface CommandPickerProps {
   initialFilter?: string
   refetchOnOpen?: boolean
   hideFilterInput?: boolean
+  contentWidth?: number
 }
 
 const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
@@ -45,6 +47,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
       initialFilter = '',
       refetchOnOpen = false,
       hideFilterInput = false,
+      contentWidth,
     },
     ref,
   ) {
@@ -165,7 +168,10 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
 
     return (
       <Popover open={open} onOpenChange={onOpenChange}>
-        <PopoverAnchor asChild>{anchor}</PopoverAnchor>
+        <PopoverAnchor asChild>
+          <span className="absolute top-0 left-0 w-0 h-0" aria-hidden="true" />
+        </PopoverAnchor>
+        {anchor}
         <PopoverContent
           side={side}
           align={align}
@@ -174,7 +180,15 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
           onCloseAutoFocus={(e) => {
             if (hideFilterInput) e.preventDefault()
           }}
-          className="bg-surface border border-border rounded-lg shadow-lg z-50 w-[360px] max-h-[320px] flex flex-col p-2"
+          className={cn(
+            'bg-surface border border-border rounded-lg shadow-lg z-50 max-h-[320px] flex flex-col p-2',
+            contentWidth === undefined ? 'w-[360px]' : 'w-full',
+          )}
+          style={
+            contentWidth === undefined
+              ? undefined
+              : { width: contentWidth, boxSizing: 'border-box' }
+          }
         >
           {partial && (
             <div className="text-[11px] text-text-tertiary px-2 py-1 mb-1 rounded bg-surface-hover">

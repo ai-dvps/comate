@@ -134,6 +134,26 @@ export default function PromptInput({
   // Saved caret position when the editable surface loses focus, so pickers
   // opened by toolbar buttons can still insert at the intended position.
   const caretBeforeBlurRef = useRef<number | null>(null)
+  const inputCardRef = useRef<HTMLDivElement>(null)
+  const [contentWidth, setContentWidth] = useState<number | undefined>(undefined)
+
+  useEffect(() => {
+    const el = inputCardRef.current
+    if (!el) return
+
+    const measure = () => {
+      const nextWidth = el.offsetWidth
+      setContentWidth((prev) => (prev === nextWidth ? prev : nextWidth))
+    }
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    measure()
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -845,7 +865,7 @@ export default function PromptInput({
           </div>
         </div>
       ) : (
-        <div className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
+        <div ref={inputCardRef} className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
           <>
             <div className="flex items-center px-2 pt-2 gap-1">
               <CommandPicker
@@ -862,6 +882,7 @@ export default function PromptInput({
                 initialFilter={pickerFilter}
                 hideFilterInput={pickerSource === 'slash'}
                 refetchOnOpen
+                contentWidth={contentWidth}
                 anchor={
                   <button
                     type="button"
@@ -889,6 +910,7 @@ export default function PromptInput({
                 initialFilter={filePickerFilter}
                 hideFilterInput={filePickerSource === 'at'}
                 refetchOnOpen
+                contentWidth={contentWidth}
                 anchor={
                   <button
                     type="button"
@@ -913,6 +935,7 @@ export default function PromptInput({
                 side="top"
                 align="start"
                 initialFilter={historyPickerFilter}
+                contentWidth={contentWidth}
                 anchor={
                   <button
                     type="button"
