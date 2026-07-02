@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bot list name filter** — the Bot Management page now has a search box at the top of the left bot list. Press Enter to filter bots by name with fuzzy, order-preserving matching; a clear button and match count appear while a filter is active. If the selected bot is filtered out, the selection moves to the first visible match. When the selected bot has unsaved changes, a Save/Discard dialog appears (no Keep Editing option, since the bot is no longer visible in the list). English and Simplified Chinese i18n keys added.
+
 - **Dead-loop detection** — server-side detection and silent intervention for two common runaway patterns. Main-agent `Read` loops on unchanged files are blocked after a configurable threshold and return the cached file content as the tool result, with a warning injected before the block. Subagent tight tool-call loops are detected by polling subagent transcripts; when a loop is found, guidance is injected into the main session prompting the model to stop the subagent, and the query is interrupted if the loop persists past the configured timeout. Thresholds, poll intervals, and timeouts are configurable per workspace via `WorkspaceSettings.deadLoopDetection` with global defaults; detection is enabled by default and emits no user-facing notifications.
 
 ### Changed
