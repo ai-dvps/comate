@@ -28,9 +28,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function invalidateBotRuntimesIfNeeded(botId: string, input: UpdateBotInput): void {
   if (input.persona !== undefined || input.rolePersonas !== undefined || input.rolePolicy !== undefined) {
-    chatService.closeRuntimesForBot(botId).catch((err) => {
-      console.error(`Failed to invalidate runtimes for bot ${botId}:`, err);
-    });
+    chatService.scheduleRebuildsForBot(botId);
   }
 }
 
@@ -240,9 +238,7 @@ router.post('/:id/members', (req, res) => {
       { channel, channelUserId, role },
       systemActor(),
     );
-    chatService.closeRuntimesForBot(req.params.id).catch((err) => {
-      console.error(`Failed to invalidate runtimes for bot ${req.params.id}:`, err);
-    });
+    chatService.scheduleRebuildsForBot(req.params.id);
     res.status(201).json({ member });
   } catch (error) {
     const mapped = mapBotError(error);
@@ -273,9 +269,7 @@ router.put('/:id/members/:channelUserId/role', (req, res) => {
       role,
       systemActor(),
     );
-    chatService.closeRuntimesForBot(req.params.id).catch((err) => {
-      console.error(`Failed to invalidate runtimes for bot ${req.params.id}:`, err);
-    });
+    chatService.scheduleRebuildsForBot(req.params.id);
     res.status(204).send();
   } catch (error) {
     const mapped = mapBotError(error);
@@ -294,9 +288,7 @@ router.delete('/:id/members/:channelUserId', (req, res) => {
     }
 
     botService.removeMember(req.params.id, channel, req.params.channelUserId, systemActor());
-    chatService.closeRuntimesForBot(req.params.id).catch((err) => {
-      console.error(`Failed to invalidate runtimes for bot ${req.params.id}:`, err);
-    });
+    chatService.scheduleRebuildsForBot(req.params.id);
     res.status(204).send();
   } catch (error) {
     const mapped = mapBotError(error);

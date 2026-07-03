@@ -85,7 +85,7 @@ describe('bots routes', { concurrency: false }, () => {
   let originalDisconnectBotFeishu: typeof feishuBotService.disconnectBot;
   let originalUpdateConnectionForBotFeishu: typeof feishuBotService.updateConnectionForBot;
   let originalGetBotStatusFeishu: typeof feishuBotService.getBotStatus;
-  let originalCloseRuntimesForBot: typeof chatService.closeRuntimesForBot;
+  let originalScheduleRebuildsForBot: typeof chatService.scheduleRebuildsForBot;
 
   beforeEach(() => {
     workspaceStore.resetData();
@@ -100,7 +100,7 @@ describe('bots routes', { concurrency: false }, () => {
     originalUpdateConnectionForBotFeishu = feishuBotService.updateConnectionForBot.bind(feishuBotService);
     originalGetBotStatusFeishu = feishuBotService.getBotStatus.bind(feishuBotService);
 
-    originalCloseRuntimesForBot = chatService.closeRuntimesForBot.bind(chatService);
+    originalScheduleRebuildsForBot = chatService.scheduleRebuildsForBot.bind(chatService);
 
     wecomBotService.connectBot = async () => {};
     wecomBotService.disconnectBot = () => {};
@@ -112,7 +112,7 @@ describe('bots routes', { concurrency: false }, () => {
     feishuBotService.updateConnectionForBot = async () => {};
     feishuBotService.getBotStatus = () => 'not_configured';
 
-    chatService.closeRuntimesForBot = async () => {};
+    chatService.scheduleRebuildsForBot = () => {};
   });
 
   afterEach(() => {
@@ -126,7 +126,7 @@ describe('bots routes', { concurrency: false }, () => {
     feishuBotService.updateConnectionForBot = originalUpdateConnectionForBotFeishu;
     feishuBotService.getBotStatus = originalGetBotStatusFeishu;
 
-    chatService.closeRuntimesForBot = originalCloseRuntimesForBot;
+    chatService.scheduleRebuildsForBot = originalScheduleRebuildsForBot;
   });
 
   it('GET / returns a list of bots with redacted credentials', async () => {
@@ -480,7 +480,7 @@ describe('bots routes', { concurrency: false }, () => {
   it('PUT /:id with persona change triggers runtime invalidation', async () => {
     const bot = botService.createBot(validWecomBot);
     let invalidatedBotId: string | null = null;
-    chatService.closeRuntimesForBot = async (botId) => {
+    chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
     };
 
@@ -501,7 +501,7 @@ describe('bots routes', { concurrency: false }, () => {
   it('PUT /:id with rolePersonas change triggers runtime invalidation', async () => {
     const bot = botService.createBot(validWecomBot);
     let invalidatedBotId: string | null = null;
-    chatService.closeRuntimesForBot = async (botId) => {
+    chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
     };
 
@@ -522,7 +522,7 @@ describe('bots routes', { concurrency: false }, () => {
   it('PUT /:id with rolePolicy change triggers runtime invalidation', async () => {
     const bot = botService.createBot(validWecomBot);
     let invalidatedBotId: string | null = null;
-    chatService.closeRuntimesForBot = async (botId) => {
+    chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
     };
 
@@ -552,7 +552,7 @@ describe('bots routes', { concurrency: false }, () => {
   it('PUT /:id with name change does not trigger runtime invalidation', async () => {
     const bot = botService.createBot(validWecomBot);
     let invalidatedBotId: string | null = 'not-called';
-    chatService.closeRuntimesForBot = async (botId) => {
+    chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
     };
 
@@ -573,7 +573,7 @@ describe('bots routes', { concurrency: false }, () => {
   it('POST /:id/members triggers runtime invalidation', async () => {
     const bot = botService.createBot(validWecomBot);
     let invalidatedBotId: string | null = null;
-    chatService.closeRuntimesForBot = async (botId) => {
+    chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
     };
 
@@ -595,7 +595,7 @@ describe('bots routes', { concurrency: false }, () => {
     const bot = botService.createBot(validWecomBot);
     botService.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-1', role: 'normal' });
     let invalidatedBotId: string | null = null;
-    chatService.closeRuntimesForBot = async (botId) => {
+    chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
     };
 
@@ -618,7 +618,7 @@ describe('bots routes', { concurrency: false }, () => {
     const bot = botService.createBot(validWecomBot);
     botService.addMember(bot.id, { channel: 'wecom', channelUserId: 'u-1', role: 'normal' });
     let invalidatedBotId: string | null = null;
-    chatService.closeRuntimesForBot = async (botId) => {
+    chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
     };
 

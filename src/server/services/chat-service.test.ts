@@ -5,6 +5,8 @@ import {
   ChatService,
   __setIdleGracePeriodForTesting,
   __restoreIdleGracePeriod,
+  __setRebuildPollIntervalForTesting,
+  __restoreRebuildPollInterval,
 } from './chat-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { SessionRuntime } from './session-runtime.js';
@@ -2402,5 +2404,291 @@ describe('chat-service subagent loop poller', { concurrency: false }, () => {
 
     assert.strictEqual(service.mockSdkClient.listSubagentsCalls, 0);
     assert.strictEqual(service.mockSdkClient.getSubagentMessagesCalls, 0);
+  });
+});
+
+describe('chat-service deferred runtime rebuild', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+  const originalGetLocalSession = workspaceStore.getLocalSession.bind(workspaceStore);
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+  const originalGetProvider = workspaceStore.getProvider.bind(workspaceStore);
+
+  class MockSdkClient extends SdkClient {
+    override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+      return {
+        sessionId: 's1',
+        summary: 'Test Session',
+        createdAt: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+      } as SDKSessionInfo;
+    }
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return [];
+    }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
+    override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
+  }
+
+  class TestChatService extends ChatService {
+    constructor() {
+      super(new MockSdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  function createMockRuntime(
+    options: { isProcessing?: () => boolean } = {},
+  ): SessionRuntime & { closeCalls: number } {
+    const mock = {
+      closeCalls: 0,
+      isClosed: () => false,
+      isProcessingTurn: () => options.isProcessing?.() ?? false,
+      getStatus: () => ({
+        pendingCount: 0,
+        isProcessing: options.isProcessing?.() ?? false,
+        workspaceId: 'ws-1',
+      }),
+      close: async () => {
+        mock.closeCalls++;
+      },
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: () => {},
+      resolveApproval: () => {},
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+    };
+    return mock as unknown as SessionRuntime & { closeCalls: number };
+  }
+
+  function setupStoreMocks(session: ChatSession = createMockSession('s1')) {
+    workspaceStore.get = async () => createMockWorkspace('ws-1');
+    workspaceStore.getLocalSession = () => session;
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+    workspaceStore.getProvider = () => createMockProvider();
+  }
+
+  beforeEach(() => {
+    __setRebuildPollIntervalForTesting(10);
+    service = new TestChatService();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+    SessionRuntime.open = originalOpen;
+    workspaceStore.get = originalGet;
+    workspaceStore.getLocalSession = originalGetLocalSession;
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+    workspaceStore.getProvider = originalGetProvider;
+    __restoreRebuildPollInterval();
+  });
+
+  it('rebuilds an idle cached runtime immediately', async () => {
+    setupStoreMocks();
+    let openCalls = 0;
+    let closeCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      const runtime = createMockRuntime();
+      const originalClose = runtime.close.bind(runtime);
+      runtime.close = async () => {
+        closeCalls++;
+        await originalClose();
+      };
+      return runtime;
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    assert.strictEqual(openCalls, 1);
+
+    service.scheduleRuntimeRebuild('s1', { workspaceId: 'ws-1' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(closeCalls, 1, 'old runtime should be closed');
+    assert.strictEqual(openCalls, 2, 'replacement runtime should be pre-created');
+  });
+
+  it('defers rebuild until an active turn ends', async () => {
+    setupStoreMocks();
+    let processing = true;
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime({ isProcessing: () => processing });
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    service.scheduleRuntimeRebuild('s1', { workspaceId: 'ws-1' });
+
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(openCalls, 1, 'runtime should not rebuild while turn is active');
+
+    processing = false;
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual(openCalls, 2, 'runtime should rebuild once turn ends');
+  });
+
+  it('coalesces multiple rebuild requests for the same active session', async () => {
+    setupStoreMocks();
+    let processing = true;
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime({ isProcessing: () => processing });
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    service.scheduleRuntimeRebuild('s1', { workspaceId: 'ws-1' });
+    service.scheduleRuntimeRebuild('s1', { workspaceId: 'ws-1' });
+    service.scheduleRuntimeRebuild('s1', { workspaceId: 'ws-1' });
+
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(openCalls, 1);
+
+    processing = false;
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual(openCalls, 2, 'only one replacement should be pre-created');
+  });
+
+  it('schedules a second rebuild if a new change arrives after pre-creation', async () => {
+    setupStoreMocks();
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    service.scheduleRuntimeRebuild('s1', { workspaceId: 'ws-1' });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(openCalls, 2);
+
+    service.scheduleRuntimeRebuild('s1', { workspaceId: 'ws-1' });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(openCalls, 3, 'latest change should trigger another rebuild');
+  });
+
+  it('rebuilds bot sessions by bot id', async () => {
+    setupStoreMocks({ ...createMockSession('s1'), botId: 'bot-1' });
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', true, undefined, 'bot-user-1');
+    service.scheduleRebuildsForBot('bot-1');
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(openCalls, 2, 'bot session should be rebuilt');
+  });
+
+  it('does not rebuild bot sessions for a different bot id', async () => {
+    setupStoreMocks({ ...createMockSession('s1'), botId: 'bot-1' });
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', true, undefined, 'bot-user-1');
+    service.scheduleRebuildsForBot('bot-2');
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(openCalls, 1, 'unrelated bot should not trigger rebuild');
+  });
+
+  it('rebuilds legacy workspace bot sessions on workspace policy change', async () => {
+    setupStoreMocks({ ...createMockSession('s1'), source: 'wecom' });
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', true);
+    service.scheduleRebuildsForWorkspaceLegacyPolicy('ws-1');
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(openCalls, 2, 'legacy bot session should be rebuilt');
+  });
+
+  it('does not rebuild modern bot sessions on workspace policy change', async () => {
+    setupStoreMocks({ ...createMockSession('s1'), botId: 'bot-1', source: 'wecom' });
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', true, undefined, 'bot-user-1');
+    service.scheduleRebuildsForWorkspaceLegacyPolicy('ws-1');
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(openCalls, 1, 'modern bot session should not be rebuilt by workspace policy');
+  });
+
+  it('rebuilds sessions when provider settings change', async () => {
+    setupStoreMocks({ ...createMockSession('s1'), providerId: 'p1' });
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    service.scheduleRebuildsForProvider('p1');
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(openCalls, 2, 'session using provider should be rebuilt');
+  });
+
+  it('does not rebuild sessions using a different provider', async () => {
+    setupStoreMocks({ ...createMockSession('s1'), providerId: 'p2' });
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    service.scheduleRebuildsForProvider('p1');
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(openCalls, 1, 'session using different provider should not be rebuilt');
+  });
+
+  it('clears pending rebuild state when runtime is closed manually', async () => {
+    setupStoreMocks();
+    const processing = true;
+    SessionRuntime.open = () => createMockRuntime({ isProcessing: () => processing });
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    service.scheduleRuntimeRebuild('s1', { workspaceId: 'ws-1' });
+
+    await new Promise((r) => setTimeout(r, 20));
+    const pendingBefore = (service as unknown as { pendingRebuilds: Map<string, unknown> }).pendingRebuilds.has('s1');
+    assert.ok(pendingBefore, 'rebuild should be pending while turn is active');
+
+    await service.closeRuntime('s1');
+    const pendingAfter = (service as unknown as { pendingRebuilds: Map<string, unknown> }).pendingRebuilds.has('s1');
+    assert.ok(!pendingAfter, 'pending rebuild should be cleared on manual close');
   });
 });

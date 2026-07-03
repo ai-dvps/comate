@@ -50,6 +50,12 @@ export interface MessageStream {
   wasDraft: boolean;
 }
 
+type RuntimeContext = {
+  workspaceId: string;
+  isBotSession?: boolean;
+  botUserId?: string;
+};
+
 let RUNTIME_IDLE_GRACE_PERIOD_MS = 10 * 60 * 1000; // 10 minutes
 
 export function __setIdleGracePeriodForTesting(ms: number): void {
@@ -60,11 +66,24 @@ export function __restoreIdleGracePeriod(): void {
   RUNTIME_IDLE_GRACE_PERIOD_MS = 10 * 60 * 1000;
 }
 
+let REBUILD_POLL_INTERVAL_MS = 500;
+
+export function __setRebuildPollIntervalForTesting(ms: number): void {
+  REBUILD_POLL_INTERVAL_MS = ms;
+}
+
+export function __restoreRebuildPollInterval(): void {
+  REBUILD_POLL_INTERVAL_MS = 500;
+}
+
 export class ChatService {
   private sdkClient: SdkClient;
   private runtimes = new Map<string, SessionRuntime>();
   private creatingRuntimes = new Map<string, Promise<SessionRuntime>>();
   private idleTimeouts = new Map<string, NodeJS.Timeout>();
+  private runtimeContexts = new Map<string, RuntimeContext>();
+  private pendingRebuilds = new Map<string, RuntimeContext>();
+  private rebuildPollers = new Map<string, NodeJS.Timeout>();
   private subagentLoopPoller?: NodeJS.Timeout;
   private lastSubagentLoopPollBySession = new Map<string, number>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -234,14 +253,12 @@ export class ChatService {
       if (input.isArchived !== undefined) draftInput.isArchived = input.isArchived;
       const updated = workspaceStore.updateLocalSession(id, draftInput);
 
-      // Close runtime if provider changed so next message creates a fresh one
+      // Schedule rebuild if provider changed so next message creates a fresh runtime
       if (input.providerId !== undefined && input.providerId !== previousProviderId) {
         const runtime = this.getRuntimeIfExists(id);
         if (runtime) {
-          sidecarLog(`[ChatService] closing runtime ${id} due to provider change`);
-          this.closeRuntime(id).catch((err) => {
-            console.error(`Failed to close runtime ${id} during provider switch:`, err);
-          });
+          sidecarLog(`[ChatService] scheduling rebuild for runtime ${id} due to provider change`);
+          this.scheduleRuntimeRebuild(id, this.runtimeContexts.get(id));
         }
       }
 
@@ -587,6 +604,7 @@ export class ChatService {
     botEventHandler?: (id: number, event: import('../types/message.js').SseEvent) => void,
     botUserId?: string,
   ): Promise<SessionRuntime> {
+    const runtimeContext: RuntimeContext = { workspaceId, isBotSession, botUserId };
     const existing = this.runtimes.get(sessionId);
     if (existing && !existing.isClosed()) {
       this.cancelIdleClose(sessionId);
@@ -594,6 +612,7 @@ export class ChatService {
         existing.clearBotEventHandlers();
         existing.addBotEventHandler(botEventHandler);
       }
+      this.runtimeContexts.set(sessionId, runtimeContext);
       return existing;
     }
     if (existing) {
@@ -608,6 +627,7 @@ export class ChatService {
         runtime.clearBotEventHandlers();
         runtime.addBotEventHandler(botEventHandler);
       }
+      this.runtimeContexts.set(sessionId, runtimeContext);
       return runtime;
     }
 
@@ -655,6 +675,7 @@ export class ChatService {
         deadLoopSettings,
       );
       this.runtimes.set(sessionId, runtime);
+      this.runtimeContexts.set(sessionId, runtimeContext);
       this.scheduleIdleClose(sessionId);
       this.ensureSubagentLoopPoller();
 
@@ -677,6 +698,8 @@ export class ChatService {
   async closeRuntime(sessionId: string): Promise<void> {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
+    this.clearPendingRebuild(sessionId);
+    this.runtimeContexts.delete(sessionId);
     this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
     this.lastSubagentLoopPollBySession.delete(sessionId);
@@ -691,6 +714,119 @@ export class ChatService {
     const runtime = this.runtimes.get(sessionId);
     if (runtime && !runtime.isClosed()) return runtime;
     return undefined;
+  }
+
+  scheduleRuntimeRebuild(sessionId: string, context?: RuntimeContext): void {
+    const runtime = this.getRuntimeIfExists(sessionId);
+    if (!runtime) return;
+    const ctx = context ?? this.runtimeContexts.get(sessionId);
+    if (!ctx) return;
+
+    this.pendingRebuilds.set(sessionId, ctx);
+    if (runtime.isProcessingTurn()) {
+      this.startRebuildPoller(sessionId);
+      return;
+    }
+    this.performRebuild(sessionId, ctx);
+  }
+
+  scheduleRebuildsForBot(botId: string): void {
+    let count = 0;
+    for (const [sessionId, context] of this.runtimeContexts.entries()) {
+      try {
+        const session = workspaceStore.getLocalSession(sessionId);
+        if (session && session.botId === botId) {
+          this.scheduleRuntimeRebuild(sessionId, context);
+          count++;
+        }
+      } catch {
+        // ignore stale sessions
+      }
+    }
+    if (count > 0) {
+      sidecarLog(`[ChatService] scheduled ${count} runtime rebuilds for bot ${botId}`);
+    }
+  }
+
+  scheduleRebuildsForProvider(providerId: string): void {
+    let count = 0;
+    for (const [sessionId, context] of this.runtimeContexts.entries()) {
+      try {
+        const session = workspaceStore.getLocalSession(sessionId);
+        if (session && session.providerId === providerId) {
+          this.scheduleRuntimeRebuild(sessionId, context);
+          count++;
+        }
+      } catch {
+        // ignore stale sessions
+      }
+    }
+    if (count > 0) {
+      sidecarLog(`[ChatService] scheduled ${count} runtime rebuilds for provider ${providerId}`);
+    }
+  }
+
+  scheduleRebuildsForWorkspaceLegacyPolicy(workspaceId: string): void {
+    let count = 0;
+    for (const [sessionId, context] of this.runtimeContexts.entries()) {
+      if (context.workspaceId !== workspaceId || !context.isBotSession) continue;
+      try {
+        const session = workspaceStore.getLocalSession(sessionId);
+        if (session && !session.botId) {
+          this.scheduleRuntimeRebuild(sessionId, context);
+          count++;
+        }
+      } catch {
+        // ignore stale sessions
+      }
+    }
+    if (count > 0) {
+      sidecarLog(`[ChatService] scheduled ${count} legacy-policy runtime rebuilds for workspace ${workspaceId}`);
+    }
+  }
+
+  private startRebuildPoller(sessionId: string): void {
+    if (this.rebuildPollers.has(sessionId)) return;
+    const interval = setInterval(() => {
+      const runtime = this.getRuntimeIfExists(sessionId);
+      if (!runtime || runtime.isClosed() || !runtime.isProcessingTurn()) {
+        const ctx = this.pendingRebuilds.get(sessionId);
+        if (ctx && runtime && !runtime.isClosed()) {
+          this.performRebuild(sessionId, ctx);
+        } else {
+          this.clearPendingRebuild(sessionId);
+        }
+      }
+    }, REBUILD_POLL_INTERVAL_MS);
+    this.rebuildPollers.set(sessionId, interval);
+  }
+
+  private async performRebuild(sessionId: string, context: RuntimeContext): Promise<void> {
+    this.clearPendingRebuild(sessionId);
+    try {
+      sidecarLog(`[ChatService] rebuilding runtime ${sessionId}`);
+      await this.closeRuntime(sessionId);
+    } catch (err) {
+      sidecarLog(
+        `[ChatService] failed to close runtime ${sessionId} during rebuild: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    try {
+      await this.getOrCreateRuntime(sessionId, context.workspaceId, context.isBotSession, undefined, context.botUserId);
+    } catch (err) {
+      sidecarLog(
+        `[ChatService] failed to pre-create runtime ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private clearPendingRebuild(sessionId: string): void {
+    this.pendingRebuilds.delete(sessionId);
+    const poller = this.rebuildPollers.get(sessionId);
+    if (poller) {
+      clearInterval(poller);
+      this.rebuildPollers.delete(sessionId);
+    }
   }
 
   private scheduleIdleClose(sessionId: string): void {
