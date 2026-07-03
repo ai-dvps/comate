@@ -47,7 +47,7 @@ async function runHealthCheck(baseUrl: string, authToken: string): Promise<{ ok:
 }
 
 function hasSnapshottedProviderChange(input: UpdateProviderInput, existing: Provider): boolean {
-  const fields: (keyof Provider)[] = [
+  const fields: (keyof Provider & keyof UpdateProviderInput)[] = [
     'baseUrl',
     'authToken',
     'model',
