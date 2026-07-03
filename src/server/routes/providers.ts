@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { ChatError } from '../services/chat-service.js';
+import { chatService } from '../services/chat-service.js';
 import { detectProviderConfig } from '../services/provider-detection.js';
-import type { CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
+import type { CreateProviderInput, UpdateProviderInput, Provider } from '../models/provider.js';
 
 const router = Router();
 
@@ -43,6 +44,21 @@ async function runHealthCheck(baseUrl: string, authToken: string): Promise<{ ok:
   }
 
   return { ok: false, error: 'Provider endpoint is unreachable — check the base URL and network.' };
+}
+
+function hasSnapshottedProviderChange(input: UpdateProviderInput, existing: Provider): boolean {
+  const fields: (keyof UpdateProviderInput)[] = [
+    'baseUrl',
+    'authToken',
+    'model',
+    'defaultOpusModel',
+    'defaultSonnetModel',
+    'defaultHaikuModel',
+    'subagentModel',
+    'effortLevel',
+    'customEnvVars',
+  ];
+  return fields.some((field) => input[field] !== undefined && input[field] !== existing[field]);
 }
 
 // GET /api/providers
@@ -160,6 +176,9 @@ router.put('/:id', async (req, res) => {
     }
 
     const provider = store.updateProvider(id, input);
+    if (existing && hasSnapshottedProviderChange(input, existing)) {
+      chatService.scheduleRebuildsForProvider(id);
+    }
     res.json({ provider });
   } catch (error) {
     console.error('Failed to update provider:', error);
@@ -180,6 +199,7 @@ router.delete('/:id', (req, res) => {
       res.status(404).json({ error: 'Provider not found' });
       return;
     }
+    chatService.scheduleRebuildsForProvider(id);
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to delete provider:', error);

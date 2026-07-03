@@ -110,6 +110,14 @@ router.put('/:id', async (req, res) => {
       return;
     }
 
+    if (
+      input.settings?.wecomToolPermissions !== undefined ||
+      input.settings?.wecomBotIsolation !== undefined ||
+      input.settings?.sensitiveFileDenylist !== undefined
+    ) {
+      chatService.scheduleRebuildsForWorkspaceLegacyPolicy(req.params.id);
+    }
+
     res.json({ workspace });
   } catch (error) {
     console.error('Failed to update workspace:', error);
