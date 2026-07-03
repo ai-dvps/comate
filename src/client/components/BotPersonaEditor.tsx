@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Save, Check, Loader2, AlertTriangle, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Sparkles } from 'lucide-react';
 import type { Bot, BotPersona, BotRole } from '../stores/bot-store';
 import { cn } from './ui/utils';
 
@@ -12,7 +12,6 @@ export interface BotPersonaEditorHandle {
 
 interface BotPersonaEditorProps {
   bot: Bot;
-  isSaving?: boolean;
   error?: string | null;
   onSave: (payload: { persona: BotPersona | null; rolePersonas: Partial<Record<BotRole, BotPersona>> }) => void | Promise<void>;
   onDirtyChange?: (isDirty: boolean) => void;
@@ -59,7 +58,7 @@ function hasOverBudgetPrompt(record: Record<PersonaTab, BotPersona>): Record<Per
 }
 
 const BotPersonaEditor = forwardRef<BotPersonaEditorHandle, BotPersonaEditorProps>(
-  ({ bot, isSaving, error, onSave, onDirtyChange }, ref) => {
+  ({ bot, error, onSave, onDirtyChange }, ref) => {
     const { t } = useTranslation('settings');
     const [activeTab, setActiveTab] = useState<PersonaTab>('default');
     const [draft, setDraft] = useState<Record<PersonaTab, BotPersona>>(() => botToRecord(bot));
@@ -67,7 +66,14 @@ const BotPersonaEditor = forwardRef<BotPersonaEditorHandle, BotPersonaEditorProp
     const [saveError, setSaveError] = useState<string | null>(null);
     const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
+    const lastBotIdRef = useRef<string | null>(null);
+
     useEffect(() => {
+      // Only reset local editor state when the selected bot changes. Re-renders
+      // caused by saving another slice (Basic/Roles) should not wipe dirty
+      // persona edits.
+      if (lastBotIdRef.current === bot.id) return;
+      lastBotIdRef.current = bot.id;
       const record = botToRecord(bot);
       setDraft(record);
       setSaved(record);
@@ -271,46 +277,6 @@ const BotPersonaEditor = forwardRef<BotPersonaEditorHandle, BotPersonaEditorProp
         </div>
 
         <p className="text-[10px] text-text-tertiary">{t('bots.persona.freezeHint')}</p>
-
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={handleCancel}
-            disabled={isSaving || !isDirty}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed text-text-secondary hover:text-text-primary hover:bg-surface-hover"
-          >
-            <X className="w-3.5 h-3.5" />
-            {t('bots.persona.cancel')}
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving || !isDirty}
-            className={cn(
-              'flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
-              isDirty
-                ? 'bg-accent hover:bg-accent-hover text-accent-foreground'
-                : 'bg-surface-active text-text-secondary',
-            )}
-          >
-            {isSaving ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                {t('actions.saving')}
-              </>
-            ) : isDirty ? (
-              <>
-                <Save className="w-3.5 h-3.5" />
-                {t('bots.persona.saveAll')}
-              </>
-            ) : (
-              <>
-                <Check className="w-3.5 h-3.5" />
-                {t('bots.persona.saved')}
-              </>
-            )}
-          </button>
-        </div>
       </div>
     );
   },
