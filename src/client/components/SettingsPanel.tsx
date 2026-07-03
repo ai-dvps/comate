@@ -24,6 +24,7 @@ import type { Workspace } from '../stores/workspace-store'
 import ProviderSection from './ProviderSection'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 import BotManagementPage, { type BotManagementPageHandle } from './BotManagementPage'
+import UnsavedChangesDialog from './UnsavedChangesDialog'
 
 interface SettingsPanelProps {
   onClose: () => void
@@ -95,6 +96,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [appNotificationSoundsVolume, setAppNotificationSoundsVolume] = useState(notificationSoundsVolume)
   const [windowCapInput, setWindowCapInput] = useState(String(windowCap))
   const [archiveThresholdDaysInput, setArchiveThresholdDaysInput] = useState(String(archiveThresholdDays))
+
+  const [workspaceDirty, setWorkspaceDirty] = useState(false)
 
   // Workspace form state (keyed by workspace id)
   const [workspaceState, setWorkspaceState] = useState<Record<string, WorkspaceFormState>>({})
@@ -184,17 +187,44 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
+  const isAppDirty = useCallback(() => {
+    return (
+      appReopen !== snapshotRef.current.appReopen ||
+      appModifierSubmit !== snapshotRef.current.appModifierSubmit ||
+      appAutoCheckUpdates !== snapshotRef.current.appAutoCheckUpdates ||
+      appNotificationSounds !== snapshotRef.current.appNotificationSounds ||
+      appNotificationSoundsVolume !== snapshotRef.current.appNotificationSoundsVolume ||
+      windowCap !== snapshotRef.current.appWindowCap ||
+      archiveThresholdDays !== snapshotRef.current.appArchiveThresholdDays
+    )
+  }, [
+    appReopen,
+    appModifierSubmit,
+    appAutoCheckUpdates,
+    appNotificationSounds,
+    appNotificationSoundsVolume,
+    windowCap,
+    archiveThresholdDays,
+  ])
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setWorkspaceDirty(false)
+      return
+    }
+    const current = workspaceState[selectedWorkspaceId]
+    const snapshot = snapshotRef.current.workspaceState[selectedWorkspaceId]
+    if (!current || !snapshot) {
+      setWorkspaceDirty(false)
+      return
+    }
+    setWorkspaceDirty(JSON.stringify(current) !== JSON.stringify(snapshot))
+  }, [selectedWorkspaceId, workspaceState])
+
   const isDirty = useCallback(() => {
     if (activeTab === 'bots' && botPageRef.current?.isDirty()) return true
-    if (appReopen !== snapshotRef.current.appReopen) return true
-    if (appModifierSubmit !== snapshotRef.current.appModifierSubmit) return true
-    if (appAutoCheckUpdates !== snapshotRef.current.appAutoCheckUpdates) return true
-    if (appNotificationSounds !== snapshotRef.current.appNotificationSounds) return true
-    if (appNotificationSoundsVolume !== snapshotRef.current.appNotificationSoundsVolume) return true
-    if (windowCap !== snapshotRef.current.appWindowCap) return true
-    if (archiveThresholdDays !== snapshotRef.current.appArchiveThresholdDays) return true
-    return JSON.stringify(workspaceState) !== JSON.stringify(snapshotRef.current.workspaceState)
-  }, [activeTab, appReopen, appModifierSubmit, appAutoCheckUpdates, appNotificationSounds, appNotificationSoundsVolume, windowCap, archiveThresholdDays, workspaceState])
+    return isAppDirty() || workspaceDirty
+  }, [activeTab, isAppDirty, workspaceDirty])
 
   const handleClose = useCallback(() => {
     if (isDirty()) {
@@ -220,63 +250,29 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleClose, showUnsavedDialog])
 
-  const handleSave = async () => {
-    setIsSaving(true)
-
-    if (activeTab === 'bots') {
-      await botPageRef.current?.save()
-      setIsSaving(false)
-      if (pendingClose) {
-        setPendingClose(false)
-        setShowUnsavedDialog(false)
-        onClose()
-      }
-      return
-    }
-
-    // Save app settings
+  const saveAppSettings = useCallback(() => {
     setReopenLastWorkspace(appReopen)
     setUseModifierToSubmit(appModifierSubmit)
     setAutoCheckUpdates(appAutoCheckUpdates)
     setNotificationSoundsEnabled(appNotificationSounds)
     setNotificationSoundsVolume(appNotificationSoundsVolume)
+
     const parsedCap = parseInt(windowCapInput, 10)
-    if (!isNaN(parsedCap)) {
+    if (!isNaN(parsedCap) && parsedCap !== windowCap) {
       setWindowCap(parsedCap)
     }
+
     const parsedArchiveThreshold = parseInt(archiveThresholdDaysInput, 10)
-    const nextArchiveThresholdDays = !isNaN(parsedArchiveThreshold) && parsedArchiveThreshold > 0
-      ? parsedArchiveThreshold
-      : archiveThresholdDays
+    const nextArchiveThresholdDays =
+      !isNaN(parsedArchiveThreshold) && parsedArchiveThreshold > 0
+        ? parsedArchiveThreshold
+        : archiveThresholdDays
     if (nextArchiveThresholdDays !== archiveThresholdDays) {
       setArchiveThresholdDays(nextArchiveThresholdDays)
     }
 
-    // Save workspace settings for selected workspace
-    if (selectedWorkspaceId && workspaceState[selectedWorkspaceId]) {
-      const ws = workspaceState[selectedWorkspaceId]
-      const parsedRetention = parseInt(ws.promptHistoryRetentionDays, 10)
-      const promptHistoryRetentionDays = !isNaN(parsedRetention) ? parsedRetention : 30
-      await updateWorkspace(selectedWorkspaceId, {
-        name: ws.name,
-        description: ws.description,
-        settings: {
-          wecomFilePromptTemplate: ws.wecomFilePromptTemplate || undefined,
-          promptHistoryRetentionDays,
-          sensitiveFileDenylist: ws.sensitiveFileDenylist,
-        },
-        skills: ws.skills,
-        mcpServers: ws.mcpServers.map((m) => ({
-          name: m.name,
-          command: m.command,
-          args: m.args ? m.args.split(' ').filter(Boolean) : undefined,
-        })),
-        hooks: ws.hooks,
-      })
-    }
-
-    // Update snapshot
     snapshotRef.current = {
+      ...snapshotRef.current,
       appReopen,
       appModifierSubmit,
       appAutoCheckUpdates,
@@ -284,44 +280,146 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appNotificationSoundsVolume,
       appWindowCap: windowCap,
       appArchiveThresholdDays: nextArchiveThresholdDays,
-      workspaceState: JSON.parse(JSON.stringify(workspaceState)),
     }
+  }, [
+    appReopen,
+    appModifierSubmit,
+    appAutoCheckUpdates,
+    appNotificationSounds,
+    appNotificationSoundsVolume,
+    windowCapInput,
+    windowCap,
+    archiveThresholdDaysInput,
+    archiveThresholdDays,
+    setReopenLastWorkspace,
+    setUseModifierToSubmit,
+    setAutoCheckUpdates,
+    setNotificationSoundsEnabled,
+    setNotificationSoundsVolume,
+    setWindowCap,
+    setArchiveThresholdDays,
+  ])
 
-    setIsSaving(false)
+  const discardAppSettings = useCallback(() => {
+    const snapshot = snapshotRef.current
+    setAppReopen(snapshot.appReopen)
+    setAppModifierSubmit(snapshot.appModifierSubmit)
+    setAppAutoCheckUpdates(snapshot.appAutoCheckUpdates)
+    setAppNotificationSounds(snapshot.appNotificationSounds)
+    setAppNotificationSoundsVolume(snapshot.appNotificationSoundsVolume)
+    setWindowCap(snapshot.appWindowCap)
+    setArchiveThresholdDays(snapshot.appArchiveThresholdDays)
+    setWindowCapInput(String(snapshot.appWindowCap))
+    setArchiveThresholdDaysInput(String(snapshot.appArchiveThresholdDays))
+  }, [setWindowCap, setArchiveThresholdDays, setWindowCapInput, setArchiveThresholdDaysInput])
 
-    if (pendingClose) {
-      setPendingClose(false)
-      setShowUnsavedDialog(false)
-      onClose()
+  const saveWorkspace = useCallback(async () => {
+    if (!selectedWorkspaceId || !workspaceState[selectedWorkspaceId]) return
+    const ws = workspaceState[selectedWorkspaceId]
+    const parsedRetention = parseInt(ws.promptHistoryRetentionDays, 10)
+    const promptHistoryRetentionDays = !isNaN(parsedRetention) ? parsedRetention : 30
+    await updateWorkspace(selectedWorkspaceId, {
+      name: ws.name,
+      description: ws.description,
+      settings: {
+        wecomFilePromptTemplate: ws.wecomFilePromptTemplate || undefined,
+        promptHistoryRetentionDays,
+        sensitiveFileDenylist: ws.sensitiveFileDenylist,
+      },
+      skills: ws.skills,
+      mcpServers: ws.mcpServers.map((m) => ({
+        name: m.name,
+        command: m.command,
+        args: m.args ? m.args.split(' ').filter(Boolean) : undefined,
+      })),
+      hooks: ws.hooks,
+    })
+
+    snapshotRef.current = {
+      ...snapshotRef.current,
+      workspaceState: {
+        ...snapshotRef.current.workspaceState,
+        [selectedWorkspaceId]: JSON.parse(JSON.stringify(ws)),
+      },
+    }
+    setWorkspaceDirty(false)
+  }, [selectedWorkspaceId, workspaceState, updateWorkspace])
+
+  const discardWorkspace = useCallback(() => {
+    if (!selectedWorkspaceId) return
+    setWorkspaceState((prev) => {
+      const snapshot = snapshotRef.current.workspaceState[selectedWorkspaceId]
+      if (snapshot) {
+        return {
+          ...prev,
+          [selectedWorkspaceId]: JSON.parse(JSON.stringify(snapshot)),
+        }
+      }
+      const ws = workspaces.find((w) => w.id === selectedWorkspaceId)
+      if (ws) {
+        return {
+          ...prev,
+          [selectedWorkspaceId]: buildWorkspaceFormState(ws),
+        }
+      }
+      return prev
+    })
+  }, [selectedWorkspaceId, workspaces])
+
+  const handleSaveApp = async () => {
+    setIsSaving(true)
+    try {
+      saveAppSettings()
+    } finally {
+      setIsSaving(false)
     }
   }
 
-  const handleCancel = () => {
-    // Reset to snapshot
-    setAppReopen(snapshotRef.current.appReopen)
-    setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
-    setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
-    setAppNotificationSounds(snapshotRef.current.appNotificationSounds)
-    setAppNotificationSoundsVolume(snapshotRef.current.appNotificationSoundsVolume)
-    setWindowCapInput(String(snapshotRef.current.appWindowCap))
-    setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
-    setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
-    onClose()
+  const handleDiscardApp = () => {
+    discardAppSettings()
   }
 
-  const handleDiscard = () => {
+  const handleSaveWorkspace = async () => {
+    setIsSaving(true)
+    try {
+      await saveWorkspace()
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleDiscardWorkspace = () => {
+    discardWorkspace()
+  }
+
+  const handleSaveAll = async () => {
+    setIsSaving(true)
+    try {
+      if (activeTab === 'bots' && botPageRef.current?.isDirty()) {
+        await botPageRef.current.save()
+      }
+      if (isAppDirty()) {
+        saveAppSettings()
+      }
+      if (workspaceDirty) {
+        await saveWorkspace()
+      }
+      if (pendingClose) {
+        setPendingClose(false)
+        setShowUnsavedDialog(false)
+        onClose()
+      }
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleDiscardAll = () => {
     if (activeTab === 'bots') {
       botPageRef.current?.discard()
-    } else {
-      setAppReopen(snapshotRef.current.appReopen)
-      setAppModifierSubmit(snapshotRef.current.appModifierSubmit)
-      setAppAutoCheckUpdates(snapshotRef.current.appAutoCheckUpdates)
-      setAppNotificationSounds(snapshotRef.current.appNotificationSounds)
-      setAppNotificationSoundsVolume(snapshotRef.current.appNotificationSoundsVolume)
-      setWindowCapInput(String(snapshotRef.current.appWindowCap))
-      setArchiveThresholdDaysInput(String(snapshotRef.current.appArchiveThresholdDays))
-      setWorkspaceState(JSON.parse(JSON.stringify(snapshotRef.current.workspaceState)))
     }
+    discardAppSettings()
+    discardWorkspace()
     setShowUnsavedDialog(false)
     setPendingClose(false)
     onClose()
@@ -434,6 +532,11 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                     setArchiveThresholdDays(parsed)
                   }
                 }}
+                isDirty={isAppDirty()}
+                onSave={handleSaveApp}
+                onCancel={handleDiscardApp}
+                isSaving={isSaving}
+                error={storeError}
               />
             )}
 
@@ -452,81 +555,66 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 onUpdateWorkspace={updateSelectedWorkspace}
                 onDelete={handleOpenDeleteDialog}
                 onManageBots={() => setActiveTab('bots')}
+                footer={
+                  workspaceDirty ? (
+                    <>
+                      <span className="text-[11px] text-text-tertiary">
+                        {storeError ? <span className="text-destructive">{storeError}</span> : t('unsavedDialog.message')}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleDiscardWorkspace}
+                          disabled={isSaving}
+                          className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
+                        >
+                          {t('actions.cancel')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveWorkspace()}
+                          disabled={isSaving}
+                          className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+                        >
+                          {isSaving ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              {t('unsavedDialog.saving')}
+                            </>
+                          ) : (
+                            <>
+                              {t('actions.save')}
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </>
+                  ) : null
+                }
+                isDirty={workspaceDirty}
+                isSaving={isSaving}
+                onSaveWorkspace={handleSaveWorkspace}
+                onDiscardWorkspace={handleDiscardWorkspace}
               />
             )}
           </div>
 
-          {/* Footer */}
-          <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0">
-            <div className="text-[11px] text-text-tertiary">
-              {storeError ? (
-                <span className="text-destructive">{storeError}</span>
-              ) : (
-                isDirty() && t('unsavedDialog.message')
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleCancel}
-                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
-              >
-                {t('actions.cancel')}
-              </button>
-              <button
-                onClick={() => handleSave()}
-                disabled={isSaving || !isDirty()}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-              >
-                <Save className="w-3.5 h-3.5" />
-                {isSaving ? t('unsavedDialog.saving') : t('actions.save')}
-              </button>
-            </div>
-          </div>
+          {/* Footer removed: per-tab local controls */}
         </div>
       </div>
 
-      {/* Unsaved Changes Dialog */}
-      {showUnsavedDialog && (
-        <div className="fixed top-11 inset-x-0 bottom-0 z-[60] flex items-center justify-center">
-          <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" />
-          <div className="relative bg-surface border border-border rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="text-sm font-medium text-text-primary">{t('unsavedDialog.title')}</h3>
-                <p className="text-xs text-text-secondary mt-1">
-                  {t('unsavedDialog.message')}
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button
-                onClick={() => {
-                  setShowUnsavedDialog(false)
-                  setPendingClose(false)
-                }}
-                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
-              >
-                {t('unsavedDialog.keepEditing')}
-              </button>
-              <button
-                onClick={handleDiscard}
-                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
-              >
-                {t('unsavedDialog.discard')}
-              </button>
-              <button
-                onClick={() => handleSave()}
-                disabled={isSaving}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-              >
-                <Save className="w-3.5 h-3.5" />
-                {isSaving ? t('unsavedDialog.saving') : t('actions.save')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <UnsavedChangesDialog
+        isOpen={showUnsavedDialog}
+        title={t('unsavedDialog.title')}
+        message={t('unsavedDialog.message')}
+        onSave={handleSaveAll}
+        onDiscard={handleDiscardAll}
+        onKeepEditing={() => {
+          setShowUnsavedDialog(false)
+          setPendingClose(false)
+        }}
+        isSaving={isSaving}
+      />
 
       {/* Delete Workspace Dialog */}
       {selectedWorkspace && (
@@ -568,6 +656,11 @@ export function GeneralTab({
   archiveThresholdDays,
   onArchiveThresholdDaysChange,
   onArchiveThresholdDaysCommit,
+  isDirty,
+  onSave,
+  onCancel,
+  isSaving,
+  error,
 }: {
   reopenLastWorkspace: boolean
   onReopenLastWorkspaceChange: (v: boolean) => void
@@ -591,6 +684,11 @@ export function GeneralTab({
   archiveThresholdDays: string
   onArchiveThresholdDaysChange: (v: string) => void
   onArchiveThresholdDaysCommit: (v: string) => void
+  isDirty: boolean
+  onSave: () => void | Promise<void>
+  onCancel: () => void
+  isSaving: boolean
+  error: string | null
 }) {
   const { t } = useTranslation('settings')
   const [appVersion, setAppVersion] = useState<string | null>(null)
@@ -892,6 +990,42 @@ export function GeneralTab({
             </button>
           </div>
         </div>
+
+        {isDirty && (
+          <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0 -mx-6 -mb-6 mt-6">
+            <span className="text-[11px] text-text-tertiary">
+              {error ? <span className="text-destructive">{error}</span> : t('unsavedDialog.message')}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={isSaving}
+                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
+              >
+                {t('actions.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onSave()}
+                disabled={isSaving}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    {t('unsavedDialog.saving')}
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5" />
+                    {t('actions.save')}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1222,6 +1356,11 @@ function WorkspaceTabShell({
   onUpdateWorkspace,
   onDelete,
   onManageBots,
+  footer,
+  isDirty,
+  isSaving,
+  onSaveWorkspace,
+  onDiscardWorkspace,
 }: {
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
@@ -1230,9 +1369,16 @@ function WorkspaceTabShell({
   onUpdateWorkspace: (updates: Partial<WorkspaceFormState>) => void
   onDelete: () => void
   onManageBots: () => void
+  footer?: React.ReactNode
+  isDirty?: boolean
+  isSaving?: boolean
+  onSaveWorkspace?: () => Promise<void>
+  onDiscardWorkspace?: () => void
 }) {
   const { t } = useTranslation('settings')
   const [activeSection, setActiveSection] = useState<WorkspaceSection>('general')
+  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null)
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
 
   // Reset to General when switching workspaces
   useEffect(() => {
@@ -1254,6 +1400,39 @@ function WorkspaceTabShell({
     { id: 'danger', label: t('workspaceSections.danger') },
   ]
 
+  const handleSelectWorkspace = (id: string) => {
+    if (id === selectedWorkspaceId) return
+    if (isDirty) {
+      setPendingWorkspaceId(id)
+      setShowUnsavedDialog(true)
+      return
+    }
+    onSelectWorkspace(id)
+  }
+
+  const handleDialogSave = async () => {
+    await onSaveWorkspace?.()
+    if (pendingWorkspaceId) {
+      onSelectWorkspace(pendingWorkspaceId)
+    }
+    setPendingWorkspaceId(null)
+    setShowUnsavedDialog(false)
+  }
+
+  const handleDialogDiscard = () => {
+    onDiscardWorkspace?.()
+    if (pendingWorkspaceId) {
+      onSelectWorkspace(pendingWorkspaceId)
+    }
+    setPendingWorkspaceId(null)
+    setShowUnsavedDialog(false)
+  }
+
+  const handleDialogKeepEditing = () => {
+    setPendingWorkspaceId(null)
+    setShowUnsavedDialog(false)
+  }
+
   return (
     <div className="flex h-full">
       {/* Left column: workspace list */}
@@ -1266,7 +1445,7 @@ function WorkspaceTabShell({
             {workspaces.map((ws) => (
               <button
                 key={ws.id}
-                onClick={() => onSelectWorkspace(ws.id)}
+                onClick={() => handleSelectWorkspace(ws.id)}
                 className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
                   selectedWorkspaceId === ws.id
                     ? 'bg-accent/10 text-accent'
@@ -1325,6 +1504,23 @@ function WorkspaceTabShell({
             </>
           )}
         </div>
+
+        {/* Footer */}
+        {footer && (
+          <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0">
+            {footer}
+          </div>
+        )}
+
+        <UnsavedChangesDialog
+          isOpen={showUnsavedDialog}
+          title={t('unsavedDialog.title')}
+          message={t('unsavedDialog.message')}
+          onSave={handleDialogSave}
+          onDiscard={handleDialogDiscard}
+          onKeepEditing={handleDialogKeepEditing}
+          isSaving={isSaving}
+        />
       </div>
     </div>
   )

@@ -53,6 +53,11 @@ describe('GeneralTab updater flow', () => {
     archiveThresholdDays: '14',
     onArchiveThresholdDaysChange: vi.fn(),
     onArchiveThresholdDaysCommit: vi.fn(),
+    isDirty: false,
+    onSave: vi.fn(),
+    onCancel: vi.fn(),
+    isSaving: false,
+    error: null as string | null,
   };
 
   beforeEach(() => {
@@ -206,5 +211,64 @@ describe('GeneralTab updater flow', () => {
 
     const slider = screen.getByRole('slider', { name: /Notification sound volume/i }) as HTMLInputElement;
     expect(slider.disabled).toBe(true);
+  });
+
+  it('does not render the local footer when not dirty', async () => {
+    await renderWithAct(
+      <I18nextProvider i18n={i18n}>
+        <GeneralTab {...defaultProps} isDirty={false} />
+      </I18nextProvider>,
+    );
+    expect(screen.queryByRole('button', { name: /Save/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Cancel/i })).not.toBeInTheDocument();
+  });
+
+  it('renders the local Save/Cancel footer when dirty', async () => {
+    await renderWithAct(
+      <I18nextProvider i18n={i18n}>
+        <GeneralTab {...defaultProps} isDirty />
+      </I18nextProvider>,
+    );
+    expect(screen.getByRole('button', { name: /Save/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
+  });
+
+  it('calls onSave and onCancel from the local footer', async () => {
+    const onSave = vi.fn();
+    const onCancel = vi.fn();
+    await renderWithAct(
+      <I18nextProvider i18n={i18n}>
+        <GeneralTab {...defaultProps} isDirty onSave={onSave} onCancel={onCancel} />
+      </I18nextProvider>,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Save/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it('disables footer actions and shows a spinner while saving', async () => {
+    await renderWithAct(
+      <I18nextProvider i18n={i18n}>
+        <GeneralTab {...defaultProps} isDirty isSaving />
+      </I18nextProvider>,
+    );
+    expect(screen.getByText('Saving...')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Saving\.\.\./i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeDisabled();
+  });
+
+  it('renders an error message in the footer when error is provided', async () => {
+    await renderWithAct(
+      <I18nextProvider i18n={i18n}>
+        <GeneralTab {...defaultProps} isDirty error="Something failed" />
+      </I18nextProvider>,
+    );
+    expect(screen.getByText('Something failed')).toBeInTheDocument();
   });
 });
