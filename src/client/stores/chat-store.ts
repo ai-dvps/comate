@@ -7,38 +7,13 @@ import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
 import { wsClient } from '../lib/websocket-client.js'
-import type { WsEventMessage, WsRequestType } from '@server/websocket/types'
+import type { WsEventMessage } from '@server/websocket/types'
 
 export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
 
 const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout>; workspaceId: string }>()
 const lastEventId = new Map<string, string>()
 const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
-
-function isHttpForced(): boolean {
-  try {
-    return typeof localStorage !== 'undefined' && localStorage.getItem('comate-force-http') === '1'
-  } catch {
-    return false
-  }
-}
-
-async function wsRequestWithFallback<T>(
-  type: WsRequestType,
-  payload: Record<string, unknown>,
-  fallback: () => Promise<T>,
-  timeout?: number,
-): Promise<T> {
-  if (!isHttpForced()) {
-    try {
-      const result = await wsClient.request(type, payload, timeout)
-      return result as T
-    } catch (err) {
-      console.warn(`[ws] ${type} failed, falling back to HTTP`, err)
-    }
-  }
-  return fallback()
-}
 
 function closeSessionSubscriptions(exceptSessionId?: string): void {
   for (const [sessionId, sub] of sessionSubscriptions) {
@@ -68,16 +43,8 @@ function startBackgroundPolling(
   }
 
   const interval = setInterval(() => {
-    wsRequestWithFallback(
-      'status',
-      { workspaceId },
-      async () => {
-        const res = await fetch(`/api/workspaces/${workspaceId}/sessions/status`)
-        if (!res.ok) throw new Error('status fallback failed')
-        return res.json()
-      },
-      5000,
-    )
+    wsClient
+      .request('status', { workspaceId }, 5000)
       .then((data) => {
         const result = data as {
           statuses?: Record<string, { pendingCount: number; isProcessing?: boolean }>
@@ -1344,28 +1311,18 @@ export function handleSseEvent(
           const { workspaceId, content } = pending
           updates.pendingSend = { ...state.pendingSend }
           delete updates.pendingSend[sessionId]
-          wsRequestWithFallback(
-            'sendMessage',
-            { workspaceId, sessionId, content },
-            async () => {
-              const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: content }),
-              })
-              if (!res.ok) throw new Error('queued message fallback failed')
-              return res.json()
-            },
-          ).catch((err) => {
-            console.error('Failed to send queued message:', err)
-            set((s) =>
-              addSystemMessage(
-                s,
-                sessionId,
-                `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
-              ),
-            )
-          })
+          wsClient
+            .request('sendMessage', { workspaceId, sessionId, content })
+            .catch((err) => {
+              console.error('Failed to send queued message:', err)
+              set((s) =>
+                addSystemMessage(
+                  s,
+                  sessionId,
+                  `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
+                ),
+              )
+            })
         }
         return updates
       })
@@ -1453,13 +1410,11 @@ export function handleSseEvent(
           updates.draftQueue = { ...state.draftQueue }
           delete updates.draftQueue[sessionId]
           // Send the queued message asynchronously
-          fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: content }),
-          }).catch((err) => {
-            console.error('Failed to send queued message:', err)
-          })
+          wsClient
+            .request('sendMessage', { workspaceId, sessionId, content })
+            .catch((err) => {
+              console.error('Failed to send queued message:', err)
+            })
         }
         return updates
       })
@@ -2323,15 +2278,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true } }))
-      const data = (await wsRequestWithFallback(
-        'loadMessages',
-        { workspaceId, sessionId },
-        async () => {
-          const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
-          if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
-          return res.json()
-        },
-      )) as {
+      const data = (await wsClient.request('loadMessages', { workspaceId, sessionId })) as {
         messages?: unknown
         tasks?: TaskItem[]
         subagents?: unknown
@@ -2461,7 +2408,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return
     }
 
-    // Gate the POST on subscription_ack — without an ack, the server has not
+    // Gate the send on subscription_ack — without an ack, the server has not
     // yet wired this client's response into the emitter, so events would emit
     // only into the ring buffer. The ack handler drains pendingSend.
     if (!get().serverNonce[sessionId]) {
@@ -2471,25 +2418,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return
     }
 
-    // Send via WebSocket with HTTP fallback
-    wsRequestWithFallback(
-      'sendMessage',
-      { workspaceId, sessionId, content },
-      async () => {
-        const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: content }),
-        })
-        if (!res.ok) throw new Error('send message fallback failed')
-        return res.json()
-      },
-    ).catch((err) => {
-      console.error('Failed to send message:', err)
-      set((state) =>
-        addSystemMessage(
-          state,
-          sessionId,
+    // Send via WebSocket
+    wsClient
+      .request('sendMessage', { workspaceId, sessionId, content })
+      .catch((err) => {
+        console.error('Failed to send message:', err)
+        set((state) =>
+          addSystemMessage(
+            state,
+            sessionId,
           `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
         ),
       )
@@ -2679,15 +2616,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           [sessionId]: true,
         },
       }))
-      const url = new URL(
-        `/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`,
-        window.location.origin,
-      )
-      url.searchParams.set('offset', String(offset))
-      url.searchParams.set('limit', String(limit))
-      const res = await fetch(url.pathname + url.search)
-      if (!res.ok) throw new Error(i18next.t('common:failedToFetchOlderMessages', 'Failed to fetch older messages'))
-      const data = (await res.json()) as {
+      const data = (await wsClient.request('loadMessages', { workspaceId, sessionId, offset, limit })) as {
         messages?: unknown
         tasks?: TaskItem[]
       }
@@ -2734,17 +2663,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true },
       }))
 
-      const url = new URL(
-        `/api/workspaces/${workspaceId}/sessions/${sessionId}/messages/latest`,
-        window.location.origin,
-      )
-      if (afterMessageId) {
-        url.searchParams.set('afterMessageId', afterMessageId)
-      }
-
-      const res = await fetch(url.pathname + url.search)
-      if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
-      const data = (await res.json()) as { messages?: unknown; tasks?: TaskItem[] }
+      const data = (await wsClient.request('loadMessagesAfter', {
+        workspaceId,
+        sessionId,
+        afterMessageId,
+      })) as { messages?: unknown; tasks?: TaskItem[] }
       const newMessages = sanitizeMessages(data.messages)
 
       set((state) => {

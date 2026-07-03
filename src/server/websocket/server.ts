@@ -13,6 +13,7 @@ import type {
   StatusResult,
   SendMessagePayload,
   LoadMessagesPayload,
+  LoadMessagesAfterPayload,
 } from './types.js';
 import type { SseEvent } from '../types/message.js';
 
@@ -82,6 +83,9 @@ export class ComateWebSocketServer {
           break;
         case 'loadMessages':
           await this.handleLoadMessages(ctx, req);
+          break;
+        case 'loadMessagesAfter':
+          await this.handleLoadMessagesAfter(ctx, req);
           break;
         default: {
           const _exhaustive: never = req.type;
@@ -183,6 +187,16 @@ export class ComateWebSocketServer {
       workspaceId,
       offset,
       limit,
+    );
+    this.sendOk(ctx.socket, req.id, { messages, tasks, subagents });
+  }
+
+  private async handleLoadMessagesAfter(ctx: ClientContext, req: WsRequest): Promise<void> {
+    const { workspaceId, sessionId, afterMessageId } = req.payload as unknown as LoadMessagesAfterPayload;
+    const { messages, tasks, subagents } = await chatService.loadMessagesAfter(
+      sessionId,
+      workspaceId,
+      afterMessageId,
     );
     this.sendOk(ctx.socket, req.id, { messages, tasks, subagents });
   }

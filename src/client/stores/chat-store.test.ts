@@ -1,6 +1,7 @@
-import { describe, it, beforeEach } from 'node:test'
+import { describe, it, beforeEach, vi } from 'vitest'
 import assert from 'node:assert'
 import { normalizeSdkStatus, sanitizeSubagents, useChatStore, handleSseEvent, type SseSetter } from './chat-store'
+import { wsClient } from '../lib/websocket-client'
 import type { SubagentState, TaskItem } from '../types/message'
 
 describe('normalizeSdkStatus', () => {
@@ -105,9 +106,7 @@ describe('loadMessages subagent hydration', () => {
       progressHint: '',
       messages: [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] }],
     }
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify({ messages: [], tasks: [], subagents: [subagent] }), { status: 200 })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ messages: [], tasks: [], subagents: [subagent] })
 
     try {
       await useChatStore.getState().loadMessages('ws-1', 's1')
@@ -116,7 +115,7 @@ describe('loadMessages subagent hydration', () => {
       assert.strictEqual(state.length, 1)
       assert.strictEqual(state[0].parentToolUseId, 'tool-1')
     } finally {
-      globalThis.fetch = originalFetch
+      requestSpy.mockRestore()
     }
   })
 
@@ -153,9 +152,7 @@ describe('loadMessages subagent hydration', () => {
 
     useChatStore.setState({ subagents: { s1: [live] } })
 
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = async () =>
-      new Response(JSON.stringify({ messages: [], tasks: [], subagents: [historical, other] }), { status: 200 })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ messages: [], tasks: [], subagents: [historical, other] })
 
     try {
       await useChatStore.getState().loadMessages('ws-1', 's1')
@@ -168,7 +165,7 @@ describe('loadMessages subagent hydration', () => {
       assert.strictEqual(liveAfter?.description, 'Live Agent')
       assert.strictEqual(otherAfter?.state, 'completed')
     } finally {
-      globalThis.fetch = originalFetch
+      requestSpy.mockRestore()
     }
   })
 })
@@ -264,86 +261,66 @@ describe('bot session guards', () => {
       sessions: { 'ws-1': [makeSession('feishu')] },
     })
 
-    const originalFetch = globalThis.fetch
-    let fetchCalled = false
-    globalThis.fetch = async () => {
-      fetchCalled = true
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
-    }
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
 
     try {
       useChatStore.getState().sendMessage('ws-1', 's1', 'hello')
-      assert.strictEqual(fetchCalled, false)
+      assert.strictEqual(requestSpy.mock.calls.length, 0)
       assert.strictEqual(useChatStore.getState().messages['s1'], undefined)
     } finally {
-      globalThis.fetch = originalFetch
+      requestSpy.mockRestore()
     }
   })
 
-  it('sendMessage posts to a GUI session', () => {
+  it('sendMessage sends via WebSocket to a GUI session', () => {
     useChatStore.setState({
       sessions: { 'ws-1': [makeSession('gui')] },
       serverNonce: { s1: 'nonce-1' },
     })
 
-    const originalFetch = globalThis.fetch
-    let fetchCalled = false
-    globalThis.fetch = async () => {
-      fetchCalled = true
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
-    }
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
 
     try {
       useChatStore.getState().sendMessage('ws-1', 's1', 'hello')
-      assert.strictEqual(fetchCalled, true)
+      assert.strictEqual(requestSpy.mock.calls.length, 1)
+      assert.strictEqual(requestSpy.mock.calls[0][0], 'sendMessage')
       assert.strictEqual(useChatStore.getState().messages['s1']?.length, 1)
     } finally {
-      globalThis.fetch = originalFetch
+      requestSpy.mockRestore()
     }
   })
 
-  it('refreshBotMessages fetches latest messages for a Feishu bot session', async () => {
+  it('refreshBotMessages loads latest messages via WebSocket for a Feishu bot session', async () => {
     useChatStore.setState({
       sessions: { 'ws-1': [makeSession('feishu')] },
     })
 
-    const originalFetch = globalThis.fetch
-    let fetchedUrl: string | null = null
-    globalThis.fetch = async (url) => {
-      fetchedUrl = String(url)
-      return new Response(JSON.stringify({ messages: [] }), { status: 200 })
-    }
-
-    const originalWindow = globalThis.window
-    globalThis.window = { location: { origin: 'http://localhost' } } as unknown as Window & typeof globalThis
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ messages: [] })
 
     try {
       await useChatStore.getState().refreshBotMessages('ws-1', 's1')
-      assert.ok(fetchedUrl !== null)
-      assert.ok((fetchedUrl as string).includes('/sessions/s1/messages/latest'))
+      assert.strictEqual(requestSpy.mock.calls.length, 1)
+      assert.strictEqual(requestSpy.mock.calls[0][0], 'loadMessagesAfter')
+      const payload = requestSpy.mock.calls[0][1] as Record<string, unknown>
+      assert.strictEqual(payload.workspaceId, 'ws-1')
+      assert.strictEqual(payload.sessionId, 's1')
     } finally {
-      globalThis.fetch = originalFetch
-      globalThis.window = originalWindow
+      requestSpy.mockRestore()
     }
   })
 
-  it('refreshBotMessages does not fetch for a GUI session', async () => {
+  it('refreshBotMessages does not request for a GUI session', async () => {
     useChatStore.setState({
       sessions: { 'ws-1': [makeSession('gui')] },
     })
 
-    const originalFetch = globalThis.fetch
-    let fetchCalled = false
-    globalThis.fetch = async () => {
-      fetchCalled = true
-      return new Response(JSON.stringify({ messages: [] }), { status: 200 })
-    }
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ messages: [] })
 
     try {
       await useChatStore.getState().refreshBotMessages('ws-1', 's1')
-      assert.strictEqual(fetchCalled, false)
+      assert.strictEqual(requestSpy.mock.calls.length, 0)
     } finally {
-      globalThis.fetch = originalFetch
+      requestSpy.mockRestore()
     }
   })
 })

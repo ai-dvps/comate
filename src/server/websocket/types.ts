@@ -13,6 +13,7 @@ export type WsRequestType =
   | 'status'
   | 'sendMessage'
   | 'loadMessages'
+  | 'loadMessagesAfter'
 
 export interface WsRequest {
   id: string
@@ -78,4 +79,10 @@ export interface LoadMessagesPayload {
   sessionId: string
   offset?: number
   limit?: number
+}
+
+export interface LoadMessagesAfterPayload {
+  workspaceId: string
+  sessionId: string
+  afterMessageId?: string
 }

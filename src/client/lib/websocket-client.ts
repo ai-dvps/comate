@@ -100,7 +100,7 @@ class WebSocketClient {
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, MAX_RECONNECT_DELAY);
   }
 
-  request<T extends WsRequestType>(type: T, payload: Record<string, unknown>, timeout = DEFAULT_TIMEOUT): Promise<unknown> {
+  request(type: WsRequestType, payload: Record<string, unknown>, timeout = DEFAULT_TIMEOUT): Promise<unknown> {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const req: WsRequest = { id, type, payload };
 
