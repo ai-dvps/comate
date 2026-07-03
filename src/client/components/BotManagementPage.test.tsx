@@ -18,7 +18,21 @@ function makeBot(overrides?: Partial<Bot>): Bot {
     name: 'TeamBot',
     activeWorkspaceId: null,
     channelSettings: {},
-    rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+    rolePolicy: {
+      normalToolPolicy: {
+        posture: 'safe',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+        },
+      },
+      skillAllowlist: [],
+      bashWhitelist: [],
+    },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
@@ -102,7 +116,18 @@ describe('BotManagementPage', () => {
     expect(generalTab.className).toContain('border-b-2');
   });
 
-  it('marks basic config dirty and shows Save/Cancel footer when name changes', async () => {
+  it('renders the Save/Cancel footer with disabled actions when clean', async () => {
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeDisabled();
+  });
+
+  it('marks basic config dirty and enables Save/Cancel footer when name changes', async () => {
     await act(async () => {
       renderWithI18n(<BotManagementPage />);
     });
@@ -111,12 +136,12 @@ describe('BotManagementPage', () => {
     fireEvent.change(nameInput, { target: { value: 'TeamBot v2' } });
 
     await waitFor(() => {
-      expect(screen.getByText('Save')).toBeInTheDocument();
-      expect(screen.getByText('Cancel')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeEnabled();
     });
   });
 
-  it('calls updateBot and clears dirty state when Save is clicked', async () => {
+  it('calls updateBot and disables Save/Cancel footer when Save is clicked', async () => {
     const updatedBot = makeBot({ name: 'TeamBot v2' });
     const updateBot = vi.fn().mockResolvedValue(updatedBot);
     (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -131,16 +156,21 @@ describe('BotManagementPage', () => {
     const nameInput = screen.getByPlaceholderText('My Bot');
     fireEvent.change(nameInput, { target: { value: 'TeamBot v2' } });
 
-    await waitFor(() => expect(screen.getByText('Save')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
 
-    fireEvent.click(screen.getByText('Save'));
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
 
     await waitFor(() => {
       expect(updateBot).toHaveBeenCalledWith('bot-1', expect.objectContaining({ name: 'TeamBot v2' }));
     });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeDisabled();
+    });
   });
 
-  it('reverts edits when Cancel is clicked', async () => {
+  it('reverts edits and disables Save/Cancel footer when Cancel is clicked', async () => {
     await act(async () => {
       renderWithI18n(<BotManagementPage />);
     });
@@ -149,11 +179,13 @@ describe('BotManagementPage', () => {
     fireEvent.change(nameInput, { target: { value: 'Draft Name' } });
     expect(nameInput.value).toBe('Draft Name');
 
-    await waitFor(() => expect(screen.getByText('Cancel')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('Cancel'));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));
 
     await waitFor(() => {
       expect(nameInput.value).toBe('TeamBot');
+      expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeDisabled();
     });
   });
 
@@ -268,7 +300,7 @@ describe('BotManagementPage', () => {
     });
   });
 
-  it('delegates persona save through global save and calls updateBot with rolePersonas', async () => {
+  it('delegates persona save through the page-level Save footer', async () => {
     const updateBot = vi.fn().mockResolvedValue(makeBot({ persona: { prompt: 'Friendly', mode: 'append' } }));
     (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       ...mockState,
@@ -284,9 +316,8 @@ describe('BotManagementPage', () => {
 
     fireEvent.change(screen.getByPlaceholderText(/You are a helpful DevOps assistant/i), { target: { value: 'Friendly' } });
 
-    // The persona editor's own Save button should appear.
-    await waitFor(() => expect(screen.getByText('Save persona')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('Save persona'));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
 
     await waitFor(() => {
       expect(updateBot).toHaveBeenCalledWith(
@@ -296,6 +327,111 @@ describe('BotManagementPage', () => {
           rolePersonas: {},
         }),
       );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+    });
+  });
+
+  it('marks role permissions dirty and saves them through the page-level footer', async () => {
+    const updateBot = vi.fn().mockResolvedValue(
+      makeBot({ rolePolicy: { normalToolPolicy: { posture: 'safe', categoryDefaults: {} }, skillAllowlist: ['skill-a'], bashWhitelist: [] } }),
+    );
+    (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      ...mockState,
+      updateBot,
+    });
+
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Roles/i }));
+    await waitFor(() => expect(screen.getByText('Role Permissions')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. my-skill'), { target: { value: 'skill-a' } });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() => {
+      expect(updateBot).toHaveBeenCalledWith(
+        'bot-1',
+        expect.objectContaining({
+          rolePolicy: expect.objectContaining({
+            skillAllowlist: ['skill-a'],
+          }),
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+    });
+  });
+
+  it('shows unsaved-changes dialog when switching bots with dirty role config', async () => {
+    (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      ...mockState,
+      bots: [makeBot(), makeBot({ id: 'bot-2', name: 'DevOps Bot' })],
+    });
+
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Roles/i }));
+    await waitFor(() => expect(screen.getByText('Role Permissions')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. my-skill'), { target: { value: 'skill-a' } });
+
+    fireEvent.click(screen.getByText('DevOps Bot'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    });
+  });
+
+  it('saves Basic config and Role permissions together without wiping either slice', async () => {
+    const updateBot = vi.fn().mockImplementation((_id, input) =>
+      Promise.resolve(makeBot({ name: input.name ?? 'TeamBot v2', rolePolicy: input.rolePolicy ?? makeBot().rolePolicy })),
+    );
+    (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      ...mockState,
+      updateBot,
+    });
+
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+
+    const nameInput = screen.getByPlaceholderText('My Bot');
+    fireEvent.change(nameInput, { target: { value: 'TeamBot v2' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Roles/i }));
+    await waitFor(() => expect(screen.getByText('Role Permissions')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. my-skill'), { target: { value: 'skill-a' } });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() => {
+      expect(updateBot).toHaveBeenCalledTimes(2);
+    });
+
+    expect(updateBot).toHaveBeenNthCalledWith(1, 'bot-1', expect.objectContaining({ name: 'TeamBot v2' }));
+    expect(updateBot).toHaveBeenNthCalledWith(
+      2,
+      'bot-1',
+      expect.objectContaining({
+        rolePolicy: expect.objectContaining({ skillAllowlist: ['skill-a'] }),
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
     });
   });
 
