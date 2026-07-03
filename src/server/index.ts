@@ -42,6 +42,7 @@ import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
 import { initializeResolvedShellEnv } from './utils/resolve-shell-env.js';
 import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketplace-path.js';
 import { addExtraKnownMarketplace } from './utils/claude-settings.js';
+import { ComateWebSocketServer } from './websocket/server.js';
 
 function getDirname(): string {
   try {
@@ -177,6 +178,9 @@ const server = app.listen(PORT, () => {
   const serverUrl = `http://localhost:${actualPort}`;
   console.log(`Server running on ${serverUrl}`);
   diagLog(`Server started on ${serverUrl} (diag log file: ${path.join(getLogsDir(), 'sse-diag.log')})`);
+
+  // Attach WebSocket server to the same HTTP listener.
+  new ComateWebSocketServer().attach(server);
 
   // Emit ready message for Tauri sidecar discovery when PORT=0
   if (process.env.COMATE_SIDECAR === '1') {

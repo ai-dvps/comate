@@ -291,6 +291,11 @@ export class SseEmitter {
     this.send({ type: 'subscription_ack', serverNonce, sessionId });
   }
 
+  emitWebEvent(event: SseEvent): void {
+    const id = this.eventIndex++;
+    this.onEvent?.(id, event);
+  }
+
   emitPendingApproval(
     requestId: string,
     toolName: string,

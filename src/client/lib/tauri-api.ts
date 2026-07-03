@@ -22,11 +22,17 @@ async function resolveApiBaseWithRetry(): Promise<string> {
 
 let apiBasePromise: Promise<string> | null = null;
 
-function getApiBase(): Promise<string> {
+export function getApiBase(): Promise<string> {
   if (!apiBasePromise) {
     apiBasePromise = resolveApiBaseWithRetry();
   }
   return apiBasePromise;
+}
+
+export async function getWebSocketUrl(): Promise<string> {
+  const base = await getApiBase();
+  if (!base) return '';
+  return base.replace(/^http/, 'ws') + '/ws';
 }
 
 export function initTauriApi(): void {
