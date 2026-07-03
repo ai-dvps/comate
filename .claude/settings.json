@@ -1,0 +1,16 @@
+{
+  "enabledPlugins": {
+    "wecom@comate-built-in": true
+  },
+  "pluginManager": {
+    "plugins": {
+      "wecom": {
+        "version": "0.1.0",
+        "source": "comate-built-in",
+        "enabled": true,
+        "installedAt": "2026-06-30T13:16:28.319Z",
+        "updatedAt": "2026-06-30T13:16:28.319Z"
+      }
+    }
+  }
+}

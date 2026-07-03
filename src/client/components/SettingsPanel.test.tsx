@@ -213,14 +213,16 @@ describe('GeneralTab updater flow', () => {
     expect(slider.disabled).toBe(true);
   });
 
-  it('does not render the local footer when not dirty', async () => {
+  it('renders the local footer with disabled actions when not dirty', async () => {
     await renderWithAct(
       <I18nextProvider i18n={i18n}>
         <GeneralTab {...defaultProps} isDirty={false} />
       </I18nextProvider>,
     );
-    expect(screen.queryByRole('button', { name: /Save/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Cancel/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeDisabled();
   });
 
   it('renders the local Save/Cancel footer when dirty', async () => {
