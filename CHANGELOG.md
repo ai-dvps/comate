@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Bot channel ownership model** — the bot "Provider" concept has been renamed to "Channel" across TypeScript models, the Express API, SQLite storage, and the React UI. Bot ownership is now scoped per channel: each enabled WeCom/Feishu channel has exactly one owner, channel owners can manage members of their own channel and switch the bot's active workspace, but they cannot update/delete the bot or manage other channels. The GUI bypasses ownership checks via the system actor. Existing databases are migrated automatically; promoting owners in already-migrated databases is left to the GUI. English and Simplified Chinese i18n keys added.
 
-## [0.0.20] - 2026-06-30
+## [0.0.20] - 2026-07-04
 
 ### Added
 
@@ -263,6 +263,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added planning artifacts for chat message search.
 
+[0.0.20]: https://github.com/ai-dvps/comate/releases/tag/v0.0.20
 [0.0.19]: https://github.com/ai-dvps/comate/releases/tag/v0.0.19
 [0.0.13]: https://github.com/ai-dvps/comate/releases/tag/v0.0.13
 [0.0.12]: https://github.com/ai-dvps/comate/releases/tag/v0.0.12

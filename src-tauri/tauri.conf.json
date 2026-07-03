@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Comate",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "identifier": "com.comate.app",
   "build": {
     "frontendDist": "../dist/client",
