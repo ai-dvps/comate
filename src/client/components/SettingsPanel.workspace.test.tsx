@@ -164,6 +164,21 @@ describe('SettingsPanel workspace tab local footer', () => {
     vi.restoreAllMocks();
   });
 
+  it('renders the workspace footer with disabled actions when clean', async () => {
+    const onClose = vi.fn();
+
+    await act(async () => {
+      renderWithI18n(<SettingsPanel onClose={onClose} />);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
+
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeDisabled();
+  });
+
   it('shows the local Save/Cancel footer when workspace fields are dirty', async () => {
     const onClose = vi.fn();
 
@@ -183,7 +198,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
   });
 
-  it('saves the workspace and hides the footer when Save is clicked', async () => {
+  it('saves the workspace and disables the footer buttons when Save is clicked', async () => {
     const onClose = vi.fn();
 
     await act(async () => {
@@ -198,8 +213,11 @@ describe('SettingsPanel workspace tab local footer', () => {
       await Promise.resolve();
     });
 
+    const saveButton = screen.getByRole('button', { name: /^Save$/i });
+    expect(saveButton).not.toBeDisabled();
+
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Save/i }));
+      fireEvent.click(saveButton);
       await Promise.resolve();
     });
 
@@ -211,11 +229,11 @@ describe('SettingsPanel workspace tab local footer', () => {
     });
 
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /^Save$/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
     });
   });
 
-  it('reverts the workspace and hides the footer when Cancel is clicked', async () => {
+  it('reverts the workspace and disables the footer buttons when Cancel is clicked', async () => {
     const onClose = vi.fn();
 
     await act(async () => {
@@ -236,7 +254,8 @@ describe('SettingsPanel workspace tab local footer', () => {
     });
 
     expect(nameInput.value).toBe('Workspace One');
-    expect(screen.queryByRole('button', { name: /^Save$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeDisabled();
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
   });
 

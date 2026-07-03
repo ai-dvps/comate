@@ -556,40 +556,42 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 onDelete={handleOpenDeleteDialog}
                 onManageBots={() => setActiveTab('bots')}
                 footer={
-                  workspaceDirty ? (
-                    <>
-                      <span className="text-[11px] text-text-tertiary">
-                        {storeError ? <span className="text-destructive">{storeError}</span> : t('unsavedDialog.message')}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={handleDiscardWorkspace}
-                          disabled={isSaving}
-                          className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
-                        >
-                          {t('actions.cancel')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleSaveWorkspace()}
-                          disabled={isSaving}
-                          className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-                        >
-                          {isSaving ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              {t('unsavedDialog.saving')}
-                            </>
-                          ) : (
-                            <>
-                              {t('actions.save')}
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </>
-                  ) : null
+                  <>
+                    <span className="text-[11px] text-text-tertiary">
+                      {storeError ? (
+                        <span className="text-destructive">{storeError}</span>
+                      ) : workspaceDirty ? (
+                        t('unsavedDialog.message')
+                      ) : null}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleDiscardWorkspace}
+                        disabled={isSaving || !workspaceDirty}
+                        className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
+                      >
+                        {t('actions.cancel')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveWorkspace()}
+                        disabled={isSaving || !workspaceDirty}
+                        className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+                      >
+                        {isSaving ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            {t('unsavedDialog.saving')}
+                          </>
+                        ) : (
+                          <>
+                            {t('actions.save')}
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </>
                 }
                 isDirty={workspaceDirty}
                 isSaving={isSaving}
@@ -728,304 +730,304 @@ export function GeneralTab({
   }, [updateStatus, updateError, lastUpdateCheckAt, t])
 
   return (
-    <div className="p-6 max-w-xl">
-      <div className="space-y-5">
-        <PathConfigSection />
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-xl space-y-5">
+          <PathConfigSection />
 
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            {t('general.messageWindowCap')}
-          </label>
-          <input
-            type="number"
-            min={50}
-            max={1000}
-            value={windowCap}
-            onChange={(e) => onWindowCapChange(e.target.value)}
-            onBlur={() => onWindowCapCommit(windowCap)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                onWindowCapCommit(windowCap)
-              }
-            }}
-            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <p className="text-[10px] text-text-tertiary mt-1">
-            {t('general.messageWindowCapHint')}
-          </p>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            {t('general.archiveThresholdDays')}
-          </label>
-          <input
-            type="number"
-            min={1}
-            value={archiveThresholdDays}
-            onChange={(e) => onArchiveThresholdDaysChange(e.target.value)}
-            onBlur={() => onArchiveThresholdDaysCommit(archiveThresholdDays)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                onArchiveThresholdDaysCommit(archiveThresholdDays)
-              }
-            }}
-            className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <p className="text-[10px] text-text-tertiary mt-1">
-            {t('general.archiveThresholdDaysHint')}
-          </p>
-        </div>
-
-        <div className="flex items-center justify-between py-3 border-t border-border/50">
           <div>
-            <label className="block text-xs font-medium text-text-secondary">
-              {t('general.reopenLastWorkspace')}
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+              {t('general.messageWindowCap')}
             </label>
-            <p className="text-[10px] text-text-tertiary mt-0.5">
-              {t('general.reopenLastWorkspaceHint')}
+            <input
+              type="number"
+              min={50}
+              max={1000}
+              value={windowCap}
+              onChange={(e) => onWindowCapChange(e.target.value)}
+              onBlur={() => onWindowCapCommit(windowCap)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  onWindowCapCommit(windowCap)
+                }
+              }}
+              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">
+              {t('general.messageWindowCapHint')}
             </p>
           </div>
-          <button
-            onClick={() => onReopenLastWorkspaceChange(!reopenLastWorkspace)}
-            className={`relative w-9 h-5 rounded-full transition-colors ${
-              reopenLastWorkspace ? 'bg-accent' : 'bg-border'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                reopenLastWorkspace ? 'translate-x-4' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </div>
 
-        <div className="flex items-center justify-between py-3 border-t border-border/50">
           <div>
-            <label className="block text-xs font-medium text-text-secondary">
-              {t('general.useModifierToSubmit')}
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+              {t('general.archiveThresholdDays')}
             </label>
-            <p className="text-[10px] text-text-tertiary mt-0.5">
-              {t('general.useModifierToSubmitHint')}
+            <input
+              type="number"
+              min={1}
+              value={archiveThresholdDays}
+              onChange={(e) => onArchiveThresholdDaysChange(e.target.value)}
+              onBlur={() => onArchiveThresholdDaysCommit(archiveThresholdDays)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  onArchiveThresholdDaysCommit(archiveThresholdDays)
+                }
+              }}
+              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">
+              {t('general.archiveThresholdDaysHint')}
             </p>
           </div>
-          <button
-            onClick={() => onUseModifierToSubmitChange(!useModifierToSubmit)}
-            className={`relative w-9 h-5 rounded-full transition-colors ${
-              useModifierToSubmit ? 'bg-accent' : 'bg-border'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                useModifierToSubmit ? 'translate-x-4' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </div>
 
-        <div className="flex items-center justify-between py-3 border-t border-border/50">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary">
-              {t('general.notificationSounds')}
-            </label>
-            <p className="text-[10px] text-text-tertiary mt-0.5">
-              {t('general.notificationSoundsHint')}
-            </p>
-          </div>
-          <button
-            onClick={() => onNotificationSoundsChange(!notificationSounds)}
-            className={`relative w-9 h-5 rounded-full transition-colors ${
-              notificationSounds ? 'bg-accent' : 'bg-border'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                notificationSounds ? 'translate-x-4' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </div>
-
-        <div className={`py-3 border-t border-border/50 ${!notificationSounds ? 'opacity-50 pointer-events-none' : ''}`}>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="block text-xs font-medium text-text-secondary" htmlFor="notification-sounds-volume">
-              {t('general.notificationSoundsVolume')}
-            </label>
-            <span className="text-xs font-medium text-text-secondary">{notificationSoundsVolume}%</span>
-          </div>
-          <input
-            id="notification-sounds-volume"
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={notificationSoundsVolume}
-            disabled={!notificationSounds}
-            onChange={(e) => onNotificationSoundsVolumeChange(parseInt(e.target.value, 10))}
-            className="w-full h-1.5 bg-border rounded-lg appearance-none cursor-pointer accent-accent disabled:cursor-not-allowed"
-          />
-          <p className="text-[10px] text-text-tertiary mt-1">
-            {t('general.notificationSoundsVolumeHint')}
-          </p>
-        </div>
-
-        <div className="py-3 border-t border-border/50 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between py-3 border-t border-border/50">
             <div>
               <label className="block text-xs font-medium text-text-secondary">
-                {t('general.updaterTitle')}
+                {t('general.reopenLastWorkspace')}
               </label>
               <p className="text-[10px] text-text-tertiary mt-0.5">
-                {t('general.updaterVersion', { version: appVersion ?? t('general.updaterVersionUnknown') })}
-              </p>
-            </div>
-            {(updateStatus === 'idle' || updateStatus === 'checking' || updateError) && (
-              <button
-                onClick={handleCheckNow}
-                disabled={checkingNow || updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready' || updateStatus === 'restarting'}
-                className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-              >
-                {checkingNow || updateStatus === 'checking'
-                  ? t('general.updaterChecking')
-                  : t('general.updaterCheckNow')}
-              </button>
-            )}
-            {updateStatus === 'available' && (
-              <button
-                onClick={() => void downloadAndInstallUpdate()}
-                className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
-              >
-                {t('general.updaterDownload')}
-              </button>
-            )}
-          </div>
-
-          {(updateStatus === 'idle' || updateError) && (
-            <p className={`text-[10px] ${updateError ? 'text-destructive' : 'text-text-tertiary'}`}>
-              {statusText}
-            </p>
-          )}
-
-          {updateStatus === 'checking' && (
-            <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
-              <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
-              {statusText}
-            </div>
-          )}
-
-          {updateStatus === 'available' && updateInfo && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-text-primary">
-                {t('general.updaterNewVersionAvailable', { version: updateInfo.version })}
-              </p>
-              {updateInfo.body && (
-                <div className="max-h-32 overflow-y-auto rounded-lg bg-bg border border-border p-3">
-                  <p className="text-xs text-text-secondary whitespace-pre-wrap">{updateInfo.body}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {updateStatus === 'downloading' && (
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-[10px] text-text-secondary">
-                <span>{statusText}</span>
-                <span>{t('general.updaterDownloadingProgress', { progress: downloadProgress })}</span>
-              </div>
-              <div
-                className="w-full h-1.5 bg-border rounded-full overflow-hidden"
-                role="progressbar"
-                aria-valuenow={downloadProgress}
-                aria-valuemin={0}
-                aria-valuemax={100}
-              >
-                <div
-                  className="h-full bg-accent transition-all duration-200"
-                  style={{ width: `${downloadProgress}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          {updateStatus === 'ready' && (
-            <div className="space-y-2">
-              <p className="text-[10px] text-text-secondary">{statusText}</p>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => void restartToUpdate()}
-                  className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
-                >
-                  {t('general.updaterInstallNow')}
-                </button>
-                <button
-                  onClick={dismissUpdate}
-                  className="px-3 py-1.5 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
-                >
-                  {t('general.updaterLater')}
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between pt-1">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary">
-                {t('general.updaterAutoCheck')}
-              </label>
-              <p className="text-[10px] text-text-tertiary mt-0.5">
-                {t('general.updaterAutoCheckHint')}
+                {t('general.reopenLastWorkspaceHint')}
               </p>
             </div>
             <button
-              onClick={() => onAutoCheckUpdatesChange(!autoCheckUpdates)}
+              onClick={() => onReopenLastWorkspaceChange(!reopenLastWorkspace)}
               className={`relative w-9 h-5 rounded-full transition-colors ${
-                autoCheckUpdates ? 'bg-accent' : 'bg-border'
+                reopenLastWorkspace ? 'bg-accent' : 'bg-border'
               }`}
             >
               <span
                 className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                  autoCheckUpdates ? 'translate-x-4' : 'translate-x-0'
+                  reopenLastWorkspace ? 'translate-x-4' : 'translate-x-0'
                 }`}
               />
             </button>
           </div>
-        </div>
 
-        {isDirty && (
-          <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0 -mx-6 -mb-6 mt-6">
-            <span className="text-[11px] text-text-tertiary">
-              {error ? <span className="text-destructive">{error}</span> : t('unsavedDialog.message')}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onCancel}
-                disabled={isSaving}
-                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
-              >
-                {t('actions.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={() => void onSave()}
-                disabled={isSaving}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-              >
-                {isSaving ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    {t('unsavedDialog.saving')}
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-3.5 h-3.5" />
-                    {t('actions.save')}
-                  </>
+          <div className="flex items-center justify-between py-3 border-t border-border/50">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary">
+                {t('general.useModifierToSubmit')}
+              </label>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                {t('general.useModifierToSubmitHint')}
+              </p>
+            </div>
+            <button
+              onClick={() => onUseModifierToSubmitChange(!useModifierToSubmit)}
+              className={`relative w-9 h-5 rounded-full transition-colors ${
+                useModifierToSubmit ? 'bg-accent' : 'bg-border'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  useModifierToSubmit ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between py-3 border-t border-border/50">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary">
+                {t('general.notificationSounds')}
+              </label>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                {t('general.notificationSoundsHint')}
+              </p>
+            </div>
+            <button
+              onClick={() => onNotificationSoundsChange(!notificationSounds)}
+              className={`relative w-9 h-5 rounded-full transition-colors ${
+                notificationSounds ? 'bg-accent' : 'bg-border'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  notificationSounds ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className={`py-3 border-t border-border/50 ${!notificationSounds ? 'opacity-50 pointer-events-none' : ''}`}>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-medium text-text-secondary" htmlFor="notification-sounds-volume">
+                {t('general.notificationSoundsVolume')}
+              </label>
+              <span className="text-xs font-medium text-text-secondary">{notificationSoundsVolume}%</span>
+            </div>
+            <input
+              id="notification-sounds-volume"
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={notificationSoundsVolume}
+              disabled={!notificationSounds}
+              onChange={(e) => onNotificationSoundsVolumeChange(parseInt(e.target.value, 10))}
+              className="w-full h-1.5 bg-border rounded-lg appearance-none cursor-pointer accent-accent disabled:cursor-not-allowed"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">
+              {t('general.notificationSoundsVolumeHint')}
+            </p>
+          </div>
+
+          <div className="py-3 border-t border-border/50 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary">
+                  {t('general.updaterTitle')}
+                </label>
+                <p className="text-[10px] text-text-tertiary mt-0.5">
+                  {t('general.updaterVersion', { version: appVersion ?? t('general.updaterVersionUnknown') })}
+                </p>
+              </div>
+              {(updateStatus === 'idle' || updateStatus === 'checking' || updateError) && (
+                <button
+                  onClick={handleCheckNow}
+                  disabled={checkingNow || updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready' || updateStatus === 'restarting'}
+                  className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+                >
+                  {checkingNow || updateStatus === 'checking'
+                    ? t('general.updaterChecking')
+                    : t('general.updaterCheckNow')}
+                </button>
+              )}
+              {updateStatus === 'available' && (
+                <button
+                  onClick={() => void downloadAndInstallUpdate()}
+                  className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
+                >
+                  {t('general.updaterDownload')}
+                </button>
+              )}
+            </div>
+
+            {(updateStatus === 'idle' || updateError) && (
+              <p className={`text-[10px] ${updateError ? 'text-destructive' : 'text-text-tertiary'}`}>
+                {statusText}
+              </p>
+            )}
+
+            {updateStatus === 'checking' && (
+              <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
+                <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+                {statusText}
+              </div>
+            )}
+
+            {updateStatus === 'available' && updateInfo && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-text-primary">
+                  {t('general.updaterNewVersionAvailable', { version: updateInfo.version })}
+                </p>
+                {updateInfo.body && (
+                  <div className="max-h-32 overflow-y-auto rounded-lg bg-bg border border-border p-3">
+                    <p className="text-xs text-text-secondary whitespace-pre-wrap">{updateInfo.body}</p>
+                  </div>
                 )}
+              </div>
+            )}
+
+            {updateStatus === 'downloading' && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[10px] text-text-secondary">
+                  <span>{statusText}</span>
+                  <span>{t('general.updaterDownloadingProgress', { progress: downloadProgress })}</span>
+                </div>
+                <div
+                  className="w-full h-1.5 bg-border rounded-full overflow-hidden"
+                  role="progressbar"
+                  aria-valuenow={downloadProgress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div
+                    className="h-full bg-accent transition-all duration-200"
+                    style={{ width: `${downloadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {updateStatus === 'ready' && (
+              <div className="space-y-2">
+                <p className="text-[10px] text-text-secondary">{statusText}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void restartToUpdate()}
+                    className="px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
+                  >
+                    {t('general.updaterInstallNow')}
+                  </button>
+                  <button
+                    onClick={dismissUpdate}
+                    className="px-3 py-1.5 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
+                  >
+                    {t('general.updaterLater')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-1">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary">
+                  {t('general.updaterAutoCheck')}
+                </label>
+                <p className="text-[10px] text-text-tertiary mt-0.5">
+                  {t('general.updaterAutoCheckHint')}
+                </p>
+              </div>
+              <button
+                onClick={() => onAutoCheckUpdatesChange(!autoCheckUpdates)}
+                className={`relative w-9 h-5 rounded-full transition-colors ${
+                  autoCheckUpdates ? 'bg-accent' : 'bg-border'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                    autoCheckUpdates ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
               </button>
             </div>
           </div>
-        )}
+        </div>
+      </div>
+
+      <div className="flex-shrink-0 flex items-center justify-between px-6 py-4 border-t border-border/50">
+        <span className="text-[11px] text-text-tertiary">
+          {error ? <span className="text-destructive">{error}</span> : isDirty ? t('unsavedDialog.message') : null}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSaving || !isDirty}
+            className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
+          >
+            {t('actions.cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onSave()}
+            disabled={isSaving || !isDirty}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                {t('unsavedDialog.saving')}
+              </>
+            ) : (
+              <>
+                <Save className="w-3.5 h-3.5" />
+                {t('actions.save')}
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -1506,11 +1508,9 @@ function WorkspaceTabShell({
         </div>
 
         {/* Footer */}
-        {footer && (
-          <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0">
-            {footer}
-          </div>
-        )}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0">
+          {footer}
+        </div>
 
         <UnsavedChangesDialog
           isOpen={showUnsavedDialog}

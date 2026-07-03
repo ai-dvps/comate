@@ -172,11 +172,9 @@ export default function BotTabShell({
             <div className="flex-1 overflow-y-auto p-6">{children}</div>
 
             {/* Footer */}
-            {footer && (
-              <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0">
-                {footer}
-              </div>
-            )}
+            <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 flex-shrink-0">
+              {footer}
+            </div>
           </>
         )}
       </div>
