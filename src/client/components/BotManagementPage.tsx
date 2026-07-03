@@ -8,14 +8,14 @@ import {
   useRef,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { Loader2, AlertTriangle, Save } from 'lucide-react';
 import { useBotStore, type Bot as BotType, type BotPersona, type BotRole } from '../stores/bot-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
 import BotTabShell, { BotEmptyState } from './BotTabShell';
 import BotGeneralSection from './BotGeneralSection';
 import BotChannelsSection from './BotChannelsSection';
 import BotMemberList from './BotMemberList';
-import BotRolePermissions from './BotRolePermissions';
+import BotRolePermissions, { type BotRolePermissionsHandle } from './BotRolePermissions';
 import BotPersonaEditor, { type BotPersonaEditorHandle } from './BotPersonaEditor';
 import BotDangerSection from './BotDangerSection';
 import { emptyForm, botToForm, validateBotForm, buildCreateBotInput, buildUpdateBotInput, type BotFormData } from './bot-form-utils';
@@ -63,9 +63,11 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
     const [pendingSwitchSource, setPendingSwitchSource] = useState<'manual' | 'filter' | null>(null);
     const [pageError, setPageError] = useState<string | null>(null);
-    const [isSavingBasic, setIsSavingBasic] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
     const [isPersonaDirty, setIsPersonaDirty] = useState(false);
+    const [isRolesDirty, setIsRolesDirty] = useState(false);
     const personaEditorRef = useRef<BotPersonaEditorHandle>(null);
+    const rolesEditorRef = useRef<BotRolePermissionsHandle>(null);
 
     const displayBots = useMemo(() => {
       return tempBot ? [...storeBots, tempBot] : storeBots;
@@ -142,6 +144,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       setActiveSection('general');
       setPageError(null);
       setIsPersonaDirty(false);
+      setIsRolesDirty(false);
     }, [selectedBotId]);
 
     // Fetch members/status when the selected bot changes.
@@ -162,8 +165,8 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     }, [drafts, snapshots, selectedBotId, tempBot]);
 
     const isDirty = useCallback(() => {
-      return isBasicDirty() || isPersonaDirty;
-    }, [isBasicDirty, isPersonaDirty]);
+      return isBasicDirty() || isRolesDirty || isPersonaDirty;
+    }, [isBasicDirty, isRolesDirty, isPersonaDirty]);
 
     // When the active filter hides the selected bot, fall back to the first visible match.
     useEffect(() => {
@@ -200,10 +203,8 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       const validationError = validateBotForm(draft, !tempBot, t);
       if (validationError) {
         setPageError(validationError);
-        return;
+        throw new Error(validationError);
       }
-
-      setIsSavingBasic(true);
 
       if (tempBot) {
         const input = buildCreateBotInput(draft);
@@ -242,7 +243,9 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
           }));
           setPageError(null);
         } else {
-          setPageError(storeError || t('common:unknownError'));
+          const err = storeError || t('common:unknownError');
+          setPageError(err);
+          throw new Error(err);
         }
       } else {
         const input = buildUpdateBotInput(draft, selectedBot);
@@ -258,10 +261,11 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
           }));
           setPageError(null);
         } else {
-          setPageError(storeError || t('common:unknownError'));
+          const err = storeError || t('common:unknownError');
+          setPageError(err);
+          throw new Error(err);
         }
       }
-      setIsSavingBasic(false);
     }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t, addMember]);
 
     const handleCancelBasic = useCallback(() => {
@@ -290,16 +294,25 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     }, [selectedBotId, tempBot, previousBotId, snapshots]);
 
     const handleSaveAll = useCallback(async () => {
-      if (isBasicDirty()) {
-        await handleSaveBasic();
-      }
-      if (personaEditorRef.current?.isDirty()) {
-        await personaEditorRef.current.save();
+      setIsSaving(true);
+      try {
+        if (isBasicDirty()) {
+          await handleSaveBasic();
+        }
+        if (rolesEditorRef.current?.isDirty()) {
+          await rolesEditorRef.current.save();
+        }
+        if (personaEditorRef.current?.isDirty()) {
+          await personaEditorRef.current.save();
+        }
+      } finally {
+        setIsSaving(false);
       }
     }, [isBasicDirty, handleSaveBasic]);
 
     const handleDiscardAll = useCallback(() => {
       handleCancelBasic();
+      rolesEditorRef.current?.discard();
       personaEditorRef.current?.discard();
     }, [handleCancelBasic]);
 
@@ -424,39 +437,47 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     );
 
     const draft = selectedBotId ? drafts[selectedBotId] : null;
-    const basicDirty = isBasicDirty();
     const isNew = !!tempBot && selectedBotId === tempBot.id;
 
-    const footer = basicDirty ? (
+    const footer = (
       <>
-        <span className="text-[11px] text-text-tertiary">{t('unsavedDialog.message')}</span>
+        <span className="text-[11px] text-text-tertiary">
+          {pageError ? (
+            <span className="text-destructive">{pageError}</span>
+          ) : isDirty() ? (
+            t('unsavedDialog.message')
+          ) : null}
+        </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={handleCancelBasic}
-            disabled={isSavingBasic}
+            onClick={handleDiscardAll}
+            disabled={isSaving || !isDirty()}
             className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active disabled:opacity-50 rounded-lg transition-colors"
           >
             {t('actions.cancel')}
           </button>
           <button
             type="button"
-            onClick={handleSaveBasic}
-            disabled={isSavingBasic}
+            onClick={() => void handleSaveAll()}
+            disabled={isSaving || !isDirty()}
             className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
           >
-            {isSavingBasic ? (
+            {isSaving ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 {t('unsavedDialog.saving')}
               </>
             ) : (
-              t('actions.save')
+              <>
+                <Save className="w-3.5 h-3.5" />
+                {t('actions.save')}
+              </>
             )}
           </button>
         </div>
       </>
-    ) : null;
+    );
 
     const renderContent = () => {
       if (!selectedBot || !draft) {
@@ -503,7 +524,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
               botId={selectedBot.id}
               members={membersByBotId[selectedBot.id] || []}
               isLoading={isLoading}
-              isSaving={isSavingBasic}
+              isSaving={isSaving}
               error={storeError}
               onAddMember={(input) => addMember(selectedBot.id, input)}
               onSetRole={(channel, channelUserId, role) => setMemberRole(selectedBot.id, channel, channelUserId, role)}
@@ -513,10 +534,11 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
 
           {activeSection === 'roles' && !isNew && (
             <BotRolePermissions
+              ref={rolesEditorRef}
               bot={selectedBot}
-              isSaving={isSavingBasic}
               error={storeError}
               onSave={handleSaveRolePolicy}
+              onDirtyChange={setIsRolesDirty}
             />
           )}
 
@@ -524,7 +546,6 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
             <BotPersonaEditor
               ref={personaEditorRef}
               bot={selectedBot}
-              isSaving={isSavingBasic}
               error={storeError}
               onSave={handleSavePersona}
               onDirtyChange={setIsPersonaDirty}
@@ -535,7 +556,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
             <BotDangerSection
               botName={selectedBot.name}
               onDelete={handleDeleteBot}
-              isLoading={isSavingBasic}
+              isLoading={isSaving}
               error={storeError}
             />
           )}
@@ -600,10 +621,10 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
                 <button
                   type="button"
                   onClick={handleDialogSave}
-                  disabled={isSavingBasic}
+                  disabled={isSaving}
                   className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
                 >
-                  {isSavingBasic ? (
+                  {isSaving ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       {t('unsavedDialog.saving')}
