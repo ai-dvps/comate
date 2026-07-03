@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createRef } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../i18n';
-import BotPersonaEditor from './BotPersonaEditor';
+import BotPersonaEditor, { type BotPersonaEditorHandle } from './BotPersonaEditor';
 import type { Bot } from '../stores/bot-store';
 
 function renderWithI18n(ui: React.ReactElement) {
@@ -44,7 +45,9 @@ describe('BotPersonaEditor', () => {
     expect(screen.getByText('Append to Claude Code default')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...')).toBeInTheDocument();
 
-    expect(screen.getByRole('button', { name: 'Saved' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^Save$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Cancel/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Saved' })).not.toBeInTheDocument();
   });
 
   it('populates existing default persona values', () => {
@@ -58,30 +61,28 @@ describe('BotPersonaEditor', () => {
   });
 
   it('switches mode when buttons are clicked', async () => {
-    const user = userEvent.setup();
     renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={vi.fn()} />);
 
-    await user.click(screen.getByText('Replace Claude Code default'));
+    await userEvent.click(screen.getByText('Replace Claude Code default'));
 
     expect(screen.getByText('Replace Claude Code default')).toHaveClass('bg-surface-active');
     expect(screen.getByText('Append to Claude Code default')).not.toHaveClass('bg-surface-active');
-
-    expect(screen.getByRole('button', { name: /Save persona/i })).toBeEnabled();
   });
 
-  it('calls onSave with default persona when form is submitted', async () => {
+  it('calls onSave when save is invoked through the handle', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
-    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={onSave} />);
+    const ref = createRef<BotPersonaEditorHandle>();
+    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={onSave} ref={ref} />);
 
     await user.type(
       screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...'),
       'You are a test persona.',
     );
 
-    const saveButton = screen.getByRole('button', { name: /Save persona/i });
-    expect(saveButton).toBeEnabled();
-    await user.click(saveButton);
+    await act(async () => {
+      await ref.current?.save();
+    });
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
@@ -91,20 +92,22 @@ describe('BotPersonaEditor', () => {
       persona: { prompt: 'You are a test persona.', mode: 'append' },
       rolePersonas: {},
     });
+    expect(ref.current?.isDirty()).toBe(false);
   });
 
   it('calls onSave with null default and empty role personas when prompt is cleared', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
+    const ref = createRef<BotPersonaEditorHandle>();
     const bot = makeBot({ persona: { prompt: 'To be cleared', mode: 'append' } });
-    renderWithI18n(<BotPersonaEditor bot={bot} onSave={onSave} />);
+    renderWithI18n(<BotPersonaEditor bot={bot} onSave={onSave} ref={ref} />);
 
     const textarea = screen.getByDisplayValue('To be cleared');
     await user.clear(textarea);
 
-    const saveButton = screen.getByRole('button', { name: /Save persona/i });
-    expect(saveButton).toBeEnabled();
-    await user.click(saveButton);
+    await act(async () => {
+      await ref.current?.save();
+    });
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
@@ -120,26 +123,6 @@ describe('BotPersonaEditor', () => {
     fireEvent.change(textarea, { target: { value: 'a'.repeat(2001) } });
 
     expect(screen.getByText(/Long prompts increase token usage/)).toBeInTheDocument();
-  });
-
-  it('reflects saved state after a successful save', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={onSave} />);
-
-    await user.type(
-      screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...'),
-      'You are a test persona.',
-    );
-
-    const saveButton = screen.getByRole('button', { name: /Save persona/i });
-    await user.click(saveButton);
-
-    await waitFor(() => {
-      expect(onSave).toHaveBeenCalledTimes(1);
-    });
-
-    expect(screen.getByRole('button', { name: 'Saved' })).toBeDisabled();
   });
 
   it('switches between role tabs and preserves independent edits', async () => {
@@ -170,7 +153,8 @@ describe('BotPersonaEditor', () => {
   it('saves role personas only for roles with non-empty prompts', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
-    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={onSave} />);
+    const ref = createRef<BotPersonaEditorHandle>();
+    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={onSave} ref={ref} />);
 
     await user.click(screen.getByRole('tab', { name: 'Owner' }));
     await user.type(
@@ -185,8 +169,9 @@ describe('BotPersonaEditor', () => {
       'Normal prompt',
     );
 
-    const saveButton = screen.getByRole('button', { name: /Save persona/i });
-    await user.click(saveButton);
+    await act(async () => {
+      await ref.current?.save();
+    });
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
@@ -218,7 +203,9 @@ describe('BotPersonaEditor', () => {
   it('notifies parent when dirty state changes', async () => {
     const user = userEvent.setup();
     const onDirtyChange = vi.fn();
-    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={vi.fn()} onDirtyChange={onDirtyChange} />);
+    renderWithI18n(
+      <BotPersonaEditor bot={makeBot()} onSave={vi.fn()} onDirtyChange={onDirtyChange} />,
+    );
 
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
 
@@ -230,20 +217,25 @@ describe('BotPersonaEditor', () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
   });
 
-  it('cancels unsaved changes and reverts to the last saved state', async () => {
+  it('reverts unsaved changes when discard is invoked through the handle', async () => {
     const user = userEvent.setup();
-    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={vi.fn()} />);
+    const ref = createRef<BotPersonaEditorHandle>();
+    renderWithI18n(<BotPersonaEditor bot={makeBot()} onSave={vi.fn()} ref={ref} />);
 
     await user.type(
       screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...'),
       'Draft',
     );
 
-    expect(screen.getByRole('button', { name: /Save persona/i })).toBeEnabled();
+    await waitFor(() => expect(ref.current?.isDirty()).toBe(true));
 
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    act(() => {
+      ref.current?.discard();
+    });
 
-    expect(screen.getByRole('button', { name: 'Saved' })).toBeDisabled();
-    expect(screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...')).toHaveValue('');
+    await waitFor(() => {
+      expect(ref.current?.isDirty()).toBe(false);
+      expect(screen.getByPlaceholderText('e.g. You are a helpful DevOps assistant...')).toHaveValue('');
+    });
   });
 });
