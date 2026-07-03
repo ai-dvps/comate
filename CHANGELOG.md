@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **WeCom `/stop` feedback reliability** — the WeCom bot now sends a proactive `已中断` confirmation after successfully interrupting an in-flight turn, even when an active stream reply exists. Previously, the command relied solely on the stream reply's final frame; if that frame was bound to a stale connection or silently dropped by WeCom, users saw the turn stop but received no feedback message.
+
 - **Auto-install wecom plugin for WeCom-enabled workspaces** — creating or updating a bot with WeCom enabled, switching a bot's active workspace, or running the workspace-to-bot migration now automatically installs the built-in `wecom` Claude Code plugin in the workspace's project scope if it is not already installed in user, project, or local scope. This restores the previous behavior where WeCom workspaces received the necessary skill automatically.
 ## [0.0.19] - 2026-06-29
 

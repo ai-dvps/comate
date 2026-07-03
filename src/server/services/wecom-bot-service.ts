@@ -654,13 +654,16 @@ export class WeComBotService {
       await runtime.interrupt();
       runtime.cancelPendingApprovals('Turn interrupted by user.');
 
-      if (!interruptedInStream) {
-        await conn.client.sendMessage(wecomUserId, {
-          msgtype: 'markdown',
-          markdown: { content: '已中断' },
-        });
-        diagLog(`[WeComBotService] /stop for ${sessionId}: sent standalone 已中断`);
-      }
+      // Always send a proactive confirmation. Relying solely on the active
+      // stream reply is unsafe: interrupt() returns true as soon as the final
+      // frame is enqueued, but the stream reply may be bound to a stale
+      // connection or the frame may be dropped by WeCom. A proactive message
+      // through the current connection guarantees the user sees feedback.
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: { content: '已中断' },
+      });
+      diagLog(`[WeComBotService] /stop for ${sessionId}: sent proactive 已中断`);
     } catch (err) {
       console.error('[WeComBotService] failed to handle /stop:', err);
       try {
