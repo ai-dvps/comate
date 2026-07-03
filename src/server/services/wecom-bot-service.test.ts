@@ -1343,7 +1343,7 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     assert.ok(!parseWecomStopCommand('/stopx'));
   });
 
-  it('interrupts an in-flight turn and appends confirmation to the stream reply (R1, R4, R6)', async () => {
+  it('interrupts an in-flight turn and sends a proactive confirmation (R1, R4, R6)', async () => {
     workspaceStore.getActiveWecomSession = () => 'sess-1';
     setRuntime(true);
     injectStreamReply('sess-1', true);
@@ -1360,9 +1360,33 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     assert.strictEqual(streamReplyInterruptCalls[0].message, '已中断');
     assert.strictEqual(
       sentMessages.filter((m) => m.body.markdown?.content === '已中断').length,
-      0,
-      'confirmation should be appended to the stream, not sent separately',
+      1,
+      'confirmation should also be sent proactively so the user always receives it',
     );
+  });
+
+  it('sends proactive confirmation even when the stream reply delivery path may be stale', async () => {
+    workspaceStore.getActiveWecomSession = () => 'sess-1';
+    setRuntime(true);
+
+    // Simulate an active stream reply whose own connection is stale/dead.
+    // It reports success, but its internal delivery will never reach the user.
+    (service as any).activeStreamReplies.set('sess-1', {
+      interrupt: (message: string) => {
+        streamReplyInterruptCalls.push({ sessionId: 'sess-1', message });
+        return true;
+      },
+    });
+
+    const conn = createMockConnection();
+    injectConnection(conn);
+
+    await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
+
+    assert.strictEqual(streamReplyInterruptCalls.length, 1);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].userId, 'enc-user-1');
+    assert.strictEqual(sentMessages[0].body.markdown.content, '已中断');
   });
 
   it('replies with no active session message when none exists (R2)', async () => {
@@ -1541,13 +1565,14 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
       'stream reply should stay active after replacing a stale handler',
     );
 
-    // /stop should append the confirmation to that stream reply.
+    // /stop should append the confirmation to the stream reply and also send a
+    // proactive confirmation so the user reliably receives feedback.
     await (service as any).handleTextMessage('ws-1', makeTextFrame('/stop'));
 
     assert.strictEqual(
       sentMessages.filter((m) => m.body.markdown?.content === '已中断').length,
-      0,
-      'confirmation should be appended to the stream, not sent separately',
+      1,
+      'confirmation should also be sent proactively',
     );
   });
 });
