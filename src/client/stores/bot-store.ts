@@ -122,6 +122,14 @@ export interface BotState {
   addMember: (botId: string, input: { channel: BotChannel; channelUserId: string; role: BotRole }) => Promise<BotMember | null>;
   setMemberRole: (botId: string, channel: BotChannel, channelUserId: string, role: BotRole) => Promise<boolean>;
   removeMember: (botId: string, channel: BotChannel, channelUserId: string) => Promise<boolean>;
+  resolvePendingMembers: (botId: string) => Promise<{ resolved: number; failed: number } | null>;
+  setMemberPlaintext: (
+    botId: string,
+    channel: BotChannel,
+    channelUserId: string,
+    plaintextUserId: string,
+  ) => Promise<BotMember | null>;
+  refreshMembers: (botId: string) => Promise<void>;
   fetchStatus: (botId: string) => Promise<void>;
   runMigration: (dryRun?: boolean) => Promise<MigrationResult | null>;
   clearError: () => void;
@@ -321,6 +329,60 @@ export const useBotStore = create<BotState>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err), isSaving: false });
       return false;
+    }
+  },
+
+  resolvePendingMembers: async (botId) => {
+    set({ isSaving: true, error: null });
+    try {
+      const res = await fetch(`${API_BASE}/bots/${botId}/members/resolve-pending`, { method: 'POST' });
+      if (!res.ok) throw new Error(await handleError(res));
+      const data = (await res.json()) as { resolved: number; failed: number };
+      await get().fetchMembers(botId);
+      set({ isSaving: false });
+      return data;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err), isSaving: false });
+      return null;
+    }
+  },
+
+  setMemberPlaintext: async (botId, channel, channelUserId, plaintextUserId) => {
+    set({ isSaving: true, error: null });
+    try {
+      const res = await fetch(
+        `${API_BASE}/bots/${botId}/members/${encodeURIComponent(channelUserId)}/plaintext?channel=${channel}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plaintextUserId: plaintextUserId.trim() }),
+        },
+      );
+      if (!res.ok) throw new Error(await handleError(res));
+      const data = (await res.json()) as { member: BotMember };
+      const current = get().membersByBotId[botId] || [];
+      set({
+        membersByBotId: {
+          ...get().membersByBotId,
+          [botId]: current.map((m) =>
+            m.channel === channel && m.channelUserId === channelUserId ? data.member : m,
+          ),
+        },
+        isSaving: false,
+      });
+      return data.member;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err), isSaving: false });
+      return null;
+    }
+  },
+
+  refreshMembers: async (botId) => {
+    set({ isLoading: true, error: null });
+    try {
+      await get().fetchMembers(botId);
+    } finally {
+      set({ isLoading: false });
     }
   },
 
