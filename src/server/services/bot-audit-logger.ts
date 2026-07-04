@@ -1,5 +1,5 @@
 import type { BotActor } from './bot-service.js';
-import type { BotChannel } from '../models/bot.js';
+import type { BotChannelKey } from '../models/bot.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 
@@ -82,7 +82,7 @@ export class BotAuditLogger {
   logChannelEnabled(
     botId: string,
     actor: BotActor,
-    channel: BotChannel,
+    channel: BotChannelKey,
   ): void {
     this.log(botId, actor, 'channel_enabled', { channel });
   }
@@ -90,7 +90,7 @@ export class BotAuditLogger {
   logChannelDisabled(
     botId: string,
     actor: BotActor,
-    channel: BotChannel,
+    channel: BotChannelKey,
   ): void {
     this.log(botId, actor, 'channel_disabled', { channel });
   }
@@ -110,7 +110,7 @@ export class BotAuditLogger {
   logMemberRoleChanged(
     botId: string,
     actor: BotActor,
-    channel: BotChannel,
+    channel: BotChannelKey,
     channelUserId: string,
     previousRole: string | null,
     newRole: string,

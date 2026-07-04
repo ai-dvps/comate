@@ -1,17 +1,29 @@
 import type {
   Bot,
-  BotMember,
-  BotChannel,
+  BotChannelKey,
   BotChannelSettings,
-  BotRole,
-  CreateBotInput,
-  CreateBotMemberInput,
-  UpdateBotInput,
+  BotRoleKey,
+  BotRolePolicy,
+  BotPersona,
+  CreateBotInput as BaseCreateBotInput,
+  UpdateBotInput as BaseUpdateBotInput,
 } from '../models/bot.js';
+import type { BotUser } from '../models/bot-user.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import { BotAuditLogger } from './bot-audit-logger.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { diagLog } from '../utils/diag-logger.js';
+
+export interface CreateBotInput extends BaseCreateBotInput {
+  channelSettings?: BotChannelSettings;
+  rolePolicy?: BotRolePolicy;
+}
+
+export interface UpdateBotInput extends BaseUpdateBotInput {
+  channelSettings?: BotChannelSettings;
+  rolePolicy?: BotRolePolicy;
+  rolePersonas?: Partial<Record<BotRoleKey, BotPersona>> | null;
+}
 
 export class BotService {
   private store: SqliteStore;
@@ -35,6 +47,23 @@ export class BotService {
     }
 
     const bot = this.store.createBot(input);
+
+    if (input.channelSettings) {
+      for (const channelKey of Object.keys(input.channelSettings) as BotChannelKey[]) {
+        const channel = this.store.getBotChannelByKey(bot.id, channelKey);
+        if (channel) {
+          this.store.updateBotChannel(channel.id, { [channelKey]: input.channelSettings[channelKey] });
+        }
+      }
+    }
+
+    if (input.rolePolicy) {
+      const normalRole = this.store.getBotRoleByKey(bot.id, 'normal');
+      if (normalRole) {
+        this.store.updateBotRole(normalRole.id, input.rolePolicy);
+      }
+    }
+
     this.auditLogger.log(bot.id, { type: 'system' }, 'bot_created', { name: bot.name });
     return bot;
   }
@@ -78,16 +107,44 @@ export class BotService {
       throw new BotNotFoundError(id);
     }
 
+    if (input.channelSettings) {
+      for (const channelKey of Object.keys(input.channelSettings) as BotChannelKey[]) {
+        const channel = this.store.getBotChannelByKey(bot.id, channelKey);
+        if (channel) {
+          this.store.updateBotChannel(channel.id, { [channelKey]: input.channelSettings[channelKey] });
+        }
+      }
+    }
+
+    if (input.rolePolicy) {
+      const normalRole = this.store.getBotRoleByKey(bot.id, 'normal');
+      if (normalRole) {
+        this.store.updateBotRole(normalRole.id, input.rolePolicy);
+      }
+    }
+
+    if (input.rolePersonas !== undefined) {
+      for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
+        const role = this.store.getBotRoleByKey(bot.id, roleKey);
+        if (role) {
+          const persona = input.rolePersonas?.[roleKey] ?? null;
+          this.store.updateBotRole(role.id, role.permissions, persona);
+        }
+      }
+    }
+
     if (hadChannelChanges) {
-      const channels = Object.keys(input.channelSettings ?? {}) as BotChannel[];
+      const channels = Object.keys(input.channelSettings ?? {}) as BotChannelKey[];
       this.auditLogger.logChannelCredentialsChanged(bot.id, actor, channels);
-      for (const channel of channels) {
-        const wasEnabled = existing.channelSettings[channel]?.enabled ?? false;
-        const isEnabled = input.channelSettings?.[channel]?.enabled ?? false;
+      const previousChannels = this.store.listBotChannels(bot.id);
+      for (const channelKey of channels) {
+        const previous = previousChannels.find((c) => c.channelKey === channelKey);
+        const wasEnabled = previous?.config[channelKey]?.enabled ?? false;
+        const isEnabled = input.channelSettings?.[channelKey]?.enabled ?? false;
         if (!wasEnabled && isEnabled) {
-          this.auditLogger.logChannelEnabled(bot.id, actor, channel);
+          this.auditLogger.logChannelEnabled(bot.id, actor, channelKey);
         } else if (wasEnabled && !isEnabled) {
-          this.auditLogger.logChannelDisabled(bot.id, actor, channel);
+          this.auditLogger.logChannelDisabled(bot.id, actor, channelKey);
         }
       }
     }
@@ -115,7 +172,7 @@ export class BotService {
     }
 
     if (actor.type !== 'system') {
-      this.requireChannelOwner(botId, actor.channel as BotChannel, actor);
+      this.requireChannelOwner(botId, actor.channelKey as BotChannelKey, actor);
     }
 
     if (bot.activeWorkspaceId === workspaceId) {
@@ -141,42 +198,131 @@ export class BotService {
     return bot?.activeWorkspaceId ?? null;
   }
 
+  // Channels
+
+  getChannelSettings(botId: string): BotChannelSettings {
+    const channels = this.store.listBotChannels(botId);
+    const settings: BotChannelSettings = {};
+    for (const channel of channels) {
+      settings[channel.channelKey] = channel.config[channel.channelKey];
+    }
+    return settings;
+  }
+
+  updateChannelSettings(
+    botId: string,
+    channelKey: BotChannelKey,
+    settings: BotChannelSettings,
+    actor: BotActor = systemActor(),
+  ): void {
+    const bot = this.store.getBot(botId);
+    if (!bot) {
+      throw new BotNotFoundError(botId);
+    }
+    this.requireSystemOrUserActor(actor);
+
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) {
+      throw new BotValidationError(`Channel ${channelKey} not found`);
+    }
+
+    const errors = this.validateCredentials({ [channelKey]: settings });
+    if (errors.length > 0) {
+      throw new BotValidationError(errors.join('; '));
+    }
+
+    const wasEnabled = channel.config[channelKey]?.enabled ?? false;
+    this.store.updateBotChannel(channel.id, { [channelKey]: settings });
+    const isEnabled = settings.enabled ?? false;
+
+    this.auditLogger.logChannelCredentialsChanged(bot.id, actor, [channelKey]);
+    if (!wasEnabled && isEnabled) {
+      this.auditLogger.logChannelEnabled(bot.id, actor, channelKey);
+    } else if (wasEnabled && !isEnabled) {
+      this.auditLogger.logChannelDisabled(bot.id, actor, channelKey);
+    }
+  }
+
+  // Roles
+
+  getRolePolicy(botId: string): BotRolePolicy | null {
+    const normalRole = this.store.getBotRoleByKey(botId, 'normal');
+    return normalRole?.permissions ?? null;
+  }
+
+  updateRolePolicy(
+    botId: string,
+    permissions: BotRolePolicy,
+    actor: BotActor = systemActor(),
+  ): void {
+    const bot = this.store.getBot(botId);
+    if (!bot) {
+      throw new BotNotFoundError(botId);
+    }
+    this.requireSystemOrUserActor(actor);
+
+    const normalRole = this.store.getBotRoleByKey(botId, 'normal');
+    if (!normalRole) {
+      throw new BotValidationError('Normal role not found');
+    }
+    this.store.updateBotRole(normalRole.id, permissions);
+  }
+
   // Members and roles
 
   addMember(
     botId: string,
-    input: CreateBotMemberInput,
+    input: {
+      channelKey: BotChannelKey;
+      channelUserId: string;
+      roleKey?: BotRoleKey;
+      plaintextUserId?: string | null;
+    },
     actor: BotActor = systemActor(),
-  ): BotMember {
+  ): BotUser {
     const bot = this.store.getBot(botId);
     if (!bot) {
       throw new BotNotFoundError(botId);
     }
 
-    this.requireChannelOwner(botId, input.channel, actor);
+    this.requireChannelOwner(botId, input.channelKey, actor);
 
-    const role = input.role ?? 'normal';
-    if (role === 'owner') {
-      this.ensureNoExistingChannelOwner(botId, input.channel);
+    const channel = this.store.getBotChannelByKey(botId, input.channelKey);
+    if (!channel) {
+      throw new BotValidationError(`Channel ${input.channelKey} not found`);
     }
 
-    this.store.setBotMember(botId, input.channel, input.channelUserId, role);
-    this.auditLogger.log(botId, actor, 'member_added', {
-      channel: input.channel,
+    const roleKey = input.roleKey ?? 'normal';
+    const role = this.store.getBotRoleByKey(botId, roleKey);
+    if (!role) {
+      throw new BotValidationError(`Role ${roleKey} not found`);
+    }
+
+    if (roleKey === 'owner') {
+      this.ensureNoExistingChannelOwner(botId, input.channelKey);
+    }
+
+    const user = this.store.createBotUser({
+      botId,
+      channelId: channel.id,
+      roleId: role.id,
       channelUserId: input.channelUserId,
-      role,
+      plaintextUserId: input.plaintextUserId ?? null,
     });
-    const raw = this.store.listBotMembers(botId).find(
-      (m) => m.channel === input.channel && m.channelUserId === input.channelUserId,
-    )!;
-    return this.resolveMemberPlaintext(botId, raw);
+
+    this.auditLogger.log(botId, actor, 'member_added', {
+      channel: input.channelKey,
+      channelUserId: input.channelUserId,
+      role: roleKey,
+    });
+    return user;
   }
 
   setMemberRole(
     botId: string,
-    channel: BotChannel,
+    channelKey: BotChannelKey,
     channelUserId: string,
-    role: BotRole,
+    roleKey: BotRoleKey,
     actor: BotActor = systemActor(),
   ): void {
     const bot = this.store.getBot(botId);
@@ -184,30 +330,45 @@ export class BotService {
       throw new BotNotFoundError(botId);
     }
 
-    this.requireChannelOwner(botId, channel, actor);
+    this.requireChannelOwner(botId, channelKey, actor);
 
-    const currentRole = this.store.getBotMemberRole(botId, channel, channelUserId);
-
-    if (role === 'owner' && currentRole !== 'owner') {
-      this.ensureNoExistingChannelOwner(botId, channel);
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) {
+      throw new BotValidationError(`Channel ${channelKey} not found`);
     }
 
-    if (currentRole === 'owner' && role !== 'owner') {
-      this.ensureAnotherChannelOwnerExists(botId, channel, channelUserId);
+    const user = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
+    if (!user) {
+      throw new BotMemberNotFoundError(botId, channelKey, channelUserId);
     }
 
-    this.store.setBotMember(botId, channel, channelUserId, role);
+    const currentRoleKey = user.roleKey;
+
+    if (roleKey === 'owner' && currentRoleKey !== 'owner') {
+      this.ensureNoExistingChannelOwner(botId, channelKey);
+    }
+
+    if (currentRoleKey === 'owner' && roleKey !== 'owner') {
+      this.ensureAnotherChannelOwnerExists(botId, channelKey, channelUserId);
+    }
+
+    const role = this.store.getBotRoleByKey(botId, roleKey);
+    if (!role) {
+      throw new BotValidationError(`Role ${roleKey} not found`);
+    }
+
+    this.store.updateBotUser(user.id, { roleId: role.id });
     this.auditLogger.log(botId, actor, 'member_role_changed', {
-      channel,
+      channel: channelKey,
       channelUserId,
-      previousRole: currentRole,
-      newRole: role,
+      previousRole: currentRoleKey,
+      newRole: roleKey,
     });
   }
 
   removeMember(
     botId: string,
-    channel: BotChannel,
+    channelKey: BotChannelKey,
     channelUserId: string,
     actor: BotActor = systemActor(),
   ): void {
@@ -216,52 +377,39 @@ export class BotService {
       throw new BotNotFoundError(botId);
     }
 
-    this.requireChannelOwner(botId, channel, actor);
+    this.requireChannelOwner(botId, channelKey, actor);
 
-    const currentRole = this.store.getBotMemberRole(botId, channel, channelUserId);
-    if (currentRole === 'owner') {
-      this.ensureAnotherChannelOwnerExists(botId, channel, channelUserId);
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) {
+      throw new BotValidationError(`Channel ${channelKey} not found`);
     }
 
-    this.store.removeBotMember(botId, channel, channelUserId);
+    const user = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
+    if (!user) {
+      throw new BotMemberNotFoundError(botId, channelKey, channelUserId);
+    }
+
+    if (user.roleKey === 'owner') {
+      this.ensureAnotherChannelOwnerExists(botId, channelKey, channelUserId);
+    }
+
+    this.store.deleteBotUser(user.id);
     this.auditLogger.log(botId, actor, 'member_removed', {
-      channel,
+      channel: channelKey,
       channelUserId,
-      previousRole: currentRole,
+      previousRole: user.roleKey,
     });
   }
 
-  getMemberRole(botId: string, channel: BotChannel, channelUserId: string): BotRole | null {
-    return this.store.getBotMemberRole(botId, channel, channelUserId);
+  getMemberRole(botId: string, channelKey: BotChannelKey, channelUserId: string): BotRoleKey | null {
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) return null;
+    const user = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
+    return user?.roleKey ?? null;
   }
 
-  listMembers(botId: string): BotMember[] {
-    return this.store.listBotMembers(botId).map((m) => this.resolveMemberPlaintext(botId, m));
-  }
-
-  private resolveMemberPlaintext(botId: string, member: BotMember): BotMember {
-    const bot = this.store.getBot(botId);
-    if (member.channel === 'wecom') {
-      const plaintextUserId = this.store.getWecomUserMapping(member.channelUserId);
-      if (plaintextUserId) {
-        return { ...member, plaintextUserId, displayName: null, resolutionStatus: 'resolved' };
-      }
-    } else if (member.channel === 'feishu' && bot?.activeWorkspaceId) {
-      const user = this.store.getFeishuWorkspaceUser(bot.activeWorkspaceId, member.channelUserId);
-      if (user?.userId) {
-        return {
-          ...member,
-          plaintextUserId: user.userId,
-          displayName: user.name,
-          resolutionStatus: 'resolved',
-        };
-      }
-    }
-    return { ...member, plaintextUserId: null, displayName: null, resolutionStatus: 'pending' };
-  }
-
-  resolveMemberRole(botId: string, channel: BotChannel, channelUserId: string): BotRole | null {
-    return this.store.getBotMemberRole(botId, channel, channelUserId);
+  listMembers(botId: string): BotUser[] {
+    return this.store.listBotUsers(botId);
   }
 
   async resolvePendingMembers(
@@ -274,8 +422,6 @@ export class BotService {
     }
 
     const members = this.listMembers(botId).filter((m) => m.resolutionStatus === 'pending');
-    let resolved = 0;
-    let failed = 0;
 
     const resolveFeishu =
       feishuResolver ??
@@ -284,12 +430,20 @@ export class BotService {
         return feishuBotService.resolveFeishuUserName(botId, workspaceId, openId);
       });
 
+    let resolved = 0;
+    let failed = 0;
+
     for (const member of members) {
+      const channel = this.store.getBotChannel(member.channelId);
+      if (!channel) {
+        failed++;
+        continue;
+      }
       try {
-        if (member.channel === 'wecom') {
+        if (channel.channelKey === 'wecom') {
           await wecomUserResolver.resolveImmediate(bot.activeWorkspaceId ?? '', member.channelUserId);
           resolved++;
-        } else if (member.channel === 'feishu' && bot.activeWorkspaceId) {
+        } else if (channel.channelKey === 'feishu' && bot.activeWorkspaceId) {
           const result = await resolveFeishu(bot.activeWorkspaceId, member.channelUserId);
           if (result) {
             resolved++;
@@ -305,16 +459,15 @@ export class BotService {
       }
     }
 
-    return { resolved, failed };
+    return Promise.resolve({ resolved, failed });
   }
 
   setMemberPlaintext(
     botId: string,
-    channel: BotChannel,
+    channelKey: BotChannelKey,
     channelUserId: string,
     plaintextUserId: string,
-    displayName?: string,
-  ): BotMember {
+  ): BotUser {
     const bot = this.store.getBot(botId);
     if (!bot) {
       throw new BotNotFoundError(botId);
@@ -326,39 +479,26 @@ export class BotService {
       throw new BotValidationError('plaintextUserId is required');
     }
 
-    const role = this.store.getBotMemberRole(botId, channel, channelUserId);
-    if (role === null) {
-      throw new BotMemberNotFoundError(botId, channel, channelUserId);
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) {
+      throw new BotValidationError(`Channel ${channelKey} not found`);
     }
 
-    if (channel === 'wecom') {
-      const existingEncrypted = this.store.getEncryptedUserIdByPlaintext(plaintextUserId);
-      if (existingEncrypted && existingEncrypted !== channelUserId) {
-        const used = this.store.isPlaintextUserIdUsedInWorkspace(
-          bot.activeWorkspaceId,
-          plaintextUserId,
-          channelUserId,
-        );
-        if (used) {
-          throw new BotMemberPlaintextConflictError(plaintextUserId);
-        }
+    const user = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
+    if (!user) {
+      throw new BotMemberNotFoundError(botId, channelKey, channelUserId);
+    }
+
+    if (channelKey === 'wecom') {
+      const existing = this.store.listBotUsersByChannel(botId, channel.id)
+        .find((u) => u.plaintextUserId === plaintextUserId && u.channelUserId !== channelUserId);
+      if (existing) {
+        throw new BotMemberPlaintextConflictError(plaintextUserId);
       }
-      this.store.setWecomUserMapping(channelUserId, plaintextUserId);
-    } else if (channel === 'feishu') {
-      this.store.setFeishuWorkspaceUserName(
-        bot.activeWorkspaceId,
-        channelUserId,
-        displayName ?? plaintextUserId,
-        plaintextUserId,
-      );
-    } else {
-      throw new BotValidationError('channel must be wecom or feishu');
     }
 
-    const raw = this.store.listBotMembers(botId).find(
-      (m) => m.channel === channel && m.channelUserId === channelUserId,
-    )!;
-    return this.resolveMemberPlaintext(botId, raw);
+    this.store.updateBotUser(user.id, { plaintextUserId });
+    return this.store.getBotUser(user.id)!;
   }
 
   // Credential validation
@@ -398,14 +538,14 @@ export class BotService {
     throw new BotAuthorizationError('only-system');
   }
 
-  private requireChannelOwner(botId: string, channel: BotChannel, actor: BotActor): void {
+  private requireChannelOwner(botId: string, channelKey: BotChannelKey, actor: BotActor): void {
     if (actor.type === 'system' || actor.type === 'user') {
       return;
     }
-    if (actor.channel !== channel) {
+    if (actor.channelKey !== channelKey) {
       throw new BotAuthorizationError('only-owner');
     }
-    const role = this.store.getBotMemberRole(botId, channel, actor.channelUserId as string);
+    const role = this.getMemberRole(botId, channelKey, actor.channelUserId as string);
     if (role !== 'owner') {
       throw new BotAuthorizationError('only-owner');
     }
@@ -419,21 +559,25 @@ export class BotService {
     }
   }
 
-  private ensureNoExistingChannelOwner(botId: string, channel: BotChannel): void {
-    const members = this.store.listBotMembers(botId);
-    if (members.some((m) => m.channel === channel && m.role === 'owner')) {
+  private ensureNoExistingChannelOwner(botId: string, channelKey: BotChannelKey): void {
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) return;
+    const users = this.store.listBotUsersByChannel(botId, channel.id);
+    if (users.some((u) => u.roleKey === 'owner')) {
       throw new BotAuthorizationError('owner-already-exists');
     }
   }
 
   private ensureAnotherChannelOwnerExists(
     botId: string,
-    channel: BotChannel,
+    channelKey: BotChannelKey,
     channelUserId: string,
   ): void {
-    const members = this.store.listBotMembers(botId);
-    const otherOwner = members.some(
-      (m) => m.channel === channel && m.role === 'owner' && m.channelUserId !== channelUserId,
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) return;
+    const users = this.store.listBotUsersByChannel(botId, channel.id);
+    const otherOwner = users.some(
+      (u) => u.roleKey === 'owner' && u.channelUserId !== channelUserId,
     );
     if (!otherOwner) {
       throw new BotAuthorizationError('last-owner');
@@ -443,7 +587,7 @@ export class BotService {
 
 export interface BotActor {
   type: 'system' | 'user' | 'wecom' | 'feishu';
-  channel?: BotChannel;
+  channelKey?: BotChannelKey;
   channelUserId?: string;
 }
 
@@ -486,10 +630,10 @@ export class BotWorkspaceBoundError extends Error {
 
 export class BotMemberNotFoundError extends Error {
   public botId: string;
-  public channel: BotChannel;
+  public channel: BotChannelKey;
   public channelUserId: string;
 
-  constructor(botId: string, channel: BotChannel, channelUserId: string) {
+  constructor(botId: string, channel: BotChannelKey, channelUserId: string) {
     super(`Bot member not found: ${botId}/${channel}/${channelUserId}`);
     this.name = 'BotMemberNotFoundError';
     this.botId = botId;
@@ -499,14 +643,11 @@ export class BotMemberNotFoundError extends Error {
 }
 
 export class BotMemberPlaintextConflictError extends Error {
-  public code = 'duplicate-plaintext';
   public plaintextUserId: string;
 
   constructor(plaintextUserId: string) {
-    super(`Plaintext user ID already mapped to another user: ${plaintextUserId}`);
+    super(`Plaintext user id already in use: ${plaintextUserId}`);
     this.name = 'BotMemberPlaintextConflictError';
     this.plaintextUserId = plaintextUserId;
   }
 }
-
-export const botService = new BotService();

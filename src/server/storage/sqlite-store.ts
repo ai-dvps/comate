@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, copyFileSync } from 'fs';
 import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
@@ -6,16 +6,23 @@ import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../m
 import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type {
   Bot,
-  BotMember,
-  BotRole,
-  CreateBotInput,
-  CreateBotAuditLogInput,
-  UpdateBotInput,
+  BotChannel,
+  BotChannelKey,
   BotChannelSettings,
+  BotRole,
+  BotRoleKey,
   BotRolePolicy,
   BotPersona,
   BotAuditLogEntry,
+  CreateBotInput,
+  CreateBotAuditLogInput,
+  UpdateBotInput,
 } from '../models/bot.js';
+import type {
+  BotUser,
+  CreateBotUserInput,
+  UpdateBotUserInput,
+} from '../models/bot-user.js';
 import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
@@ -47,13 +54,12 @@ function getDatabaseOptions(): Database.Options | undefined {
 export class SqliteStore {
   private db: Database.Database;
   private analyticsCache?: AnalyticsCache;
+  private readonly inMemory: boolean;
 
   constructor(dbPath?: string) {
     const dbFile = dbPath ?? DB_FILE;
-    const inMemory = dbFile === ':memory:';
-    // An in-memory database has no parent directory to create; only ensure
-    // the directory when we are opening a real file on disk.
-    if (!inMemory) {
+    this.inMemory = dbFile === ':memory:';
+    if (!this.inMemory) {
       ensureDirSync(dirname(dbFile));
     }
     const options = getDatabaseOptions();
@@ -76,7 +82,6 @@ export class SqliteStore {
       )
     `);
 
-    // Migration: add lastOpenedAt column to existing workspaces table
     const workspaceColumns = this.db.prepare("PRAGMA table_info(workspaces)").all() as { name: string }[];
     if (!workspaceColumns.some(col => col.name === 'lastOpenedAt')) {
       this.db.exec('ALTER TABLE workspaces ADD COLUMN lastOpenedAt TEXT');
@@ -93,7 +98,6 @@ export class SqliteStore {
         PRIMARY KEY (workspaceId, wecomUserId, sessionId)
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS wecom_user_id_mappings (
         encryptedUserId TEXT PRIMARY KEY,
@@ -102,7 +106,6 @@ export class SqliteStore {
         updatedAt TEXT NOT NULL
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS wecom_workspace_users (
         workspaceId TEXT NOT NULL,
@@ -112,14 +115,12 @@ export class SqliteStore {
         PRIMARY KEY (workspaceId, encryptedUserId)
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS feishu_bot_binding (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         activeWorkspaceId TEXT NOT NULL
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS feishu_user_sessions (
         workspaceId TEXT NOT NULL,
@@ -130,7 +131,6 @@ export class SqliteStore {
         PRIMARY KEY (workspaceId, feishuUserId, sessionId)
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS feishu_active_sessions (
         workspaceId TEXT NOT NULL,
@@ -140,7 +140,6 @@ export class SqliteStore {
         PRIMARY KEY (workspaceId, feishuUserId)
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS feishu_workspace_users (
         workspaceId TEXT NOT NULL,
@@ -152,14 +151,12 @@ export class SqliteStore {
         PRIMARY KEY (workspaceId, openId)
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_metadata (
         session_id TEXT PRIMARY KEY,
         is_wip INTEGER NOT NULL DEFAULT 0
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bots (
         id TEXT PRIMARY KEY,
@@ -173,18 +170,13 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       )
     `);
-
-    // Migration: add persona_json column to existing bots table
     const botColumns = this.db.prepare("PRAGMA table_info(bots)").all() as { name: string }[];
     if (!botColumns.some(col => col.name === 'persona_json')) {
       this.db.exec('ALTER TABLE bots ADD COLUMN persona_json TEXT');
     }
-
-    // Migration: add role_personas_json column to existing bots table
     if (!botColumns.some(col => col.name === 'role_personas_json')) {
       this.db.exec('ALTER TABLE bots ADD COLUMN role_personas_json TEXT');
     }
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bot_members (
         bot_id TEXT NOT NULL,
@@ -196,7 +188,6 @@ export class SqliteStore {
         PRIMARY KEY (bot_id, channel, channel_user_id)
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bot_audit_logs (
         id TEXT PRIMARY KEY,
@@ -208,7 +199,6 @@ export class SqliteStore {
         created_at TEXT NOT NULL
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bot_migration_state (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -217,7 +207,6 @@ export class SqliteStore {
         snapshot_json TEXT NOT NULL DEFAULT '{}'
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -238,28 +227,19 @@ export class SqliteStore {
         bot_id TEXT
       )
     `);
-
-    // Migration: add approval_mode column to existing sessions table
     const sessionColumns = this.db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
     if (!sessionColumns.some(col => col.name === 'approval_mode')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN approval_mode TEXT');
     }
-
-    // Migration: add provider_id column to existing sessions table
     if (!sessionColumns.some(col => col.name === 'provider_id')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
     }
-
-    // Migration: add bot_id column to existing sessions table
     if (!sessionColumns.some(col => col.name === 'bot_id')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN bot_id TEXT');
     }
-
-    // Migration: add is_archived column to existing sessions table
     if (!sessionColumns.some(col => col.name === 'is_archived')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
     }
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_prompt_history (
         id TEXT PRIMARY KEY,
@@ -269,12 +249,10 @@ export class SqliteStore {
         created_at TEXT NOT NULL
       )
     `);
-
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_workspace_prompt_history_workspace_created
         ON workspace_prompt_history (workspace_id, created_at DESC)
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS providers (
         id TEXT PRIMARY KEY,
@@ -288,7 +266,6 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todos (
         id TEXT PRIMARY KEY,
@@ -300,7 +277,6 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS wecom_proactive_messages (
         id TEXT PRIMARY KEY,
@@ -315,10 +291,11 @@ export class SqliteStore {
         updated_at TEXT NOT NULL,
         delivered_at TEXT,
         claimed_at TEXT,
-        retry_count INTEGER NOT NULL DEFAULT 0
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        bot_id TEXT,
+        channel_id TEXT
       )
     `);
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS wecom_media_cache (
         workspace_id TEXT NOT NULL,
@@ -343,12 +320,9 @@ export class SqliteStore {
     this.backfillWeComSessionSource();
     this.migrateBotSettingsColumn();
     this.migrateBotMembersChannelColumns();
+    this.migrateToUnifiedSchema();
   }
 
-  /**
-   * Per-session analytics cache, lazily constructed on the store's own
-   * connection. See src/server/storage/analytics-cache.ts.
-   */
   getAnalyticsCache(): AnalyticsCache {
     if (!this.analyticsCache) {
       this.analyticsCache = new AnalyticsCache(this.db);
@@ -356,14 +330,6 @@ export class SqliteStore {
     return this.analyticsCache;
   }
 
-  /**
-   * Wipe every user table in a single transaction. Intended for tests so they
-   * can reset state between cases without reaching into the private `db`
-   * handle. The table list is derived from the live schema at call time, so
-   * newly added tables are covered automatically — there is no hard-coded list
-   * to keep in sync. The schema declares no foreign keys, so deletion order is
-   * irrelevant.
-   */
   resetData(): void {
     const tables = this.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
@@ -385,7 +351,6 @@ export class SqliteStore {
     const tableInfo = this.db.prepare("PRAGMA table_info(todos)").all() as Array<{ name: string }>;
     const hasDetail = tableInfo.some((col) => col.name === 'detail');
     if (!hasDetail) return;
-
     try {
       this.db.exec(`
         ALTER TABLE todos RENAME TO todos_old;
@@ -417,7 +382,6 @@ export class SqliteStore {
       dflt_value: string | null;
     }>;
     if (!tableInfo.some((col) => col.name === 'provider_settings_json')) return;
-
     try {
       const oldColumns = tableInfo.map((col) => col.name);
       const columnDefs = tableInfo.map((col) => {
@@ -429,7 +393,6 @@ export class SqliteStore {
       const newColumns = oldColumns.map((col) => (col === 'provider_settings_json' ? 'channel_settings_json' : col));
       const selectColumns = oldColumns.map((col) => `"${col}"`).join(', ');
       const insertColumns = newColumns.map((col) => `"${col}"`).join(', ');
-
       this.db.exec(`
         ALTER TABLE bots RENAME TO bots_old;
         CREATE TABLE bots (
@@ -452,7 +415,6 @@ export class SqliteStore {
     const tableInfo = this.db.prepare("PRAGMA table_info(bot_members)").all() as Array<{ name: string }>;
     const hasOldColumns = tableInfo.some((col) => col.name === 'provider');
     if (!hasOldColumns) return;
-
     try {
       this.db.exec(`
         ALTER TABLE bot_members RENAME TO bot_members_old;
@@ -474,7 +436,6 @@ export class SqliteStore {
     } catch (err) {
       console.error('[SqliteStore] Failed to migrate bot_members table:', err);
     }
-
     this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_members_owner_per_channel
       ON bot_members (bot_id, channel)
@@ -482,26 +443,12 @@ export class SqliteStore {
     `);
   }
 
-  /**
-   * Add the isActive column to wecom_user_sessions for existing databases and
-   * backfill the latest session per user as active. Fresh databases get the
-   * column from the CREATE TABLE statement; this migration covers databases
-   * created before the column existed. Rows that already have an active marker
-   * are left untouched.
-   *
-   * Idempotent: the PRAGMA table_info guard skips adding the column when it is
-   * already present, and the backfill only operates on (workspaceId,
-   * wecomUserId) pairs that have no active row.
-   */
   private migrateWecomUserSessionsActiveColumn(): void {
     const columns = this.db.prepare("PRAGMA table_info(wecom_user_sessions)").all() as Array<{ name: string }>;
     if (!columns.some((col) => col.name === 'isActive')) {
       this.db.exec('ALTER TABLE wecom_user_sessions ADD COLUMN isActive INTEGER NOT NULL DEFAULT 0');
     }
-
     const now = new Date().toISOString();
-
-    // Find every workspace/user pair that has no active session marker.
     const pairsWithoutActive = this.db
       .prepare(`
         SELECT workspaceId, wecomUserId
@@ -510,7 +457,6 @@ export class SqliteStore {
         HAVING SUM(isActive) = 0
       `)
       .all() as Array<{ workspaceId: string; wecomUserId: string }>;
-
     const selectLatest = this.db.prepare(`
       SELECT wus.sessionId FROM wecom_user_sessions AS wus
       JOIN sessions AS s ON s.id = wus.sessionId
@@ -518,13 +464,11 @@ export class SqliteStore {
       ORDER BY wus.createdAt DESC, wus.rowid DESC
       LIMIT 1
     `);
-
     const markActive = this.db.prepare(`
       UPDATE wecom_user_sessions
       SET isActive = 1, updatedAt = ?
       WHERE workspaceId = ? AND wecomUserId = ? AND sessionId = ?
     `);
-
     const backfill = this.db.transaction(() => {
       for (const pair of pairsWithoutActive) {
         const latest = selectLatest.get(pair.workspaceId, pair.wecomUserId) as
@@ -536,7 +480,6 @@ export class SqliteStore {
       }
     });
     backfill();
-
     if (pairsWithoutActive.length > 0) {
       console.log(
         `[SqliteStore] Backfilled ${pairsWithoutActive.length} WeCom user session mapping(s) with active marker`,
@@ -545,11 +488,9 @@ export class SqliteStore {
   }
 
   private migrateMappingTable(): void {
-    // Check if the old per-workspace mapping table exists and migrate to global
     const tableInfo = this.db.prepare("PRAGMA table_info(wecom_user_id_mappings)").all() as Array<{ name: string }>;
     const hasWorkspaceId = tableInfo.some((col) => col.name === 'workspaceId');
     if (!hasWorkspaceId) return;
-
     try {
       this.db.exec(`
         ALTER TABLE wecom_user_id_mappings RENAME TO wecom_user_id_mappings_old;
@@ -573,13 +514,11 @@ export class SqliteStore {
   }
 
   private migrateWecomUserSessions(): void {
-    // Check if the old single-session-per-user schema is still in place
     const indexInfo = this.db.prepare("PRAGMA index_list(wecom_user_sessions)").all() as Array<{ name: string; unique: number }>;
     const hasOldUniqueIndex = indexInfo.some(
       (idx) => idx.name === 'sqlite_autoindex_wecom_user_sessions_1' && idx.unique === 1
     );
     if (!hasOldUniqueIndex) return;
-
     try {
       this.db.exec(`
         ALTER TABLE wecom_user_sessions RENAME TO wecom_user_sessions_old;
@@ -619,14 +558,9 @@ export class SqliteStore {
   }
 
   private migrateFromLegacy(): void {
-    // Check if legacy JSON file exists
     if (!existsSync(LEGACY_FILE)) return;
-
-    // Check if SQLite already has workspace data (idempotent)
     const count = this.db.prepare('SELECT COUNT(*) as count FROM workspaces').get() as { count: number };
     if (count.count > 0) return;
-
-    // Read legacy data
     let data: LegacyStorageData;
     try {
       const raw = readFileSync(LEGACY_FILE, 'utf-8');
@@ -634,13 +568,10 @@ export class SqliteStore {
     } catch {
       return;
     }
-
-    // Migrate workspaces
     const insert = this.db.prepare(`
       INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt, lastOpenedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-
     const insertMany = this.db.transaction((workspaces: Workspace[]) => {
       for (const ws of workspaces) {
         insert.run(
@@ -658,15 +589,12 @@ export class SqliteStore {
         );
       }
     });
-
     try {
       insertMany(data.workspaces || []);
     } catch (err) {
       console.error('Failed to migrate workspaces to SQLite:', err);
       return;
     }
-
-    // Preserve sessions to a new JSON file
     try {
       writeFileSync(
         SESSIONS_FILE,
@@ -675,10 +603,7 @@ export class SqliteStore {
       );
     } catch (err) {
       console.error('Failed to preserve sessions during migration:', err);
-      // Continue anyway — sessions can be recreated
     }
-
-    // Rename legacy file to backup
     try {
       renameSync(LEGACY_FILE, BACKUP_FILE);
     } catch (err) {
@@ -689,22 +614,17 @@ export class SqliteStore {
   private migrateDraftSessions(): void {
     const DRAFTS_FILE = join(STORAGE_DIR, 'draft-sessions.json');
     if (!existsSync(DRAFTS_FILE)) return;
-
-    // Check if sessions table already has data (idempotent)
     const count = this.db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
     if (count.count > 0) return;
-
     try {
       const raw = readFileSync(DRAFTS_FILE, 'utf-8');
       const data = JSON.parse(raw) as { sessions?: ChatSession[] };
       const sessions = data.sessions || [];
       if (sessions.length === 0) return;
-
       const insert = this.db.prepare(`
         INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, source, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-
       const insertMany = this.db.transaction((items: ChatSession[]) => {
         for (const s of items) {
           insert.run(
@@ -724,11 +644,8 @@ export class SqliteStore {
           );
         }
       });
-
       insertMany(sessions);
       console.log(`[SqliteStore] Migrated ${sessions.length} sessions from draft-sessions.json`);
-
-      // Rename draft file to backup after successful migration
       try {
         renameSync(DRAFTS_FILE, `${DRAFTS_FILE}.bak`);
       } catch (err) {
@@ -740,11 +657,9 @@ export class SqliteStore {
   }
 
   private migrateSessionMetadataToSessions(): void {
-    // Pull is_wip from old session_metadata table into sessions table for any rows that exist there
     try {
       const rows = this.db.prepare('SELECT session_id, is_wip FROM session_metadata').all() as Array<{ session_id: string; is_wip: number }>;
       if (rows.length === 0) return;
-
       const update = this.db.prepare('UPDATE sessions SET is_wip = ? WHERE id = ?');
       const updateMany = this.db.transaction((items: Array<{ session_id: string; is_wip: number }>) => {
         for (const row of items) {
@@ -755,6 +670,485 @@ export class SqliteStore {
       console.log(`[SqliteStore] Migrated ${rows.length} session_metadata entries into sessions table`);
     } catch (err) {
       console.error('[SqliteStore] Failed to migrate session_metadata:', err);
+    }
+  }
+
+  private migrateToUnifiedSchema(): void {
+    const version = this.getMigrationVersion();
+    if (version !== null && version >= 5) {
+      return;
+    }
+
+    const oldTables = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type = 'table'
+        AND name IN ('bot_members','wecom_user_sessions','wecom_user_id_mappings',
+                     'wecom_workspace_users','feishu_bot_binding','feishu_user_sessions',
+                     'feishu_active_sessions','feishu_workspace_users')
+    `).all() as Array<{ name: string }>;
+    if (oldTables.length === 0) {
+      this.setMigrationState(5, new Date().toISOString(), { reason: 'old_tables_already_absent' });
+      return;
+    }
+
+    if (!this.inMemory) {
+      const backupDir = join(STORAGE_DIR, 'backup');
+      ensureDirSync(backupDir);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = join(backupDir, `pre-unified-schema-${timestamp}.db`);
+      try {
+        copyFileSync(DB_FILE, backupPath);
+        console.log(`[SqliteStore] Created pre-migration backup: ${backupPath}`);
+      } catch (err) {
+        console.error('[SqliteStore] Failed to create pre-migration backup:', err);
+      }
+    }
+
+    const now = new Date().toISOString();
+
+    const migrate = this.db.transaction(() => {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS bot_channels (
+          id TEXT PRIMARY KEY,
+          bot_id TEXT NOT NULL,
+          channel_key TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          config_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_channels_bot_channel_key
+        ON bot_channels (bot_id, channel_key)
+      `);
+
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS bot_roles (
+          id TEXT PRIMARY KEY,
+          bot_id TEXT NOT NULL,
+          role_key TEXT NOT NULL,
+          permissions_json TEXT NOT NULL DEFAULT '{}',
+          persona_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_roles_bot_role_key
+        ON bot_roles (bot_id, role_key)
+      `);
+
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS bot_users (
+          id TEXT PRIMARY KEY,
+          bot_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          role_id TEXT NOT NULL,
+          channel_user_id TEXT NOT NULL,
+          plaintext_user_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_users_bot_channel_channel_user
+        ON bot_users (bot_id, channel_id, channel_user_id)
+      `);
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_bot_users_bot_id ON bot_users (bot_id)
+      `);
+
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          is_active INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions (user_id)
+      `);
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_workspace_session ON user_sessions (workspace_id, session_id)
+      `);
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sessions_user_session
+        ON user_sessions (user_id, session_id)
+      `);
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sessions_active_per_user
+        ON user_sessions (user_id)
+        WHERE is_active = 1
+      `);
+
+      const botColumns = this.db.prepare("PRAGMA table_info(bots)").all() as Array<{ name: string }>;
+      const hasLegacyBotCols = botColumns.some((col) => ['channel_settings_json','role_policy_json','role_personas_json'].includes(col.name));
+
+      let oldBots: Array<{
+        id: string;
+        name: string;
+        active_workspace_id: string | null;
+        channel_settings_json: string;
+        role_policy_json: string;
+        persona_json: string | null;
+        role_personas_json: string | null;
+        created_at: string;
+        updated_at: string;
+      }> = [];
+      if (hasLegacyBotCols) {
+        oldBots = this.db.prepare('SELECT * FROM bots').all() as typeof oldBots;
+        this.db.exec(`
+          ALTER TABLE bots RENAME TO bots_old;
+          CREATE TABLE bots (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            active_workspace_id TEXT UNIQUE,
+            persona_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+          INSERT INTO bots (id, name, active_workspace_id, persona_json, created_at, updated_at)
+          SELECT id, name, active_workspace_id, persona_json, created_at, updated_at
+          FROM bots_old;
+        `);
+      }
+
+      for (const bot of oldBots) {
+        const settings = safeJsonParse(bot.channel_settings_json, {} as BotChannelSettings);
+        for (const key of ['wecom', 'feishu'] as BotChannelKey[]) {
+          const config = settings[key];
+          if (config && Object.keys(config).length > 0) {
+            const channelId = uuidv4();
+            const displayName = key === 'wecom' ? 'WeCom' : 'Feishu';
+            const encrypted = encryptChannelSettings({ [key]: config } as BotChannelSettings);
+            this.db.prepare(`
+              INSERT OR IGNORE INTO bot_channels (id, bot_id, channel_key, display_name, config_json, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(channelId, bot.id, key, displayName, JSON.stringify(encrypted), now, now);
+          }
+        }
+      }
+
+      for (const bot of oldBots) {
+        const policy = safeJsonParse(bot.role_policy_json, {
+          normalToolPolicy: {
+            posture: 'safe',
+            categoryDefaults: {
+              fileRead: 'allow',
+              fileWrite: 'deny',
+              shell: 'deny',
+              network: 'deny',
+              subagents: 'deny',
+              reply: 'allow',
+            },
+          },
+          skillAllowlist: [],
+          bashWhitelist: [],
+        } as BotRolePolicy);
+        const rolePersonas = safeJsonParse(bot.role_personas_json ?? '{}', {} as Partial<Record<BotRoleKey, BotPersona>>);
+        for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
+          const roleId = uuidv4();
+          const permissions: BotRolePolicy = roleKey === 'normal'
+            ? policy
+            : {
+                normalToolPolicy: {
+                  posture: 'allow-all',
+                  categoryDefaults: {
+                    fileRead: 'allow',
+                    fileWrite: 'allow',
+                    shell: 'allow',
+                    network: 'allow',
+                    subagents: 'allow',
+                    reply: 'allow',
+                  },
+                },
+                skillAllowlist: [],
+                bashWhitelist: [],
+              };
+          const persona = rolePersonas[roleKey];
+          this.db.prepare(`
+            INSERT OR IGNORE INTO bot_roles (id, bot_id, role_key, permissions_json, persona_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(roleId, bot.id, roleKey, JSON.stringify(permissions), persona ? JSON.stringify(persona) : null, now, now);
+        }
+      }
+
+      const memberRows = this.db.prepare('SELECT * FROM bot_members').all() as Array<{
+        bot_id: string;
+        channel: string;
+        channel_user_id: string;
+        role: string;
+        created_at: string;
+        updated_at: string;
+      }>;
+      for (const member of memberRows) {
+        const channelRow = this.db.prepare(`
+          SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?
+        `).get(member.bot_id, member.channel) as { id: string } | undefined;
+        const roleRow = this.db.prepare(`
+          SELECT id FROM bot_roles WHERE bot_id = ? AND role_key = ?
+        `).get(member.bot_id, member.role) as { id: string } | undefined;
+        if (!channelRow || !roleRow) {
+          console.log(`[SqliteStore] Skipping bot_members migration: missing channel or role for bot=${member.bot_id} channel=${member.channel} role=${member.role}`);
+          continue;
+        }
+        const userId = uuidv4();
+        this.db.prepare(`
+          INSERT OR IGNORE INTO bot_users (id, bot_id, channel_id, role_id, channel_user_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(userId, member.bot_id, channelRow.id, roleRow.id, member.channel_user_id, member.created_at, member.updated_at);
+      }
+
+      const wecomUsers = this.db.prepare('SELECT * FROM wecom_workspace_users').all() as Array<{
+        workspaceId: string;
+        encryptedUserId: string;
+        firstSeenAt: string;
+        lastSeenAt: string;
+      }>;
+      for (const wu of wecomUsers) {
+        const botRow = this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(wu.workspaceId) as { id: string } | undefined;
+        if (!botRow) {
+          console.log(`[SqliteStore] Skipping wecom_workspace_users migration: no active bot for workspace=${wu.workspaceId}`);
+          continue;
+        }
+        const channelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(botRow.id, 'wecom') as { id: string } | undefined;
+        if (!channelRow) {
+          console.log(`[SqliteStore] Skipping wecom_workspace_users migration: no wecom channel for bot=${botRow.id}`);
+          continue;
+        }
+        const roleRow = this.db.prepare('SELECT id FROM bot_roles WHERE bot_id = ? AND role_key = ?').get(botRow.id, 'normal') as { id: string } | undefined;
+        if (!roleRow) continue;
+        const mapping = this.db.prepare('SELECT plaintextUserId FROM wecom_user_id_mappings WHERE encryptedUserId = ?').get(wu.encryptedUserId) as { plaintextUserId: string } | undefined;
+        const userId = uuidv4();
+        this.db.prepare(`
+          INSERT OR IGNORE INTO bot_users (id, bot_id, channel_id, role_id, channel_user_id, plaintext_user_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(userId, botRow.id, channelRow.id, roleRow.id, wu.encryptedUserId, mapping?.plaintextUserId ?? null, wu.firstSeenAt, wu.lastSeenAt);
+      }
+
+      const wecomSessions = this.db.prepare('SELECT * FROM wecom_user_sessions').all() as Array<{
+        workspaceId: string;
+        wecomUserId: string;
+        sessionId: string;
+        createdAt: string;
+        updatedAt: string;
+        isActive: number;
+      }>;
+      for (const ws of wecomSessions) {
+        const botRow = this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(ws.workspaceId) as { id: string } | undefined;
+        if (!botRow) continue;
+        const channelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(botRow.id, 'wecom') as { id: string } | undefined;
+        if (!channelRow) continue;
+        const userRow = this.db.prepare(`
+          SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
+        `).get(botRow.id, channelRow.id, ws.wecomUserId) as { id: string } | undefined;
+        if (!userRow) continue;
+        const sessionId = uuidv4();
+        this.db.prepare(`
+          INSERT OR IGNORE INTO user_sessions (id, workspace_id, session_id, user_id, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(sessionId, ws.workspaceId, ws.sessionId, userRow.id, ws.isActive, ws.createdAt, ws.updatedAt);
+      }
+
+      const feishuBinding = this.db.prepare('SELECT activeWorkspaceId FROM feishu_bot_binding WHERE id = 1').get() as { activeWorkspaceId: string } | undefined;
+      if (feishuBinding) {
+        let feishuBotId = (this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(feishuBinding.activeWorkspaceId) as { id: string } | undefined)?.id;
+        if (!feishuBotId) {
+          feishuBotId = uuidv4();
+          const botName = `Feishu Bot (${feishuBinding.activeWorkspaceId})`;
+          this.db.prepare(`
+            INSERT INTO bots (id, name, active_workspace_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(feishuBotId, botName, feishuBinding.activeWorkspaceId, now, now);
+          const wecomChannelId = uuidv4();
+          this.db.prepare(`
+            INSERT INTO bot_channels (id, bot_id, channel_key, display_name, config_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(wecomChannelId, feishuBotId, 'wecom', 'WeCom', '{}', now, now);
+          const feishuChannelId = uuidv4();
+          this.db.prepare(`
+            INSERT INTO bot_channels (id, bot_id, channel_key, display_name, config_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(feishuChannelId, feishuBotId, 'feishu', 'Feishu', '{}', now, now);
+          for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
+            const roleId = uuidv4();
+            const permissions: BotRolePolicy = roleKey === 'normal'
+              ? {
+                  normalToolPolicy: {
+                    posture: 'safe',
+                    categoryDefaults: {
+                      fileRead: 'allow',
+                      fileWrite: 'deny',
+                      shell: 'deny',
+                      network: 'deny',
+                      subagents: 'deny',
+                      reply: 'allow',
+                    },
+                  },
+                  skillAllowlist: [],
+                  bashWhitelist: [],
+                }
+              : {
+                  normalToolPolicy: {
+                    posture: 'allow-all',
+                    categoryDefaults: {
+                      fileRead: 'allow',
+                      fileWrite: 'allow',
+                      shell: 'allow',
+                      network: 'allow',
+                      subagents: 'allow',
+                      reply: 'allow',
+                    },
+                  },
+                  skillAllowlist: [],
+                  bashWhitelist: [],
+                };
+            this.db.prepare(`
+              INSERT INTO bot_roles (id, bot_id, role_key, permissions_json, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `).run(roleId, feishuBotId, roleKey, JSON.stringify(permissions), now, now);
+          }
+        }
+
+        const feishuChannelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(feishuBotId, 'feishu') as { id: string } | undefined;
+        if (feishuChannelRow) {
+          const feishuUsers = this.db.prepare('SELECT * FROM feishu_workspace_users').all() as Array<{
+            workspaceId: string;
+            openId: string;
+            userId: string | null;
+            name: string | null;
+            firstSeenAt: string;
+            lastSeenAt: string;
+          }>;
+          for (const fu of feishuUsers) {
+            const roleRow = this.db.prepare('SELECT id FROM bot_roles WHERE bot_id = ? AND role_key = ?').get(feishuBotId, 'normal') as { id: string } | undefined;
+            if (!roleRow) continue;
+            const userId = uuidv4();
+            this.db.prepare(`
+              INSERT OR IGNORE INTO bot_users (id, bot_id, channel_id, role_id, channel_user_id, plaintext_user_id, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(userId, feishuBotId, feishuChannelRow.id, roleRow.id, fu.openId, fu.userId ?? fu.name ?? null, fu.firstSeenAt, fu.lastSeenAt);
+          }
+
+          const feishuSessions = this.db.prepare('SELECT * FROM feishu_user_sessions').all() as Array<{
+            workspaceId: string;
+            feishuUserId: string;
+            sessionId: string;
+            createdAt: string;
+            updatedAt: string;
+          }>;
+          for (const fs of feishuSessions) {
+            const userRow = this.db.prepare(`
+              SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
+            `).get(feishuBotId, feishuChannelRow.id, fs.feishuUserId) as { id: string } | undefined;
+            if (!userRow) continue;
+            const sessionId = uuidv4();
+            this.db.prepare(`
+              INSERT OR IGNORE INTO user_sessions (id, workspace_id, session_id, user_id, is_active, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(sessionId, fs.workspaceId, fs.sessionId, userRow.id, 0, fs.createdAt, fs.updatedAt);
+          }
+
+          const feishuActive = this.db.prepare('SELECT * FROM feishu_active_sessions').all() as Array<{
+            workspaceId: string;
+            feishuUserId: string;
+            sessionId: string;
+            updatedAt: string;
+          }>;
+          for (const fa of feishuActive) {
+            const userRow = this.db.prepare(`
+              SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
+            `).get(feishuBotId, feishuChannelRow.id, fa.feishuUserId) as { id: string } | undefined;
+            if (!userRow) continue;
+            this.db.prepare(`
+              UPDATE user_sessions SET is_active = 1, updated_at = ? WHERE user_id = ? AND session_id = ?
+            `).run(fa.updatedAt, userRow.id, fa.sessionId);
+            this.db.prepare(`
+              UPDATE user_sessions SET is_active = 0 WHERE user_id = ? AND session_id != ?
+            `).run(userRow.id, fa.sessionId);
+          }
+        }
+      }
+
+      this.db.prepare(`
+        UPDATE sessions SET source = 'wecom' WHERE source IS NULL AND id IN (
+          SELECT session_id FROM user_sessions WHERE user_id IN (
+            SELECT id FROM bot_users WHERE channel_id IN (
+              SELECT id FROM bot_channels WHERE channel_key = 'wecom'
+            )
+          )
+        )
+      `).run();
+      this.db.prepare(`
+        UPDATE sessions SET source = 'feishu' WHERE source IS NULL AND id IN (
+          SELECT session_id FROM user_sessions WHERE user_id IN (
+            SELECT id FROM bot_users WHERE channel_id IN (
+              SELECT id FROM bot_channels WHERE channel_key = 'feishu'
+            )
+          )
+        )
+      `).run();
+
+      const botUsersCount = (this.db.prepare('SELECT COUNT(*) as count FROM bot_users').get() as { count: number }).count;
+      const sourceCounts = {
+        bot_members: (this.db.prepare('SELECT COUNT(*) as count FROM bot_members').get() as { count: number }).count,
+        wecom_workspace_users: (this.db.prepare('SELECT COUNT(*) as count FROM wecom_workspace_users').get() as { count: number }).count,
+        feishu_workspace_users: (this.db.prepare('SELECT COUNT(*) as count FROM feishu_workspace_users').get() as { count: number }).count,
+      };
+      if (botUsersCount < sourceCounts.bot_members) {
+        throw new Error(`Migration count verification failed: bot_users (${botUsersCount}) < bot_members (${sourceCounts.bot_members})`);
+      }
+
+      const userSessionsCount = (this.db.prepare('SELECT COUNT(*) as count FROM user_sessions').get() as { count: number }).count;
+      const expectedSessions = (this.db.prepare('SELECT COUNT(*) as count FROM wecom_user_sessions').get() as { count: number }).count
+        + (this.db.prepare('SELECT COUNT(*) as count FROM feishu_user_sessions').get() as { count: number }).count;
+      if (userSessionsCount < expectedSessions) {
+        throw new Error(`Migration count verification failed: user_sessions (${userSessionsCount}) < wecom+feishu sessions (${expectedSessions})`);
+      }
+
+      const pmColumns = this.db.prepare("PRAGMA table_info(wecom_proactive_messages)").all() as Array<{ name: string }>;
+      if (!pmColumns.some((col) => col.name === 'bot_id')) {
+        this.db.exec('ALTER TABLE wecom_proactive_messages ADD COLUMN bot_id TEXT');
+        this.db.exec('ALTER TABLE wecom_proactive_messages ADD COLUMN channel_id TEXT');
+      }
+      const proactiveMessages = this.db.prepare('SELECT id, workspace_id, recipient_encrypted_user_id FROM wecom_proactive_messages WHERE bot_id IS NULL').all() as Array<{ id: string; workspace_id: string; recipient_encrypted_user_id: string }>;
+      for (const pm of proactiveMessages) {
+        const botRow = this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(pm.workspace_id) as { id: string } | undefined;
+        if (!botRow) continue;
+        const channelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(botRow.id, 'wecom') as { id: string } | undefined;
+        if (!channelRow) continue;
+        this.db.prepare('UPDATE wecom_proactive_messages SET bot_id = ?, channel_id = ? WHERE id = ?').run(botRow.id, channelRow.id, pm.id);
+      }
+
+      this.db.exec('DROP TABLE IF EXISTS bot_members');
+      this.db.exec('DROP TABLE IF EXISTS wecom_user_sessions');
+      this.db.exec('DROP TABLE IF EXISTS wecom_user_id_mappings');
+      this.db.exec('DROP TABLE IF EXISTS wecom_workspace_users');
+      this.db.exec('DROP TABLE IF EXISTS feishu_bot_binding');
+      this.db.exec('DROP TABLE IF EXISTS feishu_user_sessions');
+      this.db.exec('DROP TABLE IF EXISTS feishu_active_sessions');
+      this.db.exec('DROP TABLE IF EXISTS feishu_workspace_users');
+      if (hasLegacyBotCols) {
+        this.db.exec('DROP TABLE IF EXISTS bots_old');
+      }
+
+      this.setMigrationState(5, now, {
+        botUsersCount,
+        userSessionsCount,
+        sourceCounts,
+      });
+      console.log('[SqliteStore] Unified schema migration completed successfully');
+    });
+
+    try {
+      migrate();
+    } catch (err) {
+      console.error('[SqliteStore] Unified schema migration failed:', err);
+      throw err;
     }
   }
 
@@ -783,7 +1177,6 @@ export class SqliteStore {
       updatedAt: now,
       lastOpenedAt: null,
     };
-
     this.db.prepare(`
       INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt, lastOpenedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -800,14 +1193,12 @@ export class SqliteStore {
       workspace.updatedAt,
       workspace.lastOpenedAt
     );
-
     return workspace;
   }
 
   async update(id: string, input: UpdateWorkspaceInput): Promise<Workspace | null> {
     const existing = await this.get(id);
     if (!existing) return null;
-
     const workspace: Workspace = {
       ...existing,
       ...(input.name !== undefined && { name: input.name }),
@@ -819,7 +1210,6 @@ export class SqliteStore {
       ...(input.hooks !== undefined && { hooks: input.hooks }),
       updatedAt: new Date().toISOString(),
     };
-
     this.db.prepare(`
       UPDATE workspaces
       SET name = ?, description = ?, folderPath = ?, settings = ?, skills = ?, mcpServers = ?, hooks = ?, updatedAt = ?
@@ -835,7 +1225,6 @@ export class SqliteStore {
       workspace.updatedAt,
       id
     );
-
     return workspace;
   }
 
@@ -851,398 +1240,82 @@ export class SqliteStore {
   async delete(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
     if (result.changes > 0) {
-      this.db.prepare('DELETE FROM wecom_user_sessions WHERE workspaceId = ?').run(id);
-      this.db.prepare('DELETE FROM wecom_workspace_users WHERE workspaceId = ?').run(id);
-      this.db.prepare('DELETE FROM feishu_bot_binding WHERE activeWorkspaceId = ?').run(id);
-      this.db.prepare('DELETE FROM feishu_user_sessions WHERE workspaceId = ?').run(id);
-      this.db.prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ?').run(id);
-      this.db.prepare('DELETE FROM feishu_workspace_users WHERE workspaceId = ?').run(id);
+      this.db.prepare(`
+        DELETE FROM user_sessions WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)
+      `).run(id);
+      this.db.prepare('DELETE FROM session_metadata WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)').run(id);
+      this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_media_cache WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
-      this.db.prepare('DELETE FROM session_metadata WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)').run(id);
-      this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id);
       this.getAnalyticsCache().clearByWorkspace(id);
     }
     return result.changes > 0;
   }
 
-  // WeCom user session mapping
-
-  setWecomSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
+  addUserSession(workspaceId: string, sessionId: string, userId: string): void {
     const now = new Date().toISOString();
-    this.db
-      .prepare(`
-        INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?)
-      `)
-      .run(workspaceId, wecomUserId, sessionId, now, now);
+    this.db.prepare(`
+      INSERT OR IGNORE INTO user_sessions (id, workspace_id, session_id, user_id, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(uuidv4(), workspaceId, sessionId, userId, 0, now, now);
   }
 
-  listWecomSessions(workspaceId: string): Array<{ wecomUserId: string; sessionId: string }> {
+  listUserSessionsByUser(userId: string): Array<{ sessionId: string; createdAt: string }> {
     const rows = this.db
-      .prepare('SELECT wecomUserId, sessionId FROM wecom_user_sessions WHERE workspaceId = ?')
-      .all(workspaceId) as Array<{ wecomUserId: string; sessionId: string }>;
-    return rows;
+      .prepare('SELECT session_id, created_at FROM user_sessions WHERE user_id = ? ORDER BY created_at ASC')
+      .all(userId) as Array<{ session_id: string; created_at: string }>;
+    return rows.map((r) => ({ sessionId: r.session_id, createdAt: r.created_at }));
   }
 
-  listWecomSessionsByUser(workspaceId: string, wecomUserId: string): Array<{ sessionId: string; createdAt: string }> {
-    const rows = this.db
-      .prepare('SELECT sessionId, createdAt FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ? ORDER BY createdAt ASC')
-      .all(workspaceId, wecomUserId) as Array<{ sessionId: string; createdAt: string }>;
-    return rows;
+  listUserSessionsForBot(botId: string): Array<{ sessionId: string; userId: string; workspaceId: string }> {
+    const rows = this.db.prepare(`
+      SELECT us.session_id, us.user_id, us.workspace_id
+      FROM user_sessions us
+      JOIN bot_users bu ON bu.id = us.user_id
+      WHERE bu.bot_id = ?
+      ORDER BY us.created_at ASC
+    `).all(botId) as Array<{ session_id: string; user_id: string; workspace_id: string }>;
+    return rows.map((r) => ({ sessionId: r.session_id, userId: r.user_id, workspaceId: r.workspace_id }));
   }
 
-  getWecomUserIdBySession(workspaceId: string, sessionId: string): string | null {
+  getActiveUserSession(userId: string): string | null {
     const row = this.db
-      .prepare('SELECT wecomUserId FROM wecom_user_sessions WHERE workspaceId = ? AND sessionId = ?')
-      .get(workspaceId, sessionId) as { wecomUserId: string } | undefined;
-    return row?.wecomUserId ?? null;
-  }
-
-  /**
-   * Return the user's active (current) WeCom session id, or null if none is
-   * active. Self-heals: if the active row points at a session that no longer
-   * exists, the marker is cleared (demoted) and null is returned so the caller
-   * creates a fresh session. Reads the explicit isActive marker rather than
-   * inferring the latest session by createdAt.
-   */
-  getActiveWecomSession(workspaceId: string, wecomUserId: string): string | null {
-    const row = this.db
-      .prepare('SELECT sessionId FROM wecom_user_sessions WHERE workspaceId = ? AND wecomUserId = ? AND isActive = 1 LIMIT 1')
-      .get(workspaceId, wecomUserId) as { sessionId: string } | undefined;
+      .prepare('SELECT session_id FROM user_sessions WHERE user_id = ? AND is_active = 1 LIMIT 1')
+      .get(userId) as { session_id: string } | undefined;
     if (!row) return null;
     const exists = this.db
       .prepare('SELECT 1 FROM sessions WHERE id = ?')
-      .get(row.sessionId) as { '1': number } | undefined;
+      .get(row.session_id) as { '1': number } | undefined;
     if (!exists) {
       this.db
-        .prepare('UPDATE wecom_user_sessions SET isActive = 0, updatedAt = ? WHERE workspaceId = ? AND wecomUserId = ? AND sessionId = ?')
-        .run(new Date().toISOString(), workspaceId, wecomUserId, row.sessionId);
+        .prepare('UPDATE user_sessions SET is_active = 0, updated_at = ? WHERE user_id = ? AND session_id = ?')
+        .run(new Date().toISOString(), userId, row.session_id);
       return null;
     }
-    return row.sessionId;
+    return row.session_id;
   }
 
-  /**
-   * Mark sessionId as the user's active (current) WeCom session, demoting every
-   * other row for that user to inactive. Runs in a transaction so the
-   * single-active invariant holds. The row must already exist (inserted via
-   * setWecomSession); this only flips the marker.
-   */
-  setActiveWecomSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
+  setActiveUserSession(userId: string, sessionId: string): void {
     const now = new Date().toISOString();
     const activate = this.db.transaction(() => {
       this.db
-        .prepare('UPDATE wecom_user_sessions SET isActive = 0 WHERE workspaceId = ? AND wecomUserId = ?')
-        .run(workspaceId, wecomUserId);
+        .prepare('UPDATE user_sessions SET is_active = 0 WHERE user_id = ?')
+        .run(userId);
       this.db
-        .prepare('UPDATE wecom_user_sessions SET isActive = 1, updatedAt = ? WHERE workspaceId = ? AND wecomUserId = ? AND sessionId = ?')
-        .run(now, workspaceId, wecomUserId, sessionId);
+        .prepare('UPDATE user_sessions SET is_active = 1, updated_at = ? WHERE user_id = ? AND session_id = ?')
+        .run(now, userId, sessionId);
     });
     activate();
   }
 
-  listWecomSessionsForBackfill(): Array<{
-    workspaceId: string;
-    wecomUserId: string;
-    sessionId: string;
-    createdAt: string;
-  }> {
+  getSessionUsers(sessionId: string): string[] {
     const rows = this.db
-      .prepare(`
-        SELECT
-          wus.workspaceId,
-          wus.wecomUserId,
-          wus.sessionId,
-          wus.createdAt
-        FROM wecom_user_sessions wus
-        JOIN sessions s ON s.id = wus.sessionId
-        JOIN wecom_user_id_mappings m ON m.encryptedUserId = wus.wecomUserId
-        WHERE s.source = 'wecom'
-          AND s.name = wus.wecomUserId
-          AND s.custom_title IS NULL
-        ORDER BY wus.workspaceId, wus.wecomUserId, wus.createdAt ASC
-      `)
-      .all() as Array<{
-        workspaceId: string;
-        wecomUserId: string;
-        sessionId: string;
-        createdAt: string;
-      }>;
-    return rows;
+      .prepare('SELECT user_id FROM user_sessions WHERE session_id = ?')
+      .all(sessionId) as Array<{ user_id: string }>;
+    return rows.map((r) => r.user_id);
   }
-
-  // WeCom user ID mapping (encrypted -> plaintext), global across workspaces
-
-  getWecomUserMapping(encryptedUserId: string): string | null {
-    const row = this.db
-      .prepare('SELECT plaintextUserId FROM wecom_user_id_mappings WHERE encryptedUserId = ?')
-      .get(encryptedUserId) as { plaintextUserId: string } | undefined;
-    return row?.plaintextUserId ?? null;
-  }
-
-  getEncryptedUserIdByPlaintext(plaintextUserId: string): string | null {
-    const row = this.db
-      .prepare('SELECT encryptedUserId FROM wecom_user_id_mappings WHERE plaintextUserId = ?')
-      .get(plaintextUserId) as { encryptedUserId: string } | undefined;
-    return row?.encryptedUserId ?? null;
-  }
-
-  setWecomUserMapping(encryptedUserId: string, plaintextUserId: string): void {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(`
-        INSERT INTO wecom_user_id_mappings (encryptedUserId, plaintextUserId, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(encryptedUserId) DO UPDATE SET
-          plaintextUserId = excluded.plaintextUserId,
-          updatedAt = excluded.updatedAt
-      `)
-      .run(encryptedUserId, plaintextUserId, now, now);
-  }
-
-  listWecomUserMappings(): Array<{ encryptedUserId: string; plaintextUserId: string }> {
-    const rows = this.db
-      .prepare('SELECT encryptedUserId, plaintextUserId FROM wecom_user_id_mappings')
-      .all() as Array<{ encryptedUserId: string; plaintextUserId: string }>;
-    return rows;
-  }
-
-  // WeCom workspace user tracking
-
-  getWecomWorkspaceUser(workspaceId: string, encryptedUserId: string): { firstSeenAt: string; lastSeenAt: string } | null {
-    const row = this.db
-      .prepare('SELECT firstSeenAt, lastSeenAt FROM wecom_workspace_users WHERE workspaceId = ? AND encryptedUserId = ?')
-      .get(workspaceId, encryptedUserId) as { firstSeenAt: string; lastSeenAt: string } | undefined;
-    return row ?? null;
-  }
-
-  setWecomWorkspaceUser(workspaceId: string, encryptedUserId: string): void {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(`
-        INSERT INTO wecom_workspace_users (workspaceId, encryptedUserId, firstSeenAt, lastSeenAt)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(workspaceId, encryptedUserId) DO UPDATE SET
-          lastSeenAt = excluded.lastSeenAt
-      `)
-      .run(workspaceId, encryptedUserId, now, now);
-  }
-
-  listWecomWorkspaceUsers(workspaceId: string): Array<{ encryptedUserId: string; firstSeenAt: string; lastSeenAt: string }> {
-    const rows = this.db
-      .prepare('SELECT encryptedUserId, firstSeenAt, lastSeenAt FROM wecom_workspace_users WHERE workspaceId = ? ORDER BY lastSeenAt DESC')
-      .all(workspaceId) as Array<{ encryptedUserId: string; firstSeenAt: string; lastSeenAt: string }>;
-    return rows;
-  }
-
-  isPlaintextUserIdUsedInWorkspace(
-    workspaceId: string,
-    plaintextUserId: string,
-    excludeEncryptedUserId?: string,
-  ): boolean {
-    const rows = this.db
-      .prepare(
-        `
-        SELECT w.encryptedUserId, m.plaintextUserId
-        FROM wecom_workspace_users w
-        LEFT JOIN wecom_user_id_mappings m ON m.encryptedUserId = w.encryptedUserId
-        WHERE w.workspaceId = ?
-      `,
-      )
-      .all(workspaceId) as Array<{ encryptedUserId: string; plaintextUserId: string | null }>;
-
-    for (const row of rows) {
-      if (row.plaintextUserId === plaintextUserId) {
-        if (!excludeEncryptedUserId || row.encryptedUserId !== excludeEncryptedUserId) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  // Feishu bot state
-
-  getFeishuActiveWorkspace(): string | null {
-    const row = this.db
-      .prepare('SELECT activeWorkspaceId FROM feishu_bot_binding WHERE id = 1')
-      .get() as { activeWorkspaceId: string } | undefined;
-    return row?.activeWorkspaceId ?? null;
-  }
-
-  setFeishuActiveWorkspace(workspaceId: string): void {
-    this.db
-      .prepare(`
-        INSERT INTO feishu_bot_binding (id, activeWorkspaceId)
-        VALUES (1, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          activeWorkspaceId = excluded.activeWorkspaceId
-      `)
-      .run(workspaceId);
-  }
-
-  clearFeishuActiveWorkspace(): void {
-    this.db.prepare('DELETE FROM feishu_bot_binding WHERE id = 1').run();
-  }
-
-  addFeishuUserSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(`
-        INSERT INTO feishu_user_sessions (workspaceId, feishuUserId, sessionId, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?)
-      `)
-      .run(workspaceId, feishuUserId, sessionId, now, now);
-  }
-
-  getFeishuSessionOwner(workspaceId: string, sessionId: string): string | null {
-    const row = this.db
-      .prepare('SELECT feishuUserId FROM feishu_user_sessions WHERE workspaceId = ? AND sessionId = ?')
-      .get(workspaceId, sessionId) as { feishuUserId: string } | undefined;
-    return row?.feishuUserId ?? null;
-  }
-
-  listFeishuSessionsByUser(workspaceId: string, feishuUserId: string): Array<{ sessionId: string; createdAt: string }> {
-    const rows = this.db
-      .prepare(`
-        SELECT s.sessionId, s.createdAt
-        FROM feishu_user_sessions s
-        JOIN sessions sess ON sess.id = s.sessionId
-        WHERE s.workspaceId = ? AND s.feishuUserId = ?
-        ORDER BY s.createdAt ASC
-      `)
-      .all(workspaceId, feishuUserId) as Array<{ sessionId: string; createdAt: string }>;
-    return rows;
-  }
-
-  listFeishuSessionsForWorkspace(workspaceId: string): Array<{ sessionId: string; feishuUserId: string; createdAt: string }> {
-    const rows = this.db
-      .prepare(`
-        SELECT s.sessionId, s.feishuUserId, s.createdAt
-        FROM feishu_user_sessions s
-        JOIN sessions sess ON sess.id = s.sessionId
-        WHERE s.workspaceId = ?
-        ORDER BY s.createdAt ASC
-      `)
-      .all(workspaceId) as Array<{ sessionId: string; feishuUserId: string; createdAt: string }>;
-    return rows;
-  }
-
-  setFeishuActiveSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(`
-        INSERT INTO feishu_active_sessions (workspaceId, feishuUserId, sessionId, updatedAt)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(workspaceId, feishuUserId) DO UPDATE SET
-          sessionId = excluded.sessionId,
-          updatedAt = excluded.updatedAt
-      `)
-      .run(workspaceId, feishuUserId, sessionId, now);
-  }
-
-  getFeishuActiveSession(workspaceId: string, feishuUserId: string): string | null {
-    const row = this.db
-      .prepare('SELECT sessionId FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?')
-      .get(workspaceId, feishuUserId) as { sessionId: string } | undefined;
-    if (!row) return null;
-    const exists = this.db
-      .prepare('SELECT 1 FROM sessions WHERE id = ?')
-      .get(row.sessionId) as { '1': number } | undefined;
-    if (!exists) {
-      this.db.prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?').run(workspaceId, feishuUserId);
-      return null;
-    }
-    return row.sessionId;
-  }
-
-  clearFeishuActiveSession(workspaceId: string, feishuUserId: string): void {
-    this.db
-      .prepare('DELETE FROM feishu_active_sessions WHERE workspaceId = ? AND feishuUserId = ?')
-      .run(workspaceId, feishuUserId);
-  }
-
-  // Feishu workspace user directory
-
-  getFeishuWorkspaceUser(
-    workspaceId: string,
-    openId: string,
-  ): { openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string } | null {
-    const row = this.db
-      .prepare('SELECT openId, userId, name, firstSeenAt, lastSeenAt FROM feishu_workspace_users WHERE workspaceId = ? AND openId = ?')
-      .get(workspaceId, openId) as { openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string } | undefined;
-    return row ?? null;
-  }
-
-  setFeishuWorkspaceUser(workspaceId: string, openId: string): void {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(`
-        INSERT INTO feishu_workspace_users (workspaceId, openId, firstSeenAt, lastSeenAt)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(workspaceId, openId) DO UPDATE SET
-          lastSeenAt = excluded.lastSeenAt
-      `)
-      .run(workspaceId, openId, now, now);
-  }
-
-  setFeishuWorkspaceUserName(workspaceId: string, openId: string, name: string, userId?: string | null): void {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(`
-        UPDATE feishu_workspace_users
-        SET name = ?, userId = COALESCE(?, userId), lastSeenAt = ?
-        WHERE workspaceId = ? AND openId = ?
-      `)
-      .run(name, userId ?? null, now, workspaceId, openId);
-  }
-
-  listFeishuWorkspaceUsers(workspaceId: string): Array<{
-    openId: string;
-    userId: string | null;
-    name: string | null;
-    firstSeenAt: string;
-    lastSeenAt: string;
-  }> {
-    const rows = this.db
-      .prepare('SELECT openId, userId, name, firstSeenAt, lastSeenAt FROM feishu_workspace_users WHERE workspaceId = ? ORDER BY lastSeenAt DESC')
-      .all(workspaceId) as Array<{ openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string }>;
-    return rows;
-  }
-
-  // Session metadata (WIP, etc.)
-
-  getSessionMetadata(sessionIds: string[]): Record<string, { isWip: boolean }> {
-    if (sessionIds.length === 0) return {};
-    const placeholders = sessionIds.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(`SELECT session_id, is_wip FROM session_metadata WHERE session_id IN (${placeholders})`)
-      .all(...sessionIds) as Array<{ session_id: string; is_wip: number }>;
-    const result: Record<string, { isWip: boolean }> = {};
-    for (const row of rows) {
-      result[row.session_id] = { isWip: row.is_wip === 1 };
-    }
-    return result;
-  }
-
-  setSessionMetadata(sessionId: string, isWip: boolean): void {
-    this.db
-      .prepare(`
-        INSERT INTO session_metadata (session_id, is_wip)
-        VALUES (?, ?)
-        ON CONFLICT(session_id) DO UPDATE SET
-          is_wip = excluded.is_wip
-      `)
-      .run(sessionId, isWip ? 1 : 0);
-
-    // Also keep sessions table in sync
-    this.db.prepare(`UPDATE sessions SET is_wip = ? WHERE id = ?`).run(isWip ? 1 : 0, sessionId);
-  }
-
-  // Session CRUD (replaces draft-sessions.json)
 
   listLocalSessions(workspaceId?: string): ChatSession[] {
     const sql = workspaceId
@@ -1292,7 +1365,6 @@ export class SqliteStore {
   updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null }): ChatSession | null {
     const existing = this.getLocalSession(id);
     if (!existing) return null;
-
     const sets: string[] = [];
     const values: unknown[] = [];
     if (input.name !== undefined) {
@@ -1316,16 +1388,15 @@ export class SqliteStore {
       values.push(input.providerId);
     }
     if (sets.length === 0) return existing;
-
     sets.push('updated_at = ?');
     values.push(new Date().toISOString());
     values.push(id);
-
     this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...values);
     return this.getLocalSession(id);
   }
 
   deleteLocalSession(id: string): boolean {
+    this.db.prepare('DELETE FROM user_sessions WHERE session_id = ?').run(id);
     const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
     return result.changes > 0;
   }
@@ -1380,7 +1451,30 @@ export class SqliteStore {
     );
   }
 
-  // Provider CRUD
+  getSessionMetadata(sessionIds: string[]): Record<string, { isWip: boolean }> {
+    if (sessionIds.length === 0) return {};
+    const placeholders = sessionIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(`SELECT session_id, is_wip FROM session_metadata WHERE session_id IN (${placeholders})`)
+      .all(...sessionIds) as Array<{ session_id: string; is_wip: number }>;
+    const result: Record<string, { isWip: boolean }> = {};
+    for (const row of rows) {
+      result[row.session_id] = { isWip: row.is_wip === 1 };
+    }
+    return result;
+  }
+
+  setSessionMetadata(sessionId: string, isWip: boolean): void {
+    this.db
+      .prepare(`
+        INSERT INTO session_metadata (session_id, is_wip)
+        VALUES (?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+          is_wip = excluded.is_wip
+      `)
+      .run(sessionId, isWip ? 1 : 0);
+    this.db.prepare(`UPDATE sessions SET is_wip = ? WHERE id = ?`).run(isWip ? 1 : 0, sessionId);
+  }
 
   listProviders(): Provider[] {
     const rows = this.db.prepare('SELECT * FROM providers ORDER BY created_at DESC').all() as RawProviderRow[];
@@ -1420,7 +1514,6 @@ export class SqliteStore {
       createdAt: now,
       updatedAt: now,
     };
-
     const optionsJson = JSON.stringify({
       defaultOpusModel: provider.defaultOpusModel,
       defaultSonnetModel: provider.defaultSonnetModel,
@@ -1429,7 +1522,6 @@ export class SqliteStore {
       effortLevel: provider.effortLevel,
       customEnvVars: provider.customEnvVars,
     });
-
     this.db.prepare(`
       INSERT INTO providers (id, name, base_url, auth_token, model, is_default, options_json, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1444,18 +1536,15 @@ export class SqliteStore {
       provider.createdAt,
       provider.updatedAt
     );
-
     if (provider.isDefault) {
       this.db.prepare('UPDATE providers SET is_default = 0 WHERE id != ?').run(provider.id);
     }
-
     return provider;
   }
 
   updateProvider(id: string, input: UpdateProviderInput): Provider | null {
     const existing = this.getProvider(id);
     if (!existing) return null;
-
     const provider: Provider = {
       ...existing,
       ...(input.name !== undefined && { name: input.name.trim() }),
@@ -1471,7 +1560,6 @@ export class SqliteStore {
       ...(input.customEnvVars !== undefined && { customEnvVars: input.customEnvVars }),
       updatedAt: new Date().toISOString(),
     };
-
     const optionsJson = JSON.stringify({
       defaultOpusModel: provider.defaultOpusModel,
       defaultSonnetModel: provider.defaultSonnetModel,
@@ -1480,7 +1568,6 @@ export class SqliteStore {
       effortLevel: provider.effortLevel,
       customEnvVars: provider.customEnvVars,
     });
-
     this.db.prepare(`
       UPDATE providers
       SET name = ?, base_url = ?, auth_token = ?, model = ?, is_default = ?, options_json = ?, updated_at = ?
@@ -1495,11 +1582,9 @@ export class SqliteStore {
       provider.updatedAt,
       id
     );
-
     if (provider.isDefault) {
       this.db.prepare('UPDATE providers SET is_default = 0 WHERE id != ?').run(id);
     }
-
     return provider;
   }
 
@@ -1507,8 +1592,6 @@ export class SqliteStore {
     const result = this.db.prepare('DELETE FROM providers WHERE id = ?').run(id);
     return result.changes > 0;
   }
-
-  // Todo CRUD
 
   createTodo(workspaceId: string, input: CreateTodoInput): Todo {
     const now = new Date().toISOString();
@@ -1543,10 +1626,8 @@ export class SqliteStore {
   updateTodo(id: string, input: UpdateTodoInput): Todo | null {
     const existing = this.getTodoById(id);
     if (!existing) return null;
-
     const sets: string[] = [];
     const values: unknown[] = [];
-
     if (input.text !== undefined) {
       sets.push('text = ?');
       values.push(input.text.trim());
@@ -1560,11 +1641,9 @@ export class SqliteStore {
       values.push(input.sessionId);
     }
     if (sets.length === 0) return existing;
-
     sets.push('updated_at = ?');
     values.push(new Date().toISOString());
     values.push(id);
-
     this.db.prepare(`UPDATE todos SET ${sets.join(', ')} WHERE id = ?`).run(...values);
     return this.getTodoById(id);
   }
@@ -1584,8 +1663,6 @@ export class SqliteStore {
     `).run(new Date().toISOString(), sessionId);
     return result.changes > 0;
   }
-
-  // WeCom proactive message queue CRUD
 
   enqueueProactiveMessage(workspaceId: string, input: CreateProactiveMessageInput): WeComProactiveMessage {
     const now = new Date().toISOString();
@@ -1661,10 +1738,8 @@ export class SqliteStore {
   updateProactiveMessage(id: string, input: UpdateProactiveMessageInput): WeComProactiveMessage | null {
     const existing = this.getProactiveMessage(id);
     if (!existing) return null;
-
     const sets: string[] = [];
     const values: unknown[] = [];
-
     if (input.status !== undefined) {
       sets.push('status = ?');
       values.push(input.status);
@@ -1686,11 +1761,9 @@ export class SqliteStore {
       values.push(input.retryCount);
     }
     if (sets.length === 0) return existing;
-
     sets.push('updated_at = ?');
     values.push(new Date().toISOString());
     values.push(id);
-
     this.db.prepare(`UPDATE wecom_proactive_messages SET ${sets.join(', ')} WHERE id = ?`).run(...values);
     return this.getProactiveMessage(id);
   }
@@ -1699,8 +1772,6 @@ export class SqliteStore {
     const result = this.db.prepare('DELETE FROM wecom_proactive_messages WHERE id = ?').run(id);
     return result.changes > 0;
   }
-
-  // WeCom media cache for proactive file sends
 
   getWecomMediaCacheEntry(workspaceId: string, relativePath: string, md5: string): WeComMediaCacheEntry | null {
     const row = this.db
@@ -1738,8 +1809,6 @@ export class SqliteStore {
     );
     return entry;
   }
-
-  // Workspace prompt history
 
   createPromptHistory(
     workspaceId: string,
@@ -1779,52 +1848,72 @@ export class SqliteStore {
     return result.changes as number;
   }
 
-  // Bot management
-
   createBot(input: CreateBotInput): Bot {
     const now = new Date().toISOString();
     const bot: Bot = {
       id: uuidv4(),
       name: input.name,
       activeWorkspaceId: input.activeWorkspaceId ?? null,
-      channelSettings: input.channelSettings ?? {},
-      rolePolicy: input.rolePolicy ?? {
-        normalToolPolicy: {
-          posture: 'safe',
-          categoryDefaults: {
-            fileRead: 'allow',
-            fileWrite: 'deny',
-            shell: 'deny',
-            network: 'deny',
-            subagents: 'deny',
-            reply: 'allow',
-          },
-        },
-        skillAllowlist: [],
-        bashWhitelist: [],
-      },
       persona: input.persona,
-      rolePersonas: input.rolePersonas,
       createdAt: now,
       updatedAt: now,
     };
-
-    const encryptedSettings = encryptChannelSettings(bot.channelSettings);
     this.db.prepare(`
-      INSERT INTO bots (id, name, active_workspace_id, channel_settings_json, role_policy_json, persona_json, role_personas_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO bots (id, name, active_workspace_id, persona_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `).run(
       bot.id,
       bot.name,
       bot.activeWorkspaceId,
-      JSON.stringify(encryptedSettings),
-      JSON.stringify(bot.rolePolicy),
       bot.persona ? JSON.stringify(bot.persona) : null,
-      bot.rolePersonas ? JSON.stringify(bot.rolePersonas) : null,
       bot.createdAt,
       bot.updatedAt,
     );
-
+    for (const channelKey of ['wecom', 'feishu'] as BotChannelKey[]) {
+      const channelId = uuidv4();
+      this.db.prepare(`
+        INSERT INTO bot_channels (id, bot_id, channel_key, display_name, config_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(channelId, bot.id, channelKey, channelKey === 'wecom' ? 'WeCom' : 'Feishu', '{}', now, now);
+    }
+    for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
+      const roleId = uuidv4();
+      const permissions: BotRolePolicy = roleKey === 'normal'
+        ? {
+            normalToolPolicy: {
+              posture: 'safe',
+              categoryDefaults: {
+                fileRead: 'allow',
+                fileWrite: 'deny',
+                shell: 'deny',
+                network: 'deny',
+                subagents: 'deny',
+                reply: 'allow',
+              },
+            },
+            skillAllowlist: [],
+            bashWhitelist: [],
+          }
+        : {
+            normalToolPolicy: {
+              posture: 'allow-all',
+              categoryDefaults: {
+                fileRead: 'allow',
+                fileWrite: 'allow',
+                shell: 'allow',
+                network: 'allow',
+                subagents: 'allow',
+                reply: 'allow',
+              },
+            },
+            skillAllowlist: [],
+            bashWhitelist: [],
+          };
+      this.db.prepare(`
+        INSERT INTO bot_roles (id, bot_id, role_key, permissions_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(roleId, bot.id, roleKey, JSON.stringify(permissions), now, now);
+    }
     return bot;
   }
 
@@ -1848,80 +1937,208 @@ export class SqliteStore {
   updateBot(id: string, input: UpdateBotInput): Bot | null {
     const existing = this.getBot(id);
     if (!existing) return null;
-
     const bot: Bot = {
       ...existing,
       ...(input.name !== undefined && { name: input.name }),
       ...(input.activeWorkspaceId !== undefined && { activeWorkspaceId: input.activeWorkspaceId }),
-      ...(input.channelSettings !== undefined && { channelSettings: input.channelSettings }),
-      ...(input.rolePolicy !== undefined && { rolePolicy: input.rolePolicy }),
       ...(input.persona !== undefined && { persona: input.persona ?? undefined }),
-      ...(input.rolePersonas !== undefined && { rolePersonas: input.rolePersonas ?? undefined }),
       updatedAt: new Date().toISOString(),
     };
-
-    const encryptedSettings = encryptChannelSettings(bot.channelSettings);
     this.db.prepare(`
       UPDATE bots
-      SET name = ?, active_workspace_id = ?, channel_settings_json = ?, role_policy_json = ?, persona_json = ?, role_personas_json = ?, updated_at = ?
+      SET name = ?, active_workspace_id = ?, persona_json = ?, updated_at = ?
       WHERE id = ?
     `).run(
       bot.name,
       bot.activeWorkspaceId,
-      JSON.stringify(encryptedSettings),
-      JSON.stringify(bot.rolePolicy),
       bot.persona ? JSON.stringify(bot.persona) : null,
-      bot.rolePersonas ? JSON.stringify(bot.rolePersonas) : null,
       bot.updatedAt,
       id,
     );
-
     return bot;
   }
 
   deleteBot(id: string): boolean {
     const result = this.db.prepare('DELETE FROM bots WHERE id = ?').run(id);
     if (result.changes > 0) {
-      this.db.prepare('DELETE FROM bot_members WHERE bot_id = ?').run(id);
+      this.db.prepare(`
+        DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM bot_users WHERE bot_id = ?)
+      `).run(id);
+      this.db.prepare('DELETE FROM bot_users WHERE bot_id = ?').run(id);
+      this.db.prepare('DELETE FROM bot_roles WHERE bot_id = ?').run(id);
+      this.db.prepare('DELETE FROM bot_channels WHERE bot_id = ?').run(id);
       this.db.prepare('DELETE FROM bot_audit_logs WHERE bot_id = ?').run(id);
     }
     return result.changes > 0;
   }
 
-  // Bot members
+  createBotChannel(botId: string, channelKey: BotChannelKey, displayName: string, config: BotChannelSettings): BotChannel {
+    const now = new Date().toISOString();
+    const channel: BotChannel = {
+      id: uuidv4(),
+      botId,
+      channelKey,
+      displayName,
+      config,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const encrypted = encryptChannelSettings(config);
+    this.db.prepare(`
+      INSERT INTO bot_channels (id, bot_id, channel_key, display_name, config_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(channel.id, channel.botId, channel.channelKey, channel.displayName, JSON.stringify(encrypted), channel.createdAt, channel.updatedAt);
+    return channel;
+  }
 
-  setBotMember(botId: string, channel: string, channelUserId: string, role: BotRole): void {
+  getBotChannel(id: string): BotChannel | null {
+    const row = this.db.prepare('SELECT * FROM bot_channels WHERE id = ?').get(id) as RawBotChannelRow | undefined;
+    return row ? parseBotChannelRow(row) : null;
+  }
+
+  getBotChannelByKey(botId: string, channelKey: BotChannelKey): BotChannel | null {
+    const row = this.db.prepare('SELECT * FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(botId, channelKey) as RawBotChannelRow | undefined;
+    return row ? parseBotChannelRow(row) : null;
+  }
+
+  listBotChannels(botId: string): BotChannel[] {
+    const rows = this.db.prepare('SELECT * FROM bot_channels WHERE bot_id = ? ORDER BY created_at').all(botId) as RawBotChannelRow[];
+    return rows.map(parseBotChannelRow);
+  }
+
+  updateBotChannel(id: string, config: BotChannelSettings): BotChannel | null {
+    const existing = this.getBotChannel(id);
+    if (!existing) return null;
+    const now = new Date().toISOString();
+    const encrypted = encryptChannelSettings(config);
+    this.db.prepare(`
+      UPDATE bot_channels SET config_json = ?, updated_at = ? WHERE id = ?
+    `).run(JSON.stringify(encrypted), now, id);
+    return { ...existing, config, updatedAt: now };
+  }
+
+  deleteBotChannel(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM bot_channels WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  createBotRole(botId: string, roleKey: BotRoleKey, permissions: BotRolePolicy, persona?: BotPersona): BotRole {
+    const now = new Date().toISOString();
+    const role: BotRole = {
+      id: uuidv4(),
+      botId,
+      roleKey,
+      permissions,
+      persona,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.db.prepare(`
+      INSERT INTO bot_roles (id, bot_id, role_key, permissions_json, persona_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(role.id, role.botId, role.roleKey, JSON.stringify(role.permissions), role.persona ? JSON.stringify(role.persona) : null, role.createdAt, role.updatedAt);
+    return role;
+  }
+
+  getBotRole(id: string): BotRole | null {
+    const row = this.db.prepare('SELECT * FROM bot_roles WHERE id = ?').get(id) as RawBotRoleRow | undefined;
+    return row ? parseBotRoleRow(row) : null;
+  }
+
+  getBotRoleByKey(botId: string, roleKey: BotRoleKey): BotRole | null {
+    const row = this.db.prepare('SELECT * FROM bot_roles WHERE bot_id = ? AND role_key = ?').get(botId, roleKey) as RawBotRoleRow | undefined;
+    return row ? parseBotRoleRow(row) : null;
+  }
+
+  listBotRoles(botId: string): BotRole[] {
+    const rows = this.db.prepare('SELECT * FROM bot_roles WHERE bot_id = ? ORDER BY created_at').all(botId) as RawBotRoleRow[];
+    return rows.map(parseBotRoleRow);
+  }
+
+  updateBotRole(id: string, permissions: BotRolePolicy, persona?: BotPersona | null): BotRole | null {
+    const existing = this.getBotRole(id);
+    if (!existing) return null;
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO bot_members (bot_id, channel, channel_user_id, role, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(bot_id, channel, channel_user_id) DO UPDATE SET
-        role = excluded.role,
-        updated_at = excluded.updated_at
-    `).run(botId, channel, channelUserId, role, now, now);
+      UPDATE bot_roles SET permissions_json = ?, persona_json = ?, updated_at = ? WHERE id = ?
+    `).run(JSON.stringify(permissions), persona ? JSON.stringify(persona) : null, now, id);
+    return { ...existing, permissions, persona: persona ?? undefined, updatedAt: now };
   }
 
-  removeBotMember(botId: string, channel: string, channelUserId: string): void {
+  deleteBotRole(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM bot_roles WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  createBotUser(input: CreateBotUserInput): BotUser {
+    const now = new Date().toISOString();
+    const user: BotUser = {
+      id: uuidv4(),
+      botId: input.botId,
+      channelId: input.channelId,
+      roleId: input.roleId,
+      channelUserId: input.channelUserId,
+      plaintextUserId: input.plaintextUserId ?? null,
+      createdAt: now,
+      updatedAt: now,
+      roleKey: 'normal',
+      resolutionStatus: input.plaintextUserId ? 'resolved' : 'pending',
+    };
     this.db.prepare(`
-      DELETE FROM bot_members WHERE bot_id = ? AND channel = ? AND channel_user_id = ?
-    `).run(botId, channel, channelUserId);
+      INSERT INTO bot_users (id, bot_id, channel_id, role_id, channel_user_id, plaintext_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(user.id, user.botId, user.channelId, user.roleId, user.channelUserId, user.plaintextUserId, user.createdAt, user.updatedAt);
+    return user;
   }
 
-  getBotMemberRole(botId: string, channel: string, channelUserId: string): BotRole | null {
-    const row = this.db
-      .prepare('SELECT role FROM bot_members WHERE bot_id = ? AND channel = ? AND channel_user_id = ?')
-      .get(botId, channel, channelUserId) as { role: BotRole } | undefined;
-    return row?.role ?? null;
+  getBotUser(id: string): BotUser | null {
+    const row = this.db.prepare('SELECT * FROM bot_users WHERE id = ?').get(id) as RawBotUserRow | undefined;
+    return row ? parseBotUserRow(row, this.db) : null;
   }
 
-  listBotMembers(botId: string): BotMember[] {
-    const rows = this.db
-      .prepare('SELECT * FROM bot_members WHERE bot_id = ? ORDER BY created_at')
-      .all(botId) as RawBotMemberRow[];
-    return rows.map(parseBotMemberRow);
+  getBotUserByChannelIdentity(botId: string, channelId: string, channelUserId: string): BotUser | null {
+    const row = this.db.prepare(`
+      SELECT * FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
+    `).get(botId, channelId, channelUserId) as RawBotUserRow | undefined;
+    return row ? parseBotUserRow(row, this.db) : null;
   }
 
-  // Bot audit logs
+  listBotUsers(botId: string): BotUser[] {
+    const rows = this.db.prepare('SELECT * FROM bot_users WHERE bot_id = ? ORDER BY created_at').all(botId) as RawBotUserRow[];
+    return rows.map((r) => parseBotUserRow(r, this.db));
+  }
+
+  listBotUsersByChannel(botId: string, channelId: string): BotUser[] {
+    const rows = this.db.prepare('SELECT * FROM bot_users WHERE bot_id = ? AND channel_id = ? ORDER BY created_at').all(botId, channelId) as RawBotUserRow[];
+    return rows.map((r) => parseBotUserRow(r, this.db));
+  }
+
+  updateBotUser(id: string, input: UpdateBotUserInput): BotUser | null {
+    const existing = this.getBotUser(id);
+    if (!existing) return null;
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (input.roleId !== undefined) {
+      sets.push('role_id = ?');
+      values.push(input.roleId);
+    }
+    if (input.plaintextUserId !== undefined) {
+      sets.push('plaintext_user_id = ?');
+      values.push(input.plaintextUserId);
+    }
+    if (sets.length === 0) return existing;
+    sets.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+    this.db.prepare(`UPDATE bot_users SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return this.getBotUser(id);
+  }
+
+  deleteBotUser(id: string): boolean {
+    this.db.prepare('DELETE FROM user_sessions WHERE user_id = ?').run(id);
+    const result = this.db.prepare('DELETE FROM bot_users WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
 
   recordAuditLog(input: CreateBotAuditLogInput): BotAuditLogEntry {
     const now = new Date().toISOString();
@@ -1956,8 +2173,6 @@ export class SqliteStore {
     return rows.map(parseAuditLogRow);
   }
 
-  // Bot migration state
-
   getMigrationVersion(): number | null {
     const row = this.db
       .prepare('SELECT version FROM bot_migration_state WHERE id = 1')
@@ -1975,8 +2190,6 @@ export class SqliteStore {
         snapshot_json = excluded.snapshot_json
     `).run(version, runAt, JSON.stringify(snapshot));
   }
-
-  // Session bot_id backfill
 
   setSessionBotId(sessionId: string, botId: string): void {
     this.db.prepare('UPDATE sessions SET bot_id = ? WHERE id = ?').run(botId, sessionId);
@@ -2056,7 +2269,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     isDraft: row.is_draft === 1,
     isWip: row.is_wip === 1,
     isArchived: row.is_archived === 1,
-    source: (row.source as 'gui' | 'wecom') ?? undefined,
+    source: (row.source as 'gui' | 'wecom' | 'feishu') ?? undefined,
     approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
     providerId: row.provider_id ?? undefined,
     botId: row.bot_id ?? undefined,
@@ -2074,22 +2287,61 @@ interface RawBotRow {
   id: string;
   name: string;
   active_workspace_id: string | null;
-  channel_settings_json: string;
-  role_policy_json: string;
   persona_json: string | null;
-  role_personas_json: string | null;
   created_at: string;
   updated_at: string;
 }
 
 function parseBotRow(row: RawBotRow): Bot {
-  const encryptedSettings = safeJsonParse(row.channel_settings_json, {} as BotChannelSettings);
   return {
     id: row.id,
     name: row.name,
     activeWorkspaceId: row.active_workspace_id,
-    channelSettings: decryptChannelSettings(encryptedSettings),
-    rolePolicy: safeJsonParse(row.role_policy_json, {
+    persona: row.persona_json ? safeJsonParse(row.persona_json, undefined as unknown as BotPersona) : undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface RawBotChannelRow {
+  id: string;
+  bot_id: string;
+  channel_key: string;
+  display_name: string;
+  config_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseBotChannelRow(row: RawBotChannelRow): BotChannel {
+  const encryptedConfig = safeJsonParse(row.config_json, {} as BotChannelSettings);
+  return {
+    id: row.id,
+    botId: row.bot_id,
+    channelKey: row.channel_key as BotChannelKey,
+    displayName: row.display_name,
+    config: decryptChannelSettings(encryptedConfig),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface RawBotRoleRow {
+  id: string;
+  bot_id: string;
+  role_key: string;
+  permissions_json: string;
+  persona_json: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseBotRoleRow(row: RawBotRoleRow): BotRole {
+  return {
+    id: row.id,
+    botId: row.bot_id,
+    roleKey: row.role_key as BotRoleKey,
+    permissions: safeJsonParse(row.permissions_json, {
       normalToolPolicy: {
         posture: 'safe',
         categoryDefaults: {
@@ -2105,32 +2357,35 @@ function parseBotRow(row: RawBotRow): Bot {
       bashWhitelist: [],
     } as BotRolePolicy),
     persona: row.persona_json ? safeJsonParse(row.persona_json, undefined as unknown as BotPersona) : undefined,
-    rolePersonas: row.role_personas_json ? safeJsonParse(row.role_personas_json, undefined as unknown as Partial<Record<BotRole, BotPersona>>) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
-interface RawBotMemberRow {
+interface RawBotUserRow {
+  id: string;
   bot_id: string;
-  channel: string;
+  channel_id: string;
+  role_id: string;
   channel_user_id: string;
-  role: BotRole;
+  plaintext_user_id: string | null;
   created_at: string;
   updated_at: string;
 }
 
-function parseBotMemberRow(row: RawBotMemberRow): BotMember {
+function parseBotUserRow(row: RawBotUserRow, db: Database.Database): BotUser {
+  const roleRow = db.prepare('SELECT role_key FROM bot_roles WHERE id = ?').get(row.role_id) as { role_key: string } | undefined;
   return {
+    id: row.id,
     botId: row.bot_id,
-    channel: row.channel as BotMember['channel'],
+    channelId: row.channel_id,
+    roleId: row.role_id,
     channelUserId: row.channel_user_id,
-    role: row.role,
-    plaintextUserId: null,
-    displayName: null,
-    resolutionStatus: 'pending',
+    plaintextUserId: row.plaintext_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    roleKey: (roleRow?.role_key ?? 'normal') as BotRoleKey,
+    resolutionStatus: row.plaintext_user_id ? 'resolved' : 'pending',
   };
 }
 

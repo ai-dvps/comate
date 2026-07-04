@@ -1,11 +1,11 @@
-import type { Bot, BotRole } from '../models/bot.js';
+import type { BotRoleKey } from '../models/bot.js';
 import {
   evaluateToolPermission,
   type PermissionDecision,
 } from './tool-permission-policy.js';
 import { evaluateSkill, type SkillPolicyResult } from './bot-skill-policy.js';
 
-export function isOwnerOrAdmin(role: BotRole | null | undefined): boolean {
+export function isOwnerOrAdmin(role: BotRoleKey | null | undefined): boolean {
   return role === 'owner' || role === 'admin';
 }
 
@@ -13,30 +13,34 @@ export function isOwnerOrAdmin(role: BotRole | null | undefined): boolean {
  * Evaluate whether a tool is allowed for a bot member.
  *
  * Owner/Admin bypass the Normal tool policy entirely. Normal users are
- * evaluated against `bot.rolePolicy.normalToolPolicy`.
+ * evaluated against the normal role's `normalToolPolicy`.
  */
 export function evaluateBotToolPermission(
-  bot: Bot,
-  role: BotRole | null | undefined,
+  normalToolPolicy: PermissionDecision,
+  role: BotRoleKey | null | undefined,
   toolName: string,
 ): PermissionDecision {
   if (isOwnerOrAdmin(role)) {
     return 'allow';
   }
-  return evaluateToolPermission(bot.rolePolicy.normalToolPolicy, toolName, false);
+  return evaluateToolPermission(normalToolPolicy, toolName, false);
 }
 
 /**
  * Evaluate whether a Skill tool invocation is allowed for a bot member.
  */
 export function evaluateBotSkill(
-  bot: Bot,
-  role: BotRole | null | undefined,
+  rolePolicy: {
+    normalToolPolicy: PermissionDecision;
+    skillAllowlist: string[];
+    bashWhitelist: string[];
+  },
+  role: BotRoleKey | null | undefined,
   toolName: string,
   input: Record<string, unknown>,
 ): SkillPolicyResult {
   return evaluateSkill(
-    { policy: bot.rolePolicy, isAdminOrOwner: isOwnerOrAdmin(role) },
+    { policy: rolePolicy, isAdminOrOwner: isOwnerOrAdmin(role) },
     toolName,
     input,
   );
@@ -49,14 +53,14 @@ export function evaluateBotSkill(
  * that start with an entry in the bot's Bash whitelist.
  */
 export function isBashCommandAllowed(
-  bot: Bot,
-  role: BotRole | null | undefined,
+  bashWhitelist: string[],
+  role: BotRoleKey | null | undefined,
   command: string,
 ): boolean {
   if (isOwnerOrAdmin(role)) {
     return true;
   }
-  const whitelist = bot.rolePolicy.bashWhitelist ?? [];
+  const whitelist = bashWhitelist ?? [];
   if (whitelist.length === 0) {
     return false;
   }
