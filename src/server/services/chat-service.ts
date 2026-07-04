@@ -613,6 +613,7 @@ export class ChatService {
         existing.addBotEventHandler(botEventHandler);
       }
       this.runtimeContexts.set(sessionId, runtimeContext);
+      sidecarLog(`[ChatService] reusing existing runtime ${sessionId}`);
       return existing;
     }
     if (existing) {
@@ -622,6 +623,7 @@ export class ChatService {
 
     const pending = this.creatingRuntimes.get(sessionId);
     if (pending) {
+      diagLog(`[ChatService] awaiting pending runtime creation ${sessionId}`);
       const runtime = await pending;
       if (botEventHandler) {
         runtime.clearBotEventHandlers();
@@ -632,6 +634,9 @@ export class ChatService {
     }
 
     const promise = (async () => {
+      const startedAt = Date.now();
+      diagLog(`[ChatService] creating runtime ${sessionId} workspaceId=${workspaceId} isBotSession=${!!isBotSession}`);
+
       const workspace = await workspaceStore.get(workspaceId);
       if (!workspace) {
         throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -641,6 +646,7 @@ export class ChatService {
       if (!session) {
         throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
       }
+      diagLog(`[ChatService] runtime ${sessionId} session loaded elapsed=${Date.now() - startedAt}ms isDraft=${!!session.isDraft}`);
 
       // Verify non-draft sessions actually exist in SDK before resuming.
       // If the SDK has lost track of the session, fall back to sessionId mode
@@ -648,7 +654,9 @@ export class ChatService {
       // "No conversation found with session ID".
       if (!session.isDraft) {
         try {
+          const verifyStart = Date.now();
           const sdkSession = await this.sdkClient.getSessionInfo(sessionId, { dir: workspace.folderPath });
+          diagLog(`[ChatService] runtime ${sessionId} getSessionInfo elapsed=${Date.now() - verifyStart}ms found=${!!sdkSession}`);
           if (!sdkSession) {
             sidecarLog(`[ChatService] Session ${sessionId} not found in SDK, falling back to draft mode`);
             workspaceStore.setSessionDraft(sessionId, true);
@@ -659,8 +667,14 @@ export class ChatService {
         }
       }
 
+      const optionsStart = Date.now();
       const options = this.buildSdkOptions(workspace, session, isBotSession, botUserId);
+      diagLog(`[ChatService] runtime ${sessionId} buildSdkOptions elapsed=${Date.now() - optionsStart}ms pathToClaudeCodeExecutable=${options.pathToClaudeCodeExecutable || 'undefined'}`);
+
+      const testStart = Date.now();
       await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
+      diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
+
       const deadLoopSettings = resolveDeadLoopDetectionSettings(workspace.settings);
       const runtime = SessionRuntime.open(
         sessionId,
@@ -674,6 +688,7 @@ export class ChatService {
         () => this.scheduleIdleClose(sessionId),
         deadLoopSettings,
       );
+      diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - startedAt}ms`);
       this.runtimes.set(sessionId, runtime);
       this.runtimeContexts.set(sessionId, runtimeContext);
       this.scheduleIdleClose(sessionId);

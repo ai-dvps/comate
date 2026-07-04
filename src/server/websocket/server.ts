@@ -103,8 +103,11 @@ export class ComateWebSocketServer {
 
   private async handleSubscribe(ctx: ClientContext, req: WsRequest): Promise<void> {
     const { workspaceId, sessionId, lastEventId } = req.payload as unknown as SubscribePayload;
+    const startedAt = Date.now();
+    diagLog(`[WebSocket] subscribe request received sessionId=${sessionId} workspaceId=${workspaceId}`);
 
     const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
+    diagLog(`[WebSocket] subscribe runtime ready sessionId=${sessionId} elapsed=${Date.now() - startedAt}ms`);
 
     // Register client subscription context
     ctx.subscriptions.set(sessionId, workspaceId);
@@ -138,6 +141,7 @@ export class ComateWebSocketServer {
     unsubscribersBySession.set(ctx.socket, () => runtime.removeWebEventHandler(handler));
 
     this.sendOk(ctx.socket, req.id, { subscribed: true });
+    diagLog(`[WebSocket] subscribe response sent sessionId=${sessionId} elapsed=${Date.now() - startedAt}ms`);
   }
 
   private async handleUnsubscribe(ctx: ClientContext, req: WsRequest): Promise<void> {
