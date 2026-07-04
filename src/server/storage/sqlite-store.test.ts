@@ -4,7 +4,6 @@ import assert from 'node:assert';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import type { BotPersona, BotRole } from '../models/bot.js';
 import { SqliteStore } from './sqlite-store.js';
 
 const testDbDir = mkdtempSync(join(tmpdir(), 'sqlite-store-test-'));
@@ -96,12 +95,10 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
     assert.strictEqual(claimed.status, 'delivering');
     assert.ok(claimed.claimedAt);
 
-    // Second claim should get the other pending row
     const claimed2 = store.claimNextPendingMessage('ws-1');
     assert.ok(claimed2);
     assert.strictEqual(claimed2.status, 'delivering');
 
-    // No more pending rows
     const claimed3 = store.claimNextPendingMessage('ws-1');
     assert.strictEqual(claimed3, null);
   });
@@ -157,18 +154,15 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
   });
 
   it('delete workspace cascades to proactive messages', async () => {
-    // Create a workspace so delete actually removes it and triggers cascade
     const ws = await store.create({
       name: 'Cascade Test',
       folderPath: '/tmp/cascade-test',
     });
     store.enqueueProactiveMessage(ws.id, createMessageInput());
 
-    // Verify message exists
     const before = store.listProactiveMessages(ws.id);
     assert.strictEqual(before.length, 1);
 
-    // Workspace deletion cascades
     await store.delete(ws.id);
 
     const after = store.listProactiveMessages(ws.id);
@@ -189,84 +183,6 @@ describe('SqliteStore proactive messages', { concurrency: false }, () => {
     assert.strictEqual(updated.status, 'pending');
     assert.strictEqual(updated.errorReason, null);
     assert.strictEqual(updated.retryCount, 2);
-  });
-
-  it('getWecomUserIdBySession returns correct userId for existing mapping', () => {
-    store.setWecomSession('ws-1', 'user-alice', 'session-123');
-
-    const userId = store.getWecomUserIdBySession('ws-1', 'session-123');
-    assert.strictEqual(userId, 'user-alice');
-  });
-
-  it('getWecomUserIdBySession returns null for unknown sessionId', () => {
-    const userId = store.getWecomUserIdBySession('ws-1', 'unknown-session');
-    assert.strictEqual(userId, null);
-  });
-
-  it('getWecomUserIdBySession returns null when session exists in different workspace', () => {
-    store.setWecomSession('ws-1', 'user-alice', 'session-123');
-
-    const userId = store.getWecomUserIdBySession('ws-2', 'session-123');
-    assert.strictEqual(userId, null);
-  });
-});
-
-describe('SqliteStore WeCom user ID mappings', { concurrency: false }, () => {
-  let store: SqliteStore;
-
-  beforeEach(() => {
-    store = new SqliteStore(':memory:');
-    store.resetData();
-  });
-
-  async function createWorkspace(name: string) {
-    return store.create({ name, folderPath: `/tmp/${name}` });
-  }
-
-  it('isPlaintextUserIdUsedInWorkspace returns false when checking the same user', async () => {
-    const ws = await createWorkspace('WeCom Dup');
-    store.setWecomWorkspaceUser(ws.id, 'E123');
-    store.setWecomUserMapping('E123', 'U456');
-
-    assert.strictEqual(
-      store.isPlaintextUserIdUsedInWorkspace(ws.id, 'U456', 'E123'),
-      false,
-    );
-  });
-
-  it('isPlaintextUserIdUsedInWorkspace returns true when another user has the same plaintext', async () => {
-    const ws = await createWorkspace('WeCom Dup');
-    store.setWecomWorkspaceUser(ws.id, 'E123');
-    store.setWecomWorkspaceUser(ws.id, 'E789');
-    store.setWecomUserMapping('E123', 'U456');
-    store.setWecomUserMapping('E789', 'U456');
-
-    assert.strictEqual(
-      store.isPlaintextUserIdUsedInWorkspace(ws.id, 'U456', 'E123'),
-      true,
-    );
-  });
-
-  it('isPlaintextUserIdUsedInWorkspace isolates workspaces', async () => {
-    const ws1 = await createWorkspace('WeCom A');
-    const ws2 = await createWorkspace('WeCom B');
-    store.setWecomWorkspaceUser(ws2.id, 'E999');
-    store.setWecomUserMapping('E999', 'U456');
-
-    assert.strictEqual(
-      store.isPlaintextUserIdUsedInWorkspace(ws1.id, 'U456', 'E123'),
-      false,
-    );
-  });
-
-  it('isPlaintextUserIdUsedInWorkspace returns false for unmapped users', async () => {
-    const ws = await createWorkspace('WeCom Unmapped');
-    store.setWecomWorkspaceUser(ws.id, 'E789');
-
-    assert.strictEqual(
-      store.isPlaintextUserIdUsedInWorkspace(ws.id, 'U456', 'E123'),
-      false,
-    );
   });
 });
 
@@ -415,8 +331,6 @@ describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
 
   it('prunePromptHistory removes entries older than retentionDays', async () => {
     const ws = await createWorkspace('History Prune');
-    // Backdate one entry via the optional createdAt argument so it falls
-    // outside the retention window.
     store.createPromptHistory(ws.id, 'session-1', 'old', new Date(Date.now() - 31 * 86400_000).toISOString());
     store.createPromptHistory(ws.id, 'session-1', 'recent');
 
@@ -447,219 +361,10 @@ describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
   });
 });
 
-describe('SqliteStore Feishu state', { concurrency: false }, () => {
-  let store: SqliteStore;
-
-  beforeEach(() => {
-    store = new SqliteStore(testDbPath);
-    store.resetData();
-  });
-
-  async function createWorkspace(name: string) {
-    return store.create({ name, folderPath: `/tmp/${name}` });
-  }
-
-  function createSession(workspaceId: string, id: string) {
-    const now = new Date().toISOString();
-    store.syncSdkSession({
-      id,
-      workspaceId,
-      name: id,
-      isDraft: false,
-      isWip: false,
-      source: 'feishu',
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
-
-  it('sets and reads the active workspace binding', async () => {
-    const ws = await createWorkspace('Feishu Binding');
-    assert.strictEqual(store.getFeishuActiveWorkspace(), null);
-
-    store.setFeishuActiveWorkspace(ws.id);
-    assert.strictEqual(store.getFeishuActiveWorkspace(), ws.id);
-
-    const ws2 = await createWorkspace('Feishu Binding 2');
-    store.setFeishuActiveWorkspace(ws2.id);
-    assert.strictEqual(store.getFeishuActiveWorkspace(), ws2.id);
-  });
-
-  it('clears the active workspace binding', async () => {
-    const ws = await createWorkspace('Feishu Clear');
-    store.setFeishuActiveWorkspace(ws.id);
-    store.clearFeishuActiveWorkspace();
-    assert.strictEqual(store.getFeishuActiveWorkspace(), null);
-  });
-
-  it('lists sessions per Feishu user and isolates users', async () => {
-    const ws = await createWorkspace('Feishu Users');
-    createSession(ws.id, 'session-a');
-    createSession(ws.id, 'session-b');
-    createSession(ws.id, 'session-c');
-
-    store.addFeishuUserSession(ws.id, 'user-alice', 'session-a');
-    store.addFeishuUserSession(ws.id, 'user-alice', 'session-b');
-    store.addFeishuUserSession(ws.id, 'user-bob', 'session-c');
-
-    const alice = store.listFeishuSessionsByUser(ws.id, 'user-alice');
-    assert.strictEqual(alice.length, 2);
-    assert.ok(alice.some((s) => s.sessionId === 'session-a'));
-    assert.ok(alice.some((s) => s.sessionId === 'session-b'));
-
-    const bob = store.listFeishuSessionsByUser(ws.id, 'user-bob');
-    assert.strictEqual(bob.length, 1);
-    assert.strictEqual(bob[0].sessionId, 'session-c');
-  });
-
-  it('lists all Feishu sessions for a workspace', async () => {
-    const ws = await createWorkspace('Feishu Workspace List');
-    createSession(ws.id, 'session-a');
-    createSession(ws.id, 'session-b');
-
-    store.addFeishuUserSession(ws.id, 'user-alice', 'session-a');
-    store.addFeishuUserSession(ws.id, 'user-bob', 'session-b');
-
-    const all = store.listFeishuSessionsForWorkspace(ws.id);
-    assert.strictEqual(all.length, 2);
-    assert.ok(all.some((s) => s.sessionId === 'session-a' && s.feishuUserId === 'user-alice'));
-    assert.ok(all.some((s) => s.sessionId === 'session-b' && s.feishuUserId === 'user-bob'));
-  });
-
-  it('sets and reads the active session', async () => {
-    const ws = await createWorkspace('Feishu Active');
-    createSession(ws.id, 'session-1');
-
-    store.setFeishuActiveSession(ws.id, 'user-alice', 'session-1');
-    assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), 'session-1');
-
-    createSession(ws.id, 'session-2');
-    store.setFeishuActiveSession(ws.id, 'user-alice', 'session-2');
-    assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), 'session-2');
-  });
-
-  it('returns session owner for Feishu sessions', async () => {
-    const ws = await createWorkspace('Feishu Owner');
-    createSession(ws.id, 'session-x');
-    store.addFeishuUserSession(ws.id, 'user-alice', 'session-x');
-    assert.strictEqual(store.getFeishuSessionOwner(ws.id, 'session-x'), 'user-alice');
-    assert.strictEqual(store.getFeishuSessionOwner(ws.id, 'session-y'), null);
-  });
-
-  it('drops orphaned mappings and active sessions when the session is deleted', async () => {
-    const ws = await createWorkspace('Feishu Orphan');
-    createSession(ws.id, 'session-alive');
-    createSession(ws.id, 'session-deleted');
-
-    store.addFeishuUserSession(ws.id, 'user-alice', 'session-alive');
-    store.addFeishuUserSession(ws.id, 'user-alice', 'session-deleted');
-    store.setFeishuActiveSession(ws.id, 'user-alice', 'session-deleted');
-
-    store.deleteLocalSession('session-deleted');
-
-    const sessions = store.listFeishuSessionsByUser(ws.id, 'user-alice');
-    assert.strictEqual(sessions.length, 1);
-    assert.strictEqual(sessions[0].sessionId, 'session-alive');
-
-    assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), null);
-  });
-
-  it('deletes workspace cascades to Feishu state', async () => {
-    const ws = await createWorkspace('Feishu Cascade');
-    createSession(ws.id, 'session-1');
-    store.setFeishuActiveWorkspace(ws.id);
-    store.addFeishuUserSession(ws.id, 'user-alice', 'session-1');
-    store.setFeishuActiveSession(ws.id, 'user-alice', 'session-1');
-
-    await store.delete(ws.id);
-
-    assert.strictEqual(store.getFeishuActiveWorkspace(), null);
-    assert.strictEqual(store.listFeishuSessionsByUser(ws.id, 'user-alice').length, 0);
-    assert.strictEqual(store.getFeishuActiveSession(ws.id, 'user-alice'), null);
-  });
-
-  it('upserts Feishu workspace users preserving firstSeenAt', async () => {
-    const ws = await createWorkspace('Feishu Users Upsert');
-
-    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
-    const first = store.getFeishuWorkspaceUser(ws.id, 'ou-alice');
-    assert.ok(first);
-    assert.strictEqual(first.openId, 'ou-alice');
-    assert.strictEqual(first.name, null);
-    assert.strictEqual(first.userId, null);
-
-    // Simulate a later message and verify firstSeenAt stays the same while lastSeenAt changes.
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
-    const second = store.getFeishuWorkspaceUser(ws.id, 'ou-alice');
-    assert.ok(second);
-    assert.strictEqual(second.firstSeenAt, first.firstSeenAt);
-    assert.notStrictEqual(second.lastSeenAt, first.lastSeenAt);
-  });
-
-  it('lists Feishu workspace users ordered by lastSeenAt DESC', async () => {
-    const ws = await createWorkspace('Feishu Users List');
-
-    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    store.setFeishuWorkspaceUser(ws.id, 'ou-bob');
-
-    const users = store.listFeishuWorkspaceUsers(ws.id);
-    assert.strictEqual(users.length, 2);
-    assert.strictEqual(users[0].openId, 'ou-bob');
-    assert.strictEqual(users[1].openId, 'ou-alice');
-  });
-
-  it('caches display name and user_id', async () => {
-    const ws = await createWorkspace('Feishu Users Name');
-
-    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
-    store.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice', 'alice-uid');
-
-    const user = store.getFeishuWorkspaceUser(ws.id, 'ou-alice');
-    assert.ok(user);
-    assert.strictEqual(user.name, 'Alice');
-    assert.strictEqual(user.userId, 'alice-uid');
-
-    const listed = store.listFeishuWorkspaceUsers(ws.id);
-    assert.strictEqual(listed[0].name, 'Alice');
-  });
-
-  it('keeps existing userId when updating name without userId', async () => {
-    const ws = await createWorkspace('Feishu Users Partial Update');
-
-    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
-    store.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice', 'alice-uid');
-    store.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice Updated');
-
-    const user = store.getFeishuWorkspaceUser(ws.id, 'ou-alice');
-    assert.ok(user);
-    assert.strictEqual(user.name, 'Alice Updated');
-    assert.strictEqual(user.userId, 'alice-uid');
-  });
-
-  it('returns null for unknown Feishu workspace user', async () => {
-    const ws = await createWorkspace('Feishu Users Missing');
-    assert.strictEqual(store.getFeishuWorkspaceUser(ws.id, 'ou-unknown'), null);
-  });
-
-  it('deletes workspace cascades to Feishu workspace users', async () => {
-    const ws = await createWorkspace('Feishu Users Cascade');
-    store.setFeishuWorkspaceUser(ws.id, 'ou-alice');
-
-    await store.delete(ws.id);
-
-    assert.strictEqual(store.listFeishuWorkspaceUsers(ws.id).length, 0);
-  });
-});
-
 describe('SqliteStore in-memory + resetData', { concurrency: false }, () => {
   let store: SqliteStore;
 
   beforeEach(() => {
-    // ':memory:' opens a hermetic per-instance database with no file artifacts.
-    // Constructing it successfully also proves the unconditional WAL pragma in
-    // the constructor does not throw against an in-memory database.
     store = new SqliteStore(':memory:');
   });
 
@@ -678,10 +383,6 @@ describe('SqliteStore in-memory + resetData', { concurrency: false }, () => {
     const ws = await store.create({ name: 'WS', folderPath: '/tmp/ws' });
     const session = store.createLocalSession(ws.id, 's1');
     store.createTodo(ws.id, { text: 'do thing' });
-    store.setWecomSession(ws.id, 'enc-user', session.id);
-    store.setWecomUserMapping('enc-user', 'plain-user');
-    store.setFeishuActiveWorkspace(ws.id);
-    store.addFeishuUserSession(ws.id, 'feishu-user', session.id);
     store.createPromptHistory(ws.id, session.id, 'hello');
     store.getAnalyticsCache().upsert({
       sessionId: session.id,
@@ -708,15 +409,9 @@ describe('SqliteStore in-memory + resetData', { concurrency: false }, () => {
 
     store.resetData();
 
-    // Every table family is empty after reset — proving resetData derived the
-    // full table set from the schema rather than a hard-coded subset.
     assert.strictEqual((await store.list()).length, 0);
     assert.strictEqual(store.listLocalSessions().length, 0);
     assert.strictEqual(store.getTodosByWorkspace(ws.id).length, 0);
-    assert.strictEqual(store.listWecomSessions(ws.id).length, 0);
-    assert.strictEqual(store.getWecomUserMapping('enc-user'), null);
-    assert.strictEqual(store.getFeishuActiveWorkspace(), null);
-    assert.strictEqual(store.listFeishuSessionsForWorkspace(ws.id).length, 0);
     assert.strictEqual(store.listPromptHistory(ws.id).length, 0);
     assert.strictEqual(store.getAnalyticsCache().listAll().length, 0);
   });
@@ -726,17 +421,15 @@ describe('SqliteStore in-memory + resetData', { concurrency: false }, () => {
   });
 
   it('separate in-memory stores are isolated from each other', async () => {
-    // Each ':memory:' instance is a distinct database on its own connection.
     const other = new SqliteStore(':memory:');
     const ws = await store.create({ name: 'Owner', folderPath: '/tmp/owner' });
 
     assert.ok(await store.get(ws.id));
-    // The workspace is not visible in the independent in-memory instance.
     assert.strictEqual(await other.get(ws.id), null);
   });
 });
 
-describe('SqliteStore wecom active session + customTitle', { concurrency: false }, () => {
+describe('SqliteStore unified user sessions', { concurrency: false }, () => {
   let store: SqliteStore;
 
   beforeEach(() => {
@@ -744,146 +437,145 @@ describe('SqliteStore wecom active session + customTitle', { concurrency: false 
     store.resetData();
   });
 
-  // Helper mirroring the real bot flow: create the sessions-table row, the
-  // wecom_user_sessions mapping row, then (optionally) flip it active.
-  function makeSession(workspaceId: string, wecomUserId: string, active = false): string {
-    const session = store.createLocalSession(workspaceId, wecomUserId, undefined, undefined, 'wecom');
-    store.setWecomSession(workspaceId, wecomUserId, session.id);
-    if (active) store.setActiveWecomSession(workspaceId, wecomUserId, session.id);
-    return session.id;
+  async function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
   }
 
-  it('newly inserted wecom session rows default to non-active (no backfill)', () => {
-    makeSession('ws-1', 'user-a');
-    // isActive defaults to 0; no setActiveWecomSession called
-    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), null);
+  it('adds and lists user sessions', async () => {
+    const ws = await createWorkspace('US Test');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session = store.createLocalSession(ws.id, 'Test');
+    store.addUserSession(ws.id, session.id, user.id);
+
+    const sessions = store.listUserSessionsByUser(user.id);
+    assert.strictEqual(sessions.length, 1);
+    assert.strictEqual(sessions[0].sessionId, session.id);
   });
 
-  it('migration is idempotent (constructing a second store does not throw)', () => {
-    assert.doesNotThrow(() => new SqliteStore(':memory:'));
+  it('getActiveUserSession returns null when no active session', async () => {
+    const ws = await createWorkspace('US Active');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    assert.strictEqual(store.getActiveUserSession(user.id), null);
   });
 
-  it('setActiveWecomSession marks the row active and getActiveWecomSession returns it', () => {
-    const id = makeSession('ws-1', 'user-a', true);
-    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), id);
+  it('setActiveUserSession marks session active and demotes previous', async () => {
+    const ws = await createWorkspace('US Switch');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session1 = store.createLocalSession(ws.id, 'S1');
+    const session2 = store.createLocalSession(ws.id, 'S2');
+    store.addUserSession(ws.id, session1.id, user.id);
+    store.addUserSession(ws.id, session2.id, user.id);
+
+    store.setActiveUserSession(user.id, session1.id);
+    assert.strictEqual(store.getActiveUserSession(user.id), session1.id);
+
+    store.setActiveUserSession(user.id, session2.id);
+    assert.strictEqual(store.getActiveUserSession(user.id), session2.id);
+
+    const all = store.listUserSessionsByUser(user.id);
+    assert.strictEqual(all.length, 2);
   });
 
-  it('activating a second session demotes the first (single-active invariant)', () => {
-    const first = makeSession('ws-1', 'user-a', true);
-    const second = makeSession('ws-1', 'user-a', true);
-    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), second);
-    // first is preserved but no longer active
-    const ids = store.listWecomSessionsByUser('ws-1', 'user-a').map((s) => s.sessionId);
-    assert.ok(ids.includes(first));
-    assert.ok(ids.includes(second));
+  it('getActiveUserSession self-heals when session is deleted', async () => {
+    const ws = await createWorkspace('US Heal');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.addUserSession(ws.id, session.id, user.id);
+    store.setActiveUserSession(user.id, session.id);
+    assert.strictEqual(store.getActiveUserSession(user.id), session.id);
+
+    store.deleteLocalSession(session.id);
+    assert.strictEqual(store.getActiveUserSession(user.id), null);
   });
 
-  it('getActiveWecomSession self-heals when the active session is absent from sessions', () => {
-    // wecom_user_sessions row exists, but 'sess-gone' was never inserted into sessions
-    store.setWecomSession('ws-1', 'user-a', 'sess-gone');
-    store.setActiveWecomSession('ws-1', 'user-a', 'sess-gone');
-    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), null);
+  it('getSessionUsers returns linked user ids', async () => {
+    const ws = await createWorkspace('US Owners');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.addUserSession(ws.id, session.id, user.id);
+
+    const users = store.getSessionUsers(session.id);
+    assert.strictEqual(users.length, 1);
+    assert.strictEqual(users[0], user.id);
   });
 
-  it('two users each keep their own independent active session', () => {
-    const a = makeSession('ws-1', 'user-a', true);
-    const b = makeSession('ws-1', 'user-b', true);
-    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-a'), a);
-    assert.strictEqual(store.getActiveWecomSession('ws-1', 'user-b'), b);
-  });
+  it('workspace delete cascades to user_sessions', async () => {
+    const ws = await createWorkspace('US Cascade');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
 
-  it('createLocalSession persists customTitle when provided', () => {
-    const session = store.createLocalSession('ws-1', 'Project X', undefined, undefined, 'wecom', 'Project X');
-    assert.strictEqual(session.customTitle, 'Project X');
-    const fromDb = store.getLocalSession(session.id);
-    assert.ok(fromDb);
-    assert.strictEqual(fromDb!.customTitle, 'Project X');
-  });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.addUserSession(ws.id, session.id, user.id);
+    store.setActiveUserSession(user.id, session.id);
 
-  it('createLocalSession leaves customTitle unset when not provided', () => {
-    const session = store.createLocalSession('ws-1', 'user-1', undefined, undefined, 'wecom');
-    assert.strictEqual(session.customTitle, undefined);
-    const fromDb = store.getLocalSession(session.id);
-    assert.ok(fromDb);
-    assert.strictEqual(fromDb!.customTitle, undefined);
+    assert.strictEqual(store.getActiveUserSession(user.id), session.id);
+
+    await store.delete(ws.id);
+
+    assert.strictEqual(store.getActiveUserSession(user.id), null);
+    assert.strictEqual(store.listUserSessionsByUser(user.id).length, 0);
   });
 });
 
-describe('SqliteStore wecom active session backfill', { concurrency: false }, () => {
-  const backfillDbPath = join(testDbDir, 'backfill-data.db');
-
-  beforeEach(() => {
-    try {
-      const store = new SqliteStore(backfillDbPath);
-      store.resetData();
-    } catch {
-      // If the DB does not exist yet, resetData is not needed.
-    }
-  });
-
-  it('backfills the latest inactive session as active on store construction', () => {
-    // Simulate pre-backfill state: a WeCom user has sessions but no active marker.
-    const firstStore = new SqliteStore(backfillDbPath);
-    firstStore.resetData();
-
-    const oldSession = firstStore.createLocalSession('ws-1', 'user-a', undefined, undefined, 'wecom');
-    firstStore.setWecomSession('ws-1', 'user-a', oldSession.id);
-    // Intentionally not calling setActiveWecomSession, mimicking rows created
-    // before the active-marker feature existed.
-
-    // Constructing a new store (e.g. after Comate restart) should run the
-    // migration/backfill and mark the latest session active.
-    const restartedStore = new SqliteStore(backfillDbPath);
-    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), oldSession.id);
-  });
-
-  it('does not overwrite an existing active session when backfilling', () => {
-    const firstStore = new SqliteStore(backfillDbPath);
-    firstStore.resetData();
-
-    const oldSession = firstStore.createLocalSession('ws-1', 'user-a', undefined, undefined, 'wecom');
-    firstStore.setWecomSession('ws-1', 'user-a', oldSession.id);
-
-    const activeSession = firstStore.createLocalSession('ws-1', 'user-a', undefined, undefined, 'wecom');
-    firstStore.setWecomSession('ws-1', 'user-a', activeSession.id);
-    firstStore.setActiveWecomSession('ws-1', 'user-a', activeSession.id);
-
-    const restartedStore = new SqliteStore(backfillDbPath);
-    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), activeSession.id);
-  });
-
-  it('backfills independently per workspace and per user', () => {
-    const firstStore = new SqliteStore(backfillDbPath);
-    firstStore.resetData();
-
-    const aSession = firstStore.createLocalSession('ws-1', 'user-a', undefined, undefined, 'wecom');
-    firstStore.setWecomSession('ws-1', 'user-a', aSession.id);
-
-    const bSession = firstStore.createLocalSession('ws-1', 'user-b', undefined, undefined, 'wecom');
-    firstStore.setWecomSession('ws-1', 'user-b', bSession.id);
-
-    const otherWsSession = firstStore.createLocalSession('ws-2', 'user-a', undefined, undefined, 'wecom');
-    firstStore.setWecomSession('ws-2', 'user-a', otherWsSession.id);
-
-    const restartedStore = new SqliteStore(backfillDbPath);
-    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), aSession.id);
-    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-b'), bSession.id);
-    assert.strictEqual(restartedStore.getActiveWecomSession('ws-2', 'user-a'), otherWsSession.id);
-  });
-
-  it('does not backfill a session whose row is missing from sessions table', () => {
-    const firstStore = new SqliteStore(backfillDbPath);
-    firstStore.resetData();
-
-    // Insert a mapping to a session that no longer exists.
-    firstStore.setWecomSession('ws-1', 'user-a', 'deleted-session-id');
-
-    const restartedStore = new SqliteStore(backfillDbPath);
-    assert.strictEqual(restartedStore.getActiveWecomSession('ws-1', 'user-a'), null);
-  });
-});
-
-describe('SqliteStore bot management', { concurrency: false }, () => {
+describe('SqliteStore bot management (unified schema)', { concurrency: false }, () => {
   let store: SqliteStore;
 
   beforeEach(() => {
@@ -891,244 +583,34 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     store.resetData();
   });
 
-  function createBotInput(overrides: Partial<{
-    name: string;
-    activeWorkspaceId: string;
-    persona: BotPersona;
-    rolePersonas: Partial<Record<BotRole, BotPersona>>;
-  }> = {}) {
-    return {
-      name: overrides.name ?? 'Test Bot',
-      activeWorkspaceId: overrides.activeWorkspaceId,
-      persona: overrides.persona,
-      rolePersonas: overrides.rolePersonas,
-      channelSettings: {
-        wecom: {
-          botId: 'wecom-bot-id',
-          botSecret: 'wecom-bot-secret',
-          corpSecret: 'wecom-corp-secret',
-        },
-        feishu: {
-          appId: 'feishu-app-id',
-          appSecret: 'feishu-app-secret',
-          encryptKey: 'feishu-encrypt-key',
-          verificationToken: 'feishu-verification-token',
-        },
-      },
-      rolePolicy: {
-        normalToolPolicy: {
-          posture: 'safe' as const,
-          categoryDefaults: {
-            fileRead: 'allow' as const,
-            fileWrite: 'deny' as const,
-            shell: 'deny' as const,
-            network: 'deny' as const,
-            subagents: 'deny' as const,
-            reply: 'allow' as const,
-          },
-        },
-        skillAllowlist: [],
-        bashWhitelist: [],
-      },
-    };
-  }
+  it('createBot persists a bot and default channels/roles', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
 
-  it('createBot persists a bot and returns it', () => {
-    const bot = store.createBot(createBotInput({ name: 'WeCom Bot' }));
-
-    assert.strictEqual(bot.name, 'WeCom Bot');
+    assert.strictEqual(bot.name, 'Test Bot');
     assert.ok(bot.id);
     assert.ok(bot.createdAt);
     assert.ok(bot.updatedAt);
-    assert.deepStrictEqual(bot.channelSettings, createBotInput().channelSettings);
+    assert.strictEqual(bot.activeWorkspaceId, null);
+
+    const channels = store.listBotChannels(bot.id);
+    assert.strictEqual(channels.length, 2);
+    assert.ok(channels.some((c) => c.channelKey === 'wecom'));
+    assert.ok(channels.some((c) => c.channelKey === 'feishu'));
+
+    const roles = store.listBotRoles(bot.id);
+    assert.strictEqual(roles.length, 3);
+    assert.ok(roles.some((r) => r.roleKey === 'owner'));
+    assert.ok(roles.some((r) => r.roleKey === 'admin'));
+    assert.ok(roles.some((r) => r.roleKey === 'normal'));
   });
 
   it('createBot stores and returns a persona', () => {
     const persona = { prompt: '你是运维助手', mode: 'append' as const };
-    const bot = store.createBot(createBotInput({ name: 'Persona Bot', persona }));
+    const bot = store.createBot({ name: 'Persona Bot', persona });
 
     assert.deepStrictEqual(bot.persona, persona);
     const found = store.getBot(bot.id);
     assert.deepStrictEqual(found?.persona, persona);
-  });
-
-  it('getBot returns persona undefined when none is configured', () => {
-    const bot = store.createBot(createBotInput());
-    const found = store.getBot(bot.id);
-
-    assert.strictEqual(found?.persona, undefined);
-  });
-
-  it('updateBot clears the persona when persona is null', () => {
-    const persona = { prompt: '你是运维助手', mode: 'append' as const };
-    const bot = store.createBot(createBotInput({ persona }));
-    assert.deepStrictEqual(store.getBot(bot.id)?.persona, persona);
-
-    const updated = store.updateBot(bot.id, { persona: null });
-    assert.strictEqual(updated?.persona, undefined);
-    assert.strictEqual(store.getBot(bot.id)?.persona, undefined);
-  });
-
-  it('migrates existing bots rows to include persona_json on store construction', () => {
-    const dbPath = join(testDbDir, 'persona-migration.db');
-
-    // Create a store with the current schema and a bot.
-    const firstStore = new SqliteStore(dbPath);
-    firstStore.resetData();
-    const bot = firstStore.createBot(createBotInput({ name: 'Pre-migration Bot' }));
-
-    // Simulate a pre-persona database by dropping the persona_json column.
-    // The simulated table uses the old provider_settings_json column name so
-    // the channel-settings migration also runs on re-open.
-    const db = (firstStore as unknown as { db: { exec: (sql: string) => void; prepare: (sql: string) => { get: (id: string) => Record<string, unknown> | undefined } } }).db;
-    const row = db.prepare('SELECT * FROM bots WHERE id = ?').get(bot.id);
-    assert.ok(row);
-    db.exec('ALTER TABLE bots RENAME TO bots_old');
-    db.exec(`
-      CREATE TABLE bots (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        active_workspace_id TEXT UNIQUE,
-        provider_settings_json TEXT NOT NULL DEFAULT '{}',
-        role_policy_json TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-    db.prepare(`
-      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      row.id,
-      row.name,
-      row.active_workspace_id,
-      row.channel_settings_json,
-      row.role_policy_json,
-      row.created_at,
-      row.updated_at,
-    );
-    db.exec('DROP TABLE bots_old');
-
-    // Re-opening the database should run the migration and load the bot without error.
-    const migratedStore = new SqliteStore(dbPath);
-    const found = migratedStore.getBot(bot.id);
-    assert.ok(found);
-    assert.strictEqual(found!.name, 'Pre-migration Bot');
-    assert.strictEqual(found!.persona, undefined);
-  });
-
-  it('createBot stores and returns rolePersonas', () => {
-    const rolePersonas: Partial<Record<BotRole, BotPersona>> = {
-      owner: { prompt: 'Owner persona', mode: 'append' as const },
-      admin: { prompt: 'Admin persona', mode: 'replace' as const },
-    };
-    const bot = store.createBot(createBotInput({ name: 'Role Persona Bot', rolePersonas }));
-
-    assert.deepStrictEqual(bot.rolePersonas, rolePersonas);
-    const found = store.getBot(bot.id);
-    assert.deepStrictEqual(found?.rolePersonas, rolePersonas);
-  });
-
-  it('getBot returns rolePersonas undefined when none is configured', () => {
-    const bot = store.createBot(createBotInput());
-    const found = store.getBot(bot.id);
-
-    assert.strictEqual(found?.rolePersonas, undefined);
-  });
-
-  it('updateBot replaces rolePersonas', () => {
-    const initial: Partial<Record<BotRole, BotPersona>> = {
-      owner: { prompt: 'Owner v1', mode: 'append' as const },
-    };
-    const bot = store.createBot(createBotInput({ rolePersonas: initial }));
-
-    const next: Partial<Record<BotRole, BotPersona>> = {
-      admin: { prompt: 'Admin v2', mode: 'replace' as const },
-      normal: { prompt: 'Normal v2', mode: 'append' as const },
-    };
-    const updated = store.updateBot(bot.id, { rolePersonas: next });
-
-    assert.deepStrictEqual(updated?.rolePersonas, next);
-    assert.deepStrictEqual(store.getBot(bot.id)?.rolePersonas, next);
-  });
-
-  it('updateBot clears rolePersonas when set to null', () => {
-    const rolePersonas: Partial<Record<BotRole, BotPersona>> = {
-      owner: { prompt: 'Owner', mode: 'append' as const },
-    };
-    const bot = store.createBot(createBotInput({ rolePersonas }));
-    assert.deepStrictEqual(store.getBot(bot.id)?.rolePersonas, rolePersonas);
-
-    const updated = store.updateBot(bot.id, { rolePersonas: null });
-    assert.strictEqual(updated?.rolePersonas, undefined);
-    assert.strictEqual(store.getBot(bot.id)?.rolePersonas, undefined);
-  });
-
-  it('migrates existing bots rows to include role_personas_json on store construction', () => {
-    const dbPath = join(testDbDir, 'role-personas-migration.db');
-
-    const firstStore = new SqliteStore(dbPath);
-    firstStore.resetData();
-    const bot = firstStore.createBot(
-      createBotInput({ name: 'Pre-role-personas Bot', persona: { prompt: 'Default', mode: 'append' as const } }),
-    );
-
-    const db = (firstStore as unknown as { db: { exec: (sql: string) => void; prepare: (sql: string) => { get: (id: string) => Record<string, unknown> | undefined } } }).db;
-    const row = db.prepare('SELECT * FROM bots WHERE id = ?').get(bot.id);
-    assert.ok(row);
-    db.exec('ALTER TABLE bots RENAME TO bots_old');
-    db.exec(`
-      CREATE TABLE bots (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        active_workspace_id TEXT UNIQUE,
-        provider_settings_json TEXT NOT NULL DEFAULT '{}',
-        role_policy_json TEXT NOT NULL DEFAULT '{}',
-        persona_json TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-    db.prepare(`
-      INSERT INTO bots (id, name, active_workspace_id, provider_settings_json, role_policy_json, persona_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      row.id,
-      row.name,
-      row.active_workspace_id,
-      row.channel_settings_json,
-      row.role_policy_json,
-      row.persona_json,
-      row.created_at,
-      row.updated_at,
-    );
-    db.exec('DROP TABLE bots_old');
-
-    const migratedStore = new SqliteStore(dbPath);
-    const found = migratedStore.getBot(bot.id);
-    assert.ok(found);
-    assert.strictEqual(found!.name, 'Pre-role-personas Bot');
-    assert.deepStrictEqual(found!.persona, { prompt: 'Default', mode: 'append' });
-    assert.strictEqual(found!.rolePersonas, undefined);
-  });
-
-  it('existing bot with only persona keeps persona as Default and has no role personas', () => {
-    const persona = { prompt: 'Legacy default', mode: 'replace' as const };
-    const bot = store.createBot(createBotInput({ name: 'Legacy Bot', persona }));
-
-    const found = store.getBot(bot.id);
-    assert.deepStrictEqual(found?.persona, persona);
-    assert.strictEqual(found?.rolePersonas, undefined);
-  });
-
-  it('getBot returns a persisted bot by id', () => {
-    const bot = store.createBot(createBotInput());
-    const found = store.getBot(bot.id);
-
-    assert.ok(found);
-    assert.strictEqual(found!.name, bot.name);
-    assert.strictEqual(found!.activeWorkspaceId, bot.activeWorkspaceId);
-    assert.deepStrictEqual(found!.channelSettings, bot.channelSettings);
   });
 
   it('getBot returns null for unknown id', () => {
@@ -1136,8 +618,8 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
   });
 
   it('listBots returns all bots', () => {
-    store.createBot(createBotInput({ name: 'A' }));
-    store.createBot(createBotInput({ name: 'B' }));
+    store.createBot({ name: 'A' });
+    store.createBot({ name: 'B' });
 
     const bots = store.listBots();
     assert.strictEqual(bots.length, 2);
@@ -1146,46 +628,38 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
   });
 
   it('listBotsForWorkspace filters by active workspace', () => {
-    store.createBot(createBotInput({ name: 'In WS1', activeWorkspaceId: 'ws-1' }));
-    store.createBot(createBotInput({ name: 'In WS2', activeWorkspaceId: 'ws-2' }));
-    store.createBot(createBotInput({ name: 'Unbound' }));
+    store.createBot({ name: 'In WS1', activeWorkspaceId: 'ws-1' });
+    store.createBot({ name: 'In WS2', activeWorkspaceId: 'ws-2' });
+    store.createBot({ name: 'Unbound' });
 
     const ws1Bots = store.listBotsForWorkspace('ws-1');
     assert.strictEqual(ws1Bots.length, 1);
     assert.strictEqual(ws1Bots[0].name, 'In WS1');
   });
 
-  it('updateBot modifies name, workspace, settings and policy', () => {
-    const bot = store.createBot(createBotInput());
+  it('updateBot modifies name and workspace', () => {
+    const bot = store.createBot({ name: 'Original' });
     const updated = store.updateBot(bot.id, {
       name: 'Renamed',
       activeWorkspaceId: 'ws-updated',
-      channelSettings: { wecom: { botId: 'new-id' } },
-      rolePolicy: {
-        normalToolPolicy: {
-          posture: 'allow-all' as const,
-          categoryDefaults: {
-            fileRead: 'allow' as const,
-            fileWrite: 'allow' as const,
-            shell: 'deny' as const,
-            network: 'deny' as const,
-            subagents: 'deny' as const,
-            reply: 'allow' as const,
-          },
-        },
-        skillAllowlist: ['skill-a'],
-        bashWhitelist: ['ls'],
-      },
     });
 
     assert.ok(updated);
     assert.strictEqual(updated!.name, 'Renamed');
     assert.strictEqual(updated!.activeWorkspaceId, 'ws-updated');
-    assert.deepStrictEqual(updated!.channelSettings, { wecom: { botId: 'new-id' } });
-    assert.deepStrictEqual(updated!.rolePolicy.skillAllowlist, ['skill-a']);
 
     const fromDb = store.getBot(bot.id);
     assert.strictEqual(fromDb!.name, 'Renamed');
+  });
+
+  it('updateBot clears persona when set to null', () => {
+    const persona = { prompt: '你是运维助手', mode: 'append' as const };
+    const bot = store.createBot({ name: 'Persona Bot', persona });
+    assert.deepStrictEqual(store.getBot(bot.id)?.persona, persona);
+
+    const updated = store.updateBot(bot.id, { persona: null });
+    assert.strictEqual(updated?.persona, undefined);
+    assert.strictEqual(store.getBot(bot.id)?.persona, undefined);
   });
 
   it('updateBot returns null for unknown id', () => {
@@ -1193,93 +667,145 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     assert.strictEqual(updated, null);
   });
 
-  it('deleteBot removes the bot and its members and audit logs', () => {
-    const bot = store.createBot(createBotInput());
-    store.setBotMember(bot.id, 'wecom', 'user-1', 'owner');
+  it('deleteBot removes the bot and cascades to channels, roles, users, audit logs', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
     store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'test', eventType: 'created' });
 
     assert.strictEqual(store.deleteBot(bot.id), true);
     assert.strictEqual(store.getBot(bot.id), null);
-    assert.strictEqual(store.listBotMembers(bot.id).length, 0);
+    assert.strictEqual(store.listBotChannels(bot.id).length, 0);
+    assert.strictEqual(store.listBotRoles(bot.id).length, 0);
+    assert.strictEqual(store.listBotUsers(bot.id).length, 0);
     assert.strictEqual(store.listAuditLogs(bot.id).length, 0);
+    assert.strictEqual(store.getBotUser(user.id), null);
   });
 
   it('deleteBot returns false for unknown id', () => {
     assert.strictEqual(store.deleteBot('unknown'), false);
   });
 
-  it('setBotMember creates and updates member roles', () => {
-    const bot = store.createBot(createBotInput());
-    store.setBotMember(bot.id, 'wecom', 'user-1', 'owner');
-    assert.strictEqual(store.getBotMemberRole(bot.id, 'wecom', 'user-1'), 'owner');
+  it('createBotUser and getBotUser round-trip', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
 
-    store.setBotMember(bot.id, 'wecom', 'user-1', 'admin');
-    assert.strictEqual(store.getBotMemberRole(bot.id, 'wecom', 'user-1'), 'admin');
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+      plaintextUserId: 'plain-1',
+    });
 
-    const members = store.listBotMembers(bot.id);
-    assert.strictEqual(members.length, 1);
-    assert.strictEqual(members[0].channelUserId, 'user-1');
+    assert.strictEqual(user.botId, bot.id);
+    assert.strictEqual(user.channelId, channel.id);
+    assert.strictEqual(user.roleId, role!.id);
+    assert.strictEqual(user.channelUserId, 'user-1');
+    assert.strictEqual(user.plaintextUserId, 'plain-1');
+    assert.strictEqual(user.resolutionStatus, 'resolved');
+    assert.strictEqual(user.roleKey, 'normal');
+
+    const found = store.getBotUser(user.id);
+    assert.ok(found);
+    assert.strictEqual(found!.channelUserId, 'user-1');
+    assert.strictEqual(found!.plaintextUserId, 'plain-1');
   });
 
-  it('removeBotMember deletes a member', () => {
-    const bot = store.createBot(createBotInput());
-    store.setBotMember(bot.id, 'feishu', 'user-2', 'normal');
-    store.removeBotMember(bot.id, 'feishu', 'user-2');
+  it('getBotUserByChannelIdentity finds user by channel identity', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
 
-    assert.strictEqual(store.getBotMemberRole(bot.id, 'feishu', 'user-2'), null);
-    assert.strictEqual(store.listBotMembers(bot.id).length, 0);
+    store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const found = store.getBotUserByChannelIdentity(bot.id, channel.id, 'user-1');
+    assert.ok(found);
+    assert.strictEqual(found!.channelUserId, 'user-1');
+
+    const notFound = store.getBotUserByChannelIdentity(bot.id, channel.id, 'unknown');
+    assert.strictEqual(notFound, null);
   });
 
-  it('getBotMemberRole returns null for unknown member', () => {
-    const bot = store.createBot(createBotInput());
-    assert.strictEqual(store.getBotMemberRole(bot.id, 'wecom', 'nobody'), null);
+  it('listBotUsers returns users scoped to bot', () => {
+    const bot1 = store.createBot({ name: 'Bot 1' });
+    const bot2 = store.createBot({ name: 'Bot 2' });
+    const ch1 = store.listBotChannels(bot1.id)[0];
+    const r1 = store.getBotRoleByKey(bot1.id, 'normal');
+    assert.ok(r1);
+    const ch2 = store.listBotChannels(bot2.id)[0];
+    const r2 = store.getBotRoleByKey(bot2.id, 'normal');
+    assert.ok(r2);
+
+    store.createBotUser({ botId: bot1.id, channelId: ch1.id, roleId: r1!.id, channelUserId: 'u1' });
+    store.createBotUser({ botId: bot2.id, channelId: ch2.id, roleId: r2!.id, channelUserId: 'u2' });
+
+    assert.strictEqual(store.listBotUsers(bot1.id).length, 1);
+    assert.strictEqual(store.listBotUsers(bot2.id).length, 1);
   });
 
-  it('migrates bot_members from provider columns to channel columns', () => {
-    const dbPath = join(testDbDir, 'bot-members-migration.db');
+  it('updateBotUser changes role and plaintext', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const normalRole = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(normalRole);
+    const adminRole = store.getBotRoleByKey(bot.id, 'admin');
+    assert.ok(adminRole);
 
-    const firstStore = new SqliteStore(dbPath);
-    firstStore.resetData();
-    const bot = firstStore.createBot(createBotInput({ name: 'Legacy Members Bot' }));
-    firstStore.setBotMember(bot.id, 'wecom', 'legacy-owner', 'owner');
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: normalRole!.id,
+      channelUserId: 'user-1',
+    });
 
-    const db = (firstStore as unknown as { db: { exec: (sql: string) => void; prepare: (sql: string) => { get: (id: string) => Record<string, unknown> | undefined; run: (...args: unknown[]) => void } } }).db;
-    const row = db.prepare('SELECT * FROM bot_members WHERE bot_id = ?').get(bot.id);
-    assert.ok(row);
+    const updated = store.updateBotUser(user.id, { roleId: adminRole!.id, plaintextUserId: 'resolved-1' });
+    assert.ok(updated);
+    assert.strictEqual(updated!.roleId, adminRole!.id);
+    assert.strictEqual(updated!.roleKey, 'admin');
+    assert.strictEqual(updated!.plaintextUserId, 'resolved-1');
+    assert.strictEqual(updated!.resolutionStatus, 'resolved');
+  });
 
-    db.exec('ALTER TABLE bot_members RENAME TO bot_members_old');
-    db.exec(`
-      CREATE TABLE bot_members (
-        bot_id TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        provider_user_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (bot_id, provider, provider_user_id)
-      )
-    `);
-    db.prepare(`
-      INSERT INTO bot_members (bot_id, provider, provider_user_id, role, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(row.bot_id, row.channel, row.channel_user_id, row.role, row.created_at, row.updated_at);
-    db.exec('DROP TABLE bot_members_old');
+  it('deleteBotUser removes user and linked sessions', async () => {
+    const ws = await store.create({ name: 'WS', folderPath: '/tmp/ws' });
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
 
-    const migratedStore = new SqliteStore(dbPath);
-    const members = migratedStore.listBotMembers(bot.id);
-    assert.strictEqual(members.length, 1);
-    assert.strictEqual(members[0].channel, 'wecom');
-    assert.strictEqual(members[0].channelUserId, 'legacy-owner');
-    assert.strictEqual(members[0].role, 'owner');
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.addUserSession(ws.id, session.id, user.id);
+    store.setActiveUserSession(user.id, session.id);
 
-    assert.throws(
-      () => migratedStore.setBotMember(bot.id, 'wecom', 'second-owner', 'owner'),
-      /UNIQUE constraint failed/,
-    );
+    assert.strictEqual(store.deleteBotUser(user.id), true);
+    assert.strictEqual(store.getBotUser(user.id), null);
+    assert.strictEqual(store.listUserSessionsByUser(user.id).length, 0);
   });
 
   it('recordAuditLog creates entries ordered newest-first', () => {
-    const bot = store.createBot(createBotInput());
+    const bot = store.createBot({ name: 'Audit Bot' });
     store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'one' });
     store.recordAuditLog({ botId: bot.id, actorType: 'user', actorId: 'b', eventType: 'two' });
 
@@ -1298,7 +824,7 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
   });
 
   it('setSessionBotId links sessions to a bot', () => {
-    const bot = store.createBot(createBotInput({ activeWorkspaceId: 'ws-1' }));
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: 'ws-1' });
     const session = store.createLocalSession('ws-1', 'Test');
 
     store.setSessionBotId(session.id, bot.id);
@@ -1308,21 +834,105 @@ describe('SqliteStore bot management', { concurrency: false }, () => {
     assert.strictEqual(botSessions[0].botId, bot.id);
   });
 
-  it('encrypts and decrypts sensitive channel settings at rest', () => {
-    const settings = createBotInput().channelSettings;
-    const bot = store.createBot({ name: 'Encrypted', channelSettings: settings });
-    const found = store.getBot(bot.id);
+  it('bot channel config encrypts and decrypts at rest', () => {
+    const bot = store.createBot({ name: 'Encrypted' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const config: import('../models/bot.js').BotChannelSettings = {
+      wecom: { botId: 'wecom-bot-id', botSecret: 'wecom-bot-secret', corpSecret: 'wecom-corp-secret' },
+    };
 
-    assert.deepStrictEqual(found!.channelSettings, settings);
+    store.updateBotChannel(channel.id, config);
+    const updated = store.getBotChannel(channel.id);
+    assert.deepStrictEqual(updated!.config, config);
 
-    // Verify the raw DB does not contain plaintext secrets.
-    const row = (store as unknown as { db: { prepare: (sql: string) => { get: (id: string) => { channel_settings_json: string } | undefined } } }).db
-      .prepare('SELECT channel_settings_json FROM bots WHERE id = ?')
-      .get(bot.id);
+    const row = (store as unknown as { db: { prepare: (sql: string) => { get: (id: string) => { config_json: string } | undefined } } }).db
+      .prepare('SELECT config_json FROM bot_channels WHERE id = ?')
+      .get(channel.id);
     assert.ok(row);
-    const json = JSON.parse(row!.channel_settings_json);
+    const json = JSON.parse(row!.config_json);
     assert.notStrictEqual(json.wecom.botSecret, 'wecom-bot-secret');
-    assert.notStrictEqual(json.feishu.appSecret, 'feishu-app-secret');
+  });
+
+  it('bot role permissions round-trip', () => {
+    const bot = store.createBot({ name: 'Role Test' });
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+
+    const newPerms: import('../models/bot.js').BotRolePolicy = {
+      normalToolPolicy: {
+        posture: 'allow-all',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+        },
+      },
+      skillAllowlist: ['skill-a'],
+      bashWhitelist: ['ls'],
+    };
+
+    store.updateBotRole(role!.id, newPerms);
+    const updated = store.getBotRole(role!.id);
+    assert.deepStrictEqual(updated!.permissions, newPerms);
+  });
+
+  it('bot role persona round-trip', () => {
+    const bot = store.createBot({ name: 'Role Persona Test' });
+    const role = store.getBotRoleByKey(bot.id, 'admin');
+    assert.ok(role);
+
+    const persona = { prompt: 'Admin helper', mode: 'replace' as const };
+    store.updateBotRole(role!.id, role!.permissions, persona);
+    const updated = store.getBotRole(role!.id);
+    assert.deepStrictEqual(updated!.persona, persona);
   });
 });
 
+describe('SqliteStore unified schema migration', { concurrency: false }, () => {
+  const migrationDbPath = join(testDbDir, 'migration-data.db');
+
+  beforeEach(() => {
+    try {
+      const store = new SqliteStore(migrationDbPath);
+      store.resetData();
+    } catch {
+      // If the DB does not exist yet, resetData is not needed.
+    }
+  });
+
+  it('fresh database initializes to version 5 with new tables', () => {
+    const freshStore = new SqliteStore(':memory:');
+    assert.strictEqual(freshStore.getMigrationVersion(), 5);
+
+    // Old tables should not exist
+    const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all();
+    const tableNames = tables.map((t) => t.name);
+    assert.ok(!tableNames.includes('bot_members'));
+    assert.ok(!tableNames.includes('wecom_user_sessions'));
+    assert.ok(!tableNames.includes('feishu_workspace_users'));
+
+    // New tables should exist
+    assert.ok(tableNames.includes('bot_channels'));
+    assert.ok(tableNames.includes('bot_roles'));
+    assert.ok(tableNames.includes('bot_users'));
+    assert.ok(tableNames.includes('user_sessions'));
+  });
+
+  it('re-running migration on already-migrated database does nothing', () => {
+    const firstStore = new SqliteStore(migrationDbPath);
+    firstStore.createBot({ name: 'Pre-migration Bot' });
+
+    const version = firstStore.getMigrationVersion();
+    assert.strictEqual(version, 5);
+
+    // Re-opening should not throw and version should stay 5
+    const secondStore = new SqliteStore(migrationDbPath);
+    assert.strictEqual(secondStore.getMigrationVersion(), 5);
+    assert.strictEqual(secondStore.listBots().length, 1);
+  });
+});

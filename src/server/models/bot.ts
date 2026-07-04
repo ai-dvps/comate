@@ -1,8 +1,8 @@
 import type { ToolPermissionPolicy } from '../services/tool-permission-policy.js';
 
-export type BotChannel = 'wecom' | 'feishu';
+export type BotChannelKey = 'wecom' | 'feishu';
 
-export type BotRole = 'owner' | 'admin' | 'normal';
+export type BotRoleKey = 'owner' | 'admin' | 'normal';
 
 export interface WeComChannelConfig {
   botId?: string;
@@ -43,14 +43,22 @@ export interface BotPersona {
   mode: BotPersonaMode;
 }
 
-export interface BotMember {
+export interface BotChannel {
+  id: string;
   botId: string;
-  channel: BotChannel;
-  channelUserId: string;
-  role: BotRole;
-  plaintextUserId: string | null;
-  displayName: string | null;
-  resolutionStatus: 'resolved' | 'pending';
+  channelKey: BotChannelKey;
+  displayName: string;
+  config: BotChannelSettings;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BotRole {
+  id: string;
+  botId: string;
+  roleKey: BotRoleKey;
+  permissions: BotRolePolicy;
+  persona?: BotPersona;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,10 +67,7 @@ export interface Bot {
   id: string;
   name: string;
   activeWorkspaceId: string | null;
-  channelSettings: BotChannelSettings;
-  rolePolicy: BotRolePolicy;
   persona?: BotPersona;
-  rolePersonas?: Partial<Record<BotRole, BotPersona>>;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,25 +75,13 @@ export interface Bot {
 export interface CreateBotInput {
   name: string;
   activeWorkspaceId?: string;
-  channelSettings?: BotChannelSettings;
-  rolePolicy?: BotRolePolicy;
   persona?: BotPersona;
-  rolePersonas?: Partial<Record<BotRole, BotPersona>>;
 }
 
 export interface UpdateBotInput {
   name?: string;
   activeWorkspaceId?: string | null;
-  channelSettings?: BotChannelSettings;
-  rolePolicy?: BotRolePolicy;
   persona?: BotPersona | null;
-  rolePersonas?: Partial<Record<BotRole, BotPersona>> | null;
-}
-
-export interface CreateBotMemberInput {
-  channel: BotChannel;
-  channelUserId: string;
-  role: BotRole;
 }
 
 export interface BotAuditLogEntry {
