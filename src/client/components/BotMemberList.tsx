@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Trash2, UserPlus, AlertTriangle, Loader2, Crown, RefreshCw, Check, XCircle } from 'lucide-react';
+import { Trash2, AlertTriangle, Loader2, Crown, RefreshCw, Check, XCircle } from 'lucide-react';
 import type { BotMember, BotChannel, BotRole } from '../stores/bot-store';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
@@ -10,7 +10,6 @@ interface BotMemberListProps {
   isLoading?: boolean;
   isSaving?: boolean;
   error?: string | null;
-  onAddMember: (input: { channel: BotChannel; channelUserId: string; role: BotRole }) => Promise<unknown>;
   onSetRole: (channel: BotChannel, channelUserId: string, role: BotRole) => Promise<unknown>;
   onRemoveMember: (channel: BotChannel, channelUserId: string) => Promise<unknown>;
   onRefreshMembers: () => Promise<unknown>;
@@ -26,7 +25,6 @@ export default function BotMemberList({
   isLoading,
   isSaving,
   error,
-  onAddMember,
   onSetRole,
   onRemoveMember,
   onRefreshMembers,
@@ -34,9 +32,6 @@ export default function BotMemberList({
   onSetPlaintext,
 }: BotMemberListProps) {
   const { t } = useTranslation('settings');
-  const [channel, setChannel] = useState<BotChannel>('wecom');
-  const [channelUserId, setChannelUserId] = useState('');
-  const [role, setRole] = useState<BotRole>('normal');
   const [formError, setFormError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [confirmRemoveKey, setConfirmRemoveKey] = useState<string | null>(null);
@@ -46,7 +41,6 @@ export default function BotMemberList({
   const [resolving, setResolving] = useState(false);
 
   useEffect(() => {
-    setChannelUserId('');
     setFormError(null);
     setConfirmRemoveKey(null);
     setEditingPlaintext({});
@@ -58,22 +52,6 @@ export default function BotMemberList({
 
   const channelOwnerCount = (c: BotChannel) =>
     members.filter((m) => m.channel === c && m.role === 'owner').length;
-
-  const handleAdd = async () => {
-    setFormError(null);
-    const trimmed = channelUserId.trim();
-    if (!trimmed) {
-      setFormError(t('bots.memberUserIdRequired'));
-      return;
-    }
-    if (role === 'owner' && channelHasOwner(channel)) {
-      setFormError(t('bots.ownerAlreadyExists'));
-      return;
-    }
-    await onAddMember({ channel, channelUserId: trimmed, role });
-    setChannelUserId('');
-    setRole('normal');
-  };
 
   const handleRemove = async (member: BotMember) => {
     const key = `${member.channel}:${member.channelUserId}`;
@@ -200,51 +178,6 @@ export default function BotMemberList({
         </div>
       )}
 
-      <div className="border border-border rounded-lg p-3 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-          <Select value={channel} onValueChange={(value) => setChannel(value as BotChannel)}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="wecom">{t('bots.channelWecom')}</SelectItem>
-              <SelectItem value="feishu">{t('bots.channelFeishu')}</SelectItem>
-            </SelectContent>
-          </Select>
-          <input
-            value={channelUserId}
-            onChange={(e) => setChannelUserId(e.target.value)}
-            placeholder={t('bots.memberUserIdPlaceholder')}
-            className="sm:col-span-2 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <Select value={role} onValueChange={(value) => setRole(value as BotRole)}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
-              <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
-              <SelectItem value="owner" disabled={channelHasOwner(channel)}>
-                {t('bots.roleOwner')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={isSaving}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-        >
-          {isSaving ? (
-            <Loader2 className="w-3 h-3 animate-spin" />
-          ) : (
-            <UserPlus className="w-3 h-3" />
-          )}
-          {t('bots.addMember')}
-        </button>
-      </div>
-
       {isLoading && members.length === 0 && (
         <div className="flex items-center justify-center py-6">
           <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />
@@ -253,7 +186,6 @@ export default function BotMemberList({
 
       {!isLoading && members.length === 0 && (
         <div className="text-center py-6 border border-dashed border-border rounded-lg">
-          <UserPlus className="w-6 h-6 text-text-tertiary mx-auto mb-1.5" />
           <p className="text-xs text-text-secondary">{t('bots.noMembers')}</p>
         </div>
       )}
