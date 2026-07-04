@@ -7,6 +7,8 @@ import {
   __restoreIdleGracePeriod,
   __setRebuildPollIntervalForTesting,
   __restoreRebuildPollInterval,
+  __setSessionVerifyTimeoutForTesting,
+  __restoreSessionVerifyTimeout,
 } from './chat-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { SessionRuntime } from './session-runtime.js';
@@ -383,6 +385,101 @@ describe('chat-service idle-close', { concurrency: false }, () => {
 
     capturedSubscribed?.();
     assert.ok(!timeouts.has('s1'), 'onSubscribed should cancel idle timer');
+  });
+});
+
+describe('chat-service getOrCreateRuntime session verification timeout', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+  const originalGetLocalSession = workspaceStore.getLocalSession.bind(workspaceStore);
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+  const originalClearDraftFlag = workspaceStore.clearDraftFlag.bind(workspaceStore);
+
+  class HangingSdkClient extends SdkClient {
+    override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+      return new Promise(() => {
+        // never resolves
+      });
+    }
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return [];
+    }
+  }
+
+  class TestChatService extends ChatService {
+    constructor() {
+      super(new HangingSdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {
+      // no-op to avoid spawning the real Claude binary in tests
+    }
+  }
+
+  function createMockRuntime(): SessionRuntime {
+    return {
+      isClosed: () => false,
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      close: () => Promise.resolve(),
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: () => {},
+      resolveApproval: () => {},
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      addWebEventHandler: () => {},
+      removeWebEventHandler: () => {},
+      subscribeWebSocket: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+    } as unknown as SessionRuntime;
+  }
+
+  function setupStoreMocks() {
+    workspaceStore.get = async () => createMockWorkspace('ws-1');
+    workspaceStore.getLocalSession = () => ({
+      ...createMockSession('s1'),
+      isDraft: false,
+    });
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+  }
+
+  beforeEach(() => {
+    setupStoreMocks();
+    __setSessionVerifyTimeoutForTesting(50);
+    service = new TestChatService();
+  });
+
+  afterEach(async () => {
+    await service?.closeAllRuntimes();
+    SessionRuntime.open = originalOpen;
+    workspaceStore.get = originalGet;
+    workspaceStore.getLocalSession = originalGetLocalSession;
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+    workspaceStore.clearDraftFlag = originalClearDraftFlag;
+    __restoreSessionVerifyTimeout();
+  });
+
+  it('fails fast when SDK getSessionInfo hangs instead of blocking forever', async () => {
+    SessionRuntime.open = () => createMockRuntime() as unknown as SessionRuntime;
+
+    // Bypass the getSession() SDK lookup so the only SDK call under test is
+    // the verification step inside getOrCreateRuntime().
+    service.getSession = async () => ({
+      ...createMockSession('s1'),
+      isDraft: false,
+    });
+
+    await assert.rejects(
+      () => service.getOrCreateRuntime('s1', 'ws-1'),
+      (err: unknown) =>
+        err instanceof Error &&
+        err.message.includes('Failed to verify session with Claude Code') &&
+        (err as { code?: string }).code === 'SESSION_VERIFY_FAILED',
+      'should reject with a clear verification-failure code',
+    );
   });
 });
 

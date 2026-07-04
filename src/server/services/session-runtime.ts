@@ -81,6 +81,7 @@ export class SessionRuntime {
     onActivity?: () => void,
     deadLoopSettings?: ResolvedDeadLoopDetectionSettings,
   ): SessionRuntime {
+    diagLog(`[Runtime ${sessionId}] SessionRuntime.open called`);
     const input = new PushableIterator<SDKUserMessage>();
     const runtime = new SessionRuntime(
       sessionId,

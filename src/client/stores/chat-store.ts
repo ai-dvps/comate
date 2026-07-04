@@ -2224,6 +2224,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setActiveSession: (workspaceId: string, sessionId: string) => {
+    // Avoid duplicate subscriptions when the App-level effect re-fires with the
+    // same active session (e.g. after a state update that preserves the selection).
+    if (get().activeSessionIds[workspaceId] === sessionId) return
+
     closeSessionSubscriptions(sessionId)
     set((state) => {
       const nextUnread = { ...state.unreadCompletions }
