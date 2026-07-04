@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Trash2, UserPlus, AlertTriangle, Loader2, Crown } from 'lucide-react';
+import { Trash2, AlertTriangle, Loader2, Crown, RefreshCw, Check, XCircle } from 'lucide-react';
 import type { BotMember, BotChannel, BotRole } from '../stores/bot-store';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
@@ -10,9 +10,11 @@ interface BotMemberListProps {
   isLoading?: boolean;
   isSaving?: boolean;
   error?: string | null;
-  onAddMember: (input: { channel: BotChannel; channelUserId: string; role: BotRole }) => Promise<unknown>;
   onSetRole: (channel: BotChannel, channelUserId: string, role: BotRole) => Promise<unknown>;
   onRemoveMember: (channel: BotChannel, channelUserId: string) => Promise<unknown>;
+  onRefreshMembers: () => Promise<unknown>;
+  onResolvePending: () => Promise<unknown>;
+  onSetPlaintext: (channel: BotChannel, channelUserId: string, plaintextUserId: string) => Promise<unknown>;
 }
 
 const CHANNELS: BotChannel[] = ['wecom', 'feishu'];
@@ -23,22 +25,26 @@ export default function BotMemberList({
   isLoading,
   isSaving,
   error,
-  onAddMember,
   onSetRole,
   onRemoveMember,
+  onRefreshMembers,
+  onResolvePending,
+  onSetPlaintext,
 }: BotMemberListProps) {
   const { t } = useTranslation('settings');
-  const [channel, setChannel] = useState<BotChannel>('wecom');
-  const [channelUserId, setChannelUserId] = useState('');
-  const [role, setRole] = useState<BotRole>('normal');
   const [formError, setFormError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [confirmRemoveKey, setConfirmRemoveKey] = useState<string | null>(null);
+  const [editingPlaintext, setEditingPlaintext] = useState<Record<string, string>>({});
+  const [savingPlaintextKey, setSavingPlaintextKey] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [resolving, setResolving] = useState(false);
 
   useEffect(() => {
-    setChannelUserId('');
     setFormError(null);
     setConfirmRemoveKey(null);
+    setEditingPlaintext({});
+    setSavingPlaintextKey(null);
   }, [botId]);
 
   const channelHasOwner = (c: BotChannel) =>
@@ -46,22 +52,6 @@ export default function BotMemberList({
 
   const channelOwnerCount = (c: BotChannel) =>
     members.filter((m) => m.channel === c && m.role === 'owner').length;
-
-  const handleAdd = async () => {
-    setFormError(null);
-    const trimmed = channelUserId.trim();
-    if (!trimmed) {
-      setFormError(t('bots.memberUserIdRequired'));
-      return;
-    }
-    if (role === 'owner' && channelHasOwner(channel)) {
-      setFormError(t('bots.ownerAlreadyExists'));
-      return;
-    }
-    await onAddMember({ channel, channelUserId: trimmed, role });
-    setChannelUserId('');
-    setRole('normal');
-  };
 
   const handleRemove = async (member: BotMember) => {
     const key = `${member.channel}:${member.channelUserId}`;
@@ -83,6 +73,58 @@ export default function BotMemberList({
     setRemoving(null);
   };
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefreshMembers();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleResolvePending = async () => {
+    setResolving(true);
+    try {
+      await onResolvePending();
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  const handlePlaintextChange = (key: string, value: string) => {
+    setEditingPlaintext((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handlePlaintextSave = async (member: BotMember) => {
+    const key = `${member.channel}:${member.channelUserId}`;
+    const value = editingPlaintext[key]?.trim() ?? '';
+    if (!value) {
+      setFormError(t('bots.plaintextUserIdRequired'));
+      return;
+    }
+    setSavingPlaintextKey(key);
+    setFormError(null);
+    try {
+      await onSetPlaintext(member.channel, member.channelUserId, value);
+      setEditingPlaintext((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } finally {
+      setSavingPlaintextKey(null);
+    }
+  };
+
+  const handlePlaintextCancel = (member: BotMember) => {
+    const key = `${member.channel}:${member.channelUserId}`;
+    setEditingPlaintext((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
   const groupedMembers = CHANNELS.map((c) => ({
     channel: c,
     items: members.filter((m) => m.channel === c).sort((a, b) => {
@@ -96,9 +138,37 @@ export default function BotMemberList({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium text-text-secondary">{t('bots.membersTitle')}</h4>
-        <span className="text-[10px] text-text-tertiary">
-          {t('bots.memberCount', { count: members.length })}
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleResolvePending}
+            disabled={resolving || isSaving}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+          >
+            {resolving ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3 h-3" />
+            )}
+            {t('bots.resolvePending')}
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing || isLoading}
+            className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
+            title={t('bots.refreshMembers')}
+          >
+            {refreshing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+          </button>
+          <span className="text-[10px] text-text-tertiary">
+            {t('bots.memberCount', { count: members.length })}
+          </span>
+        </div>
       </div>
 
       {(error || formError) && (
@@ -108,51 +178,6 @@ export default function BotMemberList({
         </div>
       )}
 
-      <div className="border border-border rounded-lg p-3 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-          <Select value={channel} onValueChange={(value) => setChannel(value as BotChannel)}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="wecom">{t('bots.channelWecom')}</SelectItem>
-              <SelectItem value="feishu">{t('bots.channelFeishu')}</SelectItem>
-            </SelectContent>
-          </Select>
-          <input
-            value={channelUserId}
-            onChange={(e) => setChannelUserId(e.target.value)}
-            placeholder={t('bots.memberUserIdPlaceholder')}
-            className="sm:col-span-2 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-          />
-          <Select value={role} onValueChange={(value) => setRole(value as BotRole)}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
-              <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
-              <SelectItem value="owner" disabled={channelHasOwner(channel)}>
-                {t('bots.roleOwner')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={isSaving}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-        >
-          {isSaving ? (
-            <Loader2 className="w-3 h-3 animate-spin" />
-          ) : (
-            <UserPlus className="w-3 h-3" />
-          )}
-          {t('bots.addMember')}
-        </button>
-      </div>
-
       {isLoading && members.length === 0 && (
         <div className="flex items-center justify-center py-6">
           <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />
@@ -161,7 +186,6 @@ export default function BotMemberList({
 
       {!isLoading && members.length === 0 && (
         <div className="text-center py-6 border border-dashed border-border rounded-lg">
-          <UserPlus className="w-6 h-6 text-text-tertiary mx-auto mb-1.5" />
           <p className="text-xs text-text-secondary">{t('bots.noMembers')}</p>
         </div>
       )}
@@ -196,39 +220,101 @@ export default function BotMemberList({
                 {items.map((member) => {
                   const key = `${member.channel}:${member.channelUserId}`;
                   const isConfirming = confirmRemoveKey === key;
+                  const isPending = member.resolutionStatus === 'pending';
+                  const plaintextValue = editingPlaintext[key] ?? member.plaintextUserId ?? '';
+                  const isEditingPlaintext = key in editingPlaintext || isPending;
                   return (
                     <div key={key} className="px-3 py-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-surface-hover text-text-tertiary">
-                            {member.channel}
-                          </span>
-                          <span className="text-xs text-text-primary font-mono">{member.channelUserId}</span>
-                          {member.role === 'owner' ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-warning">
-                              <Crown className="w-3 h-3" />
-                              {t('bots.roleOwner')}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col gap-1.5 min-w-0">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-surface-hover text-text-tertiary">
+                              {member.channel}
                             </span>
-                          ) : (
-                            <Select
-                              value={member.role}
-                              onValueChange={(value) =>
-                                onSetRole(member.channel, member.channelUserId, value as BotRole)
-                              }
-                              disabled={isSaving}
+                            <span className="text-xs text-text-primary font-mono">{member.channelUserId}</span>
+                            {member.role === 'owner' ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-warning">
+                                <Crown className="w-3 h-3" />
+                                {t('bots.roleOwner')}
+                              </span>
+                            ) : (
+                              <Select
+                                value={member.role}
+                                onValueChange={(value) =>
+                                  onSetRole(member.channel, member.channelUserId, value as BotRole)
+                                }
+                                disabled={isSaving}
+                              >
+                                <SelectTrigger className="w-auto min-w-[80px] text-xs py-1 px-2 h-auto">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
+                                  <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
+                                  <SelectItem value="owner" disabled={channelHasOwner(member.channel)}>
+                                    {t('bots.roleOwner')}
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                isPending
+                                  ? 'bg-warning/10 text-warning'
+                                  : 'bg-success/10 text-success'
+                              }`}
                             >
-                              <SelectTrigger className="w-auto min-w-[80px] text-xs py-1 px-2 h-auto">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
-                                <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
-                                <SelectItem value="owner" disabled={channelHasOwner(member.channel)}>
-                                  {t('bots.roleOwner')}
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                          )}
+                              {isPending ? t('bots.pending') : t('bots.resolved')}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {isEditingPlaintext ? (
+                              <>
+                                <input
+                                  value={plaintextValue}
+                                  onChange={(e) => handlePlaintextChange(key, e.target.value)}
+                                  placeholder={t('bots.plaintextUserIdPlaceholder')}
+                                  disabled={savingPlaintextKey === key || isSaving}
+                                  className="min-w-[120px] px-2 py-1 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handlePlaintextSave(member)}
+                                  disabled={savingPlaintextKey === key || isSaving}
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-md transition-colors"
+                                >
+                                  {savingPlaintextKey === key ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Check className="w-3 h-3" />
+                                  )}
+                                  {t('actions.save')}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePlaintextCancel(member)}
+                                  disabled={savingPlaintextKey === key}
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-md transition-colors"
+                                >
+                                  <XCircle className="w-3 h-3" />
+                                  {t('actions.cancel')}
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                {member.plaintextUserId && (
+                                  <span className="text-[11px] font-mono text-text-secondary">
+                                    {member.plaintextUserId}
+                                  </span>
+                                )}
+                                {member.displayName && (
+                                  <span className="text-[11px] text-text-secondary">
+                                    ({member.displayName})
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </div>
                         <button
                           type="button"

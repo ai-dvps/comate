@@ -2126,6 +2126,9 @@ function parseBotMemberRow(row: RawBotMemberRow): BotMember {
     channel: row.channel as BotMember['channel'],
     channelUserId: row.channel_user_id,
     role: row.role,
+    plaintextUserId: null,
+    displayName: null,
+    resolutionStatus: 'pending',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

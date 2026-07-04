@@ -10,6 +10,8 @@ import { ENCRYPTED_CHANNEL_KEYS } from '../models/bot.js';
 import type { BotChannelSettings, CreateBotInput, UpdateBotInput } from '../models/bot.js';
 import {
   BotAuthorizationError,
+  BotMemberNotFoundError,
+  BotMemberPlaintextConflictError,
   BotNotFoundError,
   BotValidationError,
   BotWorkspaceBoundError,
@@ -66,6 +68,9 @@ function mapBotError(error: unknown): { status: number; message: string; code?: 
   if (error instanceof BotNotFoundError) {
     return { status: 404, message: error.message };
   }
+  if (error instanceof BotMemberNotFoundError) {
+    return { status: 404, message: error.message };
+  }
   if (error instanceof BotValidationError) {
     return { status: 400, message: error.message };
   }
@@ -74,6 +79,9 @@ function mapBotError(error: unknown): { status: number; message: string; code?: 
   }
   if (error instanceof BotWorkspaceBoundError) {
     return { status: 400, message: error.message, code: 'workspace-bound' };
+  }
+  if (error instanceof BotMemberPlaintextConflictError) {
+    return { status: 409, message: error.message, code: error.code };
   }
   return { status: 500, message: 'Internal server error' };
 }
@@ -293,6 +301,52 @@ router.delete('/:id/members/:channelUserId', (req, res) => {
   } catch (error) {
     const mapped = mapBotError(error);
     console.error('Failed to remove bot member:', error);
+    res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
+  }
+});
+
+// POST /api/bots/:id/members/resolve-pending
+router.post('/:id/members/resolve-pending', async (req, res) => {
+  try {
+    const result = await botService.resolvePendingMembers(req.params.id);
+    res.json(result);
+  } catch (error) {
+    const mapped = mapBotError(error);
+    console.error('Failed to resolve pending members:', error);
+    res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
+  }
+});
+
+// PUT /api/bots/:id/members/:channelUserId/plaintext
+router.put('/:id/members/:channelUserId/plaintext', (req, res) => {
+  try {
+    const { channel } = req.query as { channel?: unknown };
+    if (!channel || (channel !== 'wecom' && channel !== 'feishu')) {
+      res.status(400).json({ error: 'channel query parameter must be wecom or feishu' });
+      return;
+    }
+
+    const { plaintextUserId, displayName } = req.body as {
+      plaintextUserId?: unknown;
+      displayName?: unknown;
+    };
+    if (!plaintextUserId || typeof plaintextUserId !== 'string') {
+      res.status(400).json({ error: 'plaintextUserId is required' });
+      return;
+    }
+
+    const member = botService.setMemberPlaintext(
+      req.params.id,
+      channel,
+      req.params.channelUserId,
+      plaintextUserId,
+      typeof displayName === 'string' ? displayName : undefined,
+    );
+    chatService.scheduleRebuildsForBot(req.params.id);
+    res.json({ member });
+  } catch (error) {
+    const mapped = mapBotError(error);
+    console.error('Failed to set member plaintext:', error);
     res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
   }
 });
