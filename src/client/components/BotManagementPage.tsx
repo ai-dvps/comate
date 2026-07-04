@@ -47,6 +47,9 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       addMember,
       setMemberRole,
       removeMember,
+      resolvePendingMembers,
+      setMemberPlaintext,
+      refreshMembers,
       fetchStatus,
       clearError,
     } = useBotStore();
@@ -529,6 +532,11 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
               onAddMember={(input) => addMember(selectedBot.id, input)}
               onSetRole={(channel, channelUserId, role) => setMemberRole(selectedBot.id, channel, channelUserId, role)}
               onRemoveMember={(channel, channelUserId) => removeMember(selectedBot.id, channel, channelUserId)}
+              onRefreshMembers={() => refreshMembers(selectedBot.id)}
+              onResolvePending={() => resolvePendingMembers(selectedBot.id)}
+              onSetPlaintext={(channel, channelUserId, plaintextUserId) =>
+                setMemberPlaintext(selectedBot.id, channel, channelUserId, plaintextUserId)
+              }
             />
           )}
 
