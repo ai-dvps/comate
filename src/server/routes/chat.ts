@@ -136,61 +136,6 @@ router.post('/sessions/:sessionId/fork', async (req, res) => {
   }
 });
 
-// GET /api/workspaces/:id/sessions/status
-// Lightweight status check for background session discovery
-router.get('/sessions/status', async (req, res) => {
-  try {
-    const workspaceId = (req.params as { id: string }).id;
-    const statuses = chatService.getSessionsStatus(workspaceId);
-    res.json({ statuses });
-  } catch (error) {
-    console.error('Failed to get sessions status:', error);
-    if (error instanceof ChatError) {
-      res.status(error.statusCode).json({ error: error.message, code: error.code });
-      return;
-    }
-    res.status(500).json({ error: 'Failed to get sessions status' });
-  }
-});
-
-// GET /api/workspaces/:id/sessions/:sessionId/messages
-router.get('/sessions/:sessionId/messages', async (req, res) => {
-  try {
-    const workspaceId = (req.params as unknown as { id: string }).id;
-    const sessionId = req.params.sessionId;
-    const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
-    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-    const { messages, tasks, subagents } = await chatService.loadMessages(sessionId, workspaceId, offset, limit);
-    res.json({ messages, tasks, subagents });
-  } catch (error) {
-    console.error('Failed to load messages:', error);
-    if (error instanceof ChatError) {
-      res.status(error.statusCode).json({ error: error.message, code: error.code });
-      return;
-    }
-    res.status(500).json({ error: 'Failed to load messages' });
-  }
-});
-
-// GET /api/workspaces/:id/sessions/:sessionId/messages/latest
-// Returns messages newer than a given message ID
-router.get('/sessions/:sessionId/messages/latest', async (req, res) => {
-  try {
-    const workspaceId = (req.params as unknown as { id: string }).id;
-    const sessionId = req.params.sessionId;
-    const afterMessageId = req.query.afterMessageId as string | undefined;
-    const { messages, tasks, subagents } = await chatService.loadMessagesAfter(sessionId, workspaceId, afterMessageId);
-    res.json({ messages, tasks, subagents });
-  } catch (error) {
-    console.error('Failed to load latest messages:', error);
-    if (error instanceof ChatError) {
-      res.status(error.statusCode).json({ error: error.message, code: error.code });
-      return;
-    }
-    res.status(500).json({ error: 'Failed to load latest messages' });
-  }
-});
-
 // GET /api/workspaces/:id/sessions/:sessionId/wecom-user
 // Returns WeCom user info for bot sessions
 router.get('/sessions/:sessionId/wecom-user', async (req, res) => {
@@ -242,65 +187,6 @@ router.get('/sessions/:sessionId/feishu-user', async (req, res) => {
       return;
     }
     res.status(500).json({ error: 'Failed to get Feishu user' });
-  }
-});
-
-// GET /api/workspaces/:id/sessions/:sessionId/stream
-// Long-lived SSE subscription for streaming output
-router.get('/sessions/:sessionId/stream', async (req, res) => {
-  const sessionId = req.params.sessionId;
-  const workspaceId = (req.params as unknown as { id: string }).id;
-  diagLog(`[Route] GET /sessions/${sessionId}/stream`);
-
-  try {
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
-    diagLog(`[Route] got runtime for ${sessionId}`);
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-
-    const lastEventId = req.headers['last-event-id'] as string | undefined;
-
-    runtime.subscribe(res, lastEventId);
-
-    req.on('close', () => {
-      diagLog(`[Route] req close for ${sessionId}`);
-      runtime.unsubscribe(res);
-    });
-  } catch (error) {
-    console.error('Failed to subscribe to stream:', error);
-    if (error instanceof ChatError) {
-      res.status(error.statusCode).json({ error: error.message, code: error.code });
-      return;
-    }
-    res.status(500).json({ error: 'Failed to subscribe to stream' });
-  }
-});
-
-// POST /api/workspaces/:id/sessions/:sessionId/messages
-// Push a user message into the session's input channel
-router.post('/sessions/:sessionId/messages', async (req, res) => {
-  const sessionId = req.params.sessionId;
-  const workspaceId = (req.params as unknown as { id: string }).id;
-  const { message } = req.body;
-
-  if (!message || typeof message !== 'string') {
-    res.status(400).json({ error: 'message is required' });
-    return;
-  }
-
-  try {
-    diagLog(`[Route] POST message to ${sessionId}`);
-    await chatService.pushMessage(sessionId, workspaceId, message);
-    res.json({ ok: true, debug: `[Route] POST message to ${sessionId}` });
-  } catch (error) {
-    console.error('Failed to push message:', error);
-    if (error instanceof ChatError) {
-      res.status(error.statusCode).json({ error: error.message, code: error.code });
-      return;
-    }
-    res.status(500).json({ error: 'Failed to push message' });
   }
 });
 

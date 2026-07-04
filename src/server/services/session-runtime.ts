@@ -63,6 +63,7 @@ export class SessionRuntime {
   private activeRes: Response | null = null;
   private heartbeatTimer?: NodeJS.Timeout;
   private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
+  private webEventHandlers = new Set<(id: number, event: SseEvent) => void>();
   private onSubscribed?: () => void;
   private onUnsubscribed?: () => void;
   private onActivity?: () => void;
@@ -113,6 +114,14 @@ export class SessionRuntime {
       (handler as { cleanup?: () => void }).cleanup?.();
     }
     this.botEventHandlers.clear();
+  }
+
+  addWebEventHandler(handler: (id: number, event: SseEvent) => void): void {
+    this.webEventHandlers.add(handler);
+  }
+
+  removeWebEventHandler(handler: (id: number, event: SseEvent) => void): void {
+    this.webEventHandlers.delete(handler);
   }
 
   setApprovalMode(mode: ApprovalMode): void {
@@ -173,6 +182,9 @@ export class SessionRuntime {
         this.ringBuffer.shift();
       }
       for (const handler of this.botEventHandlers) {
+        handler(id, event);
+      }
+      for (const handler of this.webEventHandlers) {
         handler(id, event);
       }
       if (
@@ -583,6 +595,35 @@ export class SessionRuntime {
     this.onActivity?.();
   }
 
+  subscribeWebSocket(handler: (id: number, event: SseEvent) => void, lastEventId?: string): void {
+    diagLog(`[Runtime ${this.sessionId}] subscribeWebSocket (pending=${this.pendingApprovals.size}, lastEventId=${lastEventId ?? 'none'}, currentMessageStartId=${this.currentMessageStartId ?? 'none'})`);
+    this.addWebEventHandler(handler);
+    this.emitter.emitWebEvent({ type: 'subscription_ack', serverNonce: this.serverNonce, sessionId: this.sessionId });
+    if (lastEventId !== undefined) {
+      this.replayFromWebSocket(lastEventId, handler);
+    } else if (this.currentMessageStartId !== undefined) {
+      this.replayFromWebSocket(this.currentMessageStartId, handler);
+    }
+    for (const [requestId, pending] of this.pendingApprovals) {
+      if (pending.type === 'question') {
+        this.emitter.emitPendingQuestion(requestId, pending.questions ?? [], pending.expiresAt);
+      } else {
+        this.emitter.emitPendingApproval(
+          requestId,
+          pending.toolName ?? '',
+          pending.toolUseId ?? '',
+          pending.input,
+          pending.title,
+          pending.description,
+          pending.suggestions,
+          pending.expiresAt,
+        );
+      }
+    }
+    this.onSubscribed?.();
+    this.onActivity?.();
+  }
+
   unsubscribe(res?: Response): void {
     const hadRes = this.activeRes === res;
     if (!res || this.activeRes === res) {
@@ -867,6 +908,30 @@ export class SessionRuntime {
     for (let i = startIndex + 1; i < this.ringBuffer.length; i++) {
       const item = this.ringBuffer[i];
       res.write(SseEmitter.formatSsePayload(item.id, item.event));
+    }
+  }
+
+  private replayFromWebSocket(lastEventId: string, handler: (id: number, event: SseEvent) => void): void {
+    const startIndex = this.ringBuffer.findIndex(
+      (item) => item.id === lastEventId,
+    );
+    if (startIndex < 0) {
+      for (const item of this.ringBuffer) {
+        handler(Number(item.id), item.event);
+      }
+      const hasMissableEvents = this.ringBuffer.some(
+        (item) => item.event.type !== 'subscription_ack',
+      );
+      if (hasMissableEvents) {
+        this.emitter.emitErrorNote(
+          'Some output may have been missed due to reconnect.',
+        );
+      }
+      return;
+    }
+    for (let i = startIndex + 1; i < this.ringBuffer.length; i++) {
+      const item = this.ringBuffer[i];
+      handler(Number(item.id), item.event);
     }
   }
 
