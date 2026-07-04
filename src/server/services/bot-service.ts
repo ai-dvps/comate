@@ -164,9 +164,10 @@ export class BotService {
       channelUserId: input.channelUserId,
       role,
     });
-    return this.store.listBotMembers(botId).find(
+    const raw = this.store.listBotMembers(botId).find(
       (m) => m.channel === input.channel && m.channelUserId === input.channelUserId,
     )!;
+    return this.resolveMemberPlaintext(botId, raw);
   }
 
   setMemberRole(
@@ -233,7 +234,28 @@ export class BotService {
   }
 
   listMembers(botId: string): BotMember[] {
-    return this.store.listBotMembers(botId);
+    return this.store.listBotMembers(botId).map((m) => this.resolveMemberPlaintext(botId, m));
+  }
+
+  private resolveMemberPlaintext(botId: string, member: BotMember): BotMember {
+    const bot = this.store.getBot(botId);
+    if (member.channel === 'wecom') {
+      const plaintextUserId = this.store.getWecomUserMapping(member.channelUserId);
+      if (plaintextUserId) {
+        return { ...member, plaintextUserId, displayName: null, resolutionStatus: 'resolved' };
+      }
+    } else if (member.channel === 'feishu' && bot?.activeWorkspaceId) {
+      const user = this.store.getFeishuWorkspaceUser(bot.activeWorkspaceId, member.channelUserId);
+      if (user?.userId) {
+        return {
+          ...member,
+          plaintextUserId: user.userId,
+          displayName: user.name,
+          resolutionStatus: 'resolved',
+        };
+      }
+    }
+    return { ...member, plaintextUserId: null, displayName: null, resolutionStatus: 'pending' };
   }
 
   resolveMemberRole(botId: string, channel: BotChannel, channelUserId: string): BotRole | null {

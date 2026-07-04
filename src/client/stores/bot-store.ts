@@ -58,6 +58,9 @@ export interface BotMember {
   channel: BotChannel;
   channelUserId: string;
   role: BotRole;
+  plaintextUserId: string | null;
+  displayName: string | null;
+  resolutionStatus: 'resolved' | 'pending';
   createdAt: string;
   updatedAt: string;
 }
