@@ -368,6 +368,23 @@ export class WeComBotService {
       Array.from(this.connections.values()).find((c) => c.workspaceId === workspaceId)?.botId;
   }
 
+  private ensureBotMember(workspaceId: string, channel: 'wecom', channelUserId: string): void {
+    const botId = this.getBotIdForWorkspace(workspaceId);
+    if (!botId) return;
+    if (!botService.getBot(botId)) return;
+
+    const role = botService.getMemberRole(botId, channel, channelUserId);
+    if (role !== null) return;
+
+    try {
+      botService.addMember(botId, { channel, channelUserId, role: 'normal' });
+      chatService.scheduleRebuildsForBot(botId);
+    } catch (err) {
+      // Membership is best-effort; do not block message handling.
+      console.error(`[WeComBotService] failed to auto-add member ${channelUserId} for bot ${botId}:`, err);
+    }
+  }
+
   disconnectAll(): void {
     for (const botId of Array.from(this.connections.keys())) {
       this.disconnectBot(botId);
@@ -436,6 +453,9 @@ export class WeComBotService {
 
     // Track that this user has interacted with this workspace
     wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
+
+    // Auto-add first-time messengers as normal bot members.
+    this.ensureBotMember(workspaceId, 'wecom', wecomUserId);
 
     // /clear and /new (aliases) start a fresh session. Intercepted before the
     // message reaches the agent so the literal command is never a chat turn.
@@ -828,6 +848,9 @@ export class WeComBotService {
     // Fire-and-forget: queue unseen user IDs for batch resolution
     wecomUserResolver.resolveOnMessage(workspaceId, wecomUserId).catch(() => {});
     wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
+
+    // Auto-add first-time messengers as normal bot members.
+    this.ensureBotMember(workspaceId, 'wecom', wecomUserId);
 
     const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn) return;
