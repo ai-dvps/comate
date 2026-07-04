@@ -386,4 +386,57 @@ describe('BotService', { concurrency: false }, () => {
       );
     });
   });
+
+  describe('member plaintext resolution', () => {
+    it('returns resolved WeCom member when a mapping exists', () => {
+      const bot = service.createBot(createBotInput());
+      store.setWecomUserMapping('enc-1', 'plain-1');
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'enc-1', role: 'normal' });
+
+      const [member] = service.listMembers(bot.id);
+      assert.strictEqual(member.plaintextUserId, 'plain-1');
+      assert.strictEqual(member.displayName, null);
+      assert.strictEqual(member.resolutionStatus, 'resolved');
+    });
+
+    it('returns pending when no WeCom mapping exists', () => {
+      const bot = service.createBot(createBotInput());
+      service.addMember(bot.id, { channel: 'wecom', channelUserId: 'enc-1', role: 'normal' });
+
+      const [member] = service.listMembers(bot.id);
+      assert.strictEqual(member.plaintextUserId, null);
+      assert.strictEqual(member.resolutionStatus, 'pending');
+    });
+
+    it('returns resolved Feishu member with userId and name', () => {
+      const bot = service.createBot(createBotInput({ activeWorkspaceId: 'ws-f' }));
+      store.setFeishuWorkspaceUser('ws-f', 'open-1');
+      store.setFeishuWorkspaceUserName('ws-f', 'open-1', 'Alice', 'alice-id');
+      service.addMember(bot.id, { channel: 'feishu', channelUserId: 'open-1', role: 'normal' });
+
+      const [member] = service.listMembers(bot.id);
+      assert.strictEqual(member.plaintextUserId, 'alice-id');
+      assert.strictEqual(member.displayName, 'Alice');
+      assert.strictEqual(member.resolutionStatus, 'resolved');
+    });
+
+    it('returns pending Feishu member when userId is missing', () => {
+      const bot = service.createBot(createBotInput({ activeWorkspaceId: 'ws-f' }));
+      store.setFeishuWorkspaceUser('ws-f', 'open-1');
+      service.addMember(bot.id, { channel: 'feishu', channelUserId: 'open-1', role: 'normal' });
+
+      const [member] = service.listMembers(bot.id);
+      assert.strictEqual(member.plaintextUserId, null);
+      assert.strictEqual(member.resolutionStatus, 'pending');
+    });
+
+    it('returns enriched member from addMember when mapping already exists', () => {
+      const bot = service.createBot(createBotInput());
+      store.setWecomUserMapping('enc-1', 'plain-1');
+
+      const member = service.addMember(bot.id, { channel: 'wecom', channelUserId: 'enc-1', role: 'normal' });
+      assert.strictEqual(member.plaintextUserId, 'plain-1');
+      assert.strictEqual(member.resolutionStatus, 'resolved');
+    });
+  });
 });
