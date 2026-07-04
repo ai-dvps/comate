@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bot member plaintext editing** — the plaintext user ID input no longer appears by default for every pending member. Instead, members without a plaintext ID show a clickable placeholder, and members with a plaintext ID show the resolved value; clicking either opens an inline editor that saves on Enter or blur and cancels on Escape or an empty blur. The pending/resolved status badge continues to reflect the actual resolution state.
+
 - **GUI session subscribe timeout** — increased the WebSocket `subscribe` timeout from 5s to 30s (`DEFAULT_TIMEOUT`) so that cold-start runtime creation (which includes `getSessionInfo`, building SDK options, and testing the Claude binary) no longer causes the GUI to show `Connection error: WebSocket request timeout: subscribe`. Bot sessions were unaffected because they do not use the GUI's WebSocket subscribe path. Added server-side diagnostic logs around `getOrCreateRuntime` and the WebSocket subscribe handler so future slow-start issues can be traced stage-by-stage.
 
 ## [0.0.20] - 2026-07-04
