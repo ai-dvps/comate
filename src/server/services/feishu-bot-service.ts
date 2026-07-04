@@ -188,6 +188,25 @@ export class FeishuBotService {
     return this.workspaceIdToBotId.get(workspaceId) ?? this.activeBotId ?? undefined;
   }
 
+  async resolveFeishuUserName(
+    botId: string,
+    workspaceId: string,
+    openId: string,
+  ): Promise<{ userId: string; name: string } | null> {
+    const connection = this.connections.get(botId);
+    const larkClient = connection?.larkClient;
+    if (!larkClient) {
+      diagLog(`[FeishuBotService] no lark client for bot ${botId}, cannot resolve ${openId}`);
+      return null;
+    }
+    try {
+      return await feishuUserResolver.resolveImmediate(workspaceId, openId, larkClient);
+    } catch (err) {
+      diagLog('[FeishuBotService] resolveFeishuUserName failed:', err);
+      return null;
+    }
+  }
+
   /**
    * Lark WS dispatcher. This covers Feishu apps that use long-connection event
    * subscription instead of the HTTP callback route.
