@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, vi } from 'vitest'
 import assert from 'node:assert'
 import { normalizeSdkStatus, sanitizeSubagents, useChatStore, handleSseEvent, type SseSetter } from './chat-store'
-import { wsClient } from '../lib/websocket-client'
+import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
 import type { SubagentState, TaskItem } from '../types/message'
 
 describe('normalizeSdkStatus', () => {
@@ -319,6 +319,51 @@ describe('bot session guards', () => {
     try {
       await useChatStore.getState().refreshBotMessages('ws-1', 's1')
       assert.strictEqual(requestSpy.mock.calls.length, 0)
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+})
+
+describe('setActiveSession subscribe timeout', () => {
+  function makeGuiSession(): ReturnType<typeof useChatStore.getState>['sessions'][string][number] {
+    return {
+      id: 's1',
+      workspaceId: 'ws-1',
+      name: 'Test',
+      source: 'gui',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeGuiSession()] },
+      activeSessionIds: {},
+      messages: {},
+      drafts: {},
+      subagents: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      approvalQueue: {},
+      serverNonce: {},
+      pendingSend: {},
+    })
+  })
+
+  it('uses DEFAULT_TIMEOUT for subscribe requests', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      // subscribeToSession fires and forgets doSubscribe(); give the microtask queue a turn.
+      await new Promise((r) => setTimeout(r, 0))
+
+      const subscribeCall = requestSpy.mock.calls.find((call) => call[0] === 'subscribe')
+      assert.ok(subscribeCall, 'subscribe request should be sent')
+      assert.strictEqual(subscribeCall[2], DEFAULT_TIMEOUT)
     } finally {
       requestSpy.mockRestore()
     }
