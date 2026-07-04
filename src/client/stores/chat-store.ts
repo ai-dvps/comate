@@ -3,9 +3,11 @@ import i18next from 'i18next'
 
 import type { ChatMessage, MessagePart, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem } from '../types/message'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
-import { diagLog, diagWarn } from '../utils/diag-logger'
+import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
+import { wsClient } from '../lib/websocket-client.js'
+import type { WsEventMessage } from '@server/websocket/types'
 
 export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
 
@@ -41,13 +43,13 @@ function startBackgroundPolling(
   }
 
   const interval = setInterval(() => {
-    fetch(`/api/workspaces/${workspaceId}/sessions/status`)
-      .then(async (res) => {
-        if (!res.ok) return
-        const data = (await res.json()) as {
+    wsClient
+      .request('status', { workspaceId }, 5000)
+      .then((data) => {
+        const result = data as {
           statuses?: Record<string, { pendingCount: number; isProcessing?: boolean }>
         }
-        const statuses = data.statuses ?? {}
+        const statuses = result.statuses ?? {}
         set((state) => {
           const next = { ...state.sessionStatus }
           const nextStreaming = { ...state.isStreaming }
@@ -454,58 +456,6 @@ function pruneWindow(messages: ChatMessage[], cap: number): ChatMessage[] {
   return messages.slice(pruneCount)
 }
 
-
-async function* parseSSEStream(
-  stream: ReadableStream<Uint8Array>,
-): AsyncGenerator<{ event: string; data: unknown; id?: string }> {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let currentEvent = 'message'
-  let currentData = ''
-  let currentId: string | undefined
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-
-    for (const rawLine of lines) {
-      const line = rawLine.replace(/\r$/, '')
-      if (line.startsWith('event: ')) {
-        if (currentData) {
-          yield { event: currentEvent, data: parseData(currentData), id: currentId }
-          currentData = ''
-          currentId = undefined
-        }
-        currentEvent = line.slice(7)
-      } else if (line.startsWith('data: ')) {
-        currentData = line.slice(6)
-      } else if (line.startsWith('id: ')) {
-        currentId = line.slice(4)
-      } else if (line === '' && currentData) {
-        yield { event: currentEvent, data: parseData(currentData), id: currentId }
-        currentData = ''
-        currentId = undefined
-      }
-    }
-  }
-
-  if (currentData) {
-    yield { event: currentEvent, data: parseData(currentData), id: currentId }
-  }
-}
-
-function parseData(data: string): unknown {
-  try {
-    return JSON.parse(data)
-  } catch {
-    return data
-  }
-}
 
 export type SseSetter = (
   updater: (state: ChatState) => ChatState | Partial<ChatState>,
@@ -1361,20 +1311,18 @@ export function handleSseEvent(
           const { workspaceId, content } = pending
           updates.pendingSend = { ...state.pendingSend }
           delete updates.pendingSend[sessionId]
-          fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: content }),
-          }).catch((err) => {
-            console.error('Failed to send queued message:', err)
-            set((s) =>
-              addSystemMessage(
-                s,
-                sessionId,
-                `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
-              ),
-            )
-          })
+          wsClient
+            .request('sendMessage', { workspaceId, sessionId, content })
+            .catch((err) => {
+              console.error('Failed to send queued message:', err)
+              set((s) =>
+                addSystemMessage(
+                  s,
+                  sessionId,
+                  `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
+                ),
+              )
+            })
         }
         return updates
       })
@@ -1462,13 +1410,11 @@ export function handleSseEvent(
           updates.draftQueue = { ...state.draftQueue }
           delete updates.draftQueue[sessionId]
           // Send the queued message asynchronously
-          fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: content }),
-          }).catch((err) => {
-            console.error('Failed to send queued message:', err)
-          })
+          wsClient
+            .request('sendMessage', { workspaceId, sessionId, content })
+            .catch((err) => {
+              console.error('Failed to send queued message:', err)
+            })
         }
         return updates
       })
@@ -1882,19 +1828,6 @@ export function normalizeSdkStatus(status: string): TaskItem['status'] {
   }
 }
 
-// Events that can be batched — deltas are high-frequency during streaming
-// and benefit from RAF-aligned flushing.
-const BATCHABLE_EVENTS = new Set([
-  'text_delta',
-  'thinking_delta',
-  'tool_input_delta',
-])
-
-interface BufferedEvent {
-  event: string
-  data: unknown
-}
-
 function subscribeToSession(
   set: SseSetter,
   _get: SseGetter,
@@ -1908,229 +1841,49 @@ function subscribeToSession(
     existing.close()
   }
 
-  let attempt = 0
-  const baseDelay = 2000
-  const maxDelay = 30000
-  const maxAttempts = 5
-  let retryTimer: ReturnType<typeof setTimeout> | undefined
+  const lastId = lastEventId.get(sessionId)
 
-  const connect = () => {
-    const lastId = lastEventId.get(sessionId)
-    const headers: Record<string, string> = {}
-    if (lastId) {
-      headers['Last-Event-ID'] = lastId
+  const doSubscribe = async (): Promise<void> => {
+    try {
+      await wsClient.request(
+        'subscribe',
+        { workspaceId, sessionId, lastEventId: lastId },
+        5000,
+      )
+      diagLog(`[WS ${sessionId}] subscribed`)
+      set((state) => ({
+        isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
+      }))
+    } catch (err) {
+      console.error(`[WS ${sessionId}] subscribe failed`, err)
+      set((state) =>
+        addSystemMessage(
+          state,
+          sessionId,
+          `${i18next.t('common:connectionError', 'Connection error')}: ${err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')}`,
+        ),
+      )
     }
-
-    diagLog(`[SSE ${sessionId}] subscribing (lastId=${lastId ?? 'none'})`)
-
-    const abortController = new AbortController()
-    let readTimeout: ReturnType<typeof setTimeout> | undefined
-    let abortedIntentionally = false
-
-    // Delta batching state (per connection)
-    const deltaBuffer: BufferedEvent[] = []
-    let flushRafId: number | null = null
-
-    const flushDeltas = () => {
-      if (flushRafId !== null) {
-        cancelAnimationFrame(flushRafId)
-        flushRafId = null
-      }
-      if (deltaBuffer.length === 0) return
-      const batch = deltaBuffer.splice(0, deltaBuffer.length)
-      for (const { event, data } of batch) {
-        try {
-          handleSseEvent(set, workspaceId, sessionId, event, data)
-        } catch (err) {
-          console.error('SSE batched event handler error:', err)
-        }
-      }
-    }
-
-    const scheduleFlush = () => {
-      if (flushRafId !== null) return
-      flushRafId = requestAnimationFrame(() => {
-        flushRafId = null
-        flushDeltas()
-      })
-    }
-
-    const thisClose = () => {
-      abortedIntentionally = true
-      if (flushRafId !== null) {
-        cancelAnimationFrame(flushRafId)
-        flushRafId = null
-      }
-      flushDeltas()
-      if (retryTimer) {
-        clearTimeout(retryTimer)
-        retryTimer = undefined
-      }
-      if (readTimeout) {
-        clearTimeout(readTimeout)
-        readTimeout = undefined
-      }
-      abortController.abort()
-    }
-
-    const resetReadTimeout = () => {
-      if (readTimeout) {
-        clearTimeout(readTimeout)
-      }
-      readTimeout = setTimeout(() => {
-        console.warn(`[SSE ${sessionId}] read timeout — forcing reconnect`)
-        abortController.abort()
-      }, 35000)
-    }
-
-    fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/stream`, {
-      headers,
-      signal: abortController.signal,
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const error = await res.json().catch(() => ({ error: i18next.t('common:subscriptionFailed', 'Subscription failed') }))
-          const err = new Error(error.error || i18next.t('common:subscriptionFailed', 'Subscription failed'))
-          ;(err as Error & { status?: number }).status = res.status
-          throw err
-        }
-        if (!res.body) throw new Error(i18next.t('common:noResponseBody', 'No response body'))
-
-        diagLog(`[SSE ${sessionId}] stream opened`)
-        let wasActiveAtCleanClose = false
-        try {
-          for await (const event of parseSSEStream(res.body)) {
-            resetReadTimeout()
-            if (event.id) {
-              lastEventId.set(sessionId, event.id)
-            }
-            // Connection is healthy — reset retry counter and clear restart state
-            attempt = 0
-            set((state) => ({
-              isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
-            }))
-            try {
-              if (BATCHABLE_EVENTS.has(event.event)) {
-                deltaBuffer.push({ event: event.event, data: event.data })
-                scheduleFlush()
-              } else {
-                // Non-delta events flush pending deltas immediately so
-                // approvals, questions, and done events are not delayed.
-                flushDeltas()
-                handleSseEvent(set, workspaceId, sessionId, event.event, event.data)
-              }
-            } catch (err) {
-              console.error('SSE event handler error:', err)
-              set((state) =>
-                addSystemMessage(
-                  state,
-                  sessionId,
-                  `${i18next.t('common:error', 'Error')}: ${err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')}`,
-                ),
-              )
-            }
-          }
-          diagWarn(`[SSE ${sessionId}] stream ended cleanly`)
-          wasActiveAtCleanClose = sessionSubscriptions.get(sessionId)?.close === thisClose
-        } finally {
-          if (readTimeout) {
-            clearTimeout(readTimeout)
-            readTimeout = undefined
-          }
-          flushDeltas()
-          const current = sessionSubscriptions.get(sessionId)
-          if (current?.close === thisClose) {
-            sessionSubscriptions.delete(sessionId)
-            diagLog(`[SSE ${sessionId}] subscription removed (clean close)`)
-          }
-        }
-        if (wasActiveAtCleanClose) {
-          if (attempt >= maxAttempts) {
-            console.error('Subscription max retries exceeded after clean close')
-            set((state) =>
-              addSystemMessage(
-                state,
-                sessionId,
-                i18next.t('common:connectionLost', 'Connection lost. Please reselect the session to reconnect.'),
-              ),
-            )
-            set((state) => ({
-              isStreaming: { ...state.isStreaming, [sessionId]: false },
-              isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
-            }))
-            return
-          }
-          const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay)
-          attempt++
-          diagLog(`[SSE ${sessionId}] retrying after clean close in ${delay}ms`)
-          retryTimer = setTimeout(connect, delay)
-        }
-      })
-      .catch((err) => {
-        if (readTimeout) {
-          clearTimeout(readTimeout)
-          readTimeout = undefined
-        }
-        const current = sessionSubscriptions.get(sessionId)
-        if (current?.close === thisClose) {
-          sessionSubscriptions.delete(sessionId)
-        }
-        if (err.name === 'AbortError') {
-          if (abortedIntentionally) {
-            diagLog(`[SSE ${sessionId}] subscription aborted intentionally`)
-            return
-          }
-          // Timeout-driven abort — fall through to retry logic
-        }
-
-        const status = (err as Error & { status?: number }).status
-        if (status && status >= 400 && status < 500) {
-          console.error('Subscription fatal error:', err)
-          set((state) =>
-            addSystemMessage(
-              state,
-              sessionId,
-              `${i18next.t('common:connectionError', 'Connection error')}: ${err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')}`,
-            ),
-          )
-          set((state) => ({
-            isStreaming: { ...state.isStreaming, [sessionId]: false },
-            isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
-          }))
-          return
-        }
-
-        if (attempt >= maxAttempts) {
-          console.error('Subscription max retries exceeded:', err)
-          set((state) =>
-            addSystemMessage(
-              state,
-              sessionId,
-              i18next.t('common:connectionLost', 'Connection lost. Please reselect the session to reconnect.'),
-            ),
-          )
-          set((state) => ({
-            isStreaming: { ...state.isStreaming, [sessionId]: false },
-            isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
-          }))
-          return
-        }
-
-        const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay)
-        attempt++
-        diagLog(
-          `[SSE ${sessionId}] retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`,
-        )
-        retryTimer = setTimeout(connect, delay)
-      })
-
-    sessionSubscriptions.set(sessionId, {
-      close: thisClose,
-      workspaceId,
-    })
   }
 
-  connect()
+  const thisClose = (): void => {
+    void wsClient.request('unsubscribe', { workspaceId, sessionId }, 3000).catch(() => {})
+  }
+
+  const reconnectUnsub = wsClient.onReconnect(() => {
+    diagLog(`[WS ${sessionId}] resubscribing after reconnect`)
+    void doSubscribe()
+  })
+
+  void doSubscribe()
+
+  sessionSubscriptions.set(sessionId, {
+    close: () => {
+      reconnectUnsub()
+      thisClose()
+    },
+    workspaceId,
+  })
 }
 
 function applyActivityUpdate(
@@ -2194,6 +1947,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
   lastCompletion: {},
   domCache: {},
   isRestartingRuntime: {},
+
+  // WebSocket event listener — routes server-pushed events back into the store.
+  ...(typeof window !== 'undefined' && typeof WebSocket !== 'undefined'
+    ? (() => {
+        wsClient.onEvent((msg: WsEventMessage) => {
+          if (msg.eventType === 'sse' && msg.sessionId && msg.workspaceId) {
+            const data = msg.data as { type?: string }
+            if (typeof data.type === 'string') {
+              handleSseEvent(set, msg.workspaceId, msg.sessionId, data.type, msg.data)
+            }
+          }
+        })
+        void wsClient.connect().catch(() => {})
+        return {}
+      })()
+    : {}),
 
   fetchSessions: async (workspaceId: string) => {
     set((state) => ({ isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: true } }))
@@ -2509,9 +2278,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true } }))
-      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`)
-      if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
-      const data = (await res.json()) as { messages?: unknown; tasks?: TaskItem[]; subagents?: unknown }
+      const data = (await wsClient.request('loadMessages', { workspaceId, sessionId })) as {
+        messages?: unknown
+        tasks?: TaskItem[]
+        subagents?: unknown
+      }
       const mappedMessages = sanitizeMessages(data.messages)
       const serverTasks = data.tasks ?? []
       const serverSubagents = sanitizeSubagents(data.subagents)
@@ -2637,7 +2408,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return
     }
 
-    // Gate the POST on subscription_ack — without an ack, the server has not
+    // Gate the send on subscription_ack — without an ack, the server has not
     // yet wired this client's response into the emitter, so events would emit
     // only into the ring buffer. The ack handler drains pendingSend.
     if (!get().serverNonce[sessionId]) {
@@ -2647,17 +2418,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return
     }
 
-    // POST to server
-    fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: content }),
-    }).catch((err) => {
-      console.error('Failed to send message:', err)
-      set((state) =>
-        addSystemMessage(
-          state,
-          sessionId,
+    // Send via WebSocket
+    wsClient
+      .request('sendMessage', { workspaceId, sessionId, content })
+      .catch((err) => {
+        console.error('Failed to send message:', err)
+        set((state) =>
+          addSystemMessage(
+            state,
+            sessionId,
           `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
         ),
       )
@@ -2847,15 +2616,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           [sessionId]: true,
         },
       }))
-      const url = new URL(
-        `/api/workspaces/${workspaceId}/sessions/${sessionId}/messages`,
-        window.location.origin,
-      )
-      url.searchParams.set('offset', String(offset))
-      url.searchParams.set('limit', String(limit))
-      const res = await fetch(url.pathname + url.search)
-      if (!res.ok) throw new Error(i18next.t('common:failedToFetchOlderMessages', 'Failed to fetch older messages'))
-      const data = (await res.json()) as {
+      const data = (await wsClient.request('loadMessages', { workspaceId, sessionId, offset, limit })) as {
         messages?: unknown
         tasks?: TaskItem[]
       }
@@ -2902,17 +2663,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true },
       }))
 
-      const url = new URL(
-        `/api/workspaces/${workspaceId}/sessions/${sessionId}/messages/latest`,
-        window.location.origin,
-      )
-      if (afterMessageId) {
-        url.searchParams.set('afterMessageId', afterMessageId)
-      }
-
-      const res = await fetch(url.pathname + url.search)
-      if (!res.ok) throw new Error(i18next.t('common:failedToLoadMessages', 'Failed to load messages'))
-      const data = (await res.json()) as { messages?: unknown; tasks?: TaskItem[] }
+      const data = (await wsClient.request('loadMessagesAfter', {
+        workspaceId,
+        sessionId,
+        afterMessageId,
+      })) as { messages?: unknown; tasks?: TaskItem[] }
       const newMessages = sanitizeMessages(data.messages)
 
       set((state) => {
