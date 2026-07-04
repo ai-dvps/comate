@@ -1855,6 +1855,9 @@ function subscribeToSession(
         isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
       }))
     } catch (err) {
+      set((state) => ({
+        isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
+      }))
       console.error(`[WS ${sessionId}] subscribe failed`, err)
       set((state) =>
         addSystemMessage(
@@ -2756,10 +2759,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       )
       if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
-      // Signal that a runtime restart is in progress; cleared when SSE reconnects
-      set((state) => ({
-        isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: true },
-      }))
+      // If the session has an active WebSocket subscription, the server just closed its
+      // runtime. Recreate the subscription so a fresh runtime with the new provider is
+      // created; the resulting subscription_ack clears the loading state.
+      if (sessionSubscriptions.has(sessionId)) {
+        set((state) => ({
+          isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: true },
+        }))
+        subscribeToSession(set, get, workspaceId, sessionId)
+      }
     } catch (err) {
       console.error('Failed to set session provider:', err)
       // Revert optimistic update on error

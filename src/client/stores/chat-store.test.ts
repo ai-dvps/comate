@@ -272,15 +272,20 @@ describe('bot session guards', () => {
     }
   })
 
-  it('sendMessage sends via WebSocket to a GUI session', () => {
+  it('sendMessage sends via WebSocket to a GUI session', async () => {
     useChatStore.setState({
       sessions: { 'ws-1': [makeSession('gui')] },
-      serverNonce: { s1: 'nonce-1' },
     })
 
     const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
 
     try {
+      // Establish an active subscription so sendMessage sends directly.
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+      useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+      requestSpy.mockClear()
+
       useChatStore.getState().sendMessage('ws-1', 's1', 'hello')
       assert.strictEqual(requestSpy.mock.calls.length, 1)
       assert.strictEqual(requestSpy.mock.calls[0][0], 'sendMessage')
@@ -435,6 +440,95 @@ describe('notification turn-timing metadata', () => {
     })
     handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
     assert.strictEqual(useChatStore.getState().streamStartedAt['s1'], 500)
+  })
+})
+
+describe('setSessionProvider', () => {
+  function makeGuiSession(): ReturnType<typeof useChatStore.getState>['sessions'][string][number] {
+    return {
+      id: 's1',
+      workspaceId: 'ws-1',
+      name: 'Test',
+      source: 'gui',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  let requestSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: async () => ({}),
+        }),
+      ) as unknown as typeof fetch,
+    )
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeGuiSession()] },
+      activeSessionIds: {},
+      messages: {},
+      drafts: {},
+      subagents: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      approvalQueue: {},
+      serverNonce: {},
+      pendingSend: {},
+      isRestartingRuntime: {},
+    })
+    // Clear any lingering subscriptions from other test suites.
+    useChatStore.getState().setActiveSession('ws-1', '')
+  })
+
+  afterEach(() => {
+    requestSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('re-subscribes and clears loading after a provider switch for an active session', async () => {
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    requestSpy.mockClear()
+
+    await useChatStore.getState().setSessionProvider('ws-1', 's1', 'p2')
+    await new Promise((r) => setTimeout(r, 0))
+
+    const subscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'subscribe')
+    assert.strictEqual(subscribeCalls.length, 1, 'should resubscribe after provider switch')
+    assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], false)
+  })
+
+  it('does not enter a loading state when there is no active subscription', async () => {
+    await useChatStore.getState().setSessionProvider('ws-1', 's1', 'p2')
+    await new Promise((r) => setTimeout(r, 0))
+
+    const subscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'subscribe')
+    assert.strictEqual(subscribeCalls.length, 0, 'should not subscribe when no active runtime')
+    assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], undefined)
+  })
+
+  it('clears loading even if the post-switch subscribe fails', async () => {
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    requestSpy.mockImplementation(async (type: string) => {
+      if (type === 'subscribe') {
+        throw new Error('subscribe failed')
+      }
+      return {}
+    })
+
+    await useChatStore.getState().setSessionProvider('ws-1', 's1', 'p2')
+    await new Promise((r) => setTimeout(r, 0))
+
+    assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], false)
   })
 })
 

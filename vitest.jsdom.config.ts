@@ -17,6 +17,7 @@ export default defineProject({
     setupFiles: ['./vitest.setup.ts'],
     include: [
       'src/client/{components,hooks}/**/*.{test,spec}.{ts,tsx}',
+      'src/client/stores/chat-store.test.ts',
       'src/client/lib/bot-filter.test.ts',
     ],
     exclude: [
