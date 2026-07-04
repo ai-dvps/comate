@@ -163,6 +163,46 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     assert.ok(timeouts.has('s1'), 'idle timeout should be scheduled immediately after runtime creation');
   });
 
+  it('emits diagnostic timing logs during runtime creation', async () => {
+    setupStoreMocks();
+
+    SessionRuntime.open = (...args: unknown[]) => {
+      const runtime = createMockRuntime({
+        onSubscribed: args[6] as (() => void) | undefined,
+        onUnsubscribed: args[7] as (() => void) | undefined,
+        onActivity: args[8] as (() => void) | undefined,
+      });
+      return runtime;
+    };
+
+    const { logs, restore } = collectDiagLogs();
+    try {
+      await service.getOrCreateRuntime('s1', 'ws-1');
+      assert.ok(
+        logs.some((log) => log.includes('[ChatService] creating runtime s1')),
+        'should log runtime creation start',
+      );
+      assert.ok(
+        logs.some((log) => log.includes('[ChatService] runtime s1 session loaded')),
+        'should log session loaded',
+      );
+      assert.ok(
+        logs.some((log) => log.includes('[ChatService] runtime s1 buildSdkOptions')),
+        'should log buildSdkOptions timing',
+      );
+      assert.ok(
+        logs.some((log) => log.includes('[ChatService] runtime s1 testClaudeBinary')),
+        'should log testClaudeBinary timing',
+      );
+      assert.ok(
+        logs.some((log) => log.includes('[ChatService] runtime s1 SessionRuntime.open')),
+        'should log SessionRuntime.open timing',
+      );
+    } finally {
+      restore();
+    }
+  });
+
   it('onActivity resets the idle timer', async () => {
     setupStoreMocks();
 
