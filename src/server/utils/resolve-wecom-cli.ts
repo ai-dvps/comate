@@ -15,9 +15,8 @@ function tryPath(label: string, filePath: string): string | undefined {
 }
 
 function findInPath(command: string): string | undefined {
-  const cmd = process.platform === 'win32' ? 'where' : 'command';
-  const args = process.platform === 'win32' ? [command] : ['-v', command];
-  const result = spawnSync(cmd, args, { encoding: 'utf-8', shell: true });
+  const cmd = process.platform === 'win32' ? `where ${command}` : `command -v ${command}`;
+  const result = spawnSync(cmd, { encoding: 'utf-8', shell: true });
   const lines = result.stdout?.trim().split('\n') || [];
   for (const line of lines) {
     const p = line.trim();

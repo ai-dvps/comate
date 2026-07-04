@@ -76,6 +76,22 @@ export function __restoreRebuildPollInterval(): void {
   REBUILD_POLL_INTERVAL_MS = 500;
 }
 
+let SESSION_VERIFY_TIMEOUT_MS = 10000;
+
+export function __setSessionVerifyTimeoutForTesting(ms: number): void {
+  SESSION_VERIFY_TIMEOUT_MS = ms;
+}
+
+export function __restoreSessionVerifyTimeout(): void {
+  SESSION_VERIFY_TIMEOUT_MS = 10000;
+}
+
+class SessionVerifyTimeoutError extends Error {
+  constructor() {
+    super('SDK getSessionInfo timeout');
+  }
+}
+
 export class ChatService {
   private sdkClient: SdkClient;
   private runtimes = new Map<string, SessionRuntime>();
@@ -655,7 +671,21 @@ export class ChatService {
       if (!session.isDraft) {
         try {
           const verifyStart = Date.now();
-          const sdkSession = await this.sdkClient.getSessionInfo(sessionId, { dir: workspace.folderPath });
+          diagLog(`[ChatService] runtime ${sessionId} verifying session in SDK`);
+          let verifyTimeout: ReturnType<typeof setTimeout> | undefined;
+          const sdkSession = await Promise.race([
+            this.sdkClient
+              .getSessionInfo(sessionId, { dir: workspace.folderPath })
+              .finally(() => {
+                if (verifyTimeout) clearTimeout(verifyTimeout);
+              }),
+            new Promise<never>((_, reject) => {
+              verifyTimeout = setTimeout(
+                () => reject(new SessionVerifyTimeoutError()),
+                SESSION_VERIFY_TIMEOUT_MS,
+              );
+            }),
+          ]);
           diagLog(`[ChatService] runtime ${sessionId} getSessionInfo elapsed=${Date.now() - verifyStart}ms found=${!!sdkSession}`);
           if (!sdkSession) {
             sidecarLog(`[ChatService] Session ${sessionId} not found in SDK, falling back to draft mode`);
@@ -663,7 +693,18 @@ export class ChatService {
             session.isDraft = true;
           }
         } catch (err) {
-          sidecarLog(`[ChatService] Failed to verify session ${sessionId} in SDK: ${err}`);
+          const message = err instanceof Error ? err.message : String(err);
+          sidecarLog(`[ChatService] Failed to verify session ${sessionId} in SDK: ${message}`);
+          // Only treat a hang as fatal. Other SDK errors are transient; fall
+          // through and let the runtime start attempt fail later with a clearer
+          // error instead of blocking the subscribe request forever.
+          if (err instanceof SessionVerifyTimeoutError) {
+            throw new ChatError(
+              `Failed to verify session with Claude Code: ${message}`,
+              'SESSION_VERIFY_FAILED',
+              500,
+            );
+          }
         }
       }
 
@@ -676,6 +717,8 @@ export class ChatService {
       diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
 
       const deadLoopSettings = resolveDeadLoopDetectionSettings(workspace.settings);
+      diagLog(`[ChatService] runtime ${sessionId} calling SessionRuntime.open`);
+      const openStart = Date.now();
       const runtime = SessionRuntime.open(
         sessionId,
         workspaceId,
@@ -688,7 +731,7 @@ export class ChatService {
         () => this.scheduleIdleClose(sessionId),
         deadLoopSettings,
       );
-      diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - startedAt}ms`);
+      diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - openStart}ms`);
       this.runtimes.set(sessionId, runtime);
       this.runtimeContexts.set(sessionId, runtimeContext);
       this.scheduleIdleClose(sessionId);

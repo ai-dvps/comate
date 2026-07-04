@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **GUI session subscribe timeout** — increased the WebSocket `subscribe` timeout from 5s to 30s (`DEFAULT_TIMEOUT`) so that cold-start runtime creation (which includes `getSessionInfo`, building SDK options, and testing the Claude binary) no longer causes the GUI to show `Connection error: WebSocket request timeout: subscribe`. Bot sessions were unaffected because they do not use the GUI's WebSocket subscribe path. Added server-side diagnostic logs around `getOrCreateRuntime` and the WebSocket subscribe handler so future slow-start issues can be traced stage-by-stage.
 
+- **Session subscribe hangs and duplicate subscriptions** — `setActiveSession` now short-circuits when the target session is already active, preventing the App-level effect from re-subscribing twice for the same click. The server-side `getSessionInfo` verification step in `getOrCreateRuntime` now has a 10s timeout and returns a clear `SESSION_VERIFY_FAILED` error instead of leaving the WebSocket `subscribe` request hanging forever. Additional runtime-creation logs (`[ChatService] calling SessionRuntime.open`, `[Runtime] SessionRuntime.open called`) make it obvious whether runtime creation started.
+
+- **Release build WebSocket CSP** — added `ws://localhost:*`, `wss://localhost:*`, and `ipc://localhost` to the Tauri `connect-src` Content Security Policy. In release builds the webview previously blocked connections to the sidecar WebSocket (`ws://localhost:<port>/ws`) and the Tauri IPC fallback (`ipc://localhost/get_api_port`), so GUI sessions could not subscribe or start a runtime even though the binary was present. Dev mode worked because the development CSP/webview defaults allowed localhost WebSocket traffic.
+
 ## [0.0.20] - 2026-07-04
 
 ### Added

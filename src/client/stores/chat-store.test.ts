@@ -373,6 +373,25 @@ describe('setActiveSession subscribe timeout', () => {
       requestSpy.mockRestore()
     }
   })
+
+  it('does not subscribe again when the session is already active', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+
+      // Calling setActiveSession again with the same session should be a no-op
+      // and must not tear down and recreate the subscription.
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+
+      const subscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'subscribe')
+      assert.strictEqual(subscribeCalls.length, 1, 'only one subscribe request should be sent')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
 })
 
 describe('notification turn-timing metadata', () => {
