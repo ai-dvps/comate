@@ -17,7 +17,7 @@ interface PendingRequest {
   timer?: ReturnType<typeof setTimeout>;
 }
 
-const DEFAULT_TIMEOUT = 30000;
+export const DEFAULT_TIMEOUT = 30000;
 const BASE_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 

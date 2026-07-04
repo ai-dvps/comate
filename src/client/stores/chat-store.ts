@@ -6,7 +6,7 @@ import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
-import { wsClient } from '../lib/websocket-client.js'
+import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
 
 export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
@@ -1848,7 +1848,7 @@ function subscribeToSession(
       await wsClient.request(
         'subscribe',
         { workspaceId, sessionId, lastEventId: lastId },
-        5000,
+        DEFAULT_TIMEOUT,
       )
       diagLog(`[WS ${sessionId}] subscribed`)
       set((state) => ({
