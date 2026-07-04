@@ -10,6 +10,8 @@ import type {
 } from '../models/bot.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import { BotAuditLogger } from './bot-audit-logger.js';
+import { wecomUserResolver } from './wecom-user-resolver.js';
+import { diagLog } from '../utils/diag-logger.js';
 
 export class BotService {
   private store: SqliteStore;
@@ -262,6 +264,103 @@ export class BotService {
     return this.store.getBotMemberRole(botId, channel, channelUserId);
   }
 
+  async resolvePendingMembers(
+    botId: string,
+    feishuResolver?: (workspaceId: string, openId: string) => Promise<{ userId: string; name: string } | null>,
+  ): Promise<{ resolved: number; failed: number }> {
+    const bot = this.store.getBot(botId);
+    if (!bot) {
+      throw new BotNotFoundError(botId);
+    }
+
+    const members = this.listMembers(botId).filter((m) => m.resolutionStatus === 'pending');
+    let resolved = 0;
+    let failed = 0;
+
+    const resolveFeishu =
+      feishuResolver ??
+      (async (workspaceId: string, openId: string) => {
+        const { feishuBotService } = await import('./feishu-bot-service.js');
+        return feishuBotService.resolveFeishuUserName(botId, workspaceId, openId);
+      });
+
+    for (const member of members) {
+      try {
+        if (member.channel === 'wecom') {
+          await wecomUserResolver.resolveImmediate(bot.activeWorkspaceId ?? '', member.channelUserId);
+          resolved++;
+        } else if (member.channel === 'feishu' && bot.activeWorkspaceId) {
+          const result = await resolveFeishu(bot.activeWorkspaceId, member.channelUserId);
+          if (result) {
+            resolved++;
+          } else {
+            failed++;
+          }
+        } else {
+          failed++;
+        }
+      } catch (err) {
+        diagLog('[BotService] resolvePendingMembers failed:', err);
+        failed++;
+      }
+    }
+
+    return { resolved, failed };
+  }
+
+  setMemberPlaintext(
+    botId: string,
+    channel: BotChannel,
+    channelUserId: string,
+    plaintextUserId: string,
+    displayName?: string,
+  ): BotMember {
+    const bot = this.store.getBot(botId);
+    if (!bot) {
+      throw new BotNotFoundError(botId);
+    }
+    if (!bot.activeWorkspaceId) {
+      throw new BotValidationError('Bot has no active workspace');
+    }
+    if (!plaintextUserId || typeof plaintextUserId !== 'string' || plaintextUserId.trim() === '') {
+      throw new BotValidationError('plaintextUserId is required');
+    }
+
+    const role = this.store.getBotMemberRole(botId, channel, channelUserId);
+    if (role === null) {
+      throw new BotMemberNotFoundError(botId, channel, channelUserId);
+    }
+
+    if (channel === 'wecom') {
+      const existingEncrypted = this.store.getEncryptedUserIdByPlaintext(plaintextUserId);
+      if (existingEncrypted && existingEncrypted !== channelUserId) {
+        const used = this.store.isPlaintextUserIdUsedInWorkspace(
+          bot.activeWorkspaceId,
+          plaintextUserId,
+          channelUserId,
+        );
+        if (used) {
+          throw new BotMemberPlaintextConflictError(plaintextUserId);
+        }
+      }
+      this.store.setWecomUserMapping(channelUserId, plaintextUserId);
+    } else if (channel === 'feishu') {
+      this.store.setFeishuWorkspaceUserName(
+        bot.activeWorkspaceId,
+        channelUserId,
+        displayName ?? plaintextUserId,
+        plaintextUserId,
+      );
+    } else {
+      throw new BotValidationError('channel must be wecom or feishu');
+    }
+
+    const raw = this.store.listBotMembers(botId).find(
+      (m) => m.channel === channel && m.channelUserId === channelUserId,
+    )!;
+    return this.resolveMemberPlaintext(botId, raw);
+  }
+
   // Credential validation
 
   validateCredentials(channelSettings: BotChannelSettings): string[] {
@@ -382,6 +481,31 @@ export class BotWorkspaceBoundError extends Error {
     this.name = 'BotWorkspaceBoundError';
     this.boundBotId = boundBotId;
     this.workspaceId = workspaceId;
+  }
+}
+
+export class BotMemberNotFoundError extends Error {
+  public botId: string;
+  public channel: BotChannel;
+  public channelUserId: string;
+
+  constructor(botId: string, channel: BotChannel, channelUserId: string) {
+    super(`Bot member not found: ${botId}/${channel}/${channelUserId}`);
+    this.name = 'BotMemberNotFoundError';
+    this.botId = botId;
+    this.channel = channel;
+    this.channelUserId = channelUserId;
+  }
+}
+
+export class BotMemberPlaintextConflictError extends Error {
+  public code = 'duplicate-plaintext';
+  public plaintextUserId: string;
+
+  constructor(plaintextUserId: string) {
+    super(`Plaintext user ID already mapped to another user: ${plaintextUserId}`);
+    this.name = 'BotMemberPlaintextConflictError';
+    this.plaintextUserId = plaintextUserId;
   }
 }
 
