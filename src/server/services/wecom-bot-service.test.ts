@@ -1902,3 +1902,85 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
       assert.ok(!pushed);
     });
   });
+
+  describe('auto-add bot members on first inbound message', { concurrency: false }, () => {
+    let service: WeComBotService;
+    let workspace: { id: string; name: string; folderPath: string };
+    let botId: string;
+    const ownerUserId = 'owner-1';
+    const newUserId = 'new-user-1';
+
+    beforeEach(async () => {
+      workspaceStore.resetData();
+      service = new WeComBotService();
+
+      workspace = await workspaceStore.create({ name: 'Auto-add Workspace', folderPath: '/tmp/auto-add' });
+      const bot = botService.createBot({
+        name: 'Auto-add Bot',
+        activeWorkspaceId: workspace.id,
+        channelSettings: {
+          wecom: { enabled: true, botId: 'wecom-bot-id', botSecret: 'wecom-bot-secret' },
+        },
+      });
+      botId = bot.id;
+      botService.addMember(botId, { channel: 'wecom', channelUserId: ownerUserId, role: 'owner' });
+
+      chatService.getOrCreateRuntime = async () =>
+        ({ pushMessage: () => {} }) as any;
+    });
+
+    function injectConnection() {
+      const conn = {
+        client: { sendMessage: async () => {}, replyStream: async () => {} },
+        workspaceId: workspace.id,
+        botId,
+        folderPath: workspace.folderPath,
+        status: 'connected' as const,
+      };
+      (service as any).connections.set(botId, conn);
+      (service as any).workspaceIdToBotId.set(workspace.id, botId);
+      (service as any).botIdToWorkspaceId.set(botId, workspace.id);
+    }
+
+    function makeTextFrame(userid: string, content = 'hello') {
+      return {
+        headers: { req_id: 'req-1' },
+        body: {
+          msgid: 'msg-1',
+          aibotid: 'wecom-bot-id',
+          chattype: 'single',
+          from: { userid },
+          msgtype: 'text',
+          text: { content },
+        },
+      };
+    }
+
+    it('adds a first-time text messenger as a normal member', async () => {
+      injectConnection();
+
+      assert.strictEqual(botService.getMemberRole(botId, 'wecom', newUserId), null);
+
+      await (service as any).handleTextMessage(workspace.id, makeTextFrame(newUserId));
+
+      assert.strictEqual(botService.getMemberRole(botId, 'wecom', newUserId), 'normal');
+    });
+
+    it('does not overwrite an existing member role on repeat messages', async () => {
+      injectConnection();
+      botService.addMember(botId, { channel: 'wecom', channelUserId: newUserId, role: 'admin' });
+
+      await (service as any).handleTextMessage(workspace.id, makeTextFrame(newUserId));
+
+      assert.strictEqual(botService.getMemberRole(botId, 'wecom', newUserId), 'admin');
+    });
+
+    it('does not downgrade the channel owner', async () => {
+      injectConnection();
+
+      await (service as any).handleTextMessage(workspace.id, makeTextFrame(ownerUserId));
+
+      assert.strictEqual(botService.getMemberRole(botId, 'wecom', ownerUserId), 'owner');
+    });
+  });
+
