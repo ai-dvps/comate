@@ -952,6 +952,27 @@ describe('FeishuBotService', () => {
       assert.strictEqual(workspaceStore.getFeishuWorkspaceUser(workspace.id, feishuUserId), null);
       assert.strictEqual(resolverCalls.length, 0);
     });
+
+    it('auto-adds a first-time direct messenger as a normal member', async () => {
+      const handler = (service as unknown as { createDispatchHandler: () => (thread: MockThread, message: unknown) => Promise<void> }).createDispatchHandler();
+      const newUserId = 'ou-new';
+
+      assert.strictEqual(botService.getMemberRole(botId, 'feishu', newUserId), null);
+
+      await handler(makeThread(true), makeMessage('hello', newUserId));
+
+      assert.strictEqual(botService.getMemberRole(botId, 'feishu', newUserId), 'normal');
+    });
+
+    it('does not overwrite an existing member role on repeat direct messages', async () => {
+      const handler = (service as unknown as { createDispatchHandler: () => (thread: MockThread, message: unknown) => Promise<void> }).createDispatchHandler();
+      const newUserId = 'ou-repeat';
+      botService.addMember(botId, { channel: 'feishu', channelUserId: newUserId, role: 'admin' });
+
+      await handler(makeThread(true), makeMessage('hello', newUserId));
+
+      assert.strictEqual(botService.getMemberRole(botId, 'feishu', newUserId), 'admin');
+    });
   });
 
   describe('bot menu events (handleMenuEvent)', () => {

@@ -8,6 +8,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from '../services/bot-service.js';
 import { chatService } from '../services/chat-service.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
+import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { PluginSettingsService } from '../services/plugin-settings-service.js';
 import type { CreateBotInput } from '../models/bot.js';
@@ -475,6 +476,127 @@ describe('bots routes', { concurrency: false }, () => {
     );
     assert.strictEqual(res.statusCode, 204);
     assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'u-1'), null);
+  });
+
+  it('POST /:id/members/resolve-pending resolves WeCom pending members', async () => {
+    const bot = botService.createBot(validWecomBot);
+    workspaceStore.setWecomUserMapping('enc-1', 'plain-1');
+    botService.addMember(bot.id, { channel: 'wecom', channelUserId: 'enc-2', role: 'normal' });
+
+    const originalResolveImmediate = wecomUserResolver.resolveImmediate.bind(wecomUserResolver);
+    wecomUserResolver.resolveImmediate = async (_workspaceId: string, encryptedUserId: string) => {
+      if (encryptedUserId === 'enc-2') {
+        workspaceStore.setWecomUserMapping(encryptedUserId, 'plain-2');
+        return 'plain-2';
+      }
+      throw new Error('unexpected');
+    };
+
+    try {
+      const handlers = await importRouteHandlers();
+      const res = createMockRes();
+      await handlers['/:id/members/resolve-pending'].post({ params: { id: bot.id } }, res);
+      assert.strictEqual(res.statusCode, 200);
+      const body = res.jsonBody as { resolved: number; failed: number };
+      assert.strictEqual(body.resolved, 1);
+      assert.strictEqual(body.failed, 0);
+    } finally {
+      wecomUserResolver.resolveImmediate = originalResolveImmediate;
+    }
+  });
+
+  it('POST /:id/members/resolve-pending counts Feishu as failed when no client', async () => {
+    const bot = botService.createBot({
+      ...validWecomBot,
+      activeWorkspaceId: 'ws-f',
+      channelSettings: { feishu: { enabled: true, appId: 'a', appSecret: 's' } },
+    });
+    botService.addMember(bot.id, { channel: 'feishu', channelUserId: 'open-1', role: 'normal' });
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/resolve-pending'].post({ params: { id: bot.id } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { resolved: number; failed: number };
+    assert.strictEqual(body.resolved, 0);
+    assert.strictEqual(body.failed, 1);
+  });
+
+  it('PUT /:id/members/:channelUserId/plaintext stores a manual WeCom mapping', async () => {
+    const bot = botService.createBot(validWecomBot);
+    botService.addMember(bot.id, { channel: 'wecom', channelUserId: 'enc-1', role: 'normal' });
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:channelUserId/plaintext'].put(
+      {
+        params: { id: bot.id, channelUserId: 'enc-1' },
+        query: { channel: 'wecom' },
+        body: { plaintextUserId: 'manual-1' },
+      },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { member: { plaintextUserId: string; resolutionStatus: string } };
+    assert.strictEqual(body.member.plaintextUserId, 'manual-1');
+    assert.strictEqual(body.member.resolutionStatus, 'resolved');
+  });
+
+  it('PUT /:id/members/:channelUserId/plaintext rejects duplicate plaintext in workspace', async () => {
+    const bot = botService.createBot(validWecomBot);
+    workspaceStore.setWecomWorkspaceUser('ws-1', 'enc-1');
+    workspaceStore.setWecomUserMapping('enc-1', 'existing');
+    workspaceStore.setWecomWorkspaceUser('ws-1', 'enc-2');
+    botService.addMember(bot.id, { channel: 'wecom', channelUserId: 'enc-2', role: 'normal' });
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:channelUserId/plaintext'].put(
+      {
+        params: { id: bot.id, channelUserId: 'enc-2' },
+        query: { channel: 'wecom' },
+        body: { plaintextUserId: 'existing' },
+      },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 409);
+  });
+
+  it('PUT /:id/members/:channelUserId/plaintext rejects empty plaintext IDs', async () => {
+    const bot = botService.createBot(validWecomBot);
+    botService.addMember(bot.id, { channel: 'wecom', channelUserId: 'enc-1', role: 'normal' });
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:channelUserId/plaintext'].put(
+      {
+        params: { id: bot.id, channelUserId: 'enc-1' },
+        query: { channel: 'wecom' },
+        body: { plaintextUserId: '   ' },
+      },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 400);
+  });
+
+  it('PUT /:id/members/:channelUserId/plaintext returns 404 for unknown members', async () => {
+    const bot = botService.createBot(validWecomBot);
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:channelUserId/plaintext'].put(
+      {
+        params: { id: bot.id, channelUserId: 'no-such' },
+        query: { channel: 'wecom' },
+        body: { plaintextUserId: 'manual-1' },
+      },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 404);
   });
 
   it('PUT /:id with persona change triggers runtime invalidation', async () => {
