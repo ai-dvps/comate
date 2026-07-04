@@ -529,7 +529,6 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
               isLoading={isLoading}
               isSaving={isSaving}
               error={storeError}
-              onAddMember={(input) => addMember(selectedBot.id, input)}
               onSetRole={(channel, channelUserId, role) => setMemberRole(selectedBot.id, channel, channelUserId, role)}
               onRemoveMember={(channel, channelUserId) => removeMember(selectedBot.id, channel, channelUserId)}
               onRefreshMembers={() => refreshMembers(selectedBot.id)}
