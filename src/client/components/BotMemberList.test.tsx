@@ -15,6 +15,7 @@ describe('BotMemberList', () => {
     cleanup();
     baseProps.onSetRole.mockClear();
     baseProps.onRemoveMember.mockClear();
+    baseProps.onSetPlaintext.mockClear();
   });
 
   afterEach(() => {
@@ -140,19 +141,79 @@ describe('BotMemberList', () => {
     });
   });
 
-  it('shows a plaintext input for pending members and saves the fallback', async () => {
+  it('does not show a plaintext input by default', () => {
     const members: BotMember[] = [
-      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-pending', role: 'normal', plaintextUserId: null, displayName: null, resolutionStatus: 'pending', createdAt: '', updatedAt: '' },
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-1', role: 'normal', plaintextUserId: null, displayName: null, resolutionStatus: 'pending', createdAt: '', updatedAt: '' },
     ];
     renderWithI18n(<BotMemberList {...baseProps} members={members} />);
 
+    expect(screen.queryByPlaceholderText('Plaintext user ID')).not.toBeInTheDocument();
+    expect(screen.getByText('Plaintext user ID')).toBeInTheDocument();
+  });
+
+  it('opens inline plaintext editor on placeholder click and saves on Enter', async () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-1', role: 'normal', plaintextUserId: null, displayName: null, resolutionStatus: 'pending', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    await userEvent.click(screen.getByText('Plaintext user ID'));
     const input = screen.getByPlaceholderText('Plaintext user ID');
-    fireEvent.change(input, { target: { value: 'fallback-id' } });
-    fireEvent.click(screen.getAllByText('Save')[0]);
+    await userEvent.clear(input);
+    await userEvent.type(input, 'new-id');
+    await userEvent.keyboard('{Enter}');
 
     await waitFor(() => {
-      expect(baseProps.onSetPlaintext).toHaveBeenCalledWith('wecom', 'u-pending', 'fallback-id');
+      expect(baseProps.onSetPlaintext).toHaveBeenCalledWith('wecom', 'u-1', 'new-id');
     });
+  });
+
+  it('opens inline editor on resolved plaintext click and saves on blur', async () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'feishu', channelUserId: 'ou-1', role: 'normal', plaintextUserId: 'user-1', displayName: 'Alice', resolutionStatus: 'resolved', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    await userEvent.click(screen.getByText('user-1'));
+    const input = screen.getByDisplayValue('user-1');
+    await userEvent.clear(input);
+    await userEvent.type(input, 'user-2');
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(baseProps.onSetPlaintext).toHaveBeenCalledWith('feishu', 'ou-1', 'user-2');
+    });
+  });
+
+  it('cancels plaintext editing on Escape', async () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-1', role: 'normal', plaintextUserId: null, displayName: null, resolutionStatus: 'pending', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    await userEvent.click(screen.getByText('Plaintext user ID'));
+    const input = screen.getByPlaceholderText('Plaintext user ID');
+    await userEvent.type(input, 'new-id');
+    await userEvent.keyboard('{Escape}');
+
+    expect(screen.queryByPlaceholderText('Plaintext user ID')).not.toBeInTheDocument();
+    expect(baseProps.onSetPlaintext).not.toHaveBeenCalled();
+  });
+
+  it('cancels plaintext editing on blur when value is empty', async () => {
+    const members: BotMember[] = [
+      { botId: 'bot-1', channel: 'wecom', channelUserId: 'u-1', role: 'normal', plaintextUserId: null, displayName: null, resolutionStatus: 'pending', createdAt: '', updatedAt: '' },
+    ];
+    renderWithI18n(<BotMemberList {...baseProps} members={members} />);
+
+    await userEvent.click(screen.getByText('Plaintext user ID'));
+    const input = screen.getByPlaceholderText('Plaintext user ID');
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText('Plaintext user ID')).not.toBeInTheDocument();
+    });
+    expect(baseProps.onSetPlaintext).not.toHaveBeenCalled();
   });
 
   it('shows resolved plaintext and display name', () => {

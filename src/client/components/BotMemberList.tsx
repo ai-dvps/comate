@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Trash2, AlertTriangle, Loader2, Crown, RefreshCw, Check, XCircle } from 'lucide-react';
+import { Trash2, AlertTriangle, Loader2, Crown, RefreshCw } from 'lucide-react';
 import type { BotMember, BotChannel, BotRole } from '../stores/bot-store';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
@@ -91,6 +91,12 @@ export default function BotMemberList({
     }
   };
 
+  const handleStartEdit = (member: BotMember) => {
+    const key = `${member.channel}:${member.channelUserId}`;
+    setEditingPlaintext((prev) => ({ ...prev, [key]: member.plaintextUserId ?? '' }));
+    setFormError(null);
+  };
+
   const handlePlaintextChange = (key: string, value: string) => {
     setEditingPlaintext((prev) => ({ ...prev, [key]: value }));
   };
@@ -123,6 +129,25 @@ export default function BotMemberList({
       delete next[key];
       return next;
     });
+  };
+
+  const handlePlaintextBlur = (member: BotMember) => {
+    const key = `${member.channel}:${member.channelUserId}`;
+    const value = editingPlaintext[key]?.trim() ?? '';
+    if (value && value !== (member.plaintextUserId ?? '')) {
+      handlePlaintextSave(member);
+    } else {
+      handlePlaintextCancel(member);
+    }
+  };
+
+  const handlePlaintextKeyDown = (member: BotMember, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handlePlaintextSave(member);
+    } else if (e.key === 'Escape') {
+      handlePlaintextCancel(member);
+    }
   };
 
   const groupedMembers = CHANNELS.map((c) => ({
@@ -221,8 +246,7 @@ export default function BotMemberList({
                   const key = `${member.channel}:${member.channelUserId}`;
                   const isConfirming = confirmRemoveKey === key;
                   const isPending = member.resolutionStatus === 'pending';
-                  const plaintextValue = editingPlaintext[key] ?? member.plaintextUserId ?? '';
-                  const isEditingPlaintext = key in editingPlaintext || isPending;
+                  const isEditingPlaintext = key in editingPlaintext;
                   return (
                     <div key={key} className="px-3 py-2">
                       <div className="flex items-center justify-between gap-3">
@@ -269,50 +293,40 @@ export default function BotMemberList({
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">
                             {isEditingPlaintext ? (
-                              <>
-                                <input
-                                  value={plaintextValue}
-                                  onChange={(e) => handlePlaintextChange(key, e.target.value)}
-                                  placeholder={t('bots.plaintextUserIdPlaceholder')}
-                                  disabled={savingPlaintextKey === key || isSaving}
-                                  className="min-w-[120px] px-2 py-1 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handlePlaintextSave(member)}
-                                  disabled={savingPlaintextKey === key || isSaving}
-                                  className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-md transition-colors"
-                                >
-                                  {savingPlaintextKey === key ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <Check className="w-3 h-3" />
-                                  )}
-                                  {t('actions.save')}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handlePlaintextCancel(member)}
-                                  disabled={savingPlaintextKey === key}
-                                  className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-md transition-colors"
-                                >
-                                  <XCircle className="w-3 h-3" />
-                                  {t('actions.cancel')}
-                                </button>
-                              </>
+                              <input
+                                autoFocus
+                                value={editingPlaintext[key] ?? ''}
+                                onChange={(e) => handlePlaintextChange(key, e.target.value)}
+                                onBlur={() => handlePlaintextBlur(member)}
+                                onKeyDown={(e) => handlePlaintextKeyDown(member, e)}
+                                placeholder={t('bots.plaintextUserIdPlaceholder')}
+                                disabled={savingPlaintextKey === key || isSaving}
+                                className="min-w-[120px] px-2 py-1 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                              />
                             ) : (
-                              <>
-                                {member.plaintextUserId && (
-                                  <span className="text-[11px] font-mono text-text-secondary">
-                                    {member.plaintextUserId}
+                              <button
+                                type="button"
+                                onClick={() => handleStartEdit(member)}
+                                disabled={isSaving}
+                                className="inline-flex items-center gap-2 text-left disabled:opacity-50"
+                              >
+                                {member.plaintextUserId ? (
+                                  <>
+                                    <span className="text-[11px] font-mono text-text-secondary">
+                                      {member.plaintextUserId}
+                                    </span>
+                                    {member.displayName && (
+                                      <span className="text-[11px] text-text-secondary">
+                                        ({member.displayName})
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="text-[11px] text-text-tertiary italic">
+                                    {t('bots.plaintextUserIdPlaceholder')}
                                   </span>
                                 )}
-                                {member.displayName && (
-                                  <span className="text-[11px] text-text-secondary">
-                                    ({member.displayName})
-                                  </span>
-                                )}
-                              </>
+                              </button>
                             )}
                           </div>
                         </div>
