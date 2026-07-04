@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Bot member management** — removed the manual "Add member" form from the Bot Management members tab. Members are now added only through bot creation (initial channel owner) or automatic WeCom/Feishu first-message enrollment. Role editing, member removal, resolve-pending, plaintext fallback, and refresh remain available. Removed the now-unused `onAddMember` prop and related `en`/`zh-CN` i18n keys.
+
 - **Deferred runtime rebuild on config changes** — changes to bot role policy, persona, role personas, or member list; workspace-level legacy bot permissions (`wecomToolPermissions`, `wecomBotIsolation`, `sensitiveFileDenylist`); and provider settings (`providerId`, `baseUrl`, `authToken`, `model`, default/subagent models, `effortLevel`, `customEnvVars`) now automatically rebuild affected cached runtimes. If a runtime is actively processing a turn or waiting on a pending approval/question, the rebuild waits until the turn ends, then closes the old runtime and pre-creates a replacement so the next user prompt picks up the new configuration without manual intervention. Multiple rapid changes to the same runtime are coalesced into a single rebuild.
 
 - **Picker popovers follow the input-card width** — the skill, file, and history pickers in the normal-session `PromptInput` now open at the same width as the input-card container and resize with it. The popovers are left-aligned to the input card; when `contentWidth` is not provided (e.g., outside `PromptInput`) they keep the previous fixed `360px` width.
