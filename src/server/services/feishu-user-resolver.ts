@@ -36,42 +36,53 @@ interface FeishuBasicUser {
  * as "pending" until a name is cached.
  */
 export class FeishuUserResolver {
+  async resolveImmediate(
+    workspaceId: string,
+    openId: string,
+    larkClient: lark.Client,
+  ): Promise<{ userId: string; name: string }> {
+    const existing = workspaceStore.getFeishuWorkspaceUser(workspaceId, openId);
+    if (existing?.userId && existing?.name) {
+      diagLog(`[FeishuUserResolver] Immediate workspace=${workspaceId} user=${tid(openId)} cached=true`);
+      return { userId: existing.userId, name: existing.name };
+    }
+
+    diagLog(`[FeishuUserResolver] Immediate workspace=${workspaceId} user=${tid(openId)} resolving`);
+
+    if (!larkClient) {
+      throw new Error('No lark client available');
+    }
+
+    const response = (await larkClient.contact.user.basicBatch({
+      data: { user_ids: [openId] },
+      params: { user_id_type: 'open_id' },
+    })) as { data?: { users?: FeishuBasicUser[] } };
+
+    const user = response?.data?.users?.[0];
+    if (user?.name) {
+      workspaceStore.setFeishuWorkspaceUserName(
+        workspaceId,
+        openId,
+        user.name,
+        user.user_id ?? null,
+      );
+      diagLog(`[FeishuUserResolver] Immediate workspace=${workspaceId} user=${tid(openId)} name=${user.name}`);
+    }
+
+    if (user?.user_id && user?.name) {
+      return { userId: user.user_id, name: user.name };
+    }
+
+    throw new Error('Feishu user name/user_id not found in response');
+  }
+
   async resolveOnMessage(
     workspaceId: string,
     openId: string,
     larkClient: lark.Client,
   ): Promise<void> {
     try {
-      const existing = workspaceStore.getFeishuWorkspaceUser(workspaceId, openId);
-      if (existing?.name) {
-        diagLog(`[FeishuUserResolver] workspace=${workspaceId} user=${tid(openId)} cached=true`);
-        return;
-      }
-
-      diagLog(`[FeishuUserResolver] workspace=${workspaceId} user=${tid(openId)} resolving`);
-
-      if (!larkClient) {
-        diagLog('[FeishuUserResolver] no larkClient available, skipping resolution');
-        return;
-      }
-
-      const response = (await larkClient.contact.user.basicBatch({
-        data: { user_ids: [openId] },
-        params: { user_id_type: 'open_id' },
-      })) as { data?: { users?: FeishuBasicUser[] } };
-
-      const user = response?.data?.users?.[0];
-      if (user?.name) {
-        workspaceStore.setFeishuWorkspaceUserName(
-          workspaceId,
-          openId,
-          user.name,
-          user.user_id ?? null,
-        );
-        diagLog(`[FeishuUserResolver] workspace=${workspaceId} user=${tid(openId)} name=${user.name}`);
-      } else {
-        diagLog(`[FeishuUserResolver] workspace=${workspaceId} user=${tid(openId)} no name in response`);
-      }
+      await this.resolveImmediate(workspaceId, openId, larkClient);
     } catch (err) {
       diagLog('[FeishuUserResolver] resolution failed:', redactedError(err));
       // Swallow: message handling must continue with a pending name.
