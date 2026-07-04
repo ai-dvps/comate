@@ -188,6 +188,40 @@ export class FeishuBotService {
     return this.workspaceIdToBotId.get(workspaceId) ?? this.activeBotId ?? undefined;
   }
 
+  private ensureBotMember(botId: string, channel: 'feishu', channelUserId: string): void {
+    if (!botService.getBot(botId)) return;
+
+    const role = botService.getMemberRole(botId, channel, channelUserId);
+    if (role !== null) return;
+
+    try {
+      botService.addMember(botId, { channel, channelUserId, role: 'normal' });
+      chatService.scheduleRebuildsForBot(botId);
+    } catch (err) {
+      // Membership is best-effort; do not block message handling.
+      console.error(`[FeishuBotService] failed to auto-add member ${channelUserId} for bot ${botId}:`, err);
+    }
+  }
+
+  async resolveFeishuUserName(
+    botId: string,
+    workspaceId: string,
+    openId: string,
+  ): Promise<{ userId: string; name: string } | null> {
+    const connection = this.connections.get(botId);
+    const larkClient = connection?.larkClient;
+    if (!larkClient) {
+      diagLog(`[FeishuBotService] no lark client for bot ${botId}, cannot resolve ${openId}`);
+      return null;
+    }
+    try {
+      return await feishuUserResolver.resolveImmediate(workspaceId, openId, larkClient);
+    } catch (err) {
+      diagLog('[FeishuBotService] resolveFeishuUserName failed:', err);
+      return null;
+    }
+  }
+
   /**
    * Lark WS dispatcher. This covers Feishu apps that use long-connection event
    * subscription instead of the HTTP callback route.
@@ -567,10 +601,14 @@ export class FeishuBotService {
       const feishuUserId = message.author.userId;
       const text = (message.text ?? '').trim();
 
-      const workspaceId = this.getActiveConnection()?.workspaceId;
+      const connection = this.getActiveConnection();
+      const workspaceId = connection?.workspaceId;
       if (workspaceId) {
         workspaceStore.setFeishuWorkspaceUser(workspaceId, feishuUserId);
-        void feishuUserResolver.resolveOnMessage(workspaceId, feishuUserId, this.getActiveConnection()!.larkClient);
+        void feishuUserResolver.resolveOnMessage(workspaceId, feishuUserId, connection.larkClient);
+
+        // Auto-add first-time messengers as normal bot members.
+        this.ensureBotMember(connection.botId, 'feishu', feishuUserId);
       }
 
       diagLog(

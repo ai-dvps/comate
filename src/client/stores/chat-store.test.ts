@@ -500,7 +500,7 @@ describe('setSessionProvider', () => {
     await useChatStore.getState().setSessionProvider('ws-1', 's1', 'p2')
     await new Promise((r) => setTimeout(r, 0))
 
-    const subscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'subscribe')
+    const subscribeCalls = requestSpy.mock.calls.filter((call: unknown[]) => call[0] === 'subscribe')
     assert.strictEqual(subscribeCalls.length, 1, 'should resubscribe after provider switch')
     assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], false)
   })
@@ -509,7 +509,7 @@ describe('setSessionProvider', () => {
     await useChatStore.getState().setSessionProvider('ws-1', 's1', 'p2')
     await new Promise((r) => setTimeout(r, 0))
 
-    const subscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'subscribe')
+    const subscribeCalls = requestSpy.mock.calls.filter((call: unknown[]) => call[0] === 'subscribe')
     assert.strictEqual(subscribeCalls.length, 0, 'should not subscribe when no active runtime')
     assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], undefined)
   })

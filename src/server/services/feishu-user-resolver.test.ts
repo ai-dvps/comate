@@ -138,4 +138,60 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
       await resolver.resolveOnMessage(ws.id, 'ou-frank', undefined as unknown as lark.Client);
     });
   });
+
+  describe('resolveImmediate', () => {
+    it('returns cached userId and name without calling API', async () => {
+      const ws = await createWorkspace('Immediate Cached');
+      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-alice');
+      workspaceStore.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice', 'alice-uid');
+
+      let called = false;
+      const client = {
+        contact: { user: { basicBatch: async () => { called = true; return { data: { users: [] } }; } } },
+      } as unknown as lark.Client;
+
+      const result = await resolver.resolveImmediate(ws.id, 'ou-alice', client);
+
+      assert.strictEqual(called, false);
+      assert.strictEqual(result.userId, 'alice-uid');
+      assert.strictEqual(result.name, 'Alice');
+    });
+
+    it('resolves userId and name from API', async () => {
+      const ws = await createWorkspace('Immediate Resolve');
+      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-bob');
+      const client = createFakeLarkClient({
+        users: [{ user_id: 'bob-uid', open_id: 'ou-bob', name: 'Bob' }],
+      });
+
+      const result = await resolver.resolveImmediate(ws.id, 'ou-bob', client);
+
+      assert.strictEqual(result.userId, 'bob-uid');
+      assert.strictEqual(result.name, 'Bob');
+      const user = workspaceStore.getFeishuWorkspaceUser(ws.id, 'ou-bob');
+      assert.strictEqual(user?.userId, 'bob-uid');
+      assert.strictEqual(user?.name, 'Bob');
+    });
+
+    it('throws when no lark client is available', async () => {
+      const ws = await createWorkspace('Immediate No Client');
+      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-bob');
+
+      await assert.rejects(
+        async () => await resolver.resolveImmediate(ws.id, 'ou-bob', undefined as unknown as lark.Client),
+        /No lark client available/,
+      );
+    });
+
+    it('throws when response has no user_id', async () => {
+      const ws = await createWorkspace('Immediate No UserId');
+      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-carol');
+      const client = createFakeLarkClient({ users: [{ name: 'Carol' }] });
+
+      await assert.rejects(
+        async () => await resolver.resolveImmediate(ws.id, 'ou-carol', client),
+        /Feishu user name\/user_id not found in response/,
+      );
+    });
+  });
 });
