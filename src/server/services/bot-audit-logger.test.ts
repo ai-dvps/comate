@@ -43,7 +43,7 @@ describe('BotAuditLogger', { concurrency: false }, () => {
   });
 
   it('leaves short values unchanged', () => {
-    logger.log('bot-1', { type: 'wecom', channel: 'wecom', channelUserId: 'u-1' }, 'member_added', {
+    logger.log('bot-1', { type: 'wecom', channel: 'wecom', channelUserId: 'u-1' }, 'user_added', {
       channel: 'wecom',
       channelUserId: 'u-1',
       role: 'normal',
@@ -69,8 +69,8 @@ describe('BotAuditLogger', { concurrency: false }, () => {
     assert.strictEqual(entry.details.newWorkspaceId, 'ws-new');
   });
 
-  it('records member role change events', () => {
-    logger.logMemberRoleChanged(
+  it('records user role change events', () => {
+    logger.logUserRoleChanged(
       'bot-1',
       { type: 'wecom', channel: 'wecom', channelUserId: 'owner-1' },
       'wecom',
@@ -79,7 +79,7 @@ describe('BotAuditLogger', { concurrency: false }, () => {
       'admin',
     );
     const [entry] = store.listAuditLogs('bot-1');
-    assert.strictEqual(entry.eventType, 'member_role_changed');
+    assert.strictEqual(entry.eventType, 'user_role_changed');
     assert.strictEqual(entry.details.channel, 'wecom');
     assert.strictEqual(entry.details.channelUserId, 'u-1');
     assert.strictEqual(entry.details.previousRole, 'normal');

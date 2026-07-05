@@ -10,9 +10,9 @@ export type BotAuditEventType =
   | 'channel_enabled'
   | 'channel_disabled'
   | 'active_workspace_switched'
-  | 'member_added'
-  | 'member_removed'
-  | 'member_role_changed'
+  | 'user_added'
+  | 'user_removed'
+  | 'user_role_changed'
   | 'file_access_denied';
 
 /**
@@ -107,7 +107,7 @@ export class BotAuditLogger {
     });
   }
 
-  logMemberRoleChanged(
+  logUserRoleChanged(
     botId: string,
     actor: BotActor,
     channel: BotChannelKey,
@@ -115,7 +115,7 @@ export class BotAuditLogger {
     previousRole: string | null,
     newRole: string,
   ): void {
-    this.log(botId, actor, 'member_role_changed', {
+    this.log(botId, actor, 'user_role_changed', {
       channel,
       channelUserId,
       previousRole,

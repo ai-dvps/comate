@@ -10,8 +10,8 @@ import { ENCRYPTED_CHANNEL_KEYS } from '../models/bot.js';
 import type { BotChannelSettings, CreateBotInput, UpdateBotInput } from '../models/bot.js';
 import {
   BotAuthorizationError,
-  BotMemberNotFoundError,
-  BotMemberPlaintextConflictError,
+  BotUserNotFoundError,
+  BotUserPlaintextConflictError,
   BotNotFoundError,
   BotValidationError,
   BotWorkspaceBoundError,
@@ -28,7 +28,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function invalidateBotRuntimesIfNeeded(botId: string, input: UpdateBotInput & { rolePersonas?: unknown; rolePolicy?: unknown }): void {
+function invalidateBotRuntimesIfNeeded(botId: string, input: { persona?: unknown; rolePersonas?: unknown; rolePolicy?: unknown }): void {
   if (input.persona !== undefined || input.rolePersonas !== undefined || input.rolePolicy !== undefined) {
     chatService.scheduleRebuildsForBot(botId);
   }
@@ -57,8 +57,8 @@ export function redactChannelSettings(settings: BotChannelSettings): BotChannelS
   return result;
 }
 
-function redactBot(bot: import('../models/bot.js').Bot & { channelSettings?: import('../models/bot.js').BotChannelSettings }) {
-  const channelSettings = bot.channelSettings ?? botService.getChannelSettings(bot.id);
+function redactBot(bot: import('../models/bot.js').Bot) {
+  const channelSettings = botService.getChannelSettings(bot.id);
   return {
     ...bot,
     channelSettings: redactChannelSettings(channelSettings),
@@ -69,7 +69,7 @@ function mapBotError(error: unknown): { status: number; message: string; code?: 
   if (error instanceof BotNotFoundError) {
     return { status: 404, message: error.message };
   }
-  if (error instanceof BotMemberNotFoundError) {
+  if (error instanceof BotUserNotFoundError) {
     return { status: 404, message: error.message };
   }
   if (error instanceof BotValidationError) {
@@ -81,7 +81,7 @@ function mapBotError(error: unknown): { status: number; message: string; code?: 
   if (error instanceof BotWorkspaceBoundError) {
     return { status: 400, message: error.message, code: 'workspace-bound' };
   }
-  if (error instanceof BotMemberPlaintextConflictError) {
+  if (error instanceof BotUserPlaintextConflictError) {
     return { status: 409, message: error.message, code: 'plaintext-conflict' };
   }
   return { status: 500, message: 'Internal server error' };
@@ -123,13 +123,45 @@ function resolveSentinelCredentials(
 // POST /api/bots
 router.post('/', async (req, res) => {
   try {
-    const input = req.body as CreateBotInput;
-    if (!input.name || typeof input.name !== 'string' || input.name.trim() === '') {
+    const body = req.body as CreateBotInput & {
+      channelSettings?: BotChannelSettings;
+      rolePolicy?: import('../models/bot.js').BotRolePolicy;
+      rolePersonas?: Partial<Record<import('../models/bot.js').BotRoleKey, import('../models/bot.js').BotPersona>>;
+    };
+    if (!body.name || typeof body.name !== 'string' || body.name.trim() === '') {
       res.status(400).json({ error: 'name is required' });
       return;
     }
 
-    const bot = botService.createBot(input);
+    const { channelSettings, rolePolicy, rolePersonas, ...botInput } = body;
+
+    if (channelSettings) {
+      const errors = botService.validateCredentials(channelSettings);
+      if (errors.length > 0) {
+        res.status(400).json({ error: errors.join('; ') });
+        return;
+      }
+    }
+
+    const bot = botService.createBot(botInput);
+
+    if (channelSettings) {
+      for (const channelKey of Object.keys(channelSettings) as import('../models/bot.js').BotChannelKey[]) {
+        const settings = channelSettings[channelKey];
+        if (settings) {
+          botService.updateChannelSettings(bot.id, channelKey, settings);
+        }
+      }
+    }
+
+    if (rolePolicy) {
+      botService.updateRolePolicy(bot.id, rolePolicy);
+    }
+
+    if (rolePersonas) {
+      botService.updateRolePersonas(bot.id, rolePersonas);
+    }
+
     await connectEnabledChannels(bot);
     res.status(201).json({ bot: redactBot(bot) });
   } catch (error) {
@@ -158,16 +190,35 @@ router.get('/:id', (req, res) => {
 // PUT /api/bots/:id
 router.put('/:id', async (req, res) => {
   try {
-    const input = req.body as UpdateBotInput & { channelSettings?: BotChannelSettings };
-    if (input.channelSettings) {
+    const body = req.body as UpdateBotInput & {
+      channelSettings?: BotChannelSettings;
+      rolePolicy?: import('../models/bot.js').BotRolePolicy;
+      rolePersonas?: Partial<Record<import('../models/bot.js').BotRoleKey, import('../models/bot.js').BotPersona>> | null;
+    };
+    const { channelSettings, rolePolicy, rolePersonas, ...botInput } = body;
+
+    if (channelSettings) {
       const existingSettings = botService.getChannelSettings(req.params.id);
-      input.channelSettings = resolveSentinelCredentials(
-        input.channelSettings,
-        existingSettings,
-      );
+      const resolved = resolveSentinelCredentials(channelSettings, existingSettings);
+      for (const channelKey of Object.keys(resolved) as import('../models/bot.js').BotChannelKey[]) {
+        const settings = resolved[channelKey];
+        if (settings) {
+          botService.updateChannelSettings(req.params.id, channelKey, settings);
+        }
+      }
     }
-    const bot = botService.updateBot(req.params.id, input, systemActor());
-    invalidateBotRuntimesIfNeeded(bot.id, input);
+
+    const bot = botService.updateBot(req.params.id, botInput, systemActor());
+
+    if (rolePolicy) {
+      botService.updateRolePolicy(req.params.id, rolePolicy);
+    }
+
+    if (rolePersonas !== undefined) {
+      botService.updateRolePersonas(req.params.id, rolePersonas);
+    }
+
+    invalidateBotRuntimesIfNeeded(bot.id, { persona: botInput.persona, rolePersonas, rolePolicy });
     await reconcileChannelConnections(bot);
     res.json({ bot: redactBot(bot) });
   } catch (error) {
