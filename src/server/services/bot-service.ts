@@ -19,6 +19,7 @@ import { diagLog } from '../utils/diag-logger.js';
 export interface CreateBotInput extends BaseCreateBotInput {
   channelSettings?: BotChannelSettings;
   rolePolicy?: BotRolePolicy;
+  rolePersonas?: Partial<Record<BotRoleKey, BotPersona>>;
 }
 
 export interface UpdateBotInput extends BaseUpdateBotInput {
@@ -66,6 +67,16 @@ export class BotService {
       }
     }
 
+    if (input.rolePersonas) {
+      for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
+        const role = this.store.getBotRoleByKey(bot.id, roleKey);
+        if (role) {
+          const persona = input.rolePersonas[roleKey] ?? null;
+          this.store.updateBotRole(role.id, role.permissions, persona);
+        }
+      }
+    }
+
     this.auditLogger.log(bot.id, { type: 'system' }, 'bot_created', { name: bot.name });
     return bot;
   }
@@ -109,11 +120,24 @@ export class BotService {
       throw new BotNotFoundError(id);
     }
 
-    if (input.channelSettings) {
-      for (const channelKey of Object.keys(input.channelSettings) as BotChannelKey[]) {
+    if (hadChannelChanges) {
+      const channels = Object.keys(input.channelSettings ?? {}) as BotChannelKey[];
+      const previousChannels = this.store.listBotChannels(bot.id);
+      for (const channelKey of channels) {
         const channel = this.store.getBotChannelByKey(bot.id, channelKey);
         if (channel) {
-          this.store.updateBotChannel(channel.id, { [channelKey]: input.channelSettings[channelKey] });
+          this.store.updateBotChannel(channel.id, { [channelKey]: input.channelSettings![channelKey] });
+        }
+      }
+      this.auditLogger.logChannelCredentialsChanged(bot.id, actor, channels);
+      for (const channelKey of channels) {
+        const previous = previousChannels.find((c) => c.channelKey === channelKey);
+        const wasEnabled = previous?.config[channelKey]?.enabled ?? false;
+        const isEnabled = input.channelSettings?.[channelKey]?.enabled ?? false;
+        if (!wasEnabled && isEnabled) {
+          this.auditLogger.logChannelEnabled(bot.id, actor, channelKey);
+        } else if (wasEnabled && !isEnabled) {
+          this.auditLogger.logChannelDisabled(bot.id, actor, channelKey);
         }
       }
     }
@@ -135,21 +159,6 @@ export class BotService {
       }
     }
 
-    if (hadChannelChanges) {
-      const channels = Object.keys(input.channelSettings ?? {}) as BotChannelKey[];
-      this.auditLogger.logChannelCredentialsChanged(bot.id, actor, channels);
-      const previousChannels = this.store.listBotChannels(bot.id);
-      for (const channelKey of channels) {
-        const previous = previousChannels.find((c) => c.channelKey === channelKey);
-        const wasEnabled = previous?.config[channelKey]?.enabled ?? false;
-        const isEnabled = input.channelSettings?.[channelKey]?.enabled ?? false;
-        if (!wasEnabled && isEnabled) {
-          this.auditLogger.logChannelEnabled(bot.id, actor, channelKey);
-        } else if (wasEnabled && !isEnabled) {
-          this.auditLogger.logChannelDisabled(bot.id, actor, channelKey);
-        }
-      }
-    }
     return bot;
   }
 
@@ -252,6 +261,11 @@ export class BotService {
     return normalRole?.permissions ?? null;
   }
 
+  getRolePersona(botId: string, roleKey: BotRoleKey): BotPersona | null {
+    const role = this.store.getBotRoleByKey(botId, roleKey);
+    return role?.persona ?? null;
+  }
+
   updateRolePolicy(
     botId: string,
     permissions: BotRolePolicy,
@@ -302,6 +316,18 @@ export class BotService {
 
     if (roleKey === 'owner') {
       this.ensureNoExistingChannelOwner(botId, input.channelKey);
+    }
+
+    const existing = this.store.getBotUserByChannelIdentity(botId, channel.id, input.channelUserId);
+    if (existing) {
+      // User already exists (e.g., from auto-tracking), update role if needed
+      if (existing.roleKey !== roleKey) {
+        this.setMemberRole(botId, input.channelKey, input.channelUserId, roleKey, actor);
+      }
+      if (input.plaintextUserId !== undefined && input.plaintextUserId !== null && existing.plaintextUserId !== input.plaintextUserId) {
+        this.store.updateBotUser(existing.id, { plaintextUserId: input.plaintextUserId });
+      }
+      return this.store.getBotUser(existing.id)!;
     }
 
     const user = this.store.createBotUser({

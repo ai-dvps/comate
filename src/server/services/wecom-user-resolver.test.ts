@@ -37,13 +37,10 @@ function mockFetchForBatch(mappings: Record<string, string>): typeof global.fetc
 }
 
 describe('WeComUserIdResolver flushWorkspaceNow', { concurrency: false }, () => {
-  let originalFetch: typeof global.fetch;
-
   const resolverQueue = (wecomUserResolver as unknown as { queue: Map<string, Set<string>> }).queue;
   const resolverRetryMeta = (wecomUserResolver as unknown as { retryMeta: Map<string, Map<string, unknown>> }).retryMeta;
 
   beforeEach(async () => {
-    originalFetch = global.fetch;
     workspaceStore.resetData();
     resolverQueue.clear();
     resolverRetryMeta.clear();

@@ -3,6 +3,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
+import { botService } from '../services/bot-service.js';
 
 describe('chat route Feishu user info', { concurrency: false }, () => {
   beforeEach(() => {
@@ -38,6 +39,13 @@ describe('chat route Feishu user info', { concurrency: false }, () => {
   it('returns Feishu user info for a bound session', async () => {
     const workspaceId = 'ws-1';
     const feishuUserId = 'ou_12345';
+    botService.createBot({
+      name: 'Feishu Bot',
+      activeWorkspaceId: workspaceId,
+      channelSettings: {
+        feishu: { enabled: true, appId: 'test-app', appSecret: 'test-secret' },
+      },
+    });
     const session = await chatService.createSession({ workspaceId, name: feishuUserId, source: 'feishu' });
     workspaceStore.addFeishuUserSession(workspaceId, feishuUserId, session.id);
     workspaceStore.setFeishuWorkspaceUser(workspaceId, feishuUserId);
@@ -48,9 +56,9 @@ describe('chat route Feishu user info', { concurrency: false }, () => {
     await handler({ params: { id: workspaceId, sessionId: session.id } }, res);
 
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { userId: string; lastSeenAt: string | null };
+    const body = res.jsonBody as { userId: string; name: string | null };
     assert.strictEqual(body.userId, 'Alice');
-    assert.ok(body.lastSeenAt);
+    assert.strictEqual(body.name, 'Alice');
   });
 
   it('returns 404 when the session has no Feishu owner', async () => {
@@ -67,6 +75,13 @@ describe('chat route Feishu user info', { concurrency: false }, () => {
   it('falls back to open_id when no cached name exists', async () => {
     const workspaceId = 'ws-1';
     const feishuUserId = 'ou_67890';
+    botService.createBot({
+      name: 'Feishu Bot',
+      activeWorkspaceId: workspaceId,
+      channelSettings: {
+        feishu: { enabled: true, appId: 'test-app', appSecret: 'test-secret' },
+      },
+    });
     const session = await chatService.createSession({ workspaceId, name: feishuUserId, source: 'feishu' });
     workspaceStore.addFeishuUserSession(workspaceId, feishuUserId, session.id);
     workspaceStore.setFeishuWorkspaceUser(workspaceId, feishuUserId);
@@ -76,7 +91,8 @@ describe('chat route Feishu user info', { concurrency: false }, () => {
     await handler({ params: { id: workspaceId, sessionId: session.id } }, res);
 
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { userId: string; lastSeenAt: string | null };
+    const body = res.jsonBody as { userId: string; name: string | null };
     assert.strictEqual(body.userId, feishuUserId);
+    assert.strictEqual(body.name, null);
   });
 });

@@ -145,7 +145,7 @@ describe('FeishuBotService', () => {
       },
     });
     botId = bot.id;
-    botService.addMember(botId, { channel: 'feishu', channelUserId: feishuUserId, role: 'owner' });
+    botService.addMember(botId, { channelKey: 'feishu', channelUserId: feishuUserId, roleKey: 'owner' });
 
     feishuUserResolver.resolveOnMessage = async (workspaceId: string, openId: string) => {
       resolverCalls.push({ workspaceId, openId });
@@ -486,7 +486,7 @@ describe('FeishuBotService', () => {
 
     it('/workspace denies non-Owner users before sending any card', async () => {
       const nonOwnerId = 'ou_non_owner';
-      botService.addMember(botId, { channel: 'feishu', channelUserId: nonOwnerId, role: 'normal' });
+      botService.addMember(botId, { channelKey: 'feishu', channelUserId: nonOwnerId, roleKey: 'normal' });
 
       await (service as unknown as { handleWorkspaceCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleWorkspaceCommand(
         thread,
@@ -967,7 +967,7 @@ describe('FeishuBotService', () => {
     it('does not overwrite an existing member role on repeat direct messages', async () => {
       const handler = (service as unknown as { createDispatchHandler: () => (thread: MockThread, message: unknown) => Promise<void> }).createDispatchHandler();
       const newUserId = 'ou-repeat';
-      botService.addMember(botId, { channel: 'feishu', channelUserId: newUserId, role: 'admin' });
+      botService.addMember(botId, { channelKey: 'feishu', channelUserId: newUserId, roleKey: 'admin' });
 
       await handler(makeThread(true), makeMessage('hello', newUserId));
 

@@ -209,7 +209,7 @@ const server = app.listen(PORT, () => {
     // but before auto-install was added.
     try {
       for (const bot of botService.listBots()) {
-        if (bot.channelSettings.wecom?.enabled && bot.activeWorkspaceId) {
+        if (botService.getChannelSettings(bot.id).wecom?.enabled && bot.activeWorkspaceId) {
           await builtinPluginService.ensureWecomPluginInstalled(bot.activeWorkspaceId).catch((err) => {
             console.error(
               `[Startup] failed to backfill wecom plugin for workspace ${bot.activeWorkspaceId}:`,

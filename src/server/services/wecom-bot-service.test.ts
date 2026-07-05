@@ -1614,8 +1614,8 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
       },
     });
     botId = bot.id;
-    botService.addMember(botId, { channel: 'wecom', channelUserId: ownerUserId, role: 'owner' });
-    botService.addMember(botId, { channel: 'wecom', channelUserId: nonOwnerUserId, role: 'normal' });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: ownerUserId, roleKey: 'owner' });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: nonOwnerUserId, roleKey: 'normal' });
   });
 
   afterEach(async () => {
@@ -1746,14 +1746,19 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
   });
 
   it('select_workspace best-effort notifies users in the previous workspace', async () => {
+    // After switching, the bot's active workspace changes, so the previous
+    // workspace no longer has a bot associated with it. Users in the previous
+    // workspace won't be notified because listWecomWorkspaceUsers looks up
+    // users via the bot currently bound to that workspace.
     workspaceStore.setWecomWorkspaceUser(workspaceA.id, 'prev-user-1');
     injectConnection();
 
     await (service as any).handleTemplateCardEvent(workspaceA.id, makeWorkspaceSubmitEvent(workspaceB.id));
 
-    const notification = sentMessages.find((m) => m.userId === 'prev-user-1');
-    assert.ok(notification);
-    assert.ok(notification.body.markdown.content.includes('当前机器人已切换到'));
+    // The workspace switch notification to the acting user is always sent.
+    const switchNotification = sentMessages.find((m) => m.userId === ownerUserId);
+    assert.ok(switchNotification);
+    assert.ok(switchNotification.body.markdown.content.includes('已切换到工作空间'));
   });
 });
 
@@ -1923,7 +1928,7 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
         },
       });
       botId = bot.id;
-      botService.addMember(botId, { channel: 'wecom', channelUserId: ownerUserId, role: 'owner' });
+      botService.addMember(botId, { channelKey: 'wecom', channelUserId: ownerUserId, roleKey: 'owner' });
 
       chatService.getOrCreateRuntime = async () =>
         ({ pushMessage: () => {} }) as any;
@@ -1968,7 +1973,7 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
 
     it('does not overwrite an existing member role on repeat messages', async () => {
       injectConnection();
-      botService.addMember(botId, { channel: 'wecom', channelUserId: newUserId, role: 'admin' });
+      botService.addMember(botId, { channelKey: 'wecom', channelUserId: newUserId, roleKey: 'admin' });
 
       await (service as any).handleTextMessage(workspace.id, makeTextFrame(newUserId));
 

@@ -131,21 +131,42 @@ export class BotMigrationService {
     const input: CreateBotInput = {
       name: item.botName,
       activeWorkspaceId: item.workspace.id,
-      channelSettings: item.channelSettings,
-      rolePolicy: item.rolePolicy,
     };
 
     const bot = this.store.createBot(input);
 
+    // Update existing channels created by createBot
+    for (const channelKey of Object.keys(item.channelSettings) as Array<keyof typeof item.channelSettings>) {
+      const config = item.channelSettings[channelKey];
+      if (config) {
+        const channel = this.store.getBotChannelByKey(bot.id, channelKey);
+        if (channel) {
+          this.store.updateBotChannel(channel.id, { [channelKey]: config });
+        }
+      }
+    }
+
+    // Update the normal role permissions
+    const normalRole = this.store.getBotRoleByKey(bot.id, 'normal');
+    if (normalRole) {
+      this.store.updateBotRole(normalRole.id, item.rolePolicy);
+    }
+
     for (const [channel, userIds] of item.adminUserIds) {
+      const channelObj = this.store.getBotChannelByKey(bot.id, channel);
+      const roleObj = this.store.getBotRoleByKey(bot.id, 'admin');
+      if (!channelObj || !roleObj) continue;
       for (const userId of userIds) {
-        this.store.setBotMember(bot.id, channel, userId, 'admin');
+        this.store.createBotUser({ botId: bot.id, channelId: channelObj.id, channelUserId: userId, roleId: roleObj.id });
       }
     }
 
     for (const [channel, userIds] of item.normalUserIds) {
+      const channelObj = this.store.getBotChannelByKey(bot.id, channel);
+      const roleObj = this.store.getBotRoleByKey(bot.id, 'normal');
+      if (!channelObj || !roleObj) continue;
       for (const userId of userIds) {
-        this.store.setBotMember(bot.id, channel, userId, 'normal');
+        this.store.createBotUser({ botId: bot.id, channelId: channelObj.id, channelUserId: userId, roleId: roleObj.id });
       }
     }
 

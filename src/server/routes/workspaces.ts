@@ -69,7 +69,7 @@ router.get('/:id/bot', async (req, res) => {
       res.status(404).json({ error: 'No bot bound to this workspace' });
       return;
     }
-    res.json({ bot: { ...bot, channelSettings: redactChannelSettings(bot.channelSettings) } });
+    res.json({ bot: { ...bot, channelSettings: redactChannelSettings(botService.getChannelSettings(bot.id)) } });
   } catch (error) {
     console.error('Failed to get workspace bot:', error);
     res.status(500).json({ error: 'Failed to get workspace bot' });
@@ -199,8 +199,6 @@ router.get('/:id/wecom/users', async (req, res) => {
     const result = users.map((u) => ({
       encryptedUserId: u.encryptedUserId,
       plaintextUserId: mappingMap.get(u.encryptedUserId) || undefined,
-      firstSeenAt: u.firstSeenAt,
-      lastSeenAt: u.lastSeenAt,
     }));
 
     res.json({ users: result });
@@ -375,8 +373,6 @@ router.get('/:id/feishu/users', async (req, res) => {
       openId: u.openId,
       userId: u.userId ?? undefined,
       name: u.name ?? undefined,
-      firstSeenAt: u.firstSeenAt,
-      lastSeenAt: u.lastSeenAt,
       namePending: !u.name,
     }));
 
