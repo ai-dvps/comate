@@ -88,24 +88,36 @@ export class SqliteStore {
     }
 
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS wecom_user_sessions (
-        workspaceId TEXT NOT NULL,
-        wecomUserId TEXT NOT NULL,
-        sessionId TEXT NOT NULL,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL,
-        isActive INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (workspaceId, wecomUserId, sessionId)
+      CREATE TABLE IF NOT EXISTS bot_migration_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        version INTEGER NOT NULL,
+        run_at TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL DEFAULT '{}'
       )
     `);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS wecom_user_id_mappings (
-        encryptedUserId TEXT PRIMARY KEY,
-        plaintextUserId TEXT NOT NULL,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
-      )
-    `);
+    const migrationVersion = this.getMigrationVersion();
+
+    if (migrationVersion === null || migrationVersion < 5) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS wecom_user_sessions (
+          workspaceId TEXT NOT NULL,
+          wecomUserId TEXT NOT NULL,
+          sessionId TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          isActive INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (workspaceId, wecomUserId, sessionId)
+        )
+      `);
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS wecom_user_id_mappings (
+          encryptedUserId TEXT PRIMARY KEY,
+          plaintextUserId TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        )
+      `);
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS wecom_workspace_users (
         workspaceId TEXT NOT NULL,
@@ -121,25 +133,27 @@ export class SqliteStore {
         activeWorkspaceId TEXT NOT NULL
       )
     `);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS feishu_user_sessions (
-        workspaceId TEXT NOT NULL,
-        feishuUserId TEXT NOT NULL,
-        sessionId TEXT NOT NULL,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL,
-        PRIMARY KEY (workspaceId, feishuUserId, sessionId)
-      )
-    `);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS feishu_active_sessions (
-        workspaceId TEXT NOT NULL,
-        feishuUserId TEXT NOT NULL,
-        sessionId TEXT NOT NULL,
-        updatedAt TEXT NOT NULL,
-        PRIMARY KEY (workspaceId, feishuUserId)
-      )
-    `);
+    if (migrationVersion === null || migrationVersion < 5) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS feishu_user_sessions (
+          workspaceId TEXT NOT NULL,
+          feishuUserId TEXT NOT NULL,
+          sessionId TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          PRIMARY KEY (workspaceId, feishuUserId, sessionId)
+        )
+      `);
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS feishu_active_sessions (
+          workspaceId TEXT NOT NULL,
+          feishuUserId TEXT NOT NULL,
+          sessionId TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          PRIMARY KEY (workspaceId, feishuUserId)
+        )
+      `);
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS feishu_workspace_users (
         workspaceId TEXT NOT NULL,
@@ -170,24 +184,26 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       )
     `);
-    const botColumns = this.db.prepare("PRAGMA table_info(bots)").all() as { name: string }[];
-    if (!botColumns.some(col => col.name === 'persona_json')) {
-      this.db.exec('ALTER TABLE bots ADD COLUMN persona_json TEXT');
+    if (migrationVersion === null || migrationVersion < 5) {
+      const botColumns = this.db.prepare("PRAGMA table_info(bots)").all() as { name: string }[];
+      if (!botColumns.some(col => col.name === 'persona_json')) {
+        this.db.exec('ALTER TABLE bots ADD COLUMN persona_json TEXT');
+      }
+      if (!botColumns.some(col => col.name === 'role_personas_json')) {
+        this.db.exec('ALTER TABLE bots ADD COLUMN role_personas_json TEXT');
+      }
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS bot_members (
+          bot_id TEXT NOT NULL,
+          channel TEXT NOT NULL,
+          channel_user_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (bot_id, channel, channel_user_id)
+        )
+      `);
     }
-    if (!botColumns.some(col => col.name === 'role_personas_json')) {
-      this.db.exec('ALTER TABLE bots ADD COLUMN role_personas_json TEXT');
-    }
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS bot_members (
-        bot_id TEXT NOT NULL,
-        channel TEXT NOT NULL,
-        channel_user_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (bot_id, channel, channel_user_id)
-      )
-    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bot_audit_logs (
         id TEXT PRIMARY KEY,
@@ -197,14 +213,6 @@ export class SqliteStore {
         event_type TEXT NOT NULL,
         details_json TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL
-      )
-    `);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS bot_migration_state (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        version INTEGER NOT NULL,
-        run_at TEXT NOT NULL,
-        snapshot_json TEXT NOT NULL DEFAULT '{}'
       )
     `);
     this.db.exec(`
@@ -445,6 +453,7 @@ export class SqliteStore {
 
   private migrateWecomUserSessionsActiveColumn(): void {
     const columns = this.db.prepare("PRAGMA table_info(wecom_user_sessions)").all() as Array<{ name: string }>;
+    if (columns.length === 0) return;
     if (!columns.some((col) => col.name === 'isActive')) {
       this.db.exec('ALTER TABLE wecom_user_sessions ADD COLUMN isActive INTEGER NOT NULL DEFAULT 0');
     }
@@ -542,6 +551,8 @@ export class SqliteStore {
   }
 
   private backfillWeComSessionSource(): void {
+    const columns = this.db.prepare("PRAGMA table_info(wecom_user_sessions)").all() as Array<{ name: string }>;
+    if (columns.length === 0) return;
     try {
       const result = this.db.prepare(`
         UPDATE sessions
