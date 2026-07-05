@@ -1,7 +1,8 @@
-import type { BotRoleKey } from '../models/bot.js';
+import type { BotRoleKey, BotRolePolicy } from '../models/bot.js';
 import {
   evaluateToolPermission,
   type PermissionDecision,
+  type ToolPermissionPolicy,
 } from './tool-permission-policy.js';
 import { evaluateSkill, type SkillPolicyResult } from './bot-skill-policy.js';
 
@@ -16,7 +17,7 @@ export function isOwnerOrAdmin(role: BotRoleKey | null | undefined): boolean {
  * evaluated against the normal role's `normalToolPolicy`.
  */
 export function evaluateBotToolPermission(
-  normalToolPolicy: PermissionDecision,
+  normalToolPolicy: ToolPermissionPolicy,
   role: BotRoleKey | null | undefined,
   toolName: string,
 ): PermissionDecision {
@@ -30,11 +31,7 @@ export function evaluateBotToolPermission(
  * Evaluate whether a Skill tool invocation is allowed for a bot member.
  */
 export function evaluateBotSkill(
-  rolePolicy: {
-    normalToolPolicy: PermissionDecision;
-    skillAllowlist: string[];
-    bashWhitelist: string[];
-  },
+  rolePolicy: BotRolePolicy,
   role: BotRoleKey | null | undefined,
   toolName: string,
   input: Record<string, unknown>,

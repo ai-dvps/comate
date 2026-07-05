@@ -1,5 +1,6 @@
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { resolverLog, resolverWarn, resolverError } from '../utils/resolver-logger.js';
+import type { BotChannelKey } from '../models/bot.js';
 
 interface TokenCacheEntry {
   token: string;
@@ -110,11 +111,13 @@ export class WeComUserIdResolver {
       const timeout = setTimeout(() => controller.abort(), MESSAGE_RESOLVE_TIMEOUT_MS);
 
       try {
-        const existing = workspaceStore.getWecomUserMapping(encryptedUserId);
-        if (existing) {
+        const user = this.findWecomBotUser(workspaceId, encryptedUserId);
+        if (user?.plaintextUserId) {
           resolverLog(`[WeComUserIdResolver] Message from workspace=${workspaceId} user=${tid(encryptedUserId)} cached=true`);
           return;
         }
+        // Ensure the user is tracked as a bot member even if not yet resolved.
+        this.ensureWecomBotUser(workspaceId, encryptedUserId);
         resolverLog(`[WeComUserIdResolver] Message from workspace=${workspaceId} user=${tid(encryptedUserId)} cached=false, queuing`);
         this.queueId(workspaceId, encryptedUserId);
       } finally {
@@ -135,7 +138,7 @@ export class WeComUserIdResolver {
    */
   trackWorkspaceUser(workspaceId: string, encryptedUserId: string): void {
     try {
-      workspaceStore.setWecomWorkspaceUser(workspaceId, encryptedUserId);
+      this.ensureWecomBotUser(workspaceId, encryptedUserId);
       resolverLog(`[WeComUserIdResolver] Tracked workspace=${workspaceId} user=${tid(encryptedUserId)}`);
     } catch {
       // Silently degrade: tracking failure must not block message handling
@@ -144,15 +147,15 @@ export class WeComUserIdResolver {
 
   /**
    * Immediately resolve an encrypted user ID.
-   * Checks the mapping table first, then falls back to a single-ID API call.
+   * Checks the bot_user plaintext first, then falls back to a single-ID API call.
    * On failure, throws an error. The ID is NOT re-queued.
    */
   async resolveImmediate(workspaceId: string, encryptedUserId: string): Promise<string> {
     const start = Date.now();
-    const existing = workspaceStore.getWecomUserMapping(encryptedUserId);
-    if (existing) {
+    const existing = this.findWecomBotUser(workspaceId, encryptedUserId);
+    if (existing?.plaintextUserId) {
       resolverLog(`[WeComUserIdResolver] Immediate resolve workspace=${workspaceId} user=${tid(encryptedUserId)} cacheHit=true elapsed=${Date.now() - start}ms`);
-      return existing;
+      return existing.plaintextUserId;
     }
 
     resolverLog(`[WeComUserIdResolver] Immediate resolve workspace=${workspaceId} user=${tid(encryptedUserId)} cacheHit=false`);
@@ -171,7 +174,7 @@ export class WeComUserIdResolver {
       throw new Error('Failed to resolve WeCom user ID immediately');
     }
 
-    workspaceStore.setWecomUserMapping(mapping.encryptedUserId, mapping.plaintextUserId);
+    this.storePlaintextUserId(workspaceId, encryptedUserId, mapping.plaintextUserId);
     this.removeFromQueue(workspaceId, encryptedUserId);
     resolverLog(`[WeComUserIdResolver] Immediate resolve success workspace=${workspaceId} user=${tid(encryptedUserId)} -> ${tid(mapping.plaintextUserId)} elapsed=${Date.now() - start}ms`);
     this.notifyMappingStored(workspaceId, mapping.encryptedUserId, mapping.plaintextUserId);
@@ -264,9 +267,9 @@ export class WeComUserIdResolver {
     const token = await this.getToken(workspaceId);
     const result = await this.callBatchApi(token, readyIds);
 
-    // Store successful mappings (global across workspaces)
+    // Store successful mappings on the workspace's active WeCom bot user rows.
     for (const mapping of result.mappings) {
-      workspaceStore.setWecomUserMapping(mapping.encryptedUserId, mapping.plaintextUserId);
+      this.storePlaintextUserId(workspaceId, mapping.encryptedUserId, mapping.plaintextUserId);
       this.removeFromQueue(workspaceId, mapping.encryptedUserId);
       this.notifyMappingStored(workspaceId, mapping.encryptedUserId, mapping.plaintextUserId);
     }
@@ -444,6 +447,56 @@ export class WeComUserIdResolver {
     } catch (err) {
       resolverError('[WeComUserIdResolver] onMappingStored callback failed:', this.redactedError(err));
     }
+  }
+
+  private findWecomBotUser(workspaceId: string, encryptedUserId: string) {
+    return this.findBotUser(workspaceId, 'wecom', encryptedUserId);
+  }
+
+  private ensureWecomBotUser(workspaceId: string, encryptedUserId: string) {
+    return this.ensureBotUser(workspaceId, 'wecom', encryptedUserId);
+  }
+
+  private storePlaintextUserId(
+    workspaceId: string,
+    encryptedUserId: string,
+    plaintextUserId: string,
+  ): void {
+    const user = this.ensureWecomBotUser(workspaceId, encryptedUserId);
+    workspaceStore.updateBotUser(user.id, { plaintextUserId });
+  }
+
+  private findBotUser(workspaceId: string, channelKey: BotChannelKey, channelUserId: string) {
+    const bot = workspaceStore.listBotsForWorkspace(workspaceId)[0];
+    if (!bot) return null;
+    const channel = workspaceStore.getBotChannelByKey(bot.id, channelKey);
+    if (!channel) return null;
+    return workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, channelUserId);
+  }
+
+  private ensureBotUser(workspaceId: string, channelKey: BotChannelKey, channelUserId: string) {
+    const existing = this.findBotUser(workspaceId, channelKey, channelUserId);
+    if (existing) return existing;
+
+    const bot = workspaceStore.listBotsForWorkspace(workspaceId)[0];
+    if (!bot) {
+      throw new Error(`No active bot for workspace ${workspaceId}`);
+    }
+    const channel = workspaceStore.getBotChannelByKey(bot.id, channelKey);
+    if (!channel) {
+      throw new Error(`Channel ${channelKey} not found for bot ${bot.id}`);
+    }
+    const role = workspaceStore.getBotRoleByKey(bot.id, 'normal');
+    if (!role) {
+      throw new Error(`Normal role not found for bot ${bot.id}`);
+    }
+    return workspaceStore.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role.id,
+      channelUserId,
+      plaintextUserId: null,
+    });
   }
 
   private redactedError(err: unknown): unknown {

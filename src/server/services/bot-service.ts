@@ -7,6 +7,8 @@ import type {
   BotPersona,
   CreateBotInput as BaseCreateBotInput,
   UpdateBotInput as BaseUpdateBotInput,
+  WeComChannelConfig,
+  FeishuChannelConfig,
 } from '../models/bot.js';
 import type { BotUser } from '../models/bot-user.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
@@ -212,7 +214,7 @@ export class BotService {
   updateChannelSettings(
     botId: string,
     channelKey: BotChannelKey,
-    settings: BotChannelSettings,
+    settings: WeComChannelConfig | FeishuChannelConfig,
     actor: BotActor = systemActor(),
   ): void {
     const bot = this.store.getBot(botId);
@@ -410,6 +412,47 @@ export class BotService {
 
   listMembers(botId: string): BotUser[] {
     return this.store.listBotUsers(botId);
+  }
+
+  getMember(botId: string, channelKey: BotChannelKey, channelUserId: string): BotUser | null {
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) return null;
+    return this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
+  }
+
+  ensureMember(
+    botId: string,
+    channelKey: BotChannelKey,
+    channelUserId: string,
+    plaintextUserId?: string | null,
+  ): BotUser {
+    const bot = this.store.getBot(botId);
+    if (!bot) {
+      throw new BotNotFoundError(botId);
+    }
+
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) {
+      throw new BotValidationError(`Channel ${channelKey} not found`);
+    }
+
+    const existing = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
+    if (existing) {
+      return existing;
+    }
+
+    const normalRole = this.store.getBotRoleByKey(botId, 'normal');
+    if (!normalRole) {
+      throw new BotValidationError('Normal role not found');
+    }
+
+    return this.store.createBotUser({
+      botId,
+      channelId: channel.id,
+      roleId: normalRole.id,
+      channelUserId,
+      plaintextUserId: plaintextUserId ?? null,
+    });
   }
 
   async resolvePendingMembers(
@@ -651,3 +694,5 @@ export class BotMemberPlaintextConflictError extends Error {
     this.plaintextUserId = plaintextUserId;
   }
 }
+
+export const botService = new BotService();
