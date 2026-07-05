@@ -95,17 +95,32 @@ describe('BotMigrationService', { concurrency: false }, () => {
     const bot = bots[0];
     assert.strictEqual(bot.name, 'Legacy WeCom Bot');
     assert.strictEqual(bot.activeWorkspaceId, workspace.id);
-    assert.strictEqual(bot.channelSettings.wecom?.enabled, true);
-    assert.strictEqual(bot.channelSettings.wecom?.botId, 'wecom-bot-1');
-    assert.strictEqual(bot.channelSettings.feishu?.enabled, true);
-    assert.strictEqual(bot.channelSettings.feishu?.appId, 'feishu-app-1');
-    assert.deepStrictEqual(bot.rolePolicy.skillAllowlist, ['skill-a', 'skill-b']);
 
-    const members = store.listBotMembers(bot.id);
-    assert.ok(members.some((m) => m.channel === 'wecom' && m.channelUserId === 'admin-1' && m.role === 'admin'));
-    assert.ok(members.some((m) => m.channel === 'wecom' && m.channelUserId === 'user-1' && m.role === 'normal'));
-    assert.ok(members.some((m) => m.channel === 'feishu' && m.channelUserId === 'feishu-admin-1' && m.role === 'admin'));
-    assert.ok(members.some((m) => m.channel === 'feishu' && m.channelUserId === 'feishu-user-1' && m.role === 'normal'));
+    const channels = store.listBotChannels(bot.id);
+    const wecomChannel = channels.find((c) => c.channelKey === 'wecom');
+    const feishuChannel = channels.find((c) => c.channelKey === 'feishu');
+    assert.strictEqual(wecomChannel?.config.wecom?.enabled, true);
+    assert.strictEqual(wecomChannel?.config.wecom?.botId, 'wecom-bot-1');
+    assert.strictEqual(feishuChannel?.config.feishu?.enabled, true);
+    assert.strictEqual(feishuChannel?.config.feishu?.appId, 'feishu-app-1');
+
+    const normalRole = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(normalRole);
+    assert.deepStrictEqual(normalRole!.permissions.skillAllowlist.sort(), ['skill-a', 'skill-b']);
+
+    const members = store.listBotUsers(bot.id);
+    assert.ok(members.some((m) => {
+      const channel = channels.find((c) => c.id === m.channelId);
+      return channel?.channelKey === 'wecom' && m.channelUserId === 'admin-1' && m.roleKey === 'admin';
+    }));
+    assert.ok(members.some((m) => {
+      const channel = channels.find((c) => c.id === m.channelId);
+      return channel?.channelKey === 'feishu' && m.channelUserId === 'feishu-admin-1' && m.roleKey === 'admin';
+    }));
+    assert.ok(members.some((m) => {
+      const channel = channels.find((c) => c.id === m.channelId);
+      return channel?.channelKey === 'feishu' && m.channelUserId === 'feishu-user-1' && m.roleKey === 'normal';
+    }));
 
     const migratedWorkspace = await store.get(workspace.id);
     assert.ok(migratedWorkspace);

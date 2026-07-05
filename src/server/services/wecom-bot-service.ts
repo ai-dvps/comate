@@ -26,7 +26,7 @@ import { wecomSessionRenamer } from './wecom-session-renamer.js';
 import { createStreamReply, type StreamReplyConnection, type StreamReplyResult } from './wecom-stream-reply.js';
 import { saveMediaFile } from './wecom-file-storage.js';
 import { validateSendFilePath } from './wecom-send-file-policy.js';
-import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy, SAFE_PRESET } from './tool-permission-policy.js';
+import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { diagLog } from '../utils/diag-logger.js';
 import {
   buildWecomSessionListCard,
@@ -178,7 +178,7 @@ export class WeComBotService {
   async initialize(): Promise<void> {
     await this.cleanupStaleContextFiles();
 
-    const bots = botService.listBots().filter((b) => b.channelSettings.wecom?.enabled);
+    const bots = botService.listBots().filter((b) => botService.getChannelSettings(b.id).wecom?.enabled);
     if (bots.length > 0) {
       for (const bot of bots) {
         await this.connectBot(bot);
@@ -198,7 +198,7 @@ export class WeComBotService {
   async connectBot(bot: Bot): Promise<void> {
     this.disconnectBot(bot.id);
 
-    const wecom = bot.channelSettings.wecom;
+    const wecom = botService.getChannelSettings(bot.id).wecom;
     if (!wecom?.enabled || !wecom.botId || !wecom.botSecret) {
       diagLog(`[WeComBotService] skipping connect for bot ${bot.id}: missing WeCom credentials`);
       return;
@@ -301,21 +301,6 @@ export class WeComBotService {
       id: workspace.settings.wecomBotId!,
       name: workspace.settings.wecomBotName ?? workspace.name,
       activeWorkspaceId: workspace.id,
-      channelSettings: {
-        wecom: {
-          enabled: workspace.settings.wecomBotEnabled,
-          botId: workspace.settings.wecomBotId,
-          botSecret: workspace.settings.wecomBotSecret,
-          botName: workspace.settings.wecomBotName,
-          corpId: workspace.settings.wecomCorpId,
-          corpSecret: workspace.settings.wecomCorpSecret,
-        },
-      },
-      rolePolicy: {
-        normalToolPolicy: SAFE_PRESET,
-        skillAllowlist: workspace.settings.wecomBotIsolation?.defaultAllowedSkills ?? [],
-        bashWhitelist: [],
-      },
       createdAt: workspace.createdAt,
       updatedAt: workspace.updatedAt,
     };
@@ -377,7 +362,7 @@ export class WeComBotService {
     if (role !== null) return;
 
     try {
-      botService.addMember(botId, { channel, channelUserId, role: 'normal' });
+      botService.addMember(botId, { channelKey: channel, channelUserId, roleKey: 'normal' });
       chatService.scheduleRebuildsForBot(botId);
     } catch (err) {
       // Membership is best-effort; do not block message handling.
@@ -408,7 +393,7 @@ export class WeComBotService {
   async getAggregateStatus(): Promise<{
     state: 'connected' | 'partial' | 'disconnected' | 'not_configured';
   }> {
-    let bots = botService.listBots().filter((b) => b.channelSettings.wecom?.enabled);
+    let bots = botService.listBots().filter((b) => botService.getChannelSettings(b.id).wecom?.enabled);
 
     // Pre-migration fallback: treat workspace-embedded WeCom configs as bots.
     if (bots.length === 0) {
@@ -420,8 +405,6 @@ export class WeComBotService {
             id: ws.settings.wecomBotId!,
             name: ws.settings.wecomBotName ?? ws.name,
             activeWorkspaceId: ws.id,
-            channelSettings: { wecom: { enabled: true, botId: ws.settings.wecomBotId!, botSecret: ws.settings.wecomBotSecret! } },
-            rolePolicy: { normalToolPolicy: SAFE_PRESET, skillAllowlist: [], bashWhitelist: [] },
             createdAt: ws.createdAt,
             updatedAt: ws.updatedAt,
           }));
@@ -805,7 +788,7 @@ export class WeComBotService {
 
     botService.setActiveWorkspace(botId, workspaceId, {
       type: 'wecom',
-      channel: 'wecom',
+      channelKey: 'wecom',
       channelUserId: wecomUserId,
     });
 

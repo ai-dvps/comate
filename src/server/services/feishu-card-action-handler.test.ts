@@ -59,8 +59,8 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
       },
     });
     botId = bot.id;
-    botService.addMember(botId, { channel: 'feishu', channelUserId: ownerUserId, role: 'owner' });
-    botService.addMember(botId, { channel: 'feishu', channelUserId: nonOwnerUserId, role: 'normal' });
+    botService.addMember(botId, { channelKey: 'feishu', channelUserId: ownerUserId, roleKey: 'owner' });
+    botService.addMember(botId, { channelKey: 'feishu', channelUserId: nonOwnerUserId, roleKey: 'normal' });
   });
 
   it('rejects rapid repeated actions via rate limit', async () => {

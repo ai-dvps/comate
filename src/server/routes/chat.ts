@@ -148,10 +148,8 @@ router.get('/sessions/:sessionId/wecom-user', async (req, res) => {
       return;
     }
     const mapping = store.getWecomUserMapping(encryptedUserId);
-    const workspaceUser = store.getWecomWorkspaceUser(workspaceId, encryptedUserId);
     res.json({
       userId: mapping ?? encryptedUserId,
-      lastSeenAt: workspaceUser?.lastSeenAt ?? null,
     });
   } catch (error) {
     console.error('Failed to get WeCom user:', error);
@@ -178,7 +176,6 @@ router.get('/sessions/:sessionId/feishu-user', async (req, res) => {
     res.json({
       userId: workspaceUser?.name ?? workspaceUser?.userId ?? openId,
       name: workspaceUser?.name ?? null,
-      lastSeenAt: workspaceUser?.lastSeenAt ?? null,
     });
   } catch (error) {
     console.error('Failed to get Feishu user:', error);

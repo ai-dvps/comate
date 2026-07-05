@@ -28,7 +28,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function invalidateBotRuntimesIfNeeded(botId: string, input: UpdateBotInput): void {
+function invalidateBotRuntimesIfNeeded(botId: string, input: UpdateBotInput & { rolePersonas?: unknown; rolePolicy?: unknown }): void {
   if (input.persona !== undefined || input.rolePersonas !== undefined || input.rolePolicy !== undefined) {
     chatService.scheduleRebuildsForBot(botId);
   }
@@ -57,10 +57,11 @@ export function redactChannelSettings(settings: BotChannelSettings): BotChannelS
   return result;
 }
 
-function redactBot(bot: import('../models/bot.js').Bot) {
+function redactBot(bot: import('../models/bot.js').Bot & { channelSettings?: import('../models/bot.js').BotChannelSettings }) {
+  const channelSettings = bot.channelSettings ?? botService.getChannelSettings(bot.id);
   return {
     ...bot,
-    channelSettings: redactChannelSettings(bot.channelSettings),
+    channelSettings: redactChannelSettings(channelSettings),
   };
 }
 
@@ -81,7 +82,7 @@ function mapBotError(error: unknown): { status: number; message: string; code?: 
     return { status: 400, message: error.message, code: 'workspace-bound' };
   }
   if (error instanceof BotMemberPlaintextConflictError) {
-    return { status: 409, message: error.message, code: error.code };
+    return { status: 409, message: error.message, code: 'plaintext-conflict' };
   }
   return { status: 500, message: 'Internal server error' };
 }
@@ -157,12 +158,12 @@ router.get('/:id', (req, res) => {
 // PUT /api/bots/:id
 router.put('/:id', async (req, res) => {
   try {
-    const input = req.body as UpdateBotInput;
+    const input = req.body as UpdateBotInput & { channelSettings?: BotChannelSettings };
     if (input.channelSettings) {
-      const existing = botService.getBot(req.params.id);
+      const existingSettings = botService.getChannelSettings(req.params.id);
       input.channelSettings = resolveSentinelCredentials(
         input.channelSettings,
-        existing?.channelSettings ?? {},
+        existingSettings,
       );
     }
     const bot = botService.updateBot(req.params.id, input, systemActor());
@@ -243,7 +244,7 @@ router.post('/:id/members', (req, res) => {
 
     const member = botService.addMember(
       req.params.id,
-      { channel, channelUserId, role },
+      { channelKey: channel, channelUserId, roleKey: role },
       systemActor(),
     );
     chatService.scheduleRebuildsForBot(req.params.id);
@@ -326,9 +327,8 @@ router.put('/:id/members/:channelUserId/plaintext', (req, res) => {
       return;
     }
 
-    const { plaintextUserId, displayName } = req.body as {
+    const { plaintextUserId } = req.body as {
       plaintextUserId?: unknown;
-      displayName?: unknown;
     };
     if (!plaintextUserId || typeof plaintextUserId !== 'string') {
       res.status(400).json({ error: 'plaintextUserId is required' });
@@ -340,7 +340,6 @@ router.put('/:id/members/:channelUserId/plaintext', (req, res) => {
       channel,
       req.params.channelUserId,
       plaintextUserId,
-      typeof displayName === 'string' ? displayName : undefined,
     );
     chatService.scheduleRebuildsForBot(req.params.id);
     res.json({ member });
@@ -385,25 +384,27 @@ router.post('/migrate', async (req, res) => {
 });
 
 async function connectEnabledChannels(bot: import('../models/bot.js').Bot): Promise<void> {
-  await ensureWecomPluginForBot(bot);
-  if (bot.channelSettings.wecom?.enabled) {
-    await wecomBotService.connectBot(bot).catch((err) => {
+  const channelSettings = botService.getChannelSettings(bot.id);
+  await ensureWecomPluginForBot(bot.id, channelSettings);
+  if (channelSettings.wecom?.enabled) {
+    await wecomBotService.connectBot({ ...bot, channelSettings } as import('../models/bot.js').Bot & { channelSettings: import('../models/bot.js').BotChannelSettings }).catch((err) => {
       console.error(`[BotsRoute] WeCom connect failed for bot ${bot.id}:`, err);
     });
   }
-  if (bot.channelSettings.feishu?.enabled) {
-    await feishuBotService.connectBot(bot).catch((err) => {
+  if (channelSettings.feishu?.enabled) {
+    await feishuBotService.connectBot({ ...bot, channelSettings } as import('../models/bot.js').Bot & { channelSettings: import('../models/bot.js').BotChannelSettings }).catch((err) => {
       console.error(`[BotsRoute] Feishu connect failed for bot ${bot.id}:`, err);
     });
   }
 }
 
 async function reconcileChannelConnections(bot: import('../models/bot.js').Bot): Promise<void> {
-  await ensureWecomPluginForBot(bot);
-  if (bot.channelSettings.wecom?.enabled) {
+  const channelSettings = botService.getChannelSettings(bot.id);
+  await ensureWecomPluginForBot(bot.id, channelSettings);
+  if (channelSettings.wecom?.enabled) {
     const status = wecomBotService.getBotStatus(bot.id);
     if (status === 'not_configured') {
-      await wecomBotService.connectBot(bot).catch((err) => {
+      await wecomBotService.connectBot({ ...bot, channelSettings } as import('../models/bot.js').Bot & { channelSettings: import('../models/bot.js').BotChannelSettings }).catch((err) => {
         console.error(`[BotsRoute] WeCom connect failed for bot ${bot.id}:`, err);
       });
     } else if (bot.activeWorkspaceId) {
@@ -413,10 +414,10 @@ async function reconcileChannelConnections(bot: import('../models/bot.js').Bot):
     wecomBotService.disconnectBot(bot.id);
   }
 
-  if (bot.channelSettings.feishu?.enabled) {
+  if (channelSettings.feishu?.enabled) {
     const status = feishuBotService.getBotStatus(bot.id);
     if (status === 'not_configured') {
-      await feishuBotService.connectBot(bot).catch((err) => {
+      await feishuBotService.connectBot({ ...bot, channelSettings } as import('../models/bot.js').Bot & { channelSettings: import('../models/bot.js').BotChannelSettings }).catch((err) => {
         console.error(`[BotsRoute] Feishu connect failed for bot ${bot.id}:`, err);
       });
     } else if (bot.activeWorkspaceId) {
@@ -427,15 +428,19 @@ async function reconcileChannelConnections(bot: import('../models/bot.js').Bot):
   }
 }
 
-async function ensureWecomPluginForBot(bot: import('../models/bot.js').Bot): Promise<void> {
-  if (!bot.channelSettings.wecom?.enabled || !bot.activeWorkspaceId) {
+async function ensureWecomPluginForBot(botId: string, channelSettings: import('../models/bot.js').BotChannelSettings): Promise<void> {
+  if (!channelSettings.wecom?.enabled) {
+    return;
+  }
+  const bot = botService.getBot(botId);
+  if (!bot?.activeWorkspaceId) {
     return;
   }
   try {
     await builtinPluginService.ensureWecomPluginInstalled(bot.activeWorkspaceId);
   } catch (err) {
     console.error(
-      `[BotsRoute] Failed to ensure wecom plugin for bot ${bot.id} / workspace ${bot.activeWorkspaceId}:`,
+      `[BotsRoute] Failed to ensure wecom plugin for bot ${botId} / workspace ${bot.activeWorkspaceId}:`,
       err,
     );
   }

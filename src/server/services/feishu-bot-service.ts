@@ -10,7 +10,6 @@ import type { ChatSession } from '../models/session.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
-import { SAFE_PRESET } from './tool-permission-policy.js';
 import { createFeishuSessionForUser } from './feishu-session-helpers.js';
 import { FeishuStreamReply, type FeishuStreamReplyHandle } from './feishu-stream-reply.js';
 import {
@@ -55,7 +54,7 @@ export class FeishuBotService {
   private activeStreamReplies = new Map<string, FeishuStreamReplyHandle>();
 
   async initialize(): Promise<void> {
-    const feishuBots = botService.listBots().filter((b) => b.channelSettings.feishu?.enabled);
+    const feishuBots = botService.listBots().filter((b) => botService.getChannelSettings(b.id).feishu?.enabled);
 
     if (feishuBots.length > 0) {
       const storedActiveWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
@@ -82,10 +81,11 @@ export class FeishuBotService {
     await this.connect(workspace);
   }
 
-  async connectBot(bot: Bot): Promise<void> {
+  async connectBot(bot: Bot & { channelSettings?: import('../models/bot.js').BotChannelSettings }): Promise<void> {
     this.disconnectBot(bot.id);
 
-    const feishu = bot.channelSettings.feishu;
+    const channelSettings = bot.channelSettings ?? botService.getChannelSettings(bot.id);
+    const feishu = channelSettings.feishu;
     const appId = feishu?.appId?.trim();
     const appSecret = feishu?.appSecret?.trim();
     if (!appId || !appSecret) {
@@ -160,20 +160,6 @@ export class FeishuBotService {
       id: workspace.settings.feishuAppId!,
       name: workspace.name,
       activeWorkspaceId: workspace.id,
-      channelSettings: {
-        feishu: {
-          enabled: workspace.settings.feishuBotEnabled,
-          appId: workspace.settings.feishuAppId,
-          appSecret: workspace.settings.feishuAppSecret,
-          encryptKey: workspace.settings.feishuEncryptKey,
-          verificationToken: workspace.settings.feishuVerificationToken,
-        },
-      },
-      rolePolicy: {
-        normalToolPolicy: SAFE_PRESET,
-        skillAllowlist: [],
-        bashWhitelist: [],
-      },
       createdAt: workspace.createdAt,
       updatedAt: workspace.updatedAt,
     };
@@ -195,7 +181,7 @@ export class FeishuBotService {
     if (role !== null) return;
 
     try {
-      botService.addMember(botId, { channel, channelUserId, role: 'normal' });
+      botService.addMember(botId, { channelKey: channel, channelUserId, roleKey: 'normal' });
       chatService.scheduleRebuildsForBot(botId);
     } catch (err) {
       // Membership is best-effort; do not block message handling.
@@ -417,7 +403,7 @@ export class FeishuBotService {
       bot = botService.getBot(botId);
     }
     if (!bot) {
-      const boundBots = botService.listBotsForWorkspace(workspaceId).filter((b) => b.channelSettings.feishu?.enabled);
+      const boundBots = botService.listBotsForWorkspace(workspaceId).filter((b) => botService.getChannelSettings(b.id).feishu?.enabled);
       bot = boundBots[0] ?? this.botFromWorkspace(workspace);
     }
     if (!bot) {
@@ -429,7 +415,7 @@ export class FeishuBotService {
     if (botId && actorUserId) {
       botService.setActiveWorkspace(botId, workspaceId, {
         type: 'feishu',
-        channel: 'feishu',
+        channelKey: 'feishu',
         channelUserId: actorUserId,
       });
     }
@@ -502,20 +488,6 @@ export class FeishuBotService {
       id: appId,
       name: workspace.name,
       activeWorkspaceId: workspace.id,
-      channelSettings: {
-        feishu: {
-          enabled: workspace.settings.feishuBotEnabled,
-          appId,
-          appSecret,
-          encryptKey: workspace.settings.feishuEncryptKey,
-          verificationToken: workspace.settings.feishuVerificationToken,
-        },
-      },
-      rolePolicy: {
-        normalToolPolicy: SAFE_PRESET,
-        skillAllowlist: [],
-        bashWhitelist: [],
-      },
       createdAt: workspace.createdAt,
       updatedAt: workspace.updatedAt,
     };
@@ -591,7 +563,7 @@ export class FeishuBotService {
     // In the decoupled bot architecture, Feishu is enabled at the bot level.
     // Keep the legacy workspace flag as a fallback for pre-migration setups.
     if (workspace.settings.feishuBotEnabled) return true;
-    return botService.listBotsForWorkspace(workspace.id).some((b) => b.channelSettings.feishu?.enabled);
+    return botService.listBotsForWorkspace(workspace.id).some((b) => botService.getChannelSettings(b.id).feishu?.enabled);
   }
 
   private createDispatchHandler(): DirectMessageHandler & MentionHandler {

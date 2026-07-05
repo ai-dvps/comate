@@ -26,7 +26,7 @@ import { evaluateSkill } from './bot-skill-policy.js';
 import { botService } from './bot-service.js';
 import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
-import type { BotRole, BotRolePolicy } from '../models/bot.js';
+import type { BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 import { resolveDeadLoopDetectionSettings, detectSubagentLoop, type ResolvedDeadLoopDetectionSettings } from './dead-loop-detector.js';
 
@@ -1432,11 +1432,11 @@ export class ChatService {
           // Inject the Bot persona into the SDK system prompt for WeCom/Feishu
           // sessions. GUI sessions never reach this branch because isBotSession
           // is false. Changes apply to the next newly created runtime.
-          const roleForPersona: BotRole | undefined = channel && channelUserId
+          const roleForPersona: import('../models/bot.js').BotRoleKey | undefined = channel && channelUserId
             ? botService.getMemberRole(bot.id, channel, channelUserId) ?? 'normal'
             : undefined;
           const persona = roleForPersona
-            ? bot.rolePersonas?.[roleForPersona] ?? bot.persona
+            ? botService.getRolePersona(bot.id, roleForPersona) ?? bot.persona
             : bot.persona;
           if (persona) {
             if (persona.mode === 'append') {
@@ -1494,7 +1494,8 @@ export class ChatService {
             const role = channel && channelUserId
               ? botService.getMemberRole(bot.id, channel, channelUserId)
               : null;
-            const decision = evaluateBotToolPermission(bot, role, toolName);
+            const rolePolicy = botService.getRolePolicy(bot.id);
+            const decision = evaluateBotToolPermission(rolePolicy?.normalToolPolicy ?? { posture: 'safe', categoryDefaults: { fileRead: 'allow', fileWrite: 'deny', shell: 'deny', network: 'deny', subagents: 'deny', reply: 'allow' } }, role, toolName);
             // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
             // without a category fit). Fall through to today's allow-all behavior
             // per R10. The brainstorm explicitly defers MCP and Skills gating.
@@ -1512,7 +1513,7 @@ export class ChatService {
             // Bash whitelist overrides the Shell category for Normal users; Owner/Admin
             // bypass the whitelist entirely.
             if (toolName === 'Bash' && typeof input.command === 'string' && channelUserId) {
-              if (isBashCommandAllowed(bot, role, input.command)) {
+              if (isBashCommandAllowed(rolePolicy?.bashWhitelist ?? [], role, input.command)) {
                 return { behavior: 'allow' as const, updatedInput: input };
               }
               diagLog(
@@ -1528,7 +1529,7 @@ export class ChatService {
               // Generic denial message — do NOT name the capability. Inbound bot
               // messages are an untrusted channel; naming the denied capability
               // would let an attacker probe the policy by mapping denials.
-              const reason = getToolPermissionDenialReason(bot.rolePolicy.normalToolPolicy, toolName);
+              const reason = getToolPermissionDenialReason(rolePolicy?.normalToolPolicy, toolName);
               diagLog(
                 `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${reason ?? 'deny'}`,
               );
@@ -1547,7 +1548,7 @@ export class ChatService {
                 if (session.botId && channel && channelUserId) {
                   botAuditLogger.logFileAccessDenied(
                     session.botId,
-                    { type: channel, channel, channelUserId },
+                    { type: channel, channelKey: channel, channelUserId },
                     {
                       sessionId: session.id,
                       toolName,
@@ -1572,7 +1573,7 @@ export class ChatService {
             }
 
             if (toolName === 'Skill') {
-              const r = evaluateBotSkill(bot, role, toolName, input);
+              const r = evaluateBotSkill(rolePolicy ?? { normalToolPolicy: { posture: 'safe', categoryDefaults: { fileRead: 'allow', fileWrite: 'deny', shell: 'deny', network: 'deny', subagents: 'deny', reply: 'allow' } }, skillAllowlist: [], bashWhitelist: [] }, role, toolName, input);
               if (!r.allowed) {
                 diagLog(
                   `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'skill-denied'}`,
@@ -1732,7 +1733,7 @@ export class ChatService {
               if (session.botId && canonicalUserId && (session.source === 'wecom' || session.source === 'feishu')) {
                 botAuditLogger.logFileAccessDenied(
                   session.botId,
-                  { type: session.source, channel: session.source, channelUserId: canonicalUserId },
+                  { type: session.source, channelKey: session.source, channelUserId: canonicalUserId },
                   {
                     sessionId: session.id,
                     toolName,

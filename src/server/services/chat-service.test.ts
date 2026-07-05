@@ -1867,11 +1867,11 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
       },
     });
     const channelUserId = role === 'normal' ? 'user-1' : role === 'admin' ? 'admin-1' : 'owner-1';
-    botService.addMember(bot.id, { channel: 'wecom', channelUserId, role });
+    botService.addMember(bot.id, { channelKey: 'wecom', channelUserId, roleKey: role });
 
     const encryptedUserId = `enc-${channelUserId}`;
-    workspaceStore.setWecomUserMapping(encryptedUserId, channelUserId);
     workspaceStore.setWecomWorkspaceUser(workspace.id, encryptedUserId);
+    workspaceStore.setWecomUserMapping(encryptedUserId, channelUserId);
     const session = workspaceStore.createLocalSession(
       workspace.id,
       'Bot Session',
@@ -1989,13 +1989,13 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
     const denied = await canUseTool('Bash', { command: 'cat /etc/passwd' });
     assert.strictEqual(denied.behavior, 'deny');
 
-    botService.addMember(botId, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
     botService.setMemberRole(
       botId,
       'wecom',
       'user-1',
       'admin',
-      { type: 'wecom', channel: 'wecom', channelUserId: 'owner-1' },
+      { type: 'wecom', channelKey: 'wecom', channelUserId: 'owner-1' },
     );
 
     const allowed = await canUseTool('Bash', { command: 'cat /etc/passwd' });
@@ -2108,12 +2108,12 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
 
     const channelUserId = config.memberRole === 'normal' ? 'user-1' : config.memberRole === 'admin' ? 'admin-1' : 'owner-1';
     if (config.memberRole) {
-      botService.addMember(bot.id, { channel: 'wecom', channelUserId, role: config.memberRole });
+      botService.addMember(bot.id, { channelKey: 'wecom', channelUserId, roleKey: config.memberRole });
     }
 
     const encryptedUserId = `enc-${channelUserId}`;
-    workspaceStore.setWecomUserMapping(encryptedUserId, channelUserId);
     workspaceStore.setWecomWorkspaceUser(workspace.id, encryptedUserId);
+    workspaceStore.setWecomUserMapping(encryptedUserId, channelUserId);
 
     const session = workspaceStore.createLocalSession(
       workspace.id,
