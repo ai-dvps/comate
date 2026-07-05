@@ -1857,14 +1857,12 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
     const bot = botService.createBot({
       name: 'Policy Bot',
       activeWorkspaceId: workspace.id,
-      channelSettings: {
-        wecom: { enabled: true, botId: 'bot-wecom', botSecret: 'secret' },
-      },
-      rolePolicy: {
-        normalToolPolicy: SAFE_PRESET,
-        skillAllowlist: ['allowed-skill'],
-        bashWhitelist: ['ls'],
-      },
+    });
+    botService.updateChannelSettings(bot.id, 'wecom', { enabled: true, botId: 'bot-wecom', botSecret: 'secret' });
+    botService.updateRolePolicy(bot.id, {
+      normalToolPolicy: SAFE_PRESET,
+      skillAllowlist: ['allowed-skill'],
+      bashWhitelist: ['ls'],
     });
     const channelUserId = role === 'normal' ? 'user-1' : role === 'admin' ? 'admin-1' : 'owner-1';
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId, roleKey: role });
@@ -2099,12 +2097,12 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     const bot = botService.createBot({
       name: 'Persona Bot',
       activeWorkspaceId: workspace.id,
-      channelSettings: {
-        wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'secret' },
-      },
       persona: config.persona,
-      rolePersonas: config.rolePersonas,
     });
+    botService.updateChannelSettings(bot.id, 'wecom', { enabled: true, botId: 'wecom-bot', botSecret: 'secret' });
+    if (config.rolePersonas) {
+      botService.updateRolePersonas(bot.id, config.rolePersonas);
+    }
 
     const channelUserId = config.memberRole === 'normal' ? 'user-1' : config.memberRole === 'admin' ? 'admin-1' : 'owner-1';
     if (config.memberRole) {

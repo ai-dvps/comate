@@ -5,28 +5,17 @@ import type {
   BotRoleKey,
   BotRolePolicy,
   BotPersona,
-  CreateBotInput as BaseCreateBotInput,
-  UpdateBotInput as BaseUpdateBotInput,
+  CreateBotInput,
+  UpdateBotInput,
   WeComChannelConfig,
   FeishuChannelConfig,
 } from '../models/bot.js';
+export type { CreateBotInput, UpdateBotInput } from '../models/bot.js';
 import type { BotUser } from '../models/bot-user.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import { BotAuditLogger } from './bot-audit-logger.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
 import { diagLog } from '../utils/diag-logger.js';
-
-export interface CreateBotInput extends BaseCreateBotInput {
-  channelSettings?: BotChannelSettings;
-  rolePolicy?: BotRolePolicy;
-  rolePersonas?: Partial<Record<BotRoleKey, BotPersona>>;
-}
-
-export interface UpdateBotInput extends BaseUpdateBotInput {
-  channelSettings?: BotChannelSettings;
-  rolePolicy?: BotRolePolicy;
-  rolePersonas?: Partial<Record<BotRoleKey, BotPersona>> | null;
-}
 
 export class BotService {
   private store: SqliteStore;
@@ -40,42 +29,11 @@ export class BotService {
   // Bot CRUD
 
   createBot(input: CreateBotInput): Bot {
-    const errors = this.validateCredentials(input.channelSettings ?? {});
-    if (errors.length > 0) {
-      throw new BotValidationError(errors.join('; '));
-    }
-
     if (input.activeWorkspaceId) {
       this.ensureWorkspaceNotBound(input.activeWorkspaceId);
     }
 
     const bot = this.store.createBot(input);
-
-    if (input.channelSettings) {
-      for (const channelKey of Object.keys(input.channelSettings) as BotChannelKey[]) {
-        const channel = this.store.getBotChannelByKey(bot.id, channelKey);
-        if (channel) {
-          this.store.updateBotChannel(channel.id, { [channelKey]: input.channelSettings[channelKey] });
-        }
-      }
-    }
-
-    if (input.rolePolicy) {
-      const normalRole = this.store.getBotRoleByKey(bot.id, 'normal');
-      if (normalRole) {
-        this.store.updateBotRole(normalRole.id, input.rolePolicy);
-      }
-    }
-
-    if (input.rolePersonas) {
-      for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
-        const role = this.store.getBotRoleByKey(bot.id, roleKey);
-        if (role) {
-          const persona = input.rolePersonas[roleKey] ?? null;
-          this.store.updateBotRole(role.id, role.permissions, persona);
-        }
-      }
-    }
 
     this.auditLogger.log(bot.id, { type: 'system' }, 'bot_created', { name: bot.name });
     return bot;
@@ -101,62 +59,15 @@ export class BotService {
 
     this.requireSystemOrUserActor(actor);
 
-    if (input.channelSettings) {
-      const errors = this.validateCredentials(input.channelSettings);
-      if (errors.length > 0) {
-        throw new BotValidationError(errors.join('; '));
-      }
-    }
-
     if (input.activeWorkspaceId !== undefined && input.activeWorkspaceId !== existing.activeWorkspaceId) {
       if (input.activeWorkspaceId) {
         this.ensureWorkspaceNotBound(input.activeWorkspaceId, id);
       }
     }
 
-    const hadChannelChanges = input.channelSettings !== undefined;
     const bot = this.store.updateBot(id, input);
     if (!bot) {
       throw new BotNotFoundError(id);
-    }
-
-    if (hadChannelChanges) {
-      const channels = Object.keys(input.channelSettings ?? {}) as BotChannelKey[];
-      const previousChannels = this.store.listBotChannels(bot.id);
-      for (const channelKey of channels) {
-        const channel = this.store.getBotChannelByKey(bot.id, channelKey);
-        if (channel) {
-          this.store.updateBotChannel(channel.id, { [channelKey]: input.channelSettings![channelKey] });
-        }
-      }
-      this.auditLogger.logChannelCredentialsChanged(bot.id, actor, channels);
-      for (const channelKey of channels) {
-        const previous = previousChannels.find((c) => c.channelKey === channelKey);
-        const wasEnabled = previous?.config[channelKey]?.enabled ?? false;
-        const isEnabled = input.channelSettings?.[channelKey]?.enabled ?? false;
-        if (!wasEnabled && isEnabled) {
-          this.auditLogger.logChannelEnabled(bot.id, actor, channelKey);
-        } else if (wasEnabled && !isEnabled) {
-          this.auditLogger.logChannelDisabled(bot.id, actor, channelKey);
-        }
-      }
-    }
-
-    if (input.rolePolicy) {
-      const normalRole = this.store.getBotRoleByKey(bot.id, 'normal');
-      if (normalRole) {
-        this.store.updateBotRole(normalRole.id, input.rolePolicy);
-      }
-    }
-
-    if (input.rolePersonas !== undefined) {
-      for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
-        const role = this.store.getBotRoleByKey(bot.id, roleKey);
-        if (role) {
-          const persona = input.rolePersonas?.[roleKey] ?? null;
-          this.store.updateBotRole(role.id, role.permissions, persona);
-        }
-      }
     }
 
     return bot;
@@ -284,6 +195,26 @@ export class BotService {
     this.store.updateBotRole(normalRole.id, permissions);
   }
 
+  updateRolePersonas(
+    botId: string,
+    rolePersonas: Partial<Record<BotRoleKey, BotPersona>> | null,
+    actor: BotActor = systemActor(),
+  ): void {
+    const bot = this.store.getBot(botId);
+    if (!bot) {
+      throw new BotNotFoundError(botId);
+    }
+    this.requireSystemOrUserActor(actor);
+
+    for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
+      const role = this.store.getBotRoleByKey(botId, roleKey);
+      if (role) {
+        const persona = rolePersonas?.[roleKey] ?? null;
+        this.store.updateBotRole(role.id, role.permissions, persona);
+      }
+    }
+  }
+
   // Members and roles
 
   addMember(
@@ -338,7 +269,7 @@ export class BotService {
       plaintextUserId: input.plaintextUserId ?? null,
     });
 
-    this.auditLogger.log(botId, actor, 'member_added', {
+    this.auditLogger.log(botId, actor, 'user_added', {
       channel: input.channelKey,
       channelUserId: input.channelUserId,
       role: roleKey,
@@ -367,7 +298,7 @@ export class BotService {
 
     const user = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
     if (!user) {
-      throw new BotMemberNotFoundError(botId, channelKey, channelUserId);
+      throw new BotUserNotFoundError(botId, channelKey, channelUserId);
     }
 
     const currentRoleKey = user.roleKey;
@@ -386,7 +317,7 @@ export class BotService {
     }
 
     this.store.updateBotUser(user.id, { roleId: role.id });
-    this.auditLogger.log(botId, actor, 'member_role_changed', {
+    this.auditLogger.log(botId, actor, 'user_role_changed', {
       channel: channelKey,
       channelUserId,
       previousRole: currentRoleKey,
@@ -414,7 +345,7 @@ export class BotService {
 
     const user = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
     if (!user) {
-      throw new BotMemberNotFoundError(botId, channelKey, channelUserId);
+      throw new BotUserNotFoundError(botId, channelKey, channelUserId);
     }
 
     if (user.roleKey === 'owner') {
@@ -422,7 +353,7 @@ export class BotService {
     }
 
     this.store.deleteBotUser(user.id);
-    this.auditLogger.log(botId, actor, 'member_removed', {
+    this.auditLogger.log(botId, actor, 'user_removed', {
       channel: channelKey,
       channelUserId,
       previousRole: user.roleKey,
@@ -555,14 +486,14 @@ export class BotService {
 
     const user = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
     if (!user) {
-      throw new BotMemberNotFoundError(botId, channelKey, channelUserId);
+      throw new BotUserNotFoundError(botId, channelKey, channelUserId);
     }
 
     if (channelKey === 'wecom') {
       const existing = this.store.listBotUsersByChannel(botId, channel.id)
         .find((u) => u.plaintextUserId === plaintextUserId && u.channelUserId !== channelUserId);
       if (existing) {
-        throw new BotMemberPlaintextConflictError(plaintextUserId);
+        throw new BotUserPlaintextConflictError(plaintextUserId);
       }
     }
 
@@ -697,26 +628,26 @@ export class BotWorkspaceBoundError extends Error {
   }
 }
 
-export class BotMemberNotFoundError extends Error {
+export class BotUserNotFoundError extends Error {
   public botId: string;
   public channel: BotChannelKey;
   public channelUserId: string;
 
   constructor(botId: string, channel: BotChannelKey, channelUserId: string) {
-    super(`Bot member not found: ${botId}/${channel}/${channelUserId}`);
-    this.name = 'BotMemberNotFoundError';
+    super(`Bot user not found: ${botId}/${channel}/${channelUserId}`);
+    this.name = 'BotUserNotFoundError';
     this.botId = botId;
     this.channel = channel;
     this.channelUserId = channelUserId;
   }
 }
 
-export class BotMemberPlaintextConflictError extends Error {
+export class BotUserPlaintextConflictError extends Error {
   public plaintextUserId: string;
 
   constructor(plaintextUserId: string) {
     super(`Plaintext user id already in use: ${plaintextUserId}`);
-    this.name = 'BotMemberPlaintextConflictError';
+    this.name = 'BotUserPlaintextConflictError';
     this.plaintextUserId = plaintextUserId;
   }
 }

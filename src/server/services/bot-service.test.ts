@@ -9,7 +9,7 @@ import {
   BotValidationError,
   BotWorkspaceBoundError,
 } from './bot-service.js';
-import type { BotRole, CreateBotInput } from '../models/bot.js';
+import type { BotRoleKey, CreateBotInput, BotChannelSettings, BotRolePolicy, BotPersona } from '../models/bot.js';
 
 const systemActor = { type: 'system' as const };
 const wecomOwner = { type: 'wecom' as const, channelKey: 'wecom' as const, channelUserId: 'owner-1' };
@@ -19,15 +19,43 @@ function createBotInput(overrides: Partial<CreateBotInput> = {}): CreateBotInput
   return {
     name: 'Test Bot',
     activeWorkspaceId: 'ws-1',
-    channelSettings: {
-      wecom: {
-        enabled: true,
-        botId: 'wecom-bot',
-        botSecret: 'wecom-secret',
-      },
-    },
     ...overrides,
   };
+}
+
+function createBotWithDefaults(
+  service: BotService,
+  overrides: Partial<CreateBotInput> & {
+    channelSettings?: BotChannelSettings;
+    rolePolicy?: BotRolePolicy;
+    rolePersonas?: Partial<Record<BotRoleKey, BotPersona>>;
+  } = {},
+) {
+  const { channelSettings, rolePolicy, rolePersonas, ...botInput } = overrides;
+  const bot = service.createBot({
+    name: botInput.name ?? 'Test Bot',
+    activeWorkspaceId: botInput.activeWorkspaceId ?? 'ws-1',
+    persona: botInput.persona,
+  });
+
+  if (channelSettings) {
+    for (const channelKey of Object.keys(channelSettings) as BotRoleKey[]) {
+      const settings = channelSettings[channelKey as keyof BotChannelSettings];
+      if (settings) {
+        service.updateChannelSettings(bot.id, channelKey as 'wecom' | 'feishu', settings);
+      }
+    }
+  }
+
+  if (rolePolicy) {
+    service.updateRolePolicy(bot.id, rolePolicy);
+  }
+
+  if (rolePersonas) {
+    service.updateRolePersonas(bot.id, rolePersonas);
+  }
+
+  return bot;
 }
 
 describe('BotService', { concurrency: false }, () => {
@@ -42,7 +70,11 @@ describe('BotService', { concurrency: false }, () => {
 
   describe('createBot', () => {
     it('creates a bot with valid credentials', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service, {
+        channelSettings: {
+          wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'wecom-secret' },
+        },
+      });
       assert.strictEqual(bot.name, 'Test Bot');
       assert.strictEqual(bot.activeWorkspaceId, 'ws-1');
 
@@ -58,18 +90,19 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('creates a bot with role personas', () => {
-      const rolePersonas: Partial<Record<BotRole, { prompt: string; mode: 'append' | 'replace' }>> = {
+      const rolePersonas: Partial<Record<BotRoleKey, { prompt: string; mode: 'append' | 'replace' }>> = {
         owner: { prompt: 'Owner persona.', mode: 'append' },
         normal: { prompt: 'Normal persona.', mode: 'replace' },
       };
-      const bot = service.createBot(createBotInput({ rolePersonas }));
+      const bot = createBotWithDefaults(service, { rolePersonas });
       assert.deepStrictEqual(service.getRolePersona(bot.id, 'owner'), rolePersonas.owner);
       assert.deepStrictEqual(service.getRolePersona(bot.id, 'normal'), rolePersonas.normal);
     });
 
     it('throws when enabled WeCom credentials are missing', () => {
+      const bot = service.createBot(createBotInput());
       assert.throws(
-        () => service.createBot(createBotInput({ channelSettings: { wecom: { enabled: true } } })),
+        () => service.updateChannelSettings(bot.id, 'wecom', { enabled: true }),
         BotValidationError,
       );
     });
@@ -85,7 +118,7 @@ describe('BotService', { concurrency: false }, () => {
 
   describe('setActiveWorkspace', () => {
     it('switches active workspace when actor is owner', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
 
       const updated = service.setActiveWorkspace(bot.id, 'ws-2', wecomOwner);
@@ -100,7 +133,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('rejects workspace switch by non-owner', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'normal-1', roleKey: 'normal' });
 
@@ -112,7 +145,7 @@ describe('BotService', { concurrency: false }, () => {
 
     it('rejects binding an already-bound workspace', () => {
       service.createBot(createBotInput({ activeWorkspaceId: 'ws-shared' }));
-      const botB = service.createBot(createBotInput({ name: 'B', activeWorkspaceId: 'ws-2' }));
+      const botB = createBotWithDefaults(service, { name: 'B', activeWorkspaceId: 'ws-2' });
       service.addMember(botB.id, { channelKey: 'wecom', channelUserId: 'owner-2', roleKey: 'owner' });
 
       assert.throws(
@@ -124,13 +157,13 @@ describe('BotService', { concurrency: false }, () => {
 
   describe('member roles', () => {
     it('defaults new members to normal', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       const member = service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1' });
       assert.strictEqual(member.roleKey, 'normal');
     });
 
     it('allows only one owner', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
 
       assert.throws(
@@ -140,7 +173,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('rejects promoting a second owner before demoting the first', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'owner' });
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-2', roleKey: 'admin' });
 
@@ -151,7 +184,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('allows changing a non-owner role', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'owner' });
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-2', roleKey: 'normal' });
 
@@ -160,7 +193,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('rejects demoting the only owner', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'owner' });
 
       assert.throws(
@@ -170,7 +203,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('rejects removing the only owner', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'owner' });
 
       assert.throws(
@@ -180,23 +213,25 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('records audit logs for member changes', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'owner' });
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-2', roleKey: 'normal' });
       service.setMemberRole(bot.id, 'wecom', 'u-2', 'admin', systemActor);
 
       const logs = store.listAuditLogs(bot.id);
-      assert.ok(logs.some((l) => l.eventType === 'member_added'));
-      assert.ok(logs.some((l) => l.eventType === 'member_role_changed'));
+      assert.ok(logs.some((l) => l.eventType === 'user_added'));
+      assert.ok(logs.some((l) => l.eventType === 'user_role_changed'));
     });
   });
 
   describe('updateBot', () => {
     it('updates channel settings', () => {
-      const bot = service.createBot(createBotInput());
-      service.updateBot(bot.id, {
-        channelSettings: { wecom: { enabled: true, botId: 'new-id', botSecret: 'new-secret' } },
+      const bot = createBotWithDefaults(service, {
+        channelSettings: {
+          wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'wecom-secret' },
+        },
       });
+      service.updateChannelSettings(bot.id, 'wecom', { enabled: true, botId: 'new-id', botSecret: 'new-secret' });
       const settings = service.getChannelSettings(bot.id);
       assert.strictEqual(settings.wecom?.botId, 'new-id');
 
@@ -224,38 +259,38 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('updates the bot role personas', () => {
-      const initial: Partial<Record<BotRole, { prompt: string; mode: 'append' | 'replace' }>> = {
+      const initial: Partial<Record<BotRoleKey, { prompt: string; mode: 'append' | 'replace' }>> = {
         owner: { prompt: 'Owner v1.', mode: 'append' },
       };
-      const bot = service.createBot(createBotInput({ rolePersonas: initial }));
+      const bot = createBotWithDefaults(service, { rolePersonas: initial });
 
-      const next: Partial<Record<BotRole, { prompt: string; mode: 'append' | 'replace' }>> = {
+      const next: Partial<Record<BotRoleKey, { prompt: string; mode: 'append' | 'replace' }>> = {
         admin: { prompt: 'Admin v2.', mode: 'replace' },
       };
-      service.updateBot(bot.id, { rolePersonas: next });
+      service.updateRolePersonas(bot.id, next);
       assert.deepStrictEqual(service.getRolePersona(bot.id, 'admin'), next.admin);
       assert.strictEqual(service.getRolePersona(bot.id, 'owner'), null);
     });
 
     it('clears role personas when rolePersonas is null', () => {
-      const rolePersonas: Partial<Record<BotRole, { prompt: string; mode: 'append' | 'replace' }>> = {
+      const rolePersonas: Partial<Record<BotRoleKey, { prompt: string; mode: 'append' | 'replace' }>> = {
         owner: { prompt: 'Owner.', mode: 'append' },
       };
-      const bot = service.createBot(createBotInput({ rolePersonas }));
+      const bot = createBotWithDefaults(service, { rolePersonas });
 
-      const updated = service.updateBot(bot.id, { rolePersonas: null });
-      assert.strictEqual(updated.rolePersonas, undefined);
-      assert.strictEqual(service.getBot(bot.id)?.rolePersonas, undefined);
+      service.updateRolePersonas(bot.id, null);
+      assert.strictEqual(service.getRolePersona(bot.id, 'owner'), null);
     });
 
     it('emits channel_enabled and channel_disabled audit events', () => {
-      const bot = service.createBot(createBotInput());
-      service.updateBot(bot.id, {
+      const bot = createBotWithDefaults(service, {
         channelSettings: {
-          wecom: { enabled: false, botId: 'wecom-bot', botSecret: 'wecom-secret' },
-          feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' },
+          wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'wecom-secret' },
+          feishu: { enabled: false },
         },
       });
+      service.updateChannelSettings(bot.id, 'wecom', { enabled: false, botId: 'wecom-bot', botSecret: 'wecom-secret' });
+      service.updateChannelSettings(bot.id, 'feishu', { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' });
 
       const logs = store.listAuditLogs(bot.id);
       assert.ok(logs.some((l) => l.eventType === 'channel_disabled' && l.details.channel === 'wecom'));
@@ -263,9 +298,9 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('throws for invalid channel settings', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       assert.throws(
-        () => service.updateBot(bot.id, { channelSettings: { wecom: { enabled: true } } }),
+        () => service.updateChannelSettings(bot.id, 'wecom', { enabled: true }),
         BotValidationError,
       );
     });
@@ -277,13 +312,13 @@ describe('BotService', { concurrency: false }, () => {
 
   describe('deleteBot', () => {
     it('deletes an existing bot', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       assert.strictEqual(service.deleteBot(bot.id), true);
       assert.strictEqual(service.getBot(bot.id), null);
     });
 
     it('records a bot_deleted audit log', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.deleteBot(bot.id);
       const logs = store.listAuditLogs(bot.id);
       assert.ok(logs.some((l) => l.eventType === 'bot_deleted' && l.details.name === 'Test Bot'));
@@ -298,7 +333,7 @@ describe('BotService', { concurrency: false }, () => {
     const feishuOwner = { type: 'feishu' as const, channelKey: 'feishu' as const, channelUserId: 'owner-f' };
 
     it('allows one owner in each channel independently', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
       service.addMember(bot.id, { channelKey: 'feishu', channelUserId: 'owner-f', roleKey: 'owner' });
 
@@ -307,7 +342,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('allows any channel owner to switch active workspace', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'feishu', channelUserId: 'owner-f', roleKey: 'owner' });
 
       const updated = service.setActiveWorkspace(bot.id, 'ws-2', feishuOwner);
@@ -315,7 +350,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('isolates ownership between channels', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
       service.addMember(bot.id, { channelKey: 'feishu', channelUserId: 'owner-f', roleKey: 'owner' });
 
@@ -334,7 +369,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('rejects channel owner from bot-level update and delete', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
 
       assert.throws(
@@ -348,7 +383,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('rejects cross-channel workspace switch', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
 
       assert.throws(
@@ -358,7 +393,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('protects the last owner of a channel even when another channel has an owner', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
       service.addMember(bot.id, { channelKey: 'feishu', channelUserId: 'owner-f', roleKey: 'owner' });
 
@@ -373,7 +408,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('rejects non-owner channel member for member management', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-2', roleKey: 'normal' });
 
@@ -390,7 +425,7 @@ describe('BotService', { concurrency: false }, () => {
 
   describe('member plaintext resolution', () => {
     it('returns resolved WeCom member when a mapping exists', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
 
       const member = service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-1', roleKey: 'normal', plaintextUserId: 'plain-1' });
       assert.strictEqual(member.plaintextUserId, 'plain-1');
@@ -398,7 +433,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('returns pending when no WeCom mapping exists', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
       service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-1', roleKey: 'normal' });
 
       const [member] = service.listMembers(bot.id);
@@ -407,7 +442,13 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('returns resolved Feishu member with userId and name', () => {
-      const bot = service.createBot(createBotInput({ activeWorkspaceId: 'ws-f', channelSettings: { wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'wecom-secret' }, feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' } } }));
+      const bot = createBotWithDefaults(service, {
+        activeWorkspaceId: 'ws-f',
+        channelSettings: {
+          wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'wecom-secret' },
+          feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' },
+        },
+      });
       store.setFeishuWorkspaceUser('ws-f', 'open-1');
       store.setFeishuWorkspaceUserName('ws-f', 'open-1', 'Alice', 'alice-id');
       service.addMember(bot.id, { channelKey: 'feishu', channelUserId: 'open-1', roleKey: 'normal' });
@@ -418,7 +459,13 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('returns pending Feishu member when userId is missing', () => {
-      const bot = service.createBot(createBotInput({ activeWorkspaceId: 'ws-f', channelSettings: { wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'wecom-secret' }, feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' } } }));
+      const bot = createBotWithDefaults(service, {
+        activeWorkspaceId: 'ws-f',
+        channelSettings: {
+          wecom: { enabled: true, botId: 'wecom-bot', botSecret: 'wecom-secret' },
+          feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' },
+        },
+      });
       store.setFeishuWorkspaceUser('ws-f', 'open-1');
       service.addMember(bot.id, { channelKey: 'feishu', channelUserId: 'open-1', roleKey: 'normal' });
 
@@ -428,7 +475,7 @@ describe('BotService', { concurrency: false }, () => {
     });
 
     it('returns enriched member from addMember when mapping already exists', () => {
-      const bot = service.createBot(createBotInput());
+      const bot = createBotWithDefaults(service);
 
       const member = service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-1', roleKey: 'normal', plaintextUserId: 'plain-1' });
       assert.strictEqual(member.plaintextUserId, 'plain-1');

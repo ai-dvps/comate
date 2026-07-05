@@ -16,14 +16,17 @@ import type { CreateBotInput } from '../models/bot.js';
 const validWecomBot: CreateBotInput = {
   name: 'WeCom Bot',
   activeWorkspaceId: 'ws-1',
-  channelSettings: {
-    wecom: {
-      enabled: true,
-      botId: 'wecom-bot-id',
-      botSecret: 'wecom-bot-secret',
-    },
-  },
 };
+
+function createWeComBot() {
+  const bot = botService.createBot(validWecomBot);
+  botService.updateChannelSettings(bot.id, 'wecom', {
+    enabled: true,
+    botId: 'wecom-bot-id',
+    botSecret: 'wecom-bot-secret',
+  });
+  return bot;
+}
 
 function createMockRes(): {
   statusCode: number;
@@ -131,7 +134,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('GET / returns a list of bots with redacted credentials', async () => {
-    botService.createBot(validWecomBot);
+    createWeComBot();
     const handlers = await importRouteHandlers();
     const res = createMockRes();
     await handlers['/'].get({}, res);
@@ -149,7 +152,7 @@ describe('bots routes', { concurrency: false }, () => {
 
     const handlers = await importRouteHandlers();
     const res = createMockRes();
-    await handlers['/'].post({ body: validWecomBot }, res);
+    await handlers['/'].post({ body: { ...validWecomBot, channelSettings: { wecom: { enabled: true, botId: 'wecom-bot-id', botSecret: 'wecom-bot-secret' } } } }, res);
 
     assert.strictEqual(res.statusCode, 201);
     const body = res.jsonBody as { bot: { id: string } };
@@ -242,7 +245,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('GET /:id returns bot and members', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'owner' });
     const handlers = await importRouteHandlers();
     const res = createMockRes();
@@ -253,7 +256,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id updates channel settings and reconnects enabled providers', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     let reconnectedBotId: string | null = null;
     wecomBotService.connectBot = async (b) => {
       reconnectedBotId = b.id;
@@ -288,7 +291,7 @@ describe('bots routes', { concurrency: false }, () => {
     await handlers['/'].post(
       {
         body: {
-          ...validWecomBot,
+          name: "WeCom Bot", activeWorkspaceId: "ws-1",
           persona: { prompt: 'Hello, I am a bot', mode: 'append' as const },
         },
       },
@@ -300,7 +303,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id updates the bot persona and returns it', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     const handlers = await importRouteHandlers();
     const res = createMockRes();
     await handlers['/:id'].put(
@@ -317,7 +320,7 @@ describe('bots routes', { concurrency: false }, () => {
 
   it('GET /:id returns the bot persona', async () => {
     const bot = botService.createBot({
-      ...validWecomBot,
+      name: "WeCom Bot", activeWorkspaceId: "ws-1",
       persona: { prompt: 'Intro persona', mode: 'append' as const },
     });
     const handlers = await importRouteHandlers();
@@ -330,7 +333,7 @@ describe('bots routes', { concurrency: false }, () => {
 
   it('GET / returns bots with persona unredacted', async () => {
     botService.createBot({
-      ...validWecomBot,
+      name: "WeCom Bot", activeWorkspaceId: "ws-1",
       persona: { prompt: 'Listed persona', mode: 'replace' as const },
     });
     const handlers = await importRouteHandlers();
@@ -343,7 +346,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('DELETE /:id disconnects providers and removes the bot', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     let disconnectedWecomBotId: string | null = null;
     wecomBotService.disconnectBot = (id) => {
       disconnectedWecomBotId = id;
@@ -362,13 +365,13 @@ describe('bots routes', { concurrency: false }, () => {
     const botA = botService.createBot({
       name: 'A',
       activeWorkspaceId: workspace.id,
-      channelSettings: { wecom: { enabled: true, botId: 'a', botSecret: 's' } },
     });
+    botService.updateChannelSettings(botA.id, 'wecom', { enabled: true, botId: 'a', botSecret: 's' });
     const botB = botService.createBot({
       name: 'B',
       activeWorkspaceId: 'ws-other',
-      channelSettings: { wecom: { enabled: true, botId: 'b', botSecret: 's' } },
     });
+    botService.updateChannelSettings(botB.id, 'wecom', { enabled: true, botId: 'b', botSecret: 's' });
     botService.addMember(botB.id, { channelKey: 'wecom', channelUserId: 'owner', roleKey: 'owner' });
 
     const handlers = await importRouteHandlers();
@@ -391,8 +394,8 @@ describe('bots routes', { concurrency: false }, () => {
     const bot = botService.createBot({
       name: 'Mover',
       activeWorkspaceId: ws1.id,
-      channelSettings: { wecom: { enabled: true, botId: 'm', botSecret: 's' } },
     });
+    botService.updateChannelSettings(bot.id, 'wecom', { enabled: true, botId: 'm', botSecret: 's' });
 
     let routedBotId: string | null = null;
     let routedWorkspaceId: string | null = null;
@@ -416,7 +419,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('POST /:id/members adds a member', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     const handlers = await importRouteHandlers();
     const res = createMockRes();
     await handlers['/:id/members'].post(
@@ -432,7 +435,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('POST /:id/members validates channel', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     const handlers = await importRouteHandlers();
     const res = createMockRes();
     await handlers['/:id/members'].post(
@@ -446,7 +449,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id/members/:channelUserId/role updates a role', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'normal' });
     const handlers = await importRouteHandlers();
     const res = createMockRes();
@@ -463,7 +466,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('DELETE /:id/members/:channelUserId removes a member', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'normal' });
     const handlers = await importRouteHandlers();
     const res = createMockRes();
@@ -479,7 +482,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('POST /:id/members/resolve-pending resolves WeCom pending members', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     workspaceStore.setWecomUserMapping('enc-1', 'plain-1');
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-2', roleKey: 'normal' });
 
@@ -507,7 +510,7 @@ describe('bots routes', { concurrency: false }, () => {
 
   it('POST /:id/members/resolve-pending counts Feishu as failed when no client', async () => {
     const bot = botService.createBot({
-      ...validWecomBot,
+      name: "WeCom Bot", activeWorkspaceId: "ws-1",
       activeWorkspaceId: 'ws-f',
       channelSettings: { feishu: { enabled: true, appId: 'a', appSecret: 's' } },
     });
@@ -523,7 +526,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id/members/:channelUserId/plaintext stores a manual WeCom mapping', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-1', roleKey: 'normal' });
 
     const handlers = await importRouteHandlers();
@@ -544,7 +547,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id/members/:channelUserId/plaintext rejects duplicate plaintext in workspace', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     workspaceStore.setWecomWorkspaceUser('ws-1', 'enc-1');
     workspaceStore.setWecomUserMapping('enc-1', 'existing');
     workspaceStore.setWecomWorkspaceUser('ws-1', 'enc-2');
@@ -565,7 +568,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id/members/:channelUserId/plaintext rejects empty plaintext IDs', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-1', roleKey: 'normal' });
 
     const handlers = await importRouteHandlers();
@@ -583,7 +586,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id/members/:channelUserId/plaintext returns 404 for unknown members', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
 
     const handlers = await importRouteHandlers();
     const res = createMockRes();
@@ -600,7 +603,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id with persona change triggers runtime invalidation', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     let invalidatedBotId: string | null = null;
     chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
@@ -621,7 +624,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id with rolePersonas change triggers runtime invalidation', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     let invalidatedBotId: string | null = null;
     chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
@@ -642,7 +645,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id with rolePolicy change triggers runtime invalidation', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     let invalidatedBotId: string | null = null;
     chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
@@ -672,7 +675,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id with name change does not trigger runtime invalidation', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     let invalidatedBotId: string | null = 'not-called';
     chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
@@ -693,7 +696,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('POST /:id/members triggers runtime invalidation', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     let invalidatedBotId: string | null = null;
     chatService.scheduleRebuildsForBot = (botId) => {
       invalidatedBotId = botId;
@@ -714,7 +717,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('PUT /:id/members/:channelUserId/role triggers runtime invalidation', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'normal' });
     let invalidatedBotId: string | null = null;
     chatService.scheduleRebuildsForBot = (botId) => {
@@ -737,7 +740,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('DELETE /:id/members/:channelUserId triggers runtime invalidation', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'normal' });
     let invalidatedBotId: string | null = null;
     chatService.scheduleRebuildsForBot = (botId) => {
@@ -759,7 +762,7 @@ describe('bots routes', { concurrency: false }, () => {
   });
 
   it('GET /:id/status returns channel statuses', async () => {
-    const bot = botService.createBot(validWecomBot);
+    const bot = createWeComBot();
     wecomBotService.getBotStatus = () => 'connected';
     feishuBotService.getBotStatus = () => 'not_configured';
 
