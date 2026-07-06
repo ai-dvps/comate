@@ -53,16 +53,19 @@ export interface Bot {
   updatedAt: string;
 }
 
-export interface BotMember {
+export interface BotUser {
+  id: string;
   botId: string;
-  channel: BotChannel;
+  channelId: string;
+  channelKey: BotChannel;
+  roleId: string;
   channelUserId: string;
-  role: BotRole;
   plaintextUserId: string | null;
-  displayName: string | null;
-  resolutionStatus: 'resolved' | 'pending';
+  displayName?: string | null;
   createdAt: string;
   updatedAt: string;
+  roleKey: BotRole;
+  resolutionStatus: 'resolved' | 'pending';
 }
 
 export interface CreateBotInput {
@@ -106,7 +109,7 @@ export interface MigrationResult {
 
 export interface BotState {
   bots: Bot[];
-  membersByBotId: Record<string, BotMember[]>;
+  membersByBotId: Record<string, BotUser[]>;
   statusByBotId: Record<string, BotStatus>;
   isLoading: boolean;
   isSaving: boolean;
@@ -119,7 +122,7 @@ export interface BotState {
   deleteBot: (id: string) => Promise<boolean>;
   switchWorkspace: (botId: string, workspaceId: string) => Promise<Bot | null>;
   fetchMembers: (botId: string) => Promise<void>;
-  addMember: (botId: string, input: { channel: BotChannel; channelUserId: string; role: BotRole }) => Promise<BotMember | null>;
+  addMember: (botId: string, input: { channel: BotChannel; channelUserId: string; role: BotRole }) => Promise<BotUser | null>;
   setMemberRole: (botId: string, channel: BotChannel, channelUserId: string, role: BotRole) => Promise<boolean>;
   removeMember: (botId: string, channel: BotChannel, channelUserId: string) => Promise<boolean>;
   resolvePendingMembers: (botId: string) => Promise<{ resolved: number; failed: number } | null>;
@@ -128,7 +131,7 @@ export interface BotState {
     channel: BotChannel,
     channelUserId: string,
     plaintextUserId: string,
-  ) => Promise<BotMember | null>;
+  ) => Promise<BotUser | null>;
   refreshMembers: (botId: string) => Promise<void>;
   fetchStatus: (botId: string) => Promise<void>;
   runMigration: (dryRun?: boolean) => Promise<MigrationResult | null>;
@@ -247,7 +250,7 @@ export const useBotStore = create<BotState>((set, get) => ({
     try {
       const res = await fetch(`${API_BASE}/bots/${botId}`);
       if (!res.ok) throw new Error(await handleError(res));
-      const data = (await res.json()) as { bot: Bot; members: BotMember[] };
+      const data = (await res.json()) as { bot: Bot; members: BotUser[] };
       set({
         membersByBotId: { ...get().membersByBotId, [botId]: data.members || [] },
       });
@@ -265,7 +268,7 @@ export const useBotStore = create<BotState>((set, get) => ({
         body: JSON.stringify(input),
       });
       if (!res.ok) throw new Error(await handleError(res));
-      const data = (await res.json()) as { member: BotMember };
+      const data = (await res.json()) as { member: BotUser };
       const current = get().membersByBotId[botId] || [];
       set({
         membersByBotId: { ...get().membersByBotId, [botId]: [...current, data.member] },
@@ -295,7 +298,7 @@ export const useBotStore = create<BotState>((set, get) => ({
         membersByBotId: {
           ...get().membersByBotId,
           [botId]: current.map((m) =>
-            m.channel === channel && m.channelUserId === channelUserId ? { ...m, role } : m,
+            m.channelKey === channel && m.channelUserId === channelUserId ? { ...m, roleKey: role } : m,
           ),
         },
         isSaving: false,
@@ -320,7 +323,7 @@ export const useBotStore = create<BotState>((set, get) => ({
         membersByBotId: {
           ...get().membersByBotId,
           [botId]: current.filter(
-            (m) => !(m.channel === channel && m.channelUserId === channelUserId),
+            (m) => !(m.channelKey === channel && m.channelUserId === channelUserId),
           ),
         },
         isSaving: false,
@@ -359,13 +362,13 @@ export const useBotStore = create<BotState>((set, get) => ({
         },
       );
       if (!res.ok) throw new Error(await handleError(res));
-      const data = (await res.json()) as { member: BotMember };
+      const data = (await res.json()) as { member: BotUser };
       const current = get().membersByBotId[botId] || [];
       set({
         membersByBotId: {
           ...get().membersByBotId,
           [botId]: current.map((m) =>
-            m.channel === channel && m.channelUserId === channelUserId ? data.member : m,
+            m.channelKey === channel && m.channelUserId === channelUserId ? data.member : m,
           ),
         },
         isSaving: false,

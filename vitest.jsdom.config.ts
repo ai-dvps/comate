@@ -18,6 +18,7 @@ export default defineProject({
     include: [
       'src/client/{components,hooks}/**/*.{test,spec}.{ts,tsx}',
       'src/client/stores/chat-store.test.ts',
+      'src/client/stores/bot-store.test.ts',
       'src/client/lib/bot-filter.test.ts',
     ],
     exclude: [
