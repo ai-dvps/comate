@@ -99,6 +99,18 @@ describe('BotService', { concurrency: false }, () => {
       assert.deepStrictEqual(service.getRolePersona(bot.id, 'normal'), rolePersonas.normal);
     });
 
+    it('returns all role personas via getRolePersonas', () => {
+      const rolePersonas: Partial<Record<BotRoleKey, { prompt: string; mode: 'append' | 'replace' }>> = {
+        owner: { prompt: 'Owner persona.', mode: 'append' },
+        admin: { prompt: 'Admin persona.', mode: 'replace' },
+      };
+      const bot = createBotWithDefaults(service, { rolePersonas });
+      assert.deepStrictEqual(service.getRolePersonas(bot.id), {
+        owner: rolePersonas.owner,
+        admin: rolePersonas.admin,
+      });
+    });
+
     it('throws when enabled WeCom credentials are missing', () => {
       const bot = service.createBot(createBotInput());
       assert.throws(
@@ -449,8 +461,8 @@ describe('BotService', { concurrency: false }, () => {
           feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' },
         },
       });
-      store.setFeishuWorkspaceUser('ws-f', 'open-1');
-      store.setFeishuWorkspaceUserName('ws-f', 'open-1', 'Alice', 'alice-id');
+      service.ensureMember(bot.id, 'feishu', 'open-1');
+      service.setMemberPlaintext(bot.id, 'feishu', 'open-1', 'alice-id');
       service.addMember(bot.id, { channelKey: 'feishu', channelUserId: 'open-1', roleKey: 'normal' });
 
       const [member] = service.listMembers(bot.id);
@@ -466,7 +478,7 @@ describe('BotService', { concurrency: false }, () => {
           feishu: { enabled: true, appId: 'feishu-app', appSecret: 'feishu-secret' },
         },
       });
-      store.setFeishuWorkspaceUser('ws-f', 'open-1');
+      service.ensureMember(bot.id, 'feishu', 'open-1');
       service.addMember(bot.id, { channelKey: 'feishu', channelUserId: 'open-1', roleKey: 'normal' });
 
       const [member] = service.listMembers(bot.id);

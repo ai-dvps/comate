@@ -177,6 +177,17 @@ export class BotService {
     return role?.persona ?? null;
   }
 
+  getRolePersonas(botId: string): Partial<Record<BotRoleKey, BotPersona>> {
+    const roles = this.store.listBotRoles(botId);
+    const result: Partial<Record<BotRoleKey, BotPersona>> = {};
+    for (const role of roles) {
+      if (role.persona) {
+        result[role.roleKey] = role.persona;
+      }
+    }
+    return result;
+  }
+
   updateRolePolicy(
     botId: string,
     permissions: BotRolePolicy,
@@ -410,6 +421,42 @@ export class BotService {
       channelUserId,
       plaintextUserId: plaintextUserId ?? null,
     });
+  }
+
+  // Workspace-scoped helpers for backward-compatible routes
+
+  getBotForWorkspace(workspaceId: string): Bot | null {
+    return this.store.listBotsForWorkspace(workspaceId)[0] ?? null;
+  }
+
+  private getChannelForWorkspace(
+    workspaceId: string,
+    channelKey: BotChannelKey,
+  ): { bot: Bot; channel: import('../models/bot.js').BotChannel } | null {
+    const bot = this.getBotForWorkspace(workspaceId);
+    if (!bot) return null;
+    const channel = this.store.getBotChannelByKey(bot.id, channelKey);
+    if (!channel) return null;
+    return { bot, channel };
+  }
+
+  listChannelUsersForWorkspace(workspaceId: string, channelKey: BotChannelKey): BotUser[] {
+    const pair = this.getChannelForWorkspace(workspaceId, channelKey);
+    if (!pair) return [];
+    return this.store.listBotUsersByChannel(pair.bot.id, pair.channel.id);
+  }
+
+  setChannelUserPlaintextForWorkspace(
+    workspaceId: string,
+    channelKey: BotChannelKey,
+    channelUserId: string,
+    plaintextUserId: string,
+  ): BotUser {
+    const pair = this.getChannelForWorkspace(workspaceId, channelKey);
+    if (!pair) {
+      throw new BotValidationError('No bot bound to this workspace');
+    }
+    return this.setMemberPlaintext(pair.bot.id, channelKey, channelUserId, plaintextUserId);
   }
 
   async resolvePendingMembers(

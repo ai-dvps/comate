@@ -642,6 +642,57 @@ describe('bots routes', { concurrency: false }, () => {
     assert.strictEqual(invalidatedBotId, bot.id);
   });
 
+  it('PUT /:id persists rolePersonas and returns them', async () => {
+    const bot = createWeComBot();
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    const rolePersonas = {
+      owner: { prompt: 'Owner persona', mode: 'append' as const },
+      admin: { prompt: 'Admin persona', mode: 'replace' as const },
+      normal: { prompt: 'Normal persona', mode: 'append' as const },
+    };
+    await handlers['/:id'].put({ params: { id: bot.id }, body: { rolePersonas } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bot: { rolePersonas: unknown } };
+    assert.deepStrictEqual(body.bot.rolePersonas, rolePersonas);
+    assert.deepStrictEqual(botService.getRolePersona(bot.id, 'owner'), rolePersonas.owner);
+    assert.deepStrictEqual(botService.getRolePersona(bot.id, 'admin'), rolePersonas.admin);
+    assert.deepStrictEqual(botService.getRolePersona(bot.id, 'normal'), rolePersonas.normal);
+  });
+
+  it('GET /:id returns rolePersonas', async () => {
+    const bot = createWeComBot();
+    botService.updateRolePersonas(bot.id, {
+      owner: { prompt: 'Owner persona', mode: 'append' as const },
+    });
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].get({ params: { id: bot.id } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bot: { rolePersonas: unknown } };
+    assert.deepStrictEqual(body.bot.rolePersonas, {
+      owner: { prompt: 'Owner persona', mode: 'append' },
+    });
+  });
+
+  it('GET / returns bots with rolePersonas unredacted', async () => {
+    const bot = createWeComBot();
+    botService.updateRolePersonas(bot.id, {
+      normal: { prompt: 'Normal persona', mode: 'replace' as const },
+    });
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].get({}, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bots: Array<{ rolePersonas: unknown }> };
+    assert.strictEqual(body.bots.length, 1);
+    assert.deepStrictEqual(body.bots[0].rolePersonas, {
+      normal: { prompt: 'Normal persona', mode: 'replace' },
+    });
+  });
+
   it('PUT /:id persists rolePolicy and returns it', async () => {
     const bot = createWeComBot();
     const handlers = await importRouteHandlers();
