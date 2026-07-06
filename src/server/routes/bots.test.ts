@@ -483,13 +483,12 @@ describe('bots routes', { concurrency: false }, () => {
 
   it('POST /:id/members/resolve-pending resolves WeCom pending members', async () => {
     const bot = createWeComBot();
-    workspaceStore.setWecomUserMapping('enc-1', 'plain-1');
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-2', roleKey: 'normal' });
 
     const originalResolveImmediate = wecomUserResolver.resolveImmediate.bind(wecomUserResolver);
     wecomUserResolver.resolveImmediate = async (_workspaceId: string, encryptedUserId: string) => {
       if (encryptedUserId === 'enc-2') {
-        workspaceStore.setWecomUserMapping(encryptedUserId, 'plain-2');
+        botService.setMemberPlaintext(bot.id, 'wecom', encryptedUserId, 'plain-2');
         return 'plain-2';
       }
       throw new Error('unexpected');
@@ -548,9 +547,8 @@ describe('bots routes', { concurrency: false }, () => {
 
   it('PUT /:id/members/:channelUserId/plaintext rejects duplicate plaintext in workspace', async () => {
     const bot = createWeComBot();
-    workspaceStore.setWecomWorkspaceUser('ws-1', 'enc-1');
-    workspaceStore.setWecomUserMapping('enc-1', 'existing');
-    workspaceStore.setWecomWorkspaceUser('ws-1', 'enc-2');
+    botService.ensureMember(bot.id, 'wecom', 'enc-1');
+    botService.setMemberPlaintext(bot.id, 'wecom', 'enc-1', 'existing');
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-2', roleKey: 'normal' });
 
     const handlers = await importRouteHandlers();
@@ -642,6 +640,42 @@ describe('bots routes', { concurrency: false }, () => {
 
     await new Promise((resolve) => setImmediate(resolve));
     assert.strictEqual(invalidatedBotId, bot.id);
+  });
+
+  it('PUT /:id persists rolePolicy and returns it', async () => {
+    const bot = createWeComBot();
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    const rolePolicy = {
+      normalToolPolicy: { posture: 'deny-all' as const, categoryDefaults: { fileRead: 'deny' as const } },
+      skillAllowlist: ['skill-a'],
+      bashWhitelist: ['ls'],
+    };
+    await handlers['/:id'].put({ params: { id: bot.id }, body: { rolePolicy } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bot: { rolePolicy: unknown } };
+    assert.deepStrictEqual(body.bot.rolePolicy, rolePolicy);
+    assert.deepStrictEqual(botService.getRolePolicy(bot.id), rolePolicy);
+  });
+
+  it('GET / returns bots with rolePolicy unredacted', async () => {
+    const bot = createWeComBot();
+    botService.updateRolePolicy(bot.id, {
+      normalToolPolicy: { posture: 'allow-all' as const, categoryDefaults: { fileRead: 'allow' as const } },
+      skillAllowlist: ['skill-b'],
+      bashWhitelist: [],
+    });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/'].get({}, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { bots: Array<{ rolePolicy: unknown }> };
+    assert.strictEqual(body.bots.length, 1);
+    assert.deepStrictEqual(body.bots[0].rolePolicy.normalToolPolicy, {
+      posture: 'allow-all',
+      categoryDefaults: { fileRead: 'allow' },
+    });
+    assert.deepStrictEqual(body.bots[0].rolePolicy.skillAllowlist, ['skill-b']);
   });
 
   it('PUT /:id with rolePolicy change triggers runtime invalidation', async () => {
