@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
+import { botService } from '../services/bot-service.js';
+import type { BotUser } from '../models/bot-user.js';
 
 const router = Router({ mergeParams: true });
 
@@ -27,8 +29,8 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    const callerUserId = store.getWecomUserIdBySession(workspaceId, sessionId);
-    if (!callerUserId) {
+    const callerUser = findWecomUserForSession(workspaceId, sessionId);
+    if (!callerUser) {
       res.status(400).json({
         error: 'unknown_session',
         message: 'Session is not associated with a WeCom user in this workspace.',
@@ -42,7 +44,7 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    const callerCanonicalUserId = store.getWecomUserMapping(callerUserId) ?? callerUserId;
+    const callerCanonicalUserId = callerUser.plaintextUserId ?? callerUser.channelUserId;
     const isAdmin = workspace.settings.wecomBotIsolation?.adminUserIds?.includes(callerCanonicalUserId) ?? false;
 
     await wecomBotService.sendFile(workspaceId, toUser.trim(), filePath.trim(), isAdmin);
@@ -75,5 +77,16 @@ router.post('/', async (req, res) => {
     res.status(500).json({ error: 'send_file_failed', message });
   }
 });
+
+function findWecomUserForSession(workspaceId: string, sessionId: string): BotUser | null {
+  const users = botService.listChannelUsersForWorkspace(workspaceId, 'wecom');
+  for (const user of users) {
+    const sessions = store.listUserSessionsByUser(user.id);
+    if (sessions.some((s) => s.sessionId === sessionId)) {
+      return user;
+    }
+  }
+  return null;
+}
 
 export default router;

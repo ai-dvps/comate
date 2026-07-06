@@ -1,6 +1,8 @@
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
+import { botService } from './bot-service.js';
 import type { WeComProactiveMessage } from '../models/wecom-proactive-message.js';
+import type { BotUser } from '../models/bot-user.js';
 
 const POLL_INTERVAL_MS = 5_000;
 const GRACE_PERIOD_MS = 30_000;
@@ -124,16 +126,22 @@ export class WeComQueueWorker {
     }
   }
 
+  private resolveWecomUser(entry: WeComProactiveMessage): BotUser | null {
+    const bot = botService.getBotForWorkspace(entry.workspaceId);
+    if (!bot) return null;
+    return botService.getMember(bot.id, 'wecom', entry.recipientEncryptedUserId);
+  }
+
   private async canDispatch(entry: WeComProactiveMessage): Promise<boolean> {
     // Verify the user ID mapping is still present
-    const plaintextId = workspaceStore.getWecomUserMapping(entry.recipientEncryptedUserId);
-    if (!plaintextId) {
+    const user = this.resolveWecomUser(entry);
+    if (!user?.plaintextUserId) {
       console.log(`[WeComQueueWorker] Cannot dispatch ${entry.id}: user ID not decrypted yet`);
       return false;
     }
 
     // Find recipient session
-    const sessionId = workspaceStore.getActiveWecomSession(entry.workspaceId, entry.recipientEncryptedUserId);
+    const sessionId = user ? workspaceStore.getActiveUserSession(user.id) : null;
     if (!sessionId) {
       console.log(`[WeComQueueWorker] Cannot dispatch ${entry.id}: no session for recipient`);
       return false;
@@ -150,7 +158,11 @@ export class WeComQueueWorker {
   }
 
   private async dispatch(entry: WeComProactiveMessage): Promise<void> {
-    const sessionId = workspaceStore.getActiveWecomSession(entry.workspaceId, entry.recipientEncryptedUserId)!;
+    const user = this.resolveWecomUser(entry);
+    const sessionId = user ? workspaceStore.getActiveUserSession(user.id) : null;
+    if (!sessionId) {
+      throw new Error(`No active session for recipient ${entry.recipientEncryptedUserId}`);
+    }
 
     console.log(`[WeComQueueWorker] Dispatching ${entry.id} to session ${sessionId}`);
 

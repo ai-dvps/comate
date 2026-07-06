@@ -651,10 +651,10 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
   const originalGet = workspaceStore.get.bind(workspaceStore);
   const originalGetLocalSession = workspaceStore.getLocalSession.bind(workspaceStore);
   const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
-  const originalGetWecomUserIdBySession = workspaceStore.getWecomUserIdBySession.bind(workspaceStore);
-  const originalGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
-  const originalListWecomWorkspaceUsers = workspaceStore.listWecomWorkspaceUsers.bind(workspaceStore);
-  const originalListWecomUserMappings = workspaceStore.listWecomUserMappings.bind(workspaceStore);
+  const originalGetSessionUsers = workspaceStore.getSessionUsers.bind(workspaceStore);
+  const originalGetBotUser = workspaceStore.getBotUser.bind(workspaceStore);
+  const originalGetBotChannel = workspaceStore.getBotChannel.bind(workspaceStore);
+  const originalListChannelUsersForWorkspace = botService.listChannelUsersForWorkspace.bind(botService);
 
   class MockSdkClient extends SdkClient {
     override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
@@ -700,10 +700,10 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     workspaceStore.get = originalGet;
     workspaceStore.getLocalSession = originalGetLocalSession;
     workspaceStore.getDefaultProvider = originalGetDefaultProvider;
-    workspaceStore.getWecomUserIdBySession = originalGetWecomUserIdBySession;
-    workspaceStore.getWecomUserMapping = originalGetWecomUserMapping;
-    workspaceStore.listWecomWorkspaceUsers = originalListWecomWorkspaceUsers;
-    workspaceStore.listWecomUserMappings = originalListWecomUserMappings;
+    workspaceStore.getSessionUsers = originalGetSessionUsers;
+    workspaceStore.getBotUser = originalGetBotUser;
+    workspaceStore.getBotChannel = originalGetBotChannel;
+    botService.listChannelUsersForWorkspace = originalListChannelUsersForWorkspace;
   });
 
   function createMockRuntime(): SessionRuntime {
@@ -774,13 +774,48 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     workspaceStore.get = async () => mockWorkspace;
     workspaceStore.getLocalSession = () => createMockSession('s1');
     workspaceStore.getDefaultProvider = () => createMockProvider();
-    workspaceStore.getWecomUserIdBySession = () =>
-      identity?.wecomUserId === undefined ? 'wecom-user-1' : identity.wecomUserId;
-    workspaceStore.getWecomUserMapping = () =>
-      identity?.mapping === undefined ? 'user1' : identity.mapping;
+
+    const wecomUserId = identity?.wecomUserId === undefined ? 'wecom-user-1' : identity.wecomUserId;
+    const mapping = identity?.mapping === undefined ? 'user1' : identity.mapping;
+    workspaceStore.getSessionUsers = () => (wecomUserId === null ? [] : ['user-1']);
+    workspaceStore.getBotUser = (userId: string) => {
+      if (userId !== 'user-1' || wecomUserId === null) return null;
+      return {
+        id: 'user-1',
+        botId: 'bot-1',
+        channelId: 'chan-1',
+        roleId: 'role-1',
+        channelKey: 'wecom',
+        channelUserId: wecomUserId,
+        plaintextUserId: mapping,
+        createdAt: '',
+        updatedAt: '',
+        roleKey: 'normal',
+        resolutionStatus: mapping ? 'resolved' : 'pending',
+      } as unknown as import('../models/bot-user.js').BotUser;
+    };
+    workspaceStore.getBotChannel = (channelId: string) => {
+      if (channelId !== 'chan-1') return null;
+      return { id: 'chan-1', channelKey: 'wecom' } as unknown as import('../models/bot.js').BotChannel;
+    };
+
     const knownUserDirNames = identity?.knownUserDirNames ?? [];
-    workspaceStore.listWecomWorkspaceUsers = () => knownUserDirNames.map((name) => ({ encryptedUserId: name, plaintextUserId: name }));
-    workspaceStore.listWecomUserMappings = () => [];
+    botService.listChannelUsersForWorkspace = (_workspaceId: string, channelKey: string) => {
+      if (channelKey !== 'wecom') return [];
+      return knownUserDirNames.map((name) => ({
+        id: `user-${name}`,
+        botId: 'bot-1',
+        channelId: 'chan-1',
+        roleId: 'role-1',
+        channelKey: 'wecom',
+        channelUserId: name,
+        plaintextUserId: name,
+        createdAt: '',
+        updatedAt: '',
+        roleKey: 'normal',
+        resolutionStatus: 'resolved',
+      } as unknown as import('../models/bot-user.js').BotUser));
+    };
 
     let capturedOptions: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {
@@ -803,8 +838,10 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     workspaceStore.get = async () => mockWorkspace;
     workspaceStore.getLocalSession = () => ({ ...createMockSession('s1'), ...sessionOverrides });
     workspaceStore.getDefaultProvider = () => createMockProvider();
-    workspaceStore.listWecomWorkspaceUsers = () => [];
-    workspaceStore.listWecomUserMappings = () => [];
+    workspaceStore.getSessionUsers = () => [];
+    workspaceStore.getBotUser = () => null;
+    workspaceStore.getBotChannel = () => null;
+    botService.listChannelUsersForWorkspace = () => [];
 
     let capturedOptions: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {
@@ -818,15 +855,32 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
   }
 
   it('Feishu bot session does not set WECOM_USER_ID', async () => {
-    workspaceStore.getWecomUserIdBySession = () => undefined;
-    workspaceStore.getWecomUserMapping = () => undefined;
+    workspaceStore.getSessionUsers = () => [];
+    workspaceStore.getBotUser = () => null;
     const options = await captureBotOptions({ wecomBotEnabled: true }, 'feishu-user-1');
     assert.strictEqual(options.env.WECOM_USER_ID, undefined);
   });
 
   it('GUI session does not set WECOM_USER_ID', async () => {
-    workspaceStore.getWecomUserIdBySession = () => 'wecom-user-1';
-    workspaceStore.getWecomUserMapping = () => 'user1';
+    workspaceStore.getSessionUsers = () => ['user-1'];
+    workspaceStore.getBotUser = () =>
+      ({
+        id: 'user-1',
+        botId: 'bot-1',
+        channelId: 'chan-1',
+        roleId: 'role-1',
+        channelKey: 'wecom',
+        channelUserId: 'wecom-user-1',
+        plaintextUserId: 'user1',
+        createdAt: '',
+        updatedAt: '',
+        roleKey: 'normal',
+        resolutionStatus: 'resolved',
+      } as unknown as import('../models/bot-user.js').BotUser);
+    workspaceStore.getBotChannel = (channelId: string) =>
+      channelId === 'chan-1'
+        ? ({ id: 'chan-1', channelKey: 'wecom' } as unknown as import('../models/bot.js').BotChannel)
+        : null;
     const mockWorkspace = createMockWorkspace('ws-1');
     workspaceStore.get = async () => mockWorkspace;
     workspaceStore.getLocalSession = () => createMockSession('s1');
@@ -1868,8 +1922,12 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId, roleKey: role });
 
     const encryptedUserId = `enc-${channelUserId}`;
-    workspaceStore.setWecomWorkspaceUser(workspace.id, encryptedUserId);
-    workspaceStore.setWecomUserMapping(encryptedUserId, channelUserId);
+    const encryptedUser = botService.addMember(bot.id, {
+      channelKey: 'wecom',
+      channelUserId: encryptedUserId,
+      roleKey: 'normal',
+      plaintextUserId: channelUserId,
+    });
     const session = workspaceStore.createLocalSession(
       workspace.id,
       'Bot Session',
@@ -1879,7 +1937,8 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
       undefined,
       bot.id,
     );
-    workspaceStore.setWecomSession(workspace.id, encryptedUserId, session.id);
+    workspaceStore.addUserSession(workspace.id, session.id, encryptedUser.id);
+    workspaceStore.setActiveUserSession(encryptedUser.id, session.id);
 
     let capturedOptions: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {
@@ -2110,8 +2169,12 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     }
 
     const encryptedUserId = `enc-${channelUserId}`;
-    workspaceStore.setWecomWorkspaceUser(workspace.id, encryptedUserId);
-    workspaceStore.setWecomUserMapping(encryptedUserId, channelUserId);
+    const encryptedUser = botService.addMember(bot.id, {
+      channelKey: 'wecom',
+      channelUserId: encryptedUserId,
+      roleKey: 'normal',
+      plaintextUserId: channelUserId,
+    });
 
     const session = workspaceStore.createLocalSession(
       workspace.id,
@@ -2122,7 +2185,8 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       undefined,
       bot.id,
     );
-    workspaceStore.setWecomSession(workspace.id, encryptedUserId, session.id);
+    workspaceStore.addUserSession(workspace.id, session.id, encryptedUser.id);
+    workspaceStore.setActiveUserSession(encryptedUser.id, session.id);
 
     let capturedOptions: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {

@@ -96,6 +96,10 @@
     "revealInFileManager": "Reveal in File Manager",
     "copyFullPath": "Copy full path"
   },
+  "migrationNotice": {
+    "title": "Schema upgrade complete",
+    "message": "Historical bot audit logs ({{count}} entries) were removed during the latest schema migration. New audit events will continue to be recorded."
+  },
   "provider": {
     "noProviderConfigured": "No LLM provider configured. Go to Settings → Providers to add one.",
     "configure": "Configure Provider"

@@ -29,6 +29,7 @@ import { startPeriodicUpdateChecks, stopPeriodicUpdateChecks } from './lib/updat
 import UpdateNotification from './components/UpdateNotification'
 import UpdateRestartDialog from './components/UpdateRestartDialog'
 import { ToolRendererProvider } from './components/tool-renderers/ToolRendererContext'
+import { useMigrationNotice } from './hooks/use-migration-notice'
 
 function App() {
   const { t } = useTranslation('common')
@@ -63,6 +64,7 @@ function App() {
     checking: true,
   })
   const [providerToastDismissed, setProviderToastDismissed] = useState(false)
+  const { visible: migrationNoticeVisible, auditLogsCleared, dismiss: dismissMigrationNotice } = useMigrationNotice()
 
   const fetchProviders = useProviderStore((s) => s.fetchProviders)
   const detectProviders = useProviderStore((s) => s.detectProviders)
@@ -301,6 +303,23 @@ function App() {
         )}
 
         <UpdateNotification />
+
+        {migrationNoticeVisible && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 bg-surface border border-border rounded-lg shadow-lg px-3 py-2 flex items-center gap-2 max-w-md">
+            <AlertCircle className="w-4 h-4 text-warning flex-shrink-0" />
+            <div className="flex flex-col text-xs">
+              <span className="font-medium text-text-primary">{t('migrationNotice.title')}</span>
+              <span className="text-text-secondary">{t('migrationNotice.message', { count: auditLogsCleared })}</span>
+            </div>
+            <button
+              onClick={dismissMigrationNotice}
+              className="p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors flex-shrink-0"
+              aria-label={t('close')}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         <Sidebar
           width={sidebarWidth}

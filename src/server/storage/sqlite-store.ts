@@ -118,22 +118,22 @@ export class SqliteStore {
         )
       `);
     }
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS wecom_workspace_users (
-        workspaceId TEXT NOT NULL,
-        encryptedUserId TEXT NOT NULL,
-        firstSeenAt TEXT NOT NULL,
-        lastSeenAt TEXT NOT NULL,
-        PRIMARY KEY (workspaceId, encryptedUserId)
-      )
-    `);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS feishu_bot_binding (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        activeWorkspaceId TEXT NOT NULL
-      )
-    `);
     if (migrationVersion === null || migrationVersion < 5) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS wecom_workspace_users (
+          workspaceId TEXT NOT NULL,
+          encryptedUserId TEXT NOT NULL,
+          firstSeenAt TEXT NOT NULL,
+          lastSeenAt TEXT NOT NULL,
+          PRIMARY KEY (workspaceId, encryptedUserId)
+        )
+      `);
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS feishu_bot_binding (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          activeWorkspaceId TEXT NOT NULL
+        )
+      `);
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS feishu_user_sessions (
           workspaceId TEXT NOT NULL,
@@ -153,18 +153,18 @@ export class SqliteStore {
           PRIMARY KEY (workspaceId, feishuUserId)
         )
       `);
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS feishu_workspace_users (
+          workspaceId TEXT NOT NULL,
+          openId TEXT NOT NULL,
+          userId TEXT,
+          name TEXT,
+          firstSeenAt TEXT NOT NULL,
+          lastSeenAt TEXT NOT NULL,
+          PRIMARY KEY (workspaceId, openId)
+        )
+      `);
     }
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS feishu_workspace_users (
-        workspaceId TEXT NOT NULL,
-        openId TEXT NOT NULL,
-        userId TEXT,
-        name TEXT,
-        firstSeenAt TEXT NOT NULL,
-        lastSeenAt TEXT NOT NULL,
-        PRIMARY KEY (workspaceId, openId)
-      )
-    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_metadata (
         session_id TEXT PRIMARY KEY,
@@ -949,6 +949,14 @@ export class SqliteStore {
         updatedAt: string;
         isActive: number;
       }>;
+      // A bot_user may have several source sessions marked active (the same person
+      // across workspaces that resolve to one bot row). The unified schema allows
+      // at most one active session per bot_user (idx_user_sessions_active_per_user),
+      // so insert every session inactive and promote a single winner per bot_user
+      // afterwards. Promoting inline would either silently drop rows (INSERT OR
+      // IGNORE against the active-per-user index) or throw a UNIQUE constraint;
+      // demote-all-then-promote-one avoids both.
+      const wecomActiveWinner = new Map<string, { sessionId: string; updatedAt: string }>();
       for (const ws of wecomSessions) {
         const botRow = this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(ws.workspaceId) as { id: string } | undefined;
         if (!botRow) continue;
@@ -961,8 +969,18 @@ export class SqliteStore {
         const sessionId = uuidv4();
         this.db.prepare(`
           INSERT OR IGNORE INTO user_sessions (id, workspace_id, session_id, user_id, is_active, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(sessionId, ws.workspaceId, ws.sessionId, userRow.id, ws.isActive, ws.createdAt, ws.updatedAt);
+          VALUES (?, ?, ?, ?, 0, ?, ?)
+        `).run(sessionId, ws.workspaceId, ws.sessionId, userRow.id, ws.createdAt, ws.updatedAt);
+        if (ws.isActive === 1) {
+          const existing = wecomActiveWinner.get(userRow.id);
+          if (!existing || ws.updatedAt > existing.updatedAt) {
+            wecomActiveWinner.set(userRow.id, { sessionId: ws.sessionId, updatedAt: ws.updatedAt });
+          }
+        }
+      }
+      for (const [userId, winner] of wecomActiveWinner) {
+        this.db.prepare('UPDATE user_sessions SET is_active = 0 WHERE user_id = ?').run(userId);
+        this.db.prepare('UPDATE user_sessions SET is_active = 1, updated_at = ? WHERE user_id = ? AND session_id = ?').run(winner.updatedAt, userId, winner.sessionId);
       }
 
       const feishuBinding = this.db.prepare('SELECT activeWorkspaceId FROM feishu_bot_binding WHERE id = 1').get() as { activeWorkspaceId: string } | undefined;
@@ -1070,17 +1088,26 @@ export class SqliteStore {
             sessionId: string;
             updatedAt: string;
           }>;
+          // feishu_active_sessions records one active session per workspace; the
+          // same person across workspaces resolves to a single bot_user, so collect
+          // one winning (latest) active session per bot_user and promote only that.
+          // Promoting each row inline would set two rows active for one bot_user and
+          // violate idx_user_sessions_active_per_user; demote-all-then-promote-one
+          // never leaves two active simultaneously.
+          const feishuActiveWinner = new Map<string, { sessionId: string; updatedAt: string }>();
           for (const fa of feishuActive) {
             const userRow = this.db.prepare(`
               SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
             `).get(feishuBotId, feishuChannelRow.id, fa.feishuUserId) as { id: string } | undefined;
             if (!userRow) continue;
-            this.db.prepare(`
-              UPDATE user_sessions SET is_active = 1, updated_at = ? WHERE user_id = ? AND session_id = ?
-            `).run(fa.updatedAt, userRow.id, fa.sessionId);
-            this.db.prepare(`
-              UPDATE user_sessions SET is_active = 0 WHERE user_id = ? AND session_id != ?
-            `).run(userRow.id, fa.sessionId);
+            const existing = feishuActiveWinner.get(userRow.id);
+            if (!existing || fa.updatedAt > existing.updatedAt) {
+              feishuActiveWinner.set(userRow.id, { sessionId: fa.sessionId, updatedAt: fa.updatedAt });
+            }
+          }
+          for (const [userId, winner] of feishuActiveWinner) {
+            this.db.prepare('UPDATE user_sessions SET is_active = 0 WHERE user_id = ?').run(userId);
+            this.db.prepare('UPDATE user_sessions SET is_active = 1, updated_at = ? WHERE user_id = ? AND session_id = ?').run(winner.updatedAt, userId, winner.sessionId);
           }
         }
       }
@@ -1110,15 +1137,95 @@ export class SqliteStore {
         wecom_workspace_users: (this.db.prepare('SELECT COUNT(*) as count FROM wecom_workspace_users').get() as { count: number }).count,
         feishu_workspace_users: (this.db.prepare('SELECT COUNT(*) as count FROM feishu_workspace_users').get() as { count: number }).count,
       };
-      if (botUsersCount < sourceCounts.bot_members) {
-        throw new Error(`Migration count verification failed: bot_users (${botUsersCount}) < bot_members (${sourceCounts.bot_members})`);
+      // Source tables may overlap (e.g. the same channel user id can appear in
+      // both bot_members and wecom_workspace_users). Compute the expected number
+      // of distinct (bot_id, channel_id, channel_user_id) rows after migration,
+      // ignoring workspace users whose workspace has no active bot.
+      const expectedBotUserKeys = new Set<string>();
+      const verifyMemberRows = this.db.prepare('SELECT bot_id, channel, channel_user_id FROM bot_members').all() as Array<{
+        bot_id: string;
+        channel: string;
+        channel_user_id: string;
+      }>;
+      for (const row of verifyMemberRows) {
+        const channelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(
+          row.bot_id,
+          row.channel,
+        ) as { id: string } | undefined;
+        if (channelRow) {
+          expectedBotUserKeys.add(`${row.bot_id}:${channelRow.id}:${row.channel_user_id}`);
+        }
+      }
+      const verifyWecomUserRows = this.db.prepare('SELECT workspaceId, encryptedUserId FROM wecom_workspace_users').all() as Array<{
+        workspaceId: string;
+        encryptedUserId: string;
+      }>;
+      for (const row of verifyWecomUserRows) {
+        const botRow = this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(
+          row.workspaceId,
+        ) as { id: string } | undefined;
+        if (!botRow) continue;
+        const channelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(
+          botRow.id,
+          'wecom',
+        ) as { id: string } | undefined;
+        if (channelRow) {
+          expectedBotUserKeys.add(`${botRow.id}:${channelRow.id}:${row.encryptedUserId}`);
+        }
+      }
+      if (feishuBinding) {
+        const feishuBotRow = this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(
+          feishuBinding.activeWorkspaceId,
+        ) as { id: string } | undefined;
+        if (feishuBotRow) {
+          const channelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(
+            feishuBotRow.id,
+            'feishu',
+          ) as { id: string } | undefined;
+          if (channelRow) {
+            const verifyFeishuUserRows = this.db.prepare('SELECT openId FROM feishu_workspace_users').all() as Array<{
+              openId: string;
+            }>;
+            for (const row of verifyFeishuUserRows) {
+              expectedBotUserKeys.add(`${feishuBotRow.id}:${channelRow.id}:${row.openId}`);
+            }
+          }
+        }
+      }
+      const expectedBotUsers = expectedBotUserKeys.size;
+      if (botUsersCount < expectedBotUsers) {
+        throw new Error(
+          `Migration count verification failed: bot_users (${botUsersCount}) < expected (${expectedBotUsers}) ` +
+            `(bot_members=${sourceCounts.bot_members}, wecom_workspace_users=${sourceCounts.wecom_workspace_users}, feishu_workspace_users=${sourceCounts.feishu_workspace_users})`,
+        );
       }
 
       const userSessionsCount = (this.db.prepare('SELECT COUNT(*) as count FROM user_sessions').get() as { count: number }).count;
-      const expectedSessions = (this.db.prepare('SELECT COUNT(*) as count FROM wecom_user_sessions').get() as { count: number }).count
-        + (this.db.prepare('SELECT COUNT(*) as count FROM feishu_user_sessions').get() as { count: number }).count;
+      // Expected = number of RESOLVABLE source sessions (those whose bot/channel/
+      // bot_user all exist), not the raw source count. Population legitimately
+      // skips sessions whose user has no workspace_user row (no bot_user created)
+      // or whose workspace has no active bot; the raw count would abort on those.
+      // UNION (not UNION ALL) dedups (user_id, session_id) pairs, mirroring the
+      // INSERT OR IGNORE against idx_user_sessions_user_session. The old tables
+      // still exist at this point (they are dropped further below).
+      const expectedSessions = (this.db.prepare(`
+        SELECT COUNT(*) as count FROM (
+          SELECT u.id AS uid, w.sessionId AS sid
+          FROM wecom_user_sessions w
+          JOIN bots b ON b.active_workspace_id = w.workspaceId
+          JOIN bot_channels c ON c.bot_id = b.id AND c.channel_key = 'wecom'
+          JOIN bot_users u ON u.bot_id = b.id AND u.channel_id = c.id AND u.channel_user_id = w.wecomUserId
+          UNION
+          SELECT u.id AS uid, f.sessionId AS sid
+          FROM feishu_user_sessions f
+          JOIN feishu_bot_binding fb ON fb.id = 1
+          JOIN bots b ON b.active_workspace_id = fb.activeWorkspaceId
+          JOIN bot_channels c ON c.bot_id = b.id AND c.channel_key = 'feishu'
+          JOIN bot_users u ON u.bot_id = b.id AND u.channel_id = c.id AND u.channel_user_id = f.feishuUserId
+        )
+      `).get() as { count: number }).count;
       if (userSessionsCount < expectedSessions) {
-        throw new Error(`Migration count verification failed: user_sessions (${userSessionsCount}) < wecom+feishu sessions (${expectedSessions})`);
+        throw new Error(`Migration count verification failed: user_sessions (${userSessionsCount}) < resolvable (${expectedSessions})`);
       }
 
       const pmColumns = this.db.prepare("PRAGMA table_info(wecom_proactive_messages)").all() as Array<{ name: string }>;
@@ -1138,18 +1245,22 @@ export class SqliteStore {
       this.db.exec('DROP TABLE IF EXISTS bot_members');
       this.db.exec('DROP TABLE IF EXISTS wecom_user_sessions');
       this.db.exec('DROP TABLE IF EXISTS wecom_user_id_mappings');
-      // Note: wecom_workspace_users and feishu_workspace_users are kept
-      // for backward compatibility with workspace-scoped user APIs.
+      this.db.exec('DROP TABLE IF EXISTS wecom_workspace_users');
+      this.db.exec('DROP TABLE IF EXISTS feishu_bot_binding');
       this.db.exec('DROP TABLE IF EXISTS feishu_user_sessions');
       this.db.exec('DROP TABLE IF EXISTS feishu_active_sessions');
+      this.db.exec('DROP TABLE IF EXISTS feishu_workspace_users');
       if (hasLegacyBotCols) {
         this.db.exec('DROP TABLE IF EXISTS bots_old');
       }
+
+      const auditLogsCleared = (this.db.prepare('DELETE FROM bot_audit_logs').run() as { changes: number }).changes;
 
       this.setMigrationState(5, now, {
         botUsersCount,
         userSessionsCount,
         sourceCounts,
+        auditLogsCleared,
       });
       console.log('[SqliteStore] Unified schema migration completed successfully');
     });
@@ -1288,6 +1399,18 @@ export class SqliteStore {
       ORDER BY us.created_at ASC
     `).all(botId) as Array<{ session_id: string; user_id: string; workspace_id: string }>;
     return rows.map((r) => ({ sessionId: r.session_id, userId: r.user_id, workspaceId: r.workspace_id }));
+  }
+
+  listBotSessionsForWorkspace(workspaceId: string): Array<{ sessionId: string; channelKey: BotChannelKey }> {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT us.session_id, bc.channel_key
+      FROM user_sessions us
+      JOIN bot_users bu ON bu.id = us.user_id
+      JOIN bot_channels bc ON bc.id = bu.channel_id
+      WHERE us.workspace_id = ?
+      ORDER BY us.created_at ASC
+    `).all(workspaceId) as Array<{ session_id: string; channel_key: string }>;
+    return rows.map((r) => ({ sessionId: r.session_id, channelKey: r.channel_key as BotChannelKey }));
   }
 
   getActiveUserSession(userId: string): string | null {
@@ -1884,12 +2007,16 @@ export class SqliteStore {
       bot.createdAt,
       bot.updatedAt,
     );
+    const inputChannelSettings = (input as { channelSettings?: import('../models/bot.js').BotChannelSettings }).channelSettings;
     for (const channelKey of ['wecom', 'feishu'] as BotChannelKey[]) {
       const channelId = uuidv4();
       this.db.prepare(`
         INSERT INTO bot_channels (id, bot_id, channel_key, display_name, config_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(channelId, bot.id, channelKey, channelKey === 'wecom' ? 'WeCom' : 'Feishu', '{}', now, now);
+      if (inputChannelSettings?.[channelKey]) {
+        this.updateBotChannel(channelId, { [channelKey]: inputChannelSettings[channelKey] });
+      }
     }
     for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
       const roleId = uuidv4();
@@ -2089,10 +2216,13 @@ export class SqliteStore {
     const now = new Date().toISOString();
     const roleRow = this.db.prepare('SELECT role_key FROM bot_roles WHERE id = ?').get(input.roleId) as { role_key: string } | undefined;
     const roleKey = (roleRow?.role_key ?? 'normal') as import('../models/bot.js').BotRoleKey;
+    const channelRow = this.db.prepare('SELECT channel_key FROM bot_channels WHERE id = ?').get(input.channelId) as { channel_key: string } | undefined;
+    const channelKey = (channelRow?.channel_key ?? 'wecom') as import('../models/bot.js').BotChannelKey;
     const user: BotUser = {
       id: uuidv4(),
       botId: input.botId,
       channelId: input.channelId,
+      channelKey,
       roleId: input.roleId,
       channelUserId: input.channelUserId,
       plaintextUserId: input.plaintextUserId ?? null,
@@ -2128,6 +2258,11 @@ export class SqliteStore {
   listBotUsersByChannel(botId: string, channelId: string): BotUser[] {
     const rows = this.db.prepare('SELECT * FROM bot_users WHERE bot_id = ? AND channel_id = ? ORDER BY created_at').all(botId, channelId) as RawBotUserRow[];
     return rows.map((r) => parseBotUserRow(r, this.db));
+  }
+
+  getBotUserByPlaintext(plaintextUserId: string): BotUser | null {
+    const row = this.db.prepare('SELECT * FROM bot_users WHERE plaintext_user_id = ? LIMIT 1').get(plaintextUserId) as RawBotUserRow | undefined;
+    return row ? parseBotUserRow(row, this.db) : null;
   }
 
   updateBotUser(id: string, input: UpdateBotUserInput): BotUser | null {
@@ -2197,6 +2332,17 @@ export class SqliteStore {
     return row?.version ?? null;
   }
 
+  getMigrationState(): { version: number | null; runAt: string | null; snapshot: Record<string, unknown> } {
+    const row = this.db
+      .prepare('SELECT version, run_at, snapshot_json FROM bot_migration_state WHERE id = 1')
+      .get() as { version: number | null; run_at: string | null; snapshot_json: string | null } | undefined;
+    return {
+      version: row?.version ?? null,
+      runAt: row?.run_at ?? null,
+      snapshot: row?.snapshot_json ? safeJsonParse(row.snapshot_json, {}) : {},
+    };
+  }
+
   setMigrationState(version: number, runAt: string, snapshot: Record<string, unknown>): void {
     this.db.prepare(`
       INSERT INTO bot_migration_state (id, version, run_at, snapshot_json)
@@ -2212,333 +2358,6 @@ export class SqliteStore {
     this.db.prepare('UPDATE sessions SET bot_id = ? WHERE id = ?').run(botId, sessionId);
   }
 
-  // Legacy Feishu compatibility wrappers (unified schema)
-
-  private getFeishuBotForWorkspace(workspaceId: string): { botId: string; channelId: string } | null {
-    const botRow = this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(workspaceId) as { id: string } | undefined;
-    if (!botRow) return null;
-    const channelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(botRow.id, 'feishu') as { id: string } | undefined;
-    if (!channelRow) return null;
-    return { botId: botRow.id, channelId: channelRow.id };
-  }
-
-  getFeishuActiveWorkspace(): string | null {
-    // Feishu active workspace is stored via the feishu_bot_binding table (legacy global binding).
-    // Keep this for backward compatibility until full decoupling.
-    const row = this.db.prepare('SELECT activeWorkspaceId FROM feishu_bot_binding WHERE id = 1').get() as { activeWorkspaceId: string } | undefined;
-    return row?.activeWorkspaceId ?? null;
-  }
-
-  setFeishuActiveWorkspace(workspaceId: string): void {
-    this.db.prepare(`
-      INSERT INTO feishu_bot_binding (id, activeWorkspaceId) VALUES (1, ?)
-      ON CONFLICT(id) DO UPDATE SET activeWorkspaceId = excluded.activeWorkspaceId
-    `).run(workspaceId);
-  }
-
-  clearFeishuActiveWorkspace(): void {
-    this.db.prepare('DELETE FROM feishu_bot_binding WHERE id = 1').run();
-  }
-
-  getFeishuActiveSession(workspaceId: string, feishuUserId: string): string | null {
-    const feishuBot = this.getFeishuBotForWorkspace(workspaceId);
-    if (!feishuBot) return null;
-    const userRow = this.db.prepare(`
-      SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-    `).get(feishuBot.botId, feishuBot.channelId, feishuUserId) as { id: string } | undefined;
-    if (!userRow) return null;
-    return this.getActiveUserSession(userRow.id);
-  }
-
-  setFeishuActiveSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
-    const feishuBot = this.getFeishuBotForWorkspace(workspaceId);
-    if (!feishuBot) return;
-    let userRow = this.db.prepare(`
-      SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-    `).get(feishuBot.botId, feishuBot.channelId, feishuUserId) as { id: string } | undefined;
-    if (!userRow) {
-      const normalRole = this.db.prepare('SELECT id FROM bot_roles WHERE bot_id = ? AND role_key = ?').get(feishuBot.botId, 'normal') as { id: string } | undefined;
-      if (!normalRole) return;
-      userRow = { id: uuidv4() };
-      this.db.prepare(`
-        INSERT INTO bot_users (id, bot_id, channel_id, role_id, channel_user_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(userRow.id, feishuBot.botId, feishuBot.channelId, normalRole.id, feishuUserId, new Date().toISOString(), new Date().toISOString());
-    }
-    this.addUserSession(workspaceId, sessionId, userRow.id);
-    this.setActiveUserSession(userRow.id, sessionId);
-  }
-
-  addFeishuUserSession(workspaceId: string, feishuUserId: string, sessionId: string): void {
-    this.setFeishuActiveSession(workspaceId, feishuUserId, sessionId);
-  }
-
-  listFeishuSessionsByUser(workspaceId: string, feishuUserId: string): Array<{ sessionId: string; createdAt: string }> {
-    const feishuBot = this.getFeishuBotForWorkspace(workspaceId);
-    if (!feishuBot) return [];
-    const userRow = this.db.prepare(`
-      SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-    `).get(feishuBot.botId, feishuBot.channelId, feishuUserId) as { id: string } | undefined;
-    if (!userRow) return [];
-    return this.listUserSessionsByUser(userRow.id);
-  }
-
-  listFeishuSessionsForWorkspace(workspaceId: string): Array<{ sessionId: string; feishuUserId: string }> {
-    const feishuBot = this.getFeishuBotForWorkspace(workspaceId);
-    if (!feishuBot) return [];
-    const rows = this.db.prepare(`
-      SELECT us.session_id, bu.channel_user_id as feishu_user_id
-      FROM user_sessions us
-      JOIN bot_users bu ON bu.id = us.user_id
-      WHERE bu.bot_id = ? AND bu.channel_id = ? AND us.workspace_id = ?
-    `).all(feishuBot.botId, feishuBot.channelId, workspaceId) as Array<{ session_id: string; feishu_user_id: string }>;
-    return rows.map((r) => ({ sessionId: r.session_id, feishuUserId: r.feishu_user_id }));
-  }
-
-  getFeishuSessionOwner(workspaceId: string, sessionId: string): string | null {
-    const feishuBot = this.getFeishuBotForWorkspace(workspaceId);
-    if (!feishuBot) return null;
-    const row = this.db.prepare(`
-      SELECT bu.channel_user_id
-      FROM user_sessions us
-      JOIN bot_users bu ON bu.id = us.user_id
-      WHERE us.workspace_id = ? AND us.session_id = ? AND bu.bot_id = ? AND bu.channel_id = ?
-      LIMIT 1
-    `).get(workspaceId, sessionId, feishuBot.botId, feishuBot.channelId) as { channel_user_id: string } | undefined;
-    return row?.channel_user_id ?? null;
-  }
-
-  listFeishuWorkspaceUsers(workspaceId: string): Array<{ openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string }> {
-    const rows = this.db.prepare(`
-      SELECT openId, userId, name, firstSeenAt, lastSeenAt FROM feishu_workspace_users
-      WHERE workspaceId = ?
-      ORDER BY lastSeenAt DESC
-    `).all(workspaceId) as Array<{ openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string }>;
-    return rows;
-  }
-
-  setFeishuWorkspaceUser(workspaceId: string, openId: string): void {
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT INTO feishu_workspace_users (workspaceId, openId, firstSeenAt, lastSeenAt)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(workspaceId, openId) DO UPDATE SET lastSeenAt = excluded.lastSeenAt
-    `).run(workspaceId, openId, now, now);
-    // Also track in unified schema
-    const feishuBot = this.getFeishuBotForWorkspace(workspaceId);
-    if (feishuBot) {
-      const existing = this.db.prepare(`
-        SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-      `).get(feishuBot.botId, feishuBot.channelId, openId) as { id: string } | undefined;
-      if (!existing) {
-        const normalRole = this.db.prepare('SELECT id FROM bot_roles WHERE bot_id = ? AND role_key = ?').get(feishuBot.botId, 'normal') as { id: string } | undefined;
-        if (normalRole) {
-          const now2 = new Date().toISOString();
-          this.db.prepare(`
-            INSERT INTO bot_users (id, bot_id, channel_id, role_id, channel_user_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(uuidv4(), feishuBot.botId, feishuBot.channelId, normalRole.id, openId, now2, now2);
-        }
-      }
-    }
-  }
-
-  getFeishuWorkspaceUser(workspaceId: string, openId: string): { openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string } | null {
-    const row = this.db.prepare(`
-      SELECT openId, userId, name, firstSeenAt, lastSeenAt FROM feishu_workspace_users
-      WHERE workspaceId = ? AND openId = ?
-    `).get(workspaceId, openId) as { openId: string; userId: string | null; name: string | null; firstSeenAt: string; lastSeenAt: string } | undefined;
-    return row ?? null;
-  }
-
-  setFeishuWorkspaceUserName(workspaceId: string, openId: string, name: string, userId: string | null): void {
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      UPDATE feishu_workspace_users
-      SET name = ?, userId = ?, lastSeenAt = ?
-      WHERE workspaceId = ? AND openId = ?
-    `).run(name, userId ?? null, now, workspaceId, openId);
-    // Also update unified schema
-    const feishuBot = this.getFeishuBotForWorkspace(workspaceId);
-    if (feishuBot) {
-      this.db.prepare(`
-        UPDATE bot_users SET plaintext_user_id = ?, updated_at = ?
-        WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-      `).run(userId ?? name, now, feishuBot.botId, feishuBot.channelId, openId);
-    }
-  }
-
-  // Legacy WeCom compatibility wrappers (unified schema)
-
-  private getWecomBotForWorkspace(workspaceId: string): { botId: string; channelId: string } | null {
-    const botRow = this.db.prepare('SELECT id FROM bots WHERE active_workspace_id = ?').get(workspaceId) as { id: string } | undefined;
-    if (!botRow) return null;
-    const channelRow = this.db.prepare('SELECT id FROM bot_channels WHERE bot_id = ? AND channel_key = ?').get(botRow.id, 'wecom') as { id: string } | undefined;
-    if (!channelRow) return null;
-    return { botId: botRow.id, channelId: channelRow.id };
-  }
-
-  getActiveWecomSession(workspaceId: string, wecomUserId: string): string | null {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return null;
-    const userRow = this.db.prepare(`
-      SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-    `).get(wecomBot.botId, wecomBot.channelId, wecomUserId) as { id: string } | undefined;
-    if (!userRow) return null;
-    return this.getActiveUserSession(userRow.id);
-  }
-
-  setActiveWecomSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return;
-    let userRow = this.db.prepare(`
-      SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-    `).get(wecomBot.botId, wecomBot.channelId, wecomUserId) as { id: string } | undefined;
-    if (!userRow) {
-      const normalRole = this.db.prepare('SELECT id FROM bot_roles WHERE bot_id = ? AND role_key = ?').get(wecomBot.botId, 'normal') as { id: string } | undefined;
-      if (!normalRole) return;
-      userRow = { id: uuidv4() };
-      this.db.prepare(`
-        INSERT INTO bot_users (id, bot_id, channel_id, role_id, channel_user_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(userRow.id, wecomBot.botId, wecomBot.channelId, normalRole.id, wecomUserId, new Date().toISOString(), new Date().toISOString());
-    }
-    this.addUserSession(workspaceId, sessionId, userRow.id);
-    this.setActiveUserSession(userRow.id, sessionId);
-  }
-
-  setWecomSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
-    this.setActiveWecomSession(workspaceId, wecomUserId, sessionId);
-  }
-
-  listWecomSessionsByUser(workspaceId: string, wecomUserId: string): Array<{ sessionId: string; createdAt: string }> {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return [];
-    const userRow = this.db.prepare(`
-      SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-    `).get(wecomBot.botId, wecomBot.channelId, wecomUserId) as { id: string } | undefined;
-    if (!userRow) return [];
-    return this.listUserSessionsByUser(userRow.id);
-  }
-
-  listWecomSessions(workspaceId: string): Array<{ sessionId: string; wecomUserId: string }> {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return [];
-    const rows = this.db.prepare(`
-      SELECT us.session_id, bu.channel_user_id as wecom_user_id
-      FROM user_sessions us
-      JOIN bot_users bu ON bu.id = us.user_id
-      WHERE bu.bot_id = ? AND bu.channel_id = ? AND us.workspace_id = ?
-    `).all(wecomBot.botId, wecomBot.channelId, workspaceId) as Array<{ session_id: string; wecom_user_id: string }>;
-    return rows.map((r) => ({ sessionId: r.session_id, wecomUserId: r.wecom_user_id }));
-  }
-
-  listWecomSessionsForBackfill(): Array<{ workspaceId: string; wecomUserId: string; sessionId: string }> {
-    const rows = this.db.prepare(`
-      SELECT us.workspace_id, bu.channel_user_id as wecom_user_id, us.session_id
-      FROM user_sessions us
-      JOIN bot_users bu ON bu.id = us.user_id
-      JOIN bot_channels bc ON bc.id = bu.channel_id
-      WHERE bc.channel_key = 'wecom'
-    `).all() as Array<{ workspace_id: string; wecom_user_id: string; session_id: string }>;
-    return rows.map((r) => ({ workspaceId: r.workspace_id, wecomUserId: r.wecom_user_id, sessionId: r.session_id }));
-  }
-
-  getWecomUserIdBySession(workspaceId: string, sessionId: string): string | null {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return null;
-    const row = this.db.prepare(`
-      SELECT bu.channel_user_id
-      FROM user_sessions us
-      JOIN bot_users bu ON bu.id = us.user_id
-      WHERE us.workspace_id = ? AND us.session_id = ? AND bu.bot_id = ? AND bu.channel_id = ?
-      LIMIT 1
-    `).get(workspaceId, sessionId, wecomBot.botId, wecomBot.channelId) as { channel_user_id: string } | undefined;
-    return row?.channel_user_id ?? null;
-  }
-
-  listWecomWorkspaceUsers(workspaceId: string): Array<{ encryptedUserId: string }> {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return [];
-    const rows = this.db.prepare(`
-      SELECT channel_user_id as encrypted_user_id FROM bot_users
-      WHERE bot_id = ? AND channel_id = ?
-    `).all(wecomBot.botId, wecomBot.channelId) as Array<{ encrypted_user_id: string }>;
-    return rows.map((r) => ({ encryptedUserId: r.encrypted_user_id }));
-  }
-
-  getWecomUserMapping(encryptedUserId: string): string | null {
-    const row = this.db.prepare(`
-      SELECT plaintext_user_id FROM bot_users WHERE channel_user_id = ?
-    `).get(encryptedUserId) as { plaintext_user_id: string | null } | undefined;
-    return row?.plaintext_user_id ?? null;
-  }
-
-  setWecomUserMapping(encryptedUserId: string, plaintextUserId: string): void {
-    this.db.prepare(`
-      UPDATE bot_users SET plaintext_user_id = ?, updated_at = ? WHERE channel_user_id = ?
-    `).run(plaintextUserId, new Date().toISOString(), encryptedUserId);
-  }
-
-  setWecomWorkspaceUser(workspaceId: string, encryptedUserId: string): void {
-    this.trackWorkspaceUser(workspaceId, encryptedUserId);
-  }
-
-  getWecomWorkspaceUser(workspaceId: string, encryptedUserId: string): { encryptedUserId: string; plaintextUserId: string | null } | null {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return null;
-    const row = this.db.prepare(`
-      SELECT channel_user_id as encrypted_user_id, plaintext_user_id FROM bot_users
-      WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-    `).get(wecomBot.botId, wecomBot.channelId, encryptedUserId) as { encrypted_user_id: string; plaintext_user_id: string | null } | undefined;
-    if (!row) return null;
-    return { encryptedUserId: row.encrypted_user_id, plaintextUserId: row.plaintext_user_id };
-  }
-
-  isPlaintextUserIdUsedInWorkspace(workspaceId: string, plaintextUserId: string, excludeEncryptedUserId?: string): boolean {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return false;
-    const sql = excludeEncryptedUserId
-      ? `SELECT 1 FROM bot_users WHERE bot_id = ? AND channel_id = ? AND plaintext_user_id = ? AND channel_user_id != ? LIMIT 1`
-      : `SELECT 1 FROM bot_users WHERE bot_id = ? AND channel_id = ? AND plaintext_user_id = ? LIMIT 1`;
-    const params = excludeEncryptedUserId
-      ? [wecomBot.botId, wecomBot.channelId, plaintextUserId, excludeEncryptedUserId]
-      : [wecomBot.botId, wecomBot.channelId, plaintextUserId];
-    const row = this.db.prepare(sql).get(...params) as { 1: number } | undefined;
-    return row !== undefined;
-  }
-
-  getEncryptedUserIdByPlaintext(plaintextUserId: string): string | null {
-    const row = this.db.prepare(`
-      SELECT channel_user_id FROM bot_users WHERE plaintext_user_id = ? LIMIT 1
-    `).get(plaintextUserId) as { channel_user_id: string } | undefined;
-    return row?.channel_user_id ?? null;
-  }
-
-  listWecomUserMappings(): Array<{ encryptedUserId: string; plaintextUserId: string }> {
-    const rows = this.db.prepare(`
-      SELECT channel_user_id as encrypted_user_id, plaintext_user_id
-      FROM bot_users
-      WHERE plaintext_user_id IS NOT NULL
-    `).all() as Array<{ encrypted_user_id: string; plaintext_user_id: string }>;
-    return rows.map((r) => ({ encryptedUserId: r.encrypted_user_id, plaintextUserId: r.plaintext_user_id }));
-  }
-
-  trackWorkspaceUser(workspaceId: string, encryptedUserId: string): void {
-    const wecomBot = this.getWecomBotForWorkspace(workspaceId);
-    if (!wecomBot) return;
-    const existing = this.db.prepare(`
-      SELECT id FROM bot_users WHERE bot_id = ? AND channel_id = ? AND channel_user_id = ?
-    `).get(wecomBot.botId, wecomBot.channelId, encryptedUserId) as { id: string } | undefined;
-    if (existing) return;
-    const normalRole = this.db.prepare('SELECT id FROM bot_roles WHERE bot_id = ? AND role_key = ?').get(wecomBot.botId, 'normal') as { id: string } | undefined;
-    if (!normalRole) return;
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT INTO bot_users (id, bot_id, channel_id, role_id, channel_user_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(uuidv4(), wecomBot.botId, wecomBot.channelId, normalRole.id, encryptedUserId, now, now);
-  }
 }
 
 export interface WorkspacePromptHistoryEntry {
@@ -2713,10 +2532,12 @@ interface RawBotUserRow {
 
 function parseBotUserRow(row: RawBotUserRow, db: Database.Database): BotUser {
   const roleRow = db.prepare('SELECT role_key FROM bot_roles WHERE id = ?').get(row.role_id) as { role_key: string } | undefined;
+  const channelRow = db.prepare('SELECT channel_key FROM bot_channels WHERE id = ?').get(row.channel_id) as { channel_key: string } | undefined;
   return {
     id: row.id,
     botId: row.bot_id,
     channelId: row.channel_id,
+    channelKey: (channelRow?.channel_key ?? 'wecom') as BotChannelKey,
     roleId: row.role_id,
     channelUserId: row.channel_user_id,
     plaintextUserId: row.plaintext_user_id,

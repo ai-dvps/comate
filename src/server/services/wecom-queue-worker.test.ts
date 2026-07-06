@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { WeComQueueWorker, formatProactiveDirective } from './wecom-queue-worker.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
+import { botService } from './bot-service.js';
 import type { SessionRuntime } from './session-runtime.js';
 import type { WeComProactiveMessage } from '../models/wecom-proactive-message.js';
 import type { Workspace } from '../models/workspace.js';
@@ -13,8 +14,6 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   let originalList: typeof workspaceStore.list;
   let originalListProactiveMessages: typeof workspaceStore.listProactiveMessages;
   let originalClaimNextPendingMessage: typeof workspaceStore.claimNextPendingMessage;
-  let originalGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
-  let originalGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
   let originalUpdateProactiveMessage: typeof workspaceStore.updateProactiveMessage;
   let originalGetRuntimeIfExists: typeof chatService.getRuntimeIfExists;
   let originalGetOrCreateRuntime: typeof chatService.getOrCreateRuntime;
@@ -22,12 +21,11 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   const mockMessages: WeComProactiveMessage[] = [];
 
   beforeEach(() => {
+    workspaceStore.resetData();
     worker = new WeComQueueWorker();
     originalList = workspaceStore.list.bind(workspaceStore);
     originalListProactiveMessages = workspaceStore.listProactiveMessages.bind(workspaceStore);
     originalClaimNextPendingMessage = workspaceStore.claimNextPendingMessage.bind(workspaceStore);
-    originalGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
-    originalGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
     originalUpdateProactiveMessage = workspaceStore.updateProactiveMessage.bind(workspaceStore);
     originalGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
     originalGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
@@ -39,35 +37,38 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     workspaceStore.list = originalList;
     workspaceStore.listProactiveMessages = originalListProactiveMessages;
     workspaceStore.claimNextPendingMessage = originalClaimNextPendingMessage;
-    workspaceStore.getWecomUserMapping = originalGetWecomUserMapping;
-    workspaceStore.getActiveWecomSession = originalGetActiveWecomSession;
     workspaceStore.updateProactiveMessage = originalUpdateProactiveMessage;
     chatService.getRuntimeIfExists = originalGetRuntimeIfExists;
     chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
   });
 
-  function createMockMessage(overrides: Partial<WeComProactiveMessage> = {}): WeComProactiveMessage {
-    return {
-      id: overrides.id ?? 'msg-1',
-      workspaceId: overrides.workspaceId ?? 'ws-1',
-      senderSessionId: overrides.senderSessionId ?? 'session-a',
-      recipientEncryptedUserId: overrides.recipientEncryptedUserId ?? 'enc-b',
-      recipientPlaintextUserId: overrides.recipientPlaintextUserId ?? 'plain-b',
-      messageContent: overrides.messageContent ?? 'Hello B',
-      status: overrides.status ?? 'pending',
-      errorReason: overrides.errorReason ?? null,
-      createdAt: overrides.createdAt ?? new Date().toISOString(),
-      updatedAt: overrides.updatedAt ?? new Date().toISOString(),
-      deliveredAt: overrides.deliveredAt ?? null,
-      claimedAt: overrides.claimedAt ?? null,
-      retryCount: overrides.retryCount ?? 0,
-    };
+  function createWecomBot(workspaceId: string) {
+    return botService.createBot({
+      name: 'WeCom Bot',
+      activeWorkspaceId: workspaceId,
+      channelSettings: {
+        wecom: { enabled: true, corpId: 'test-corp', corpSecret: 'test-secret', agentId: 'test-agent' },
+      },
+    });
   }
 
-  function setupHappyPathMocks() {
-    workspaceStore.list = async () => [{ id: 'ws-1' } as Workspace];
-    workspaceStore.getWecomUserMapping = () => 'plain-b';
-    workspaceStore.getActiveWecomSession = () => 'session-b';
+  function addWecomUser(botId: string, channelUserId: string, plaintextUserId?: string) {
+    return botService.addMember(botId, {
+      channelKey: 'wecom',
+      channelUserId,
+      plaintextUserId,
+    });
+  }
+
+  async function createWecomSession(workspaceId: string, userId: string) {
+    const session = await chatService.createSession({ workspaceId, name: 'wecom session', source: 'wecom' });
+    workspaceStore.addUserSession(workspaceId, session.id, userId);
+    workspaceStore.setActiveUserSession(userId, session.id);
+    return session;
+  }
+
+  function setupHappyPathMocks(workspaceId = 'ws-1') {
+    workspaceStore.list = async () => [{ id: workspaceId } as Workspace];
     workspaceStore.claimNextPendingMessage = () => {
       const msg = mockMessages.find((m) => m.status === 'pending');
       if (msg) {
@@ -97,8 +98,31 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     chatService.getOrCreateRuntime = async () => mockRuntime;
   }
 
+  function createMockMessage(overrides: Partial<WeComProactiveMessage> = {}): WeComProactiveMessage {
+    return {
+      id: overrides.id ?? 'msg-1',
+      workspaceId: overrides.workspaceId ?? 'ws-1',
+      senderSessionId: overrides.senderSessionId ?? 'session-a',
+      recipientEncryptedUserId: overrides.recipientEncryptedUserId ?? 'enc-b',
+      recipientPlaintextUserId: overrides.recipientPlaintextUserId ?? 'plain-b',
+      messageContent: overrides.messageContent ?? 'Hello B',
+      status: overrides.status ?? 'pending',
+      errorReason: overrides.errorReason ?? null,
+      createdAt: overrides.createdAt ?? new Date().toISOString(),
+      updatedAt: overrides.updatedAt ?? new Date().toISOString(),
+      deliveredAt: overrides.deliveredAt ?? null,
+      claimedAt: overrides.claimedAt ?? null,
+      retryCount: overrides.retryCount ?? 0,
+    };
+  }
+
   it('dispatches pending message when recipient is idle and ID decrypted', async () => {
-    setupHappyPathMocks();
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const user = addWecomUser(bot.id, 'enc-b', 'plain-b');
+    await createWecomSession(workspaceId, user.id);
+
+    setupHappyPathMocks(workspaceId);
     mockMessages.push(createMockMessage());
 
     const mockRuntime = {
@@ -118,9 +142,12 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   });
 
   it('releases claim when recipient runtime is busy', async () => {
-    workspaceStore.list = async () => [{ id: 'ws-1' } as Workspace];
-    workspaceStore.getWecomUserMapping = () => 'plain-b';
-    workspaceStore.getActiveWecomSession = () => 'session-b';
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const user = addWecomUser(bot.id, 'enc-b', 'plain-b');
+    await createWecomSession(workspaceId, user.id);
+
+    workspaceStore.list = async () => [{ id: workspaceId } as Workspace];
     workspaceStore.claimNextPendingMessage = () => createMockMessage();
     workspaceStore.updateProactiveMessage = (id, input) => {
       const msg = mockMessages.find((m) => m.id === id);
@@ -147,8 +174,11 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   });
 
   it('releases claim when user ID is not decrypted', async () => {
-    workspaceStore.list = async () => [{ id: 'ws-1' } as Workspace];
-    workspaceStore.getWecomUserMapping = () => null;
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    addWecomUser(bot.id, 'enc-b');
+
+    workspaceStore.list = async () => [{ id: workspaceId } as Workspace];
     workspaceStore.claimNextPendingMessage = () => createMockMessage();
     workspaceStore.updateProactiveMessage = (id, input) => {
       const msg = mockMessages.find((m) => m.id === id);
@@ -213,9 +243,12 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
   });
 
   it('marks message failed when dispatch throws', async () => {
-    workspaceStore.list = async () => [{ id: 'ws-1' } as Workspace];
-    workspaceStore.getWecomUserMapping = () => 'plain-b';
-    workspaceStore.getActiveWecomSession = () => 'session-b';
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const user = addWecomUser(bot.id, 'enc-b', 'plain-b');
+    await createWecomSession(workspaceId, user.id);
+
+    workspaceStore.list = async () => [{ id: workspaceId } as Workspace];
     workspaceStore.claimNextPendingMessage = () => createMockMessage();
     workspaceStore.updateProactiveMessage = (id, input) => {
       const msg = mockMessages.find((m) => m.id === id);

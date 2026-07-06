@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
+import { botService } from '../services/bot-service.js';
+import type { BotUser } from '../models/bot-user.js';
 
 const router = Router({ mergeParams: true });
 
@@ -28,13 +30,13 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    const callerUserIdEncrypted = store.getWecomUserIdBySession(workspaceId, sessionId);
-    const callerUserId = callerUserIdEncrypted ? store.getWecomUserMapping(callerUserIdEncrypted) : null;
+    const callerUser = findWecomUserForSession(workspaceId, sessionId);
+    const callerPlaintextUserId = callerUser?.plaintextUserId ?? null;
 
     // Same user + bot connected → direct send. On direct-send failure (including bot
     // not connected), surface the error instead of silently re-enqueueing, which would
     // create an infinite loop.
-    if (callerUserId === toUser.trim()) {
+    if (callerPlaintextUserId === toUser.trim()) {
       const status = wecomBotService.getStatus(workspaceId);
       if (status === 'connected') {
         try {
@@ -57,8 +59,8 @@ router.post('/', async (req, res) => {
     }
 
     // Different user, unmapped session, or bot not connected → enqueue
-    const encryptedUserId = store.getEncryptedUserIdByPlaintext(toUser.trim());
-    if (!encryptedUserId) {
+    const recipientUser = findWecomUserByPlaintext(workspaceId, toUser.trim());
+    if (!recipientUser) {
       res.status(400).json({
         error: 'recipient_not_resolved',
         message: 'WeCom user ID has not been decrypted yet. The recipient must send at least one message to the bot first.',
@@ -66,7 +68,7 @@ router.post('/', async (req, res) => {
       return;
     }
 
-    const recipientSessionId = store.getActiveWecomSession(workspaceId, encryptedUserId);
+    const recipientSessionId = store.getActiveUserSession(recipientUser.id);
     if (!recipientSessionId) {
       res.status(400).json({
         error: 'recipient_no_session',
@@ -77,7 +79,7 @@ router.post('/', async (req, res) => {
 
     const entry = store.enqueueProactiveMessage(workspaceId, {
       senderSessionId: sessionId,
-      recipientEncryptedUserId: encryptedUserId,
+      recipientEncryptedUserId: recipientUser.channelUserId,
       recipientPlaintextUserId: toUser.trim(),
       messageContent: message.trim(),
     });
@@ -89,5 +91,21 @@ router.post('/', async (req, res) => {
     res.status(500).json({ error: 'send_failed', message });
   }
 });
+
+function findWecomUserForSession(workspaceId: string, sessionId: string): BotUser | null {
+  const users = botService.listChannelUsersForWorkspace(workspaceId, 'wecom');
+  for (const user of users) {
+    const sessions = store.listUserSessionsByUser(user.id);
+    if (sessions.some((s) => s.sessionId === sessionId)) {
+      return user;
+    }
+  }
+  return null;
+}
+
+function findWecomUserByPlaintext(workspaceId: string, plaintextUserId: string): BotUser | null {
+  const users = botService.listChannelUsersForWorkspace(workspaceId, 'wecom');
+  return users.find((u) => u.plaintextUserId === plaintextUserId) ?? null;
+}
 
 export default router;

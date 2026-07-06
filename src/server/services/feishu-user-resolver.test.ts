@@ -4,6 +4,7 @@ process.env.COMATE_SIDECAR = '';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { botService } from './bot-service.js';
 import { FeishuUserResolver } from './feishu-user-resolver.js';
 import type * as lark from '@larksuiteoapi/node-sdk';
 
@@ -40,10 +41,28 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
     return workspaceStore.create({ name, folderPath: `/tmp/${name}` });
   }
 
+  function createFeishuBot(workspaceId: string) {
+    return botService.createBot({
+      name: 'Feishu Bot',
+      activeWorkspaceId: workspaceId,
+      channelSettings: {
+        feishu: { enabled: true, appId: 'test-app', appSecret: 'test-secret' },
+      },
+    });
+  }
+
+  function addFeishuUser(botId: string, openId: string, plaintextUserId?: string) {
+    return botService.addMember(botId, {
+      channelKey: 'feishu',
+      channelUserId: openId,
+      plaintextUserId,
+    });
+  }
+
   it('does not call Feishu API when name is already cached', async () => {
     const ws = await createWorkspace('Resolver Cached');
-    workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-alice');
-    workspaceStore.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice', 'alice-uid');
+    const bot = createFeishuBot(ws.id);
+    addFeishuUser(bot.id, 'ou-alice', 'alice-uid');
 
     let called = false;
     const client = {
@@ -57,7 +76,8 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
 
   it('resolves and caches name and user_id for uncached user', async () => {
     const ws = await createWorkspace('Resolver Resolve');
-    workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-bob');
+    const bot = createFeishuBot(ws.id);
+    addFeishuUser(bot.id, 'ou-bob');
 
     const client = createFakeLarkClient({
       users: [{ user_id: 'bob-uid', open_id: 'ou-bob', name: 'Bob' }],
@@ -65,29 +85,31 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
 
     await resolver.resolveOnMessage(ws.id, 'ou-bob', client);
 
-    const user = workspaceStore.getFeishuWorkspaceUser(ws.id, 'ou-bob');
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'feishu')!;
+    const user = workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, 'ou-bob');
     assert.ok(user);
-    assert.strictEqual(user.name, 'Bob');
-    assert.strictEqual(user.userId, 'bob-uid');
+    assert.strictEqual(user.plaintextUserId, 'bob-uid');
   });
 
   it('caches name when user_id is absent from response', async () => {
     const ws = await createWorkspace('Resolver Name Only');
-    workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-carol');
+    const bot = createFeishuBot(ws.id);
+    addFeishuUser(bot.id, 'ou-carol');
 
     const client = createFakeLarkClient({ users: [{ name: 'Carol' }] });
 
     await resolver.resolveOnMessage(ws.id, 'ou-carol', client);
 
-    const user = workspaceStore.getFeishuWorkspaceUser(ws.id, 'ou-carol');
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'feishu')!;
+    const user = workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, 'ou-carol');
     assert.ok(user);
-    assert.strictEqual(user.name, 'Carol');
-    assert.strictEqual(user.userId, null);
+    assert.strictEqual(user.plaintextUserId, 'Carol');
   });
 
   it('swallows Feishu API errors without throwing', async () => {
     const ws = await createWorkspace('Resolver Error');
-    workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-dave');
+    const bot = createFeishuBot(ws.id);
+    addFeishuUser(bot.id, 'ou-dave');
 
     const client = createFailingLarkClient(new Error('scope error for ou_dave'));
 
@@ -95,14 +117,16 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
       await resolver.resolveOnMessage(ws.id, 'ou-dave', client);
     });
 
-    const user = workspaceStore.getFeishuWorkspaceUser(ws.id, 'ou-dave');
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'feishu')!;
+    const user = workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, 'ou-dave');
     assert.ok(user);
-    assert.strictEqual(user.name, null);
+    assert.strictEqual(user.plaintextUserId, null);
   });
 
   it('redacts open_id and credentials from logged errors', async () => {
     const ws = await createWorkspace('Resolver Redaction');
-    workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-eve-secret');
+    const bot = createFeishuBot(ws.id);
+    addFeishuUser(bot.id, 'ou-eve-secret');
 
     const client = createFailingLarkClient(
       new Error('request failed for ou_eve-secret with appId=secret-id appSecret=secret-key'),
@@ -132,7 +156,8 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
 
   it('returns without throwing when larkClient is missing', async () => {
     const ws = await createWorkspace('Resolver No Client');
-    workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-frank');
+    const bot = createFeishuBot(ws.id);
+    addFeishuUser(bot.id, 'ou-frank');
 
     await assert.doesNotReject(async () => {
       await resolver.resolveOnMessage(ws.id, 'ou-frank', undefined as unknown as lark.Client);
@@ -142,8 +167,8 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
   describe('resolveImmediate', () => {
     it('returns cached userId and name without calling API', async () => {
       const ws = await createWorkspace('Immediate Cached');
-      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-alice');
-      workspaceStore.setFeishuWorkspaceUserName(ws.id, 'ou-alice', 'Alice', 'alice-uid');
+      const bot = createFeishuBot(ws.id);
+      addFeishuUser(bot.id, 'ou-alice', 'alice-uid');
 
       let called = false;
       const client = {
@@ -154,12 +179,13 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
 
       assert.strictEqual(called, false);
       assert.strictEqual(result.userId, 'alice-uid');
-      assert.strictEqual(result.name, 'Alice');
+      assert.strictEqual(result.name, 'alice-uid');
     });
 
     it('resolves userId and name from API', async () => {
       const ws = await createWorkspace('Immediate Resolve');
-      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-bob');
+      const bot = createFeishuBot(ws.id);
+      addFeishuUser(bot.id, 'ou-bob');
       const client = createFakeLarkClient({
         users: [{ user_id: 'bob-uid', open_id: 'ou-bob', name: 'Bob' }],
       });
@@ -168,14 +194,15 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
 
       assert.strictEqual(result.userId, 'bob-uid');
       assert.strictEqual(result.name, 'Bob');
-      const user = workspaceStore.getFeishuWorkspaceUser(ws.id, 'ou-bob');
-      assert.strictEqual(user?.userId, 'bob-uid');
-      assert.strictEqual(user?.name, 'Bob');
+      const channel = workspaceStore.getBotChannelByKey(bot.id, 'feishu')!;
+      const user = workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, 'ou-bob');
+      assert.strictEqual(user?.plaintextUserId, 'bob-uid');
     });
 
     it('throws when no lark client is available', async () => {
       const ws = await createWorkspace('Immediate No Client');
-      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-bob');
+      const bot = createFeishuBot(ws.id);
+      addFeishuUser(bot.id, 'ou-bob');
 
       await assert.rejects(
         async () => await resolver.resolveImmediate(ws.id, 'ou-bob', undefined as unknown as lark.Client),
@@ -185,7 +212,8 @@ describe('FeishuUserResolver', { concurrency: false }, () => {
 
     it('throws when response has no user_id', async () => {
       const ws = await createWorkspace('Immediate No UserId');
-      workspaceStore.setFeishuWorkspaceUser(ws.id, 'ou-carol');
+      const bot = createFeishuBot(ws.id);
+      addFeishuUser(bot.id, 'ou-carol');
       const client = createFakeLarkClient({ users: [{ name: 'Carol' }] });
 
       await assert.rejects(

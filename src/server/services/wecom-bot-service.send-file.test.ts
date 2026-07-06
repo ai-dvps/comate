@@ -20,10 +20,11 @@ describe('WeComBotService.sendFile', { concurrency: false }, () => {
   let tempDir: string;
 
   let origGet: typeof workspaceStore.get;
-  let origGetEncryptedUserIdByPlaintext: typeof workspaceStore.getEncryptedUserIdByPlaintext;
-  let origGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
   let origGetWecomMediaCacheEntry: typeof workspaceStore.getWecomMediaCacheEntry;
   let origCreateWecomMediaCacheEntry: typeof workspaceStore.createWecomMediaCacheEntry;
+  let origGetBotChannelByKey: typeof workspaceStore.getBotChannelByKey;
+  let origGetBotUserByPlaintext: typeof workspaceStore.getBotUserByPlaintext;
+  let origGetBotUserByChannelIdentity: typeof workspaceStore.getBotUserByChannelIdentity;
 
   let uploadedFiles: Array<{ buffer: Buffer; options: { type: string; filename: string } }>;
   let sentMessages: Array<{ userId: string; body: unknown }>;
@@ -47,35 +48,63 @@ describe('WeComBotService.sendFile', { concurrency: false }, () => {
     cacheEntries = [];
 
     origGet = workspaceStore.get.bind(workspaceStore);
-    origGetEncryptedUserIdByPlaintext = workspaceStore.getEncryptedUserIdByPlaintext.bind(workspaceStore);
-    origGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
     origGetWecomMediaCacheEntry = workspaceStore.getWecomMediaCacheEntry.bind(workspaceStore);
     origCreateWecomMediaCacheEntry = workspaceStore.createWecomMediaCacheEntry.bind(workspaceStore);
+    origGetBotChannelByKey = workspaceStore.getBotChannelByKey.bind(workspaceStore);
+    origGetBotUserByPlaintext = workspaceStore.getBotUserByPlaintext.bind(workspaceStore);
+    origGetBotUserByChannelIdentity = workspaceStore.getBotUserByChannelIdentity.bind(workspaceStore);
 
     workspaceStore.get = async () => ({ id: 'ws-1', folderPath: tempDir, settings: {} } as unknown as Workspace);
-    workspaceStore.getEncryptedUserIdByPlaintext = (plaintext: string) => {
-      if (plaintext === 'ZhangWei') return 'enc-zhangwei';
-      if (plaintext === 'LiSi') return 'enc-lisi';
-      return null;
-    };
-    workspaceStore.getWecomUserMapping = (encrypted: string) => {
-      if (encrypted === 'enc-zhangwei') return 'ZhangWei';
-      if (encrypted === 'enc-lisi') return 'LiSi';
-      return null;
-    };
     workspaceStore.getWecomMediaCacheEntry = () => null;
     workspaceStore.createWecomMediaCacheEntry = (input) => {
       cacheEntries.push(input);
       return { ...input };
     };
+    workspaceStore.getBotChannelByKey = () => ({ id: 'chan-1' } as unknown as import('../models/bot.js').BotChannel);
+    workspaceStore.getBotUserByPlaintext = (plaintext: string) => {
+      if (plaintext === 'ZhangWei') {
+        return {
+          id: 'user-1', botId: 'bot-1', channelId: 'chan-1', roleId: 'role-normal',
+          channelUserId: 'enc-zhangwei', plaintextUserId: 'ZhangWei',
+          createdAt: '', updatedAt: '', roleKey: 'normal', resolutionStatus: 'resolved',
+        } as unknown as import('../models/bot-user.js').BotUser;
+      }
+      if (plaintext === 'LiSi') {
+        return {
+          id: 'user-2', botId: 'bot-1', channelId: 'chan-1', roleId: 'role-normal',
+          channelUserId: 'enc-lisi', plaintextUserId: 'LiSi',
+          createdAt: '', updatedAt: '', roleKey: 'normal', resolutionStatus: 'resolved',
+        } as unknown as import('../models/bot-user.js').BotUser;
+      }
+      return null;
+    };
+    workspaceStore.getBotUserByChannelIdentity = (botId: string, channelId: string, channelUserId: string) => {
+      if (botId !== 'bot-1' || channelId !== 'chan-1') return null;
+      if (channelUserId === 'enc-zhangwei') {
+        return {
+          id: 'user-1', botId: 'bot-1', channelId: 'chan-1', roleId: 'role-normal',
+          channelUserId: 'enc-zhangwei', plaintextUserId: 'ZhangWei',
+          createdAt: '', updatedAt: '', roleKey: 'normal', resolutionStatus: 'resolved',
+        } as unknown as import('../models/bot-user.js').BotUser;
+      }
+      if (channelUserId === 'enc-lisi') {
+        return {
+          id: 'user-2', botId: 'bot-1', channelId: 'chan-1', roleId: 'role-normal',
+          channelUserId: 'enc-lisi', plaintextUserId: 'LiSi',
+          createdAt: '', updatedAt: '', roleKey: 'normal', resolutionStatus: 'resolved',
+        } as unknown as import('../models/bot-user.js').BotUser;
+      }
+      return null;
+    };
   });
 
   afterEach(async () => {
     workspaceStore.get = origGet;
-    workspaceStore.getEncryptedUserIdByPlaintext = origGetEncryptedUserIdByPlaintext;
-    workspaceStore.getWecomUserMapping = origGetWecomUserMapping;
     workspaceStore.getWecomMediaCacheEntry = origGetWecomMediaCacheEntry;
     workspaceStore.createWecomMediaCacheEntry = origCreateWecomMediaCacheEntry;
+    workspaceStore.getBotChannelByKey = origGetBotChannelByKey;
+    workspaceStore.getBotUserByPlaintext = origGetBotUserByPlaintext;
+    workspaceStore.getBotUserByChannelIdentity = origGetBotUserByChannelIdentity;
 
     await fsPromises.rm(tempDir, { recursive: true, force: true });
   });

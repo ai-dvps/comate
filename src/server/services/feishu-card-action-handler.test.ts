@@ -14,21 +14,11 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
   const nonOwnerUserId = 'user-1';
 
   const originalGet = workspaceStore.get.bind(workspaceStore);
-  const originalGetOwner = workspaceStore.getFeishuSessionOwner.bind(workspaceStore);
-  const originalGetActiveSession = workspaceStore.getFeishuActiveSession.bind(workspaceStore);
-  const originalSetActiveSession = workspaceStore.setFeishuActiveSession.bind(workspaceStore);
-  const originalAddUserSession = workspaceStore.addFeishuUserSession.bind(workspaceStore);
   const originalGetRuntime = chatService.getRuntimeIfExists.bind(chatService);
-  const originalCreateSession = chatService.createSession.bind(chatService);
 
   afterEach(() => {
     workspaceStore.get = originalGet;
-    workspaceStore.getFeishuSessionOwner = originalGetOwner;
-    workspaceStore.getFeishuActiveSession = originalGetActiveSession;
-    workspaceStore.setFeishuActiveSession = originalSetActiveSession;
-    workspaceStore.addFeishuUserSession = originalAddUserSession;
     chatService.getRuntimeIfExists = originalGetRuntime;
-    chatService.createSession = originalCreateSession;
   });
 
   function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
@@ -102,55 +92,49 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
     assert.strictEqual((result as { toast: { content: string } }).toast.content, '工作空间已切换。');
   });
 
-  it('select_session checks ownership and updates active session', async () => {
+  async function createFeishuSessionForUser(openId: string): Promise<{ sessionId: string; userId: string }> {
     workspaceStore.get = async () => makeWorkspace();
-    workspaceStore.getFeishuSessionOwner = () => 'user-1';
-    let activeSessionId: string | null = null;
-    workspaceStore.setFeishuActiveSession = (_ws, _user, sessionId) => {
-      activeSessionId = sessionId;
-    };
+    const channel = workspaceStore.getBotChannelByKey(botId, 'feishu')!;
+    const user = workspaceStore.getBotUserByChannelIdentity(botId, channel.id, openId)!;
+    const session = await chatService.createSession({
+      workspaceId: 'ws-1',
+      name: 'feishu session',
+      source: 'feishu',
+    });
+    workspaceStore.addUserSession('ws-1', session.id, user.id);
+    workspaceStore.setActiveUserSession(user.id, session.id);
+    return { sessionId: session.id, userId: user.id };
+  }
+
+  it('select_session checks ownership and updates active session', async () => {
+    const { sessionId, userId } = await createFeishuSessionForUser(nonOwnerUserId);
 
     const payload: CardActionPayload = {
       action: 'select_session',
       workspaceId: 'ws-1',
-      sessionId: 'session-1',
+      sessionId,
     };
-    const result = await handler.handle('user-1', payload);
+    const result = await handler.handle(nonOwnerUserId, payload);
 
-    assert.strictEqual(activeSessionId, 'session-1');
+    assert.strictEqual(workspaceStore.getActiveUserSession(userId), sessionId);
     assert.strictEqual((result as { toast: { type: string } }).toast.type, 'success');
   });
 
   it('create_session creates a Feishu session and activates it', async () => {
     workspaceStore.get = async () => makeWorkspace();
-    chatService.createSession = async (input) => ({
-      id: 'session-new',
-      workspaceId: input.workspaceId,
-      name: input.name ?? 'Session',
-      source: input.source,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    let added: { workspaceId: string; openId: string; sessionId: string } | null = null;
-    workspaceStore.addFeishuUserSession = (ws, openId, sessionId) => {
-      added = { workspaceId: ws, openId, sessionId };
-    };
-    let activeSessionId: string | null = null;
-    workspaceStore.setFeishuActiveSession = (_ws, _user, sessionId) => {
-      activeSessionId = sessionId;
-    };
 
     const payload: CardActionPayload = { action: 'create_session', workspaceId: 'ws-1' };
-    const result = await handler.handle('user-1', payload);
+    const result = await handler.handle(nonOwnerUserId, payload);
 
-    assert.strictEqual(added?.sessionId, 'session-new');
-    assert.strictEqual(activeSessionId, 'session-new');
-    assert.ok((result as { toast: { content: string } }).toast.content.includes('user-1'));
+    const channel = workspaceStore.getBotChannelByKey(botId, 'feishu')!;
+    const user = workspaceStore.getBotUserByChannelIdentity(botId, channel.id, nonOwnerUserId)!;
+    const activeSessionId = workspaceStore.getActiveUserSession(user.id);
+    assert.ok(activeSessionId);
+    assert.ok((result as { toast: { content: string } }).toast.content.includes(nonOwnerUserId));
   });
 
   it('approval resolves allow/deny on the runtime for the owner', async () => {
-    workspaceStore.get = async () => makeWorkspace();
-    workspaceStore.getFeishuSessionOwner = () => 'user-1';
+    const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
 
     let resolvedRequestId: string | null = null;
     let resolvedResult: unknown = null;
@@ -164,11 +148,11 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
     const payload: CardActionPayload = {
       action: 'approval',
       workspaceId: 'ws-1',
-      sessionId: 'session-1',
+      sessionId,
       requestId: 'req-1',
       behavior: 'allow',
     };
-    const result = await handler.handle('user-1', payload);
+    const result = await handler.handle(nonOwnerUserId, payload);
 
     assert.strictEqual(resolvedRequestId, 'req-1');
     assert.strictEqual((resolvedResult as { behavior: string }).behavior, 'allow');
@@ -176,8 +160,7 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
   });
 
   it('question single-select resolves immediately', async () => {
-    workspaceStore.get = async () => makeWorkspace();
-    workspaceStore.getFeishuSessionOwner = () => 'user-1';
+    const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
 
     let resolvedInput: unknown = null;
     chatService.getRuntimeIfExists = () => ({
@@ -193,13 +176,13 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
     const payload: CardActionPayload = {
       action: 'question',
       workspaceId: 'ws-1',
-      sessionId: 'session-1',
+      sessionId,
       requestId: 'req-1',
       questionIndex: 0,
       answer: 'A',
       multiSelect: false,
     };
-    const result = await handler.handle('user-1', payload);
+    const result = await handler.handle(nonOwnerUserId, payload);
 
     assert.strictEqual((resolvedInput as { updatedInput: { answers: string[] } }).updatedInput.answers[0], 'A');
     assert.strictEqual((result as { toast: { content: string } }).toast.content, '已提交。');

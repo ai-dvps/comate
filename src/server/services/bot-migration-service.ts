@@ -39,7 +39,12 @@ export class BotMigrationService {
   }
 
   hasMigrationRun(): boolean {
-    return this.store.getMigrationVersion() !== null;
+    // The unified schema migration bumps bot_migration_state.version to 5 and
+    // drops the legacy workspace-user tables. After that, the presence of any
+    // bot record is the signal that workspace-embedded configs have been
+    // promoted. This also lets the service run on fresh databases where the
+    // unified migration completed before any bots existed.
+    return this.store.listBots().length > 0;
   }
 
   async migrate(options: { dryRun?: boolean } = {}): Promise<MigrationResult> {
@@ -200,19 +205,31 @@ export class BotMigrationService {
     if (wecom) {
       adminUserIds.set('wecom', new Set(wecomAdmins));
       normalUserIds.set('wecom', new Set());
-      for (const row of this.store.listWecomWorkspaceUsers(workspace.id)) {
-        const channelUserId = this.store.getWecomUserMapping(row.encryptedUserId) ?? row.encryptedUserId;
-        if (wecomAdmins.has(channelUserId)) continue;
-        normalUserIds.get('wecom')!.add(channelUserId);
+      const bot = this.store.listBotsForWorkspace(workspace.id)[0];
+      if (bot) {
+        const channel = this.store.getBotChannelByKey(bot.id, 'wecom');
+        if (channel) {
+          for (const botUser of this.store.listBotUsersByChannel(bot.id, channel.id)) {
+            const channelUserId = botUser.plaintextUserId ?? botUser.channelUserId;
+            if (wecomAdmins.has(channelUserId)) continue;
+            normalUserIds.get('wecom')!.add(channelUserId);
+          }
+        }
       }
     }
 
     if (feishu) {
       adminUserIds.set('feishu', new Set(feishuAdmins));
       normalUserIds.set('feishu', new Set());
-      for (const row of this.store.listFeishuWorkspaceUsers(workspace.id)) {
-        if (feishuAdmins.has(row.openId)) continue;
-        normalUserIds.get('feishu')!.add(row.openId);
+      const bot = this.store.listBotsForWorkspace(workspace.id)[0];
+      if (bot) {
+        const channel = this.store.getBotChannelByKey(bot.id, 'feishu');
+        if (channel) {
+          for (const botUser of this.store.listBotUsersByChannel(bot.id, channel.id)) {
+            if (feishuAdmins.has(botUser.channelUserId)) continue;
+            normalUserIds.get('feishu')!.add(botUser.channelUserId);
+          }
+        }
       }
     }
 

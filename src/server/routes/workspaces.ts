@@ -8,7 +8,7 @@ import { botService } from '../services/bot-service.js';
 import { validateDeadLoopDetectionSettings } from '../services/dead-loop-detector.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
-import { redactChannelSettings } from '../routes/bots.js';
+import { redactChannelSettings, mapBotError } from '../routes/bots.js';
 
 const router = Router();
 
@@ -170,10 +170,9 @@ router.delete('/:id', async (req, res) => {
     // answering inbound messages against a workspace whose settings row is gone.
     await chatService.closeRuntimesForWorkspace(req.params.id);
 
-    // Clear the global Feishu active binding if the deleted workspace was active.
-    if (store.getFeishuActiveWorkspace() === req.params.id) {
-      store.clearFeishuActiveWorkspace();
-      feishuBotService.disconnect();
+    // Disconnect any Feishu bots bound to the deleted workspace.
+    for (const bot of botService.listBotsForWorkspace(req.params.id)) {
+      feishuBotService.disconnectBot(bot.id);
     }
 
     res.status(204).send();
@@ -192,13 +191,11 @@ router.get('/:id/wecom/users', async (req, res) => {
       return;
     }
 
-    const users = store.listWecomWorkspaceUsers(req.params.id);
-    const mappings = store.listWecomUserMappings();
-    const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
+    const users = botService.listChannelUsersForWorkspace(req.params.id, 'wecom');
 
     const result = users.map((u) => ({
-      encryptedUserId: u.encryptedUserId,
-      plaintextUserId: mappingMap.get(u.encryptedUserId) || undefined,
+      encryptedUserId: u.channelUserId,
+      plaintextUserId: u.plaintextUserId ?? undefined,
     }));
 
     res.json({ users: result });
@@ -223,7 +220,8 @@ router.post('/:id/wecom/users/:encryptedUserId/plaintext', async (req, res) => {
       return;
     }
 
-    const existingUser = store.getWecomWorkspaceUser(workspaceId, encryptedUserId);
+    const existingUser = botService.listChannelUsersForWorkspace(workspaceId, 'wecom')
+      .find((u) => u.channelUserId === encryptedUserId);
     if (!existingUser) {
       res.status(400).json({ error: 'WeCom user not found in workspace' });
       return;
@@ -240,16 +238,15 @@ router.post('/:id/wecom/users/:encryptedUserId/plaintext', async (req, res) => {
       return;
     }
 
-    const isDuplicate = store.isPlaintextUserIdUsedInWorkspace(workspaceId, trimmed, encryptedUserId);
-    if (isDuplicate) {
-      res.status(409).json({ error: 'Plaintext userId is already used by another user in this workspace' });
-      return;
-    }
-
-    store.setWecomUserMapping(encryptedUserId, trimmed);
+    botService.setChannelUserPlaintextForWorkspace(workspaceId, 'wecom', encryptedUserId, trimmed);
 
     res.json({ encryptedUserId, plaintextUserId: trimmed });
   } catch (error) {
+    if (error instanceof Error && error.name === 'BotUserPlaintextConflictError') {
+      const mapped = mapBotError(error);
+      res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
+      return;
+    }
     console.error('Failed to set WeCom user plaintext ID:', error);
     res.status(500).json({ error: 'Failed to set WeCom user plaintext ID' });
   }
@@ -367,13 +364,14 @@ router.get('/:id/feishu/users', async (req, res) => {
       return;
     }
 
-    const users = store.listFeishuWorkspaceUsers(req.params.id);
+    const users = botService.listChannelUsersForWorkspace(req.params.id, 'feishu')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const result = users.map((u) => ({
-      openId: u.openId,
-      userId: u.userId ?? undefined,
-      name: u.name ?? undefined,
-      namePending: !u.name,
+      openId: u.channelUserId,
+      userId: u.plaintextUserId ?? undefined,
+      name: u.plaintextUserId ?? undefined,
+      namePending: !u.plaintextUserId,
     }));
 
     res.json({ users: result });

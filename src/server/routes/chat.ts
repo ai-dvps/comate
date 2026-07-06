@@ -2,7 +2,9 @@ import { Router } from 'express';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { chatService, ChatError } from '../services/chat-service.js';
 import { store } from '../storage/sqlite-store.js';
+import { botService } from '../services/bot-service.js';
 import { diagLog } from '../utils/diag-logger.js';
+import type { BotUser } from '../models/bot-user.js';
 
 const router = Router({ mergeParams: true });
 diagLog('[Route] chat module loaded');
@@ -142,14 +144,13 @@ router.get('/sessions/:sessionId/wecom-user', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const encryptedUserId = store.getWecomUserIdBySession(workspaceId, sessionId);
-    if (!encryptedUserId) {
+    const user = findChannelUserForSession(workspaceId, 'wecom', sessionId);
+    if (!user) {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
-    const mapping = store.getWecomUserMapping(encryptedUserId);
     res.json({
-      userId: mapping ?? encryptedUserId,
+      userId: user.plaintextUserId ?? user.channelUserId,
     });
   } catch (error) {
     console.error('Failed to get WeCom user:', error);
@@ -167,15 +168,14 @@ router.get('/sessions/:sessionId/feishu-user', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const openId = store.getFeishuSessionOwner(workspaceId, sessionId);
-    if (!openId) {
+    const user = findChannelUserForSession(workspaceId, 'feishu', sessionId);
+    if (!user) {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
-    const workspaceUser = store.getFeishuWorkspaceUser(workspaceId, openId);
     res.json({
-      userId: workspaceUser?.name ?? workspaceUser?.userId ?? openId,
-      name: workspaceUser?.name ?? null,
+      userId: user.plaintextUserId ?? user.channelUserId,
+      name: user.plaintextUserId ?? null,
     });
   } catch (error) {
     console.error('Failed to get Feishu user:', error);
@@ -186,6 +186,21 @@ router.get('/sessions/:sessionId/feishu-user', async (req, res) => {
     res.status(500).json({ error: 'Failed to get Feishu user' });
   }
 });
+
+function findChannelUserForSession(
+  workspaceId: string,
+  channelKey: 'wecom' | 'feishu',
+  sessionId: string,
+): BotUser | null {
+  const users = botService.listChannelUsersForWorkspace(workspaceId, channelKey);
+  for (const user of users) {
+    const sessions = store.listUserSessionsByUser(user.id);
+    if (sessions.some((s) => s.sessionId === sessionId)) {
+      return user;
+    }
+  }
+  return null;
+}
 
 // POST /api/workspaces/:id/sessions/:sessionId/approvals/:requestId
 // Resolve a pending approval or question

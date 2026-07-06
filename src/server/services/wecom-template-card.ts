@@ -463,9 +463,9 @@ export function verifySessionOwner(
   wecomUserId: string,
   sessionId: string,
   workspaceId: string,
-  getWecomUserIdBySession: (workspaceId: string, sessionId: string) => string | null | undefined,
+  getChannelUserIdBySession: (workspaceId: string, sessionId: string) => string | null | undefined,
 ): boolean {
-  const ownerWecomUserId = getWecomUserIdBySession(workspaceId, sessionId);
-  if (!ownerWecomUserId) return false;
-  return ownerWecomUserId === wecomUserId;
+  const ownerChannelUserId = getChannelUserIdBySession(workspaceId, sessionId);
+  if (!ownerChannelUserId) return false;
+  return ownerChannelUserId === wecomUserId;
 }
