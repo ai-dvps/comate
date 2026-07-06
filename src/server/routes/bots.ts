@@ -61,6 +61,7 @@ export function redactChannelSettings(settings: BotChannelSettings): BotChannelS
 function redactBot(bot: import('../models/bot.js').Bot) {
   const channelSettings = botService.getChannelSettings(bot.id);
   const rolePolicy = botService.getRolePolicy(bot.id);
+  const rolePersonas = botService.getRolePersonas(bot.id);
   return {
     ...bot,
     channelSettings: redactChannelSettings(channelSettings),
@@ -69,6 +70,7 @@ function redactBot(bot: import('../models/bot.js').Bot) {
       skillAllowlist: [],
       bashWhitelist: [],
     },
+    rolePersonas,
   };
 }
 
