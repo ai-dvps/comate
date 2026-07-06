@@ -5,6 +5,7 @@ import { wecomBotService } from '../services/wecom-bot-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { BotMigrationService } from '../services/bot-migration-service.js';
 import { builtinPluginService } from '../services/builtin-plugin-service.js';
+import { SAFE_PRESET } from '../services/tool-permission-policy.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { ENCRYPTED_CHANNEL_KEYS } from '../models/bot.js';
 import type { BotChannelSettings, CreateBotInput, UpdateBotInput } from '../models/bot.js';
@@ -59,13 +60,19 @@ export function redactChannelSettings(settings: BotChannelSettings): BotChannelS
 
 function redactBot(bot: import('../models/bot.js').Bot) {
   const channelSettings = botService.getChannelSettings(bot.id);
+  const rolePolicy = botService.getRolePolicy(bot.id);
   return {
     ...bot,
     channelSettings: redactChannelSettings(channelSettings),
+    rolePolicy: rolePolicy ?? {
+      normalToolPolicy: SAFE_PRESET,
+      skillAllowlist: [],
+      bashWhitelist: [],
+    },
   };
 }
 
-function mapBotError(error: unknown): { status: number; message: string; code?: string } {
+export function mapBotError(error: unknown): { status: number; message: string; code?: string } {
   if (error instanceof BotNotFoundError) {
     return { status: 404, message: error.message };
   }
