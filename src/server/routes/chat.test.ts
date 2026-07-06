@@ -36,20 +36,28 @@ describe('chat route Feishu user info', { concurrency: false }, () => {
     throw new Error('GET /sessions/:sessionId/feishu-user handler not found');
   }
 
-  it('returns Feishu user info for a bound session', async () => {
-    const workspaceId = 'ws-1';
-    const feishuUserId = 'ou_12345';
-    botService.createBot({
+  function createFeishuBot(workspaceId: string) {
+    return botService.createBot({
       name: 'Feishu Bot',
       activeWorkspaceId: workspaceId,
       channelSettings: {
         feishu: { enabled: true, appId: 'test-app', appSecret: 'test-secret' },
       },
     });
-    const session = await chatService.createSession({ workspaceId, name: feishuUserId, source: 'feishu' });
-    workspaceStore.addFeishuUserSession(workspaceId, feishuUserId, session.id);
-    workspaceStore.setFeishuWorkspaceUser(workspaceId, feishuUserId);
-    workspaceStore.setFeishuWorkspaceUserName(workspaceId, feishuUserId, 'Alice', 'user_abc');
+  }
+
+  it('returns Feishu user info for a bound session', async () => {
+    const workspaceId = 'ws-1';
+    const feishuUserId = 'ou_12345';
+    const bot = createFeishuBot(workspaceId);
+    const user = botService.addMember(bot.id, {
+      channelKey: 'feishu',
+      channelUserId: feishuUserId,
+      plaintextUserId: 'Alice',
+    });
+    const session = await chatService.createSession({ workspaceId, name: 'feishu session', source: 'feishu' });
+    workspaceStore.addUserSession(workspaceId, session.id, user.id);
+    workspaceStore.setActiveUserSession(user.id, session.id);
 
     const handler = await importGetFeishuUserHandler();
     const res = createMockRes();
@@ -75,16 +83,14 @@ describe('chat route Feishu user info', { concurrency: false }, () => {
   it('falls back to open_id when no cached name exists', async () => {
     const workspaceId = 'ws-1';
     const feishuUserId = 'ou_67890';
-    botService.createBot({
-      name: 'Feishu Bot',
-      activeWorkspaceId: workspaceId,
-      channelSettings: {
-        feishu: { enabled: true, appId: 'test-app', appSecret: 'test-secret' },
-      },
+    const bot = createFeishuBot(workspaceId);
+    const user = botService.addMember(bot.id, {
+      channelKey: 'feishu',
+      channelUserId: feishuUserId,
     });
-    const session = await chatService.createSession({ workspaceId, name: feishuUserId, source: 'feishu' });
-    workspaceStore.addFeishuUserSession(workspaceId, feishuUserId, session.id);
-    workspaceStore.setFeishuWorkspaceUser(workspaceId, feishuUserId);
+    const session = await chatService.createSession({ workspaceId, name: 'feishu session', source: 'feishu' });
+    workspaceStore.addUserSession(workspaceId, session.id, user.id);
+    workspaceStore.setActiveUserSession(user.id, session.id);
 
     const handler = await importGetFeishuUserHandler();
     const res = createMockRes();

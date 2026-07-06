@@ -57,28 +57,12 @@ export class FeishuBotService {
     const feishuBots = botService.listBots().filter((b) => botService.getChannelSettings(b.id).feishu?.enabled);
 
     if (feishuBots.length > 0) {
-      const storedActiveWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
-      const activeBot =
-        feishuBots.find((b) => b.activeWorkspaceId === storedActiveWorkspaceId) ?? feishuBots[0];
+      const activeBot = feishuBots.find((b) => b.activeWorkspaceId && this.workspaceIdToBotId.get(b.activeWorkspaceId) === b.id) ?? feishuBots[0];
       await this.connectBot(activeBot);
       return;
     }
 
-    // Pre-migration fallback: connect the workspace stored in the global binding.
-    const activeWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
-    if (!activeWorkspaceId) {
-      diagLog('[FeishuBotService] no active workspace binding on startup');
-      return;
-    }
-
-    const workspace = await workspaceStore.get(activeWorkspaceId);
-    if (!workspace || !this.isFeishuEnabled(workspace)) {
-      workspaceStore.clearFeishuActiveWorkspace();
-      diagLog('[FeishuBotService] cleared stale active workspace binding');
-      return;
-    }
-
-    await this.connect(workspace);
+    diagLog('[FeishuBotService] no Feishu-enabled bots on startup');
   }
 
   async connectBot(bot: Bot & { channelSettings?: import('../models/bot.js').BotChannelSettings }): Promise<void> {
@@ -143,9 +127,6 @@ export class FeishuBotService {
         this.registerWSMenuHandler(adapter, workspace, larkClient);
       }
       this.registerWSCardActionResponseHandler(adapter);
-      if (workspace) {
-        workspaceStore.setFeishuActiveWorkspace(workspace.id);
-      }
       connection.status = 'connected';
       diagLog(`[FeishuBotService] connected bot ${bot.id} for workspace ${workspaceId}`);
     } catch (err) {
@@ -154,27 +135,66 @@ export class FeishuBotService {
     }
   }
 
-  /** Backward-compatible workspace-scoped connect (pre-migration). */
-  async connect(workspace: Workspace): Promise<void> {
-    const bot: Bot = {
-      id: workspace.settings.feishuAppId!,
-      name: workspace.name,
-      activeWorkspaceId: workspace.id,
-      createdAt: workspace.createdAt,
-      updatedAt: workspace.updatedAt,
-    };
-    await this.connectBot(bot);
-  }
-
   private getActiveConnection(): Connection | null {
     return this.activeBotId ? this.connections.get(this.activeBotId) ?? null : null;
   }
 
   private getBotIdForWorkspace(workspaceId: string): string | undefined {
-    return this.workspaceIdToBotId.get(workspaceId) ?? this.activeBotId ?? undefined;
+    return (
+      this.workspaceIdToBotId.get(workspaceId) ??
+      this.activeBotId ??
+      botService.getBotForWorkspace(workspaceId)?.id ??
+      undefined
+    );
   }
 
-  private ensureBotMember(botId: string, channel: 'feishu', channelUserId: string): void {
+  private getFeishuUser(workspaceId: string, openId: string): import('../models/bot-user.js').BotUser | null {
+    const botId = this.getBotIdForWorkspace(workspaceId);
+    if (!botId) return null;
+    return botService.getMember(botId, 'feishu', openId);
+  }
+
+  private ensureFeishuUser(workspaceId: string, openId: string): import('../models/bot-user.js').BotUser | null {
+    const botId = this.getBotIdForWorkspace(workspaceId);
+    if (!botId) return null;
+    try {
+      return botService.ensureMember(botId, 'feishu', openId);
+    } catch (err) {
+      console.error(`[FeishuBotService] failed to ensure user ${openId} for bot ${botId}:`, err);
+      return null;
+    }
+  }
+
+  private getActiveSessionForUser(workspaceId: string, openId: string): string | null {
+    const botUser = this.getFeishuUser(workspaceId, openId);
+    if (!botUser) return null;
+    return workspaceStore.getActiveUserSession(botUser.id);
+  }
+
+  private setActiveSessionForUser(workspaceId: string, openId: string, sessionId: string): void {
+    const botUser = this.ensureFeishuUser(workspaceId, openId);
+    if (!botUser) return;
+    workspaceStore.addUserSession(workspaceId, sessionId, botUser.id);
+    workspaceStore.setActiveUserSession(botUser.id, sessionId);
+  }
+
+  private listUserSessions(workspaceId: string, openId: string): Array<{ sessionId: string; createdAt: string }> {
+    const botUser = this.getFeishuUser(workspaceId, openId);
+    if (!botUser) return [];
+    return workspaceStore.listUserSessionsByUser(botUser.id);
+  }
+
+  private touchFeishuUser(workspaceId: string, openId: string): void {
+    const botUser = this.getFeishuUser(workspaceId, openId);
+    if (!botUser) return;
+    workspaceStore.updateBotUser(botUser.id, { plaintextUserId: botUser.plaintextUserId ?? null });
+  }
+
+  private listFeishuUsersForWorkspace(workspaceId: string): import('../models/bot-user.js').BotUser[] {
+    return botService.listChannelUsersForWorkspace(workspaceId, 'feishu');
+  }
+
+  private ensureBotUser(botId: string, channel: 'feishu', channelUserId: string): void {
     if (!botService.getBot(botId)) return;
 
     const role = botService.getMemberRole(botId, channel, channelUserId);
@@ -320,7 +340,6 @@ export class FeishuBotService {
     this.botIdToWorkspaceId.delete(botId);
     if (this.activeBotId === botId) {
       this.activeBotId = null;
-      workspaceStore.clearFeishuActiveWorkspace();
     }
 
     connection.chat
@@ -374,7 +393,7 @@ export class FeishuBotService {
     if (bot) {
       await this.connectBot(bot);
     } else {
-      await this.connect(workspace);
+      this.disconnectBot(botId);
     }
   }
 
@@ -393,7 +412,6 @@ export class FeishuBotService {
   ): Promise<void> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace || !this.isFeishuEnabled(workspace)) {
-      workspaceStore.clearFeishuActiveWorkspace();
       this.disconnect();
       return;
     }
@@ -407,7 +425,6 @@ export class FeishuBotService {
       bot = boundBots[0] ?? this.botFromWorkspace(workspace);
     }
     if (!bot) {
-      workspaceStore.clearFeishuActiveWorkspace();
       this.disconnect();
       return;
     }
@@ -430,7 +447,6 @@ export class FeishuBotService {
       }
       this.workspaceIdToBotId.set(workspaceId, bot.id);
       this.botIdToWorkspaceId.set(bot.id, workspaceId);
-      workspaceStore.setFeishuActiveWorkspace(workspaceId);
       diagLog(`[FeishuBotService] switched bot ${bot.id} to workspace ${workspaceId}`);
     } else {
       await this.connectBot(bot);
@@ -438,12 +454,12 @@ export class FeishuBotService {
     }
 
     if (previousWorkspaceId && previousWorkspaceId !== workspaceId) {
-      const users = workspaceStore.listFeishuWorkspaceUsers(previousWorkspaceId);
+      const users = this.listFeishuUsersForWorkspace(previousWorkspaceId);
       const message = `当前机器人已切换到工作空间“${workspace.name}”。你正在进行的任务仍在原工作空间继续。`;
       for (const user of users) {
-        this.sendProactiveMessage(bot.id, user.openId, message).catch((err) => {
+        this.sendProactiveMessage(bot.id, user.channelUserId, message).catch((err) => {
           diagLog(
-            `[FeishuBotService] failed to notify user ${user.openId} of workspace switch:`,
+            `[FeishuBotService] failed to notify user ${user.channelUserId} of workspace switch:`,
             err,
           );
         });
@@ -469,7 +485,6 @@ export class FeishuBotService {
     }
     this.workspaceIdToBotId.set(workspaceId, botId);
     this.botIdToWorkspaceId.set(botId, workspaceId);
-    workspaceStore.setFeishuActiveWorkspace(workspaceId);
   }
 
   /** Best-effort send a plain-text DM via a bot connection. */
@@ -576,11 +591,15 @@ export class FeishuBotService {
       const connection = this.getActiveConnection();
       const workspaceId = connection?.workspaceId;
       if (workspaceId) {
-        workspaceStore.setFeishuWorkspaceUser(workspaceId, feishuUserId);
+        this.ensureFeishuUser(workspaceId, feishuUserId);
+        // Update the user's last-seen timestamp in the unified store; this keeps
+        // Feishu user discovery tests and workspace APIs that read firstSeenAt /
+        // lastSeenAt working after the legacy table was dropped.
+        this.touchFeishuUser(workspaceId, feishuUserId);
         void feishuUserResolver.resolveOnMessage(workspaceId, feishuUserId, connection.larkClient);
 
         // Auto-add first-time messengers as normal bot members.
-        this.ensureBotMember(connection.botId, 'feishu', feishuUserId);
+        this.ensureBotUser(connection.botId, 'feishu', feishuUserId);
       }
 
       diagLog(
@@ -875,7 +894,7 @@ export class FeishuBotService {
     const workspace = await this.requireActiveWorkspace(thread);
     if (!workspace) return;
 
-    const sessionId = workspaceStore.getFeishuActiveSession(workspace.id, feishuUserId);
+    const sessionId = this.getActiveSessionForUser(workspace.id, feishuUserId);
     if (!sessionId) {
       await this.safePostText(thread, '没有活跃的会话可中断。请运行 /resume 选择会话。');
       return;
@@ -888,7 +907,7 @@ export class FeishuBotService {
     const workspace = await this.requireActiveWorkspace(thread);
     if (!workspace) return;
 
-    const sessionId = workspaceStore.getFeishuActiveSession(workspace.id, feishuUserId);
+    const sessionId = this.getActiveSessionForUser(workspace.id, feishuUserId);
     let sessionName = '暂无活跃会话';
     if (sessionId) {
       try {
@@ -913,7 +932,7 @@ export class FeishuBotService {
     workspace: Workspace,
     openId: string,
   ): Promise<void> {
-    const sessionId = workspaceStore.getFeishuActiveSession(workspace.id, openId);
+    const sessionId = this.getActiveSessionForUser(workspace.id, openId);
     if (!sessionId) {
       await this.sendMenuText(larkClient, openId, '没有活跃的会话可中断。请运行 /resume 选择会话。');
       return;
@@ -950,7 +969,7 @@ export class FeishuBotService {
     workspace: Workspace,
     feishuUserId: string,
   ): Promise<{ sessionId: string; isNew: boolean }> {
-    const activeSessionId = workspaceStore.getFeishuActiveSession(workspace.id, feishuUserId);
+    const activeSessionId = this.getActiveSessionForUser(workspace.id, feishuUserId);
     if (activeSessionId) {
       const session = await chatService.getSession(activeSessionId, workspace.id);
       if (session) {
@@ -1068,7 +1087,8 @@ export class FeishuBotService {
   }
 
   private async requireActiveWorkspace(thread: Thread): Promise<Workspace | null> {
-    const activeWorkspaceId = workspaceStore.getFeishuActiveWorkspace();
+    const connection = this.getActiveConnection();
+    const activeWorkspaceId = connection?.workspaceId;
     if (!activeWorkspaceId) {
       await this.safePostText(thread, '机器人尚未绑定工作空间，请联系管理员运行 /workspace 进行设置。');
       return null;
@@ -1076,7 +1096,6 @@ export class FeishuBotService {
 
     const workspace = await workspaceStore.get(activeWorkspaceId);
     if (!workspace || !this.isFeishuEnabled(workspace)) {
-      workspaceStore.clearFeishuActiveWorkspace();
       await this.safePostText(thread, '当前绑定的工作空间已失效，请联系管理员重新设置。');
       return null;
     }
@@ -1169,8 +1188,8 @@ export class FeishuBotService {
     workspace: Workspace,
     openId: string,
   ): Promise<Array<{ session: ChatSession; isActive: boolean }>> {
-    const sessionRows = workspaceStore.listFeishuSessionsByUser(workspace.id, openId);
-    const activeSessionId = workspaceStore.getFeishuActiveSession(workspace.id, openId);
+    const sessionRows = this.listUserSessions(workspace.id, openId);
+    const activeSessionId = this.getActiveSessionForUser(workspace.id, openId);
 
     const sessions: Array<{ session: ChatSession; isActive: boolean }> = [];
     for (const row of sessionRows) {

@@ -2,26 +2,21 @@ import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { chatService } from '../services/chat-service.js';
+import { botService } from '../services/bot-service.js';
 import type { WeComProactiveMessage } from '../models/wecom-proactive-message.js';
 
 describe('wecom-send routes', { concurrency: false }, () => {
-  let originalGetWecomUserIdBySession: typeof workspaceStore.getWecomUserIdBySession;
-  let originalGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
-  let originalGetEncryptedUserIdByPlaintext: typeof workspaceStore.getEncryptedUserIdByPlaintext;
-  let originalGetActiveWecomSession: typeof workspaceStore.getActiveWecomSession;
-  let originalEnqueueProactiveMessage: typeof workspaceStore.enqueueProactiveMessage;
   let originalGetStatus: (workspaceId: string) => string;
   let originalSendDirectMessage: (
     workspaceId: string,
     toUser: string,
     message: string,
   ) => Promise<void>;
+  let originalEnqueueProactiveMessage: typeof workspaceStore.enqueueProactiveMessage;
 
   beforeEach(async () => {
-    originalGetWecomUserIdBySession = workspaceStore.getWecomUserIdBySession.bind(workspaceStore);
-    originalGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
-    originalGetEncryptedUserIdByPlaintext = workspaceStore.getEncryptedUserIdByPlaintext.bind(workspaceStore);
-    originalGetActiveWecomSession = workspaceStore.getActiveWecomSession.bind(workspaceStore);
+    workspaceStore.resetData();
     originalEnqueueProactiveMessage = workspaceStore.enqueueProactiveMessage.bind(workspaceStore);
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
@@ -30,10 +25,6 @@ describe('wecom-send routes', { concurrency: false }, () => {
   });
 
   afterEach(() => {
-    workspaceStore.getWecomUserIdBySession = originalGetWecomUserIdBySession;
-    workspaceStore.getWecomUserMapping = originalGetWecomUserMapping;
-    workspaceStore.getEncryptedUserIdByPlaintext = originalGetEncryptedUserIdByPlaintext;
-    workspaceStore.getActiveWecomSession = originalGetActiveWecomSession;
     workspaceStore.enqueueProactiveMessage = originalEnqueueProactiveMessage;
 
     import('../services/wecom-bot-service.js').then(({ wecomBotService }) => {
@@ -83,24 +74,51 @@ describe('wecom-send routes', { concurrency: false }, () => {
     return handlers;
   }
 
+  function createWecomBot(workspaceId: string) {
+    return botService.createBot({
+      name: 'WeCom Bot',
+      activeWorkspaceId: workspaceId,
+      channelSettings: {
+        wecom: { enabled: true, corpId: 'test-corp', corpSecret: 'test-secret', agentId: 'test-agent' },
+      },
+    });
+  }
+
+  function addWecomUser(botId: string, channelUserId: string, plaintextUserId?: string) {
+    return botService.addMember(botId, {
+      channelKey: 'wecom',
+      channelUserId,
+      plaintextUserId,
+    });
+  }
+
+  async function createWecomSession(workspaceId: string, userId: string) {
+    const session = await chatService.createSession({ workspaceId, name: 'wecom session', source: 'wecom' });
+    workspaceStore.addUserSession(workspaceId, session.id, userId);
+    workspaceStore.setActiveUserSession(userId, session.id);
+    return session;
+  }
+
   it('direct send when caller matches recipient and bot is connected', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
-    workspaceStore.getWecomUserMapping = () => 'alice';
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const user = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const session = await createWecomSession(workspaceId, user.id);
 
     let sendCalled = false;
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     wecomBotService.getStatus = () => 'connected';
     wecomBotService.sendDirectMessage = async (wsId, toUser, message) => {
       sendCalled = true;
-      assert.strictEqual(wsId, 'ws-1');
+      assert.strictEqual(wsId, workspaceId);
       assert.strictEqual(toUser, 'alice');
       assert.strictEqual(message, 'hello');
     };
 
+    const handlers = await importRouteHandlers();
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'alice', message: 'hello', msgType: 'text' },
+      params: { workspaceId },
+      body: { sessionId: session.id, toUser: 'alice', message: 'hello', msgType: 'text' },
     };
     const res = createMockRes();
 
@@ -112,20 +130,22 @@ describe('wecom-send routes', { concurrency: false }, () => {
   });
 
   it('queues when caller differs from recipient', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
-    workspaceStore.getWecomUserMapping = () => 'alice';
-    workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-bob';
-    workspaceStore.getActiveWecomSession = () => 'session-bob';
-    workspaceStore.enqueueProactiveMessage = () =>
-      ({ id: 'msg-1', status: 'pending' } as WeComProactiveMessage);
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const caller = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const recipient = addWecomUser(bot.id, 'enc-bob', 'bob');
+    const callerSession = await createWecomSession(workspaceId, caller.id);
+    await createWecomSession(workspaceId, recipient.id);
+
+    workspaceStore.enqueueProactiveMessage = () => ({ id: 'msg-1', status: 'pending' } as WeComProactiveMessage);
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     wecomBotService.getStatus = () => 'connected';
 
+    const handlers = await importRouteHandlers();
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', message: 'hello' },
+      params: { workspaceId },
+      body: { sessionId: callerSession.id, toUser: 'bob', message: 'hello' },
     };
     const res = createMockRes();
 
@@ -137,16 +157,17 @@ describe('wecom-send routes', { concurrency: false }, () => {
   });
 
   it('queues when session has no WeCom user mapping', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => null;
-    workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-bob';
-    workspaceStore.getActiveWecomSession = () => 'session-bob';
-    workspaceStore.enqueueProactiveMessage = () =>
-      ({ id: 'msg-2', status: 'pending' } as WeComProactiveMessage);
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const recipient = addWecomUser(bot.id, 'enc-bob', 'bob');
+    await createWecomSession(workspaceId, recipient.id);
 
+    workspaceStore.enqueueProactiveMessage = () => ({ id: 'msg-2', status: 'pending' } as WeComProactiveMessage);
+
+    const handlers = await importRouteHandlers();
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', message: 'hello' },
+      params: { workspaceId },
+      body: { sessionId: 'sid-unknown', toUser: 'bob', message: 'hello' },
     };
     const res = createMockRes();
 
@@ -157,20 +178,20 @@ describe('wecom-send routes', { concurrency: false }, () => {
   });
 
   it('returns error when bot is not connected even for same user', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
-    workspaceStore.getWecomUserMapping = () => 'alice';
-    workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-alice';
-    workspaceStore.getActiveWecomSession = () => 'session-alice';
-    workspaceStore.enqueueProactiveMessage = () =>
-      ({ id: 'msg-3', status: 'pending' } as WeComProactiveMessage);
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const user = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const session = await createWecomSession(workspaceId, user.id);
+
+    workspaceStore.enqueueProactiveMessage = () => ({ id: 'msg-3', status: 'pending' } as WeComProactiveMessage);
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     wecomBotService.getStatus = () => 'disconnected';
 
+    const handlers = await importRouteHandlers();
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'alice', message: 'hello' },
+      params: { workspaceId },
+      body: { sessionId: session.id, toUser: 'alice', message: 'hello' },
     };
     const res = createMockRes();
 
@@ -181,9 +202,10 @@ describe('wecom-send routes', { concurrency: false }, () => {
   });
 
   it('returns error when direct send throws', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
-    workspaceStore.getWecomUserMapping = () => 'alice';
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const user = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const session = await createWecomSession(workspaceId, user.id);
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     wecomBotService.getStatus = () => 'connected';
@@ -191,9 +213,10 @@ describe('wecom-send routes', { concurrency: false }, () => {
       throw new Error('network error');
     };
 
+    const handlers = await importRouteHandlers();
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'alice', message: 'hello' },
+      params: { workspaceId },
+      body: { sessionId: session.id, toUser: 'alice', message: 'hello' },
     };
     const res = createMockRes();
 
@@ -205,14 +228,15 @@ describe('wecom-send routes', { concurrency: false }, () => {
   });
 
   it('returns 400 when recipient is not resolved', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
-    workspaceStore.getWecomUserMapping = () => 'alice';
-    workspaceStore.getEncryptedUserIdByPlaintext = () => null;
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const caller = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const session = await createWecomSession(workspaceId, caller.id);
 
+    const handlers = await importRouteHandlers();
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', message: 'hello' },
+      params: { workspaceId },
+      body: { sessionId: session.id, toUser: 'bob', message: 'hello' },
     };
     const res = createMockRes();
 
@@ -223,15 +247,18 @@ describe('wecom-send routes', { concurrency: false }, () => {
   });
 
   it('returns 400 when recipient has no session', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
-    workspaceStore.getWecomUserMapping = () => 'alice';
-    workspaceStore.getEncryptedUserIdByPlaintext = () => 'enc-bob';
-    workspaceStore.getActiveWecomSession = () => null;
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const caller = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const recipient = addWecomUser(bot.id, 'enc-bob', 'bob');
+    const session = await createWecomSession(workspaceId, caller.id);
+    // No active session for recipient
+    workspaceStore.addUserSession(workspaceId, 'orphan-session', recipient.id);
 
+    const handlers = await importRouteHandlers();
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', message: 'hello' },
+      params: { workspaceId },
+      body: { sessionId: session.id, toUser: 'bob', message: 'hello' },
     };
     const res = createMockRes();
 

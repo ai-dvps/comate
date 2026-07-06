@@ -60,8 +60,6 @@ describe('BotMigrationService', { concurrency: false }, () => {
 
   it('dry-run returns a preview without writing bots', async () => {
     const workspace = await store.create(createWorkspaceInput());
-    store.setWecomWorkspaceUser(workspace.id, 'user-1');
-    store.setFeishuWorkspaceUser(workspace.id, 'feishu-user-1');
 
     const result = await service.migrate({ dryRun: true });
 
@@ -81,8 +79,6 @@ describe('BotMigrationService', { concurrency: false }, () => {
 
   it('migrates a workspace to a bot and cleans workspace settings', async () => {
     const workspace = await store.create(createWorkspaceInput());
-    store.setWecomWorkspaceUser(workspace.id, 'user-1');
-    store.setFeishuWorkspaceUser(workspace.id, 'feishu-user-1');
 
     const result = await service.migrate();
 
@@ -116,10 +112,6 @@ describe('BotMigrationService', { concurrency: false }, () => {
     assert.ok(members.some((m) => {
       const channel = channels.find((c) => c.id === m.channelId);
       return channel?.channelKey === 'feishu' && m.channelUserId === 'feishu-admin-1' && m.roleKey === 'admin';
-    }));
-    assert.ok(members.some((m) => {
-      const channel = channels.find((c) => c.id === m.channelId);
-      return channel?.channelKey === 'feishu' && m.channelUserId === 'feishu-user-1' && m.roleKey === 'normal';
     }));
 
     const migratedWorkspace = await store.get(workspace.id);

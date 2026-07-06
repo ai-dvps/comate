@@ -47,11 +47,13 @@ interface MockLarkClient {
 describe('FeishuBotService', () => {
   let service: FeishuBotService;
   let thread: MockThread;
-  let originalGetFeishuActiveWorkspace: typeof workspaceStore.getFeishuActiveWorkspace;
-  let originalGetFeishuActiveSession: typeof workspaceStore.getFeishuActiveSession;
-  let originalSetFeishuActiveSession: typeof workspaceStore.setFeishuActiveSession;
-  let originalAddFeishuUserSession: typeof workspaceStore.addFeishuUserSession;
-  let originalListFeishuSessionsByUser: typeof workspaceStore.listFeishuSessionsByUser;
+  let getFeishuBotUserId: (openId: string) => string;
+  let feishuChannelId: string;
+  let originalGetActiveUserSession: typeof workspaceStore.getActiveUserSession;
+  let originalSetActiveUserSession: typeof workspaceStore.setActiveUserSession;
+  let originalAddUserSession: typeof workspaceStore.addUserSession;
+  let originalListUserSessionsByUser: typeof workspaceStore.listUserSessionsByUser;
+  let originalGetSessionUsers: typeof workspaceStore.getSessionUsers;
   let originalList: typeof workspaceStore.list;
   let originalGet: typeof workspaceStore.get;
   let originalChatServiceCreateSession: typeof chatService.createSession;
@@ -61,7 +63,8 @@ describe('FeishuBotService', () => {
   let originalFeishuUserResolverResolveOnMessage: typeof feishuUserResolver.resolveOnMessage;
   let createdSessions: Array<{ workspaceId: string; name: string; source?: string }>;
   let activeSessions: Map<string, string>;
-  let userSessions: Array<{ workspaceId: string; feishuUserId: string; sessionId: string }>;
+  let userSessions: Array<{ workspaceId: string; userId: string; sessionId: string }>;
+  let sessionOwners: Map<string, string[]>;
   let resolverCalls: Array<{ workspaceId: string; openId: string }>;
 
   let larkCalls: Array<{ method: string; args: unknown }>;
@@ -115,14 +118,15 @@ describe('FeishuBotService', () => {
     createdSessions = [];
     activeSessions = new Map();
     userSessions = [];
+    sessionOwners = new Map();
     resolverCalls = [];
     larkCalls = [];
 
-    originalGetFeishuActiveWorkspace = workspaceStore.getFeishuActiveWorkspace.bind(workspaceStore);
-    originalGetFeishuActiveSession = workspaceStore.getFeishuActiveSession.bind(workspaceStore);
-    originalSetFeishuActiveSession = workspaceStore.setFeishuActiveSession.bind(workspaceStore);
-    originalAddFeishuUserSession = workspaceStore.addFeishuUserSession.bind(workspaceStore);
-    originalListFeishuSessionsByUser = workspaceStore.listFeishuSessionsByUser.bind(workspaceStore);
+    originalGetActiveUserSession = workspaceStore.getActiveUserSession.bind(workspaceStore);
+    originalSetActiveUserSession = workspaceStore.setActiveUserSession.bind(workspaceStore);
+    originalAddUserSession = workspaceStore.addUserSession.bind(workspaceStore);
+    originalListUserSessionsByUser = workspaceStore.listUserSessionsByUser.bind(workspaceStore);
+    originalGetSessionUsers = workspaceStore.getSessionUsers.bind(workspaceStore);
     originalList = workspaceStore.list.bind(workspaceStore);
     originalGet = workspaceStore.get.bind(workspaceStore);
     originalChatServiceCreateSession = chatService.createSession.bind(chatService);
@@ -147,22 +151,33 @@ describe('FeishuBotService', () => {
     botId = bot.id;
     botService.addMember(botId, { channelKey: 'feishu', channelUserId: feishuUserId, roleKey: 'owner' });
 
+    const channel = workspaceStore.getBotChannelByKey(botId, 'feishu')!;
+    feishuChannelId = channel.id;
+    getFeishuBotUserId = (openId: string) =>
+      workspaceStore.getBotUserByChannelIdentity(botId, feishuChannelId, openId)!.id;
+
     feishuUserResolver.resolveOnMessage = async (workspaceId: string, openId: string) => {
       resolverCalls.push({ workspaceId, openId });
     };
 
-    workspaceStore.getFeishuActiveWorkspace = () => workspace.id;
     workspaceStore.get = async () => workspace;
-    workspaceStore.getFeishuActiveSession = (workspaceId: string, userId: string) => {
-      return activeSessions.get(`${workspaceId}:${userId}`) ?? null;
+    workspaceStore.getActiveUserSession = (userId: string) => {
+      return activeSessions.get(userId) ?? null;
     };
-    workspaceStore.setFeishuActiveSession = (workspaceId: string, userId: string, sessionId: string) => {
-      activeSessions.set(`${workspaceId}:${userId}`, sessionId);
+    workspaceStore.setActiveUserSession = (userId: string, sessionId: string) => {
+      activeSessions.set(userId, sessionId);
     };
-    workspaceStore.addFeishuUserSession = (workspaceId: string, userId: string, sessionId: string) => {
-      userSessions.push({ workspaceId, feishuUserId: userId, sessionId });
+    workspaceStore.addUserSession = (workspaceId: string, sessionId: string, userId: string) => {
+      userSessions.push({ workspaceId, userId, sessionId });
+      const owners = sessionOwners.get(sessionId) ?? [];
+      if (!owners.includes(userId)) owners.push(userId);
+      sessionOwners.set(sessionId, owners);
     };
-    workspaceStore.listFeishuSessionsByUser = () => [];
+    workspaceStore.listUserSessionsByUser = (userId: string) =>
+      userSessions
+        .filter((u) => u.userId === userId)
+        .map((u) => ({ sessionId: u.sessionId, createdAt: new Date().toISOString() }));
+    workspaceStore.getSessionUsers = (sessionId: string) => sessionOwners.get(sessionId) ?? [];
     workspaceStore.list = async () => [workspace];
 
     let sessionCounter = 0;
@@ -263,11 +278,11 @@ describe('FeishuBotService', () => {
   });
 
   afterEach(() => {
-    workspaceStore.getFeishuActiveWorkspace = originalGetFeishuActiveWorkspace;
-    workspaceStore.getFeishuActiveSession = originalGetFeishuActiveSession;
-    workspaceStore.setFeishuActiveSession = originalSetFeishuActiveSession;
-    workspaceStore.addFeishuUserSession = originalAddFeishuUserSession;
-    workspaceStore.listFeishuSessionsByUser = originalListFeishuSessionsByUser;
+    workspaceStore.getActiveUserSession = originalGetActiveUserSession;
+    workspaceStore.setActiveUserSession = originalSetActiveUserSession;
+    workspaceStore.addUserSession = originalAddUserSession;
+    workspaceStore.listUserSessionsByUser = originalListUserSessionsByUser;
+    workspaceStore.getSessionUsers = originalGetSessionUsers;
     workspaceStore.list = originalList;
     workspaceStore.get = originalGet;
     chatService.createSession = originalChatServiceCreateSession;
@@ -296,7 +311,7 @@ describe('FeishuBotService', () => {
 
       assert.strictEqual(userSessions.length, 1);
       assert.strictEqual(userSessions[0].sessionId, 'session-1');
-      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+      assert.strictEqual(activeSessions.get(getFeishuBotUserId(feishuUserId)), 'session-1');
 
       const textPosts = getTextPosts();
       assert.strictEqual(textPosts.length, 0, 'hint should not be a separate text post');
@@ -322,7 +337,7 @@ describe('FeishuBotService', () => {
     });
 
     it('reuses an active session and does not post the hint', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-existing');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-existing');
       createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
 
       let pushArgs: unknown[] = [];
@@ -538,30 +553,26 @@ describe('FeishuBotService', () => {
     }
 
     it('handles select_session and posts the toast to the thread', async () => {
-      workspaceStore.getFeishuSessionOwner = () => 'ou_select';
-      let activeSessionId: string | null = null;
-      workspaceStore.setFeishuActiveSession = (ws, user, sessionId) => {
-        activeSessionId = sessionId;
-      };
+      const openId = 'ou_select';
+      botService.addMember(botId, { channelKey: 'feishu', channelUserId: openId, roleKey: 'normal' });
+      const userId = getFeishuBotUserId(openId);
+      sessionOwners.set('session-42', [userId]);
 
       const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id, sessionId: 'session-42' });
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
-        makeActionEvent(payload, undefined, 'ou_select'),
+        makeActionEvent(payload, undefined, openId),
       );
 
-      assert.strictEqual(activeSessionId, 'session-42');
+      assert.strictEqual(activeSessions.get(userId), 'session-42');
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
     });
 
     it('handles v2 form submit select_session from form_value and replaces the original form disabled', async () => {
-      workspaceStore.getFeishuSessionOwner = () => 'ou_form';
-      workspaceStore.listFeishuSessionsByUser = () => [{ sessionId: 'session-42' }];
-      let activeSessionId: string | null = null;
-      workspaceStore.setFeishuActiveSession = (ws, user, sessionId) => {
-        activeSessions.set(`${ws}:${user}`, sessionId);
-        activeSessionId = sessionId;
-      };
+      const openId = 'ou_form';
+      botService.addMember(botId, { channelKey: 'feishu', channelUserId: openId, roleKey: 'normal' });
+      const userId = getFeishuBotUserId(openId);
+      sessionOwners.set('session-42', [userId]);
       chatService.getSession = async () =>
         ({
           id: 'session-42',
@@ -578,11 +589,11 @@ describe('FeishuBotService', () => {
       ).sessionListCardIds.set('msg-card-1', 'card-1');
 
       const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
-      const event = makeFormEvent(payload, { sessionId: 'session-42' }, 'ou_form');
+      const event = makeFormEvent(payload, { sessionId: 'session-42' }, openId);
 
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(event);
 
-      assert.strictEqual(activeSessionId, 'session-42');
+      assert.strictEqual(activeSessions.get(userId), 'session-42');
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('会话已切换。')));
 
@@ -632,7 +643,6 @@ describe('FeishuBotService', () => {
     });
 
     it('rejects v2 form submit when sessionId is missing from form_value', async () => {
-      workspaceStore.getFeishuSessionOwner = () => 'ou_form';
       const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
       const event = makeFormEvent(payload, {}, 'ou_form');
 
@@ -657,11 +667,14 @@ describe('FeishuBotService', () => {
     });
 
     it('falls back to larkClient direct message when thread is unavailable', async () => {
-      workspaceStore.getFeishuSessionOwner = () => 'ou_fallback';
+      const openId = 'ou_fallback';
+      botService.addMember(botId, { channelKey: 'feishu', channelUserId: openId, roleKey: 'normal' });
+      const userId = getFeishuBotUserId(openId);
+      sessionOwners.set('session-42', [userId]);
 
       const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id, sessionId: 'session-42' });
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
-        makeActionEvent(payload, null, 'ou_fallback'),
+        makeActionEvent(payload, null, openId),
       );
 
       const textCalls = larkCalls.filter(
@@ -676,7 +689,7 @@ describe('FeishuBotService', () => {
       );
       assert.strictEqual(
         (textCalls[0].args as { data: { receive_id: string } }).data.receive_id,
-        'ou_fallback',
+        openId,
       );
       assert.ok(
         (textCalls[0].args as { data: { content: string } }).data.content.includes('会话已切换。'),
@@ -708,7 +721,6 @@ describe('FeishuBotService', () => {
 
     it('select_workspace switches the active workspace and updates routing maps', async () => {
       workspaceStore.get = async () => workspace;
-      workspaceStore.getFeishuActiveWorkspace = originalGetFeishuActiveWorkspace;
 
       const payload = JSON.stringify({ action: 'select_workspace', workspaceId: 'ws-2', botId });
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
@@ -723,15 +735,17 @@ describe('FeishuBotService', () => {
       assert.ok(connection);
       assert.strictEqual(connection.workspaceId, 'ws-2');
       assert.strictEqual(internals.workspaceIdToBotId.get('ws-2'), botId);
-      assert.strictEqual(workspaceStore.getFeishuActiveWorkspace(), 'ws-2');
+      assert.strictEqual(botService.getBot(botId)?.activeWorkspaceId, 'ws-2');
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('工作空间已切换')));
     });
 
     it('wraps dispatcher card.action.trigger to return the disabled card response', async () => {
-      workspaceStore.getFeishuSessionOwner = () => 'ou_dispatcher';
-      workspaceStore.listFeishuSessionsByUser = () => [{ sessionId: 'session-42' }];
+      const openId = 'ou_dispatcher';
+      botService.addMember(botId, { channelKey: 'feishu', channelUserId: openId, roleKey: 'normal' });
+      const userId = getFeishuBotUserId(openId);
+      sessionOwners.set('session-42', [userId]);
       chatService.getSession = async () =>
         ({
           id: 'session-42',
@@ -749,7 +763,7 @@ describe('FeishuBotService', () => {
       const payload = JSON.stringify({ action: 'select_session', workspaceId: workspace.id });
       const rawEvent = {
         context: { open_message_id: 'msg-dispatcher-1', open_chat_id: 'chat-dispatcher-1' },
-        operator: { open_id: 'ou_dispatcher' },
+        operator: { open_id: openId },
         action: { name: 'submit_session', value: JSON.parse(payload), tag: 'button', form_value: { sessionId: 'session-42' } },
       };
 
@@ -805,7 +819,7 @@ describe('FeishuBotService', () => {
       assert.strictEqual(createdSessions.length, 1);
       assert.strictEqual(createdSessions[0].name, feishuUserId);
       assert.strictEqual(createdSessions[0].source, 'feishu');
-      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+      assert.strictEqual(activeSessions.get(getFeishuBotUserId(feishuUserId)), 'session-1');
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes(`已创建新会话：${feishuUserId}`)));
@@ -820,7 +834,7 @@ describe('FeishuBotService', () => {
 
       assert.strictEqual(createdSessions.length, 1);
       assert.strictEqual(createdSessions[0].name, feishuUserId);
-      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+      assert.strictEqual(activeSessions.get(getFeishuBotUserId(feishuUserId)), 'session-1');
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes(`已创建新会话：${feishuUserId}`)));
@@ -835,7 +849,7 @@ describe('FeishuBotService', () => {
 
       assert.strictEqual(createdSessions.length, 1);
       assert.strictEqual(createdSessions[0].name, 'Project Planning');
-      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+      assert.strictEqual(activeSessions.get(getFeishuBotUserId(feishuUserId)), 'session-1');
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('已创建新会话：Project Planning')));
@@ -850,7 +864,7 @@ describe('FeishuBotService', () => {
 
       assert.strictEqual(createdSessions.length, 1);
       assert.strictEqual(createdSessions[0].name, 'Project Planning');
-      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+      assert.strictEqual(activeSessions.get(getFeishuBotUserId(feishuUserId)), 'session-1');
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('已创建新会话：Project Planning')));
@@ -919,9 +933,9 @@ describe('FeishuBotService', () => {
 
       await handler(makeThread(true), makeMessage('hello'));
 
-      const user = workspaceStore.getFeishuWorkspaceUser(workspace.id, feishuUserId);
+      const user = botService.getMember(botId, 'feishu', feishuUserId);
       assert.ok(user);
-      assert.strictEqual(user.openId, feishuUserId);
+      assert.strictEqual(user.channelUserId, feishuUserId);
 
       assert.strictEqual(resolverCalls.length, 1);
       assert.strictEqual(resolverCalls[0].workspaceId, workspace.id);
@@ -932,24 +946,25 @@ describe('FeishuBotService', () => {
       const handler = (service as unknown as { createDispatchHandler: () => (thread: MockThread, message: unknown) => Promise<void> }).createDispatchHandler();
 
       await handler(makeThread(true), makeMessage('hello'));
-      const first = workspaceStore.getFeishuWorkspaceUser(workspace.id, feishuUserId);
+      const first = botService.getMember(botId, 'feishu', feishuUserId);
       assert.ok(first);
 
       await new Promise((resolve) => setTimeout(resolve, 5));
       await handler(makeThread(true), makeMessage('hello again'));
 
-      const second = workspaceStore.getFeishuWorkspaceUser(workspace.id, feishuUserId);
+      const second = botService.getMember(botId, 'feishu', feishuUserId);
       assert.ok(second);
-      assert.strictEqual(second.firstSeenAt, first.firstSeenAt);
-      assert.notStrictEqual(second.lastSeenAt, first.lastSeenAt);
+      assert.strictEqual(second.createdAt, first.createdAt);
+      assert.notStrictEqual(second.updatedAt, first.updatedAt);
     });
 
     it('ignores group mentions and does not create a user record', async () => {
       const handler = (service as unknown as { createDispatchHandler: () => (thread: MockThread, message: unknown) => Promise<void> }).createDispatchHandler();
+      const userCountBefore = botService.listChannelUsersForWorkspace(workspace.id, 'feishu').length;
 
       await handler(makeThread(false), makeMessage('hello'));
 
-      assert.strictEqual(workspaceStore.getFeishuWorkspaceUser(workspace.id, feishuUserId), null);
+      assert.strictEqual(botService.listChannelUsersForWorkspace(workspace.id, 'feishu').length, userCountBefore);
       assert.strictEqual(resolverCalls.length, 0);
     });
 
@@ -1043,9 +1058,11 @@ describe('FeishuBotService', () => {
     }
 
     it('"resume" sends the session-list card to the operator open_id', async () => {
-      workspaceStore.listFeishuSessionsByUser = () => [
-        { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
-      ];
+      userSessions.push({
+        workspaceId: workspace.id,
+        userId: getFeishuBotUserId(feishuUserId),
+        sessionId: 'session-existing',
+      });
       createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
 
       await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'resume');
@@ -1064,17 +1081,17 @@ describe('FeishuBotService', () => {
     });
 
     it('"resume" still sends a card when the user has no sessions', async () => {
-      workspaceStore.listFeishuSessionsByUser = () => [];
-
       await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'resume');
 
       assert.strictEqual(interactiveCardCalls().length, 1, 'empty-state card should still be sent');
     });
 
     it('"/resume" (with leading slash) sends the session-list card to the operator open_id', async () => {
-      workspaceStore.listFeishuSessionsByUser = () => [
-        { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
-      ];
+      userSessions.push({
+        workspaceId: workspace.id,
+        userId: getFeishuBotUserId(feishuUserId),
+        sessionId: 'session-existing',
+      });
       createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
 
       await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, '/resume');
@@ -1099,8 +1116,8 @@ describe('FeishuBotService', () => {
       assert.strictEqual(createdSessions[0].name, feishuUserId);
       assert.strictEqual(createdSessions[0].source, 'feishu');
       assert.strictEqual(userSessions.length, 1);
-      assert.strictEqual(userSessions[0].feishuUserId, feishuUserId);
-      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+      assert.strictEqual(userSessions[0].userId, getFeishuBotUserId(feishuUserId));
+      assert.strictEqual(activeSessions.get(getFeishuBotUserId(feishuUserId)), 'session-1');
 
       const text = textCalls();
       assert.strictEqual(text.length, 1);
@@ -1122,8 +1139,8 @@ describe('FeishuBotService', () => {
       assert.strictEqual(createdSessions[0].name, feishuUserId);
       assert.strictEqual(createdSessions[0].source, 'feishu');
       assert.strictEqual(userSessions.length, 1);
-      assert.strictEqual(userSessions[0].feishuUserId, feishuUserId);
-      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+      assert.strictEqual(userSessions[0].userId, getFeishuBotUserId(feishuUserId));
+      assert.strictEqual(activeSessions.get(getFeishuBotUserId(feishuUserId)), 'session-1');
 
       const text = textCalls();
       assert.strictEqual(text.length, 1);
@@ -1145,8 +1162,8 @@ describe('FeishuBotService', () => {
       assert.strictEqual(createdSessions[0].name, feishuUserId);
       assert.strictEqual(createdSessions[0].source, 'feishu');
       assert.strictEqual(userSessions.length, 1);
-      assert.strictEqual(userSessions[0].feishuUserId, feishuUserId);
-      assert.strictEqual(activeSessions.get(`${workspace.id}:${feishuUserId}`), 'session-1');
+      assert.strictEqual(userSessions[0].userId, getFeishuBotUserId(feishuUserId));
+      assert.strictEqual(activeSessions.get(getFeishuBotUserId(feishuUserId)), 'session-1');
 
       const text = textCalls();
       assert.strictEqual(text.length, 1);
@@ -1162,7 +1179,7 @@ describe('FeishuBotService', () => {
     });
 
     it('"stop" interrupts an in-flight turn and appends 已中断 to the active stream reply', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
       createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
 
       let capturedHandler: ((id: number, event: SseEvent) => void) & { cleanup: () => void } | undefined;
@@ -1209,7 +1226,7 @@ describe('FeishuBotService', () => {
     });
 
     it('"/stop" (with leading slash) interrupts an in-flight turn and appends 已中断', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
 
       let interruptCalled = false;
       chatService.getRuntimeIfExists = () =>
@@ -1242,7 +1259,7 @@ describe('FeishuBotService', () => {
     });
 
     it('"stop" replies with idle message when no turn is in flight', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
       chatService.getRuntimeIfExists = () => makeMockRuntime({ isProcessingTurn: false });
 
       await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'stop');
@@ -1253,7 +1270,7 @@ describe('FeishuBotService', () => {
     });
 
     it('"stop" does not crash when the interrupt fails', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
       chatService.getRuntimeIfExists = () =>
         makeMockRuntime({
           interrupt: async () => {
@@ -1358,9 +1375,11 @@ describe('FeishuBotService', () => {
 
       assert.ok('application.bot.menu_v6' in registeredHandlers, 'should register menu_v6 handler');
 
-      workspaceStore.listFeishuSessionsByUser = () => [
-        { sessionId: 'session-existing', workspaceId: workspace.id, feishuUserId },
-      ];
+      userSessions.push({
+        workspaceId: workspace.id,
+        userId: getFeishuBotUserId(feishuUserId),
+        sessionId: 'session-existing',
+      });
       createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
 
       await registeredHandlers['application.bot.menu_v6']({
@@ -1374,7 +1393,7 @@ describe('FeishuBotService', () => {
 
   describe('/stop command', () => {
     it('interrupts the active streaming reply and does not send a standalone text', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
       createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
 
       let capturedHandler: ((id: number, event: SseEvent) => void) & { cleanup: () => void } | undefined;
@@ -1428,7 +1447,7 @@ describe('FeishuBotService', () => {
     });
 
     it('sends a standalone 已中断 when there is no active stream reply', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
 
       let interruptCalled = false;
       let cancelCalled = false;
@@ -1468,7 +1487,7 @@ describe('FeishuBotService', () => {
     });
 
     it('replies with an idle message when the session has no in-flight turn', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
       chatService.getRuntimeIfExists = () => makeMockRuntime({ isProcessingTurn: false });
 
       await (service as unknown as { handleStopCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStopCommand(
@@ -1482,7 +1501,7 @@ describe('FeishuBotService', () => {
     });
 
     it('replies with a fallback error when the interrupt fails', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-1');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
       chatService.getRuntimeIfExists = () =>
         makeMockRuntime({
           interrupt: async () => {
@@ -1503,7 +1522,7 @@ describe('FeishuBotService', () => {
 
   describe('/status command', () => {
     it('replies with workspace name and active session name', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-status');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-status');
       chatService.getSession = async (sessionId: string, workspaceId: string) =>
         ({
           id: sessionId,
@@ -1528,7 +1547,7 @@ describe('FeishuBotService', () => {
     });
 
     it('falls back to session name when customTitle is absent', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-status');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-status');
       chatService.getSession = async (sessionId: string, workspaceId: string) =>
         ({
           id: sessionId,
@@ -1561,7 +1580,15 @@ describe('FeishuBotService', () => {
     });
 
     it('replies with the binding hint when no workspace is active', async () => {
-      workspaceStore.getFeishuActiveWorkspace = () => null;
+      const internals = service as unknown as {
+        connections: Map<string, { larkClient: MockLarkClient; workspaceId: string; botId: string }>;
+        workspaceIdToBotId: Map<string, string>;
+      };
+      const connection = internals.connections.get(botId);
+      if (connection) {
+        connection.workspaceId = '';
+      }
+      internals.workspaceIdToBotId.delete(workspace.id);
 
       await (service as unknown as { handleStatusCommand: (thread: MockThread, feishuUserId: string) => Promise<void> }).handleStatusCommand(
         thread,
@@ -1574,7 +1601,7 @@ describe('FeishuBotService', () => {
     });
 
     it('replies with a fallback error when session lookup fails', async () => {
-      activeSessions.set(`${workspace.id}:${feishuUserId}`, 'session-status');
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-status');
       chatService.getSession = async () => {
         throw new Error('db down');
       };

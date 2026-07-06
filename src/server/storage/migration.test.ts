@@ -123,6 +123,32 @@ function prepareLegacyDb(dbPath: string): { setupStore: SqliteStore; seedDb: Dat
       PRIMARY KEY (workspaceId, feishuUserId)
     )
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wecom_workspace_users (
+      workspaceId TEXT NOT NULL,
+      encryptedUserId TEXT NOT NULL,
+      firstSeenAt TEXT NOT NULL,
+      lastSeenAt TEXT NOT NULL,
+      PRIMARY KEY (workspaceId, encryptedUserId)
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS feishu_bot_binding (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      activeWorkspaceId TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS feishu_workspace_users (
+      workspaceId TEXT NOT NULL,
+      openId TEXT NOT NULL,
+      userId TEXT,
+      name TEXT,
+      firstSeenAt TEXT NOT NULL,
+      lastSeenAt TEXT NOT NULL,
+      PRIMARY KEY (workspaceId, openId)
+    )
+  `);
   db.close();
 
   const setupStore = new SqliteStore(dbPath);
@@ -296,16 +322,15 @@ describe('unified schema migration', { concurrency: false }, () => {
     assert.ok(tables.includes('bot_users'));
     assert.ok(tables.includes('user_sessions'));
 
-    // Legacy mapping/session tables are dropped; workspace-user tables are kept
-    // for backward-compatible workspace APIs.
+    // Legacy mapping/session/workspace-user tables are dropped.
     assert.strictEqual(tables.includes('bot_members'), false);
     assert.strictEqual(tables.includes('wecom_user_sessions'), false);
     assert.strictEqual(tables.includes('wecom_user_id_mappings'), false);
+    assert.strictEqual(tables.includes('wecom_workspace_users'), false);
     assert.strictEqual(tables.includes('feishu_user_sessions'), false);
     assert.strictEqual(tables.includes('feishu_active_sessions'), false);
-    assert.ok(tables.includes('wecom_workspace_users'));
-    assert.ok(tables.includes('feishu_workspace_users'));
-    assert.ok(tables.includes('feishu_bot_binding'));
+    assert.strictEqual(tables.includes('feishu_workspace_users'), false);
+    assert.strictEqual(tables.includes('feishu_bot_binding'), false);
 
     const bots = store.listBots();
     assert.strictEqual(bots.length, 2);
@@ -417,5 +442,137 @@ describe('unified schema migration', { concurrency: false }, () => {
     // Original bot and the implicit Feishu bot are both preserved.
     assert.strictEqual(firstStore.listBots().length, 2);
     assert.strictEqual(secondStore.listBots().length, 2);
+  });
+
+  it('handles multi-active feishu/wecom sessions and skipped sessions without aborting', () => {
+    // Reproduces the dev-database failure: a feishu user with feishu_active_sessions
+    // rows in multiple workspaces maps to ONE bot_user, so promoting each "active"
+    // row used to violate idx_user_sessions_active_per_user (UNIQUE constraint).
+    // Also covers a wecom user with two isActive=1 source sessions (silent loss via
+    // INSERT OR IGNORE) and a "ghost" wecom session whose user has no workspace_user
+    // row (legitimately skipped — must NOT trip the count verification).
+    const { seedDb } = prepareLegacyDb(dbPath);
+    const ts = now();
+
+    // BOT1 owns WS1 and has a wecom channel + wecom bot_user 'wecom-u1'.
+    // Give wecom-u1 a SECOND active session in the same workspace (same bot_user).
+    seedDb
+      .prepare(
+        `INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, bot_id, created_at, updated_at, custom_title)
+         VALUES (?, ?, ?, 1, 0, 0, NULL, 'manual', NULL, NULL, ?, ?, NULL)`,
+      )
+      .run('wecom-session-3', WS1, 'WeCom Session 3', ts, ts);
+    seedDb
+      .prepare(
+        `INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt, isActive) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(WS1, 'wecom-u1', 'wecom-session-3', ts, ts, 1);
+
+    // A "ghost" wecom session: its user has no wecom_workspace_users row, so no
+    // bot_user is created and the session is legitimately skipped during populate.
+    seedDb
+      .prepare(
+        `INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, bot_id, created_at, updated_at, custom_title)
+         VALUES (?, ?, ?, 1, 0, 0, NULL, 'manual', NULL, NULL, ?, ?, NULL)`,
+      )
+      .run('wecom-ghost-session', WS1, 'WeCom Ghost', ts, ts);
+    seedDb
+      .prepare(
+        `INSERT INTO wecom_user_sessions (workspaceId, wecomUserId, sessionId, createdAt, updatedAt, isActive) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(WS1, 'wecom-ghost', 'wecom-ghost-session', ts, ts, 0);
+
+    // feishu-open-1 already has one feishu_active_session in WS2. Add a second
+    // feishu session + active marker in WS1 so the SAME bot_user ends up with two
+    // active sessions (the failure mode).
+    seedDb
+      .prepare(
+        `INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, bot_id, created_at, updated_at, custom_title)
+         VALUES (?, ?, ?, 1, 0, 0, NULL, 'manual', NULL, NULL, ?, ?, NULL)`,
+      )
+      .run('feishu-session-2', WS1, 'Feishu Session 2', ts, ts);
+    seedDb
+      .prepare(
+        `INSERT INTO feishu_user_sessions (workspaceId, feishuUserId, sessionId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(WS1, 'feishu-open-1', 'feishu-session-2', ts, ts);
+    seedDb
+      .prepare(
+        `INSERT INTO feishu_active_sessions (workspaceId, feishuUserId, sessionId, updatedAt) VALUES (?, ?, ?, ?)`,
+      )
+      .run(WS1, 'feishu-open-1', 'feishu-session-2', ts);
+
+    seedDb.prepare(`UPDATE bot_migration_state SET version = 0, run_at = ? WHERE id = 1`).run(ts);
+    seedDb.close();
+
+    // Must not throw (previously: UNIQUE constraint failed: user_sessions.user_id).
+    const store = new SqliteStore(dbPath);
+    assert.strictEqual(store.getMigrationVersion(), 5);
+    const db = openRawDb(store);
+
+    // No row was lost to the multi-active collisions: wecom-u1 has 2 sessions,
+    // feishu-open-1 has 2 sessions, plus wecom-u2 (1) = 5 user_sessions total.
+    // The ghost session is legitimately skipped (not counted).
+    const userSessionsCount = (db.prepare('SELECT COUNT(*) as count FROM user_sessions').get() as { count: number }).count;
+    assert.strictEqual(userSessionsCount, 5);
+
+    // Exactly one active session per bot_user (the per-user active invariant).
+    const wecomChannel = store.listBotChannels(BOT1).find((c) => c.channelKey === 'wecom')!;
+    const wecomU1 = store.getBotUserByChannelIdentity(BOT1, wecomChannel.id, 'wecom-u1')!;
+    const activeForWecomU1 = (
+      db.prepare('SELECT COUNT(*) as count FROM user_sessions WHERE user_id = ? AND is_active = 1').get(wecomU1.id) as {
+        count: number;
+      }
+    ).count;
+    assert.strictEqual(activeForWecomU1, 1);
+
+    const feishuBot = store.listBots().find((b) => b.id !== BOT1)!;
+    const feishuChannel = store.listBotChannels(feishuBot.id).find((c) => c.channelKey === 'feishu')!;
+    const feishuOpen1 = store.getBotUserByChannelIdentity(feishuBot.id, feishuChannel.id, 'feishu-open-1')!;
+    const activeForFeishuOpen1 = (
+      db.prepare('SELECT COUNT(*) as count FROM user_sessions WHERE user_id = ? AND is_active = 1').get(feishuOpen1.id) as {
+        count: number;
+      }
+    ).count;
+    assert.strictEqual(activeForFeishuOpen1, 1);
+
+    // The ghost session was skipped (no bot_user), and the count verification did
+    // NOT abort despite the raw source count being higher.
+    const ghostPresent = (
+      db
+        .prepare('SELECT COUNT(*) as count FROM user_sessions WHERE session_id = ?')
+        .get('wecom-ghost-session') as { count: number }
+    ).count;
+    assert.strictEqual(ghostPresent, 0);
+  });
+
+  it('aborts and leaves old tables when bot_users count verification fails', () => {
+    const { seedDb } = prepareLegacyDb(dbPath);
+    const ts = now();
+    // Insert a bot_members row with a channel that exists but a role that does
+    // not. The migration skips it (no matching role row), but verification still
+    // expects it, so bot_users count will be lower than expected and the
+    // migration must abort before dropping old tables.
+    seedDb
+      .prepare(
+        `INSERT INTO bot_members (bot_id, channel, channel_user_id, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(BOT1, 'wecom', 'wecom-missing-role', 'unknown_role', ts, ts);
+    seedDb.prepare(`UPDATE bot_migration_state SET version = 0, run_at = ? WHERE id = 1`).run(ts);
+    seedDb.close();
+
+    assert.throws(
+      () => new SqliteStore(dbPath),
+      /Migration count verification failed: bot_users \(\d+\) < expected \(\d+\)/,
+    );
+
+    const db = new Database(dbPath);
+    // Old tables must still be present because the migration aborted.
+    assert.strictEqual(tableNames(db).includes('bot_members'), true);
+    assert.strictEqual(tableNames(db).includes('wecom_workspace_users'), true);
+    // Version must not have been bumped.
+    const version = (db.prepare('SELECT version FROM bot_migration_state WHERE id = 1').get() as { version: number }).version;
+    assert.strictEqual(version, 0);
+    db.close();
   });
 });

@@ -103,11 +103,15 @@ export class FeishuCardActionHandler {
     if (!sessionId) {
       return this.toast('缺少会话信息。', 'error');
     }
-    const owner = workspaceStore.getFeishuSessionOwner(workspace.id, sessionId);
-    if (owner !== openId) {
+    if (!this.isSessionOwner(workspace, openId, sessionId)) {
       return this.toast('你无法操作该会话。', 'error');
     }
-    workspaceStore.setFeishuActiveSession(workspace.id, openId, sessionId);
+    const user = this.requireFeishuUser(workspace, openId);
+    if (user instanceof Error) {
+      return this.toast(user.message, 'error');
+    }
+    workspaceStore.addUserSession(workspace.id, sessionId, user.id);
+    workspaceStore.setActiveUserSession(user.id, sessionId);
     return this.toast('会话已切换。');
   }
 
@@ -117,6 +121,28 @@ export class FeishuCardActionHandler {
   ): Promise<unknown> {
     const session = await createFeishuSessionForUser(workspace, openId);
     return this.toast(`会话 “${session.name}” 已创建并选中。`);
+  }
+
+  private isSessionOwner(workspace: Workspace, openId: string, sessionId: string): boolean {
+    const user = this.resolveFeishuUser(workspace, openId);
+    if (!user) return false;
+    return workspaceStore.getSessionUsers(sessionId).includes(user.id);
+  }
+
+  private resolveFeishuUser(workspace: Workspace, openId: string): import('../models/bot-user.js').BotUser | null {
+    const bot = botService.getBotForWorkspace(workspace.id);
+    if (!bot) return null;
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'feishu');
+    if (!channel) return null;
+    return workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, openId);
+  }
+
+  private requireFeishuUser(workspace: Workspace, openId: string): import('../models/bot-user.js').BotUser | Error {
+    const user = this.resolveFeishuUser(workspace, openId);
+    if (!user) {
+      return new Error('无法识别操作用户。');
+    }
+    return user;
   }
 
   private handleApproval(
@@ -129,8 +155,7 @@ export class FeishuCardActionHandler {
     if (!sessionId || !requestId) {
       return this.toast('缺少审批信息。', 'error');
     }
-    const owner = workspaceStore.getFeishuSessionOwner(workspace.id, sessionId);
-    if (owner !== openId) {
+    if (!this.isSessionOwner(workspace, openId, sessionId)) {
       return this.toast('你无法操作该会话。', 'error');
     }
 
@@ -159,8 +184,7 @@ export class FeishuCardActionHandler {
     if (!sessionId || !requestId) {
       return this.toast('缺少问题信息。', 'error');
     }
-    const owner = workspaceStore.getFeishuSessionOwner(workspace.id, sessionId);
-    if (owner !== openId) {
+    if (!this.isSessionOwner(workspace, openId, sessionId)) {
       return this.toast('你无法操作该会话。', 'error');
     }
 
@@ -198,8 +222,7 @@ export class FeishuCardActionHandler {
     if (!sessionId || !requestId) {
       return this.toast('缺少问题信息。', 'error');
     }
-    const owner = workspaceStore.getFeishuSessionOwner(workspace.id, sessionId);
-    if (owner !== openId) {
+    if (!this.isSessionOwner(workspace, openId, sessionId)) {
       return this.toast('你无法操作该会话。', 'error');
     }
 

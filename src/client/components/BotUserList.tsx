@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, AlertTriangle, Loader2, Crown, RefreshCw } from 'lucide-react';
-import type { BotMember, BotChannel, BotRole } from '../stores/bot-store';
+import type { BotUser, BotChannel, BotRole } from '../stores/bot-store';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
-interface BotMemberListProps {
+interface BotUserListProps {
   botId: string;
-  members: BotMember[];
+  members: BotUser[];
   isLoading?: boolean;
   isSaving?: boolean;
   error?: string | null;
@@ -19,7 +19,7 @@ interface BotMemberListProps {
 
 const CHANNELS: BotChannel[] = ['wecom', 'feishu'];
 
-export default function BotMemberList({
+export default function BotUserList({
   botId,
   members,
   isLoading,
@@ -30,7 +30,7 @@ export default function BotMemberList({
   onRefreshMembers,
   onResolvePending,
   onSetPlaintext,
-}: BotMemberListProps) {
+}: BotUserListProps) {
   const { t } = useTranslation('settings');
   const [formError, setFormError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -48,28 +48,28 @@ export default function BotMemberList({
   }, [botId]);
 
   const channelHasOwner = (c: BotChannel) =>
-    members.some((m) => m.channel === c && m.role === 'owner');
+    members.some((m) => m.channelKey === c && m.roleKey === 'owner');
 
   const channelOwnerCount = (c: BotChannel) =>
-    members.filter((m) => m.channel === c && m.role === 'owner').length;
+    members.filter((m) => m.channelKey === c && m.roleKey === 'owner').length;
 
-  const handleRemove = async (member: BotMember) => {
-    const key = `${member.channel}:${member.channelUserId}`;
-    if (member.role === 'owner' && channelOwnerCount(member.channel) <= 1) {
+  const handleRemove = async (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
+    if (member.roleKey === 'owner' && channelOwnerCount(member.channelKey) <= 1) {
       setConfirmRemoveKey(key);
       return;
     }
     setRemoving(key);
     setConfirmRemoveKey(null);
-    await onRemoveMember(member.channel, member.channelUserId);
+    await onRemoveMember(member.channelKey, member.channelUserId);
     setRemoving(null);
   };
 
-  const handleConfirmRemove = async (member: BotMember) => {
-    const key = `${member.channel}:${member.channelUserId}`;
+  const handleConfirmRemove = async (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
     setRemoving(key);
     setConfirmRemoveKey(null);
-    await onRemoveMember(member.channel, member.channelUserId);
+    await onRemoveMember(member.channelKey, member.channelUserId);
     setRemoving(null);
   };
 
@@ -91,8 +91,8 @@ export default function BotMemberList({
     }
   };
 
-  const handleStartEdit = (member: BotMember) => {
-    const key = `${member.channel}:${member.channelUserId}`;
+  const handleStartEdit = (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
     setEditingPlaintext((prev) => ({ ...prev, [key]: member.plaintextUserId ?? '' }));
     setFormError(null);
   };
@@ -101,8 +101,8 @@ export default function BotMemberList({
     setEditingPlaintext((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handlePlaintextSave = async (member: BotMember) => {
-    const key = `${member.channel}:${member.channelUserId}`;
+  const handlePlaintextSave = async (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
     const value = editingPlaintext[key]?.trim() ?? '';
     if (!value) {
       setFormError(t('bots.plaintextUserIdRequired'));
@@ -111,7 +111,7 @@ export default function BotMemberList({
     setSavingPlaintextKey(key);
     setFormError(null);
     try {
-      await onSetPlaintext(member.channel, member.channelUserId, value);
+      await onSetPlaintext(member.channelKey, member.channelUserId, value);
       setEditingPlaintext((prev) => {
         const next = { ...prev };
         delete next[key];
@@ -122,8 +122,8 @@ export default function BotMemberList({
     }
   };
 
-  const handlePlaintextCancel = (member: BotMember) => {
-    const key = `${member.channel}:${member.channelUserId}`;
+  const handlePlaintextCancel = (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
     setEditingPlaintext((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -131,8 +131,8 @@ export default function BotMemberList({
     });
   };
 
-  const handlePlaintextBlur = (member: BotMember) => {
-    const key = `${member.channel}:${member.channelUserId}`;
+  const handlePlaintextBlur = (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
     const value = editingPlaintext[key]?.trim() ?? '';
     if (value && value !== (member.plaintextUserId ?? '')) {
       handlePlaintextSave(member);
@@ -141,7 +141,7 @@ export default function BotMemberList({
     }
   };
 
-  const handlePlaintextKeyDown = (member: BotMember, e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handlePlaintextKeyDown = (member: BotUser, e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       handlePlaintextSave(member);
@@ -152,9 +152,9 @@ export default function BotMemberList({
 
   const groupedMembers = CHANNELS.map((c) => ({
     channel: c,
-    items: members.filter((m) => m.channel === c).sort((a, b) => {
+    items: members.filter((m) => m.channelKey === c).sort((a, b) => {
       const roleOrder = { owner: 0, admin: 1, normal: 2 };
-      if (roleOrder[a.role] !== roleOrder[b.role]) return roleOrder[a.role] - roleOrder[b.role];
+      if (roleOrder[a.roleKey] !== roleOrder[b.roleKey]) return roleOrder[a.roleKey] - roleOrder[b.roleKey];
       return a.channelUserId.localeCompare(b.channelUserId);
     }),
   }));
@@ -243,7 +243,7 @@ export default function BotMemberList({
             ) : (
               <div className="divide-y divide-border/50">
                 {items.map((member) => {
-                  const key = `${member.channel}:${member.channelUserId}`;
+                  const key = `${member.channelKey}:${member.channelUserId}`;
                   const isConfirming = confirmRemoveKey === key;
                   const isPending = member.resolutionStatus === 'pending';
                   const isEditingPlaintext = key in editingPlaintext;
@@ -253,19 +253,19 @@ export default function BotMemberList({
                         <div className="flex flex-col gap-1.5 min-w-0">
                           <div className="flex items-center gap-3 flex-wrap">
                             <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-surface-hover text-text-tertiary">
-                              {member.channel}
+                              {member.channelKey}
                             </span>
                             <span className="text-xs text-text-primary font-mono">{member.channelUserId}</span>
-                            {member.role === 'owner' ? (
+                            {member.roleKey === 'owner' ? (
                               <span className="inline-flex items-center gap-1 text-[10px] font-medium text-warning">
                                 <Crown className="w-3 h-3" />
                                 {t('bots.roleOwner')}
                               </span>
                             ) : (
                               <Select
-                                value={member.role}
+                                value={member.roleKey}
                                 onValueChange={(value) =>
-                                  onSetRole(member.channel, member.channelUserId, value as BotRole)
+                                  onSetRole(member.channelKey, member.channelUserId, value as BotRole)
                                 }
                                 disabled={isSaving}
                               >
@@ -275,7 +275,7 @@ export default function BotMemberList({
                                 <SelectContent>
                                   <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
                                   <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
-                                  <SelectItem value="owner" disabled={channelHasOwner(member.channel)}>
+                                  <SelectItem value="owner" disabled={channelHasOwner(member.channelKey)}>
                                     {t('bots.roleOwner')}
                                   </SelectItem>
                                 </SelectContent>

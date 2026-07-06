@@ -914,7 +914,12 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     const tableNames = tables.map((t) => t.name);
     assert.ok(!tableNames.includes('bot_members'));
     assert.ok(!tableNames.includes('wecom_user_sessions'));
-    // feishu_workspace_users and wecom_workspace_users are kept for compatibility
+    assert.ok(!tableNames.includes('wecom_user_id_mappings'));
+    assert.ok(!tableNames.includes('wecom_workspace_users'));
+    assert.ok(!tableNames.includes('feishu_user_sessions'));
+    assert.ok(!tableNames.includes('feishu_active_sessions'));
+    assert.ok(!tableNames.includes('feishu_workspace_users'));
+    assert.ok(!tableNames.includes('feishu_bot_binding'));
 
     // New tables should exist
     assert.ok(tableNames.includes('bot_channels'));

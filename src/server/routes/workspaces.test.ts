@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
 import { wecomUserResolver } from '../services/wecom-user-resolver.js';
+import { botService } from '../services/bot-service.js';
 import type { Workspace } from '../models/workspace.js';
 
 describe('workspaces routes', { concurrency: false }, () => {
@@ -14,10 +15,6 @@ describe('workspaces routes', { concurrency: false }, () => {
   let originalPrunePromptHistory: typeof workspaceStore.prunePromptHistory;
   let originalCreatePromptHistory: typeof workspaceStore.createPromptHistory;
   let originalRecordLastOpened: typeof workspaceStore.recordLastOpened;
-  let originalListWecomWorkspaceUsers: typeof workspaceStore.listWecomWorkspaceUsers;
-  let originalGetWecomWorkspaceUser: typeof workspaceStore.getWecomWorkspaceUser;
-  let originalSetWecomUserMapping: typeof workspaceStore.setWecomUserMapping;
-  let originalIsPlaintextUserIdUsedInWorkspace: typeof workspaceStore.isPlaintextUserIdUsedInWorkspace;
   let originalFlushWorkspaceNow: typeof wecomUserResolver.flushWorkspaceNow;
 
   beforeEach(() => {
@@ -28,10 +25,6 @@ describe('workspaces routes', { concurrency: false }, () => {
     originalPrunePromptHistory = workspaceStore.prunePromptHistory.bind(workspaceStore);
     originalCreatePromptHistory = workspaceStore.createPromptHistory.bind(workspaceStore);
     originalRecordLastOpened = workspaceStore.recordLastOpened.bind(workspaceStore);
-    originalListWecomWorkspaceUsers = workspaceStore.listWecomWorkspaceUsers.bind(workspaceStore);
-    originalGetWecomWorkspaceUser = workspaceStore.getWecomWorkspaceUser.bind(workspaceStore);
-    originalSetWecomUserMapping = workspaceStore.setWecomUserMapping.bind(workspaceStore);
-    originalIsPlaintextUserIdUsedInWorkspace = workspaceStore.isPlaintextUserIdUsedInWorkspace.bind(workspaceStore);
     originalFlushWorkspaceNow = wecomUserResolver.flushWorkspaceNow.bind(wecomUserResolver);
   });
 
@@ -43,11 +36,8 @@ describe('workspaces routes', { concurrency: false }, () => {
     workspaceStore.prunePromptHistory = originalPrunePromptHistory;
     workspaceStore.createPromptHistory = originalCreatePromptHistory;
     workspaceStore.recordLastOpened = originalRecordLastOpened;
-    workspaceStore.listWecomWorkspaceUsers = originalListWecomWorkspaceUsers;
-    workspaceStore.getWecomWorkspaceUser = originalGetWecomWorkspaceUser;
-    workspaceStore.setWecomUserMapping = originalSetWecomUserMapping;
-    workspaceStore.isPlaintextUserIdUsedInWorkspace = originalIsPlaintextUserIdUsedInWorkspace;
     wecomUserResolver.flushWorkspaceNow = originalFlushWorkspaceNow;
+    workspaceStore.resetData();
   });
 
   function createMockRes(): {
@@ -282,12 +272,17 @@ describe('workspaces routes', { concurrency: false }, () => {
     const handlers = await importRouteHandlers();
 
     workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as Workspace);
-    workspaceStore.getWecomWorkspaceUser = () => ({ firstSeenAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() });
-    workspaceStore.isPlaintextUserIdUsedInWorkspace = () => false;
-    let mappingArgs: [string, string] | null = null;
-    workspaceStore.setWecomUserMapping = (encryptedUserId: string, plaintextUserId: string) => {
-      mappingArgs = [encryptedUserId, plaintextUserId];
-    };
+    workspaceStore.createBot({ name: 'Test Bot', activeWorkspaceId: 'ws-1' });
+    const bot = botService.listBotsForWorkspace('ws-1')[0];
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'wecom')!;
+    const role = workspaceStore.getBotRoleByKey(bot.id, 'normal')!;
+    workspaceStore.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role.id,
+      channelUserId: 'E123',
+      plaintextUserId: null,
+    });
 
     const req = { params: { id: 'ws-1', encryptedUserId: 'E123' }, body: { plaintextUserId: 'U456' } };
     const res = createMockRes();
@@ -295,22 +290,35 @@ describe('workspaces routes', { concurrency: false }, () => {
     await handlers['/:id/wecom/users/:encryptedUserId/plaintext'].post(req, res);
 
     assert.strictEqual(res.statusCode, 200);
-    assert.deepStrictEqual(mappingArgs, ['E123', 'U456']);
     const body = res.jsonBody as { encryptedUserId: string; plaintextUserId: string };
     assert.strictEqual(body.encryptedUserId, 'E123');
     assert.strictEqual(body.plaintextUserId, 'U456');
+    const updated = botService.listChannelUsersForWorkspace('ws-1', 'wecom').find((u) => u.channelUserId === 'E123');
+    assert.strictEqual(updated?.plaintextUserId, 'U456');
   });
 
   it('POST /:id/wecom/users/:encryptedUserId/plaintext rejects duplicates', async () => {
     const handlers = await importRouteHandlers();
 
     workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as Workspace);
-    workspaceStore.getWecomWorkspaceUser = () => ({ firstSeenAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() });
-    workspaceStore.isPlaintextUserIdUsedInWorkspace = () => true;
-    let mappingCalled = false;
-    workspaceStore.setWecomUserMapping = () => {
-      mappingCalled = true;
-    };
+    workspaceStore.createBot({ name: 'Test Bot', activeWorkspaceId: 'ws-1' });
+    const bot = botService.listBotsForWorkspace('ws-1')[0];
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'wecom')!;
+    const role = workspaceStore.getBotRoleByKey(bot.id, 'normal')!;
+    workspaceStore.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role.id,
+      channelUserId: 'E123',
+      plaintextUserId: null,
+    });
+    workspaceStore.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role.id,
+      channelUserId: 'E456',
+      plaintextUserId: 'U456',
+    });
 
     const req = { params: { id: 'ws-1', encryptedUserId: 'E123' }, body: { plaintextUserId: 'U456' } };
     const res = createMockRes();
@@ -318,14 +326,13 @@ describe('workspaces routes', { concurrency: false }, () => {
     await handlers['/:id/wecom/users/:encryptedUserId/plaintext'].post(req, res);
 
     assert.strictEqual(res.statusCode, 409);
-    assert.strictEqual(mappingCalled, false);
   });
 
   it('POST /:id/wecom/users/:encryptedUserId/plaintext returns 400 when user is not in workspace', async () => {
     const handlers = await importRouteHandlers();
 
     workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as Workspace);
-    workspaceStore.getWecomWorkspaceUser = () => null;
+    workspaceStore.createBot({ name: 'Test Bot', activeWorkspaceId: 'ws-1' });
 
     const req = { params: { id: 'ws-1', encryptedUserId: 'E123' }, body: { plaintextUserId: 'U456' } };
     const res = createMockRes();
@@ -340,7 +347,17 @@ describe('workspaces routes', { concurrency: false }, () => {
     const handlers = await importRouteHandlers();
 
     workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as Workspace);
-    workspaceStore.getWecomWorkspaceUser = () => ({ firstSeenAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() });
+    workspaceStore.createBot({ name: 'Test Bot', activeWorkspaceId: 'ws-1' });
+    const bot = botService.listBotsForWorkspace('ws-1')[0];
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'wecom')!;
+    const role = workspaceStore.getBotRoleByKey(bot.id, 'normal')!;
+    workspaceStore.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role.id,
+      channelUserId: 'E123',
+      plaintextUserId: null,
+    });
 
     const req = { params: { id: 'ws-1', encryptedUserId: 'E123' }, body: { plaintextUserId: '   ' } };
     const res = createMockRes();

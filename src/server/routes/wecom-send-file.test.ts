@@ -2,12 +2,11 @@ import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { chatService } from '../services/chat-service.js';
+import { botService } from '../services/bot-service.js';
 import type { Workspace } from '../models/workspace.js';
 
 describe('wecom-send-file routes', { concurrency: false }, () => {
-  let originalGetWecomUserIdBySession: typeof workspaceStore.getWecomUserIdBySession;
-  let originalGet: typeof workspaceStore.get;
-  let originalGetWecomUserMapping: typeof workspaceStore.getWecomUserMapping;
   let originalSendFile: (
     workspaceId: string,
     toUser: string,
@@ -16,22 +15,13 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
   ) => Promise<void>;
 
   beforeEach(async () => {
-    originalGetWecomUserIdBySession = workspaceStore.getWecomUserIdBySession.bind(workspaceStore);
-    originalGet = workspaceStore.get.bind(workspaceStore);
-    originalGetWecomUserMapping = workspaceStore.getWecomUserMapping.bind(workspaceStore);
-
-    workspaceStore.get = async () => ({ id: 'ws-1', settings: {} } as unknown as Workspace);
-    workspaceStore.getWecomUserMapping = () => null;
+    workspaceStore.resetData();
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     originalSendFile = wecomBotService.sendFile.bind(wecomBotService);
   });
 
   afterEach(() => {
-    workspaceStore.getWecomUserIdBySession = originalGetWecomUserIdBySession;
-    workspaceStore.get = originalGet;
-    workspaceStore.getWecomUserMapping = originalGetWecomUserMapping;
-
     import('../services/wecom-bot-service.js').then(({ wecomBotService }) => {
       wecomBotService.sendFile = originalSendFile;
     });
@@ -86,22 +76,59 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     return handlers;
   }
 
+  async function createWorkspace(settings: Workspace['settings'] = {}) {
+    return workspaceStore.create({
+      name: 'Test Workspace',
+      folderPath: '/tmp/test-workspace',
+      settings,
+    });
+  }
+
+  function createWecomBot(workspaceId: string) {
+    return botService.createBot({
+      name: 'WeCom Bot',
+      activeWorkspaceId: workspaceId,
+      channelSettings: {
+        wecom: { enabled: true, corpId: 'test-corp', corpSecret: 'test-secret', agentId: 'test-agent' },
+      },
+    });
+  }
+
+  function addWecomUser(botId: string, channelUserId: string, plaintextUserId?: string) {
+    return botService.addMember(botId, {
+      channelKey: 'wecom',
+      channelUserId,
+      plaintextUserId,
+    });
+  }
+
+  async function createWecomSession(workspaceId: string, userId: string) {
+    const session = await chatService.createSession({ workspaceId, name: 'wecom session', source: 'wecom' });
+    workspaceStore.addUserSession(workspaceId, session.id, userId);
+    workspaceStore.setActiveUserSession(userId, session.id);
+    return session;
+  }
+
   it('returns 200 when sendFile succeeds', async () => {
+    const workspace = await createWorkspace();
+    const bot = createWecomBot(workspace.id);
+    const user = addWecomUser(bot.id, 'enc-alice');
+    const session = await createWecomSession(workspace.id, user.id);
+
     const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     let sendFileCalled = false;
     wecomBotService.sendFile = async (wsId, toUser, filePath) => {
       sendFileCalled = true;
-      assert.strictEqual(wsId, 'ws-1');
+      assert.strictEqual(wsId, workspace.id);
       assert.strictEqual(toUser, 'bob');
       assert.strictEqual(filePath, 'docs/report.pdf');
     };
 
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
+      params: { workspaceId: workspace.id },
+      body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
     const res = createMockRes();
 
@@ -113,19 +140,18 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
   });
 
   it('passes isAdmin=true to sendFile when the caller is an admin', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
-    workspaceStore.getWecomUserMapping = () => 'alice';
-    workspaceStore.get = async () => ({
-      id: 'ws-1',
-      settings: {
-        wecomBotIsolation: {
-          adminUserIds: ['alice'],
-          defaultAllowedSkills: [],
-          adminAllowedSkills: [],
-        },
+    const workspace = await createWorkspace({
+      wecomBotIsolation: {
+        adminUserIds: ['alice'],
+        defaultAllowedSkills: [],
+        adminAllowedSkills: [],
       },
-    } as unknown as Workspace);
+    });
+    const bot = createWecomBot(workspace.id);
+    const user = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const session = await createWecomSession(workspace.id, user.id);
+
+    const handlers = await importRouteHandlers();
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     let capturedIsAdmin: boolean | undefined;
@@ -134,8 +160,8 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
+      params: { workspaceId: workspace.id },
+      body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
     const res = createMockRes();
 
@@ -146,19 +172,18 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
   });
 
   it('passes isAdmin=false to sendFile for non-admin callers', async () => {
-    const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
-    workspaceStore.getWecomUserMapping = () => 'alice';
-    workspaceStore.get = async () => ({
-      id: 'ws-1',
-      settings: {
-        wecomBotIsolation: {
-          adminUserIds: ['admin-user'],
-          defaultAllowedSkills: [],
-          adminAllowedSkills: [],
-        },
+    const workspace = await createWorkspace({
+      wecomBotIsolation: {
+        adminUserIds: ['admin-user'],
+        defaultAllowedSkills: [],
+        adminAllowedSkills: [],
       },
-    } as unknown as Workspace);
+    });
+    const bot = createWecomBot(workspace.id);
+    const user = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const session = await createWecomSession(workspace.id, user.id);
+
+    const handlers = await importRouteHandlers();
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     let capturedIsAdmin: boolean | undefined;
@@ -167,8 +192,8 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
+      params: { workspaceId: workspace.id },
+      body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
     const res = createMockRes();
 
@@ -179,43 +204,48 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
   });
 
   it('returns 400 when sessionId is missing', async () => {
+    const workspace = await createWorkspace();
     const handlers = await importRouteHandlers();
 
-    const req1 = { params: { workspaceId: 'ws-1' }, body: { toUser: 'bob', filePath: 'docs/report.pdf' } };
+    const req1 = { params: { workspaceId: workspace.id }, body: { toUser: 'bob', filePath: 'docs/report.pdf' } };
     const res1 = createMockRes();
     await handlers['/'].post(req1, res1);
     assert.strictEqual(res1.statusCode, 400);
 
-    const req2 = { params: { workspaceId: 'ws-1' }, body: { sessionId: '', toUser: 'bob', filePath: 'docs/report.pdf' } };
+    const req2 = { params: { workspaceId: workspace.id }, body: { sessionId: '', toUser: 'bob', filePath: 'docs/report.pdf' } };
     const res2 = createMockRes();
     await handlers['/'].post(req2, res2);
     assert.strictEqual(res2.statusCode, 400);
   });
 
   it('returns 400 when toUser is missing', async () => {
+    const workspace = await createWorkspace();
     const handlers = await importRouteHandlers();
 
-    const req = { params: { workspaceId: 'ws-1' }, body: { sessionId: 'sid-1', filePath: 'docs/report.pdf' } };
+    const req = { params: { workspaceId: workspace.id }, body: { sessionId: 'sid-1', filePath: 'docs/report.pdf' } };
     const res = createMockRes();
     await handlers['/'].post(req, res);
     assert.strictEqual(res.statusCode, 400);
   });
 
   it('returns 400 when filePath is missing', async () => {
+    const workspace = await createWorkspace();
     const handlers = await importRouteHandlers();
 
-    const req = { params: { workspaceId: 'ws-1' }, body: { sessionId: 'sid-1', toUser: 'bob' } };
+    const req = { params: { workspaceId: workspace.id }, body: { sessionId: 'sid-1', toUser: 'bob' } };
     const res = createMockRes();
     await handlers['/'].post(req, res);
     assert.strictEqual(res.statusCode, 400);
   });
 
   it('returns 400 when session is unknown', async () => {
+    const workspace = await createWorkspace();
+    createWecomBot(workspace.id);
+
     const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => null;
 
     const req = {
-      params: { workspaceId: 'ws-1' },
+      params: { workspaceId: workspace.id },
       body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
     };
     const res = createMockRes();
@@ -227,8 +257,12 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
   });
 
   it('returns 400 when sendFile throws a permission error', async () => {
+    const workspace = await createWorkspace();
+    const bot = createWecomBot(workspace.id);
+    const user = addWecomUser(bot.id, 'enc-alice');
+    const session = await createWecomSession(workspace.id, user.id);
+
     const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     wecomBotService.sendFile = async () => {
@@ -236,8 +270,8 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'data/ZhangWei/private.pdf' },
+      params: { workspaceId: workspace.id },
+      body: { sessionId: session.id, toUser: 'bob', filePath: 'data/ZhangWei/private.pdf' },
     };
     const res = createMockRes();
 
@@ -249,17 +283,21 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
   });
 
   it('returns 503 when bot is not connected', async () => {
+    const workspace = await createWorkspace();
+    const bot = createWecomBot(workspace.id);
+    const user = addWecomUser(bot.id, 'enc-alice');
+    const session = await createWecomSession(workspace.id, user.id);
+
     const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     wecomBotService.sendFile = async () => {
-      throw new Error('Bot for workspace ws-1 is not connected');
+      throw new Error(`Bot for workspace ${workspace.id} is not connected`);
     };
 
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
+      params: { workspaceId: workspace.id },
+      body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
     const res = createMockRes();
 
@@ -270,8 +308,12 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
   });
 
   it('returns 500 when sendFile throws an upload error', async () => {
+    const workspace = await createWorkspace();
+    const bot = createWecomBot(workspace.id);
+    const user = addWecomUser(bot.id, 'enc-alice');
+    const session = await createWecomSession(workspace.id, user.id);
+
     const handlers = await importRouteHandlers();
-    workspaceStore.getWecomUserIdBySession = () => 'enc-alice';
 
     const { wecomBotService } = await import('../services/wecom-bot-service.js');
     wecomBotService.sendFile = async () => {
@@ -279,8 +321,8 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
-      params: { workspaceId: 'ws-1' },
-      body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
+      params: { workspaceId: workspace.id },
+      body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
     const res = createMockRes();
 

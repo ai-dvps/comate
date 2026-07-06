@@ -1,6 +1,7 @@
 import type { Workspace } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import { chatService } from './chat-service.js';
+import { botService } from './bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 
 /**
@@ -20,7 +21,12 @@ export async function createFeishuSessionForUser(
     source: 'feishu',
     botId,
   });
-  workspaceStore.addFeishuUserSession(workspace.id, openId, session.id);
-  workspaceStore.setFeishuActiveSession(workspace.id, openId, session.id);
+  const resolvedBotId = botId ?? botService.getBotForWorkspace(workspace.id)?.id;
+  if (!resolvedBotId) {
+    throw new Error(`No bot bound to workspace ${workspace.id}`);
+  }
+  const botUser = botService.ensureMember(resolvedBotId, 'feishu', openId);
+  workspaceStore.addUserSession(workspace.id, session.id, botUser.id);
+  workspaceStore.setActiveUserSession(botUser.id, session.id);
   return session;
 }

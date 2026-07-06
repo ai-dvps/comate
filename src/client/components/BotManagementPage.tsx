@@ -14,7 +14,7 @@ import { useWorkspaceStore } from '../stores/workspace-store';
 import BotTabShell, { BotEmptyState } from './BotTabShell';
 import BotGeneralSection from './BotGeneralSection';
 import BotChannelsSection from './BotChannelsSection';
-import BotMemberList from './BotMemberList';
+import BotUserList from './BotUserList';
 import BotRolePermissions, { type BotRolePermissionsHandle } from './BotRolePermissions';
 import BotPersonaEditor, { type BotPersonaEditorHandle } from './BotPersonaEditor';
 import BotDangerSection from './BotDangerSection';
@@ -523,7 +523,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
           )}
 
           {activeSection === 'members' && !isNew && (
-            <BotMemberList
+            <BotUserList
               botId={selectedBot.id}
               members={membersByBotId[selectedBot.id] || []}
               isLoading={isLoading}

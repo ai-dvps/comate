@@ -175,16 +175,12 @@ export class ChatService {
     // Load merged sessions from local DB (drafts + synced SDK sessions)
     const allSessions = workspaceStore.listLocalSessions(workspaceId);
 
-    // Identify bot sessions from the user mapping table
-    const wecomMappings = workspaceStore.listWecomSessions(workspaceId);
-    const feishuMappings = workspaceStore.listFeishuSessionsForWorkspace(workspaceId);
-    const botSessionIds = new Set([
-      ...wecomMappings.map((m) => m.sessionId),
-      ...feishuMappings.map((m) => m.sessionId),
-    ]);
+    // Identify bot sessions from the unified user_sessions / bot_users tables.
+    const botSessions = workspaceStore.listBotSessionsForWorkspace(workspaceId);
     for (const session of allSessions) {
-      if (botSessionIds.has(session.id)) {
-        session.source = wecomMappings.some((m) => m.sessionId === session.id) ? 'wecom' : 'feishu';
+      const botSession = botSessions.find((m) => m.sessionId === session.id);
+      if (botSession) {
+        session.source = botSession.channelKey;
       }
     }
 
@@ -1279,6 +1275,18 @@ export class ChatService {
     return result;
   }
 
+  private getWecomBotUserForSession(sessionId: string): import('../models/bot-user.js').BotUser | null {
+    for (const userId of workspaceStore.getSessionUsers(sessionId)) {
+      const botUser = workspaceStore.getBotUser(userId);
+      if (!botUser) continue;
+      const channel = workspaceStore.getBotChannel(botUser.channelId);
+      if (channel?.channelKey === 'wecom') {
+        return botUser;
+      }
+    }
+    return null;
+  }
+
   private buildSdkOptions(
     workspace: Workspace,
     session: ChatSession,
@@ -1415,8 +1423,8 @@ export class ChatService {
       const channel = session.source === 'wecom' || session.source === 'feishu' ? session.source : undefined;
       let channelUserId: string | undefined;
       if (channel === 'wecom') {
-        const wecomUserId = workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
-        channelUserId = wecomUserId ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId) : undefined;
+        const wecomBotUser = this.getWecomBotUserForSession(session.id);
+        channelUserId = wecomBotUser?.plaintextUserId ?? wecomBotUser?.channelUserId;
       } else if (channel === 'feishu') {
         channelUserId = botUserId;
       }
@@ -1456,15 +1464,12 @@ export class ChatService {
 
           const knownUserDirNames: string[] = [];
           if (channel === 'wecom') {
-            const wsUsers = workspaceStore.listWecomWorkspaceUsers(workspace.id);
-            const mappings = workspaceStore.listWecomUserMappings();
-            const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
-            for (const u of wsUsers) {
-              knownUserDirNames.push(mappingMap.get(u.encryptedUserId) ?? u.encryptedUserId);
+            for (const u of botService.listChannelUsersForWorkspace(workspace.id, 'wecom')) {
+              knownUserDirNames.push(u.plaintextUserId ?? u.channelUserId);
             }
           } else if (channel === 'feishu') {
-            for (const u of workspaceStore.listFeishuWorkspaceUsers(workspace.id)) {
-              knownUserDirNames.push(u.openId);
+            for (const u of botService.listChannelUsersForWorkspace(workspace.id, 'feishu')) {
+              knownUserDirNames.push(u.plaintextUserId ?? u.channelUserId);
             }
           }
 
@@ -1654,20 +1659,16 @@ export class ChatService {
       if (!options.canUseTool) {
         const resolved = resolveEffectivePolicy(workspace);
         const policy = resolved.policy;
-        const wecomUserId = workspaceStore.getWecomUserIdBySession(workspace.id, session.id);
+        const wecomBotUser = this.getWecomBotUserForSession(session.id);
         const canonicalUserId = botUserId
-          ?? (wecomUserId
-            ? (workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId)
-            : undefined);
+          ?? (wecomBotUser?.plaintextUserId ?? wecomBotUser?.channelUserId);
 
         let skillContext: import('./bot-skill-policy.js').SkillPolicyContext | undefined;
 
         if (canonicalUserId) {
           const userDirName = canonicalUserId;
-          const wsUsers = workspaceStore.listWecomWorkspaceUsers(workspace.id);
-          const mappings = workspaceStore.listWecomUserMappings();
-          const mappingMap = new Map(mappings.map((m) => [m.encryptedUserId, m.plaintextUserId]));
-          const knownUserDirNames = wsUsers.map((u) => mappingMap.get(u.encryptedUserId) ?? u.encryptedUserId);
+          const wsUsers = botService.listChannelUsersForWorkspace(workspace.id, 'wecom');
+          const knownUserDirNames = wsUsers.map((u) => u.plaintextUserId ?? u.channelUserId);
 
           pathContext = createPathPolicyContext(
             workspace,

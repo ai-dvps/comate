@@ -96,6 +96,10 @@
     "revealInFileManager": "在文件管理器中显示",
     "copyFullPath": "复制完整路径"
   },
+  "migrationNotice": {
+    "title": "Schema 升级完成",
+    "message": "在最新的统一 Schema 迁移中，历史机器人审计日志（{{count}} 条）已被清理。新的审计事件仍会继续记录。"
+  },
   "provider": {
     "noProviderConfigured": "未配置 LLM 服务商。请前往设置 → 服务商添加。",
     "configure": "配置服务商"

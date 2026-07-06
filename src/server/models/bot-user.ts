@@ -1,9 +1,10 @@
-import type { BotRoleKey } from './bot.js';
+import type { BotChannelKey, BotRoleKey } from './bot.js';
 
 export interface BotUser {
   id: string;
   botId: string;
   channelId: string;
+  channelKey: BotChannelKey;
   roleId: string;
   channelUserId: string;
   plaintextUserId: string | null;

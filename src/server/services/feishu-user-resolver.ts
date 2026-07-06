@@ -1,4 +1,5 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import { botService } from './bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 
@@ -41,10 +42,18 @@ export class FeishuUserResolver {
     openId: string,
     larkClient: lark.Client,
   ): Promise<{ userId: string; name: string }> {
-    const existing = workspaceStore.getFeishuWorkspaceUser(workspaceId, openId);
-    if (existing?.userId && existing?.name) {
+    const bot = botService.getBotForWorkspace(workspaceId);
+    if (!bot) {
+      throw new Error(`No bot bound to workspace ${workspaceId}`);
+    }
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'feishu');
+    if (!channel) {
+      throw new Error(`No feishu channel for bot ${bot.id}`);
+    }
+    const existing = workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, openId);
+    if (existing?.plaintextUserId) {
       diagLog(`[FeishuUserResolver] Immediate workspace=${workspaceId} user=${tid(openId)} cached=true`);
-      return { userId: existing.userId, name: existing.name };
+      return { userId: existing.plaintextUserId, name: existing.plaintextUserId };
     }
 
     diagLog(`[FeishuUserResolver] Immediate workspace=${workspaceId} user=${tid(openId)} resolving`);
@@ -60,12 +69,19 @@ export class FeishuUserResolver {
 
     const user = response?.data?.users?.[0];
     if (user?.name) {
-      workspaceStore.setFeishuWorkspaceUserName(
-        workspaceId,
-        openId,
-        user.name,
-        user.user_id ?? null,
-      );
+      const plaintext = user.user_id ?? user.name;
+      if (existing) {
+        workspaceStore.updateBotUser(existing.id, { plaintextUserId: plaintext });
+      } else {
+        const role = workspaceStore.getBotRoleByKey(bot.id, 'normal');
+        workspaceStore.createBotUser({
+          botId: bot.id,
+          channelId: channel.id,
+          roleId: role?.id ?? '',
+          channelUserId: openId,
+          plaintextUserId: plaintext,
+        });
+      }
       diagLog(`[FeishuUserResolver] Immediate workspace=${workspaceId} user=${tid(openId)} name=${user.name}`);
     }
 

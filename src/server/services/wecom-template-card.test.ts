@@ -506,20 +506,20 @@ describe('wecom-template-card', () => {
 
   describe('verifySessionOwner', () => {
     it('returns true when the user owns the session', () => {
-      const getWecomUserIdBySession = () => 'user-abc';
-      const result = verifySessionOwner('user-abc', 'sess-1', 'ws-1', getWecomUserIdBySession);
+      const getChannelUserIdBySession = () => 'user-abc';
+      const result = verifySessionOwner('user-abc', 'sess-1', 'ws-1', getChannelUserIdBySession);
       assert.strictEqual(result, true);
     });
 
     it('returns false when the user does not own the session', () => {
-      const getWecomUserIdBySession = () => 'user-abc';
-      const result = verifySessionOwner('user-other', 'sess-1', 'ws-1', getWecomUserIdBySession);
+      const getChannelUserIdBySession = () => 'user-abc';
+      const result = verifySessionOwner('user-other', 'sess-1', 'ws-1', getChannelUserIdBySession);
       assert.strictEqual(result, false);
     });
 
     it('returns false when session owner is not found', () => {
-      const getWecomUserIdBySession = () => null;
-      const result = verifySessionOwner('user-abc', 'sess-1', 'ws-1', getWecomUserIdBySession);
+      const getChannelUserIdBySession = () => null;
+      const result = verifySessionOwner('user-abc', 'sess-1', 'ws-1', getChannelUserIdBySession);
       assert.strictEqual(result, false);
     });
   });

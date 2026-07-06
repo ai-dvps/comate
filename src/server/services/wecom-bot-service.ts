@@ -68,7 +68,8 @@ async function resolveStreamReplyIfNeeded<TFrame>(
   if (!workspace) return undefined;
   const policy = resolveEffectivePolicy(workspace).policy;
 
-  const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId) ?? wecomUserId;
+  const botUser = workspaceStore.getBotUserByPlaintext(wecomUserId);
+  const plaintextUserId = botUser?.plaintextUserId ?? wecomUserId;
   const isAdmin = workspace.settings.wecomBotIsolation?.adminUserIds?.includes(plaintextUserId) ?? false;
 
   if (evaluateToolPermission(policy, REPLY_TOOL_NAME, isAdmin) === 'deny') {
@@ -353,7 +354,7 @@ export class WeComBotService {
       Array.from(this.connections.values()).find((c) => c.workspaceId === workspaceId)?.botId;
   }
 
-  private ensureBotMember(workspaceId: string, channel: 'wecom', channelUserId: string): void {
+  private ensureBotUser(workspaceId: string, channel: 'wecom', channelUserId: string): void {
     const botId = this.getBotIdForWorkspace(workspaceId);
     if (!botId) return;
     if (!botService.getBot(botId)) return;
@@ -368,6 +369,107 @@ export class WeComBotService {
       // Membership is best-effort; do not block message handling.
       console.error(`[WeComBotService] failed to auto-add member ${channelUserId} for bot ${botId}:`, err);
     }
+  }
+
+  private getWecomBotForWorkspace(workspaceId: string): { botId: string; channelId: string } | null {
+    const botId = this.getBotIdForWorkspace(workspaceId);
+    if (botId) {
+      const channel = workspaceStore.getBotChannelByKey(botId, 'wecom');
+      if (channel) return { botId, channelId: channel.id };
+    }
+    // Fallback for storage-only lookups (e.g. tests without an injected connection).
+    const bot = workspaceStore.listBotsForWorkspace(workspaceId)[0];
+    if (!bot) return null;
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'wecom');
+    if (!channel) return null;
+    return { botId: bot.id, channelId: channel.id };
+  }
+
+  private getBotUserForWecom(workspaceId: string, wecomUserId: string): { botUser: import('../models/bot-user.js').BotUser; botId: string; channelId: string } | null {
+    const bot = this.getWecomBotForWorkspace(workspaceId);
+    if (!bot) return null;
+    let botUser = workspaceStore.getBotUserByChannelIdentity(bot.botId, bot.channelId, wecomUserId);
+    if (!botUser) {
+      botUser = botService.ensureMember(bot.botId, 'wecom', wecomUserId);
+    }
+    return { botUser, botId: bot.botId, channelId: bot.channelId };
+  }
+
+  private getPlaintextUserId(workspaceId: string, wecomUserId: string): string | null {
+    const botUser = this.getBotUserForWecom(workspaceId, wecomUserId);
+    return botUser?.botUser.plaintextUserId ?? null;
+  }
+
+  private getChannelUserIdByPlaintext(plaintextUserId: string): string | null {
+    return workspaceStore.getBotUserByPlaintext(plaintextUserId)?.channelUserId ?? null;
+  }
+
+  private getChannelUserIdBySession(sessionId: string): string | null {
+    const userIds = workspaceStore.getSessionUsers(sessionId);
+    for (const userId of userIds) {
+      const botUser = workspaceStore.getBotUser(userId);
+      if (botUser) {
+        const channel = workspaceStore.getBotChannel(botUser.channelId);
+        if (channel?.channelKey === 'wecom') {
+          return botUser.channelUserId;
+        }
+      }
+    }
+    return null;
+  }
+
+  private listWorkspaceChannelUsers(workspaceId: string): Array<{ encryptedUserId: string }> {
+    const bot = this.getWecomBotForWorkspace(workspaceId);
+    if (!bot) return [];
+    const users = workspaceStore.listBotUsersByChannel(bot.botId, bot.channelId);
+    return users.map((u) => ({ encryptedUserId: u.channelUserId }));
+  }
+
+  private getActiveChannelSession(workspaceId: string, wecomUserId: string): string | null {
+    const botUser = this.getBotUserForWecom(workspaceId, wecomUserId);
+    if (!botUser) return null;
+    return workspaceStore.getActiveUserSession(botUser.botUser.id);
+  }
+
+  private setActiveChannelSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
+    const botUser = this.getBotUserForWecom(workspaceId, wecomUserId);
+    if (!botUser) return;
+    workspaceStore.addUserSession(workspaceId, sessionId, botUser.botUser.id);
+    workspaceStore.setActiveUserSession(botUser.botUser.id, sessionId);
+  }
+
+  private listChannelSessionsByUser(workspaceId: string, wecomUserId: string): Array<{ sessionId: string; createdAt: string }> {
+    const botUser = this.getBotUserForWecom(workspaceId, wecomUserId);
+    if (!botUser) return [];
+    return workspaceStore.listUserSessionsByUser(botUser.botUser.id);
+  }
+
+  private setChannelSession(workspaceId: string, wecomUserId: string, sessionId: string): void {
+    this.setActiveChannelSession(workspaceId, wecomUserId, sessionId);
+  }
+
+  private ensureChannelUser(workspaceId: string, encryptedUserId: string): void {
+    const bot = this.getWecomBotForWorkspace(workspaceId);
+    if (!bot) return;
+    const existing = workspaceStore.getBotUserByChannelIdentity(bot.botId, bot.channelId, encryptedUserId);
+    if (existing) return;
+    const normalRole = workspaceStore.getBotRoleByKey(bot.botId, 'normal');
+    if (!normalRole) return;
+    workspaceStore.createBotUser({
+      botId: bot.botId,
+      channelId: bot.channelId,
+      roleId: normalRole.id,
+      channelUserId: encryptedUserId,
+      plaintextUserId: null,
+    });
+  }
+
+  private async resolvePlaintextUserId(wecomUserId: string): Promise<string | null> {
+    // First try the unified schema lookup
+    const botUser = workspaceStore.getBotUserByPlaintext(wecomUserId);
+    if (botUser?.plaintextUserId) return botUser.plaintextUserId;
+    // Fallback to legacy mapping table
+    return null;
   }
 
   disconnectAll(): void {
@@ -438,7 +540,7 @@ export class WeComBotService {
     wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
 
     // Auto-add first-time messengers as normal bot members.
-    this.ensureBotMember(workspaceId, 'wecom', wecomUserId);
+    this.ensureBotUser(workspaceId, 'wecom', wecomUserId);
 
     // /clear and /new (aliases) start a fresh session. Intercepted before the
     // message reaches the agent so the literal command is never a chat turn.
@@ -561,13 +663,13 @@ export class WeComBotService {
     conn: BotConnection,
   ): Promise<void> {
     try {
-      const activeSessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
-      const rows = workspaceStore.listWecomSessionsByUser(workspaceId, wecomUserId);
+      const activeSessionId = this.getActiveChannelSession(workspaceId, wecomUserId);
+      const rows = this.listChannelSessionsByUser(workspaceId, wecomUserId);
 
       type Candidate = { sessionId: string; title: string; updatedAt: string; isActive: boolean };
       const candidates: Candidate[] = [];
       for (const row of rows) {
-        // listWecomSessionsByUser returns only {sessionId, createdAt}; fetch
+        // listUserSessionsByUser returns only {sessionId, createdAt}; fetch
         // title + updatedAt per row (and filter archived) like collectSessionList.
         const session = await chatService.getSession(row.sessionId, workspaceId);
         if (!session || session.isArchived) continue; // R8: exclude archived
@@ -630,7 +732,7 @@ export class WeComBotService {
     conn: BotConnection,
   ): Promise<void> {
     try {
-      const sessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
+      const sessionId = this.getActiveChannelSession(workspaceId, wecomUserId);
       diagLog(`[WeComBotService] /stop from ${wecomUserId}, activeSession=${sessionId ?? 'none'}`);
       if (!sessionId) {
         await conn.client.sendMessage(wecomUserId, {
@@ -731,7 +833,7 @@ export class WeComBotService {
         return;
       }
 
-      const sessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
+      const sessionId = this.getActiveChannelSession(workspaceId, wecomUserId);
       let sessionName = '暂无活跃会话';
       if (sessionId) {
         try {
@@ -813,8 +915,8 @@ export class WeComBotService {
     });
 
     if (previousWorkspaceId) {
-      const users = workspaceStore.listWecomWorkspaceUsers(previousWorkspaceId);
-      const message = `当前机器人已切换到工作空间“${workspaceName}”。你正在进行的任务仍在原工作空间继续。`;
+      const users = this.listWorkspaceChannelUsers(previousWorkspaceId);
+      const message = `当前机器人已切换到工作空间”${workspaceName}”。你正在进行的任务仍在原工作空间继续。`;
       for (const user of users) {
         this.sendProactiveMessage(botId, user.encryptedUserId, message).catch((err) => {
           diagLog(`[WeComBotService] failed to notify user ${user.encryptedUserId} of workspace switch:`, err);
@@ -833,7 +935,7 @@ export class WeComBotService {
     wecomUserResolver.trackWorkspaceUser(workspaceId, wecomUserId);
 
     // Auto-add first-time messengers as normal bot members.
-    this.ensureBotMember(workspaceId, 'wecom', wecomUserId);
+    this.ensureBotUser(workspaceId, 'wecom', wecomUserId);
 
     const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn) return;
@@ -894,7 +996,7 @@ export class WeComBotService {
       const filename = sdkFilename ?? this.generateFallbackFilename(msgtype);
 
       // Determine user folder name
-      const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
+      const plaintextUserId = this.getPlaintextUserId(workspaceId, wecomUserId);
       const userFolderName = plaintextUserId ?? wecomUserId;
 
       // Save file to workspace
@@ -990,10 +1092,9 @@ export class WeComBotService {
       customTitle,
       botId,
     });
-    workspaceStore.setWecomSession(workspaceId, wecomUserId, session.id);
-    workspaceStore.setActiveWecomSession(workspaceId, wecomUserId, session.id);
+    this.setActiveChannelSession(workspaceId, wecomUserId, session.id);
 
-    const plaintextUserId = workspaceStore.getWecomUserMapping(wecomUserId);
+    const plaintextUserId = this.getPlaintextUserId(workspaceId, wecomUserId);
     if (plaintextUserId) {
       wecomSessionRenamer.renameSessionsForUser(workspaceId, wecomUserId).catch((err) => {
         console.error('[WeComBotService] Failed to rename sessions after creation:', err);
@@ -1003,7 +1104,7 @@ export class WeComBotService {
   }
 
   private async getOrCreateSession(workspaceId: string, wecomUserId: string): Promise<string | null> {
-    let sessionId = workspaceStore.getActiveWecomSession(workspaceId, wecomUserId);
+    let sessionId = this.getActiveChannelSession(workspaceId, wecomUserId);
 
     if (sessionId) {
       const session = await chatService.getSession(sessionId, workspaceId);
@@ -1103,12 +1204,12 @@ export class WeComBotService {
       throw new Error(`Bot for workspace ${workspaceId} is not connected`);
     }
 
-    const encryptedUserId = workspaceStore.getEncryptedUserIdByPlaintext(toUser.trim());
+    const encryptedUserId = this.getChannelUserIdByPlaintext(toUser.trim());
     if (!encryptedUserId) {
       throw new Error(`WeCom user ID has not been decrypted yet. The recipient must send at least one message to the bot first.`);
     }
 
-    const userFolderName = workspaceStore.getWecomUserMapping(encryptedUserId) ?? encryptedUserId;
+    const userFolderName = this.getPlaintextUserId(workspaceId, encryptedUserId) ?? encryptedUserId;
 
     const validation = validateSendFilePath(workspace.folderPath, userFolderName, filePath.trim(), isAdmin);
     if (!validation.allowed) {
@@ -1184,7 +1285,7 @@ export class WeComBotService {
     }
 
     // Verify the clicking user owns the session.
-    const ownerWecomUserId = workspaceStore.getWecomUserIdBySession(workspaceId, parsed.sessionId);
+    const ownerWecomUserId = this.getChannelUserIdBySession(parsed.sessionId);
     if (ownerWecomUserId !== parsed.wecomUserId) {
       await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
       return;
@@ -1243,8 +1344,8 @@ export class WeComBotService {
    * Handle a `/resume` card submit: switch the user's active session to the
    * selected one. Stateless — the target sessionId is read from the selected
    * option id; no pending store is consulted. Mirrors feishu handleSelectSession
-   * (ownership check on the TARGET session, then setActiveWecomSession).
-   * Idempotent via setActiveWecomSession's transactional single-active invariant.
+   * (ownership check on the TARGET session, then setActiveChannelSession).
+   * Idempotent via setActiveChannelSession's transactional single-active invariant.
    */
   private async handleResumeSubmit(
     workspaceId: string,
@@ -1267,7 +1368,7 @@ export class WeComBotService {
       parsed.wecomUserId,
       targetSessionId,
       workspaceId,
-      (ws, sess) => workspaceStore.getWecomUserIdBySession(ws, sess),
+      (_ws, sess) => this.getChannelUserIdBySession(sess),
     );
     if (!ownsTarget) {
       await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');
@@ -1275,7 +1376,7 @@ export class WeComBotService {
     }
 
     try {
-      workspaceStore.setActiveWecomSession(workspaceId, parsed.wecomUserId, targetSessionId);
+      this.setActiveChannelSession(workspaceId, parsed.wecomUserId, targetSessionId);
     } catch (err) {
       console.error('[WeComBotService] failed to switch session via /resume:', err);
       await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该会话');

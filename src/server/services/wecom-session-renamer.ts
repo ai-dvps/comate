@@ -1,13 +1,14 @@
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
+import { botService } from './bot-service.js';
 import type { ChatSession } from '../models/session.js';
 
 export class WeComSessionRenamer {
   async renameSessionsForUser(workspaceId: string, encryptedUserId: string): Promise<void> {
-    const plaintextUserId = workspaceStore.getWecomUserMapping(encryptedUserId);
-    if (!plaintextUserId) return;
+    const user = this.resolveWecomUser(workspaceId, encryptedUserId);
+    if (!user?.plaintextUserId) return;
 
-    const sessionMappings = workspaceStore.listWecomSessionsByUser(workspaceId, encryptedUserId);
+    const sessionMappings = workspaceStore.listUserSessionsByUser(user.id);
     if (sessionMappings.length === 0) return;
 
     const sessions: ChatSession[] = [];
@@ -30,8 +31,8 @@ export class WeComSessionRenamer {
     for (let i = 0; i < sessions.length; i++) {
       const session = sessions[i];
       const title = sessions.length === 1
-        ? `${plaintextUserId} session`
-        : `${plaintextUserId} session #${i + 1}`;
+        ? `${user.plaintextUserId} session`
+        : `${user.plaintextUserId} session #${i + 1}`;
 
       try {
         await chatService.updateSession(session.id, { name: title }, workspaceId);
@@ -45,7 +46,7 @@ export class WeComSessionRenamer {
   }
 
   async backfillExistingSessions(): Promise<void> {
-    const mappings = workspaceStore.listWecomSessionsForBackfill();
+    const mappings = await this.listChannelSessionsForBackfill();
     if (mappings.length === 0) return;
 
     // Group by (workspaceId, wecomUserId)
@@ -60,8 +61,8 @@ export class WeComSessionRenamer {
 
     for (const [key, groupMappings] of groups) {
       const [workspaceId, encryptedUserId] = key.split(':');
-      const plaintextUserId = workspaceStore.getWecomUserMapping(encryptedUserId);
-      if (!plaintextUserId) continue;
+      const user = this.resolveWecomUser(workspaceId, encryptedUserId);
+      if (!user?.plaintextUserId) continue;
 
       const sessions: ChatSession[] = [];
       for (const mapping of groupMappings) {
@@ -82,8 +83,8 @@ export class WeComSessionRenamer {
       for (let i = 0; i < sessions.length; i++) {
         const session = sessions[i];
         const title = sessions.length === 1
-          ? `${plaintextUserId} session`
-          : `${plaintextUserId} session #${i + 1}`;
+          ? `${user.plaintextUserId} session`
+          : `${user.plaintextUserId} session #${i + 1}`;
 
         try {
           await chatService.updateSession(session.id, { name: title }, workspaceId);
@@ -97,6 +98,34 @@ export class WeComSessionRenamer {
     }
 
     console.log(`[WeComSessionRenamer] Backfill complete, processed ${mappings.length} sessions`);
+  }
+
+  private async listChannelSessionsForBackfill(): Promise<Array<{ workspaceId: string; wecomUserId: string; sessionId: string }>> {
+    const result: Array<{ workspaceId: string; wecomUserId: string; sessionId: string }> = [];
+    for (const workspace of await workspaceStore.list()) {
+      for (const sessionMapping of workspaceStore.listBotSessionsForWorkspace(workspace.id)) {
+        if (sessionMapping.channelKey !== 'wecom') continue;
+        for (const userId of workspaceStore.getSessionUsers(sessionMapping.sessionId)) {
+          const botUser = workspaceStore.getBotUser(userId);
+          if (!botUser) continue;
+          const channel = workspaceStore.getBotChannel(botUser.channelId);
+          if (channel?.channelKey === 'wecom') {
+            result.push({
+              workspaceId: workspace.id,
+              wecomUserId: botUser.channelUserId,
+              sessionId: sessionMapping.sessionId,
+            });
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  private resolveWecomUser(workspaceId: string, encryptedUserId: string): import('../models/bot-user.js').BotUser | null {
+    const bot = botService.getBotForWorkspace(workspaceId);
+    if (!bot) return null;
+    return botService.getMember(bot.id, 'wecom', encryptedUserId);
   }
 
   private isEligibleForRename(session: ChatSession): boolean {

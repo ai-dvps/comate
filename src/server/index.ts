@@ -110,6 +110,20 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.get('/api/health/migration', (_req, res) => {
+  try {
+    const state = workspaceStore.getMigrationState();
+    res.json({
+      version: state.version,
+      runAt: state.runAt,
+      auditLogsCleared: (state.snapshot.auditLogsCleared as number | undefined) ?? 0,
+    });
+  } catch (error) {
+    console.error('Failed to get migration state:', error);
+    res.status(500).json({ error: 'Failed to get migration state' });
+  }
+});
+
 // Client diagnostic log sink — forwards browser logs into sse-diag.log
 app.post('/api/log', express.json({ limit: '1mb' }), (req, res) => {
   const { level = 'log', message } = req.body;
