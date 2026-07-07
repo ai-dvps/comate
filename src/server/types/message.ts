@@ -108,6 +108,61 @@ export interface SubagentState {
   messages: SubagentMessage[]
 }
 
+export interface WorkflowPhase {
+  title: string
+  detail?: string
+}
+
+export type WorkflowStatus = 'running' | 'completed' | 'error' | 'killed'
+
+export interface WorkflowProgressAgent {
+  type: 'workflow_agent'
+  index: number
+  label?: string
+  phaseIndex?: number
+  phaseTitle?: string
+  agentId: string
+  model?: string
+  state?: 'running' | 'done'
+  startedAt?: number
+  queuedAt?: number
+  lastProgressAt?: number
+  attempt?: number
+  tokens?: number
+  toolCalls?: number
+  durationMs?: number
+  lastToolName?: string
+  lastToolSummary?: string
+  promptPreview?: string
+  resultPreview?: string
+}
+
+export interface WorkflowProgressPhase {
+  type: 'workflow_phase'
+  index: number
+  title: string
+}
+
+export type WorkflowProgressItem = WorkflowProgressAgent | WorkflowProgressPhase
+
+export interface WorkflowState {
+  runId: string
+  sessionId: string
+  toolUseId?: string
+  workflowName?: string
+  status: WorkflowStatus
+  summary?: string
+  error?: string
+  startTime: number
+  durationMs?: number
+  totalTokens?: number
+  totalToolCalls?: number
+  agentCount: number
+  phases: WorkflowPhase[]
+  progress: WorkflowProgressItem[]
+  subagents: SubagentState[]
+}
+
 /**
  * Discriminated union of every SSE event emitted by the chat stream route.
  * The server emits these via `event: <type>` + `data: <JSON>` SSE frames.
@@ -252,6 +307,20 @@ export type SseEvent =
       type: 'task_updated'
       taskId: string
       patch: { status?: string; description?: string; error?: string }
+    }
+  | {
+      type: 'workflow_start'
+      runId: string
+      sessionId: string
+      toolUseId: string
+      workflowName?: string
+    }
+  | { type: 'workflow_update'; runId: string; sessionId: string }
+  | {
+      type: 'workflow_done'
+      runId: string
+      sessionId: string
+      status: WorkflowStatus
     }
   | { type: 'compact_boundary' }
   | { type: 'compact_status'; active: boolean }
