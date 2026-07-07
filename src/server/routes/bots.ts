@@ -537,6 +537,36 @@ router.post('/:id/channels/:channelKey/reconnect', async (req, res) => {
   }
 });
 
+// GET /api/bots/:id/channels/:channelKey/credentials
+router.get('/:id/channels/:channelKey/credentials', (req, res) => {
+  try {
+    const bot = botService.getBot(req.params.id);
+    if (!bot) {
+      res.status(404).json({ error: 'Bot not found' });
+      return;
+    }
+
+    const channelKey = req.params.channelKey;
+    if (channelKey !== 'wecom' && channelKey !== 'feishu') {
+      res.status(400).json({ error: 'channelKey must be wecom or feishu' });
+      return;
+    }
+
+    const allSettings = botService.getChannelSettings(req.params.id);
+    const credentials = allSettings[channelKey];
+    if (!credentials) {
+      res.status(404).json({ error: 'Channel not configured' });
+      return;
+    }
+
+    botService.getAuditLogger().log(req.params.id, systemActor(), 'channel_credentials_viewed', { channelKey });
+    res.json({ credentials });
+  } catch (error) {
+    console.error('Failed to get channel credentials:', error);
+    res.status(500).json({ error: 'Failed to get channel credentials' });
+  }
+});
+
 // POST /api/bots/migrate
 router.post('/migrate', async (req, res) => {
   try {

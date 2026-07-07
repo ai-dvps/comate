@@ -15,6 +15,8 @@ interface BotChannelsSectionProps {
   channelStatus?: { wecom: ChannelStatus; feishu: ChannelStatus; errors?: { wecom?: string; feishu?: string } };
   pendingActions?: Record<'wecom' | 'feishu', 'connect' | 'disconnect' | null>;
   onReconnect?: (channelKey: 'wecom' | 'feishu') => void;
+  onRevealCredential?: (fieldKey: string) => Promise<string | undefined>;
+  revealedCredentials?: Record<string, string>;
 }
 
 function getChannelLabel(
@@ -67,8 +69,12 @@ export default function BotChannelsSection({
   channelStatus,
   pendingActions,
   onReconnect,
+  onRevealCredential,
+  revealedCredentials,
 }: BotChannelsSectionProps) {
   const { t } = useTranslation('settings');
+  const getOriginal = (fieldKey: string, channelValue: string | true | undefined) =>
+    revealedCredentials?.[fieldKey] ?? channelValue;
 
   const Toggle = ({
     checked,
@@ -218,8 +224,9 @@ export default function BotChannelsSection({
               label={`${t('bots.wecomBotSecret')}${originalBot ? '' : ' *'}`}
               value={form.wecomBotSecret}
               placeholder={t('bots.wecomBotSecretPlaceholder')}
-              original={originalBot?.channelSettings.wecom?.botSecret}
+              original={getOriginal('wecomBotSecret', originalBot?.channelSettings.wecom?.botSecret)}
               onChange={(value) => onUpdate({ wecomBotSecret: value })}
+              onReveal={onRevealCredential ? () => onRevealCredential('wecomBotSecret') : undefined}
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -238,8 +245,9 @@ export default function BotChannelsSection({
                 label={t('bots.wecomCorpSecret')}
                 value={form.wecomCorpSecret}
                 placeholder={t('bots.wecomCorpSecretPlaceholder')}
-                original={originalBot?.channelSettings.wecom?.corpSecret}
+                original={getOriginal('wecomCorpSecret', originalBot?.channelSettings.wecom?.corpSecret)}
                 onChange={(value) => onUpdate({ wecomCorpSecret: value })}
+                onReveal={onRevealCredential ? () => onRevealCredential('wecomCorpSecret') : undefined}
               />
             </div>
             {!originalBot && (
@@ -292,8 +300,9 @@ export default function BotChannelsSection({
               label={`${t('bots.feishuAppSecret')}${originalBot ? '' : ' *'}`}
               value={form.feishuAppSecret}
               placeholder={t('bots.feishuAppSecretPlaceholder')}
-              original={originalBot?.channelSettings.feishu?.appSecret}
+              original={getOriginal('feishuAppSecret', originalBot?.channelSettings.feishu?.appSecret)}
               onChange={(value) => onUpdate({ feishuAppSecret: value })}
+              onReveal={onRevealCredential ? () => onRevealCredential('feishuAppSecret') : undefined}
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <SecretInput
@@ -301,16 +310,18 @@ export default function BotChannelsSection({
                 label={t('bots.feishuEncryptKey')}
                 value={form.feishuEncryptKey}
                 placeholder={t('bots.feishuEncryptKeyPlaceholder')}
-                original={originalBot?.channelSettings.feishu?.encryptKey}
+                original={getOriginal('feishuEncryptKey', originalBot?.channelSettings.feishu?.encryptKey)}
                 onChange={(value) => onUpdate({ feishuEncryptKey: value })}
+                onReveal={onRevealCredential ? () => onRevealCredential('feishuEncryptKey') : undefined}
               />
               <SecretInput
                 id="feishuVerificationToken"
                 label={t('bots.feishuVerificationToken')}
                 value={form.feishuVerificationToken}
                 placeholder={t('bots.feishuVerificationTokenPlaceholder')}
-                original={originalBot?.channelSettings.feishu?.verificationToken}
+                original={getOriginal('feishuVerificationToken', originalBot?.channelSettings.feishu?.verificationToken)}
                 onChange={(value) => onUpdate({ feishuVerificationToken: value })}
+                onReveal={onRevealCredential ? () => onRevealCredential('feishuVerificationToken') : undefined}
               />
             </div>
             {!originalBot && (

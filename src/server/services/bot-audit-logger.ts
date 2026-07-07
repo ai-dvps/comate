@@ -7,6 +7,7 @@ export type BotAuditEventType =
   | 'bot_created'
   | 'bot_deleted'
   | 'channel_credentials_changed'
+  | 'channel_credentials_viewed'
   | 'channel_enabled'
   | 'channel_disabled'
   | 'channel_reconnect_requested'

@@ -1028,6 +1028,57 @@ describe('bots routes', { concurrency: false }, () => {
     }
   });
 
+  it('GET /:id/channels/:channelKey/credentials returns decrypted channel credentials', async () => {
+    const bot = createWeComBot();
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/channels/:channelKey/credentials'].get(
+      { params: { id: bot.id, channelKey: 'wecom' } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { credentials: { botSecret?: unknown } };
+    assert.strictEqual(body.credentials.botSecret, 'wecom-bot-secret');
+  });
+
+  it('GET /:id/channels/:channelKey/credentials returns 404 for missing bot', async () => {
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/channels/:channelKey/credentials'].get(
+      { params: { id: 'nonexistent', channelKey: 'wecom' } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 404);
+  });
+
+  it('GET /:id/channels/:channelKey/credentials validates channel key', async () => {
+    const bot = createWeComBot();
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/channels/:channelKey/credentials'].get(
+      { params: { id: bot.id, channelKey: 'unknown' } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 400);
+    const body = res.jsonBody as { error: string };
+    assert.match(body.error, /wecom or feishu/);
+  });
+
+  it('GET /:id/channels/:channelKey/credentials records an audit log entry', async () => {
+    const bot = createWeComBot();
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/channels/:channelKey/credentials'].get(
+      { params: { id: bot.id, channelKey: 'wecom' } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200);
+    const logs = workspaceStore.listAuditLogs(bot.id);
+    const viewed = logs.find((log) => log.eventType === 'channel_credentials_viewed');
+    assert.ok(viewed);
+    assert.deepStrictEqual(viewed!.details, { channelKey: 'wecom' });
+  });
+
   it('PUT /:id disconnects a channel when it is disabled', async () => {
     const bot = createWeComBot();
     const originalWecomDisconnect = wecomBotService.disconnectChannel.bind(wecomBotService);
