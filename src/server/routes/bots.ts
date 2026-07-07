@@ -8,7 +8,8 @@ import { builtinPluginService } from '../services/builtin-plugin-service.js';
 import { SAFE_PRESET } from '../services/tool-permission-policy.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { ENCRYPTED_CHANNEL_KEYS } from '../models/bot.js';
-import type { BotChannelSettings, CreateBotInput, UpdateBotInput } from '../models/bot.js';
+import type { BotChannelSettings, CreateBotInput, UpdateBotInput, BotChannelKey } from '../models/bot.js';
+import { sanitizeChannelError } from '../utils/channel-error-sanitizer.js';
 import {
   BotAuthorizationError,
   BotUserNotFoundError,
@@ -20,6 +21,8 @@ import {
 } from '../services/bot-service.js';
 
 const router = Router();
+const reconnectRateLimits = new Map<string, number>();
+const RECONNECT_RATE_LIMIT_MS = 30_000;
 
 function systemActor(): BotActor {
   return { type: 'system' };
@@ -206,10 +209,14 @@ router.put('/:id', async (req, res) => {
     };
     const { channelSettings, rolePolicy, rolePersonas, ...botInput } = body;
 
+    let preUpdateSettingsSnapshot: BotChannelSettings | undefined;
+    let preUpdateActiveWorkspaceIdSnapshot: string | null | undefined;
     if (channelSettings) {
       const existingSettings = botService.getChannelSettings(req.params.id);
+      preUpdateSettingsSnapshot = existingSettings;
+      preUpdateActiveWorkspaceIdSnapshot = botService.getBot(req.params.id)?.activeWorkspaceId;
       const resolved = resolveSentinelCredentials(channelSettings, existingSettings);
-      for (const channelKey of Object.keys(resolved) as import('../models/bot.js').BotChannelKey[]) {
+      for (const channelKey of Object.keys(resolved) as BotChannelKey[]) {
         const settings = resolved[channelKey];
         if (settings) {
           botService.updateChannelSettings(req.params.id, channelKey, settings);
@@ -228,7 +235,11 @@ router.put('/:id', async (req, res) => {
     }
 
     invalidateBotRuntimesIfNeeded(bot.id, { persona: botInput.persona, rolePersonas, rolePolicy });
-    await reconcileChannelConnections(bot);
+    await reconcileChannelConnections(
+      bot,
+      preUpdateSettingsSnapshot,
+      preUpdateActiveWorkspaceIdSnapshot,
+    );
     res.json({ bot: redactBot(bot) });
   } catch (error) {
     const mapped = mapBotError(error);
@@ -271,8 +282,10 @@ router.post('/:id/active-workspace', async (req, res) => {
       return;
     }
 
+    const preUpdateSettings = botService.getChannelSettings(req.params.id);
+    const preUpdateActiveWorkspaceId = botService.getBot(req.params.id)?.activeWorkspaceId;
     const bot = botService.setActiveWorkspace(req.params.id, workspaceId, systemActor());
-    await reconcileChannelConnections(bot);
+    await reconcileChannelConnections(bot, preUpdateSettings, preUpdateActiveWorkspaceId);
     res.json({ bot: redactBot(bot) });
   } catch (error) {
     const mapped = mapBotError(error);
@@ -418,15 +431,109 @@ router.get('/:id/status', (req, res) => {
       res.status(404).json({ error: 'Bot not found' });
       return;
     }
+    const wecomStatus = wecomBotService.getBotStatus(req.params.id);
+    const feishuStatus = feishuBotService.getBotStatus(req.params.id);
+    const errors: { wecom?: string; feishu?: string } = {};
+    if (wecomStatus === 'error') {
+      errors.wecom = sanitizeChannelError(wecomBotService.getChannelError(req.params.id));
+    }
+    if (feishuStatus === 'error') {
+      errors.feishu = sanitizeChannelError(feishuBotService.getChannelError(req.params.id));
+    }
     res.json({
-      status: {
-        wecom: wecomBotService.getBotStatus(req.params.id),
-        feishu: feishuBotService.getBotStatus(req.params.id),
-      },
+      wecom: wecomStatus,
+      feishu: feishuStatus,
+      ...(Object.keys(errors).length > 0 && { errors }),
     });
   } catch (error) {
     console.error('Failed to get bot status:', error);
     res.status(500).json({ error: 'Failed to get bot status' });
+  }
+});
+
+// POST /api/bots/:id/channels/:channelKey/reconnect
+router.post('/:id/channels/:channelKey/reconnect', async (req, res) => {
+  try {
+    const bot = botService.getBot(req.params.id);
+    if (!bot) {
+      res.status(404).json({ error: 'Bot not found' });
+      return;
+    }
+
+    const channelKey = req.params.channelKey;
+    if (channelKey !== 'wecom' && channelKey !== 'feishu') {
+      res.status(400).json({ error: 'channelKey must be wecom or feishu' });
+      return;
+    }
+
+    const allSettings = botService.getChannelSettings(req.params.id);
+    const channelSettings = allSettings[channelKey];
+    if (!channelSettings?.enabled) {
+      res.status(400).json({ error: 'Channel is disabled' });
+      return;
+    }
+
+    const credential = channelSettings as Record<string, unknown>;
+    const primarySecret = channelKey === 'wecom' ? credential.botSecret : credential.appSecret;
+    const primaryId = channelKey === 'wecom' ? credential.botId : credential.appId;
+    if (typeof primaryId !== 'string' || !primaryId.trim() || typeof primarySecret !== 'string' || !primarySecret.trim()) {
+      res.status(400).json({ error: 'Missing credentials' });
+      return;
+    }
+
+    const rateLimitKey = `${req.params.id}:${channelKey}`;
+    const now = Date.now();
+    const lastAttempt = reconnectRateLimits.get(rateLimitKey) ?? 0;
+    if (now - lastAttempt < RECONNECT_RATE_LIMIT_MS) {
+      res.status(429).json({ error: 'Too many reconnect attempts' });
+      return;
+    }
+    reconnectRateLimits.set(rateLimitKey, now);
+
+    const actor = systemActor();
+    botService.getAuditLogger().log(req.params.id, actor, 'channel_reconnect_requested', { channelKey });
+
+    if (channelKey === 'wecom') {
+      wecomBotService.disconnectChannel(req.params.id, channelKey);
+      await wecomBotService.connectChannel(req.params.id, channelKey);
+    } else {
+      feishuBotService.disconnectChannel(req.params.id, channelKey);
+      await feishuBotService.connectChannel(req.params.id, channelKey);
+    }
+
+    const wecomStatus = wecomBotService.getBotStatus(req.params.id);
+    const feishuStatus = feishuBotService.getBotStatus(req.params.id);
+    const errors: { wecom?: string; feishu?: string } = {};
+    if (wecomStatus === 'error') {
+      errors.wecom = sanitizeChannelError(wecomBotService.getChannelError(req.params.id));
+    }
+    if (feishuStatus === 'error') {
+      errors.feishu = sanitizeChannelError(feishuBotService.getChannelError(req.params.id));
+    }
+
+    const failed = channelKey === 'wecom' ? wecomStatus === 'error' : feishuStatus === 'error';
+    if (failed) {
+      botService.getAuditLogger().log(req.params.id, actor, 'channel_reconnect_failed', {
+        channelKey,
+        error: errors[channelKey],
+      });
+      res.status(502).json({
+        wecom: wecomStatus,
+        feishu: feishuStatus,
+        ...(Object.keys(errors).length > 0 && { errors }),
+      });
+      return;
+    }
+
+    botService.getAuditLogger().log(req.params.id, actor, 'channel_reconnect_succeeded', { channelKey });
+    res.json({
+      wecom: wecomStatus,
+      feishu: feishuStatus,
+      ...(Object.keys(errors).length > 0 && { errors }),
+    });
+  } catch (error) {
+    console.error('Failed to reconnect channel:', error);
+    res.status(500).json({ error: 'Failed to reconnect channel' });
   }
 });
 
@@ -458,33 +565,78 @@ async function connectEnabledChannels(bot: import('../models/bot.js').Bot): Prom
   }
 }
 
-async function reconcileChannelConnections(bot: import('../models/bot.js').Bot): Promise<void> {
+function getEffectiveCredentials(
+  settings: BotChannelSettings,
+  channelKey: BotChannelKey,
+): Record<string, string | undefined> {
+  const result: Record<string, string | undefined> = {};
+  if (channelKey === 'wecom') {
+    const cfg = settings.wecom;
+    if (!cfg) return result;
+    result.botId = cfg.botId;
+    result.botSecret = cfg.botSecret;
+    result.corpId = cfg.corpId;
+    result.corpSecret = cfg.corpSecret;
+  } else {
+    const cfg = settings.feishu;
+    if (!cfg) return result;
+    result.appId = cfg.appId;
+    result.appSecret = cfg.appSecret;
+    result.encryptKey = cfg.encryptKey;
+    result.verificationToken = cfg.verificationToken;
+  }
+  return result;
+}
+
+function effectiveCredentialsChanged(
+  pre: BotChannelSettings,
+  post: BotChannelSettings,
+  channelKey: BotChannelKey,
+): boolean {
+  const preCreds = getEffectiveCredentials(pre, channelKey);
+  const postCreds = getEffectiveCredentials(post, channelKey);
+  const keys = new Set([...Object.keys(preCreds), ...Object.keys(postCreds)]);
+  for (const key of keys) {
+    if (preCreds[key] !== postCreds[key]) return true;
+  }
+  return false;
+}
+
+async function reconcileChannelConnections(
+  bot: import('../models/bot.js').Bot,
+  preUpdateSettings?: BotChannelSettings,
+  preUpdateActiveWorkspaceId?: string | null,
+): Promise<void> {
   const channelSettings = botService.getChannelSettings(bot.id);
   await ensureWecomPluginForBot(bot.id, channelSettings);
-  if (channelSettings.wecom?.enabled) {
-    const status = wecomBotService.getBotStatus(bot.id);
-    if (status === 'not_configured') {
-      await wecomBotService.connectBot({ ...bot, channelSettings } as import('../models/bot.js').Bot & { channelSettings: import('../models/bot.js').BotChannelSettings }).catch((err) => {
-        console.error(`[BotsRoute] WeCom connect failed for bot ${bot.id}:`, err);
-      });
-    } else if (bot.activeWorkspaceId) {
-      await wecomBotService.updateConnectionForBot(bot.id, bot.activeWorkspaceId);
-    }
-  } else {
-    wecomBotService.disconnectBot(bot.id);
-  }
 
-  if (channelSettings.feishu?.enabled) {
-    const status = feishuBotService.getBotStatus(bot.id);
-    if (status === 'not_configured') {
-      await feishuBotService.connectBot({ ...bot, channelSettings } as import('../models/bot.js').Bot & { channelSettings: import('../models/bot.js').BotChannelSettings }).catch((err) => {
-        console.error(`[BotsRoute] Feishu connect failed for bot ${bot.id}:`, err);
-      });
-    } else if (bot.activeWorkspaceId) {
-      await feishuBotService.updateConnectionForBot(bot.id, bot.activeWorkspaceId);
+  for (const channelKey of ['wecom', 'feishu'] as BotChannelKey[]) {
+    const service = channelKey === 'wecom' ? wecomBotService : feishuBotService;
+    const enabled = !!channelSettings[channelKey]?.enabled;
+    const wasEnabled = !!preUpdateSettings?.[channelKey]?.enabled;
+    const status = service.getBotStatus(bot.id);
+
+    if (enabled) {
+      const credentialsChanged =
+        preUpdateSettings !== undefined &&
+        effectiveCredentialsChanged(preUpdateSettings, channelSettings, channelKey);
+      if (!wasEnabled || status === 'not_configured' || credentialsChanged) {
+        try {
+          service.disconnectChannel(bot.id, channelKey);
+        } catch (err) {
+          console.error(`[BotsRoute] ${channelKey} disconnect failed for bot ${bot.id}:`, err);
+        }
+        await service.connectChannel(bot.id, channelKey).catch((err) => {
+          console.error(`[BotsRoute] ${channelKey} connect failed for bot ${bot.id}:`, err);
+        });
+      } else if (bot.activeWorkspaceId && preUpdateActiveWorkspaceId !== bot.activeWorkspaceId) {
+        await service.updateConnectionForBot(bot.id, bot.activeWorkspaceId);
+      } else if (preUpdateSettings === undefined && bot.activeWorkspaceId) {
+        await service.updateConnectionForBot(bot.id, bot.activeWorkspaceId);
+      }
+    } else {
+      service.disconnectChannel(bot.id, channelKey);
     }
-  } else {
-    feishuBotService.disconnectBot(bot.id);
   }
 }
 

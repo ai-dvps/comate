@@ -21,6 +21,36 @@ import BotDangerSection from './BotDangerSection';
 import { emptyForm, botToForm, validateBotForm, buildCreateBotInput, buildUpdateBotInput, type BotFormData } from './bot-form-utils';
 import { filterBotsByName } from '../lib/bot-filter';
 
+function deriveChannelPendingAction(
+  pre: BotFormData | undefined,
+  post: BotFormData | undefined,
+  channel: 'wecom' | 'feishu',
+): 'connect' | 'disconnect' | null {
+  if (!pre || !post) return null;
+  const enabledKey = channel === 'wecom' ? 'wecomEnabled' : 'feishuEnabled';
+  const wasEnabled = pre[enabledKey];
+  const isEnabled = post[enabledKey];
+  if (wasEnabled && !isEnabled) return 'disconnect';
+  if (!wasEnabled && isEnabled) return 'connect';
+  if (!isEnabled) return null;
+
+  if (channel === 'wecom') {
+    const credsChanged =
+      pre.wecomBotId !== post.wecomBotId ||
+      pre.wecomBotSecret !== post.wecomBotSecret ||
+      pre.wecomCorpId !== post.wecomCorpId ||
+      pre.wecomCorpSecret !== post.wecomCorpSecret;
+    return credsChanged ? 'connect' : null;
+  }
+
+  const credsChanged =
+    pre.feishuAppId !== post.feishuAppId ||
+    pre.feishuAppSecret !== post.feishuAppSecret ||
+    pre.feishuEncryptKey !== post.feishuEncryptKey ||
+    pre.feishuVerificationToken !== post.feishuVerificationToken;
+  return credsChanged ? 'connect' : null;
+}
+
 export type BotSectionId = 'general' | 'channels' | 'members' | 'roles' | 'persona' | 'danger';
 
 export interface BotManagementPageHandle {
@@ -37,6 +67,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const {
       bots: storeBots,
       membersByBotId,
+      channelStatusByBotId,
       isLoading,
       error: storeError,
       fetchBots,
@@ -51,6 +82,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       setMemberPlaintext,
       refreshMembers,
       fetchStatus,
+      reconnectChannel,
       clearError,
     } = useBotStore();
     const { workspaces, fetchWorkspaces } = useWorkspaceStore();
@@ -69,6 +101,10 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const [isSaving, setIsSaving] = useState(false);
     const [isPersonaDirty, setIsPersonaDirty] = useState(false);
     const [isRolesDirty, setIsRolesDirty] = useState(false);
+    const [pendingChannelActions, setPendingChannelActions] = useState<Record<'wecom' | 'feishu', 'connect' | 'disconnect' | null>>({
+      wecom: null,
+      feishu: null,
+    });
     const personaEditorRef = useRef<BotPersonaEditorHandle>(null);
     const rolesEditorRef = useRef<BotRolePermissionsHandle>(null);
 
@@ -157,6 +193,33 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
         void fetchStatus(selectedBotId);
       }
     }, [selectedBotId, tempBot, fetchMembers, fetchStatus]);
+
+    // Poll channel status while the Channels section is active.
+    useEffect(() => {
+      if (!selectedBotId || tempBot?.id.startsWith('temp-') || activeSection !== 'channels') {
+        return;
+      }
+      void fetchStatus(selectedBotId);
+      const interval = setInterval(() => void fetchStatus(selectedBotId), 5000);
+      return () => clearInterval(interval);
+    }, [selectedBotId, tempBot, activeSection, fetchStatus]);
+
+    // Clear optimistic channel hints once polling reports a terminal status.
+    useEffect(() => {
+      if (!selectedBotId) return;
+      const status = channelStatusByBotId[selectedBotId];
+      if (!status) return;
+      setPendingChannelActions((prev) => {
+        const next = { ...prev };
+        for (const key of ['wecom', 'feishu'] as const) {
+          const terminal = status[key] === 'connected' || status[key] === 'error' || status[key] === 'disconnected';
+          if (terminal) {
+            next[key] = null;
+          }
+        }
+        return next;
+      });
+    }, [channelStatusByBotId, selectedBotId]);
 
     const isBasicDirty = useCallback(() => {
       if (!selectedBotId) return false;
@@ -251,25 +314,34 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
           throw new Error(err);
         }
       } else {
+        const preSaveSnapshot = snapshots[selectedBotId];
         const input = buildUpdateBotInput(draft, selectedBot);
         const bot = await updateBot(selectedBotId, input);
         if (bot) {
+          const postForm = botToForm(bot);
+          setPendingChannelActions((prev) => ({
+            wecom:
+              deriveChannelPendingAction(preSaveSnapshot, postForm, 'wecom') ?? prev.wecom,
+            feishu:
+              deriveChannelPendingAction(preSaveSnapshot, postForm, 'feishu') ?? prev.feishu,
+          }));
           setSnapshots((prev) => ({
             ...prev,
-            [selectedBotId]: botToForm(bot),
+            [selectedBotId]: postForm,
           }));
           setDrafts((prev) => ({
             ...prev,
-            [selectedBotId]: botToForm(bot),
+            [selectedBotId]: postForm,
           }));
           setPageError(null);
+          void fetchStatus(selectedBotId);
         } else {
           const err = storeError || t('common:unknownError');
           setPageError(err);
           throw new Error(err);
         }
       }
-    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t, addMember]);
+    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t, addMember, fetchStatus, snapshots]);
 
     const handleCancelBasic = useCallback(() => {
       if (!selectedBotId) return;
@@ -295,6 +367,22 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       }
       setPageError(null);
     }, [selectedBotId, tempBot, previousBotId, snapshots]);
+
+    const handleReconnectChannel = useCallback(
+      async (channelKey: 'wecom' | 'feishu') => {
+        if (!selectedBotId) return;
+        setPendingChannelActions((prev) => ({ ...prev, [channelKey]: 'connect' }));
+        const result = await reconnectChannel(selectedBotId, channelKey);
+        if (result.ok) {
+          setPageError(null);
+          void fetchStatus(selectedBotId);
+        } else {
+          setPendingChannelActions((prev) => ({ ...prev, [channelKey]: null }));
+          setPageError(result.error || t('common:unknownError'));
+        }
+      },
+      [selectedBotId, reconnectChannel, fetchStatus, t],
+    );
 
     const handleSaveAll = useCallback(async () => {
       setIsSaving(true);
@@ -519,6 +607,9 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
               form={draft}
               onUpdate={handleUpdate}
               originalBot={isNew ? null : selectedBot}
+              channelStatus={channelStatusByBotId[selectedBot.id]}
+              pendingActions={pendingChannelActions}
+              onReconnect={handleReconnectChannel}
             />
           )}
 

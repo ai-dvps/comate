@@ -7,7 +7,7 @@ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import StatusIndicator from './StatusIndicator'
 import ConfirmDialog from './ConfirmDialog'
 import { BotStatusIcon } from './BotStatusIcon'
-import { getBotStatusLabel, useBotStatuses, type BotStatus } from '../hooks/use-bot-statuses'
+import { getChannelStatusLabel, useChannelStatuses, type ChannelStatus } from '../hooks/use-channel-statuses'
 
 interface WorkspaceItem {
   id: string
@@ -19,8 +19,8 @@ interface TabPillProps {
   ws: WorkspaceItem
   isActive: boolean
   counts: { needsMe: number; finishedUnread: number; streaming: number }
-  wecomStatus?: BotStatus
-  feishuStatus?: BotStatus
+  wecomStatus?: ChannelStatus
+  feishuStatus?: ChannelStatus
   wecomTitle?: string
   feishuTitle?: string
   onClick: () => void
@@ -103,8 +103,8 @@ export default function WorkspaceTabs() {
     [openWorkspaceIds, workspaces]
   )
 
-  const wecomBotStatuses = useBotStatuses(openWorkspaceIds, '/bot/status')
-  const feishuBotStatuses = useBotStatuses(openWorkspaceIds, '/feishu/status')
+  const wecomBotStatuses = useChannelStatuses(openWorkspaceIds, '/bot/status')
+  const feishuBotStatuses = useChannelStatuses(openWorkspaceIds, '/feishu/status')
 
   // Scroll active tab into view when it changes
   useEffect(() => {
@@ -177,8 +177,8 @@ export default function WorkspaceTabs() {
               counts={counts}
               wecomStatus={wecomStatus}
               feishuStatus={feishuStatus}
-              wecomTitle={wecomStatus ? getBotStatusLabel(wecomStatus, t, 'bot') : undefined}
-              feishuTitle={feishuStatus ? getBotStatusLabel(feishuStatus, t, 'feishuBot') : undefined}
+              wecomTitle={wecomStatus ? getChannelStatusLabel(wecomStatus, t, 'bot') : undefined}
+              feishuTitle={feishuStatus ? getChannelStatusLabel(feishuStatus, t, 'feishuBot') : undefined}
               onClick={() => setActiveWorkspace(ws.id)}
               onClose={(e) => handleClose(e, ws.id)}
               closeLabel={t('workspaceTabs.closeTab', { name: ws.name })}
@@ -257,7 +257,7 @@ export default function WorkspaceTabs() {
                           iconSrc="/wecom-icon.svg"
                           alt="WeCom"
                           status={wecomStatus}
-                          title={getBotStatusLabel(wecomStatus, t, 'bot')}
+                          title={getChannelStatusLabel(wecomStatus, t, 'bot')}
                         />
                       )}
                       {feishuStatus && (
@@ -265,7 +265,7 @@ export default function WorkspaceTabs() {
                           iconSrc="/feishu-icon.svg"
                           alt="Feishu"
                           status={feishuStatus}
-                          title={getBotStatusLabel(feishuStatus, t, 'feishuBot')}
+                          title={getChannelStatusLabel(feishuStatus, t, 'feishuBot')}
                         />
                       )}
                       {counts.needsMe > 0 && (

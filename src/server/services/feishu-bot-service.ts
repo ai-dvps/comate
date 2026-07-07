@@ -5,7 +5,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import type { Thread, Message, DirectMessageHandler, MentionHandler, ActionEvent } from 'chat';
 import type { SseEvent } from '../types/message.js';
 import type { Workspace } from '../models/workspace.js';
-import type { Bot } from '../models/bot.js';
+import type { Bot, BotChannelKey } from '../models/bot.js';
 import type { ChatSession } from '../models/session.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from './bot-service.js';
@@ -40,6 +40,8 @@ interface Connection {
   workspaceId: string;
   botId: string;
   status: FeishuBotStatus;
+  connectionId: string;
+  lastError?: string;
 }
 
 export class FeishuBotService {
@@ -113,6 +115,8 @@ export class FeishuBotService {
       workspaceId,
       botId: bot.id,
       status: 'connecting',
+      connectionId: randomUUID(),
+      lastError: undefined,
     };
     this.connections.set(bot.id, connection);
     this.activeBotId = bot.id;
@@ -128,9 +132,11 @@ export class FeishuBotService {
       }
       this.registerWSCardActionResponseHandler(adapter);
       connection.status = 'connected';
+      connection.lastError = undefined;
       diagLog(`[FeishuBotService] connected bot ${bot.id} for workspace ${workspaceId}`);
     } catch (err) {
       connection.status = 'error';
+      connection.lastError = String(err);
       console.error(`[FeishuBotService] failed to initialize bot ${bot.id}:`, err);
     }
   }
@@ -331,9 +337,10 @@ export class FeishuBotService {
     return undefined;
   }
 
-  disconnectBot(botId: string): void {
+  disconnectBot(botId: string, expectedConnectionId?: string): void {
     const connection = this.connections.get(botId);
     if (!connection) return;
+    if (expectedConnectionId && connection.connectionId !== expectedConnectionId) return;
 
     this.connections.delete(botId);
     this.workspaceIdToBotId.delete(connection.workspaceId);
@@ -363,6 +370,29 @@ export class FeishuBotService {
     if (fallback) {
       this.disconnectBot(fallback.botId);
     }
+  }
+
+  connectChannel(botId: string, channelKey: BotChannelKey): Promise<void> {
+    if (channelKey !== 'feishu') {
+      throw new Error(`FeishuBotService does not support channel ${channelKey}`);
+    }
+    const bot = botService.getBot(botId);
+    if (!bot) {
+      throw new Error(`Bot ${botId} not found`);
+    }
+    const channelSettings = botService.getChannelSettings(botId);
+    return this.connectBot({ ...bot, channelSettings } as Bot & { channelSettings?: import('../models/bot.js').BotChannelSettings });
+  }
+
+  disconnectChannel(botId: string, channelKey: BotChannelKey): void {
+    if (channelKey !== 'feishu') {
+      throw new Error(`FeishuBotService does not support channel ${channelKey}`);
+    }
+    this.disconnectBot(botId);
+  }
+
+  getChannelError(botId: string): string | undefined {
+    return this.connections.get(botId)?.lastError;
   }
 
   getBotStatus(botId: string): FeishuBotStatus {

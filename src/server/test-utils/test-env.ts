@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'fs';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 
 // Redirect server tests away from the user's real data directory. This must be
@@ -7,7 +7,11 @@ import { join } from 'path';
 // SqliteStore singleton (storage/sqlite-store.js) or resolves storage at load
 // (storage/json-store.js, utils/path-config.js). The import order is enforced
 // statically by the ESLint rule in .eslintrc.cjs and defended at runtime below.
-if (!process.env.COMATE_DATA_DIR) {
+function looksLikeProductionStorageDir(dir: string): boolean {
+  return dir === join(homedir(), '.comate') || dir.includes('com.comate.app');
+}
+
+if (!process.env.COMATE_DATA_DIR || looksLikeProductionStorageDir(process.env.COMATE_DATA_DIR)) {
   process.env.COMATE_DATA_DIR = mkdtempSync(join(tmpdir(), 'comate-test-'));
 }
 

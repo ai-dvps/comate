@@ -1,9 +1,9 @@
-import { BOT_STATUS_CLASS, BOT_STATUS_DOT, type BotStatus } from '../hooks/use-bot-statuses'
+import { CHANNEL_STATUS_CLASS, CHANNEL_STATUS_DOT, type ChannelStatus } from '../hooks/use-channel-statuses'
 
 interface BotStatusIconProps {
   iconSrc: string
   alt: string
-  status: BotStatus
+  status: ChannelStatus
   title: string
 }
 
@@ -25,10 +25,10 @@ export function BotStatusIcon({ iconSrc, alt, status, title }: BotStatusIconProp
         src={iconSrc}
         alt={alt}
         aria-hidden="true"
-        className={`w-3 h-3 flex-shrink-0 ${BOT_STATUS_CLASS[status]}`}
+        className={`w-3 h-3 flex-shrink-0 ${CHANNEL_STATUS_CLASS[status]}`}
       />
       <span
-        className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${BOT_STATUS_DOT[status]} ring-1 ring-bg`}
+        className={`absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${CHANNEL_STATUS_DOT[status]} ring-1 ring-bg`}
       />
     </span>
   )

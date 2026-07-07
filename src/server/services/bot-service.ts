@@ -120,6 +120,10 @@ export class BotService {
     return bot?.activeWorkspaceId ?? null;
   }
 
+  getAuditLogger(): BotAuditLogger {
+    return this.auditLogger;
+  }
+
   // Channels
 
   getChannelSettings(botId: string): BotChannelSettings {

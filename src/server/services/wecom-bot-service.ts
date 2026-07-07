@@ -17,7 +17,7 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Workspace } from '../models/workspace.js';
-import type { Bot } from '../models/bot.js';
+import type { Bot, BotChannelKey } from '../models/bot.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
@@ -90,6 +90,8 @@ export interface BotConnection {
   botId: string;
   folderPath: string;
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
+  connectionId: string;
+  lastError?: string;
 }
 
 /**
@@ -222,6 +224,8 @@ export class WeComBotService {
       botId: bot.id,
       folderPath,
       status: 'connecting',
+      connectionId: randomUUID(),
+      lastError: undefined,
     };
 
     this.connections.set(bot.id, conn);
@@ -231,10 +235,13 @@ export class WeComBotService {
     }
 
     client.on('authenticated', async () => {
-      conn.status = 'connected';
+      const activeConn = this.connections.get(bot.id);
+      if (!activeConn || activeConn.connectionId !== conn.connectionId) return;
+      activeConn.status = 'connected';
+      activeConn.lastError = undefined;
       const freshBot = workspaceStore.getBot(bot.id);
       const activeWorkspaceId = freshBot?.activeWorkspaceId ?? workspaceId;
-      conn.workspaceId = activeWorkspaceId;
+      activeConn.workspaceId = activeWorkspaceId;
       this.botIdToWorkspaceId.set(bot.id, activeWorkspaceId);
       if (activeWorkspaceId) {
         this.workspaceIdToBotId.set(activeWorkspaceId, bot.id);
@@ -248,12 +255,18 @@ export class WeComBotService {
     });
 
     client.on('disconnected', (reason) => {
-      conn.status = 'disconnected';
+      const activeConn = this.connections.get(bot.id);
+      if (!activeConn || activeConn.connectionId !== conn.connectionId) return;
+      activeConn.status = 'disconnected';
+      activeConn.lastError = undefined;
       console.log(`WeCom bot ${bot.id} disconnected: ${reason}`);
     });
 
     client.on('error', (err) => {
-      conn.status = 'error';
+      const activeConn = this.connections.get(bot.id);
+      if (!activeConn || activeConn.connectionId !== conn.connectionId) return;
+      activeConn.status = 'error';
+      activeConn.lastError = String(err);
       console.error(`WeCom bot ${bot.id} error:`, err);
     });
 
@@ -296,6 +309,29 @@ export class WeComBotService {
     client.connect();
   }
 
+  connectChannel(botId: string, channelKey: BotChannelKey): Promise<void> {
+    if (channelKey !== 'wecom') {
+      throw new Error(`WeComBotService does not support channel ${channelKey}`);
+    }
+    const bot = botService.getBot(botId);
+    if (!bot) {
+      throw new Error(`Bot ${botId} not found`);
+    }
+    const channelSettings = botService.getChannelSettings(botId);
+    return this.connectBot({ ...bot, channelSettings } as Bot & { channelSettings: import('../models/bot.js').BotChannelSettings });
+  }
+
+  disconnectChannel(botId: string, channelKey: BotChannelKey): void {
+    if (channelKey !== 'wecom') {
+      throw new Error(`WeComBotService does not support channel ${channelKey}`);
+    }
+    this.disconnectBot(botId);
+  }
+
+  getChannelError(botId: string): string | undefined {
+    return this.connections.get(botId)?.lastError;
+  }
+
   /** Backward-compatible workspace-scoped connect (pre-migration). */
   async connect(workspace: Workspace): Promise<void> {
     const bot: Bot = {
@@ -308,9 +344,10 @@ export class WeComBotService {
     await this.connectBot(bot);
   }
 
-  disconnectBot(botId: string): void {
+  disconnectBot(botId: string, expectedConnectionId?: string): void {
     const conn = this.connections.get(botId);
     if (!conn) return;
+    if (expectedConnectionId && conn.connectionId !== expectedConnectionId) return;
     conn.client.disconnect();
     this.connections.delete(botId);
     this.botIdToWorkspaceId.delete(botId);
@@ -478,17 +515,15 @@ export class WeComBotService {
     }
   }
 
-  getBotStatus(botId: string): 'connected' | 'disconnected' | 'error' | 'not_configured' {
+  getBotStatus(botId: string): 'connecting' | 'connected' | 'disconnected' | 'error' | 'not_configured' {
     const conn = this.connections.get(botId);
     if (!conn) return 'not_configured';
-    if (conn.status === 'connecting') return 'disconnected';
     return conn.status;
   }
 
-  getStatus(workspaceId: string): 'connected' | 'disconnected' | 'error' | 'not_configured' {
+  getStatus(workspaceId: string): 'connecting' | 'connected' | 'disconnected' | 'error' | 'not_configured' {
     const conn = this.getConnectionByWorkspaceId(workspaceId);
     if (!conn) return 'not_configured';
-    if (conn.status === 'connecting') return 'disconnected';
     return conn.status;
   }
 
