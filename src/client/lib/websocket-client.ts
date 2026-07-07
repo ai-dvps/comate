@@ -10,6 +10,7 @@ import { getWebSocketUrl } from './tauri-api.js';
 
 export type WsEventListener = (event: WsEventMessage) => void;
 export type WsReconnectListener = () => void;
+export type WsDisconnectListener = () => void;
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -26,6 +27,7 @@ class WebSocketClient {
   private pending = new Map<string, PendingRequest>();
   private eventListeners = new Set<WsEventListener>();
   private reconnectListeners = new Set<WsReconnectListener>();
+  private disconnectListeners = new Set<WsDisconnectListener>();
   private reconnectDelay = BASE_RECONNECT_DELAY;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private intentionalClose = false;
@@ -65,6 +67,9 @@ class WebSocketClient {
         this.socket = null;
         this.connecting = false;
         if (!this.intentionalClose) {
+          for (const listener of this.disconnectListeners) {
+            listener();
+          }
           this.scheduleReconnect();
         }
         reject(new Error('WebSocket closed before open'));
@@ -172,6 +177,11 @@ class WebSocketClient {
   onReconnect(listener: WsReconnectListener): () => void {
     this.reconnectListeners.add(listener);
     return () => this.reconnectListeners.delete(listener);
+  }
+
+  onDisconnect(listener: WsDisconnectListener): () => void {
+    this.disconnectListeners.add(listener);
+    return () => this.disconnectListeners.delete(listener);
   }
 }
 

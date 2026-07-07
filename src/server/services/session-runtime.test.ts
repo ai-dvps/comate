@@ -707,6 +707,74 @@ describe('session-runtime reconnect warning', { concurrency: false }, () => {
     assert.ok(writes[2].includes('id: 3'));
   });
 
+  it('replays subsequent events without warning when lastEventId is found in ring buffer via WebSocket', () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      (_id, event) => {
+        events.push(event);
+      },
+    );
+    const ringBuffer = getRingBuffer(runtime);
+    ringBuffer.push(
+      { id: '1', event: { type: 'text_delta', messageId: 'm1', partIndex: 0, text: 'first' } },
+      { id: '2', event: { type: 'text_delta', messageId: 'm1', partIndex: 1, text: 'second' } },
+      { id: '3', event: { type: 'text_delta', messageId: 'm1', partIndex: 2, text: 'third' } },
+    );
+
+    const replayed: SseEvent[] = [];
+    runtime.subscribeWebSocket((_id, event) => {
+      replayed.push(event);
+    }, '1');
+
+    assert.ok(
+      replayed.some((e) => e.type === 'text_delta' && (e as { text?: string }).text === 'second'),
+      'second text_delta should be replayed',
+    );
+    assert.ok(
+      replayed.some((e) => e.type === 'text_delta' && (e as { text?: string }).text === 'third'),
+      'third text_delta should be replayed',
+    );
+    assert.ok(
+      !replayed.some((e) => e.type === 'text_delta' && (e as { text?: string }).text === 'first'),
+      'first text_delta (the matched lastEventId) should not be replayed',
+    );
+    assert.strictEqual(events.filter((e) => e.type === 'error_note').length, 0);
+  });
+
+  it('replays assistant_start inclusively for fresh WebSocket subscriptions mid-turn', () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      (_id, event) => {
+        events.push(event);
+      },
+    );
+    const ringBuffer = getRingBuffer(runtime);
+    ringBuffer.push(
+      { id: 'start-1', event: { type: 'assistant_start', messageId: 'm1' } },
+      { id: '2', event: { type: 'text_delta', messageId: 'm1', partIndex: 0, text: 'hello' } },
+    );
+    (runtime as unknown as { currentMessageStartId?: string }).currentMessageStartId = 'start-1';
+
+    const replayed: SseEvent[] = [];
+    runtime.subscribeWebSocket((_id, event) => {
+      replayed.push(event);
+    });
+
+    assert.ok(replayed.some((e) => e.type === 'assistant_start'), 'assistant_start should be replayed');
+    assert.ok(replayed.some((e) => e.type === 'text_delta'), 'text_delta should be replayed');
+    assert.strictEqual(events.filter((e) => e.type === 'error_note').length, 0);
+  });
+
   it('does not emit warning when currentMessageStartId is set but ring buffer is empty', () => {
     const events: SseEvent[] = [];
     runtime = SessionRuntime.open(

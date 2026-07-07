@@ -33,6 +33,23 @@ function closeWorkspaceSessionSubscriptions(workspaceId: string): void {
   }
 }
 
+/** Test-only helper: tear down every session subscription and clear server nonces. */
+export function clearAllSessionSubscriptions(set: SseSetter): void {
+  for (const [sessionId, sub] of sessionSubscriptions) {
+    try {
+      sub.close()
+    } catch {
+      // ignore cleanup errors
+    }
+    sessionSubscriptions.delete(sessionId)
+  }
+  set(() => ({
+    serverNonce: {},
+    // Keep pendingSend: subscription_ack will drain it after reconnect.
+    // Keep lastEventId: it is the replay cursor for reconnect.
+  }))
+}
+
 function startBackgroundPolling(
   set: SseSetter,
   workspaceId: string,
@@ -1869,6 +1886,13 @@ function subscribeToSession(
     existing.close()
   }
 
+  // Mark this session as having no valid server nonce until subscription_ack
+  // arrives. This prevents a stale nonce from letting sendMessage post to a
+  // runtime that has no WebSocket handler registered.
+  set((state) => ({
+    serverNonce: { ...state.serverNonce, [sessionId]: '' },
+  }))
+
   const doSubscribe = async (): Promise<void> => {
     try {
       // Read the latest lastEventId at resubscribe time so reconnect replay
@@ -1886,6 +1910,7 @@ function subscribeToSession(
     } catch (err) {
       set((state) => ({
         isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
+        serverNonce: { ...state.serverNonce, [sessionId]: '' },
       }))
       console.error(`[WS ${sessionId}] subscribe failed`, err)
       set((state) =>
@@ -1907,8 +1932,6 @@ function subscribeToSession(
     void doSubscribe()
   })
 
-  void doSubscribe()
-
   sessionSubscriptions.set(sessionId, {
     close: () => {
       reconnectUnsub()
@@ -1916,6 +1939,8 @@ function subscribeToSession(
     },
     workspaceId,
   })
+
+  void doSubscribe()
 }
 
 function applyActivityUpdate(
@@ -1985,6 +2010,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ? (() => {
         wsClient.onEvent((msg: WsEventMessage) => {
           handleWsEvent(set, msg)
+        })
+        wsClient.onDisconnect(() => {
+          clearAllSessionSubscriptions(set)
         })
         void wsClient.connect().catch(() => {})
         return {}

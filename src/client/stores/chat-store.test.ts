@@ -8,6 +8,7 @@ import {
   handleWsEvent,
   getLastEventId,
   clearLastEventId,
+  clearAllSessionSubscriptions,
   type SseSetter,
 } from './chat-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
@@ -496,6 +497,133 @@ describe('setActiveSession multi-workspace re-subscribe', () => {
     } finally {
       requestSpy.mockRestore()
     }
+  })
+})
+
+describe('sendMessage subscription gating', () => {
+  function makeGuiSession(): ReturnType<typeof useChatStore.getState>['sessions'][string][number] {
+    return {
+      id: 's1',
+      workspaceId: 'ws-1',
+      name: 'Test',
+      source: 'gui' as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeGuiSession()] },
+      activeSessionIds: {},
+      messages: {},
+      drafts: {},
+      subagents: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      approvalQueue: {},
+      serverNonce: {},
+      pendingSend: {},
+    })
+  })
+
+  it('queues sendMessage in pendingSend when the subscription lacks a server nonce', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      // Open a subscription but do not acknowledge it (no serverNonce).
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+      requestSpy.mockClear()
+
+      useChatStore.getState().sendMessage('ws-1', 's1', 'hello')
+      await new Promise((r) => setTimeout(r, 0))
+
+      const sendCalls = requestSpy.mock.calls.filter((call) => call[0] === 'sendMessage')
+      assert.strictEqual(sendCalls.length, 0, 'must not send without a server nonce')
+      assert.deepStrictEqual(useChatStore.getState().pendingSend['s1'], {
+        workspaceId: 'ws-1',
+        content: 'hello',
+      })
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('does not send a second subscribe when sendMessage races with subscribeToSession', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 5))
+      return {}
+    })
+
+    try {
+      // setActiveSession starts an async subscribe; sendMessage is called before
+      // the subscribe promise resolves. sessionSubscriptions must already be set
+      // so sendMessage does not spawn a duplicate subscription.
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      useChatStore.getState().sendMessage('ws-1', 's1', 'hello')
+      await new Promise((r) => setTimeout(r, 20))
+
+      const subscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'subscribe')
+      assert.strictEqual(subscribeCalls.length, 1, 'only one subscribe request should be sent')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+})
+
+describe('subscription state after disconnect', () => {
+  function makeGuiSession(): ReturnType<typeof useChatStore.getState>['sessions'][string][number] {
+    return {
+      id: 's1',
+      workspaceId: 'ws-1',
+      name: 'Test',
+      source: 'gui' as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeGuiSession()] },
+      activeSessionIds: {},
+      messages: {},
+      drafts: {},
+      subagents: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      approvalQueue: {},
+      serverNonce: {},
+      pendingSend: {},
+    })
+  })
+
+  it('clears serverNonce for all sessions on disconnect so the next sendMessage re-subscribes', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({ serverNonce: { s1: 'stale-nonce' } })
+
+    clearAllSessionSubscriptions(set)
+
+    assert.strictEqual(useChatStore.getState().serverNonce['s1'], undefined)
+  })
+
+  it('keeps lastEventId as the reconnect cursor after clearing subscriptions', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleWsEvent(set, {
+      type: 'event',
+      eventType: 'sse',
+      workspaceId: 'ws-1',
+      sessionId: 's1',
+      eventId: 'evt-keep',
+      data: { type: 'text_delta', text: 'prior' },
+    })
+
+    clearAllSessionSubscriptions(set)
+
+    assert.strictEqual(getLastEventId('s1'), 'evt-keep')
   })
 })
 
