@@ -26,6 +26,7 @@ export type RenderablePart =
       toolUseId: string
       output: string
       isError: boolean
+      toolUseResult?: unknown
     }
 
 export interface RenderableMessage {
@@ -71,6 +72,7 @@ export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
             toolUseId: part.toolUseId,
             output: part.output,
             isError: part.isError,
+            ...(part.toolUseResult !== undefined && { toolUseResult: part.toolUseResult }),
           }
         default:
           return null
@@ -124,7 +126,7 @@ export function adaptSubagentMessage(
 
 export interface ResultMappableMessage {
   parts: Array<
-    | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }
+    | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean; toolUseResult?: unknown }
     | { type: string }
   >
 }

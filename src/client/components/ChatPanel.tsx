@@ -60,6 +60,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const [openDrawerToolUseId, setOpenDrawerToolUseId] = useState<
     string | null
   >(null)
+  const [, setOpenWorkflowRunId] = useState<string | null>(null)
   const [subagentPanelWidth, setSubagentPanelWidth] = useState(400)
   const [refreshMeta, setRefreshMeta] = useState<{
     lastRefreshedAt: Date | null
@@ -138,6 +139,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   useEffect(() => {
     // Close drawer when switching sessions
     setOpenDrawerToolUseId(null)
+    setOpenWorkflowRunId(null)
   }, [activeSessionId])
 
   useEffect(() => {
@@ -376,6 +378,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                   sessionId={sessionId}
                   workspaceId={workspaceId}
                   onOpenDrawer={setOpenDrawerToolUseId}
+                  onOpenWorkflow={setOpenWorkflowRunId}
                   isVisible={sessionId === activeSessionId}
                   searchMatches={searchMatches}
                   currentMatch={currentMatch}

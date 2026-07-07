@@ -1,10 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import ChatMessageRenderer, {
   type RenderableMessage,
 } from './ChatMessageRenderer'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
+import type { WorkflowState } from '../types/message'
 
 vi.mock('streamdown', () => ({
   Streamdown: ({ children }: { children: string }) => <div>{children}</div>,
@@ -14,6 +16,16 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
   initReactI18next: { type: '3rdParty', init: () => {} },
   I18nextProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+let mockStoreState: { workflows: Record<string, WorkflowState[]> } = {
+  workflows: {},
+}
+
+vi.mock('../stores/chat-store', () => ({
+  useChatStore: vi.fn((selector: (state: typeof mockStoreState) => unknown) =>
+    selector(mockStoreState),
+  ),
 }))
 
 function makeTextMessage(text: string, role: 'user' | 'assistant' | 'system' = 'assistant'): RenderableMessage {
@@ -33,6 +45,9 @@ const baseProps = {
 }
 
 describe('ChatMessageRenderer search highlights', () => {
+  beforeEach(() => {
+    mockStoreState = { workflows: {} }
+  })
   it('renders inline highlights for user text', () => {
     const message = makeTextMessage('hello world', 'user')
     const matches: MessageSearchMatch[] = [
@@ -129,5 +144,169 @@ describe('ChatMessageRenderer search highlights', () => {
     expect(screen.getByText('Retrying API request (1/3) after 1000ms')).toBeInTheDocument()
     const alert = document.querySelector('[data-icon]')
     expect(alert).not.toBeInTheDocument()
+  })
+})
+
+describe('ChatMessageRenderer Workflow card', () => {
+  function makeWorkflowMessage(toolUseId: string): RenderableMessage {
+    return {
+      id: 'msg-wf',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId,
+          toolName: 'Workflow',
+          input: { name: 'Deep Research' },
+          isStreaming: false,
+        },
+      ],
+    }
+  }
+
+  function makeResultMap(toolUseId: string, runId: string) {
+    return new Map([
+      [
+        toolUseId,
+        {
+          type: 'tool_result' as const,
+          toolUseId,
+          output: JSON.stringify({ status: 'async_launched', runId }),
+          isError: false,
+          toolUseResult: {
+            status: 'async_launched',
+            runId,
+            taskId: 'task-1',
+            workflowName: 'Deep Research',
+          },
+        },
+      ],
+    ])
+  }
+
+  beforeEach(() => {
+    mockStoreState = { workflows: {} }
+  })
+
+  it('renders Workflow card with status badge and progress hint', () => {
+    mockStoreState = {
+      workflows: {
+        'session-1': [
+          {
+            runId: 'wf-1',
+            sessionId: 'session-1',
+            toolUseId: 'tu-wf-1',
+            workflowName: 'Deep Research',
+            status: 'running',
+            startTime: Date.now(),
+            agentCount: 3,
+            phases: [{ title: 'Research phase' }],
+            progress: [
+              { type: 'workflow_phase', index: 0, title: 'Research phase' },
+              { type: 'workflow_agent', index: 0, agentId: 'a1', state: 'done' },
+              { type: 'workflow_agent', index: 1, agentId: 'a2', state: 'running' },
+              { type: 'workflow_agent', index: 2, agentId: 'a3' },
+            ],
+            subagents: [],
+          },
+        ],
+      },
+    }
+
+    const message = makeWorkflowMessage('tu-wf-1')
+    const resultMap = makeResultMap('tu-wf-1', 'wf-1')
+    render(<ChatMessageRenderer {...baseProps} message={message} resultMap={resultMap} />)
+
+    expect(screen.getByText('Deep Research')).toBeInTheDocument()
+    expect(screen.getByText('workflowStatus.running')).toBeInTheDocument()
+    expect(screen.getByText('Research phase')).toBeInTheDocument()
+    expect(screen.getByText('workflowSubagentCountWithRunning')).toBeInTheDocument()
+  })
+
+  it('calls onOpenWorkflow with runId when card is clicked', async () => {
+    const onOpenWorkflow = vi.fn()
+    mockStoreState = {
+      workflows: {
+        'session-1': [
+          {
+            runId: 'wf-2',
+            sessionId: 'session-1',
+            status: 'running',
+            startTime: Date.now(),
+            agentCount: 0,
+            phases: [],
+            progress: [],
+            subagents: [],
+          },
+        ],
+      },
+    }
+
+    const message = makeWorkflowMessage('tu-wf-2')
+    const resultMap = makeResultMap('tu-wf-2', 'wf-2')
+    render(
+      <ChatMessageRenderer
+        {...baseProps}
+        message={message}
+        resultMap={resultMap}
+        onOpenWorkflow={onOpenWorkflow}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button'))
+    expect(onOpenWorkflow).toHaveBeenCalledWith('wf-2')
+  })
+
+  it('falls back to generic tool card when Workflow result has no runId', () => {
+    const message: RenderableMessage = {
+      id: 'msg-wf',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-wf-3',
+          toolName: 'Workflow',
+          input: { name: 'Deep Research' },
+          isStreaming: false,
+        },
+      ],
+    }
+    const resultMap = new Map([
+      [
+        'tu-wf-3',
+        {
+          type: 'tool_result' as const,
+          toolUseId: 'tu-wf-3',
+          output: 'launched',
+          isError: false,
+        },
+      ],
+    ])
+
+    render(<ChatMessageRenderer {...baseProps} message={message} resultMap={resultMap} />)
+
+    expect(screen.getByText('Workflow')).toBeInTheDocument()
+    expect(screen.getByText('name: Deep Research')).toBeInTheDocument()
+  })
+
+  it('continues to render non-Workflow tools as before', () => {
+    const message: RenderableMessage = {
+      id: 'msg-tool',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-read',
+          toolName: 'read_file',
+          input: { path: '/config.json' },
+          isStreaming: false,
+        },
+      ],
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(screen.getByText('read_file')).toBeInTheDocument()
+    expect(screen.getByText('/config.json')).toBeInTheDocument()
   })
 })

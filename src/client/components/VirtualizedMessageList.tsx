@@ -29,6 +29,7 @@ interface VirtualizedMessageListProps {
   sessionId: string
   workspaceId: string
   onOpenDrawer: (parentToolUseId: string) => void
+  onOpenWorkflow?: (runId: string) => void
   isVisible?: boolean
   searchMatches?: MessageSearchMatch[]
   currentMatch?: MessageSearchMatch | null
@@ -60,6 +61,7 @@ export default function VirtualizedMessageList({
   sessionId,
   workspaceId,
   onOpenDrawer,
+  onOpenWorkflow,
   isVisible = true,
   searchMatches = [],
   currentMatch = null,
@@ -312,6 +314,7 @@ export default function VirtualizedMessageList({
                   item,
                   resultMap,
                   onOpenDrawer,
+                  onOpenWorkflow,
                   sessionId,
                   autoApprovedTools,
                   searchMatches,
@@ -346,6 +349,7 @@ function renderViewItem(
   item: ViewItem,
   resultMap: Map<string, Extract<import('./ChatMessageRenderer').RenderablePart, { type: 'tool_result' }>>,
   onOpenDrawer: (parentToolUseId: string) => void,
+  onOpenWorkflow: ((runId: string) => void) | undefined,
   sessionId: string,
   autoApprovedTools?: Record<string, 'auto' | 'readonly'>,
   searchMatches?: MessageSearchMatch[],
@@ -393,6 +397,7 @@ function renderViewItem(
       message={adapted}
       resultMap={resultMap}
       onOpenDrawer={onOpenDrawer}
+      onOpenWorkflow={onOpenWorkflow}
       sessionId={sessionId}
       autoApprovedTools={autoApprovedTools}
       searchMatches={searchMatches}

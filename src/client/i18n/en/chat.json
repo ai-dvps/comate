@@ -97,6 +97,15 @@
     "completed": "Completed",
     "error": "Error"
   },
+  "workflow": "Workflow",
+  "workflowStatus": {
+    "running": "Running",
+    "completed": "Completed",
+    "error": "Error",
+    "killed": "Killed"
+  },
+  "workflowSubagentCount": "{{completed}}/{{total}} done",
+  "workflowSubagentCountWithRunning": "{{completed}}/{{total}} done, {{running}} running",
   "provider": {
     "default": "Default",
     "noDefault": "No default configured",

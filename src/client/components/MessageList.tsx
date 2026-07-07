@@ -35,6 +35,7 @@ interface MessageListProps {
   sessionId: string
   workspaceId: string
   onOpenDrawer: (parentToolUseId: string) => void
+  onOpenWorkflow?: (runId: string) => void
   isVisible?: boolean
   searchMatches?: MessageSearchMatch[]
   currentMatch?: MessageSearchMatch | null
@@ -50,7 +51,7 @@ function isToolResultOnly(msg: ChatMessage): boolean {
   )
 }
 
-export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVisible = true, searchMatches = [], currentMatch = null }: MessageListProps) {
+export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOpenWorkflow, isVisible = true, searchMatches = [], currentMatch = null }: MessageListProps) {
   const { t } = useTranslation('chat')
   const { chatFontSize } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] ?? EMPTY_ARRAY)
@@ -95,6 +96,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
         sessionId={sessionId}
         workspaceId={workspaceId}
         onOpenDrawer={onOpenDrawer}
+        onOpenWorkflow={onOpenWorkflow}
         isVisible={isVisible}
         searchMatches={searchMatches}
         currentMatch={currentMatch}
@@ -119,7 +121,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, isVi
   return (
     <Conversation>
       <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)}`}>
-        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, sessionId, autoApprovedTools, searchMatches, currentMatch))}
+        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, onOpenWorkflow, sessionId, autoApprovedTools, searchMatches, currentMatch))}
         <CompactingIndicator sessionId={sessionId} />
       </ConversationContent>
       <ConversationScrollButton />
@@ -131,6 +133,7 @@ function renderViewItem(
   item: ViewItem,
   resultMap: Map<string, Extract<import('./ChatMessageRenderer').RenderablePart, { type: 'tool_result' }>>,
   onOpenDrawer: (parentToolUseId: string) => void,
+  onOpenWorkflow: ((runId: string) => void) | undefined,
   sessionId: string,
   autoApprovedTools?: Record<string, 'auto' | 'readonly'>,
   searchMatches?: MessageSearchMatch[],
@@ -178,6 +181,7 @@ function renderViewItem(
       message={adapted}
       resultMap={resultMap}
       onOpenDrawer={onOpenDrawer}
+      onOpenWorkflow={onOpenWorkflow}
       sessionId={sessionId}
       autoApprovedTools={autoApprovedTools}
       searchMatches={searchMatches}
