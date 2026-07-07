@@ -20,6 +20,7 @@ import {
 import CompactBoundary from './CompactBoundary'
 import SubagentBriefStatus from './SubagentBriefStatus'
 import StreamingToolInputPreview from './StreamingToolInputPreview'
+import WorkflowToolCard from './WorkflowToolCard'
 import { cn } from './ui/utils'
 import {
   type RenderableMessage,
@@ -38,6 +39,7 @@ export interface ChatMessageRendererProps {
   message: RenderableMessage
   resultMap: Map<string, Extract<RenderablePart, { type: 'tool_result' }>>
   onOpenDrawer: (parentToolUseId: string) => void
+  onOpenWorkflow?: (runId: string) => void
   sessionId: string
   autoApprovedTools?: Record<string, 'auto' | 'readonly'>
   searchMatches?: MessageSearchMatch[]
@@ -107,6 +109,31 @@ export function HighlightText({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+function extractWorkflowRunId(
+  result: Extract<RenderablePart, { type: 'tool_result' }> | undefined,
+): string | undefined {
+  if (!result) return undefined
+  if (
+    result.toolUseResult &&
+    typeof result.toolUseResult === 'object'
+  ) {
+    const runId = (result.toolUseResult as Record<string, unknown>).runId
+    if (typeof runId === 'string' && runId) return runId
+  }
+  try {
+    const parsed = JSON.parse(result.output) as Record<string, unknown> | undefined
+    const runId = parsed?.runId
+    if (typeof runId === 'string' && runId) return runId
+  } catch {
+    // ignore parse errors
+  }
+  return undefined
+}
+
+/* ------------------------------------------------------------------ */
 /*  Component                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -114,6 +141,7 @@ export default function ChatMessageRenderer({
   message,
   resultMap,
   onOpenDrawer,
+  onOpenWorkflow,
   sessionId,
   autoApprovedTools,
   searchMatches = [],
@@ -234,6 +262,62 @@ export default function ChatMessageRenderer({
                         }
                       : undefined
                   }
+                />
+              )
+            }
+            if (part.toolName === 'Workflow') {
+              const result = resultMap.get(part.toolUseId)
+              const runId = extractWorkflowRunId(result)
+              if (!runId) {
+                // Fall back to the generic tool card until the async-launched
+                // result (with runId) has been delivered.
+                const summary = summarizeToolInput(part.input)
+                const state = toToolState(part, result)
+                return (
+                  <Tool key={partKey}>
+                    <ToolHeader
+                      state={state}
+                      summary={summary}
+                      type="tool-Workflow"
+                      autoApproved={autoApprovedTools?.[part.toolUseId]}
+                      meta={part.meta}
+                    />
+                    <ToolContent
+                      forceExpanded={isCurrentInPart}
+                      hasSearchMatch={hasMatchInPart}
+                      isCurrentSearchMatch={isCurrentInPart}
+                    >
+                      <ToolInput
+                        input={part.input}
+                        toolName={part.toolName}
+                        searchMatches={ranges}
+                      />
+                      {result && (
+                        <div className="pt-2">
+                          <ToolOutput
+                            errorText={result.isError ? result.output : undefined}
+                            output={result.isError ? undefined : result.output}
+                            searchMatches={ranges}
+                          />
+                        </div>
+                      )}
+                    </ToolContent>
+                  </Tool>
+                )
+              }
+              const workflowName =
+                part.input &&
+                typeof part.input === 'object' &&
+                typeof (part.input as Record<string, unknown>).name === 'string'
+                  ? ((part.input as Record<string, unknown>).name as string)
+                  : undefined
+              return (
+                <WorkflowToolCard
+                  key={partKey}
+                  runId={runId}
+                  sessionId={sessionId}
+                  workflowName={workflowName}
+                  onOpenWorkflow={onOpenWorkflow}
                 />
               )
             }
