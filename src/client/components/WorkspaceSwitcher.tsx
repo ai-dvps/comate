@@ -4,7 +4,7 @@ import { Check, LayoutGrid } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { BotStatusIcon } from './BotStatusIcon'
-import { getBotStatusLabel, useBotStatuses } from '../hooks/use-bot-statuses'
+import { getChannelStatusLabel, useChannelStatuses } from '../hooks/use-channel-statuses'
 
 interface WorkspaceSwitcherProps {
   open?: boolean
@@ -25,8 +25,8 @@ export default function WorkspaceSwitcher({ open, onOpenChange }: WorkspaceSwitc
 
   // All workspace ids (memoized so the polling effects do not restart every render).
   const allWorkspaceIds = useMemo(() => workspaces.map((w) => w.id), [workspaces])
-  const wecomStatuses = useBotStatuses(allWorkspaceIds, '/bot/status')
-  const feishuStatuses = useBotStatuses(allWorkspaceIds, '/feishu/status')
+  const wecomStatuses = useChannelStatuses(allWorkspaceIds, '/bot/status')
+  const feishuStatuses = useChannelStatuses(allWorkspaceIds, '/feishu/status')
 
   const handleSelect = (id: string) => {
     openWorkspace(id)
@@ -82,7 +82,7 @@ export default function WorkspaceSwitcher({ open, onOpenChange }: WorkspaceSwitc
                         iconSrc="/wecom-icon.svg"
                         alt="WeCom"
                         status={wecomStatus}
-                        title={getBotStatusLabel(wecomStatus, t, 'bot')}
+                        title={getChannelStatusLabel(wecomStatus, t, 'bot')}
                       />
                     )}
                     {feishuStatus && (
@@ -90,7 +90,7 @@ export default function WorkspaceSwitcher({ open, onOpenChange }: WorkspaceSwitc
                         iconSrc="/feishu-icon.svg"
                         alt="Feishu"
                         status={feishuStatus}
-                        title={getBotStatusLabel(feishuStatus, t, 'feishuBot')}
+                        title={getChannelStatusLabel(feishuStatus, t, 'feishuBot')}
                       />
                     )}
                     {isOpenTab && (

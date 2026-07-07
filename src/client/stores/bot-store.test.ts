@@ -41,7 +41,7 @@ describe('useBotStore member mutations', () => {
       membersByBotId: {
         'bot-1': [makeMember()],
       },
-      statusByBotId: {},
+      channelStatusByBotId: {},
       isLoading: false,
       isSaving: false,
       migrationResult: null,
@@ -97,5 +97,60 @@ describe('useBotStore member mutations', () => {
     assert.strictEqual(members[0].plaintextUserId, 'resolved-id');
     assert.strictEqual(members[0].resolutionStatus, 'resolved');
     assert.strictEqual(useBotStore.getState().error, null);
+  });
+});
+
+describe('useBotStore channel status', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    global.fetch = originalFetch;
+    useBotStore.setState({
+      bots: [],
+      membersByBotId: {},
+      channelStatusByBotId: {},
+      isLoading: false,
+      isSaving: false,
+      migrationResult: null,
+      error: null,
+    });
+  });
+
+  it('fetchStatus stores per-channel statuses and errors', async () => {
+    global.fetch = mockFetch({
+      status: 200,
+      body: { wecom: 'connected', feishu: 'error', errors: { feishu: 'Auth failed' } },
+    });
+
+    await useBotStore.getState().fetchStatus('bot-1');
+
+    const status = useBotStore.getState().channelStatusByBotId['bot-1'];
+    assert.strictEqual(status.wecom, 'connected');
+    assert.strictEqual(status.feishu, 'error');
+    assert.strictEqual(status.errors?.feishu, 'Auth failed');
+  });
+
+  it('reconnectChannel updates stored status on success', async () => {
+    global.fetch = mockFetch({
+      status: 200,
+      body: { wecom: 'connected', feishu: 'not_configured' },
+    });
+
+    const result = await useBotStore.getState().reconnectChannel('bot-1', 'wecom');
+
+    assert.strictEqual(result.ok, true);
+    const status = useBotStore.getState().channelStatusByBotId['bot-1'];
+    assert.strictEqual(status.wecom, 'connected');
+  });
+
+  it('reconnectChannel returns error and sets store error on failure', async () => {
+    global.fetch = mockFetch({ status: 502, body: { error: 'Connection failed' } });
+
+    const result = await useBotStore.getState().reconnectChannel('bot-1', 'wecom');
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.error, 'Connection failed');
+    assert.strictEqual(useBotStore.getState().error, 'Connection failed');
   });
 });

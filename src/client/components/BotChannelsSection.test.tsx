@@ -65,4 +65,129 @@ describe('BotChannelsSection', () => {
     expect(secretInput).toBeInTheDocument();
     expect(secretInput.getAttribute('type')).toBe('password');
   });
+
+  it('renders per-channel status labels and dots', () => {
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true, feishuEnabled: true }}
+        onUpdate={vi.fn()}
+        channelStatus={{ wecom: 'connected', feishu: 'not_configured' }}
+      />,
+    );
+
+    expect(screen.getByText('WeCom connected')).toBeInTheDocument();
+    expect(screen.getByText('Feishu not configured')).toBeInTheDocument();
+  });
+
+  it('renders sanitized error message when a channel is in error state', () => {
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), feishuEnabled: true }}
+        onUpdate={vi.fn()}
+        channelStatus={{ wecom: 'not_configured', feishu: 'error', errors: { feishu: 'Authentication failed' } }}
+      />,
+    );
+
+    expect(screen.getByText('Authentication failed')).toBeInTheDocument();
+  });
+
+  it('shows Reconnect button when channel is disconnected and credentials are unchanged', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+    const onReconnect = vi.fn();
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true, wecomBotId: 'bid' }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'disconnected', feishu: 'not_configured' }}
+        onReconnect={onReconnect}
+      />,
+    );
+
+    const reconnectButton = screen.getByRole('button', { name: /reconnect/i });
+    expect(reconnectButton).toBeInTheDocument();
+    fireEvent.click(reconnectButton);
+    expect(onReconnect).toHaveBeenCalledWith('wecom');
+  });
+
+  it('hides Reconnect button when credentials are dirty', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true, wecomBotId: 'different-id' }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'disconnected', feishu: 'not_configured' }}
+        onReconnect={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument();
+  });
+
+  it('hides Reconnect button when channel is not disconnected', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'connected', feishu: 'not_configured' }}
+        onReconnect={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument();
+  });
+
+  it('appends disabled descriptor when a channel toggle is off', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: false } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: false, feishuEnabled: true }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'disconnected', feishu: 'connected' }}
+      />,
+    );
+
+    expect(screen.getByText(/WeCom disconnected/i)).toBeInTheDocument();
+    expect(screen.getByText(/WeCom disconnected.*disabled/i)).toBeInTheDocument();
+  });
 });

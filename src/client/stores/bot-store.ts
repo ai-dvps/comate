@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import i18next from 'i18next';
+import type { ChannelStatus } from '../hooks/use-channel-statuses';
 
 export type BotChannel = 'wecom' | 'feishu';
 
@@ -86,9 +87,10 @@ export interface UpdateBotInput {
   rolePersonas?: Partial<Record<BotRole, BotPersona>> | null;
 }
 
-export interface BotStatus {
-  wecom: string;
-  feishu: string;
+export interface BotChannelStatuses {
+  wecom: ChannelStatus;
+  feishu: ChannelStatus;
+  errors?: { wecom?: string; feishu?: string };
 }
 
 export interface MigrationResult {
@@ -110,7 +112,7 @@ export interface MigrationResult {
 export interface BotState {
   bots: Bot[];
   membersByBotId: Record<string, BotUser[]>;
-  statusByBotId: Record<string, BotStatus>;
+  channelStatusByBotId: Record<string, BotChannelStatuses>;
   isLoading: boolean;
   isSaving: boolean;
   migrationResult: MigrationResult | null;
@@ -134,6 +136,7 @@ export interface BotState {
   ) => Promise<BotUser | null>;
   refreshMembers: (botId: string) => Promise<void>;
   fetchStatus: (botId: string) => Promise<void>;
+  reconnectChannel: (botId: string, channelKey: BotChannel) => Promise<{ ok: boolean; statuses?: BotChannelStatuses; error?: string }>;
   runMigration: (dryRun?: boolean) => Promise<MigrationResult | null>;
   clearError: () => void;
 }
@@ -152,7 +155,7 @@ async function handleError(res: Response): Promise<string> {
 export const useBotStore = create<BotState>((set, get) => ({
   bots: [],
   membersByBotId: {},
-  statusByBotId: {},
+  channelStatusByBotId: {},
   isLoading: false,
   isSaving: false,
   migrationResult: null,
@@ -393,12 +396,35 @@ export const useBotStore = create<BotState>((set, get) => ({
     try {
       const res = await fetch(`${API_BASE}/bots/${botId}/status`);
       if (!res.ok) return;
-      const data = (await res.json()) as { status: BotStatus };
+      const data = (await res.json()) as BotChannelStatuses;
       set({
-        statusByBotId: { ...get().statusByBotId, [botId]: data.status },
+        channelStatusByBotId: { ...get().channelStatusByBotId, [botId]: data },
       });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  reconnectChannel: async (botId, channelKey) => {
+    try {
+      const res = await fetch(`${API_BASE}/bots/${botId}/channels/${channelKey}/reconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = (await res.json()) as BotChannelStatuses & { error?: string };
+      if (!res.ok) {
+        const message = data.error || i18next.t('common:requestFailed', 'Request failed');
+        set({ error: message });
+        return { ok: false, error: message };
+      }
+      set({
+        channelStatusByBotId: { ...get().channelStatusByBotId, [botId]: data },
+      });
+      return { ok: true, statuses: data };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      set({ error: message });
+      return { ok: false, error: message };
     }
   },
 

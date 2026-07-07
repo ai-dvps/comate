@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 
-export type BotStatus = 'connected' | 'disconnected' | 'error' | 'not_configured' | 'connecting'
+export type ChannelStatus = 'connected' | 'disconnected' | 'error' | 'not_configured' | 'connecting'
 
 export type BotPrefix = 'bot' | 'feishuBot'
 
-export const BOT_STATUS_CLASS: Record<BotStatus, string> = {
+export const CHANNEL_STATUS_CLASS: Record<ChannelStatus, string> = {
   connected: 'opacity-100',
   disconnected: 'opacity-40 grayscale',
   error: 'opacity-100',
@@ -12,7 +12,7 @@ export const BOT_STATUS_CLASS: Record<BotStatus, string> = {
   connecting: 'opacity-100',
 }
 
-export const BOT_STATUS_DOT: Record<BotStatus, string> = {
+export const CHANNEL_STATUS_DOT: Record<ChannelStatus, string> = {
   connected: 'bg-green-500',
   disconnected: 'bg-text-tertiary',
   error: 'bg-warning',
@@ -22,8 +22,8 @@ export const BOT_STATUS_DOT: Record<BotStatus, string> = {
   connecting: 'bg-blue-500 animate-pulse',
 }
 
-export function getBotStatusLabel(status: BotStatus, t: (key: string) => string, prefix: BotPrefix): string {
-  const keyMap: Record<BotStatus, string> = {
+export function getChannelStatusLabel(status: ChannelStatus, t: (key: string) => string, prefix: BotPrefix): string {
+  const keyMap: Record<ChannelStatus, string> = {
     connected: `${prefix}Connected`,
     disconnected: `${prefix}Disconnected`,
     error: `${prefix}Error`,
@@ -34,7 +34,7 @@ export function getBotStatusLabel(status: BotStatus, t: (key: string) => string,
 }
 
 /**
- * Polls a bot status endpoint for the given workspaces on a fixed cadence.
+ * Polls a channel status endpoint for the given workspaces on a fixed cadence.
  * Shared by every bot indicator surface so they use identical polling
  * lifecycle semantics (fetch on mount + interval, clear when empty).
  *
@@ -44,11 +44,11 @@ export function getBotStatusLabel(status: BotStatus, t: (key: string) => string,
  * array (e.g. a store slice or a useMemo'd list) so the effect does not
  * restart on every render.
  */
-export function useBotStatuses(
+export function useChannelStatuses(
   workspaceIds: string[],
   endpoint: string,
-): Record<string, BotStatus> {
-  const [statuses, setStatuses] = useState<Record<string, BotStatus>>({})
+): Record<string, ChannelStatus> {
+  const [statuses, setStatuses] = useState<Record<string, ChannelStatus>>({})
 
   useEffect(() => {
     if (workspaceIds.length === 0) {
@@ -61,15 +61,15 @@ export function useBotStatuses(
         workspaceIds.map(async (id) => {
           try {
             const res = await fetch(`/api/workspaces/${id}${endpoint}`)
-            if (!res.ok) return { id, status: 'error' as BotStatus }
+            if (!res.ok) return { id, status: 'error' as ChannelStatus }
             const data = await res.json()
-            return { id, status: (data.status as BotStatus) ?? 'error' }
+            return { id, status: (data.status as ChannelStatus) ?? 'error' }
           } catch {
-            return { id, status: 'error' as BotStatus }
+            return { id, status: 'error' as ChannelStatus }
           }
         }),
       )
-      const next: Record<string, BotStatus> = {}
+      const next: Record<string, ChannelStatus> = {}
       for (const { id, status } of results) {
         if (status !== 'not_configured') {
           next[id] = status

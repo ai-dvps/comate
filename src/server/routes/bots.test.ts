@@ -855,9 +855,208 @@ describe('bots routes', { concurrency: false }, () => {
     const res = createMockRes();
     await handlers['/:id/status'].get({ params: { id: bot.id } }, res);
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { status: { wecom: string; feishu: string } };
-    assert.strictEqual(body.status.wecom, 'connected');
-    assert.strictEqual(body.status.feishu, 'not_configured');
+    const body = res.jsonBody as { wecom: string; feishu: string; errors?: Record<string, string> };
+    assert.strictEqual(body.wecom, 'connected');
+    assert.strictEqual(body.feishu, 'not_configured');
+    assert.strictEqual(body.errors, undefined);
+  });
+
+  it('GET /:id/status includes sanitized error for channels in error state', async () => {
+    const bot = createWeComBot();
+    wecomBotService.getBotStatus = () => 'error';
+    wecomBotService.getChannelError = () => 'connect to https://webhook.secret.com?token=abc123def456 failed\n    at Connection.connect';
+    feishuBotService.getBotStatus = () => 'not_configured';
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/status'].get({ params: { id: bot.id } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { wecom: string; feishu: string; errors?: Record<string, string> };
+    assert.strictEqual(body.wecom, 'error');
+    assert.strictEqual(body.feishu, 'not_configured');
+    assert.ok(body.errors);
+    assert.ok(body.errors.wecom);
+    assert.ok(!body.errors.wecom.includes('https://webhook.secret.com'), 'URL should be redacted');
+    assert.ok(!body.errors.wecom.includes('abc123def456'), 'token should be redacted');
+    assert.ok(!body.errors.wecom.includes('    at '), 'stack trace should be stripped');
+  });
+
+  it('POST /:id/channels/:channelKey/reconnect validates channel key', async () => {
+    const bot = createWeComBot();
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/channels/:channelKey/reconnect'].post(
+      { params: { id: bot.id, channelKey: 'unknown' } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 400);
+    const body = res.jsonBody as { error: string };
+    assert.match(body.error, /wecom or feishu/);
+  });
+
+  it('POST /:id/channels/:channelKey/reconnect returns 404 for missing bot', async () => {
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/channels/:channelKey/reconnect'].post(
+      { params: { id: 'nonexistent', channelKey: 'wecom' } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 404);
+  });
+
+  it('POST /:id/channels/:channelKey/reconnect rejects disabled channels', async () => {
+    const bot = botService.createBot({ name: 'Disabled', activeWorkspaceId: 'ws-1' });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/channels/:channelKey/reconnect'].post(
+      { params: { id: bot.id, channelKey: 'wecom' } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 400);
+    const body = res.jsonBody as { error: string };
+    assert.match(body.error, /disabled/i);
+  });
+
+  it('POST /:id/channels/:channelKey/reconnect rejects missing credentials', async () => {
+    const bot = botService.createBot({ name: 'NoCreds', activeWorkspaceId: 'ws-1' });
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'wecom');
+    workspaceStore.updateBotChannel(channel!.id, { wecom: { enabled: true } });
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/channels/:channelKey/reconnect'].post(
+      { params: { id: bot.id, channelKey: 'wecom' } },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 400);
+    const body = res.jsonBody as { error: string };
+    assert.match(body.error, /Missing credentials/i);
+  });
+
+  it('POST /:id/channels/:channelKey/reconnect disconnects then reconnects and returns status', async () => {
+    const bot = createWeComBot();
+    const originalWecomDisconnect = wecomBotService.disconnectChannel.bind(wecomBotService);
+    const originalWecomConnect = wecomBotService.connectChannel.bind(wecomBotService);
+    let disconnectedBotId: string | null = null;
+    let connectedBotId: string | null = null;
+
+    try {
+      wecomBotService.disconnectChannel = (botId) => {
+        disconnectedBotId = botId;
+      };
+      wecomBotService.connectChannel = async (botId) => {
+        connectedBotId = botId;
+      };
+      wecomBotService.getBotStatus = () => 'connected';
+
+      const handlers = await importRouteHandlers();
+      const res = createMockRes();
+      await handlers['/:id/channels/:channelKey/reconnect'].post(
+        { params: { id: bot.id, channelKey: 'wecom' } },
+        res,
+      );
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(disconnectedBotId, bot.id);
+      assert.strictEqual(connectedBotId, bot.id);
+      const body = res.jsonBody as { wecom: string; feishu: string };
+      assert.strictEqual(body.wecom, 'connected');
+    } finally {
+      wecomBotService.disconnectChannel = originalWecomDisconnect;
+      wecomBotService.connectChannel = originalWecomConnect;
+    }
+  });
+
+  it('POST /:id/channels/:channelKey/reconnect returns 502 and sanitized error on failure', async () => {
+    const bot = createWeComBot();
+    const originalWecomDisconnect = wecomBotService.disconnectChannel.bind(wecomBotService);
+    const originalWecomConnect = wecomBotService.connectChannel.bind(wecomBotService);
+
+    try {
+      wecomBotService.disconnectChannel = () => {};
+      wecomBotService.connectChannel = async () => {};
+      wecomBotService.getBotStatus = () => 'error';
+      wecomBotService.getChannelError = () => 'https://webhook.secret.com?token=longsecrettokenvalue123 failed\n    at Connection.connect';
+
+      const handlers = await importRouteHandlers();
+      const res = createMockRes();
+      await handlers['/:id/channels/:channelKey/reconnect'].post(
+        { params: { id: bot.id, channelKey: 'wecom' } },
+        res,
+      );
+      assert.strictEqual(res.statusCode, 502);
+      const body = res.jsonBody as { wecom: string; errors?: { wecom?: string } };
+      assert.strictEqual(body.wecom, 'error');
+      assert.ok(body.errors?.wecom);
+      assert.ok(!body.errors!.wecom!.includes('https://webhook.secret.com'), 'URL should be redacted');
+      assert.ok(!body.errors!.wecom!.includes('longsecrettokenvalue123'), 'token should be redacted');
+      assert.ok(!body.errors!.wecom!.includes('    at '), 'stack trace should be stripped');
+    } finally {
+      wecomBotService.disconnectChannel = originalWecomDisconnect;
+      wecomBotService.connectChannel = originalWecomConnect;
+    }
+  });
+
+  it('POST /:id/channels/:channelKey/reconnect rate-limits repeated attempts', async () => {
+    const bot = createWeComBot();
+    const originalWecomDisconnect = wecomBotService.disconnectChannel.bind(wecomBotService);
+    const originalWecomConnect = wecomBotService.connectChannel.bind(wecomBotService);
+
+    try {
+      wecomBotService.disconnectChannel = () => {};
+      wecomBotService.connectChannel = async () => {};
+      wecomBotService.getBotStatus = () => 'connected';
+
+      const handlers = await importRouteHandlers();
+      const res1 = createMockRes();
+      await handlers['/:id/channels/:channelKey/reconnect'].post(
+        { params: { id: bot.id, channelKey: 'wecom' } },
+        res1,
+      );
+      assert.strictEqual(res1.statusCode, 200);
+
+      const res2 = createMockRes();
+      await handlers['/:id/channels/:channelKey/reconnect'].post(
+        { params: { id: bot.id, channelKey: 'wecom' } },
+        res2,
+      );
+      assert.strictEqual(res2.statusCode, 429);
+      const body = res2.jsonBody as { error: string };
+      assert.match(body.error, /Too many reconnect attempts/i);
+    } finally {
+      wecomBotService.disconnectChannel = originalWecomDisconnect;
+      wecomBotService.connectChannel = originalWecomConnect;
+    }
+  });
+
+  it('PUT /:id disconnects a channel when it is disabled', async () => {
+    const bot = createWeComBot();
+    const originalWecomDisconnect = wecomBotService.disconnectChannel.bind(wecomBotService);
+    let disconnectedBotId: string | null = null;
+
+    try {
+      wecomBotService.disconnectChannel = (botId) => {
+        disconnectedBotId = botId;
+      };
+      wecomBotService.getBotStatus = () => 'connected';
+
+      const handlers = await importRouteHandlers();
+      const res = createMockRes();
+      await handlers['/:id'].put(
+        {
+          params: { id: bot.id },
+          body: {
+            channelSettings: {
+              wecom: { enabled: false, botId: 'wecom-bot-id', botSecret: 'wecom-bot-secret' },
+            },
+          },
+        },
+        res,
+      );
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(disconnectedBotId, bot.id);
+    } finally {
+      wecomBotService.disconnectChannel = originalWecomDisconnect;
+    }
   });
 
   it('POST /migrate runs migration and reports result', async () => {

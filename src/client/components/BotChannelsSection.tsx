@@ -1,15 +1,73 @@
 import { useTranslation } from 'react-i18next';
+import { Loader2, RefreshCw } from 'lucide-react';
 import type { Bot } from '../stores/bot-store';
-import { type BotFormData } from './bot-form-utils';
+import { type BotFormData, botToForm } from './bot-form-utils';
 import SecretInput from './SecretInput';
+import {
+  CHANNEL_STATUS_DOT,
+  type ChannelStatus,
+} from '../hooks/use-channel-statuses';
 
 interface BotChannelsSectionProps {
   form: BotFormData;
   onUpdate: (patch: Partial<BotFormData>) => void;
   originalBot?: Bot | null;
+  channelStatus?: { wecom: ChannelStatus; feishu: ChannelStatus; errors?: { wecom?: string; feishu?: string } };
+  pendingActions?: Record<'wecom' | 'feishu', 'connect' | 'disconnect' | null>;
+  onReconnect?: (channelKey: 'wecom' | 'feishu') => void;
 }
 
-export default function BotChannelsSection({ form, onUpdate, originalBot }: BotChannelsSectionProps) {
+function getChannelLabel(
+  channel: 'wecom' | 'feishu',
+  status: ChannelStatus,
+  t: (key: string) => string,
+): string {
+  const suffix: Record<ChannelStatus, string> = {
+    connected: 'Connected',
+    disconnected: 'Disconnected',
+    error: 'Error',
+    not_configured: 'NotConfigured',
+    connecting: 'Connecting',
+  };
+  const key = channel === 'wecom' ? `wecomStatus${suffix[status]}` : `feishuStatus${suffix[status]}`;
+  return t(`bots.${key}`);
+}
+
+function isChannelDirty(
+  form: BotFormData,
+  originalBot: Bot | null | undefined,
+  channel: 'wecom' | 'feishu',
+): boolean {
+  if (!originalBot) return false;
+  const snapshot = botToForm(originalBot);
+  if (channel === 'wecom') {
+    return (
+      form.wecomEnabled !== snapshot.wecomEnabled ||
+      form.wecomBotId !== snapshot.wecomBotId ||
+      form.wecomBotSecret !== snapshot.wecomBotSecret ||
+      form.wecomBotName !== snapshot.wecomBotName ||
+      form.wecomCorpId !== snapshot.wecomCorpId ||
+      form.wecomCorpSecret !== snapshot.wecomCorpSecret
+    );
+  }
+  return (
+    form.feishuEnabled !== snapshot.feishuEnabled ||
+    form.feishuAppId !== snapshot.feishuAppId ||
+    form.feishuAppSecret !== snapshot.feishuAppSecret ||
+    form.feishuBotName !== snapshot.feishuBotName ||
+    form.feishuEncryptKey !== snapshot.feishuEncryptKey ||
+    form.feishuVerificationToken !== snapshot.feishuVerificationToken
+  );
+}
+
+export default function BotChannelsSection({
+  form,
+  onUpdate,
+  originalBot,
+  channelStatus,
+  pendingActions,
+  onReconnect,
+}: BotChannelsSectionProps) {
   const { t } = useTranslation('settings');
 
   const Toggle = ({
@@ -40,17 +98,95 @@ export default function BotChannelsSection({ form, onUpdate, originalBot }: BotC
     </div>
   );
 
-  return (
-    <div className="max-w-xl space-y-6">
-      {/* WeCom */}
+  const ChannelCard = ({
+    channel,
+    title,
+    children,
+  }: {
+    channel: 'wecom' | 'feishu';
+    title: string;
+    children: React.ReactNode;
+  }) => {
+    const enabled = channel === 'wecom' ? form.wecomEnabled : form.feishuEnabled;
+    const status: ChannelStatus = channelStatus?.[channel] ?? 'not_configured';
+    const pending = pendingActions?.[channel];
+    const errorMessage = channelStatus?.errors?.[channel];
+    const dirty = isChannelDirty(form, originalBot, channel);
+    const canReconnect =
+      enabled &&
+      !dirty &&
+      status === 'disconnected' &&
+      !pending &&
+      !!onReconnect;
+
+    const statusLabel = pending
+      ? t(`bots.${pending === 'connect' ? 'channelReconnecting' : 'channelDisconnecting'}`)
+      : getChannelLabel(channel, status, t);
+
+    return (
       <div className="border border-border rounded-lg p-4 space-y-4">
-        <h4 className="text-xs font-medium text-text-secondary">{t('bots.channelWecom')}</h4>
+        <div className="flex items-center justify-between gap-3">
+          <h4 className="text-xs font-medium text-text-secondary">{title}</h4>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span
+              className={`flex items-center gap-1.5 text-xs ${enabled ? 'text-text-secondary' : 'text-text-tertiary opacity-60'}`}
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              aria-describedby={errorMessage ? `${channel}-error` : undefined}
+            >
+              <span
+                className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  pending ? 'bg-blue-500 animate-pulse' : CHANNEL_STATUS_DOT[status]
+                }`}
+                aria-hidden="true"
+              />
+              {pending && (
+                <Loader2 className="w-3 h-3 animate-spin text-text-tertiary" aria-hidden="true" />
+              )}
+              <span>
+                {statusLabel}
+                {!enabled && !pending && ` ${t('bots.channelStatusDisabled')}`}
+              </span>
+            </span>
+            {canReconnect && (
+              <button
+                type="button"
+                onClick={() => onReconnect?.(channel)}
+                className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-md transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" />
+                {t('bots.reconnectButton')}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {errorMessage && (
+          <p
+            id={`${channel}-error`}
+            className="text-[11px] text-warning"
+          >
+            {errorMessage}
+          </p>
+        )}
+
         <Toggle
-          label={t('bots.wecomEnable')}
-          checked={form.wecomEnabled}
-          onChange={(value) => onUpdate({ wecomEnabled: value })}
+          label={t(channel === 'wecom' ? 'bots.wecomEnable' : 'bots.feishuEnable')}
+          checked={enabled}
+          onChange={(value) =>
+            onUpdate(channel === 'wecom' ? { wecomEnabled: value } : { feishuEnabled: value })
+          }
         />
 
+        {children}
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-w-xl space-y-6">
+      <ChannelCard channel="wecom" title={t('bots.channelWecom')}>
         {form.wecomEnabled && (
           <div className="space-y-3 pl-1 border-l-2 border-border/50">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -122,17 +258,9 @@ export default function BotChannelsSection({ form, onUpdate, originalBot }: BotC
             )}
           </div>
         )}
-      </div>
+      </ChannelCard>
 
-      {/* Feishu */}
-      <div className="border border-border rounded-lg p-4 space-y-4">
-        <h4 className="text-xs font-medium text-text-secondary">{t('bots.channelFeishu')}</h4>
-        <Toggle
-          label={t('bots.feishuEnable')}
-          checked={form.feishuEnabled}
-          onChange={(value) => onUpdate({ feishuEnabled: value })}
-        />
-
+      <ChannelCard channel="feishu" title={t('bots.channelFeishu')}>
         {form.feishuEnabled && (
           <div className="space-y-3 pl-1 border-l-2 border-border/50">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -201,7 +329,7 @@ export default function BotChannelsSection({ form, onUpdate, originalBot }: BotC
             )}
           </div>
         )}
-      </div>
+      </ChannelCard>
     </div>
   );
 }

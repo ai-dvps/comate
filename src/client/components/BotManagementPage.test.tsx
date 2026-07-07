@@ -55,7 +55,7 @@ const workspace: Workspace = {
 const mockState: BotState = {
   bots: [makeBot()],
   membersByBotId: {},
-  statusByBotId: {},
+  channelStatusByBotId: {},
   isLoading: false,
   isSaving: false,
   migrationResult: null,
@@ -73,6 +73,7 @@ const mockState: BotState = {
   setMemberPlaintext: vi.fn(),
   refreshMembers: vi.fn(),
   fetchStatus: vi.fn(),
+  reconnectChannel: vi.fn(),
   runMigration: vi.fn(),
   clearError: vi.fn(),
 };

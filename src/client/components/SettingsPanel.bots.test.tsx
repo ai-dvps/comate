@@ -78,7 +78,7 @@ const appSettings = {
 const botState = {
   bots: [bot],
   membersByBotId: {},
-  statusByBotId: {},
+  channelStatusByBotId: {},
   isLoading: false,
   isSaving: false,
   migrationResult: null,

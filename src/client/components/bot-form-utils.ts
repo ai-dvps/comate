@@ -145,6 +145,15 @@ export function buildUpdateBotInput(
       form.wecomCorpSecret,
       original?.channelSettings.wecom?.corpSecret,
     );
+  } else if (original?.channelSettings.wecom?.enabled) {
+    channelSettings.wecom = {
+      enabled: false,
+      botId: original.channelSettings.wecom.botId,
+      botName: original.channelSettings.wecom.botName,
+      corpId: original.channelSettings.wecom.corpId,
+      botSecret: buildSecretValue(form.wecomBotSecret, original.channelSettings.wecom.botSecret),
+      corpSecret: buildSecretValue(form.wecomCorpSecret, original.channelSettings.wecom.corpSecret),
+    };
   }
 
   if (form.feishuEnabled) {
@@ -165,6 +174,15 @@ export function buildUpdateBotInput(
       form.feishuVerificationToken,
       original?.channelSettings.feishu?.verificationToken,
     );
+  } else if (original?.channelSettings.feishu?.enabled) {
+    channelSettings.feishu = {
+      enabled: false,
+      appId: original.channelSettings.feishu.appId,
+      botName: original.channelSettings.feishu.botName,
+      appSecret: buildSecretValue(form.feishuAppSecret, original.channelSettings.feishu.appSecret),
+      encryptKey: buildSecretValue(form.feishuEncryptKey, original.channelSettings.feishu.encryptKey),
+      verificationToken: buildSecretValue(form.feishuVerificationToken, original.channelSettings.feishu.verificationToken),
+    };
   }
 
   return {
