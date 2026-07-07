@@ -28,7 +28,7 @@ import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
-import { resolveDeadLoopDetectionSettings, detectSubagentLoop, type ResolvedDeadLoopDetectionSettings } from './dead-loop-detector.js';
+import type { Provider } from '../models/provider.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -100,8 +100,6 @@ export class ChatService {
   private runtimeContexts = new Map<string, RuntimeContext>();
   private pendingRebuilds = new Map<string, RuntimeContext>();
   private rebuildPollers = new Map<string, NodeJS.Timeout>();
-  private subagentLoopPoller?: NodeJS.Timeout;
-  private lastSubagentLoopPollBySession = new Map<string, number>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   constructor(sdkClient?: SdkClient) {
@@ -705,14 +703,25 @@ export class ChatService {
       }
 
       const optionsStart = Date.now();
-      const options = this.buildSdkOptions(workspace, session, isBotSession, botUserId);
+      const provider = session.providerId
+        ? workspaceStore.getProvider(session.providerId)
+        : workspaceStore.getDefaultProvider();
+
+      if (!provider) {
+        throw new ChatError(
+          'No LLM provider configured. Add a provider in Settings.',
+          'PROVIDER_NOT_FOUND',
+          500,
+        );
+      }
+
+      const options = this.buildSdkOptions(workspace, session, isBotSession, botUserId, provider);
       diagLog(`[ChatService] runtime ${sessionId} buildSdkOptions elapsed=${Date.now() - optionsStart}ms pathToClaudeCodeExecutable=${options.pathToClaudeCodeExecutable || 'undefined'}`);
 
       const testStart = Date.now();
       await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
       diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
 
-      const deadLoopSettings = resolveDeadLoopDetectionSettings(workspace.settings);
       diagLog(`[ChatService] runtime ${sessionId} calling SessionRuntime.open`);
       const openStart = Date.now();
       const runtime = SessionRuntime.open(
@@ -725,13 +734,12 @@ export class ChatService {
         () => this.cancelIdleClose(sessionId),
         () => {},
         () => this.scheduleIdleClose(sessionId),
-        deadLoopSettings,
+        provider,
       );
       diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - openStart}ms`);
       this.runtimes.set(sessionId, runtime);
       this.runtimeContexts.set(sessionId, runtimeContext);
       this.scheduleIdleClose(sessionId);
-      this.ensureSubagentLoopPoller();
 
       // Set initial approval mode from session data
       if (!isBotSession && session.approvalMode) {
@@ -756,10 +764,6 @@ export class ChatService {
     this.runtimeContexts.delete(sessionId);
     this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
-    this.lastSubagentLoopPollBySession.delete(sessionId);
-    if (this.runtimes.size === 0) {
-      this.stopSubagentLoopPoller();
-    }
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
     await runtime.close();
   }
@@ -932,109 +936,6 @@ export class ChatService {
     );
     this.runtimes.clear();
     this.idleTimeouts.clear();
-    this.lastSubagentLoopPollBySession.clear();
-    this.stopSubagentLoopPoller();
-  }
-
-  private ensureSubagentLoopPoller(): void {
-    if (this.subagentLoopPoller) return;
-    const intervalMs = 1000;
-    this.subagentLoopPoller = setInterval(() => {
-      this.pollSubagentLoops().catch((err) => {
-        console.error('Subagent loop poller failed:', err);
-      });
-    }, intervalMs);
-    sidecarLog(`[ChatService] subagent loop poller started (${intervalMs}ms)`);
-  }
-
-  private stopSubagentLoopPoller(): void {
-    if (!this.subagentLoopPoller) return;
-    clearInterval(this.subagentLoopPoller);
-    this.subagentLoopPoller = undefined;
-    sidecarLog('[ChatService] subagent loop poller stopped');
-  }
-
-  private async pollSubagentLoops(): Promise<void> {
-    const now = Date.now();
-    const entries = Array.from(this.runtimes.entries());
-
-    for (const [sessionId, runtime] of entries) {
-      if (runtime.isClosed()) continue;
-      let workspace: Workspace | null = null;
-      try {
-        workspace = await workspaceStore.get(runtime.getStatus().workspaceId);
-      } catch {
-        continue;
-      }
-      if (!workspace) continue;
-
-      const settings = resolveDeadLoopDetectionSettings(workspace.settings);
-      if (!settings.enabled) continue;
-
-      const lastPoll = this.lastSubagentLoopPollBySession.get(sessionId) ?? 0;
-      if (now - lastPoll < settings.line2.pollIntervalMs) continue;
-      this.lastSubagentLoopPollBySession.set(sessionId, now);
-
-      await this.checkSubagentLoopsForSession(sessionId, runtime, workspace, settings);
-    }
-  }
-
-  private async checkSubagentLoopsForSession(
-    sessionId: string,
-    runtime: SessionRuntime,
-    workspace: Workspace,
-    settings: ResolvedDeadLoopDetectionSettings,
-  ): Promise<void> {
-    let agentIds: string[] = [];
-    try {
-      agentIds = await this.sdkClient.listSubagents(sessionId, { dir: normalizeWindowsPath(workspace.folderPath) });
-    } catch (err) {
-      sidecarLog(`[ChatService] failed to list subagents for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-      return;
-    }
-
-    let anyLoop = false;
-    for (const agentId of agentIds) {
-      let messages: import('@anthropic-ai/claude-agent-sdk').SessionMessage[] = [];
-      try {
-        messages = await this.sdkClient.getSubagentMessages(sessionId, agentId, {
-          dir: normalizeWindowsPath(workspace.folderPath),
-        });
-      } catch (err) {
-        sidecarLog(`[ChatService] failed to load subagent ${agentId} for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-        continue;
-      }
-
-      const loop = detectSubagentLoop(messages, settings.line2.windowSize, settings.line2.threshold);
-      if (loop) {
-        anyLoop = true;
-        runtime.setSubagentLoopAlert({
-          agentId,
-          toolName: loop.toolName,
-          fingerprint: loop.fingerprint,
-          count: loop.count,
-        });
-
-        const alert = runtime.getSubagentLoopAlert();
-        if (
-          alert &&
-          !runtime.hasSubagentInterruptFired() &&
-          Date.now() - alert.detectedAt >= settings.line2.interruptTimeoutMs
-        ) {
-          diagLog(`[ChatService] subagent loop timeout; interrupting session ${sessionId} agent ${agentId}`);
-          runtime.markSubagentInterruptFired();
-          try {
-            await runtime.interrupt();
-          } catch (err) {
-            sidecarLog(`[ChatService] interrupt failed for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
-      }
-    }
-
-    if (!anyLoop) {
-      runtime.clearSubagentLoopAlert();
-    }
   }
 
   /**
@@ -1292,16 +1193,17 @@ export class ChatService {
     session: ChatSession,
     isBotSession?: boolean,
     botUserId?: string,
+    provider?: Provider,
   ): import('@anthropic-ai/claude-agent-sdk').Options {
     const claudeSettings = loadClaudeSettings();
     let { env } = buildClaudeEnv(claudeSettings);
 
-    // Resolve active provider: session -> default
-    const provider = session.providerId
+    // Resolve active provider: session -> default, when not already provided.
+    const resolvedProvider = provider ?? (session.providerId
       ? workspaceStore.getProvider(session.providerId)
-      : workspaceStore.getDefaultProvider();
+      : workspaceStore.getDefaultProvider());
 
-    if (!provider) {
+    if (!resolvedProvider) {
       throw new ChatError(
         'No LLM provider configured. Add a provider in Settings.',
         'PROVIDER_NOT_FOUND',
@@ -1312,29 +1214,29 @@ export class ChatService {
     // Build flag-settings env so provider credentials survive upstream
     // settings reloads (applyConfigEnvironmentVariables overwrites process.env).
     const settingsEnv: Record<string, string> = {};
-    settingsEnv.ANTHROPIC_BASE_URL = provider.baseUrl;
-    settingsEnv.ANTHROPIC_API_KEY = provider.authToken;
-    settingsEnv.ANTHROPIC_AUTH_TOKEN = provider.authToken;
-    if (provider.model) {
-      settingsEnv.ANTHROPIC_MODEL = provider.model;
+    settingsEnv.ANTHROPIC_BASE_URL = resolvedProvider.baseUrl;
+    settingsEnv.ANTHROPIC_API_KEY = resolvedProvider.authToken;
+    settingsEnv.ANTHROPIC_AUTH_TOKEN = resolvedProvider.authToken;
+    if (resolvedProvider.model) {
+      settingsEnv.ANTHROPIC_MODEL = resolvedProvider.model;
     }
-    if (provider.defaultOpusModel) {
-      settingsEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.defaultOpusModel;
+    if (resolvedProvider.defaultOpusModel) {
+      settingsEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = resolvedProvider.defaultOpusModel;
     }
-    if (provider.defaultSonnetModel) {
-      settingsEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.defaultSonnetModel;
+    if (resolvedProvider.defaultSonnetModel) {
+      settingsEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = resolvedProvider.defaultSonnetModel;
     }
-    if (provider.defaultHaikuModel) {
-      settingsEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.defaultHaikuModel;
+    if (resolvedProvider.defaultHaikuModel) {
+      settingsEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = resolvedProvider.defaultHaikuModel;
     }
-    if (provider.subagentModel) {
-      settingsEnv.CLAUDE_CODE_SUBAGENT_MODEL = provider.subagentModel;
+    if (resolvedProvider.subagentModel) {
+      settingsEnv.CLAUDE_CODE_SUBAGENT_MODEL = resolvedProvider.subagentModel;
     }
-    if (provider.effortLevel) {
-      settingsEnv.CLAUDE_CODE_EFFORT_LEVEL = provider.effortLevel;
+    if (resolvedProvider.effortLevel) {
+      settingsEnv.CLAUDE_CODE_EFFORT_LEVEL = resolvedProvider.effortLevel;
     }
-    if (provider.customEnvVars) {
-      for (const [key, value] of Object.entries(provider.customEnvVars)) {
+    if (resolvedProvider.customEnvVars) {
+      for (const [key, value] of Object.entries(resolvedProvider.customEnvVars)) {
         settingsEnv[key] = value;
       }
     }
@@ -1391,7 +1293,7 @@ export class ChatService {
     const normalizedCwd = normalizeWindowsPath(workspace.folderPath);
     sidecarLog(`[ChatService.buildSdkOptions] pathToClaudeCodeExecutable=${claudePath}`);
     sidecarLog(`[ChatService.buildSdkOptions] cwd=${normalizedCwd} (raw=${workspace.folderPath})`);
-    sidecarLog(`[ChatService.buildSdkOptions] provider=${provider.name} model=${provider.model || 'default'}`);
+    sidecarLog(`[ChatService.buildSdkOptions] provider=${resolvedProvider.name} model=${resolvedProvider.model || 'default'}`);
     sidecarLog(`[ChatService.buildSdkOptions] sessionId=${session.id} isDraft=${!!session.isDraft}`);
     sidecarLog(`[ChatService.buildSdkOptions] platform=${process.platform} arch=${process.arch}`);
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
@@ -1399,7 +1301,7 @@ export class ChatService {
       env,
       settings: { env: settingsEnv },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-      model: provider.model || undefined,
+      model: resolvedProvider.model || undefined,
       includePartialMessages: false,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {

@@ -32,33 +32,6 @@ export interface WorkspaceSettings {
   feishuBotName?: string;
   /** Feishu user IDs allowed to switch the bot's active workspace. */
   feishuAdminUserIds?: string[];
-  /** Dead-loop detection thresholds and enablement. When unset, global defaults apply. */
-  deadLoopDetection?: DeadLoopDetectionSettings;
-}
-
-export interface DeadLoopLine1Settings {
-  /** Number of consecutive wasted Read calls before injecting guidance. */
-  warnThreshold?: number;
-  /** Number of consecutive wasted Read calls before returning cached content. */
-  blockThreshold?: number;
-}
-
-export interface DeadLoopLine2Settings {
-  /** Number of trailing tool_use blocks to scan for repeats. */
-  windowSize?: number;
-  /** Minimum repeat count of the same tool+params within the window to flag a loop. */
-  threshold?: number;
-  /** How often to poll subagent transcripts. */
-  pollIntervalMs?: number;
-  /** How long to wait for the main agent to stop a looping subagent before interrupting. */
-  interruptTimeoutMs?: number;
-}
-
-export interface DeadLoopDetectionSettings {
-  /** Master switch for dead-loop detection in this workspace. Defaults to true. */
-  enabled?: boolean;
-  line1?: DeadLoopLine1Settings;
-  line2?: DeadLoopLine2Settings;
 }
 
 export interface Skill {
