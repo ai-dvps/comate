@@ -17,6 +17,7 @@ const mockChatStore = {
   approvalQueue: {},
   messages: {},
   domCache: {},
+  workflows: {},
   fetchSessions: vi.fn(),
   sendMessage: vi.fn(),
   loadMessages: vi.fn(),
