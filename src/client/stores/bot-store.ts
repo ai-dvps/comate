@@ -137,6 +137,7 @@ export interface BotState {
   refreshMembers: (botId: string) => Promise<void>;
   fetchStatus: (botId: string) => Promise<void>;
   reconnectChannel: (botId: string, channelKey: BotChannel) => Promise<{ ok: boolean; statuses?: BotChannelStatuses; error?: string }>;
+  fetchChannelCredentials: (botId: string, channelKey: BotChannel) => Promise<WeComChannelConfig | FeishuChannelConfig | null>;
   runMigration: (dryRun?: boolean) => Promise<MigrationResult | null>;
   clearError: () => void;
 }
@@ -425,6 +426,21 @@ export const useBotStore = create<BotState>((set, get) => ({
       const message = err instanceof Error ? err.message : String(err);
       set({ error: message });
       return { ok: false, error: message };
+    }
+  },
+
+  fetchChannelCredentials: async (botId, channelKey) => {
+    try {
+      const res = await fetch(`${API_BASE}/bots/${botId}/channels/${channelKey}/credentials`);
+      if (!res.ok) {
+        set({ error: await handleError(res) });
+        return null;
+      }
+      const data = (await res.json()) as { credentials: WeComChannelConfig | FeishuChannelConfig };
+      return data.credentials;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return null;
     }
   },
 

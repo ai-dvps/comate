@@ -74,6 +74,7 @@ const mockState: BotState = {
   refreshMembers: vi.fn(),
   fetchStatus: vi.fn(),
   reconnectChannel: vi.fn(),
+  fetchChannelCredentials: vi.fn(),
   runMigration: vi.fn(),
   clearError: vi.fn(),
 };
@@ -280,6 +281,35 @@ describe('BotManagementPage', () => {
     });
 
     vi.unstubAllGlobals();
+  });
+
+  it('populates saved WeCom credentials when opening the Channels section', async () => {
+    const fetchChannelCredentials = vi.fn().mockResolvedValue({ botSecret: 'saved-wecom-secret' });
+    (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      ...mockState,
+      bots: [
+        makeBot({
+          channelSettings: {
+            wecom: { enabled: true, botId: 'wecom-bot-id', botSecret: true },
+          },
+        }),
+      ],
+      fetchChannelCredentials,
+    });
+
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Channels/i }));
+
+    await waitFor(() => {
+      expect(fetchChannelCredentials).toHaveBeenCalledWith('bot-1', 'wecom');
+    });
+
+    const secretInput = screen.getByDisplayValue('saved-wecom-secret') as HTMLInputElement;
+    expect(secretInput).toBeInTheDocument();
+    expect(secretInput.type).toBe('password');
   });
 
   it('shows unsaved-changes dialog when switching bots with dirty persona config', async () => {

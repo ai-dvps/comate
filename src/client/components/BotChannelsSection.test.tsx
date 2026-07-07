@@ -167,6 +167,33 @@ describe('BotChannelsSection', () => {
     expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument();
   });
 
+  it('requests credential reveal with the correct field key when the eye is clicked', async () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+    const onRevealCredential = vi.fn().mockResolvedValue('plain-secret');
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        onRevealCredential={onRevealCredential}
+      />,
+    );
+
+    const buttons = screen.getAllByRole('button');
+    // The first eye button belongs to the WeCom Bot Secret input.
+    fireEvent.click(buttons[1]);
+    expect(onRevealCredential).toHaveBeenCalledWith('wecomBotSecret');
+  });
+
   it('appends disabled descriptor when a channel toggle is off', () => {
     const originalBot: Bot = {
       id: 'bot-1',

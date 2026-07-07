@@ -21,6 +21,12 @@ import BotDangerSection from './BotDangerSection';
 import { emptyForm, botToForm, validateBotForm, buildCreateBotInput, buildUpdateBotInput, type BotFormData } from './bot-form-utils';
 import { filterBotsByName } from '../lib/bot-filter';
 
+const ENCRYPTED_CHANNEL_KEYS = ['botSecret', 'corpSecret', 'appSecret', 'encryptKey', 'verificationToken'];
+
+function getCredentialFieldKey(channelKey: 'wecom' | 'feishu', secretKey: string): string {
+  return channelKey + secretKey[0].toUpperCase() + secretKey.slice(1);
+}
+
 function deriveChannelPendingAction(
   pre: BotFormData | undefined,
   post: BotFormData | undefined,
@@ -83,6 +89,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       refreshMembers,
       fetchStatus,
       reconnectChannel,
+      fetchChannelCredentials,
       clearError,
     } = useBotStore();
     const { workspaces, fetchWorkspaces } = useWorkspaceStore();
@@ -98,6 +105,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
     const [pendingSwitchSource, setPendingSwitchSource] = useState<'manual' | 'filter' | null>(null);
     const [pageError, setPageError] = useState<string | null>(null);
+    const [revealedCredentials, setRevealedCredentials] = useState<Record<string, string>>({});
     const [isSaving, setIsSaving] = useState(false);
     const [isPersonaDirty, setIsPersonaDirty] = useState(false);
     const [isRolesDirty, setIsRolesDirty] = useState(false);
@@ -182,6 +190,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     useEffect(() => {
       setActiveSection('general');
       setPageError(null);
+      setRevealedCredentials({});
       setIsPersonaDirty(false);
       setIsRolesDirty(false);
     }, [selectedBotId]);
@@ -203,6 +212,37 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       const interval = setInterval(() => void fetchStatus(selectedBotId), 5000);
       return () => clearInterval(interval);
     }, [selectedBotId, tempBot, activeSection, fetchStatus]);
+
+    // Fetch saved channel credentials so secret fields are populated (masked) on open.
+    useEffect(() => {
+      if (!selectedBotId || tempBot?.id.startsWith('temp-') || activeSection !== 'channels') {
+        return;
+      }
+      const bot = selectedBot;
+      if (!bot) return;
+
+      void (async () => {
+        const nextRevealed: Record<string, string> = {};
+        for (const channelKey of ['wecom', 'feishu'] as const) {
+          const channel = bot.channelSettings[channelKey];
+          if (!channel?.enabled) continue;
+          const hasSavedSecret = ENCRYPTED_CHANNEL_KEYS.some(
+            (key) => channel[key as keyof typeof channel] === true,
+          );
+          if (!hasSavedSecret) continue;
+          const config = await fetchChannelCredentials(selectedBotId, channelKey);
+          if (!config) continue;
+          for (const secretKey of ENCRYPTED_CHANNEL_KEYS) {
+            const value = config[secretKey as keyof typeof config];
+            const originalValue = channel[secretKey as keyof typeof channel];
+            if (typeof value === 'string' && value.length > 0 && originalValue === true) {
+              nextRevealed[getCredentialFieldKey(channelKey, secretKey)] = value;
+            }
+          }
+        }
+        setRevealedCredentials(nextRevealed);
+      })();
+    }, [selectedBotId, tempBot, activeSection, selectedBot, fetchChannelCredentials]);
 
     // Clear optimistic channel hints once polling reports a terminal status.
     useEffect(() => {
@@ -382,6 +422,26 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
         }
       },
       [selectedBotId, reconnectChannel, fetchStatus, t],
+    );
+
+    const handleRevealCredential = useCallback(
+      async (fieldKey: string) => {
+        if (!selectedBotId) return undefined;
+        const channelKey = fieldKey.startsWith('wecom') ? 'wecom' : 'feishu';
+        const config = await fetchChannelCredentials(selectedBotId, channelKey);
+        if (!config) {
+          setPageError(storeError || t('common:unknownError'));
+          return undefined;
+        }
+        const secretKey = fieldKey.slice(channelKey.length).replace(/^./, (c) => c.toLowerCase());
+        const value = config[secretKey as keyof typeof config];
+        if (typeof value !== 'string') {
+          return undefined;
+        }
+        setRevealedCredentials((prev) => ({ ...prev, [fieldKey]: value }));
+        return value;
+      },
+      [selectedBotId, fetchChannelCredentials, storeError, t],
     );
 
     const handleSaveAll = useCallback(async () => {
@@ -610,6 +670,8 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
               channelStatus={channelStatusByBotId[selectedBot.id]}
               pendingActions={pendingChannelActions}
               onReconnect={handleReconnectChannel}
+              onRevealCredential={handleRevealCredential}
+              revealedCredentials={revealedCredentials}
             />
           )}
 
