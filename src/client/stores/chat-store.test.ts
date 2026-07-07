@@ -1,4 +1,5 @@
 import { describe, it, beforeEach, vi } from 'vitest'
+import type { Mock } from 'vitest'
 import assert from 'node:assert'
 import {
   normalizeSdkStatus,
@@ -12,7 +13,7 @@ import {
   type SseSetter,
 } from './chat-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
-import type { SubagentState, TaskItem, WorkflowState } from '../types/message'
+import type { SubagentState, TaskItem, WorkflowState, WorkflowStatus } from '../types/message'
 import type { WsEventMessage } from '@server/websocket/types'
 
 describe('normalizeSdkStatus', () => {
@@ -1015,7 +1016,7 @@ describe('workflow state', () => {
         ok: true,
         json: async () => ({ workflow: { ...running, status: workflowStatus } }),
       }),
-    ) as unknown as typeof fetch
+    ) as unknown as Mock & typeof fetch
     vi.stubGlobal('fetch', fetchFn)
 
     const set = useChatStore.setState as unknown as SseSetter
