@@ -810,6 +810,34 @@ function updateSubagentToolUse(
   }))
 }
 
+export function handleWsEvent(set: SseSetter, msg: WsEventMessage): void {
+  if (msg.eventType === 'sse' && msg.sessionId && msg.workspaceId) {
+    // Remember the highest event id we've processed so a reconnect can request
+    // replay from this point. Without this, a WebSocket reconnect during an
+    // active turn misses events emitted while the client was disconnected.
+    if (msg.eventId) {
+      lastEventId.set(msg.sessionId, msg.eventId)
+    }
+    const data = msg.data as { type?: string }
+    if (typeof data.type === 'string') {
+      handleSseEvent(set, msg.workspaceId, msg.sessionId, data.type, msg.data)
+    }
+  }
+}
+
+/** Test-only helpers for the reconnect `lastEventId` ring buffer. */
+export function getLastEventId(sessionId: string): string | undefined {
+  return lastEventId.get(sessionId)
+}
+
+export function clearLastEventId(sessionId?: string): void {
+  if (sessionId) {
+    lastEventId.delete(sessionId)
+  } else {
+    lastEventId.clear()
+  }
+}
+
 export function handleSseEvent(
   set: SseSetter,
   workspaceId: string,
@@ -1841,10 +1869,11 @@ function subscribeToSession(
     existing.close()
   }
 
-  const lastId = lastEventId.get(sessionId)
-
   const doSubscribe = async (): Promise<void> => {
     try {
+      // Read the latest lastEventId at resubscribe time so reconnect replay
+      // starts from the most recently processed event.
+      const lastId = lastEventId.get(sessionId)
       await wsClient.request(
         'subscribe',
         { workspaceId, sessionId, lastEventId: lastId },
@@ -1955,12 +1984,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   ...(typeof window !== 'undefined' && typeof WebSocket !== 'undefined'
     ? (() => {
         wsClient.onEvent((msg: WsEventMessage) => {
-          if (msg.eventType === 'sse' && msg.sessionId && msg.workspaceId) {
-            const data = msg.data as { type?: string }
-            if (typeof data.type === 'string') {
-              handleSseEvent(set, msg.workspaceId, msg.sessionId, data.type, msg.data)
-            }
-          }
+          handleWsEvent(set, msg)
         })
         void wsClient.connect().catch(() => {})
         return {}
@@ -2226,7 +2250,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setActiveSession: (workspaceId: string, sessionId: string) => {
     // Avoid duplicate subscriptions when the App-level effect re-fires with the
     // same active session (e.g. after a state update that preserves the selection).
-    if (get().activeSessionIds[workspaceId] === sessionId) return
+    // We must also verify the subscription is still alive: switching workspaces
+    // tears down the previous session's subscription, so returning here would
+    // leave the session unsubscribed when the user switches back.
+    if (get().activeSessionIds[workspaceId] === sessionId && sessionSubscriptions.has(sessionId)) return
 
     closeSessionSubscriptions(sessionId)
     set((state) => {
