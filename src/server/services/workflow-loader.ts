@@ -46,25 +46,26 @@ function asWorkflowStatus(value: unknown): WorkflowStatus {
 
 function parsePhases(raw: unknown): WorkflowPhase[] {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const title = asString((item as Record<string, unknown>).title);
-      const detail = asString((item as Record<string, unknown>).detail);
-      if (!title) return null;
-      return { title, detail: detail || undefined };
-    })
-    .filter((p): p is WorkflowPhase => p !== null);
+  const phases: WorkflowPhase[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const title = asString((item as Record<string, unknown>).title);
+    const detail = asString((item as Record<string, unknown>).detail);
+    if (!title) continue;
+    phases.push({ title, detail: detail || undefined });
+  }
+  return phases;
 }
 
 function parseProgress(raw: unknown): WorkflowProgressItem[] {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      return item as WorkflowProgressItem;
-    })
-    .filter((p): p is WorkflowProgressItem => p !== null);
+  const progress: WorkflowProgressItem[] = [];
+  for (const item of raw) {
+    if (item && typeof item === 'object') {
+      progress.push(item as WorkflowProgressItem);
+    }
+  }
+  return progress;
 }
 
 function parseJsonlMessages(filePath: string): SessionMessage[] {

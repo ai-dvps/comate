@@ -241,6 +241,97 @@ describe('SseEmitter result metadata', { concurrency: false }, () => {
   });
 });
 
+describe('SseEmitter workflow events', { concurrency: false }, () => {
+  it('emits workflow_start when a Workflow tool_result reports async_launched', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-sonnet-4-6',
+      tools: [],
+      session_id: 'session-1',
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'assistant',
+      message: {
+        id: 'msg-1',
+        content: [{ type: 'tool_use', id: 'tu-wf-1', name: 'Workflow', input: { name: 'deep-research', args: 'test' } }],
+      },
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tu-wf-1', content: 'Workflow launched', is_error: false }],
+      },
+      toolUseResult: {
+        status: 'async_launched',
+        taskId: 'task-1',
+        taskType: 'local_workflow',
+        workflowName: 'deep-research',
+        runId: 'wf_run-1',
+      },
+    } as unknown as SDKMessage);
+
+    const start = events.find((e) => e.type === 'workflow_start');
+    assert.ok(start, 'expected workflow_start');
+    assert.strictEqual(start.runId, 'wf_run-1');
+    assert.strictEqual(start.sessionId, 'session-1');
+    assert.strictEqual(start.toolUseId, 'tu-wf-1');
+    assert.strictEqual(start.workflowName, 'deep-research');
+  });
+
+  it('emits workflow_update and workflow_done for tracked workflow task events', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-sonnet-4-6',
+      tools: [],
+      session_id: 'session-1',
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'assistant',
+      message: {
+        id: 'msg-1',
+        content: [{ type: 'tool_use', id: 'tu-wf-1', name: 'Workflow', input: { name: 'deep-research' } }],
+      },
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tu-wf-1', content: 'Workflow launched', is_error: false }],
+      },
+      toolUseResult: { status: 'async_launched', taskId: 'task-1', runId: 'wf_run-1' },
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'task-1',
+      status: 'completed',
+    } as unknown as SDKMessage);
+
+    const updates = events.filter((e) => e.type === 'workflow_update');
+    assert.strictEqual(updates.length, 1);
+    assert.strictEqual(updates[0].runId, 'wf_run-1');
+
+    const done = events.find((e) => e.type === 'workflow_done');
+    assert.ok(done);
+    assert.strictEqual(done.runId, 'wf_run-1');
+    assert.strictEqual(done.status, 'completed');
+  });
+});
+
 describe('SseEmitter api_retry', { concurrency: false }, () => {
   it('forwards api_retry system messages as api_retry events', () => {
     const events: SseEvent[] = [];

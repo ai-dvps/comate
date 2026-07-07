@@ -5,6 +5,7 @@ import { store } from '../storage/sqlite-store.js';
 import { botService } from '../services/bot-service.js';
 import { diagLog } from '../utils/diag-logger.js';
 import type { BotUser } from '../models/bot-user.js';
+import { loadWorkflowState, listWorkflowRunIds } from '../services/workflow-loader.js';
 
 const router = Router({ mergeParams: true });
 diagLog('[Route] chat module loaded');
@@ -296,6 +297,49 @@ router.post('/sessions/:sessionId/approval-mode', async (req, res) => {
   } catch (error) {
     console.error('Failed to set approval mode:', error);
     res.status(500).json({ error: 'Failed to set approval mode' });
+  }
+});
+
+// GET /api/workspaces/:id/sessions/:sessionId/workflows
+// List workflow runIds that have on-disk state for this session.
+router.get('/sessions/:sessionId/workflows', async (req, res) => {
+  try {
+    const workspaceId = (req.params as unknown as { id: string }).id;
+    const sessionId = req.params.sessionId;
+    const workspace = await store.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const runIds = listWorkflowRunIds(workspace.folderPath, sessionId);
+    res.json({ runIds });
+  } catch (error) {
+    console.error('Failed to list workflows:', error);
+    res.status(500).json({ error: 'Failed to list workflows' });
+  }
+});
+
+// GET /api/workspaces/:id/sessions/:sessionId/workflows/:runId
+// Read the on-disk workflow state for a specific run.
+router.get('/sessions/:sessionId/workflows/:runId', async (req, res) => {
+  try {
+    const workspaceId = (req.params as unknown as { id: string }).id;
+    const sessionId = req.params.sessionId;
+    const runId = req.params.runId;
+    const workspace = await store.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const workflow = loadWorkflowState({ folderPath: workspace.folderPath, sessionId, runId });
+    if (!workflow) {
+      res.status(404).json({ error: 'Workflow not found' });
+      return;
+    }
+    res.json({ workflow });
+  } catch (error) {
+    console.error('Failed to load workflow:', error);
+    res.status(500).json({ error: 'Failed to load workflow' });
   }
 });
 
