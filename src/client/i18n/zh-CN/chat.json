@@ -107,6 +107,13 @@
   "workflowSubagentCount": "{{completed}}/{{total}} 完成",
   "workflowSubagentCountWithRunning": "{{completed}}/{{total}} 完成，{{running}} 运行中",
   "workflowPanelTitle": "工作流",
+  "workflowDetailPhases": "阶段",
+  "workflowDetailSubagents": "子代理",
+  "workflowDetailTokens_one": "{{count}} token",
+  "workflowDetailTokens_other": "{{count}} tokens",
+  "workflowDetailToolCalls_one": "{{count}} 次工具调用",
+  "workflowDetailToolCalls_other": "{{count}} 次工具调用",
+  "workflowNoData": "工作流数据已不再可用。",
   "provider": {
     "default": "默认",
     "noDefault": "未配置默认服务商",

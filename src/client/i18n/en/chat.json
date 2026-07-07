@@ -107,6 +107,13 @@
   "workflowSubagentCount": "{{completed}}/{{total}} done",
   "workflowSubagentCountWithRunning": "{{completed}}/{{total}} done, {{running}} running",
   "workflowPanelTitle": "Workflows",
+  "workflowDetailPhases": "Phases",
+  "workflowDetailSubagents": "Subagents",
+  "workflowDetailTokens_one": "{{count}} token",
+  "workflowDetailTokens_other": "{{count}} tokens",
+  "workflowDetailToolCalls_one": "{{count}} tool call",
+  "workflowDetailToolCalls_other": "{{count}} tool calls",
+  "workflowNoData": "Workflow data is no longer available.",
   "provider": {
     "default": "Default",
     "noDefault": "No default configured",

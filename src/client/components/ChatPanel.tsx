@@ -13,6 +13,7 @@ import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
 import MessageSearchBar from './MessageSearchBar'
 import WorkflowFloatingPanel from './WorkflowFloatingPanel'
+import WorkflowDetailPanel from './WorkflowDetailPanel'
 import { isBotSession } from '../lib/session-filter'
 
 const EMPTY_ARRAY: [] = []
@@ -61,7 +62,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const [openDrawerToolUseId, setOpenDrawerToolUseId] = useState<
     string | null
   >(null)
-  const [, setOpenWorkflowRunId] = useState<string | null>(null)
+  const [openWorkflowRunId, setOpenWorkflowRunId] = useState<string | null>(null)
   const [subagentPanelWidth, setSubagentPanelWidth] = useState(400)
   const [refreshMeta, setRefreshMeta] = useState<{
     lastRefreshedAt: Date | null
@@ -326,6 +327,10 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     setOpenDrawerToolUseId(null)
   }, [])
 
+  const handleCloseWorkflow = useCallback(() => {
+    setOpenWorkflowRunId(null)
+  }, [])
+
   return (
     <div className="flex flex-col h-full bg-bg">
       {/* Chat Header */}
@@ -457,6 +462,16 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             width={subagentPanelWidth}
             onClose={handleCloseDrawer}
             onWidthChange={setSubagentPanelWidth}
+          />
+        )}
+
+        {/* Workflow Detail Panel */}
+        {activeSessionId && openWorkflowRunId && (
+          <WorkflowDetailPanel
+            runId={openWorkflowRunId}
+            sessionId={activeSessionId}
+            onClose={handleCloseWorkflow}
+            onOpenDrawer={setOpenDrawerToolUseId}
           />
         )}
       </div>
