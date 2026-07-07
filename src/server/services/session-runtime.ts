@@ -263,14 +263,15 @@ export class SessionRuntime {
       input: Record<string, unknown>,
       options: {
         signal: AbortSignal;
-        suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+        suggestions?: PermissionUpdate[];
         title?: string;
         description?: string;
         toolUseID: string;
         decisionReasonType?: string;
+        requestId: string;
       },
-    ): Promise<PermissionResult> => {
-      const requestId = options.toolUseID;
+    ): Promise<PermissionResult | null> => {
+      const requestId = options.requestId ?? options.toolUseID;
 
       if (toolName === 'AskUserQuestion') {
         const questions = this.parseAskUserQuestion(input);
@@ -319,8 +320,9 @@ export class SessionRuntime {
         description?: string;
         toolUseID: string;
         decisionReasonType?: string;
+        requestId: string;
       },
-    ) => Promise<PermissionResult>,
+    ) => Promise<PermissionResult | null>,
   ): (
     toolName: string,
     input: Record<string, unknown>,
@@ -331,8 +333,9 @@ export class SessionRuntime {
       description?: string;
       toolUseID: string;
       decisionReasonType?: string;
+      requestId: string;
     },
-  ) => Promise<PermissionResult> {
+  ) => Promise<PermissionResult | null> {
     return async (toolName, input, options) => {
       const action = this.kimiLoopDetector!.beforeToolUse(toolName, input);
       if (action.behavior === 'deny') {

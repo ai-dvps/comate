@@ -1,7 +1,7 @@
 import type { Response } from 'express';
 import type { SDKMessage, SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sdk';
 
-import type { SseEvent, QuestionPayload } from '../types/message.js';
+import type { SseEvent, QuestionPayload, WorkflowStatus } from '../types/message.js';
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 
@@ -43,6 +43,7 @@ interface BlockState {
 export class SseEmitter {
   private res: Response | null = null;
   private currentMessageId: string | null = null;
+  private sessionId: string | null = null;
   private assistantStartEmitted = false;
   private blockStates = new Map<number, BlockState>();
   private seenStreamPartIndexes = new Set<number>();
@@ -62,6 +63,7 @@ export class SseEmitter {
 
   reset(): void {
     this.currentMessageId = null;
+    this.sessionId = null;
     this.assistantStartEmitted = false;
     this.blockStates.clear();
     this.seenStreamPartIndexes.clear();
@@ -69,9 +71,13 @@ export class SseEmitter {
     this.eventIndex = 0;
     this.nextPartIndex = 0;
     this.activeSubagents.clear();
+    this.pendingWorkflows.clear();
+    this.activeWorkflows.clear();
   }
 
   private activeSubagents = new Map<string, SubagentEmitter>();
+  private pendingWorkflows = new Map<string, { workflowName?: string }>();
+  private activeWorkflows = new Map<string, { runId: string; workflowName?: string }>();
 
   handle(msg: SDKMessage): void {
     const parentToolUseId = (msg as { parent_tool_use_id?: string | null }).parent_tool_use_id;
@@ -108,6 +114,7 @@ export class SseEmitter {
             sessionId: msg.session_id,
             ...(mcpServers && { mcpServers }),
           });
+          this.sessionId = msg.session_id;
           return;
         }
 
@@ -117,6 +124,7 @@ export class SseEmitter {
           const description = typeof taskMsg.description === 'string' ? taskMsg.description : '';
           if (taskId) {
             this.send({ type: 'task_started', taskId, description });
+            this.emitWorkflowTaskEvent(taskId, { status: 'running' });
           }
           return;
         }
@@ -125,15 +133,17 @@ export class SseEmitter {
           const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
           const patch = taskMsg.patch as Record<string, unknown> | undefined;
           if (taskId) {
+            const normalizedPatch = {
+              status: typeof patch?.status === 'string' ? patch.status : undefined,
+              description: typeof patch?.description === 'string' ? patch.description : undefined,
+              error: typeof patch?.error === 'string' ? patch.error : undefined,
+            };
             this.send({
               type: 'task_updated',
               taskId,
-              patch: {
-                status: typeof patch?.status === 'string' ? patch.status : undefined,
-                description: typeof patch?.description === 'string' ? patch.description : undefined,
-                error: typeof patch?.error === 'string' ? patch.error : undefined,
-              },
+              patch: normalizedPatch,
             });
+            this.emitWorkflowTaskEvent(taskId, normalizedPatch);
           }
           return;
         }
@@ -147,6 +157,7 @@ export class SseEmitter {
               taskId,
               patch: { description },
             });
+            this.emitWorkflowTaskEvent(taskId, { description });
           }
           return;
         }
@@ -160,6 +171,7 @@ export class SseEmitter {
               taskId,
               patch: { status },
             });
+            this.emitWorkflowTaskEvent(taskId, { status });
           }
           return;
         }
@@ -411,6 +423,38 @@ export class SseEmitter {
     this.activeSubagents.delete(parentToolUseId);
   }
 
+  private emitWorkflowTaskEvent(
+    taskId: string,
+    patch: { status?: string; description?: string; error?: string },
+  ): void {
+    const workflow = this.activeWorkflows.get(taskId);
+    if (!workflow || !this.sessionId) return;
+
+    this.send({
+      type: 'workflow_update',
+      runId: workflow.runId,
+      sessionId: this.sessionId,
+    });
+
+    const status = patch.status;
+    if (
+      status === 'completed' ||
+      status === 'error' ||
+      status === 'killed' ||
+      status === 'cancelled'
+    ) {
+      const finalStatus: WorkflowStatus =
+        status === 'completed' ? 'completed' : status === 'killed' ? 'killed' : 'error';
+      this.send({
+        type: 'workflow_done',
+        runId: workflow.runId,
+        sessionId: this.sessionId,
+        status: finalStatus,
+      });
+      this.activeWorkflows.delete(taskId);
+    }
+  }
+
   static formatSsePayload(id: string | number, event: SseEvent): string {
     return `id: ${id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
   }
@@ -495,6 +539,9 @@ export class SseEmitter {
         this.emitToolMeta(toolUseId, this.extractToolMeta(block));
         if (toolName === 'Agent' && toolUseId) {
           this.startSubagent(toolUseId);
+        }
+        if (toolName === 'Workflow' && toolUseId) {
+          this.pendingWorkflows.set(toolUseId, {});
         }
       } else if (blockType === 'thinking') {
         this.blockStates.set(index, { type: 'thinking' });
@@ -662,6 +709,13 @@ export class SseEmitter {
       if (toolName === 'Agent' && toolUseId) {
         this.startSubagent(toolUseId);
       }
+      if (toolName === 'Workflow' && toolUseId) {
+        const inputName =
+          input && typeof input === 'object' && typeof (input as Record<string, unknown>).name === 'string'
+            ? (input as Record<string, unknown>).name
+            : undefined;
+        this.pendingWorkflows.set(toolUseId, { workflowName: inputName as string | undefined });
+      }
     } else if (blockType === 'thinking') {
       const text = typeof b.thinking === 'string' ? b.thinking : '';
       this.send({
@@ -738,6 +792,32 @@ export class SseEmitter {
         });
         if (this.activeSubagents.has(toolUseId)) {
           this.finalizeSubagent(toolUseId, isError ? 'error' : 'completed');
+        }
+
+        const pendingWorkflow = this.pendingWorkflows.get(toolUseId);
+        if (pendingWorkflow && toolUseResult !== undefined) {
+          const result = toolUseResult as Record<string, unknown>;
+          if (result.status === 'async_launched') {
+            const runId = typeof result.runId === 'string' ? result.runId : '';
+            const wfTaskId = typeof result.taskId === 'string' ? result.taskId : '';
+            const workflowName =
+              typeof result.workflowName === 'string'
+                ? result.workflowName
+                : pendingWorkflow.workflowName;
+            if (runId && this.sessionId) {
+              this.send({
+                type: 'workflow_start',
+                runId,
+                sessionId: this.sessionId,
+                toolUseId,
+                ...(workflowName && { workflowName }),
+              });
+              if (wfTaskId) {
+                this.activeWorkflows.set(wfTaskId, { runId, workflowName });
+              }
+              this.pendingWorkflows.delete(toolUseId);
+            }
+          }
         }
       }
     }
