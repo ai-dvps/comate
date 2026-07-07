@@ -8,15 +8,15 @@ import type {
   Query,
   SDKRateLimitInfo,
   SDKControlGetContextUsageResponse,
-  HookCallback,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent, QuestionPayload } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
+import type { Provider } from '../models/provider.js';
 import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
 import { diagLog } from '../utils/diag-logger.js';
-import { ReadLoopDetector, type ResolvedDeadLoopDetectionSettings } from './dead-loop-detector.js';
+import { KimiLoopDetector, isKimiProvider } from './kimi-loop-detector.js';
 
 
 const RING_BUFFER_CAP = 500;
@@ -79,7 +79,7 @@ export class SessionRuntime {
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
     onActivity?: () => void,
-    deadLoopSettings?: ResolvedDeadLoopDetectionSettings,
+    provider?: Provider,
   ): SessionRuntime {
     diagLog(`[Runtime ${sessionId}] SessionRuntime.open called`);
     const input = new PushableIterator<SDKUserMessage>();
@@ -93,7 +93,7 @@ export class SessionRuntime {
       onSubscribed,
       onUnsubscribed,
       onActivity,
-      deadLoopSettings,
+      provider,
     );
     if (botEventHandler) {
       runtime.botEventHandlers.add(botEventHandler);
@@ -134,17 +134,8 @@ export class SessionRuntime {
     return this.approvalMode;
   }
 
-  private readLoopDetector?: ReadLoopDetector;
-  private deadLoopSettings?: ResolvedDeadLoopDetectionSettings;
-  private subagentLoopAlert?: {
-    agentId: string;
-    toolName: string;
-    fingerprint: string;
-    count: number;
-    detectedAt: number;
-    guidanceSent: boolean;
-  };
-  private subagentInterruptFired = false;
+  private provider?: Provider;
+  private kimiLoopDetector?: KimiLoopDetector;
 
   private constructor(
     sessionId: string,
@@ -156,7 +147,7 @@ export class SessionRuntime {
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
     onActivity?: () => void,
-    deadLoopSettings?: ResolvedDeadLoopDetectionSettings,
+    provider?: Provider,
   ) {
     diagLog(`[Runtime ${sessionId}] constructed`);
     this.sessionId = sessionId;
@@ -168,9 +159,9 @@ export class SessionRuntime {
     this.onSubscribed = onSubscribed;
     this.onUnsubscribed = onUnsubscribed;
     this.onActivity = onActivity;
-    this.deadLoopSettings = deadLoopSettings;
-    if (deadLoopSettings?.enabled) {
-      this.readLoopDetector = new ReadLoopDetector(deadLoopSettings.line1);
+    this.provider = provider;
+    if (provider && isKimiProvider(provider)) {
+      this.kimiLoopDetector = new KimiLoopDetector();
     }
     this.emitter = new SseEmitter(null, (id, event) => {
       if (event.type === 'assistant_start') {
@@ -203,21 +194,10 @@ export class SessionRuntime {
   private start(): void {
     diagLog(`[Runtime ${this.sessionId}] start (hasCustomCanUseTool=${!!this.options.canUseTool})`);
     const baseCanUseTool = this.options.canUseTool ?? this.buildCanUseToolCallback();
-    const canUseTool = this.readLoopDetector
-      ? this.wrapCanUseToolWithDeadLoop(baseCanUseTool)
+    const canUseTool = this.kimiLoopDetector
+      ? this.wrapCanUseToolWithKimiLoopDetection(baseCanUseTool)
       : baseCanUseTool;
     const hooks: Options['hooks'] = { ...this.options.hooks };
-    if (this.readLoopDetector) {
-      hooks.PreToolUse = [{ matcher: 'Read', hooks: [this.createPreToolUseHook()] }];
-      hooks.PostToolUse = [{ matcher: 'Read', hooks: [this.createPostToolUseHook()] }];
-    }
-    if (this.deadLoopSettings?.enabled) {
-      hooks.Stop = [{ hooks: [this.createStopHook()] }];
-      hooks.PostToolUse = [
-        ...(hooks.PostToolUse ?? []),
-        { hooks: [this.createSubagentPostToolUseHook()] },
-      ];
-    }
     const optionsWithCallback: Options = {
       ...this.options,
       canUseTool,
@@ -328,7 +308,7 @@ export class SessionRuntime {
     };
   }
 
-  private wrapCanUseToolWithDeadLoop(
+  private wrapCanUseToolWithKimiLoopDetection(
     baseCanUseTool: (
       toolName: string,
       input: Record<string, unknown>,
@@ -354,145 +334,12 @@ export class SessionRuntime {
     },
   ) => Promise<PermissionResult> {
     return async (toolName, input, options) => {
-      if (toolName === 'Read' && typeof input.file_path === 'string' && this.readLoopDetector) {
-        const action = this.readLoopDetector.beforeRead(input.file_path);
-        if (action.type === 'block') {
-          diagLog(
-            `[Runtime ${this.sessionId}] dead-loop block tool=Read path=${input.file_path} toolUseId=${options.toolUseID}`,
-          );
-          return {
-            behavior: 'deny',
-            message: this.formatCachedResult(action.cachedResult),
-          };
-        }
+      const action = this.kimiLoopDetector!.beforeToolUse(toolName, input);
+      if (action.behavior === 'deny') {
+        diagLog(`[Runtime ${this.sessionId}] kimi-loop deny tool=${toolName} toolUseId=${options.toolUseID}`);
+        return { behavior: 'deny', message: action.message };
       }
       return baseCanUseTool(toolName, input, options);
-    };
-  }
-
-  private createPreToolUseHook(): HookCallback {
-    return async (input) => {
-      if (input.hook_event_name !== 'PreToolUse') return {};
-      if (input.tool_name !== 'Read') return {};
-      const filePath = (input.tool_input as Record<string, unknown>)?.file_path;
-      if (typeof filePath !== 'string' || !this.readLoopDetector) return {};
-
-      const action = this.readLoopDetector.beforeRead(filePath);
-      if (action.type === 'warn') {
-        diagLog(`[Runtime ${this.sessionId}] dead-loop warn tool=Read path=${filePath}`);
-        return {
-          hookSpecificOutput: {
-            hookEventName: 'PreToolUse',
-            additionalContext: action.guidance,
-          },
-        };
-      }
-      return {};
-    };
-  }
-
-  private createPostToolUseHook(): HookCallback {
-    return async (input) => {
-      if (input.hook_event_name !== 'PostToolUse') return {};
-      if (input.tool_name !== 'Read') return {};
-      const filePath = (input.tool_input as Record<string, unknown>)?.file_path;
-      if (typeof filePath !== 'string' || !this.readLoopDetector) return {};
-
-      this.readLoopDetector.recordReadResult(filePath, input.tool_response);
-      return {};
-    };
-  }
-
-  private formatCachedResult(result: unknown): string {
-    if (typeof result === 'string') return result;
-    try {
-      return JSON.stringify(result);
-    } catch {
-      return String(result);
-    }
-  }
-
-  setSubagentLoopAlert(alert: {
-    agentId: string;
-    toolName: string;
-    fingerprint: string;
-    count: number;
-  }): void {
-    const existing = this.subagentLoopAlert;
-    if (
-      existing &&
-      existing.agentId === alert.agentId &&
-      existing.fingerprint === alert.fingerprint
-    ) {
-      existing.count = alert.count;
-      return;
-    }
-    this.subagentLoopAlert = { ...alert, detectedAt: Date.now(), guidanceSent: false };
-    this.subagentInterruptFired = false;
-  }
-
-  clearSubagentLoopAlert(): void {
-    this.subagentLoopAlert = undefined;
-    this.subagentInterruptFired = false;
-  }
-
-  getSubagentLoopAlert():
-    | {
-        agentId: string;
-        toolName: string;
-        fingerprint: string;
-        count: number;
-        detectedAt: number;
-        guidanceSent: boolean;
-      }
-    | undefined {
-    return this.subagentLoopAlert;
-  }
-
-  hasSubagentInterruptFired(): boolean {
-    return this.subagentInterruptFired;
-  }
-
-  markSubagentInterruptFired(): void {
-    this.subagentInterruptFired = true;
-  }
-
-  private getSubagentLoopGuidance(): string | undefined {
-    const alert = this.subagentLoopAlert;
-    if (!alert || alert.guidanceSent) {
-      return undefined;
-    }
-    alert.guidanceSent = true;
-    return `Subagent ${alert.agentId} appears to be stuck in a loop calling ${alert.toolName} with the same arguments (${alert.count} repetitions in the trailing window). Consider using TaskStop to stop it.`;
-  }
-
-  private createStopHook(): HookCallback {
-    return async (input) => {
-      if (input.hook_event_name !== 'Stop') return {};
-      const guidance = this.getSubagentLoopGuidance();
-      if (!guidance) return {};
-      diagLog(`[Runtime ${this.sessionId}] dead-loop subagent guidance via Stop hook`);
-      return {
-        hookSpecificOutput: {
-          hookEventName: 'Stop',
-          additionalContext: guidance,
-        },
-      };
-    };
-  }
-
-  private createSubagentPostToolUseHook(): HookCallback {
-    return async (input) => {
-      if (input.hook_event_name !== 'PostToolUse') return {};
-      const guidance = this.getSubagentLoopGuidance();
-      if (!guidance) return {};
-      diagLog(`[Runtime ${this.sessionId}] dead-loop subagent guidance via PostToolUse hook`);
-      return {
-        hookSpecificOutput: {
-          hookEventName: 'PostToolUse',
-          additionalContext: guidance,
-        },
-      };
     };
   }
 
@@ -698,6 +545,7 @@ export class SessionRuntime {
       parent_tool_use_id: null,
     };
     this.input.push(msg);
+    this.kimiLoopDetector?.reset();
     this.onActivity?.();
   }
 

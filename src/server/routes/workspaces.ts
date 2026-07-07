@@ -5,7 +5,6 @@ import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 import { chatService } from '../services/chat-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { botService } from '../services/bot-service.js';
-import { validateDeadLoopDetectionSettings } from '../services/dead-loop-detector.js';
 import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
 
 import { redactChannelSettings, mapBotError } from '../routes/bots.js';
@@ -95,14 +94,6 @@ router.post('/:id/open', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const input = req.body as UpdateWorkspaceInput;
-
-    if (input.settings?.deadLoopDetection !== undefined) {
-      const validationError = validateDeadLoopDetectionSettings(input.settings.deadLoopDetection);
-      if (validationError) {
-        res.status(400).json({ error: validationError });
-        return;
-      }
-    }
 
     const workspace = await store.update(req.params.id, input);
     if (!workspace) {

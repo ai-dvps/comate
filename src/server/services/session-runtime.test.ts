@@ -5,7 +5,7 @@ import { SessionRuntime } from './session-runtime.js';
 import type { SdkClient } from './sdk-client.js';
 import type { Query, SDKMessage, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent } from '../types/message.js';
-import type { ResolvedDeadLoopDetectionSettings } from './dead-loop-detector.js';
+import type { Provider } from '../models/provider.js';
 
 function collectDiagLogs(): { logs: string[]; restore: () => void } {
   const logs: string[] = [];
@@ -1154,7 +1154,7 @@ describe('session-runtime cancelPendingApprovals', { concurrency: false }, () =>
   });
 });
 
-describe('session-runtime dead-loop detection', { concurrency: false }, () => {
+describe('session-runtime Kimi loop detection', { concurrency: false }, () => {
   let runtime: SessionRuntime | undefined;
 
   afterEach(async () => {
@@ -1187,179 +1187,136 @@ describe('session-runtime dead-loop detection', { concurrency: false }, () => {
     return new AbortController().signal;
   }
 
-  function makeDeadLoopSettings(
-    overrides?: Partial<ResolvedDeadLoopDetectionSettings['line1']>,
-  ): ResolvedDeadLoopDetectionSettings {
+  function createOptions(): Options {
     return {
-      enabled: true,
-      line1: {
-        warnThreshold: 1,
-        blockThreshold: 2,
-        ...overrides,
-      },
-      line2: {
-        windowSize: 20,
-        threshold: 5,
-        pollIntervalMs: 5000,
-        interruptTimeoutMs: 30000,
-      },
+      canUseTool: async (_toolName, input) => ({
+        behavior: 'allow',
+        updatedInput: input,
+      }),
+    } as Options;
+  }
+
+  function createKimiProvider(): Provider {
+    return {
+      id: 'kimi',
+      name: 'Kimi Provider',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      authToken: 'test',
+      model: 'kimi-k2',
+      isDefault: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
   }
 
-  it('blocks repeated Read and returns cached content', async () => {
+  function createAnthropicProvider(): Provider {
+    return {
+      id: 'anthropic',
+      name: 'Anthropic Provider',
+      baseUrl: 'https://api.anthropic.com',
+      authToken: 'test',
+      model: 'claude-3-5-sonnet',
+      isDefault: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  it('denies repeated identical tool calls for Kimi providers', async () => {
     const mockSdkClient = createMockSdkClient();
     runtime = SessionRuntime.open(
       's1',
       'ws1',
       'nonce',
-      {} as Options,
+      createOptions(),
       mockSdkClient,
       undefined,
       undefined,
       undefined,
       undefined,
-      makeDeadLoopSettings({ warnThreshold: 0, blockThreshold: 1 }),
+      createKimiProvider(),
     );
-    runtime.setApprovalMode('readonly');
 
     const options = mockSdkClient.capturedOptions!;
     const signal = createAbortSignal();
-    const postHook = options.hooks!.PostToolUse![0].hooks[0];
 
-    // First read succeeds and caches content.
-    let permission = await options.canUseTool!(
-      'Read',
-      { file_path: '/a.txt' },
-      { signal, toolUseID: 'tu-1' },
+    assert.strictEqual(
+      (await options.canUseTool!('Read', { file_path: '/a.txt' }, { signal, toolUseID: 'tu-1' })).behavior,
+      'allow',
     );
-    assert.strictEqual(permission.behavior, 'allow');
-
-    await postHook(
-      {
-        hook_event_name: 'PostToolUse',
-        tool_name: 'Read',
-        tool_input: { file_path: '/a.txt' },
-        tool_response: 'cached content',
-        tool_use_id: 'tu-1',
-      },
-      'tu-1',
-      { signal },
+    assert.strictEqual(
+      (await options.canUseTool!('Read', { file_path: '/a.txt' }, { signal, toolUseID: 'tu-2' })).behavior,
+      'allow',
     );
 
-    // Second read is wasted.
-    await postHook(
-      {
-        hook_event_name: 'PostToolUse',
-        tool_name: 'Read',
-        tool_input: { file_path: '/a.txt' },
-        tool_response: 'Wasted call',
-        tool_use_id: 'tu-2',
-      },
-      'tu-2',
-      { signal },
-    );
-
-    // Third read should be blocked and return cached content.
-    permission = await options.canUseTool!(
+    const result = await options.canUseTool!(
       'Read',
       { file_path: '/a.txt' },
       { signal, toolUseID: 'tu-3' },
     );
-    assert.strictEqual(permission.behavior, 'deny');
-    assert.strictEqual((permission as { message: string }).message, 'cached content');
-  });
-
-  it('warns when the warning threshold is reached', async () => {
-    const mockSdkClient = createMockSdkClient();
-    runtime = SessionRuntime.open(
-      's1',
-      'ws1',
-      'nonce',
-      {} as Options,
-      mockSdkClient,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      makeDeadLoopSettings(),
-    );
-    runtime.setApprovalMode('readonly');
-
-    const options = mockSdkClient.capturedOptions!;
-    const signal = createAbortSignal();
-    const postHook = options.hooks!.PostToolUse![0].hooks[0];
-    const preHook = options.hooks!.PreToolUse![0].hooks[0];
-
-    await postHook(
-      {
-        hook_event_name: 'PostToolUse',
-        tool_name: 'Read',
-        tool_input: { file_path: '/a.txt' },
-        tool_response: 'cached content',
-        tool_use_id: 'tu-1',
-      },
-      'tu-1',
-      { signal },
-    );
-
-    await postHook(
-      {
-        hook_event_name: 'PostToolUse',
-        tool_name: 'Read',
-        tool_input: { file_path: '/a.txt' },
-        tool_response: 'Wasted call',
-        tool_use_id: 'tu-2',
-      },
-      'tu-2',
-      { signal },
-    );
-
-    const preResult = await preHook(
-      {
-        hook_event_name: 'PreToolUse',
-        tool_name: 'Read',
-        tool_input: { file_path: '/a.txt' },
-        tool_use_id: 'tu-3',
-      },
-      'tu-3',
-      { signal },
-    );
-
-    assert.strictEqual(preResult.hookSpecificOutput?.hookEventName, 'PreToolUse');
+    assert.strictEqual(result.behavior, 'deny');
     assert.ok(
-      typeof preResult.hookSpecificOutput?.additionalContext === 'string' &&
-        preResult.hookSpecificOutput.additionalContext.includes('already been read'),
+      (result as { message: string }).message.includes('already called Read'),
     );
   });
 
-  it('does not block when dead-loop detection is disabled', async () => {
+  it('does not deny repeated identical tool calls for non-Kimi providers', async () => {
     const mockSdkClient = createMockSdkClient();
-    const settings = makeDeadLoopSettings();
-    settings.enabled = false;
-
     runtime = SessionRuntime.open(
       's1',
       'ws1',
       'nonce',
-      {} as Options,
+      createOptions(),
       mockSdkClient,
       undefined,
       undefined,
       undefined,
       undefined,
-      settings,
+      createAnthropicProvider(),
     );
-    runtime.setApprovalMode('readonly');
 
     const options = mockSdkClient.capturedOptions!;
-    assert.strictEqual(options.hooks, undefined);
-
     const signal = createAbortSignal();
-    const permission = await options.canUseTool!(
+
+    for (let i = 0; i < 5; i++) {
+      const result = await options.canUseTool!(
+        'Read',
+        { file_path: '/a.txt' },
+        { signal, toolUseID: `tu-${i}` },
+      );
+      assert.strictEqual(result.behavior, 'allow');
+    }
+  });
+
+  it('resets the detector when a new user message is pushed', async () => {
+    const mockSdkClient = createMockSdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      createOptions(),
+      mockSdkClient,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createKimiProvider(),
+    );
+
+    const options = mockSdkClient.capturedOptions!;
+    const signal = createAbortSignal();
+
+    // Trigger two repeats so the next identical call would deny.
+    await options.canUseTool!('Read', { file_path: '/a.txt' }, { signal, toolUseID: 'tu-1' });
+    await options.canUseTool!('Read', { file_path: '/a.txt' }, { signal, toolUseID: 'tu-2' });
+
+    runtime.pushMessage('continue');
+
+    const result = await options.canUseTool!(
       'Read',
       { file_path: '/a.txt' },
-      { signal, toolUseID: 'tu-1' },
+      { signal, toolUseID: 'tu-3' },
     );
-    assert.strictEqual(permission.behavior, 'allow');
+    assert.strictEqual(result.behavior, 'allow');
   });
 });
