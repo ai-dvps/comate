@@ -106,6 +106,7 @@
   },
   "workflowSubagentCount": "{{completed}}/{{total}} 完成",
   "workflowSubagentCountWithRunning": "{{completed}}/{{total}} 完成，{{running}} 运行中",
+  "workflowPanelTitle": "工作流",
   "provider": {
     "default": "默认",
     "noDefault": "未配置默认服务商",

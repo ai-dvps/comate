@@ -7,7 +7,8 @@ import {
 } from 'lucide-react'
 
 import { useChatStore } from '../stores/chat-store'
-import type { WorkflowState, WorkflowStatus } from '../types/message'
+import type { WorkflowStatus } from '../types/message'
+import { getCurrentPhaseTitle, getSubagentCounts } from '../lib/workflow-utils'
 import { cn } from './ui/utils'
 
 interface WorkflowToolCardProps {
@@ -47,45 +48,6 @@ const statusConfig: Record<
   },
 }
 
-function getCurrentPhaseTitle(workflow: WorkflowState): string | undefined {
-  if (workflow.phases.length > 0) {
-    return workflow.phases[workflow.phases.length - 1]?.title
-  }
-  const phaseProgress = workflow.progress.filter(
-    (p): p is { type: 'workflow_phase'; index: number; title: string } =>
-      p.type === 'workflow_phase',
-  )
-  if (phaseProgress.length > 0) {
-    return phaseProgress[phaseProgress.length - 1]?.title
-  }
-  return undefined
-}
-
-function getSubagentCounts(workflow: WorkflowState): {
-  completed: number
-  running: number
-  total: number
-} {
-  const agentProgress = workflow.progress.filter(
-    (p): p is {
-      type: 'workflow_agent'
-      index: number
-      agentId: string
-      state?: 'running' | 'done'
-    } => p.type === 'workflow_agent',
-  )
-  if (agentProgress.length > 0) {
-    const completed = agentProgress.filter((p) => p.state === 'done').length
-    const running = agentProgress.filter((p) => p.state === 'running').length
-    return { completed, running, total: agentProgress.length }
-  }
-
-  const total = workflow.agentCount ?? workflow.subagents.length
-  const completed = workflow.subagents.filter((s) => s.state === 'completed').length
-  const running = workflow.subagents.filter((s) => s.state === 'running').length
-  return { completed, running, total }
-}
-
 export default function WorkflowToolCard({
   runId,
   sessionId,
@@ -94,7 +56,7 @@ export default function WorkflowToolCard({
 }: WorkflowToolCardProps) {
   const { t } = useTranslation('chat')
   const workflow = useChatStore((s) =>
-    (s.workflows[sessionId] || []).find((w) => w.runId === runId),
+    (s.workflows?.[sessionId] || []).find((w) => w.runId === runId),
   )
 
   const status = workflow?.status ?? 'running'

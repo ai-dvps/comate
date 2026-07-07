@@ -12,6 +12,7 @@ import SubagentDrawer from './SubagentDrawer'
 import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
 import MessageSearchBar from './MessageSearchBar'
+import WorkflowFloatingPanel from './WorkflowFloatingPanel'
 import { isBotSession } from '../lib/session-filter'
 
 const EMPTY_ARRAY: [] = []
@@ -387,6 +388,13 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             ))
           ) : (
             <ChatEmptyState onCreateSession={handleCreateSession} />
+          )}
+
+          {activeSessionId && (
+            <WorkflowFloatingPanel
+              sessionId={activeSessionId}
+              onOpenWorkflow={setOpenWorkflowRunId}
+            />
           )}
 
           {/* Approval Surface or Prompt Input */}

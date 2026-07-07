@@ -106,6 +106,7 @@
   },
   "workflowSubagentCount": "{{completed}}/{{total}} done",
   "workflowSubagentCountWithRunning": "{{completed}}/{{total}} done, {{running}} running",
+  "workflowPanelTitle": "Workflows",
   "provider": {
     "default": "Default",
     "noDefault": "No default configured",
