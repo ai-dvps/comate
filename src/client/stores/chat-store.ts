@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import i18next from 'i18next'
 
-import type { ChatMessage, MessagePart, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem } from '../types/message'
+import type { ChatMessage, MessagePart, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem, WorkflowState } from '../types/message'
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
@@ -14,6 +14,7 @@ export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPa
 const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout>; workspaceId: string }>()
 const lastEventId = new Map<string, string>()
 const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
+const workflowPollTimers = new Map<string, ReturnType<typeof setInterval>>()
 
 function closeSessionSubscriptions(exceptSessionId?: string): void {
   for (const [sessionId, sub] of sessionSubscriptions) {
@@ -234,6 +235,7 @@ interface ChatState {
   lastCompletion: Record<string, TurnCompletion>
   domCache: Record<string, string[]>
   isRestartingRuntime: Record<string, boolean>
+  workflows: Record<string, WorkflowState[]>
 
   fetchSessions: (workspaceId: string) => Promise<{ ok: boolean; error?: string }>
   touchDomCache: (workspaceId: string, sessionId: string) => string | null
@@ -431,6 +433,92 @@ export function sanitizeSubagents(raw: unknown): SubagentState[] {
     })
   }
   return sanitized
+}
+
+const WORKFLOW_POLL_INTERVAL_MS = 2000
+
+function getWorkflowPollKey(sessionId: string, runId: string): string {
+  return `${sessionId}:${runId}`
+}
+
+function stopWorkflowPolling(sessionId: string, runId: string): void {
+  const key = getWorkflowPollKey(sessionId, runId)
+  const timer = workflowPollTimers.get(key)
+  if (timer) {
+    clearInterval(timer)
+    workflowPollTimers.delete(key)
+  }
+}
+
+function stopAllWorkflowPollingForSession(sessionId: string): void {
+  for (const key of workflowPollTimers.keys()) {
+    if (key.startsWith(`${sessionId}:`)) {
+      const timer = workflowPollTimers.get(key)
+      if (timer) {
+        clearInterval(timer)
+      }
+      workflowPollTimers.delete(key)
+    }
+  }
+}
+
+function mergeWorkflowState(
+  set: SseSetter,
+  sessionId: string,
+  workflow: WorkflowState,
+): void {
+  set((state) => {
+    const list = state.workflows[sessionId] || []
+    const idx = list.findIndex((w) => w.runId === workflow.runId)
+    const nextList = idx >= 0 ? [...list.slice(0, idx), workflow, ...list.slice(idx + 1)] : [...list, workflow]
+    const updates: Partial<ChatState> = {
+      workflows: { ...state.workflows, [sessionId]: nextList },
+    }
+
+    if (workflow.subagents.length > 0) {
+      const existingSubagents = state.subagents[sessionId] || []
+      const subagentMap = new Map(existingSubagents.map((s) => [s.parentToolUseId, s]))
+      for (const s of workflow.subagents) {
+        subagentMap.set(s.parentToolUseId, s)
+      }
+      updates.subagents = { ...state.subagents, [sessionId]: Array.from(subagentMap.values()) }
+    }
+
+    return updates
+  })
+}
+
+async function fetchWorkflow(
+  workspaceId: string,
+  sessionId: string,
+  runId: string,
+  set: SseSetter,
+): Promise<void> {
+  try {
+    const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/workflows/${runId}`)
+    if (!res.ok) return
+    const data = (await res.json()) as { workflow?: WorkflowState }
+    if (!data.workflow) return
+    mergeWorkflowState(set, sessionId, data.workflow)
+  } catch (err) {
+    console.error('Failed to fetch workflow:', err)
+  }
+}
+
+function startWorkflowPolling(
+  workspaceId: string,
+  sessionId: string,
+  runId: string,
+  set: SseSetter,
+): void {
+  const key = getWorkflowPollKey(sessionId, runId)
+  if (workflowPollTimers.has(key)) return
+
+  void fetchWorkflow(workspaceId, sessionId, runId, set)
+  const timer = setInterval(() => {
+    void fetchWorkflow(workspaceId, sessionId, runId, set)
+  }, WORKFLOW_POLL_INTERVAL_MS)
+  workflowPollTimers.set(key, timer)
 }
 
 /**
@@ -1843,6 +1931,55 @@ export function handleSseEvent(
       })
       return
     }
+    case 'workflow_start': {
+      const runId = typeof data.runId === 'string' ? data.runId : ''
+      const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : undefined
+      const workflowName = typeof data.workflowName === 'string' ? data.workflowName : undefined
+      if (!runId) return
+      set((state) => {
+        const list = state.workflows[sessionId] || []
+        if (list.some((w) => w.runId === runId)) return {}
+        const placeholder: WorkflowState = {
+          runId,
+          sessionId,
+          ...(toolUseId && { toolUseId }),
+          ...(workflowName && { workflowName }),
+          status: 'running',
+          startTime: Date.now(),
+          agentCount: 0,
+          phases: [],
+          progress: [],
+          subagents: [],
+        }
+        return { workflows: { ...state.workflows, [sessionId]: [...list, placeholder] } }
+      })
+      startWorkflowPolling(workspaceId, sessionId, runId, set)
+      return
+    }
+    case 'workflow_update': {
+      const runId = typeof data.runId === 'string' ? data.runId : ''
+      if (!runId) return
+      startWorkflowPolling(workspaceId, sessionId, runId, set)
+      return
+    }
+    case 'workflow_done': {
+      const runId = typeof data.runId === 'string' ? data.runId : ''
+      const status =
+        data.status === 'completed' || data.status === 'error' || data.status === 'killed'
+          ? data.status
+          : 'completed'
+      if (!runId) return
+      set((state) => {
+        const list = state.workflows[sessionId] || []
+        const idx = list.findIndex((w) => w.runId === runId)
+        if (idx < 0) return {}
+        const updated: WorkflowState = { ...list[idx], status }
+        return { workflows: { ...state.workflows, [sessionId]: [...list.slice(0, idx), updated, ...list.slice(idx + 1)] } }
+      })
+      stopWorkflowPolling(sessionId, runId)
+      void fetchWorkflow(workspaceId, sessionId, runId, set)
+      return
+    }
     case 'heartbeat':
       return
     case 'system_init':
@@ -2004,6 +2141,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   lastCompletion: {},
   domCache: {},
   isRestartingRuntime: {},
+  workflows: {},
 
   // WebSocket event listener — routes server-pushed events back into the store.
   ...(typeof window !== 'undefined' && typeof WebSocket !== 'undefined'
@@ -2533,6 +2671,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearMessages: (sessionId: string) => {
+    stopAllWorkflowPollingForSession(sessionId)
     set((state) => {
       const newMessages = { ...state.messages }
       delete newMessages[sessionId]
@@ -2554,6 +2693,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newAutoApprovedTools[sessionId]
       const newIsRestartingRuntime = { ...state.isRestartingRuntime }
       delete newIsRestartingRuntime[sessionId]
+      const newWorkflows = { ...state.workflows }
+      delete newWorkflows[sessionId]
       return {
         messages: newMessages,
         subagents: newSubagents,
@@ -2565,6 +2706,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         resultMeta: newResultMeta,
         autoApprovedTools: newAutoApprovedTools,
         isRestartingRuntime: newIsRestartingRuntime,
+        workflows: newWorkflows,
       }
     })
   },

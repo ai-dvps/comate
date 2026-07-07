@@ -12,7 +12,7 @@ import {
   type SseSetter,
 } from './chat-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
-import type { SubagentState, TaskItem } from '../types/message'
+import type { SubagentState, TaskItem, WorkflowState } from '../types/message'
 import type { WsEventMessage } from '@server/websocket/types'
 
 describe('normalizeSdkStatus', () => {
@@ -100,6 +100,7 @@ describe('loadMessages subagent hydration', () => {
       sessions: { 'ws-1': [{ id: 's1', workspaceId: 'ws-1', name: 'Test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] },
       messages: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -187,6 +188,7 @@ describe('handleSseEvent context_usage', () => {
       sessions: {},
       messages: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -247,6 +249,7 @@ describe('bot session guards', () => {
       messages: {},
       drafts: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -360,6 +363,7 @@ describe('setActiveSession subscribe timeout', () => {
       messages: {},
       drafts: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -432,6 +436,7 @@ describe('setActiveSession multi-workspace re-subscribe', () => {
       messages: {},
       drafts: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -519,6 +524,7 @@ describe('sendMessage subscription gating', () => {
       messages: {},
       drafts: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -592,6 +598,7 @@ describe('subscription state after disconnect', () => {
       messages: {},
       drafts: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -636,6 +643,7 @@ describe('WebSocket event lastEventId tracking', () => {
       messages: {},
       drafts: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -813,6 +821,7 @@ describe('setSessionProvider', () => {
       messages: {},
       drafts: {},
       subagents: {},
+      workflows: {},
       tasks: {},
       isLoadingMessages: {},
       totalMessageCount: {},
@@ -868,6 +877,201 @@ describe('setSessionProvider', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], false)
+  })
+})
+
+describe('workflow state', () => {
+  function makeSubagent(parentToolUseId: string): SubagentState {
+    return {
+      parentToolUseId,
+      description: 'Agent',
+      state: 'running',
+      startTime: 1,
+      toolCount: 0,
+      progressHint: '',
+      messages: [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] }],
+    }
+  }
+
+  function stubFetchWorkflow(workflow?: WorkflowState) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: async () => ({ workflow }),
+        }),
+      ) as unknown as typeof fetch,
+    )
+  }
+
+  beforeEach(() => {
+    // Tear down any workflow polling left over by earlier tests.
+    useChatStore.getState().clearMessages('s1')
+    useChatStore.setState({
+      sessions: {},
+      messages: {},
+      subagents: {},
+      workflows: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('workflow_start adds a placeholder and fetches initial state', async () => {
+    const workflow: WorkflowState = {
+      runId: 'wf-1',
+      sessionId: 's1',
+      toolUseId: 'tu-1',
+      workflowName: 'deep-research',
+      status: 'running',
+      startTime: 123,
+      agentCount: 1,
+      phases: [],
+      progress: [],
+      subagents: [makeSubagent('workflow:wf-1:a1')],
+    }
+    stubFetchWorkflow(workflow)
+
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_start', {
+      runId: 'wf-1',
+      sessionId: 's1',
+      toolUseId: 'tu-1',
+      workflowName: 'deep-research',
+    })
+
+    await new Promise((r) => setTimeout(r, 0))
+
+    const state = useChatStore.getState()
+    assert.strictEqual(state.workflows['s1']?.length, 1)
+    assert.strictEqual(state.workflows['s1'][0].runId, 'wf-1')
+    assert.strictEqual(state.workflows['s1'][0].status, 'running')
+    assert.strictEqual(state.workflows['s1'][0].toolUseId, 'tu-1')
+    assert.strictEqual(state.workflows['s1'][0].workflowName, 'deep-research')
+    assert.strictEqual(state.subagents['s1']?.length, 1)
+    assert.strictEqual(state.subagents['s1'][0].parentToolUseId, 'workflow:wf-1:a1')
+
+    const fetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+    assert.strictEqual(fetchCalls.length, 1)
+    assert.ok((fetchCalls[0][0] as string).includes('/workflows/wf-1'))
+  })
+
+  it('workflow_update merges fetched state without duplicating workflows', async () => {
+    const placeholder: WorkflowState = {
+      runId: 'wf-1',
+      sessionId: 's1',
+      status: 'running',
+      startTime: 1,
+      agentCount: 0,
+      phases: [],
+      progress: [],
+      subagents: [],
+    }
+    useChatStore.setState({ workflows: { s1: [placeholder] } })
+
+    const updated: WorkflowState = {
+      ...placeholder,
+      agentCount: 2,
+      subagents: [makeSubagent('workflow:wf-1:a2')],
+    }
+    stubFetchWorkflow(updated)
+
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_update', { runId: 'wf-1', sessionId: 's1' })
+
+    await new Promise((r) => setTimeout(r, 0))
+
+    const state = useChatStore.getState()
+    assert.strictEqual(state.workflows['s1']?.length, 1)
+    assert.strictEqual(state.workflows['s1'][0].agentCount, 2)
+    assert.strictEqual(state.subagents['s1']?.length, 1)
+    assert.strictEqual(state.subagents['s1'][0].parentToolUseId, 'workflow:wf-1:a2')
+  })
+
+  it('workflow_done transitions status and stops polling', async () => {
+    vi.useFakeTimers()
+
+    const running: WorkflowState = {
+      runId: 'wf-1',
+      sessionId: 's1',
+      status: 'running',
+      startTime: 1,
+      agentCount: 1,
+      phases: [],
+      progress: [],
+      subagents: [],
+    }
+
+    let workflowStatus: WorkflowStatus = 'running'
+    const fetchFn = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ workflow: { ...running, status: workflowStatus } }),
+      }),
+    ) as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_start', { runId: 'wf-1', sessionId: 's1' })
+
+    await vi.advanceTimersByTimeAsync(0)
+    assert.strictEqual(fetchFn.mock.calls.length, 1)
+
+    await vi.advanceTimersByTimeAsync(2500)
+    assert.strictEqual(fetchFn.mock.calls.length, 2)
+
+    workflowStatus = 'completed'
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_done', {
+      runId: 'wf-1',
+      sessionId: 's1',
+      status: 'completed',
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    assert.strictEqual(fetchFn.mock.calls.length, 3)
+    assert.strictEqual(useChatStore.getState().workflows['s1'][0].status, 'completed')
+
+    await vi.advanceTimersByTimeAsync(2500)
+    assert.strictEqual(fetchFn.mock.calls.length, 3)
+  })
+
+  it('clearMessages removes workflows and stops polling', async () => {
+    vi.useFakeTimers()
+    stubFetchWorkflow(undefined)
+
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_start', { runId: 'wf-1', sessionId: 's1' })
+
+    await vi.advanceTimersByTimeAsync(0)
+    assert.ok(useChatStore.getState().workflows['s1'])
+
+    useChatStore.getState().clearMessages('s1')
+
+    assert.strictEqual(useChatStore.getState().workflows['s1'], undefined)
+
+    const fetchFn = globalThis.fetch as ReturnType<typeof vi.fn>
+    const countAfterClear = fetchFn.mock.calls.length
+
+    await vi.advanceTimersByTimeAsync(3000)
+    assert.strictEqual(fetchFn.mock.calls.length, countAfterClear)
+  })
+
+  it('multiple workflows in the same session are tracked independently', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_start', { runId: 'wf-1', sessionId: 's1' })
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_start', { runId: 'wf-2', sessionId: 's1' })
+
+    const state = useChatStore.getState()
+    assert.strictEqual(state.workflows['s1']?.length, 2)
+    assert.ok(state.workflows['s1'].find((w) => w.runId === 'wf-1'))
+    assert.ok(state.workflows['s1'].find((w) => w.runId === 'wf-2'))
   })
 })
 
