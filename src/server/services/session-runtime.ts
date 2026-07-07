@@ -603,7 +603,9 @@ export class SessionRuntime {
     if (lastEventId !== undefined) {
       this.replayFromWebSocket(lastEventId, handler);
     } else if (this.currentMessageStartId !== undefined) {
-      this.replayFromWebSocket(this.currentMessageStartId, handler);
+      // Fresh subscription mid-turn: include the assistant_start event itself so
+      // the client creates the assistant message rather than only seeing deltas.
+      this.replayFromWebSocket(this.currentMessageStartId, handler, true);
     }
     for (const [requestId, pending] of this.pendingApprovals) {
       if (pending.type === 'question') {
@@ -912,7 +914,7 @@ export class SessionRuntime {
     }
   }
 
-  private replayFromWebSocket(lastEventId: string, handler: (id: number, event: SseEvent) => void): void {
+  private replayFromWebSocket(lastEventId: string, handler: (id: number, event: SseEvent) => void, inclusive = false): void {
     const startIndex = this.ringBuffer.findIndex(
       (item) => item.id === lastEventId,
     );
@@ -930,7 +932,7 @@ export class SessionRuntime {
       }
       return;
     }
-    for (let i = startIndex + 1; i < this.ringBuffer.length; i++) {
+    for (let i = startIndex + (inclusive ? 0 : 1); i < this.ringBuffer.length; i++) {
       const item = this.ringBuffer[i];
       handler(Number(item.id), item.event);
     }
