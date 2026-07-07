@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Multi-workspace session re-subscribe** — switching back to a workspace whose session had been in the background now re-creates the WebSocket subscription. A deduplication guard was keeping the active session id but never checking whether the subscription itself was still alive, so after switching workspaces the previous session stayed unsubscribed and its messages appeared stale.
+
+- **WebSocket reconnect replay** — GUI sessions now record the last processed SSE event id and request replay from that point when the WebSocket reconnects. Previously the `lastEventId` cursor was read once at subscription time but never updated as events arrived, so a disconnect during an active turn caused missed SSE events. The UI stayed in the streaming state but showed no new messages until the app was restarted and persisted messages were loaded.
+
 - **Bot member plaintext editing** — the plaintext user ID input no longer appears by default for every pending member. Instead, members without a plaintext ID show a clickable placeholder, and members with a plaintext ID show the resolved value; clicking either opens an inline editor that saves on Enter or blur and cancels on Escape or an empty blur. The pending/resolved status badge continues to reflect the actual resolution state.
 
 - **GUI session subscribe timeout** — increased the WebSocket `subscribe` timeout from 5s to 30s (`DEFAULT_TIMEOUT`) so that cold-start runtime creation (which includes `getSessionInfo`, building SDK options, and testing the Claude binary) no longer causes the GUI to show `Connection error: WebSocket request timeout: subscribe`. Bot sessions were unaffected because they do not use the GUI's WebSocket subscribe path. Added server-side diagnostic logs around `getOrCreateRuntime` and the WebSocket subscribe handler so future slow-start issues can be traced stage-by-stage.
