@@ -43,6 +43,18 @@ function closeWorkspaceSessionSubscriptions(workspaceId: string): void {
   }
 }
 
+function closeSingleSessionSubscription(set: SseSetter, sessionId: string): void {
+  const sub = sessionSubscriptions.get(sessionId)
+  if (sub) {
+    sub.close()
+    sessionSubscriptions.delete(sessionId)
+    stopAllWorkflowPollingForSession(sessionId)
+  }
+  set((state) => ({
+    serverNonce: { ...state.serverNonce, [sessionId]: '' },
+  }))
+}
+
 function stopAllWorkflowPolling(): void {
   for (const [key, entry] of workflowPollTimers) {
     if (entry.timer) {
@@ -1047,6 +1059,12 @@ export function handleWsEvent(set: SseSetter, msg: WsEventMessage): void {
     if (typeof data.type === 'string') {
       handleSseEvent(set, msg.workspaceId, msg.sessionId, data.type, msg.data)
     }
+  } else if (msg.eventType === 'runtime_closed' && msg.sessionId) {
+    // The server closed this session's runtime (e.g. idle timeout). Tear down
+    // the stale local subscription and clear the server nonce so the next
+    // sendMessage re-subscribes to a fresh runtime instead of posting to the
+    // void.
+    closeSingleSessionSubscription(set, msg.sessionId)
   }
 }
 

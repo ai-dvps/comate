@@ -723,6 +723,89 @@ describe('WebSocket event lastEventId tracking', () => {
   })
 })
 
+describe('runtime_closed WebSocket event', () => {
+  function makeGuiSession(): ReturnType<typeof useChatStore.getState>['sessions'][string][number] {
+    return {
+      id: 's1',
+      workspaceId: 'ws-1',
+      name: 'Test',
+      source: 'gui' as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  beforeEach(() => {
+    clearLastEventId()
+    clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeGuiSession()] },
+      activeSessionIds: {},
+      messages: {},
+      drafts: {},
+      subagents: {},
+      workflows: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      approvalQueue: {},
+      serverNonce: {},
+      pendingSend: {},
+    })
+  })
+
+  it('clears subscription state so the next sendMessage re-subscribes', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+    const set = useChatStore.setState as unknown as SseSetter
+
+    try {
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+      useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+      requestSpy.mockClear()
+
+      // First message sends directly because the subscription is active.
+      useChatStore.getState().sendMessage('ws-1', 's1', 'first')
+      await new Promise((r) => setTimeout(r, 0))
+      assert.strictEqual(
+        requestSpy.mock.calls.filter((call) => call[0] === 'sendMessage').length,
+        1,
+        'first message should be sent',
+      )
+
+      // Server reports the runtime was closed (e.g. idle timeout).
+      handleWsEvent(set, {
+        type: 'event',
+        eventType: 'runtime_closed',
+        workspaceId: 'ws-1',
+        sessionId: 's1',
+        data: {},
+      })
+
+      assert.strictEqual(useChatStore.getState().serverNonce['s1'], '')
+
+      // The next message must re-subscribe before sending.
+      requestSpy.mockClear()
+      useChatStore.getState().sendMessage('ws-1', 's1', 'second')
+      await new Promise((r) => setTimeout(r, 0))
+
+      const subscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'subscribe')
+      assert.strictEqual(subscribeCalls.length, 1, 'should re-subscribe after runtime_closed')
+      assert.strictEqual(
+        requestSpy.mock.calls.filter((call) => call[0] === 'sendMessage').length,
+        0,
+        'must not send until the new subscription is acknowledged',
+      )
+      assert.deepStrictEqual(useChatStore.getState().pendingSend['s1'], {
+        workspaceId: 'ws-1',
+        content: 'second',
+      })
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+})
+
 describe('notification turn-timing metadata', () => {
   beforeEach(() => {
     useChatStore.setState({

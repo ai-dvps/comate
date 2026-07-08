@@ -30,6 +30,7 @@ export class ComateWebSocketServer {
   attach(server: Server): void {
     this.wss = new WebSocketServer({ server, path: '/ws' });
     this.wss.on('connection', (socket) => this.handleConnection(socket));
+    chatService.setOnRuntimeClose((sessionId) => this.notifyRuntimeClosed(sessionId));
     diagLog('[WebSocket] server attached on /ws');
   }
 
@@ -169,6 +170,32 @@ export class ComateWebSocketServer {
     if (runtime) {
       runtime.unsubscribe();
     }
+  }
+
+  private notifyRuntimeClosed(sessionId: string): void {
+    const unsubscribersBySession = this.runtimeEventUnsubscribers.get(sessionId);
+    if (!unsubscribersBySession) return;
+
+    for (const [socket, unsub] of unsubscribersBySession) {
+      const ctx = this.clients.get(socket);
+      if (!ctx) continue;
+      const workspaceId = ctx.subscriptions.get(sessionId);
+      if (!workspaceId) continue;
+
+      this.sendEvent(socket, {
+        type: 'event',
+        eventType: 'runtime_closed',
+        sessionId,
+        workspaceId,
+        data: {},
+      });
+
+      // The runtime is gone; remove the stale handler so a future subscribe
+      // creates a fresh binding instead of being treated as a duplicate.
+      unsub();
+      ctx.subscriptions.delete(sessionId);
+    }
+    this.runtimeEventUnsubscribers.delete(sessionId);
   }
 
   private async handleStatus(ctx: ClientContext, req: WsRequest): Promise<void> {

@@ -387,6 +387,22 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     capturedSubscribed?.();
     assert.ok(!timeouts.has('s1'), 'onSubscribed should cancel idle timer');
   });
+
+  it('notifies onRuntimeClose listener when runtime is closed', async () => {
+    setupStoreMocks();
+
+    SessionRuntime.open = () => createMockRuntime();
+
+    const closedSessionIds: string[] = [];
+    service.setOnRuntimeClose((sessionId) => {
+      closedSessionIds.push(sessionId);
+    });
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    await service.closeRuntime('s1');
+
+    assert.deepStrictEqual(closedSessionIds, ['s1']);
+  });
 });
 
 describe('chat-service getOrCreateRuntime session verification timeout', { concurrency: false }, () => {

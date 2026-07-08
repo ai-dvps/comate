@@ -12,9 +12,16 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
   let server: http.Server;
   let wsUrl: string;
   let ws: WebSocket;
+  let lastRuntimeCloseCallback: ((sessionId: string) => void) | undefined;
+  let originalSetOnRuntimeClose: typeof chatService.setOnRuntimeClose;
 
   beforeEach(async () => {
     workspaceStore.resetData();
+    lastRuntimeCloseCallback = undefined;
+    originalSetOnRuntimeClose = chatService.setOnRuntimeClose.bind(chatService);
+    chatService.setOnRuntimeClose = (cb) => {
+      lastRuntimeCloseCallback = cb;
+    };
 
     const wss = new ComateWebSocketServer();
     server = http.createServer();
@@ -27,6 +34,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
   });
 
   afterEach(async () => {
+    chatService.setOnRuntimeClose = originalSetOnRuntimeClose;
     ws?.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
@@ -155,6 +163,34 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       assert.strictEqual(event.eventType, 'sse');
       assert.strictEqual(event.sessionId, 'session-a');
       assert.strictEqual((event.data as { type: string }).type, 'text');
+    } finally {
+      chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
+    }
+  });
+
+  it('notifies subscribed sockets when a runtime closes', async () => {
+    const originalGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
+
+    chatService.getOrCreateRuntime = async () =>
+      ({
+        subscribeWebSocket: () => {},
+        removeWebEventHandler: () => {},
+        unsubscribe: () => {},
+      }) as unknown as ReturnType<typeof originalGetOrCreateRuntime>;
+
+    try {
+      ws = await connect();
+      sendRequest(ws, 'sub-1', 'subscribe', { workspaceId: 'ws-1', sessionId: 'session-a' });
+
+      const subOk = await waitForMessage<WsResponse>(ws, (msg) => 'id' in msg && (msg as WsResponse).id === 'sub-1');
+      assert.strictEqual(subOk.ok, true);
+
+      assert.ok(lastRuntimeCloseCallback, 'WebSocket server should register a runtime-close listener');
+      lastRuntimeCloseCallback!('session-a');
+
+      const event = await waitForMessage<WsEventMessage>(ws, (msg) => (msg as WsEventMessage).eventType === 'runtime_closed');
+      assert.strictEqual(event.sessionId, 'session-a');
+      assert.strictEqual(event.workspaceId, 'ws-1');
     } finally {
       chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
     }
