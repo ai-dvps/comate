@@ -6,12 +6,13 @@ import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthrop
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import type { ChatMessage, SubagentState, TaskItem, SseEvent } from '../types/message.js';
+import type { ChatMessage, SubagentState, TaskItem, SseEvent, WorkflowState } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
 import { SessionRuntime } from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
 import { resolveTranscriptDir } from './analytics-transcript-path.js';
+import { listWorkflowAgentIds, listWorkflowRunIds, loadWorkflowState } from './workflow-loader.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
@@ -363,6 +364,27 @@ export class ChatService {
 
   // Message history loading
 
+  async loadWorkflowsForSession(sessionId: string, workspaceId: string): Promise<WorkflowState[]> {
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      return [];
+    }
+
+    const runIds = await listWorkflowRunIds(workspace.folderPath, sessionId);
+    const workflows: WorkflowState[] = [];
+    for (const runId of runIds) {
+      const state = await loadWorkflowState({
+        folderPath: workspace.folderPath,
+        sessionId,
+        runId,
+      });
+      if (state) {
+        workflows.push(state);
+      }
+    }
+    return workflows;
+  }
+
   async loadSubagentsForSession(
     sessionId: string,
     workspaceId: string,
@@ -386,6 +408,11 @@ export class ChatService {
       return [];
     }
 
+    // Workflow subagents live under subagents/workflows/<runId>/ and are loaded
+    // by workflow-loader with synthetic parentToolUseIds. Skip them here so they
+    // are not treated as orphaned top-level subagents.
+    const workflowAgentIds = await listWorkflowAgentIds(workspace.folderPath, sessionId);
+    const filteredAgentIds = agentIds.filter((id) => !workflowAgentIds.has(id));
     const parentToolUseIdByAgentId = new Map<string, string>();
     const descriptionByToolUseId = new Map<string, string>();
     const toolUseIndexByToolUseId = new Map<string, number>();
@@ -417,7 +444,7 @@ export class ChatService {
 
     // Try the SDK's subagent meta file for the parent toolUseId mapping.
     const transcriptDir = resolveTranscriptDir(workspace.folderPath);
-    for (const agentId of agentIds) {
+    for (const agentId of filteredAgentIds) {
       if (parentToolUseIdByAgentId.has(agentId)) continue;
       const metaPath = transcriptDir
         ? path.join(transcriptDir, sessionId, 'subagents', `agent-${agentId}.meta.json`)
@@ -441,7 +468,7 @@ export class ChatService {
     }
 
     // Fallback: scan main transcript tool_result blocks that mention the agentId.
-    for (const agentId of agentIds) {
+    for (const agentId of filteredAgentIds) {
       if (parentToolUseIdByAgentId.has(agentId)) continue;
       for (const [msgIdx, msg] of mainSdkMessages.entries()) {
         if (msg.type !== 'user') continue;
@@ -488,7 +515,7 @@ export class ChatService {
     }
 
     const subagents: SubagentState[] = [];
-    for (const agentId of agentIds) {
+    for (const agentId of filteredAgentIds) {
       const parentToolUseId = parentToolUseIdByAgentId.get(agentId);
       if (!parentToolUseId) {
         console.warn(`Could not map subagent ${agentId} to a parent toolUseId`);
@@ -528,7 +555,7 @@ export class ChatService {
     workspaceId: string,
     offset?: number,
     limit?: number,
-  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[] }> {
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[] }> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -568,14 +595,15 @@ export class ChatService {
     });
     const tasks = scanSdkMessagesForTasks(sdkMessages);
     const subagents = await this.loadSubagentsForSession(sessionId, workspaceId, sdkMessages);
-    return { messages: normalized, tasks, subagents };
+    const workflows = await this.loadWorkflowsForSession(sessionId, workspaceId);
+    return { messages: normalized, tasks, subagents, workflows };
   }
 
   async loadMessagesAfter(
     sessionId: string,
     workspaceId: string,
     afterMessageId?: string,
-  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[] }> {
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[] }> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -607,7 +635,8 @@ export class ChatService {
     });
     const tasks = scanSdkMessagesForTasks(sliced);
     const subagents = await this.loadSubagentsForSession(sessionId, workspaceId, sdkMessages);
-    return { messages: normalized, tasks, subagents };
+    const workflows = await this.loadWorkflowsForSession(sessionId, workspaceId);
+    return { messages: normalized, tasks, subagents, workflows };
   }
 
   // Session runtime management

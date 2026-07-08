@@ -230,6 +230,57 @@ async function loadWorkflowSubagents(
   return subagents;
 }
 
+/**
+ * Collect every agentId that belongs to any workflow under the session's
+ * `subagents/workflows/` directory. These agents are loaded by `loadWorkflowState`
+ * and should not be re-loaded as top-level subagents by `loadSubagentsForSession`.
+ */
+export async function listWorkflowAgentIds(folderPath: string, sessionId: string): Promise<Set<string>> {
+  if (!isValidWorkflowId(sessionId)) {
+    return new Set();
+  }
+
+  const transcriptDir = resolveTranscriptDir(folderPath);
+  if (!transcriptDir) return new Set();
+
+  const workflowsDir = path.join(transcriptDir, sessionId, 'subagents', 'workflows');
+  if (!assertPathSafe(transcriptDir, workflowsDir)) {
+    diagLog('workflow-loader-unsafe-path', { workflowsDir });
+    return new Set();
+  }
+
+  if (!existsSync(workflowsDir)) return new Set();
+
+  let runIds: string[];
+  try {
+    runIds = await fs.readdir(workflowsDir);
+  } catch (err) {
+    diagLog('workflow-loader-readdir-error', { path: workflowsDir, error: String(err) });
+    return new Set();
+  }
+
+  const agentIds = new Set<string>();
+  for (const runId of runIds) {
+    if (!isValidWorkflowId(runId)) continue;
+    const runDir = path.join(workflowsDir, runId);
+    if (!assertPathSafe(workflowsDir, runDir)) continue;
+    let files: string[];
+    try {
+      files = await fs.readdir(runDir);
+    } catch (err) {
+      diagLog('workflow-loader-readdir-error', { path: runDir, error: String(err) });
+      continue;
+    }
+    for (const file of files) {
+      const match = /^agent-([a-zA-Z0-9-]+)\.jsonl$/.exec(file);
+      if (match) {
+        agentIds.add(match[1]);
+      }
+    }
+  }
+  return agentIds;
+}
+
 export interface LoadWorkflowOptions {
   folderPath: string;
   sessionId: string;

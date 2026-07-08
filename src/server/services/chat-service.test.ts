@@ -23,6 +23,7 @@ import type { QuestionPayload } from '../types/message.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { encodeProjectDir } from './analytics-transcript-path.js';
 import os from 'node:os';
 import { botService } from './bot-service.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
@@ -1802,6 +1803,141 @@ describe('chat-service loadMessages subagents', { concurrency: false }, () => {
     assert.strictEqual(result.subagents.length, 1);
     assert.strictEqual(result.subagents[0].parentToolUseId, 'tool-456');
     assert.strictEqual(result.subagents[0].description, 'Fallback agent');
+  });
+});
+
+describe('chat-service workflow history hydration', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+  const originalGetLocalSession = workspaceStore.getLocalSession.bind(workspaceStore);
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+  const originalHome = process.env.HOME;
+  let tempHome: string;
+  let folderPath: string;
+
+  class TestChatService extends ChatService {
+    constructor(sdkClient?: SdkClient) {
+      super(sdkClient ?? new SdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  function createMockWorkspaceWithFolder(id: string, fp: string): Workspace {
+    return {
+      id,
+      name: 'Test',
+      description: '',
+      folderPath: fp,
+      settings: {},
+      skills: [],
+      mcpServers: [] as McpServer[],
+      hooks: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  beforeEach(() => {
+    tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-test-home-'));
+    process.env.HOME = tempHome;
+    folderPath = path.join(tempHome, 'project');
+    workspaceStore.get = async () => createMockWorkspaceWithFolder('ws-1', folderPath);
+    workspaceStore.getLocalSession = () => createMockSession('s1');
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+  });
+
+  afterEach(async () => {
+    await service?.closeAllRuntimes();
+    workspaceStore.get = originalGet;
+    workspaceStore.getLocalSession = originalGetLocalSession;
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+    process.env.HOME = originalHome;
+  });
+
+  function writeWorkflowJson(sessionId: string, runId: string, data: Record<string, unknown>) {
+    const dir = path.join(tempHome, '.claude', 'projects', encodeProjectDir(folderPath), sessionId, 'workflows');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${runId}.json`), JSON.stringify(data));
+  }
+
+  function writeWorkflowSubagentJsonl(sessionId: string, runId: string, agentId: string, messages: unknown[]) {
+    const dir = path.join(
+      tempHome,
+      '.claude',
+      'projects',
+      encodeProjectDir(folderPath),
+      sessionId,
+      'subagents',
+      'workflows',
+      runId,
+    );
+    fs.mkdirSync(dir, { recursive: true });
+    const lines = messages.map((m) => JSON.stringify(m)).join('\n');
+    fs.writeFileSync(path.join(dir, `agent-${agentId}.jsonl`), lines);
+  }
+
+  it('excludes workflow subagents from top-level subagents and loads workflow state', async () => {
+    const runId = 'wf_history-1';
+    const agentId = 'agent-history-1';
+
+    writeWorkflowJson('s1', runId, {
+      runId,
+      sessionId: 's1',
+      status: 'killed',
+      startTime: 1783405803581,
+      workflowName: 'history-workflow',
+      workflowProgress: [
+        {
+          type: 'workflow_agent',
+          index: 1,
+          agentId,
+          label: 'history agent',
+          state: 'done',
+          startedAt: 1783405804000,
+          lastProgressAt: 1783405805000,
+        },
+      ],
+    });
+
+    writeWorkflowSubagentJsonl('s1', runId, agentId, [
+      {
+        type: 'user',
+        uuid: 'u1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'go' },
+      },
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+      },
+    ]);
+
+    class WorkflowHistorySdkClient extends SdkClient {
+      override async getSessionMessages(): Promise<SessionMessage[]> {
+        return [];
+      }
+      override async listSubagents(): Promise<string[]> {
+        return [agentId];
+      }
+      override async getSubagentMessages(): Promise<SessionMessage[]> {
+        throw new Error('workflow subagents should not be loaded as top-level subagents');
+      }
+    }
+
+    service = new TestChatService(new WorkflowHistorySdkClient());
+    const result = await service.loadMessages('s1', 'ws-1');
+
+    assert.deepStrictEqual(result.subagents, []);
+    assert.strictEqual(result.workflows.length, 1);
+    assert.strictEqual(result.workflows[0].runId, runId);
+    assert.strictEqual(result.workflows[0].workflowName, 'history-workflow');
+    assert.strictEqual(result.workflows[0].status, 'killed');
+    assert.strictEqual(result.workflows[0].subagents.length, 1);
+    assert.strictEqual(result.workflows[0].subagents[0].parentToolUseId, `workflow:${runId}:${agentId}`);
   });
 });
 

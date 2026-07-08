@@ -2629,10 +2629,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages?: unknown
         tasks?: TaskItem[]
         subagents?: unknown
+        workflows?: unknown
       }
       const mappedMessages = sanitizeMessages(data.messages)
       const serverTasks = data.tasks ?? []
       const serverSubagents = sanitizeSubagents(data.subagents)
+      const serverWorkflows = Array.isArray(data.workflows) ? (data.workflows as WorkflowState[]) : []
 
       set((state) => {
         const existing = state.messages[sessionId] || []
@@ -2673,6 +2675,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
           },
         }
       })
+
+      // Hydrate workflow state from history and start polling for any that are
+      // still running. This ensures the floating panel appears for workflows
+      // that completed before the session was reopened.
+      for (const workflow of serverWorkflows) {
+        mergeWorkflowState(set, sessionId, workflow)
+        if (!isWorkflowTerminal(workflow.status)) {
+          startWorkflowPolling(workspaceId, sessionId, workflow.runId, set)
+        }
+      }
     } catch (err) {
       console.error('Failed to load messages:', err)
       set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } }))

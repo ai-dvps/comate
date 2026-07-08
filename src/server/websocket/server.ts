@@ -213,23 +213,23 @@ export class ComateWebSocketServer {
 
   private async handleLoadMessages(ctx: ClientContext, req: WsRequest): Promise<void> {
     const { workspaceId, sessionId, offset, limit } = req.payload as unknown as LoadMessagesPayload;
-    const { messages, tasks, subagents } = await chatService.loadMessages(
+    const { messages, tasks, subagents, workflows } = await chatService.loadMessages(
       sessionId,
       workspaceId,
       offset,
       limit,
     );
-    this.sendOk(ctx.socket, req.id, { messages, tasks, subagents });
+    this.sendOk(ctx.socket, req.id, { messages, tasks, subagents, workflows });
   }
 
   private async handleLoadMessagesAfter(ctx: ClientContext, req: WsRequest): Promise<void> {
     const { workspaceId, sessionId, afterMessageId } = req.payload as unknown as LoadMessagesAfterPayload;
-    const { messages, tasks, subagents } = await chatService.loadMessagesAfter(
+    const { messages, tasks, subagents, workflows } = await chatService.loadMessagesAfter(
       sessionId,
       workspaceId,
       afterMessageId,
     );
-    this.sendOk(ctx.socket, req.id, { messages, tasks, subagents });
+    this.sendOk(ctx.socket, req.id, { messages, tasks, subagents, workflows });
   }
 
   private sendOk(socket: WebSocket, id: string, payload: unknown): void {

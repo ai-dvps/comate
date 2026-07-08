@@ -183,6 +183,112 @@ describe('loadMessages subagent hydration', () => {
   })
 })
 
+describe('loadMessages workflow hydration', () => {
+  function makeHistoricalSubagent(parentToolUseId: string): SubagentState {
+    return {
+      parentToolUseId,
+      description: 'Agent',
+      state: 'running',
+      startTime: 1,
+      toolCount: 0,
+      progressHint: '',
+      messages: [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] }],
+    }
+  }
+
+  beforeEach(() => {
+    useChatStore.getState().clearMessages('s1')
+    useChatStore.setState({
+      sessions: { 'ws-1': [{ id: 's1', workspaceId: 'ws-1', name: 'Test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] },
+      messages: {},
+      subagents: {},
+      workflows: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('hydrates completed workflows from the server response', async () => {
+    const workflow: WorkflowState = {
+      runId: 'wf-history-1',
+      sessionId: 's1',
+      toolUseId: 'tu-history-1',
+      workflowName: 'history-workflow',
+      status: 'completed',
+      startTime: 1,
+      agentCount: 1,
+      phases: [],
+      progress: [],
+      subagents: [makeHistoricalSubagent('workflow:wf-history-1:a1')],
+    }
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({
+      messages: [],
+      tasks: [],
+      subagents: [],
+      workflows: [workflow],
+    })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      const state = useChatStore.getState()
+      assert.strictEqual(state.workflows['s1']?.length, 1)
+      assert.strictEqual(state.workflows['s1'][0].runId, 'wf-history-1')
+      assert.strictEqual(state.workflows['s1'][0].status, 'completed')
+      assert.strictEqual(state.workflows['s1'][0].toolUseId, 'tu-history-1')
+      assert.strictEqual(state.subagents['s1']?.length, 1)
+      assert.strictEqual(state.subagents['s1'][0].parentToolUseId, 'workflow:wf-history-1:a1')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('starts polling for running workflows loaded from history', async () => {
+    vi.useFakeTimers()
+
+    const running: WorkflowState = {
+      runId: 'wf-history-2',
+      sessionId: 's1',
+      status: 'running',
+      startTime: 1,
+      agentCount: 1,
+      phases: [],
+      progress: [],
+      subagents: [],
+    }
+    const fetchFn = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ workflow: running }),
+      }),
+    ) as unknown as Mock & typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({
+      messages: [],
+      tasks: [],
+      subagents: [],
+      workflows: [running],
+    })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      assert.strictEqual(useChatStore.getState().workflows['s1']?.length, 1)
+
+      await vi.advanceTimersByTimeAsync(0)
+      assert.strictEqual(fetchFn.mock.calls.length, 1)
+      assert.ok((fetchFn.mock.calls[0][0] as string).includes('/workflows/wf-history-2'))
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+})
+
 describe('handleSseEvent context_usage', () => {
   beforeEach(() => {
     useChatStore.setState({
