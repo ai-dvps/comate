@@ -107,6 +107,7 @@
   "workflowSubagentCount": "{{completed}}/{{total}} done",
   "workflowSubagentCountWithRunning": "{{completed}}/{{total}} done, {{running}} running",
   "workflowPanelTitle": "Workflows",
+  "taskPanelTitle": "Tasks",
   "workflowDetailPhases": "Phases",
   "workflowDetailSubagents": "Subagents",
   "workflowDetailTokens_one": "{{count}} token",

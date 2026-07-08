@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useCallback } from 'react'
 import {
   Circle,
@@ -72,6 +73,7 @@ function TaskRow({ task }: { task: TaskItem }) {
       <div className="min-w-0 flex-1">
         <span
           className={cn(
+            'whitespace-normal break-words',
             isDone
               ? 'text-text-tertiary line-through'
               : task.status === 'failed'
@@ -90,6 +92,7 @@ function TaskRow({ task }: { task: TaskItem }) {
 }
 
 export default function TaskPanel({ sessionId }: TaskPanelProps) {
+  const { t } = useTranslation('chat')
   const tasks = useChatStore((s) => s.tasks[sessionId] ?? EMPTY_ARRAY)
   const { chatFontSize } = useAppSettings()
   const [expanded, setExpanded] = useState(false)
@@ -120,13 +123,16 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
   const progressPercent = total > 0 ? (completedCount / total) * 100 : 0
 
   return (
-    <div className="relative flex-shrink-0 border-b border-border/30 bg-surface z-20">
-      {/* Collapsed bar */}
+    <div className="pointer-events-auto rounded-lg border border-border bg-surface p-3 shadow-lg w-full max-w-xs">
       <button
         onClick={toggle}
-        className="w-full flex items-center gap-3 px-4 py-2 hover:bg-surface-hover transition-colors"
+        className="w-full flex items-center gap-2 hover:bg-surface-hover transition-colors rounded-md p-1 -m-1"
+        aria-label={t('taskPanelTitle')}
       >
         <ListTodo className="size-4 text-text-tertiary shrink-0" />
+        <span className="text-xs font-medium text-text-secondary shrink-0">
+          {t('taskPanelTitle')}
+        </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <div className="flex-1 h-1.5 bg-surface-active rounded-full overflow-hidden">
@@ -153,21 +159,12 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
         )}
       </button>
 
-      {/* Expanded popup panel */}
       {expanded && (
-        <div className={`absolute top-full left-0 right-0 border-b border-x border-border/30 rounded-b-lg bg-surface shadow-lg max-h-64 overflow-y-auto ${fontSizeClass(chatFontSize)}`}>
-          <div className="max-w-3xl mx-auto w-full">
-            {tasks.length === 0 ? (
-              <div className="px-4 py-3 text-text-tertiary">
-                No tasks yet.
-              </div>
-            ) : (
-              <div className="py-1">
-                {tasks.map((task) => (
-                  <TaskRow key={task.id} task={task} />
-                ))}
-              </div>
-            )}
+        <div className={cn('mt-2 max-h-64 overflow-y-auto', fontSizeClass(chatFontSize))}>
+          <div className="py-1">
+            {tasks.map((task) => (
+              <TaskRow key={task.id} task={task} />
+            ))}
           </div>
         </div>
       )}
