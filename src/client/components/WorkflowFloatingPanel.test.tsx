@@ -84,6 +84,8 @@ describe('WorkflowFloatingPanel', () => {
     expect(root.className).not.toContain('absolute top-4 right-4')
     expect(root.className).toContain('pointer-events-auto')
     expect(root.className).toContain('rounded-lg')
+    expect(root.className).toContain('max-w-xs')
+    expect(root.className).not.toContain('w-full')
   })
 
   it('calls onOpenWorkflow with runId when a workflow item is clicked', async () => {
