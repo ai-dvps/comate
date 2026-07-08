@@ -43,24 +43,19 @@ export default function WorkflowFloatingPanel({
   if (workflows.length === 0) return null
 
   return (
-    <div
-      className="absolute top-4 right-4 z-20 flex max-w-xs flex-col gap-2 pointer-events-none"
-      aria-label={t('workflowPanelTitle')}
-    >
-      <div className="pointer-events-auto rounded-lg border border-border bg-surface p-3 shadow-lg">
-        <div className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
-          <Workflow className="size-3.5" />
-          {t('workflowPanelTitle')}
-        </div>
-        <div className="flex flex-col gap-2">
-          {workflows.map((workflow) => (
-            <WorkflowPanelItem
-              key={workflow.runId}
-              workflow={workflow}
-              onClick={() => onOpenWorkflow(workflow.runId)}
-            />
-          ))}
-        </div>
+    <div className="pointer-events-auto rounded-lg border border-border bg-surface p-3 shadow-lg w-full">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
+        <Workflow className="size-3.5" />
+        {t('workflowPanelTitle')}
+      </div>
+      <div className="flex flex-col gap-2">
+        {workflows.map((workflow) => (
+          <WorkflowPanelItem
+            key={workflow.runId}
+            workflow={workflow}
+            onClick={() => onOpenWorkflow(workflow.runId)}
+          />
+        ))}
       </div>
     </div>
   )

@@ -107,6 +107,7 @@
   "workflowSubagentCount": "{{completed}}/{{total}} 完成",
   "workflowSubagentCountWithRunning": "{{completed}}/{{total}} 完成，{{running}} 运行中",
   "workflowPanelTitle": "工作流",
+  "taskPanelTitle": "任务",
   "workflowDetailPhases": "阶段",
   "workflowDetailSubagents": "子代理",
   "workflowDetailTokens_one": "{{count}} token",
