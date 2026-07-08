@@ -100,10 +100,15 @@ export class ChatService {
   private runtimeContexts = new Map<string, RuntimeContext>();
   private pendingRebuilds = new Map<string, RuntimeContext>();
   private rebuildPollers = new Map<string, NodeJS.Timeout>();
+  private onRuntimeClose?: (sessionId: string) => void;
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   constructor(sdkClient?: SdkClient) {
     this.sdkClient = sdkClient ?? new SdkClient();
+  }
+
+  setOnRuntimeClose(callback: (sessionId: string) => void): void {
+    this.onRuntimeClose = callback;
   }
 
   getActiveSessionCount(): number {
@@ -766,6 +771,7 @@ export class ChatService {
     this.runtimes.delete(sessionId);
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
     await runtime.close();
+    this.onRuntimeClose?.(sessionId);
   }
 
   getRuntimeIfExists(sessionId: string): SessionRuntime | undefined {
