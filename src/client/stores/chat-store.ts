@@ -14,13 +14,21 @@ export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPa
 const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout>; workspaceId: string }>()
 const lastEventId = new Map<string, string>()
 const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
-const workflowPollTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+interface WorkflowPollEntry {
+  timer?: ReturnType<typeof setTimeout>
+  generation: number
+  abortController?: AbortController
+}
+
+const workflowPollTimers = new Map<string, WorkflowPollEntry>()
 
 function closeSessionSubscriptions(exceptSessionId?: string): void {
   for (const [sessionId, sub] of sessionSubscriptions) {
     if (sessionId !== exceptSessionId) {
       sub.close()
       sessionSubscriptions.delete(sessionId)
+      stopAllWorkflowPollingForSession(sessionId)
     }
   }
 }
@@ -30,7 +38,24 @@ function closeWorkspaceSessionSubscriptions(workspaceId: string): void {
     if (sub.workspaceId === workspaceId) {
       sub.close()
       sessionSubscriptions.delete(sessionId)
+      stopAllWorkflowPollingForSession(sessionId)
     }
+  }
+}
+
+function stopAllWorkflowPolling(): void {
+  for (const [key, entry] of workflowPollTimers) {
+    if (entry.timer) {
+      clearTimeout(entry.timer)
+    }
+    if (entry.abortController) {
+      try {
+        entry.abortController.abort()
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+    workflowPollTimers.delete(key)
   }
 }
 
@@ -44,6 +69,7 @@ export function clearAllSessionSubscriptions(set: SseSetter): void {
     }
     sessionSubscriptions.delete(sessionId)
   }
+  stopAllWorkflowPolling()
   set(() => ({
     serverNonce: {},
     // Keep pendingSend: subscription_ack will drain it after reconnect.
@@ -436,26 +462,46 @@ export function sanitizeSubagents(raw: unknown): SubagentState[] {
 }
 
 const WORKFLOW_POLL_INTERVAL_MS = 2000
+const WORKFLOW_FETCH_TIMEOUT_MS = 10000
 
 function getWorkflowPollKey(sessionId: string, runId: string): string {
   return `${sessionId}:${runId}`
 }
 
+function isWorkflowTerminal(status: WorkflowState['status']): boolean {
+  return status === 'completed' || status === 'error' || status === 'killed'
+}
+
 function stopWorkflowPolling(sessionId: string, runId: string): void {
   const key = getWorkflowPollKey(sessionId, runId)
-  const timer = workflowPollTimers.get(key)
-  if (timer) {
-    clearInterval(timer)
-    workflowPollTimers.delete(key)
+  const entry = workflowPollTimers.get(key)
+  if (!entry) return
+  if (entry.timer) {
+    clearTimeout(entry.timer)
   }
+  if (entry.abortController) {
+    try {
+      entry.abortController.abort()
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+  workflowPollTimers.delete(key)
 }
 
 function stopAllWorkflowPollingForSession(sessionId: string): void {
   for (const key of workflowPollTimers.keys()) {
     if (key.startsWith(`${sessionId}:`)) {
-      const timer = workflowPollTimers.get(key)
-      if (timer) {
-        clearInterval(timer)
+      const entry = workflowPollTimers.get(key)
+      if (entry?.timer) {
+        clearTimeout(entry.timer)
+      }
+      if (entry?.abortController) {
+        try {
+          entry.abortController.abort()
+        } catch {
+          // ignore cleanup errors
+        }
       }
       workflowPollTimers.delete(key)
     }
@@ -488,21 +534,79 @@ function mergeWorkflowState(
   })
 }
 
+async function fetchWorkflowOnce(
+  workspaceId: string,
+  sessionId: string,
+  runId: string,
+  set: SseSetter,
+  signal?: AbortSignal,
+): Promise<WorkflowState | undefined> {
+  try {
+    const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/workflows/${runId}`, {
+      signal,
+    })
+    if (!res.ok) return undefined
+    const data = (await res.json()) as { workflow?: WorkflowState }
+    if (!data.workflow) return undefined
+    mergeWorkflowState(set, sessionId, data.workflow)
+    return data.workflow
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return undefined
+    console.error('Failed to fetch workflow:', err)
+    return undefined
+  }
+}
+
 async function fetchWorkflow(
   workspaceId: string,
   sessionId: string,
   runId: string,
   set: SseSetter,
-): Promise<void> {
+  generation: number,
+): Promise<WorkflowState | undefined> {
+  const key = getWorkflowPollKey(sessionId, runId)
+  const entry = workflowPollTimers.get(key)
+  if (!entry || entry.generation !== generation) return undefined
+
+  const abortController = new AbortController()
+  entry.abortController = abortController
+  const timeoutId = setTimeout(() => abortController.abort(), WORKFLOW_FETCH_TIMEOUT_MS)
+
   try {
-    const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/workflows/${runId}`)
-    if (!res.ok) return
-    const data = (await res.json()) as { workflow?: WorkflowState }
-    if (!data.workflow) return
-    mergeWorkflowState(set, sessionId, data.workflow)
+    const workflow = await fetchWorkflowOnce(workspaceId, sessionId, runId, set, abortController.signal)
+    clearTimeout(timeoutId)
+    const current = workflowPollTimers.get(key)
+    if (!current || current.generation !== generation) return undefined
+    return workflow
   } catch (err) {
+    clearTimeout(timeoutId)
+    if (err instanceof Error && err.name === 'AbortError') return undefined
     console.error('Failed to fetch workflow:', err)
+    return undefined
   }
+}
+
+async function runWorkflowPollLoop(
+  workspaceId: string,
+  sessionId: string,
+  runId: string,
+  set: SseSetter,
+  generation: number,
+): Promise<void> {
+  const key = getWorkflowPollKey(sessionId, runId)
+  const workflow = await fetchWorkflow(workspaceId, sessionId, runId, set, generation)
+  const entry = workflowPollTimers.get(key)
+  if (!entry || entry.generation !== generation) return
+
+  if (workflow && isWorkflowTerminal(workflow.status)) {
+    stopWorkflowPolling(sessionId, runId)
+    return
+  }
+
+  entry.timer = setTimeout(() => {
+    entry.timer = undefined
+    void runWorkflowPollLoop(workspaceId, sessionId, runId, set, generation)
+  }, WORKFLOW_POLL_INTERVAL_MS)
 }
 
 function startWorkflowPolling(
@@ -512,13 +616,29 @@ function startWorkflowPolling(
   set: SseSetter,
 ): void {
   const key = getWorkflowPollKey(sessionId, runId)
-  if (workflowPollTimers.has(key)) return
+  const existing = workflowPollTimers.get(key)
+  if (existing) {
+    // Abort any in-flight request and bump the generation so stale responses
+    // from the previous loop are discarded.
+    if (existing.abortController) {
+      try {
+        existing.abortController.abort()
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+    if (existing.timer) {
+      clearTimeout(existing.timer)
+      existing.timer = undefined
+    }
+    existing.generation += 1
+    void runWorkflowPollLoop(workspaceId, sessionId, runId, set, existing.generation)
+    return
+  }
 
-  void fetchWorkflow(workspaceId, sessionId, runId, set)
-  const timer = setInterval(() => {
-    void fetchWorkflow(workspaceId, sessionId, runId, set)
-  }, WORKFLOW_POLL_INTERVAL_MS)
-  workflowPollTimers.set(key, timer)
+  const entry: WorkflowPollEntry = { generation: 0 }
+  workflowPollTimers.set(key, entry)
+  void runWorkflowPollLoop(workspaceId, sessionId, runId, set, entry.generation)
 }
 
 /**
@@ -1959,7 +2079,16 @@ export function handleSseEvent(
     case 'workflow_update': {
       const runId = typeof data.runId === 'string' ? data.runId : ''
       if (!runId) return
-      startWorkflowPolling(workspaceId, sessionId, runId, set)
+      // Do not restart polling for workflows that have already reached a terminal
+      // state; a stale update arriving after workflow_done must not resurrect the
+      // poll loop.
+      set((state) => {
+        const list = state.workflows[sessionId] || []
+        const existing = list.find((w) => w.runId === runId)
+        if (existing && isWorkflowTerminal(existing.status)) return {}
+        startWorkflowPolling(workspaceId, sessionId, runId, set)
+        return {}
+      })
       return
     }
     case 'workflow_done': {
@@ -1977,7 +2106,7 @@ export function handleSseEvent(
         return { workflows: { ...state.workflows, [sessionId]: [...list.slice(0, idx), updated, ...list.slice(idx + 1)] } }
       })
       stopWorkflowPolling(sessionId, runId)
-      void fetchWorkflow(workspaceId, sessionId, runId, set)
+      void fetchWorkflowOnce(workspaceId, sessionId, runId, set)
       return
     }
     case 'heartbeat':

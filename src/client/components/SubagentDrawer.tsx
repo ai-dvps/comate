@@ -59,7 +59,11 @@ export default function SubagentDrawer({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        onClose()
+      }
     }
     if (parentToolUseId) {
       window.addEventListener('keydown', onKey)

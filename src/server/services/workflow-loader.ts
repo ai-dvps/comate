@@ -7,8 +7,8 @@
  *   ~/.claude/projects/<encoded-cwd>/<sessionId>/subagents/workflows/<runId>/agent-<id>.jsonl
  */
 
-import { existsSync, readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, promises as fs } from 'fs';
+import path from 'path';
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import { reconstructSubagentState } from './subagent-loader.js';
 import { resolveTranscriptDir } from './analytics-transcript-path.js';
@@ -16,10 +16,14 @@ import { diagLog } from '../utils/diag-logger.js';
 import type {
   SubagentState,
   WorkflowPhase,
+  WorkflowProgressAgent,
   WorkflowProgressItem,
   WorkflowState,
   WorkflowStatus,
 } from '../types/message.js';
+
+/** Allowed characters for filesystem-safe workflow IDs. */
+const WORKFLOW_ID_RE = /^[a-zA-Z0-9_-]+$/;
 
 function safeParseJson<T>(raw: string): T | null {
   try {
@@ -37,11 +41,23 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
 
+function isValidWorkflowId(value: string): boolean {
+  return WORKFLOW_ID_RE.test(value);
+}
+
+function assertPathSafe(baseDir: string, targetPath: string): boolean {
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(targetPath);
+  const prefix = resolvedBase.endsWith(path.sep) ? resolvedBase : resolvedBase + path.sep;
+  return resolvedTarget === resolvedBase || resolvedTarget.startsWith(prefix);
+}
+
 function asWorkflowStatus(value: unknown): WorkflowStatus {
   if (value === 'running' || value === 'completed' || value === 'error' || value === 'killed') {
     return value;
   }
-  return 'running';
+  // Treat any unknown SDK status as an error rather than falsely showing "running".
+  return 'error';
 }
 
 function parsePhases(raw: unknown): WorkflowPhase[] {
@@ -61,15 +77,81 @@ function parseProgress(raw: unknown): WorkflowProgressItem[] {
   if (!Array.isArray(raw)) return [];
   const progress: WorkflowProgressItem[] = [];
   for (const item of raw) {
-    if (item && typeof item === 'object') {
-      progress.push(item as WorkflowProgressItem);
+    if (!item || typeof item !== 'object') continue;
+    const it = item as Record<string, unknown>;
+    const type = it.type;
+
+    if (type === 'workflow_phase') {
+      const index = asNumber(it.index);
+      const title = asString(it.title);
+      if (index === undefined || !title) continue;
+      progress.push({ type: 'workflow_phase', index, title });
+      continue;
+    }
+
+    if (type === 'workflow_agent') {
+      const index = asNumber(it.index);
+      const agentId = asString(it.agentId);
+      if (index === undefined || !agentId) continue;
+
+      const agent: WorkflowProgressAgent = { type: 'workflow_agent', index, agentId };
+
+      const label = asString(it.label);
+      if (label) agent.label = label;
+
+      const phaseIndex = asNumber(it.phaseIndex);
+      if (phaseIndex !== undefined) agent.phaseIndex = phaseIndex;
+
+      const phaseTitle = asString(it.phaseTitle);
+      if (phaseTitle) agent.phaseTitle = phaseTitle;
+
+      const state = asString(it.state);
+      if (state === 'running' || state === 'done') agent.state = state;
+
+      const model = asString(it.model);
+      if (model) agent.model = model;
+
+      const startedAt = asNumber(it.startedAt);
+      if (startedAt !== undefined) agent.startedAt = startedAt;
+
+      const queuedAt = asNumber(it.queuedAt);
+      if (queuedAt !== undefined) agent.queuedAt = queuedAt;
+
+      const lastProgressAt = asNumber(it.lastProgressAt);
+      if (lastProgressAt !== undefined) agent.lastProgressAt = lastProgressAt;
+
+      const attempt = asNumber(it.attempt);
+      if (attempt !== undefined) agent.attempt = attempt;
+
+      const tokens = asNumber(it.tokens);
+      if (tokens !== undefined) agent.tokens = tokens;
+
+      const toolCalls = asNumber(it.toolCalls);
+      if (toolCalls !== undefined) agent.toolCalls = toolCalls;
+
+      const durationMs = asNumber(it.durationMs);
+      if (durationMs !== undefined) agent.durationMs = durationMs;
+
+      const lastToolName = asString(it.lastToolName);
+      if (lastToolName) agent.lastToolName = lastToolName;
+
+      const lastToolSummary = asString(it.lastToolSummary);
+      if (lastToolSummary) agent.lastToolSummary = lastToolSummary;
+
+      const promptPreview = asString(it.promptPreview);
+      if (promptPreview) agent.promptPreview = promptPreview;
+
+      const resultPreview = asString(it.resultPreview);
+      if (resultPreview) agent.resultPreview = resultPreview;
+
+      progress.push(agent);
     }
   }
   return progress;
 }
 
-function parseJsonlMessages(filePath: string): SessionMessage[] {
-  const raw = readFileSync(filePath, 'utf8');
+async function parseJsonlMessages(filePath: string): Promise<SessionMessage[]> {
+  const raw = await fs.readFile(filePath, 'utf8');
   const messages: SessionMessage[] = [];
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -81,28 +163,28 @@ function parseJsonlMessages(filePath: string): SessionMessage[] {
   return messages;
 }
 
-function loadWorkflowSubagents(
+async function loadWorkflowSubagents(
   folderPath: string,
   sessionId: string,
   runId: string,
   progress: WorkflowProgressItem[],
-): SubagentState[] {
+): Promise<SubagentState[]> {
   const transcriptDir = resolveTranscriptDir(folderPath);
   if (!transcriptDir) return [];
 
-  const subagentDir = join(transcriptDir, sessionId, 'subagents', 'workflows', runId);
+  const subagentDir = path.join(transcriptDir, sessionId, 'subagents', 'workflows', runId);
   if (!existsSync(subagentDir)) return [];
 
   const agentProgressById = new Map<string, WorkflowProgressItem & { type: 'workflow_agent' }>();
   for (const item of progress) {
     if (item.type === 'workflow_agent' && item.agentId) {
-      agentProgressById.set(item.agentId, item);
+      agentProgressById.set(item.agentId, item as WorkflowProgressItem & { type: 'workflow_agent' });
     }
   }
 
   let files: string[];
   try {
-    files = readdirSync(subagentDir);
+    files = await fs.readdir(subagentDir);
   } catch (err) {
     diagLog('workflow-loader-readdir-error', { path: subagentDir, error: String(err) });
     return [];
@@ -113,11 +195,11 @@ function loadWorkflowSubagents(
     const match = /^agent-([a-zA-Z0-9-]+)\.jsonl$/.exec(file);
     if (!match) continue;
     const agentId = match[1];
-    const filePath = join(subagentDir, file);
+    const filePath = path.join(subagentDir, file);
 
     let sdkMessages: SessionMessage[];
     try {
-      sdkMessages = parseJsonlMessages(filePath);
+      sdkMessages = await parseJsonlMessages(filePath);
     } catch (err) {
       diagLog('workflow-loader-jsonl-error', { path: filePath, error: String(err) });
       continue;
@@ -132,6 +214,15 @@ function loadWorkflowSubagents(
         progressItem?.state === 'done' ? progressItem?.lastProgressAt : undefined,
     });
     if (reconstructed) {
+      // Reconcile the derived state with authoritative workflow progress metadata.
+      if (progressItem?.state === 'done') {
+        reconstructed.state = 'completed';
+      } else if (progressItem?.state === 'running') {
+        reconstructed.state = 'running';
+      }
+      if (progressItem?.toolCalls !== undefined) {
+        reconstructed.toolCount = progressItem.toolCalls;
+      }
       subagents.push(reconstructed);
     }
   }
@@ -150,8 +241,12 @@ export interface LoadWorkflowOptions {
  * Load and normalize workflow state from disk.
  * Returns null when the workflow JSON is missing or unreadable.
  */
-export function loadWorkflowState(options: LoadWorkflowOptions): WorkflowState | null {
+export async function loadWorkflowState(options: LoadWorkflowOptions): Promise<WorkflowState | null> {
   const { folderPath, sessionId, runId, toolUseId } = options;
+
+  if (!isValidWorkflowId(sessionId) || !isValidWorkflowId(runId)) {
+    return null;
+  }
 
   const transcriptDir = resolveTranscriptDir(folderPath);
   if (!transcriptDir) {
@@ -159,14 +254,19 @@ export function loadWorkflowState(options: LoadWorkflowOptions): WorkflowState |
     return null;
   }
 
-  const workflowPath = join(transcriptDir, sessionId, 'workflows', `${runId}.json`);
+  const workflowPath = path.join(transcriptDir, sessionId, 'workflows', `${runId}.json`);
+  if (!assertPathSafe(transcriptDir, workflowPath)) {
+    diagLog('workflow-loader-unsafe-path', { workflowPath });
+    return null;
+  }
+
   if (!existsSync(workflowPath)) {
     return null;
   }
 
   let raw: string;
   try {
-    raw = readFileSync(workflowPath, 'utf8');
+    raw = await fs.readFile(workflowPath, 'utf8');
   } catch (err) {
     diagLog('workflow-loader-read-error', { path: workflowPath, error: String(err) });
     return null;
@@ -182,7 +282,7 @@ export function loadWorkflowState(options: LoadWorkflowOptions): WorkflowState |
   const startTime = asNumber(data.startTime) || Date.now();
   const phases = parsePhases(data.phases);
   const progress = parseProgress(data.workflowProgress);
-  const subagents = loadWorkflowSubagents(folderPath, sessionId, runId, progress);
+  const subagents = await loadWorkflowSubagents(folderPath, sessionId, runId, progress);
 
   return {
     runId,
@@ -206,17 +306,27 @@ export function loadWorkflowState(options: LoadWorkflowOptions): WorkflowState |
 /**
  * List workflow runIds that have on-disk state for a session.
  */
-export function listWorkflowRunIds(folderPath: string, sessionId: string): string[] {
+export async function listWorkflowRunIds(folderPath: string, sessionId: string): Promise<string[]> {
+  if (!isValidWorkflowId(sessionId)) {
+    return [];
+  }
+
   const transcriptDir = resolveTranscriptDir(folderPath);
   if (!transcriptDir) return [];
 
-  const workflowsDir = join(transcriptDir, sessionId, 'workflows');
+  const workflowsDir = path.join(transcriptDir, sessionId, 'workflows');
+  if (!assertPathSafe(transcriptDir, workflowsDir)) {
+    diagLog('workflow-loader-unsafe-path', { workflowsDir });
+    return [];
+  }
+
   if (!existsSync(workflowsDir)) return [];
 
   let files: string[];
   try {
-    files = readdirSync(workflowsDir);
-  } catch {
+    files = await fs.readdir(workflowsDir);
+  } catch (err) {
+    diagLog('workflow-loader-readdir-error', { path: workflowsDir, error: String(err) });
     return [];
   }
 

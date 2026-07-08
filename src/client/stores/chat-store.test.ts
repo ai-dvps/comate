@@ -1064,6 +1064,79 @@ describe('workflow state', () => {
     assert.strictEqual(fetchFn.mock.calls.length, countAfterClear)
   })
 
+  it('workflow_update is ignored when the workflow is already terminal', async () => {
+    vi.useFakeTimers()
+    stubFetchWorkflow(undefined)
+
+    const completed: WorkflowState = {
+      runId: 'wf-1',
+      sessionId: 's1',
+      status: 'completed',
+      startTime: 1,
+      agentCount: 0,
+      phases: [],
+      progress: [],
+      subagents: [],
+    }
+    useChatStore.setState({ workflows: { s1: [completed] } })
+
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_update', { runId: 'wf-1', sessionId: 's1' })
+
+    await vi.advanceTimersByTimeAsync(3000)
+
+    const fetchFn = globalThis.fetch as ReturnType<typeof vi.fn>
+    assert.strictEqual(fetchFn.mock.calls.length, 0)
+  })
+
+  it('session switch cleanup stops workflow polling', async () => {
+    vi.useFakeTimers()
+    stubFetchWorkflow(undefined)
+
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_start', { runId: 'wf-1', sessionId: 's1' })
+
+    await vi.advanceTimersByTimeAsync(0)
+    const fetchFn = globalThis.fetch as ReturnType<typeof vi.fn>
+    assert.strictEqual(fetchFn.mock.calls.length, 1)
+
+    clearAllSessionSubscriptions(set)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    assert.strictEqual(fetchFn.mock.calls.length, 1)
+  })
+
+  it('workflow_done fetches final state even when polling was already stopped', async () => {
+    const final: WorkflowState = {
+      runId: 'wf-1',
+      sessionId: 's1',
+      status: 'completed',
+      startTime: 1,
+      agentCount: 1,
+      phases: [],
+      progress: [],
+      subagents: [],
+    }
+    stubFetchWorkflow(final)
+
+    const running: WorkflowState = { ...final, status: 'running' }
+    useChatStore.setState({ workflows: { s1: [running] } })
+
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'workflow_done', {
+      runId: 'wf-1',
+      sessionId: 's1',
+      status: 'completed',
+    })
+
+    await new Promise((r) => setTimeout(r, 0))
+
+    const state = useChatStore.getState()
+    assert.strictEqual(state.workflows['s1'][0].status, 'completed')
+    const fetchFn = globalThis.fetch as ReturnType<typeof vi.fn>
+    assert.strictEqual(fetchFn.mock.calls.length, 1)
+  })
+
   it('multiple workflows in the same session are tracked independently', () => {
     const set = useChatStore.setState as unknown as SseSetter
     handleSseEvent(set, 'ws-1', 's1', 'workflow_start', { runId: 'wf-1', sessionId: 's1' })

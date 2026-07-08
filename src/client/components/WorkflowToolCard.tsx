@@ -1,14 +1,9 @@
 import { useTranslation } from 'react-i18next'
-import {
-  CheckCircleIcon,
-  ClockIcon,
-  XCircleIcon,
-  Workflow,
-} from 'lucide-react'
+import { Workflow } from 'lucide-react'
 
 import { useChatStore } from '../stores/chat-store'
-import type { WorkflowStatus } from '../types/message'
 import { getCurrentPhaseTitle, getSubagentCounts } from '../lib/workflow-utils'
+import { workflowStatusConfig } from '../lib/workflow-status'
 import { cn } from './ui/utils'
 
 interface WorkflowToolCardProps {
@@ -16,36 +11,6 @@ interface WorkflowToolCardProps {
   sessionId: string
   workflowName?: string
   onOpenWorkflow?: (runId: string) => void
-}
-
-const statusConfig: Record<
-  WorkflowStatus,
-  { labelKey: string; icon: React.ReactNode; badgeClass: string; borderClass: string }
-> = {
-  running: {
-    labelKey: 'workflowStatus.running',
-    icon: <ClockIcon className="size-3.5 animate-pulse text-warning" />,
-    badgeClass: 'bg-warning/10 text-warning border-warning/20',
-    borderClass: 'border-l-2 border-l-warning',
-  },
-  completed: {
-    labelKey: 'workflowStatus.completed',
-    icon: <CheckCircleIcon className="size-3.5 text-success" />,
-    badgeClass: 'bg-success/10 text-success border-success/20',
-    borderClass: 'border-l-2 border-l-success',
-  },
-  error: {
-    labelKey: 'workflowStatus.error',
-    icon: <XCircleIcon className="size-3.5 text-destructive" />,
-    badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
-    borderClass: 'border-l-2 border-l-destructive',
-  },
-  killed: {
-    labelKey: 'workflowStatus.killed',
-    icon: <XCircleIcon className="size-3.5 text-destructive" />,
-    badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
-    borderClass: 'border-l-2 border-l-destructive',
-  },
 }
 
 export default function WorkflowToolCard({
@@ -60,7 +25,7 @@ export default function WorkflowToolCard({
   )
 
   const status = workflow?.status ?? 'running'
-  const config = statusConfig[status]
+  const config = workflowStatusConfig[status]
   const phaseTitle = workflow ? getCurrentPhaseTitle(workflow) : undefined
   const { completed, running, total } = workflow
     ? getSubagentCounts(workflow)

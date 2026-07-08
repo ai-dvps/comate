@@ -8,6 +8,7 @@ import type { BotUser } from '../models/bot-user.js';
 import { loadWorkflowState, listWorkflowRunIds } from '../services/workflow-loader.js';
 
 const router = Router({ mergeParams: true });
+const WORKFLOW_ID_RE = /^[a-zA-Z0-9_-]+$/;
 diagLog('[Route] chat module loaded');
 
 // GET /api/workspaces/:id/sessions
@@ -311,7 +312,16 @@ router.get('/sessions/:sessionId/workflows', async (req, res) => {
       res.status(404).json({ error: 'Workspace not found' });
       return;
     }
-    const runIds = listWorkflowRunIds(workspace.folderPath, sessionId);
+    if (!WORKFLOW_ID_RE.test(sessionId)) {
+      res.status(400).json({ error: 'Invalid sessionId' });
+      return;
+    }
+    const localSession = store.getLocalSession(sessionId);
+    if (!localSession || localSession.workspaceId !== workspaceId) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    const runIds = await listWorkflowRunIds(workspace.folderPath, sessionId);
     res.json({ runIds });
   } catch (error) {
     console.error('Failed to list workflows:', error);
@@ -331,7 +341,16 @@ router.get('/sessions/:sessionId/workflows/:runId', async (req, res) => {
       res.status(404).json({ error: 'Workspace not found' });
       return;
     }
-    const workflow = loadWorkflowState({ folderPath: workspace.folderPath, sessionId, runId });
+    if (!WORKFLOW_ID_RE.test(sessionId) || !WORKFLOW_ID_RE.test(runId)) {
+      res.status(400).json({ error: 'Invalid sessionId or runId' });
+      return;
+    }
+    const localSession = store.getLocalSession(sessionId);
+    if (!localSession || localSession.workspaceId !== workspaceId) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    const workflow = await loadWorkflowState({ folderPath: workspace.folderPath, sessionId, runId });
     if (!workflow) {
       res.status(404).json({ error: 'Workflow not found' });
       return;

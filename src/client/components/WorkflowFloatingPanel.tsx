@@ -7,34 +7,13 @@ import {
   getSubagentCounts,
   getWorkflowPhaseIndex,
 } from '../lib/workflow-utils'
+import { workflowStatusConfig } from '../lib/workflow-status'
 import { cn } from './ui/utils'
-import type { WorkflowState, WorkflowStatus } from '../types/message'
+import type { WorkflowState } from '../types/message'
 
 interface WorkflowFloatingPanelProps {
   sessionId: string
   onOpenWorkflow: (runId: string) => void
-}
-
-const statusConfig: Record<
-  WorkflowStatus,
-  { labelKey: string; badgeClass: string }
-> = {
-  running: {
-    labelKey: 'workflowStatus.running',
-    badgeClass: 'bg-warning/10 text-warning border-warning/20',
-  },
-  completed: {
-    labelKey: 'workflowStatus.completed',
-    badgeClass: 'bg-success/10 text-success border-success/20',
-  },
-  error: {
-    labelKey: 'workflowStatus.error',
-    badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
-  },
-  killed: {
-    labelKey: 'workflowStatus.killed',
-    badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
-  },
 }
 
 function getPhaseProgress(workflow: WorkflowState): number {
@@ -95,7 +74,7 @@ function WorkflowPanelItem({
   onClick: () => void
 }) {
   const { t } = useTranslation('chat')
-  const config = statusConfig[workflow.status]
+  const config = workflowStatusConfig[workflow.status]
   const phaseTitle = getCurrentPhaseTitle(workflow)
   const { completed, running, total } = getSubagentCounts(workflow)
   const phaseProgress = getPhaseProgress(workflow)
