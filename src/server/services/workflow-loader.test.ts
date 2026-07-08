@@ -1,5 +1,5 @@
 import '../test-utils/test-env.js';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, it, beforeEach } from 'node:test';
@@ -54,20 +54,20 @@ describe('workflow-loader', () => {
     writeFileSync(join(dir, `agent-${agentId}.jsonl`), lines);
   }
 
-  it('returns null when the workflow JSON is missing', () => {
-    const state = loadWorkflowState({ folderPath, sessionId, runId });
+  it('returns null when the workflow JSON is missing', async () => {
+    const state = await loadWorkflowState({ folderPath, sessionId, runId });
     assert.strictEqual(state, null);
   });
 
-  it('returns null when the workflow JSON is malformed', () => {
+  it('returns null when the workflow JSON is malformed', async () => {
     const dir = join(tempHome, '.claude', 'projects', encodeProjectDir(folderPath), sessionId, 'workflows');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, `${runId}.json`), 'not-json');
-    const state = loadWorkflowState({ folderPath, sessionId, runId });
+    const state = await loadWorkflowState({ folderPath, sessionId, runId });
     assert.strictEqual(state, null);
   });
 
-  it('loads a complete workflow state with phases and subagents', () => {
+  it('loads a complete workflow state with phases and subagents', async () => {
     writeWorkflowJson({
       runId,
       status: 'running',
@@ -91,6 +91,7 @@ describe('workflow-loader', () => {
           state: 'done',
           startedAt: 1783405804000,
           lastProgressAt: 1783405805000,
+          toolCalls: 7,
         },
       ],
     });
@@ -100,7 +101,7 @@ describe('workflow-loader', () => {
       makeSessionMessage('assistant', 'result'),
     ]);
 
-    const state = loadWorkflowState({ folderPath, sessionId, runId, toolUseId: 'tool-wf-1' });
+    const state = await loadWorkflowState({ folderPath, sessionId, runId, toolUseId: 'tool-wf-1' });
     assert.ok(state);
     assert.strictEqual(state!.runId, runId);
     assert.strictEqual(state!.sessionId, sessionId);
@@ -117,9 +118,11 @@ describe('workflow-loader', () => {
     assert.strictEqual(state!.subagents.length, 1);
     assert.strictEqual(state!.subagents[0]!.parentToolUseId, `workflow:${runId}:agenta`);
     assert.strictEqual(state!.subagents[0]!.description, 'scope agent');
+    assert.strictEqual(state!.subagents[0]!.state, 'completed');
+    assert.strictEqual(state!.subagents[0]!.toolCount, 7);
   });
 
-  it('returns a workflow with an empty subagent list when the subagent dir is missing', () => {
+  it('returns a workflow with an empty subagent list when the subagent dir is missing', async () => {
     writeWorkflowJson({
       runId,
       status: 'completed',
@@ -129,13 +132,13 @@ describe('workflow-loader', () => {
       workflowProgress: [],
     });
 
-    const state = loadWorkflowState({ folderPath, sessionId, runId });
+    const state = await loadWorkflowState({ folderPath, sessionId, runId });
     assert.ok(state);
     assert.strictEqual(state!.status, 'completed');
     assert.strictEqual(state!.subagents.length, 0);
   });
 
-  it('skips malformed subagent jsonl files and keeps the rest', () => {
+  it('skips malformed subagent jsonl files and keeps the rest', async () => {
     writeWorkflowJson({
       runId,
       status: 'running',
@@ -154,23 +157,23 @@ describe('workflow-loader', () => {
     ]);
     writeSubagentJsonl('bad', ['not-valid-json']);
 
-    const state = loadWorkflowState({ folderPath, sessionId, runId });
+    const state = await loadWorkflowState({ folderPath, sessionId, runId });
     assert.ok(state);
     assert.strictEqual(state!.subagents.length, 1);
     assert.strictEqual(state!.subagents[0]!.parentToolUseId, `workflow:${runId}:good`);
   });
 
-  it('lists workflow runIds from the session workflows directory', () => {
+  it('lists workflow runIds from the session workflows directory', async () => {
     runId = 'wf_a';
     writeWorkflowJson({ runId: 'wf_a', status: 'completed', startTime: 1, agentCount: 0, phases: [], workflowProgress: [] });
     runId = 'wf_b';
     writeWorkflowJson({ runId: 'wf_b', status: 'completed', startTime: 1, agentCount: 0, phases: [], workflowProgress: [] });
 
-    const runIds = listWorkflowRunIds(folderPath, sessionId);
+    const runIds = await listWorkflowRunIds(folderPath, sessionId);
     assert.deepStrictEqual(runIds.sort(), ['wf_a', 'wf_b']);
   });
 
-  it('normalizes an unknown status to running', () => {
+  it('normalizes an unknown status to error', async () => {
     writeWorkflowJson({
       runId,
       status: 'weird',
@@ -180,8 +183,60 @@ describe('workflow-loader', () => {
       workflowProgress: [],
     });
 
-    const state = loadWorkflowState({ folderPath, sessionId, runId });
+    const state = await loadWorkflowState({ folderPath, sessionId, runId });
     assert.ok(state);
-    assert.strictEqual(state!.status, 'running');
+    assert.strictEqual(state!.status, 'error');
+  });
+
+  it('rejects invalid sessionId or runId characters', async () => {
+    writeWorkflowJson({
+      runId,
+      status: 'completed',
+      startTime: 1,
+      agentCount: 0,
+      phases: [],
+      workflowProgress: [],
+    });
+
+    assert.strictEqual(await loadWorkflowState({ folderPath, sessionId: 'bad/../id', runId }), null);
+    assert.strictEqual(await loadWorkflowState({ folderPath, sessionId, runId: 'bad/run&id' }), null);
+    assert.deepStrictEqual(await listWorkflowRunIds(folderPath, 'bad/../id'), []);
+  });
+
+  it('returns null when the workflow file cannot be read', async () => {
+    const dir = join(tempHome, '.claude', 'projects', encodeProjectDir(folderPath), sessionId, 'workflows');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${runId}.json`), JSON.stringify({ status: 'completed', startTime: 1, agentCount: 0, phases: [], workflowProgress: [] }));
+    // Replace the file with a directory so readFile fails.
+    rmSync(join(dir, `${runId}.json`), { force: true });
+    mkdirSync(join(dir, `${runId}.json`), { recursive: true });
+
+    const state = await loadWorkflowState({ folderPath, sessionId, runId });
+    assert.strictEqual(state, null);
+  });
+
+  it('filters malformed progress items', async () => {
+    writeWorkflowJson({
+      runId,
+      status: 'running',
+      startTime: 1,
+      agentCount: 1,
+      phases: [],
+      workflowProgress: [
+        { type: 'workflow_phase', index: 0, title: 'Good' },
+        { type: 'workflow_phase', index: 'not-a-number', title: 'Bad index' },
+        { type: 'workflow_agent', agentId: 'no-index' },
+        { type: 'workflow_agent', index: 0, agentId: 'valid', state: 'done' },
+        { type: 'unknown_type', index: 0 },
+      ],
+    });
+
+    const state = await loadWorkflowState({ folderPath, sessionId, runId });
+    assert.ok(state);
+    assert.strictEqual(state!.progress.length, 2);
+    assert.strictEqual(state!.progress[0]?.type, 'workflow_phase');
+    assert.strictEqual((state!.progress[0] as { title: string }).title, 'Good');
+    assert.strictEqual(state!.progress[1]?.type, 'workflow_agent');
+    assert.strictEqual((state!.progress[1] as { agentId: string }).agentId, 'valid');
   });
 });

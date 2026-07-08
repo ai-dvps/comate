@@ -9,37 +9,16 @@ import {
   getSubagentCounts,
   getWorkflowPhaseIndex,
 } from '../lib/workflow-utils'
+import { workflowStatusConfig } from '../lib/workflow-status'
 import { cn } from './ui/utils'
 import SubagentBriefStatus from './SubagentBriefStatus'
-import type { WorkflowState, WorkflowStatus } from '../types/message'
+import type { WorkflowState } from '../types/message'
 
 interface WorkflowDetailPanelProps {
   runId: string
   sessionId: string
   onClose: () => void
   onOpenDrawer: (parentToolUseId: string) => void
-}
-
-const statusConfig: Record<
-  WorkflowStatus,
-  { labelKey: string; badgeClass: string }
-> = {
-  running: {
-    labelKey: 'workflowStatus.running',
-    badgeClass: 'bg-warning/10 text-warning border-warning/20',
-  },
-  completed: {
-    labelKey: 'workflowStatus.completed',
-    badgeClass: 'bg-success/10 text-success border-success/20',
-  },
-  error: {
-    labelKey: 'workflowStatus.error',
-    badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
-  },
-  killed: {
-    labelKey: 'workflowStatus.killed',
-    badgeClass: 'bg-destructive/10 text-destructive border-destructive/20',
-  },
 }
 
 function formatWorkflowDuration(workflow: WorkflowState): string {
@@ -62,7 +41,11 @@ export default function WorkflowDetailPanel({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      // Let nested drawers/modals handle Escape first. If a child has already
+      // handled the event, do not close the detail panel too.
+      if (e.defaultPrevented) return
+      onClose()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -78,7 +61,7 @@ export default function WorkflowDetailPanel({
     )
   }
 
-  const config = statusConfig[workflow.status]
+  const config = workflowStatusConfig[workflow.status]
   const currentPhaseIndex = getWorkflowPhaseIndex(workflow)
   const { completed, running, total } = getSubagentCounts(workflow)
 

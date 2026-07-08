@@ -1,8 +1,9 @@
 import type { WorkflowState, WorkflowProgressAgent, WorkflowProgressPhase } from '../types/message'
 
 export function getCurrentPhaseTitle(workflow: WorkflowState): string | undefined {
-  if (workflow.phases.length > 0) {
-    return workflow.phases[workflow.phases.length - 1]?.title
+  const phaseIndex = getWorkflowPhaseIndex(workflow)
+  if (phaseIndex >= 0 && workflow.phases[phaseIndex]) {
+    return workflow.phases[phaseIndex].title
   }
   const phaseProgress = workflow.progress.filter(
     (p): p is WorkflowProgressPhase => p.type === 'workflow_phase',
@@ -10,7 +11,7 @@ export function getCurrentPhaseTitle(workflow: WorkflowState): string | undefine
   if (phaseProgress.length > 0) {
     return phaseProgress[phaseProgress.length - 1]?.title
   }
-  return undefined
+  return workflow.phases[0]?.title
 }
 
 export function getWorkflowPhaseIndex(workflow: WorkflowState): number {

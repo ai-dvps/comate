@@ -268,58 +268,25 @@ export default function ChatMessageRenderer({
             if (part.toolName === 'Workflow') {
               const result = resultMap.get(part.toolUseId)
               const runId = extractWorkflowRunId(result)
-              if (!runId) {
-                // Fall back to the generic tool card until the async-launched
-                // result (with runId) has been delivered.
-                const summary = summarizeToolInput(part.input)
-                const state = toToolState(part, result)
+              if (runId) {
+                const workflowName =
+                  part.input &&
+                  typeof part.input === 'object' &&
+                  typeof (part.input as Record<string, unknown>).name === 'string'
+                    ? ((part.input as Record<string, unknown>).name as string)
+                    : undefined
                 return (
-                  <Tool key={partKey}>
-                    <ToolHeader
-                      state={state}
-                      summary={summary}
-                      type="tool-Workflow"
-                      autoApproved={autoApprovedTools?.[part.toolUseId]}
-                      meta={part.meta}
-                    />
-                    <ToolContent
-                      forceExpanded={isCurrentInPart}
-                      hasSearchMatch={hasMatchInPart}
-                      isCurrentSearchMatch={isCurrentInPart}
-                    >
-                      <ToolInput
-                        input={part.input}
-                        toolName={part.toolName}
-                        searchMatches={ranges}
-                      />
-                      {result && (
-                        <div className="pt-2">
-                          <ToolOutput
-                            errorText={result.isError ? result.output : undefined}
-                            output={result.isError ? undefined : result.output}
-                            searchMatches={ranges}
-                          />
-                        </div>
-                      )}
-                    </ToolContent>
-                  </Tool>
+                  <WorkflowToolCard
+                    key={partKey}
+                    runId={runId}
+                    sessionId={sessionId}
+                    workflowName={workflowName}
+                    onOpenWorkflow={onOpenWorkflow}
+                  />
                 )
               }
-              const workflowName =
-                part.input &&
-                typeof part.input === 'object' &&
-                typeof (part.input as Record<string, unknown>).name === 'string'
-                  ? ((part.input as Record<string, unknown>).name as string)
-                  : undefined
-              return (
-                <WorkflowToolCard
-                  key={partKey}
-                  runId={runId}
-                  sessionId={sessionId}
-                  workflowName={workflowName}
-                  onOpenWorkflow={onOpenWorkflow}
-                />
-              )
+              // Fall through to the generic tool card while waiting for the
+              // async-launched result (with runId) to arrive.
             }
             const result = resultMap.get(part.toolUseId)
             const state = toToolState(part, result)

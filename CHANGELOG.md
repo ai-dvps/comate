@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workflow display** — `Workflow` tool invocations now show a clickable status card in the main chat stream, a floating panel that stays visible while scrolling, and a detail view that exposes workflow phases, running/completed subagent counts, and per-subagent conversations via the existing subagent drawer. Workflow subagents are loaded from the SDK transcript directory and keyed with synthetic `workflow:<runId>:<agentId>` identifiers. Server-side support includes `workflow_start`/`workflow_update`/`workflow_done` SSE events and REST endpoints to list/read workflow state. English and Simplified Chinese i18n keys added. (v1 is display-only; cancel/retry/resume/re-invoke are out of scope.)
 
+### Fixed
+
+- **Workflow display hardening** — workflow REST endpoints now validate `sessionId`/`runId` and verify session ownership before reading disk, preventing path traversal. Workflow polling on the client uses a single recursive loop per run with fetch timeouts, aborts in-flight requests on restart/switch, stops at terminal states, and ignores stale `workflow_update` events. The current phase title is now derived from progress instead of the last configured phase. Shared `workflowStatusConfig` replaces duplicated status badge config across workflow components, and `pendingWorkflows` entries are cleaned up when the tool result arrives even if the workflow did not launch. Escape-key handling in the workflow detail panel no longer races with the subagent drawer.
+
 ### Changed
 
 - **Kimi repeated-tool-call guard** — replaced the model-agnostic dead-loop detection feature with a Kimi/Moonshot-specific guard in the main agent. The new detector tracks identical tool calls across all tools within a user turn and denies repeats with guidance when the provider is detected as Kimi/Moonshot (by model prefix or base URL). This removes workspace-level dead-loop settings, the Read-only cache, and the subagent loop poller.

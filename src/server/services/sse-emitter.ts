@@ -815,9 +815,11 @@ export class SseEmitter {
               if (wfTaskId) {
                 this.activeWorkflows.set(wfTaskId, { runId, workflowName });
               }
-              this.pendingWorkflows.delete(toolUseId);
             }
           }
+          // Always clean up the pending entry once the tool result arrives,
+          // regardless of whether the workflow actually launched.
+          this.pendingWorkflows.delete(toolUseId);
         }
       }
     }

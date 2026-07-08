@@ -37,6 +37,7 @@ describe('WorkflowFloatingPanel', () => {
       phases: [{ title: 'Plan' }, { title: 'Execute' }, { title: 'Synthesize' }],
       progress: [
         { type: 'workflow_phase', index: 0, title: 'Plan' },
+        { type: 'workflow_phase', index: 1, title: 'Execute' },
         { type: 'workflow_agent', index: 0, agentId: 'a1', state: 'done' },
         { type: 'workflow_agent', index: 1, agentId: 'a2', state: 'running' },
         { type: 'workflow_agent', index: 2, agentId: 'a3' },
@@ -65,7 +66,7 @@ describe('WorkflowFloatingPanel', () => {
     expect(screen.getByText('workflowPanelTitle')).toBeInTheDocument()
     expect(screen.getByText('Research')).toBeInTheDocument()
     expect(screen.getByText('workflowStatus.running')).toBeInTheDocument()
-    expect(screen.getByText('Synthesize')).toBeInTheDocument()
+    expect(screen.getByText('Execute')).toBeInTheDocument()
   })
 
   it('calls onOpenWorkflow with runId when a workflow item is clicked', async () => {
