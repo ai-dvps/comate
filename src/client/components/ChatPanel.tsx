@@ -393,7 +393,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           )}
 
           {activeSessionId && (
-            <div className="absolute top-4 right-4 z-20 flex max-w-xs flex-col gap-2 pointer-events-none">
+            <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2 pointer-events-none">
               <WorkflowFloatingPanel
                 sessionId={activeSessionId}
                 onOpenWorkflow={setOpenWorkflowRunId}

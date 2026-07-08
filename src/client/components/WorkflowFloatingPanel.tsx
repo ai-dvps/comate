@@ -43,7 +43,7 @@ export default function WorkflowFloatingPanel({
   if (workflows.length === 0) return null
 
   return (
-    <div className="pointer-events-auto rounded-lg border border-border bg-surface p-3 shadow-lg w-full">
+    <div className="pointer-events-auto rounded-lg border border-border bg-surface p-3 shadow-lg max-w-xs">
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
         <Workflow className="size-3.5" />
         {t('workflowPanelTitle')}
