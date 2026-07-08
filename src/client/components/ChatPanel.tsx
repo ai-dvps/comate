@@ -471,7 +471,6 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
             runId={openWorkflowRunId}
             sessionId={activeSessionId}
             onClose={handleCloseWorkflow}
-            onOpenDrawer={setOpenDrawerToolUseId}
           />
         )}
       </div>

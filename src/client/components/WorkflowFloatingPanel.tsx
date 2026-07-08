@@ -44,7 +44,7 @@ export default function WorkflowFloatingPanel({
 
   return (
     <div
-      className="absolute bottom-4 right-4 z-20 flex max-w-xs flex-col gap-2 pointer-events-none"
+      className="absolute top-4 right-4 z-20 flex max-w-xs flex-col gap-2 pointer-events-none"
       aria-label={t('workflowPanelTitle')}
     >
       <div className="pointer-events-auto rounded-lg border border-border bg-surface p-3 shadow-lg">
