@@ -69,6 +69,23 @@ describe('WorkflowFloatingPanel', () => {
     expect(screen.getByText('Execute')).toBeInTheDocument()
   })
 
+  it('renders the inner card without an outer absolute wrapper', () => {
+    mockStoreState = {
+      workflows: {
+        'session-1': [makeWorkflow('wf-1', 'running')],
+      },
+    }
+    const { container } = render(
+      <WorkflowFloatingPanel sessionId="session-1" onOpenWorkflow={() => {}} />,
+    )
+
+    const root = container.firstChild as HTMLElement
+    expect(root).not.toBeNull()
+    expect(root.className).not.toContain('absolute top-4 right-4')
+    expect(root.className).toContain('pointer-events-auto')
+    expect(root.className).toContain('rounded-lg')
+  })
+
   it('calls onOpenWorkflow with runId when a workflow item is clicked', async () => {
     const onOpenWorkflow = vi.fn()
     mockStoreState = {

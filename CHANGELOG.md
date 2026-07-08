@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Refactored
 
+- **TaskPanel floating refactor** — `TaskPanel` now anchors as a floating card in the top-right of the chat message area, stacked vertically with the `WorkflowFloatingPanel` so the two panels no longer overlap the prompt input. `TodoWrite` items are filtered out of the session task list and continue to render as normal tool cards in the message stream; only `TaskCreate`/`TaskUpdate` tool events populate the panel. Task rows support long-title wrapping and the expanded list scrolls internally. English and Simplified Chinese i18n keys added.
+
 - **Unified bot/workspace/session/member/role schema** — replaced legacy WeCom- and Feishu-specific tables (`wecom_user_sessions`, `feishu_user_sessions`, `wecom_user_id_mappings`, `wecom_workspace_users`, `feishu_workspace_users`, `feishu_active_sessions`, `feishu_bot_binding`, `bot_members`) with unified `bot_channels`, `bot_roles`, `bot_users`, and `user_sessions` tables. Bot channel settings, role policies, and role personas now live on their respective rows; the `Bot` model carries only default persona and active workspace. TypeScript types were renamed (`BotChannel` → `BotChannelKey`, `BotRole` → `BotRoleKey`, `BotMember` → `BotUser`) and API/client payloads now use `channelKey`/`roleKey`. Existing databases are migrated automatically on first start. Historical `bot_audit_logs` rows prior to the migration are discarded and are not backfilled or normalized; only audit logs written after the migration use the new event terminology. The app now shows a one-time notice on first launch after the migration when historical audit logs were cleared.
 
 ### Fixed
