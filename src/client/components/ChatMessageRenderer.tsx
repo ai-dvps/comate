@@ -252,16 +252,7 @@ export default function ChatMessageRenderer({
                   sessionId={sessionId}
                   onOpenDrawer={onOpenDrawer}
                   input={part.input}
-                  result={
-                    agentResult
-                      ? {
-                          type: 'tool_result',
-                          toolUseId: agentResult.toolUseId,
-                          output: agentResult.output,
-                          isError: agentResult.isError,
-                        }
-                      : undefined
-                  }
+                  result={agentResult}
                 />
               )
             }

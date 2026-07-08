@@ -791,7 +791,13 @@ export class SseEmitter {
           ...(toolUseResult !== undefined && { toolUseResult }),
         });
         if (this.activeSubagents.has(toolUseId)) {
-          this.finalizeSubagent(toolUseId, isError ? 'error' : 'completed');
+          const isAsyncLaunch =
+            toolUseResult &&
+            typeof toolUseResult === 'object' &&
+            (toolUseResult as Record<string, unknown>).status === 'async_launched';
+          if (!isAsyncLaunch) {
+            this.finalizeSubagent(toolUseId, isError ? 'error' : 'completed');
+          }
         }
 
         const pendingWorkflow = this.pendingWorkflows.get(toolUseId);

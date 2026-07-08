@@ -419,3 +419,134 @@ describe('SseEmitter diagnostics', { concurrency: false }, () => {
     }
   });
 });
+
+describe('SseEmitter async subagent lifecycle', { concurrency: false }, () => {
+  it('does not emit subagent_done on an async_launched Agent tool_result', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-sonnet-4-6',
+      tools: [],
+      session_id: 'session-1',
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'assistant',
+      message: {
+        id: 'msg-1',
+        content: [{ type: 'tool_use', id: 'tu-agent-1', name: 'Agent', input: { prompt: 'Research async subagents' } }],
+      },
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tu-agent-1', content: 'Async agent launched successfully', is_error: false }],
+      },
+      toolUseResult: { status: 'async_launched', agentId: 'agent-1' },
+    } as unknown as SDKMessage);
+
+    const toolResult = events.find((e) => e.type === 'tool_result');
+    assert.ok(toolResult, 'expected tool_result event');
+    assert.strictEqual(toolResult.toolUseId, 'tu-agent-1');
+    assert.ok(
+      !(toolResult as Record<string, unknown>).toolUseResult ||
+        ((toolResult as Record<string, unknown>).toolUseResult as Record<string, unknown>).status === 'async_launched',
+      'tool_result should preserve async metadata',
+    );
+    assert.ok(!events.some((e) => e.type === 'subagent_done'), 'subagent_done should not fire on async launch metadata');
+  });
+
+  it('emits subagent_done once when the subagent transcript finishes', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-sonnet-4-6',
+      tools: [],
+      session_id: 'session-1',
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'assistant',
+      message: {
+        id: 'msg-1',
+        content: [{ type: 'tool_use', id: 'tu-agent-1', name: 'Agent', input: { prompt: 'Research async subagents' } }],
+      },
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tu-agent-1', content: 'Async agent launched successfully', is_error: false }],
+      },
+      toolUseResult: { status: 'async_launched', agentId: 'agent-1' },
+    } as unknown as SDKMessage);
+
+    // Simulate subagent starting and producing output.
+    emitter.startSubagent('tu-agent-1', 'Research async subagents');
+
+    emitter.handle({
+      type: 'assistant',
+      message: {
+        id: 'msg-subagent-1',
+        content: [{ type: 'text', text: 'Subagent output' }],
+      },
+      origin: 'subagent',
+      parent_tool_use_id: 'tu-agent-1',
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'done',
+      origin: 'subagent',
+      parent_tool_use_id: 'tu-agent-1',
+    } as unknown as SDKMessage);
+
+    const dones = events.filter((e) => e.type === 'subagent_done');
+    assert.strictEqual(dones.length, 1, 'expected exactly one subagent_done');
+    assert.strictEqual(dones[0].parentToolUseId, 'tu-agent-1');
+  });
+
+  it('still finalizes a synchronous Agent tool_result', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-sonnet-4-6',
+      tools: [],
+      session_id: 'session-1',
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'assistant',
+      message: {
+        id: 'msg-1',
+        content: [{ type: 'tool_use', id: 'tu-agent-1', name: 'Agent', input: { prompt: 'Quick sync task' } }],
+      },
+    } as unknown as SDKMessage);
+
+    emitter.handle({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tu-agent-1', content: 'Sync result', is_error: false }],
+      },
+    } as unknown as SDKMessage);
+
+    const dones = events.filter((e) => e.type === 'subagent_done');
+    assert.strictEqual(dones.length, 1, 'sync Agent tool_result should finalize subagent');
+    assert.strictEqual(dones[0].parentToolUseId, 'tu-agent-1');
+  });
+});
