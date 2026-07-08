@@ -18,6 +18,7 @@ const mockChatStore = {
   messages: {},
   domCache: {},
   workflows: {},
+  tasks: {},
   fetchSessions: vi.fn(),
   sendMessage: vi.fn(),
   loadMessages: vi.fn(),
@@ -75,7 +76,10 @@ vi.mock('./SubagentDrawer', () => ({
 }))
 
 vi.mock('./TaskPanel', () => ({
-  default: () => null,
+  default: ({ sessionId }: { sessionId: string }) =>
+    mockChatStore.tasks[sessionId]?.length ? (
+      <div data-testid="task-panel">Tasks</div>
+    ) : null,
 }))
 
 vi.mock('./StatusBar', () => ({
@@ -84,6 +88,13 @@ vi.mock('./StatusBar', () => ({
 
 vi.mock('./MessageSearchBar', () => ({
   default: () => null,
+}))
+
+vi.mock('./WorkflowFloatingPanel', () => ({
+  default: ({ sessionId }: { sessionId: string }) =>
+    mockChatStore.workflows[sessionId]?.length ? (
+      <div data-testid="workflow-floating-panel">Workflows</div>
+    ) : null,
 }))
 
 vi.mock('./ChatEmptyState', () => ({
@@ -99,6 +110,8 @@ describe('ChatPanel', () => {
     mockChatStore.approvalQueue = {}
     mockChatStore.messages = {}
     mockChatStore.domCache = {}
+    mockChatStore.workflows = {}
+    mockChatStore.tasks = {}
   })
 
   it('hides the prompt input when no session is active', () => {
@@ -172,5 +185,33 @@ describe('ChatPanel', () => {
     expect(screen.queryByTestId('approval-surface')).not.toBeInTheDocument()
     expect(screen.queryByTestId('prompt-input')).not.toBeInTheDocument()
     expect(screen.getByText('Waiting for the bot user to respond in chat...')).toBeInTheDocument()
+  })
+
+  it('does not render the floating wrapper when no workflows or tasks are active', () => {
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.messages = { s1: [] }
+
+    renderWithI18n(<ChatPanel workspaceId="ws1" />)
+
+    expect(screen.queryByTestId('workflow-floating-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-panel')).not.toBeInTheDocument()
+  })
+
+  it('renders the shared floating wrapper with both panels when workflows and tasks are active', () => {
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.messages = { s1: [] }
+    mockChatStore.workflows = { s1: [{ runId: 'wf-1' }] }
+    mockChatStore.tasks = { s1: [{ id: 't1', subject: 'Task', status: 'pending' }] }
+
+    renderWithI18n(<ChatPanel workspaceId="ws1" />)
+
+    expect(screen.getByTestId('workflow-floating-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('task-panel')).toBeInTheDocument()
+
+    const wrapper = screen.getByTestId('workflow-floating-panel').parentElement
+    expect(wrapper).toHaveClass('absolute', 'top-4', 'right-4', 'z-20')
+    expect(wrapper).toHaveClass('flex', 'flex-col', 'gap-2')
   })
 })
