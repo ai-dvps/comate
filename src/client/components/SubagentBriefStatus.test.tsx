@@ -170,4 +170,159 @@ describe('SubagentBriefStatus', () => {
       expect(screen.getByText('8s')).toBeInTheDocument()
     })
   })
+
+  describe('async lifecycle', () => {
+    it('renders async-launched badge and hides raw placeholder output when no subagent exists', () => {
+      mockStore.subagents['session-1'] = []
+
+      renderWithI18n(
+        <SubagentBriefStatus
+          parentToolUseId="tu-1"
+          sessionId="session-1"
+          onOpenDrawer={() => {}}
+          result={{
+            type: 'tool_result',
+            toolUseId: 'tu-1',
+            output: 'Async agent launched successfully',
+            isError: false,
+            toolUseResult: { status: 'async_launched', agentId: 'agent-1' },
+          }}
+        />,
+      )
+
+      expect(screen.getByText('Async', { selector: '[class*="inline-flex"]' })).toBeInTheDocument()
+      expect(
+        screen.queryByText('Async agent launched successfully'),
+      ).not.toBeInTheDocument()
+    })
+
+    it('renders running-in-background badge after the first subagent delta', () => {
+      mockStore.subagents['session-1'] = [
+        makeSubagent({
+          state: 'running',
+          messages: [
+            {
+              id: 'm1',
+              role: 'assistant',
+              parts: [{ type: 'text', text: 'Started' }],
+            },
+          ],
+        }),
+      ]
+
+      renderWithI18n(
+        <SubagentBriefStatus
+          parentToolUseId="tu-1"
+          sessionId="session-1"
+          onOpenDrawer={() => {}}
+          result={{
+            type: 'tool_result',
+            toolUseId: 'tu-1',
+            output: 'Async agent launched successfully',
+            isError: false,
+            toolUseResult: { status: 'async_launched', agentId: 'agent-1' },
+          }}
+        />,
+      )
+
+      expect(screen.getByText('Running in background', { selector: '[class*="inline-flex"]' })).toBeInTheDocument()
+    })
+
+    it('does not render inline result preview for completed state', () => {
+      mockStore.subagents['session-1'] = [
+        makeSubagent({
+          state: 'completed',
+          endTime: Date.now(),
+        }),
+      ]
+
+      renderWithI18n(
+        <SubagentBriefStatus
+          parentToolUseId="tu-1"
+          sessionId="session-1"
+          onOpenDrawer={() => {}}
+          result={{
+            type: 'tool_result',
+            toolUseId: 'tu-1',
+            output: 'Final collected result',
+            isError: false,
+            toolUseResult: { status: 'completed' },
+          }}
+        />,
+      )
+
+      expect(screen.getByText('Completed', { selector: '[class*="inline-flex"]' })).toBeInTheDocument()
+      expect(screen.queryByText('Final collected result')).not.toBeInTheDocument()
+    })
+
+    it('does not render inline error preview for error state', () => {
+      mockStore.subagents['session-1'] = [
+        makeSubagent({
+          state: 'error',
+          endTime: Date.now(),
+        }),
+      ]
+
+      renderWithI18n(
+        <SubagentBriefStatus
+          parentToolUseId="tu-1"
+          sessionId="session-1"
+          onOpenDrawer={() => {}}
+          result={{
+            type: 'tool_result',
+            toolUseId: 'tu-1',
+            output: 'Something went wrong',
+            isError: true,
+          }}
+        />,
+      )
+
+      expect(screen.getByText('Error', { selector: '[class*="inline-flex"]' })).toBeInTheDocument()
+      expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument()
+    })
+
+    it('announces the async badge via aria-live', () => {
+      mockStore.subagents['session-1'] = []
+
+      renderWithI18n(
+        <SubagentBriefStatus
+          parentToolUseId="tu-1"
+          sessionId="session-1"
+          onOpenDrawer={() => {}}
+          result={{
+            type: 'tool_result',
+            toolUseId: 'tu-1',
+            output: 'Async agent launched successfully',
+            isError: false,
+            toolUseResult: { status: 'async_launched', agentId: 'agent-1' },
+          }}
+        />,
+      )
+
+      expect(screen.getByText('Async', { selector: '[aria-live="polite"]' })).toBeInTheDocument()
+    })
+
+    it('gives the Open panel button an accessible name', () => {
+      mockStore.subagents['session-1'] = []
+
+      renderWithI18n(
+        <SubagentBriefStatus
+          parentToolUseId="tu-1"
+          sessionId="session-1"
+          onOpenDrawer={() => {}}
+          result={{
+            type: 'tool_result',
+            toolUseId: 'tu-1',
+            output: 'Async agent launched successfully',
+            isError: false,
+            toolUseResult: { status: 'async_launched', agentId: 'agent-1' },
+          }}
+        />,
+      )
+
+      expect(
+        screen.getByRole('button', { name: 'Open panel' }),
+      ).toHaveAttribute('aria-expanded', 'false')
+    })
+  })
 })

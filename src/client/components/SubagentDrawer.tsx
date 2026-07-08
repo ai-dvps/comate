@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   X,
@@ -7,12 +7,18 @@ import {
   XCircleIcon,
   Bot,
   WrenchIcon,
+  Rocket,
 } from 'lucide-react'
 
 import { useChatStore } from '../stores/chat-store'
 import { formatDuration } from '../lib/time'
 import { cn } from './ui/utils'
 import SubagentConversation from './SubagentConversation'
+import {
+  getSubagentDisplayState,
+  type SubagentDisplayState,
+} from '../lib/subagent-display'
+import type { MessagePart } from '../types/message'
 
 interface SubagentDrawerProps {
   parentToolUseId: string
@@ -22,10 +28,29 @@ interface SubagentDrawerProps {
   onWidthChange: (width: number) => void
 }
 
+type ToolResultPart = Extract<MessagePart, { type: 'tool_result' }>
+
 const MIN_WIDTH = 300
 const MAX_WIDTH = 600
 
-const statusConfig = {
+const statusConfig: Record<
+  SubagentDisplayState,
+  {
+    icon: React.ReactNode
+    labelKey: string
+    badgeClass: string
+  }
+> = {
+  async_launched: {
+    icon: <Rocket className="size-4 text-accent" />,
+    labelKey: 'subagentStatus.asyncLaunched',
+    badgeClass: 'bg-accent/10 text-accent border-accent/20',
+  },
+  running_in_background: {
+    icon: <ClockIcon className="size-4 animate-pulse text-warning" />,
+    labelKey: 'subagentStatus.runningInBackground',
+    badgeClass: 'bg-warning/10 text-warning border-warning/20',
+  },
   running: {
     icon: <ClockIcon className="size-4 animate-pulse text-warning" />,
     labelKey: 'subagentStatus.running',
@@ -56,6 +81,17 @@ export default function SubagentDrawer({
       (sa) => sa.parentToolUseId === parentToolUseId,
     ),
   )
+  const result = useChatStore((s) => {
+    const messages = s.messages[sessionId] || []
+    for (const m of messages) {
+      const part = m.parts.find(
+        (p): p is ToolResultPart =>
+          p?.type === 'tool_result' && p.toolUseId === parentToolUseId,
+      )
+      if (part) return part
+    }
+    return undefined
+  })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -101,12 +137,11 @@ export default function SubagentDrawer({
     [width, onWidthChange],
   )
 
-  if (!subagent) return null
-
-  const config = statusConfig[subagent.state]
-  const duration = formatDuration(
-    (subagent.endTime || Date.now()) - subagent.startTime,
+  const displayState = useMemo(
+    () => getSubagentDisplayState(subagent ?? undefined, result),
+    [subagent, result],
   )
+  const config = statusConfig[displayState]
 
   return (
     <aside
@@ -126,7 +161,7 @@ export default function SubagentDrawer({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="truncate text-sm font-medium text-text-primary">
-                {subagent.description}
+                {subagent?.description || t('agent')}
               </span>
               <span
                 className={cn(
@@ -138,14 +173,20 @@ export default function SubagentDrawer({
                 {t(config.labelKey)}
               </span>
             </div>
-            <div className="mt-0.5 flex items-center gap-2 text-xs text-text-secondary">
-              <span>{duration}</span>
-              <span className="text-text-tertiary">•</span>
-              <span className="flex items-center gap-1">
-                <WrenchIcon className="size-3" />
-                {t('toolCount', { count: subagent.toolCount })}
-              </span>
-            </div>
+            {subagent && (
+              <div className="mt-0.5 flex items-center gap-2 text-xs text-text-secondary">
+                <span>
+                  {formatDuration(
+                    (subagent.endTime || Date.now()) - subagent.startTime,
+                  )}
+                </span>
+                <span className="text-text-tertiary">•</span>
+                <span className="flex items-center gap-1">
+                  <WrenchIcon className="size-3" />
+                  {t('toolCount', { count: subagent.toolCount })}
+                </span>
+              </div>
+            )}
           </div>
         </div>
         <button
@@ -157,12 +198,18 @@ export default function SubagentDrawer({
         </button>
       </div>
 
-      {/* Conversation */}
-      <SubagentConversation
-        messages={subagent.messages}
-        isRunning={subagent.state === 'running'}
-        sessionId={sessionId}
-      />
+      {/* Conversation or placeholder */}
+      {subagent ? (
+        <SubagentConversation
+          messages={subagent.messages}
+          isRunning={subagent.state === 'running'}
+          sessionId={sessionId}
+        />
+      ) : (
+        <div className="flex h-full items-center justify-center text-sm text-text-secondary">
+          {t('subagentHint.asyncLaunched')}
+        </div>
+      )}
     </aside>
   )
 }
