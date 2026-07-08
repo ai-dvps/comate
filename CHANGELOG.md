@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workflow history hydration** — reopening a session now restores completed and still-running workflows from disk into the chat-store workflow slice. `loadMessages`/`loadMessagesAfter` return `workflows` alongside messages/tasks/subagents, workflow subagent IDs are filtered out of the top-level subagent list to avoid "Could not map subagent ... to a parent toolUseId" warnings, and non-terminal workflows resume polling after history load so the floating panel appears for workflows that ran while the session was closed.
 
+- **Workflow floating panel position** — the workflow floating panel now anchors to the top-right of the chat area so it no longer overlaps the prompt input box.
+
+- **Workflow detail subagent drawer** — clicking a subagent inside the workflow detail modal now opens its drawer inside the modal rather than in the main message list.
+
 - **Workflow display hardening** — workflow REST endpoints now validate `sessionId`/`runId` and verify session ownership before reading disk, preventing path traversal. Workflow polling on the client uses a single recursive loop per run with fetch timeouts, aborts in-flight requests on restart/switch, stops at terminal states, and ignores stale `workflow_update` events. The current phase title is now derived from progress instead of the last configured phase. Shared `workflowStatusConfig` replaces duplicated status badge config across workflow components, and `pendingWorkflows` entries are cleaned up when the tool result arrives even if the workflow did not launch. Escape-key handling in the workflow detail panel no longer races with the subagent drawer.
 
 ### Changed

@@ -71,7 +71,6 @@ describe('WorkflowDetailPanel', () => {
         runId="wf-1"
         sessionId="session-1"
         onClose={() => {}}
-        onOpenDrawer={() => {}}
       />,
     )
 
@@ -82,8 +81,7 @@ describe('WorkflowDetailPanel', () => {
     expect(screen.getByText('workflowDetailSubagents')).toBeInTheDocument()
   })
 
-  it('opens the subagent drawer when a subagent is clicked', async () => {
-    const onOpenDrawer = vi.fn()
+  it('opens the subagent drawer inside the modal when a subagent is clicked', async () => {
     mockStoreState = {
       workflows: { 'session-1': [makeWorkflow('wf-1')] },
       subagents: {
@@ -100,17 +98,19 @@ describe('WorkflowDetailPanel', () => {
         ],
       },
     }
-    render(
+    const { container } = render(
       <WorkflowDetailPanel
         runId="wf-1"
         sessionId="session-1"
         onClose={() => {}}
-        onOpenDrawer={onOpenDrawer}
       />,
     )
 
+    expect(container.querySelector('aside')).toBeNull()
     await userEvent.click(screen.getByTitle('openSubagentPanel'))
-    expect(onOpenDrawer).toHaveBeenCalledWith('workflow:wf-1:a1')
+    const drawer = container.querySelector('aside')
+    expect(drawer).not.toBeNull()
+    expect(drawer?.textContent).toContain('Agent one')
   })
 
   it('calls onClose when Escape is pressed', () => {
@@ -124,7 +124,6 @@ describe('WorkflowDetailPanel', () => {
         runId="wf-1"
         sessionId="session-1"
         onClose={onClose}
-        onOpenDrawer={() => {}}
       />,
     )
 
@@ -138,7 +137,6 @@ describe('WorkflowDetailPanel', () => {
         runId="wf-missing"
         sessionId="session-1"
         onClose={() => {}}
-        onOpenDrawer={() => {}}
       />,
     )
 
