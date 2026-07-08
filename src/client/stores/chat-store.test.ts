@@ -1338,3 +1338,182 @@ describe('workflow state', () => {
   })
 })
 
+describe('task scanning and filtering', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [{ id: 's1', workspaceId: 'ws-1', name: 'Test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] },
+      messages: {},
+      subagents: {},
+      workflows: {},
+      tasks: {},
+      pendingTaskCreates: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+    })
+  })
+
+  function makeTodoWriteMessage(): { id: string; role: 'assistant'; timestamp: number; parts: unknown[] } {
+    return {
+      id: 'm1',
+      role: 'assistant',
+      timestamp: 1,
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tool-todo',
+          toolName: 'TodoWrite',
+          input: { todos: [{ content: 'Buy milk', status: 'in_progress' }] },
+        },
+      ],
+    }
+  }
+
+  function makeTaskCreateMessages(): { id: string; role: 'assistant'; timestamp: number; parts: unknown[] } {
+    return {
+      id: 'm1',
+      role: 'assistant',
+      timestamp: 1,
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tool-create',
+          toolName: 'TaskCreate',
+          input: { subject: 'Write tests', activeForm: 'Planning test cases' },
+        },
+        {
+          type: 'tool_result',
+          toolUseId: 'tool-create',
+          output: JSON.stringify({ task: { id: 'task-1', subject: 'Write tests' } }),
+          isError: false,
+        },
+      ],
+    }
+  }
+
+  function makeTaskUpdateMessages(): { id: string; role: 'assistant'; timestamp: number; parts: unknown[] } {
+    return {
+      id: 'm1',
+      role: 'assistant',
+      timestamp: 1,
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tool-create',
+          toolName: 'TaskCreate',
+          input: { subject: 'Write tests' },
+        },
+        {
+          type: 'tool_result',
+          toolUseId: 'tool-create',
+          output: JSON.stringify({ task: { id: 'task-1', subject: 'Write tests' } }),
+          isError: false,
+        },
+        {
+          type: 'tool_use',
+          toolUseId: 'tool-update',
+          toolName: 'TaskUpdate',
+          input: { taskId: 'task-1', status: 'completed' },
+        },
+      ],
+    }
+  }
+
+  it('loadMessages filters out TodoWrite entries from tasks', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ messages: [makeTodoWriteMessage()], tasks: [], subagents: [] })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      const state = useChatStore.getState()
+      assert.deepStrictEqual(state.tasks['s1'], [])
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('loadMessages defensively filters todowrite-* server tasks', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({
+      messages: [],
+      tasks: [{ id: 'todowrite-0', subject: 'Server todo', status: 'in_progress' }],
+      subagents: [],
+    })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      const state = useChatStore.getState()
+      assert.deepStrictEqual(state.tasks['s1'], [])
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('loadMessages creates tasks from TaskCreate + tool_result', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ messages: [makeTaskCreateMessages()], tasks: [], subagents: [] })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      const state = useChatStore.getState()
+      assert.strictEqual(state.tasks['s1']?.length, 1)
+      assert.strictEqual(state.tasks['s1'][0].id, 'task-1')
+      assert.strictEqual(state.tasks['s1'][0].subject, 'Write tests')
+      assert.strictEqual(state.tasks['s1'][0].activeForm, 'Planning test cases')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('loadMessages updates existing task via TaskUpdate', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ messages: [makeTaskUpdateMessages()], tasks: [], subagents: [] })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      const state = useChatStore.getState()
+      assert.strictEqual(state.tasks['s1'][0].status, 'completed')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('live TodoWrite tool_use_done does not modify tasks', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({ tasks: { s1: [{ id: 'task-1', subject: 'Existing task', status: 'in_progress' }] } })
+
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 'tool-todo',
+      toolName: 'TodoWrite',
+    })
+
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_done', {
+      toolUseId: 'tool-todo',
+      input: { todos: [{ content: 'Buy milk', status: 'in_progress' }] },
+    })
+
+    const state = useChatStore.getState()
+    assert.strictEqual(state.tasks['s1']?.length, 1)
+    assert.strictEqual(state.tasks['s1'][0].id, 'task-1')
+  })
+
+  it('live TaskCreate tool_use_done stores pending task create', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 'tool-create',
+      toolName: 'TaskCreate',
+    })
+
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_done', {
+      toolUseId: 'tool-create',
+      input: { subject: 'Write tests', activeForm: 'Planning test cases' },
+    })
+
+    const state = useChatStore.getState()
+    assert.ok(state.pendingTaskCreates['s1']?.['tool-create'])
+    assert.strictEqual(state.pendingTaskCreates['s1']['tool-create'].subject, 'Write tests')
+    assert.strictEqual(state.pendingTaskCreates['s1']['tool-create'].activeForm, 'Planning test cases')
+  })
+})
+
