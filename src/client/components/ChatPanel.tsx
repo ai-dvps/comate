@@ -344,9 +344,6 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
         </div>
       </div>
 
-      {/* Task Panel */}
-      {activeSessionId && <TaskPanel sessionId={activeSessionId} />}
-
       {/* Main content row: chat area + optional subagent panel */}
       <div className="flex flex-1 overflow-hidden">
         {/* Messages */}
@@ -396,10 +393,13 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
           )}
 
           {activeSessionId && (
-            <WorkflowFloatingPanel
-              sessionId={activeSessionId}
-              onOpenWorkflow={setOpenWorkflowRunId}
-            />
+            <div className="absolute top-4 right-4 z-20 flex max-w-xs flex-col gap-2 pointer-events-none">
+              <WorkflowFloatingPanel
+                sessionId={activeSessionId}
+                onOpenWorkflow={setOpenWorkflowRunId}
+              />
+              <TaskPanel sessionId={activeSessionId} />
+            </div>
           )}
 
           {/* Approval Surface or Prompt Input */}
