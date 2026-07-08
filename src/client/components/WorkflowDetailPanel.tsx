@@ -213,7 +213,7 @@ function Modal({
         className="absolute inset-0 bg-overlay/60 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="relative flex max-h-[85vh] w-full max-w-4xl flex-row overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
+      <div className="relative flex h-[85vh] w-full max-w-4xl flex-row overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
         {children}
       </div>
     </div>

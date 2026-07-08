@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workflow floating panel position** — the workflow floating panel now anchors to the top-right of the chat area so it no longer overlaps the prompt input box.
 
-- **Workflow detail subagent drawer** — clicking a subagent inside the workflow detail modal now opens its drawer inside the modal rather than in the main message list.
+- **Workflow detail subagent drawer** — clicking a subagent inside the workflow detail modal now opens its drawer inside the modal rather than in the main message list, and the modal has a fixed height so the drawer conversation can scroll when content is long.
 
 - **Workflow display hardening** — workflow REST endpoints now validate `sessionId`/`runId` and verify session ownership before reading disk, preventing path traversal. Workflow polling on the client uses a single recursive loop per run with fetch timeouts, aborts in-flight requests on restart/switch, stops at terminal states, and ignores stale `workflow_update` events. The current phase title is now derived from progress instead of the last configured phase. Shared `workflowStatusConfig` replaces duplicated status badge config across workflow components, and `pendingWorkflows` entries are cleaned up when the tool result arrives even if the workflow did not launch. Escape-key handling in the workflow detail panel no longer races with the subagent drawer.
 
