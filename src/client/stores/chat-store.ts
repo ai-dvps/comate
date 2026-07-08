@@ -770,30 +770,7 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
     for (const part of message.parts) {
       if (!part) continue
       if (part.type === 'tool_use') {
-        if (part.toolName === 'TodoWrite') {
-          const input = part.input as
-            | {
-                todos?: Array<{
-                  content: string
-                  status: string
-                  activeForm?: string
-                }>
-              }
-            | undefined
-          if (input?.todos) {
-            tasks.length = 0
-            taskMap.clear()
-            input.todos.forEach((todo, index) => {
-              const item: TaskItem = {
-                id: `todowrite-${index}`,
-                subject: todo.content,
-                status: normalizeSdkStatus(todo.status),
-                activeForm: todo.activeForm,
-              }
-              tasks.push(item)
-            })
-          }
-        } else if (part.toolName === 'TaskCreate') {
+        if (part.toolName === 'TaskCreate') {
           const input = part.input as
             | { subject: string; description?: string; activeForm?: string }
             | undefined
@@ -1196,20 +1173,7 @@ export function handleSseEvent(
           state: 'complete',
         }))
         const toolName = findToolName(state, sessionId, toolUseId)
-        if (toolName === 'TodoWrite') {
-          const todoInput = input as
-            | { todos?: Array<{ content: string; status: string; activeForm?: string }> }
-            | undefined
-          if (todoInput?.todos) {
-            const newTasks = todoInput.todos.map((todo, index) => ({
-              id: `todowrite-${index}`,
-              subject: todo.content,
-              status: normalizeSdkStatus(todo.status),
-              activeForm: todo.activeForm,
-            }))
-            updates.tasks = { ...state.tasks, [sessionId]: newTasks }
-          }
-        } else if (toolName === 'TaskCreate') {
+        if (toolName === 'TaskCreate') {
           const createInput = input as
             | { subject: string; description?: string; activeForm?: string }
             | undefined
@@ -2645,9 +2609,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const pruned = pruneWindow(mappedMessages, state.windowCap)
         const scannedTasks = scanMessagesForTasks(mappedMessages)
         const taskMap = new Map<string, TaskItem>()
-        for (const task of serverTasks) taskMap.set(task.id, task)
+        for (const task of serverTasks) {
+          if (!task.id.startsWith('todowrite-')) taskMap.set(task.id, task)
+        }
         for (const task of scannedTasks) {
-          if (!taskMap.has(task.id)) taskMap.set(task.id, task)
+          if (!task.id.startsWith('todowrite-')) taskMap.set(task.id, task)
         }
 
         const existingSubagents = state.subagents[sessionId] || []
