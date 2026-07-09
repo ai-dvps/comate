@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Marketing website** — added a bilingual (Chinese/English) static marketing site under `website/` built with Astro 7 and Tailwind CSS 4. It includes Home, Features, Usage, Download, About, and FAQ pages, light/dark theme support, and a GitHub Pages deployment workflow at `.github/workflows/deploy-website.yml`.
+
 ### Fixed
 
 - **Message panel double scrollbar** — the `Conversation` wrapper no longer sets `overflow-y-auto`; only the inner `StickToBottom.Content` scroll container is used. This removes the duplicate scrollbar that appeared in the message panel when the non-virtualized message list was active.
