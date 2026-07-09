@@ -18,10 +18,10 @@ import { join } from 'path';
 
 /**
  * Encode a workspace folderPath into the directory name Claude Code uses under
- * `~/.claude/projects/`. Every `/` or `\` becomes `-`.
+ * `~/.claude/projects/`. Every `/`, `\`, or Windows drive-letter `:` becomes `-`.
  */
 export function encodeProjectDir(folderPath: string): string {
-  return folderPath.replace(/[/\\]/g, '-');
+  return folderPath.replace(/[/\\:]/g, '-');
 }
 
 /**

@@ -146,6 +146,7 @@ function renderViewItem(
           key={item.messageId}
           event={item.event}
           messageId={item.messageId}
+          timestamp={item.timestamp}
         />
       )
     }
@@ -154,6 +155,7 @@ function renderViewItem(
         key={item.messageId}
         kind="single"
         event={item.event}
+        timestamp={item.timestamp}
       />
     )
   }
@@ -163,6 +165,7 @@ function renderViewItem(
         key={item.messageIds[0]}
         event={item.slash}
         messageId={item.messageIds[0]}
+        timestamp={item.timestamp}
       />
     )
   }

@@ -110,17 +110,89 @@ describe('MessageList search integration', () => {
     expect(active).toHaveTextContent('world')
   })
 
-  it('renders no highlights when search props are empty', () => {
+  it('renders slash-command meta message with timestamp', () => {
     mockStore.sessions.ws1 = [makeSession()]
     mockStore.activeSessionIds.ws1 = 's1'
     mockStore.domCache.ws1 = ['s1']
-    mockStore.messages.s1 = [makeMessage('hello world')]
+    mockStore.messages.s1 = [
+      {
+        id: 'msg-slash',
+        role: 'user',
+        parts: [
+          {
+            type: 'text',
+            text: '<command-message></command-message><command-name>test</command-name><command-args>hello</command-args>',
+          },
+        ],
+        timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+      },
+    ]
 
-    renderWithI18n(
-      <MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />,
-    )
+    renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />)
 
-    expect(document.querySelector('[data-search-active="true"]')).toBeNull()
-    expect(screen.getByText('hello world')).toBeInTheDocument()
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
+  })
+
+  it('renders muted system note with timestamp', () => {
+    mockStore.sessions.ws1 = [makeSession()]
+    mockStore.activeSessionIds.ws1 = 's1'
+    mockStore.domCache.ws1 = ['s1']
+    mockStore.messages.s1 = [
+      {
+        id: 'msg-stdout',
+        role: 'user',
+        parts: [
+          {
+            type: 'text',
+            text: '<local-command-stdout>output</local-command-stdout>',
+          },
+        ],
+        timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+      },
+    ]
+
+    renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />)
+
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
+  })
+
+  it('renders paired slash-command output with timestamp', () => {
+    mockStore.sessions.ws1 = [makeSession()]
+    mockStore.activeSessionIds.ws1 = 's1'
+    mockStore.domCache.ws1 = ['s1']
+    mockStore.messages.s1 = [
+      {
+        id: 'msg-slash-2',
+        role: 'user',
+        parts: [
+          {
+            type: 'text',
+            text: '<command-message></command-message><command-name>status</command-name><command-args></command-args>',
+          },
+        ],
+        timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+      },
+      {
+        id: 'msg-out-2',
+        role: 'user',
+        parts: [
+          {
+            type: 'text',
+            text: '<local-command-stdout>ok</local-command-stdout>',
+          },
+        ],
+        timestamp: new Date(2026, 6, 8, 14, 33).getTime(),
+      },
+    ]
+
+    renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />)
+
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
   })
 })

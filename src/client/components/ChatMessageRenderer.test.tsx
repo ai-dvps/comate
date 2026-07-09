@@ -147,6 +147,63 @@ describe('ChatMessageRenderer search highlights', () => {
   })
 })
 
+describe('ChatMessageRenderer timestamps', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('renders todays timestamp for a user message', () => {
+    const now = new Date(2026, 6, 9, 10, 0).getTime()
+    vi.useFakeTimers({ now })
+    const message = makeTextMessage('hello world', 'user')
+    message.timestamp = new Date(2026, 6, 9, 14, 32).getTime()
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    const timestamp = screen.getByText('14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
+  })
+
+  it('renders older timestamp for an assistant message', () => {
+    const message = makeTextMessage('hello world', 'assistant')
+    message.timestamp = new Date(2026, 6, 8, 14, 32).getTime()
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
+  })
+
+  it('renders timestamp for api_retry system messages', () => {
+    const message: RenderableMessage = {
+      id: 'msg-1',
+      role: 'system',
+      subType: 'api_retry',
+      parts: [{ type: 'text', text: 'Retrying API request' }],
+      timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
+  })
+
+  it('renders timestamp for generic system messages', () => {
+    const message: RenderableMessage = {
+      id: 'msg-1',
+      role: 'system',
+      parts: [{ type: 'text', text: 'system warning' }],
+      timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
+  })
+})
+
 describe('ChatMessageRenderer Workflow card', () => {
   function makeWorkflowMessage(toolUseId: string): RenderableMessage {
     return {

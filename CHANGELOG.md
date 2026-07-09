@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Bot channel credential reveal** — saved WeCom/Feishu secret fields in Bot Management are now populated automatically when the Channels section opens, masked by default. The eye button toggles between masked and plaintext display; plaintext is fetched from the server only when needed and writes a `channel_credentials_viewed` audit log entry. Credentials remain encrypted at rest. New endpoint: `GET /api/bots/:id/channels/:channelKey/credentials`. English and Simplified Chinese i18n keys reused existing credential labels.
+- **Message timestamps** — chat messages now display a timestamp below the message content: `HH:mm` for messages sent today and `YYYY-MM-DD HH:mm` for older messages. Timestamps appear for user, assistant, system, and meta (slash command / muted system note) messages in both the standard and virtualized message lists. No backend changes were required; the UI consumes the existing `ChatMessage.timestamp` field.
 
 - **Bot member plaintext management** — bot member rows now show the channel user ID alongside its resolved plaintext user ID (and Feishu display name when available). Members with an unresolved plaintext ID are marked as "Pending" and can be resolved in bulk via a "Resolve pending" button, or manually by typing a fallback plaintext ID inline. A dedicated "Refresh" button reloads only the member list. WeCom and Feishu message handlers now automatically add first-time messengers as `normal` bot members, while preserving existing `owner`/`admin` roles. English and Simplified Chinese i18n keys added.
 
@@ -21,7 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Workflow display** — `Workflow` tool invocations now show a clickable status card in the main chat stream, a floating panel that stays visible while scrolling, and a detail view that exposes workflow phases, running/completed subagent counts, and per-subagent conversations via the existing subagent drawer. Workflow subagents are loaded from the SDK transcript directory and keyed with synthetic `workflow:<runId>:<agentId>` identifiers. Server-side support includes `workflow_start`/`workflow_update`/`workflow_done` SSE events and REST endpoints to list/read workflow state. English and Simplified Chinese i18n keys added. (v1 is display-only; cancel/retry/resume/re-invoke are out of scope.)
 
+- **Async subagent message display** — Agent tool invocations that run as async/background subagents now render a clean inline lifecycle card (async-launched → running-in-background → completed/error) instead of dumping raw launch metadata such as "Async agent launched successfully". Completed and error cards intentionally omit inline result/error previews; the full transcript remains available via the existing subagent drawer. The backend no longer emits subagent_done on async-launch metadata, and the chat store can replace an async-placeholder tool_result with the final collected result. New aria-live region and improved Open panel button accessibility. English and Simplified Chinese i18n keys added.
+
 ### Fixed
+
+- **TaskPanel internal task filtering** — `TaskCreate` tool calls that include `metadata: { _internal: true }` are now excluded from the TaskPanel task list, matching Claude Code's own `TaskListTool`/`useTasksV2` convention. This prevents subagent internal tracking tasks (for example, "Reading ...", "Running ...", or "... doc review") from appearing as user-visible tasks while still leaving them in the message transcript.
 
 - **Workflow history hydration** — reopening a session now restores completed and still-running workflows from disk into the chat-store workflow slice. `loadMessages`/`loadMessagesAfter` return `workflows` alongside messages/tasks/subagents, workflow subagent IDs are filtered out of the top-level subagent list to avoid "Could not map subagent ... to a parent toolUseId" warnings, and non-terminal workflows resume polling after history load so the floating panel appears for workflows that ran while the session was closed.
 
