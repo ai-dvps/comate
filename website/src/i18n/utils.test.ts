@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { localizePath, stripLocalePrefix, useTranslations } from './utils.js';
+import {
+  getContentLocale,
+  localizePath,
+  stripLocalePrefix,
+  useTranslations,
+} from './utils.js';
 
 describe('useTranslations', () => {
   it('returns the Chinese string for the Chinese locale', () => {
@@ -46,3 +51,14 @@ describe('localizePath', () => {
     expect(localizePath('/', 'en')).toBe('/en/');
   });
 });
+
+describe('getContentLocale', () => {
+  it('maps zh locale path to zh-CN content tag', () => {
+    expect(getContentLocale('zh')).toBe('zh-CN');
+  });
+
+  it('keeps en locale path as en', () => {
+    expect(getContentLocale('en')).toBe('en');
+  });
+});
+

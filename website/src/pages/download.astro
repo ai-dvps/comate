@@ -1,0 +1,46 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import LanguagePicker from '../components/LanguagePicker.astro';
+
+const locale = 'zh';
+const releasesUrl = 'https://github.com/ai-dvps/comate/releases';
+---
+
+<BaseLayout title="下载 Comate" description="下载 Comate 桌面应用">
+  <Nav>
+    <LanguagePicker slot="language-picker" />
+    <LanguagePicker slot="language-picker-mobile" />
+  </Nav>
+
+  <main class="mx-auto max-w-3xl px-4 py-16 md:py-24">
+    <h1 class="text-4xl font-bold text-text-primary">下载 Comate</h1>
+    <p class="mt-4 text-lg text-text-secondary">
+      获取最新版本，支持 macOS 和 Windows。
+    </p>
+
+    <div class="mt-8 rounded-lg border border-border bg-surface p-6">
+      <h2 class="text-xl font-semibold text-text-primary">从 GitHub Releases 安装</h2>
+      <ol class="mt-4 list-decimal space-y-2 pl-5 text-text-secondary">
+        <li>访问 GitHub Releases 页面。</li>
+        <li>下载适合您系统的安装包（.dmg 或 .exe）。</li>
+        <li>运行安装程序并按提示完成安装。</li>
+      </ol>
+      <a
+        href={releasesUrl}
+        class="mt-6 inline-flex items-center rounded-md bg-accent px-5 py-2.5 font-medium text-accent-foreground no-underline hover:bg-accent-hover"
+      >
+        前往 GitHub Releases
+      </a>
+    </div>
+
+    <p class="mt-6 text-sm text-text-tertiary">
+      更新记录同样托管在
+      <a href={releasesUrl} class="underline-offset-2">GitHub Releases</a>
+      上。
+    </p>
+  </main>
+
+  <Footer />
+</BaseLayout>

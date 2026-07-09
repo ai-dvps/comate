@@ -1,0 +1,45 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import LanguagePicker from '../../components/LanguagePicker.astro';
+
+const locale = 'en';
+const releasesUrl = 'https://github.com/ai-dvps/comate/releases';
+---
+
+<BaseLayout title="Download Comate" description="Download the Comate desktop app">
+  <Nav>
+    <LanguagePicker slot="language-picker" />
+    <LanguagePicker slot="language-picker-mobile" />
+  </Nav>
+
+  <main class="mx-auto max-w-3xl px-4 py-16 md:py-24">
+    <h1 class="text-4xl font-bold text-text-primary">Download Comate</h1>
+    <p class="mt-4 text-lg text-text-secondary">
+      Get the latest version for macOS and Windows.
+    </p>
+
+    <div class="mt-8 rounded-lg border border-border bg-surface p-6">
+      <h2 class="text-xl font-semibold text-text-primary">Install from GitHub Releases</h2>
+      <ol class="mt-4 list-decimal space-y-2 pl-5 text-text-secondary">
+        <li>Go to the GitHub Releases page.</li>
+        <li>Download the installer for your system (.dmg or .exe).</li>
+        <li>Run the installer and follow the prompts.</li>
+      </ol>
+      <a
+        href={releasesUrl}
+        class="mt-6 inline-flex items-center rounded-md bg-accent px-5 py-2.5 font-medium text-accent-foreground no-underline hover:bg-accent-hover"
+      >
+        Go to GitHub Releases
+      </a>
+    </div>
+
+    <p class="mt-6 text-sm text-text-tertiary">
+      Release notes are also hosted on
+      <a href={releasesUrl} class="underline-offset-2">GitHub Releases</a>.
+    </p>
+  </main>
+
+  <Footer />
+</BaseLayout>
