@@ -1,0 +1,59 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import LanguagePicker from '../components/LanguagePicker.astro';
+---
+
+<BaseLayout title="关于 — Comate" description="关于 Comate">
+  <Nav>
+    <LanguagePicker slot="language-picker" />
+    <LanguagePicker slot="language-picker-mobile" />
+  </Nav>
+
+  <main class="mx-auto max-w-3xl px-4 py-16 md:py-24">
+    <h1 class="text-4xl font-bold text-text-primary md:text-5xl">关于 Comate</h1>
+
+    <section class="mt-8 space-y-4 text-text-secondary">
+      <p>
+        Comate 是一款面向开发者和团队的桌面端 AI 工作区。我们将 Claude Code 的能力封装进原生 Tauri 应用，让你可以在一个统一的界面中管理工作区、进行多轮对话、浏览项目文件、跟踪任务，并通过 WeCom 机器人与团队协作。
+      </p>
+      <p>
+        我们的目标不是做一个“更好的聊天窗口”，而是把 AI 变成日常工作流的一部分：以项目文件夹为起点，让每次对话都保留上下文，让每个工具调用都清晰可见。
+      </p>
+    </section>
+
+    <section class="mt-10">
+      <h2 class="text-xl font-semibold text-text-primary">适用场景</h2>
+      <ul class="mt-4 list-disc space-y-2 pl-5 text-text-secondary">
+        <li>需要同时管理多个项目的独立开发者</li>
+        <li>希望把 AI 会话与代码仓库对齐的小团队</li>
+        <li>需要通过 WeCom 机器人共享 AI 能力的组织</li>
+        <li>追求本地优先、数据可控的桌面体验的用户</li>
+      </ul>
+    </section>
+
+    <section class="mt-10">
+      <h2 class="text-xl font-semibold text-text-primary">开源协议</h2>
+      <p class="mt-4 text-text-secondary">
+        Comate 采用 Apache License 2.0 开源。你可以在
+        <a
+          href="https://github.com/ai-dvps/comate"
+          class="text-accent underline-offset-2 hover:text-accent-hover"
+        >GitHub</a>
+        上查看源码、提交 Issue 或参与贡献。
+      </p>
+    </section>
+
+    <section class="mt-10">
+      <a
+        href="/comate/faq/"
+        class="inline-flex items-center rounded-md bg-accent px-5 py-2.5 font-medium text-accent-foreground no-underline hover:bg-accent-hover"
+      >
+        查看常见问题
+      </a>
+    </section>
+  </main>
+
+  <Footer />
+</BaseLayout>

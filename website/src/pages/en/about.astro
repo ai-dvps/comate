@@ -1,0 +1,58 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import LanguagePicker from '../../components/LanguagePicker.astro';
+---
+
+<BaseLayout title="About — Comate" description="About Comate">
+  <Nav>
+    <LanguagePicker slot="language-picker" />
+    <LanguagePicker slot="language-picker-mobile" />
+  </Nav>
+
+  <main class="mx-auto max-w-3xl px-4 py-16 md:py-24">
+    <h1 class="text-4xl font-bold text-text-primary md:text-5xl">About Comate</h1>
+
+    <section class="mt-8 space-y-4 text-text-secondary">
+      <p>
+        Comate is a desktop AI workspace for developers and teams. We wrap Claude Code in a native Tauri app so you can manage workspaces, hold multi-turn conversations, browse project files, track tasks, and collaborate through WeCom bots — all in one place.
+      </p>
+      <p>
+        The goal is not to build another chat window, but to make AI part of your everyday workflow: start from a project folder, keep context across sessions, and make every tool call visible and controllable.
+      </p>
+    </section>
+
+    <section class="mt-10">
+      <h2 class="text-xl font-semibold text-text-primary">Who it’s for</h2>
+      <ul class="mt-4 list-disc space-y-2 pl-5 text-text-secondary">
+        <li>Solo developers juggling multiple projects</li>
+        <li>Small teams who want AI sessions aligned with their code repositories</li>
+        <li>Organizations sharing AI capabilities through WeCom bots</li>
+        <li>Users who prefer a local-first, data-on-device desktop experience</li>
+      </ul>
+    </section>
+
+    <section class="mt-10">
+      <h2 class="text-xl font-semibold text-text-primary">License</h2>
+      <p class="mt-4 text-text-secondary">
+        Comate is released under the Apache License 2.0. Find the source, open issues, and contribute on
+        <a
+          href="https://github.com/ai-dvps/comate"
+          class="text-accent underline-offset-2 hover:text-accent-hover"
+        >GitHub</a>.
+      </p>
+    </section>
+
+    <section class="mt-10">
+      <a
+        href="/comate/en/faq/"
+        class="inline-flex items-center rounded-md bg-accent px-5 py-2.5 font-medium text-accent-foreground no-underline hover:bg-accent-hover"
+      >
+        Read the FAQ
+      </a>
+    </section>
+  </main>
+
+  <Footer />
+</BaseLayout>

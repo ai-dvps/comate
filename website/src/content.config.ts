@@ -41,11 +41,4 @@ const faq = defineCollection({
   }),
 });
 
-const download = defineCollection({
-  loader: glob({ pattern: '**/*.mdx', base: './src/content/download' }),
-  schema: z.object({
-    title: z.string(),
-  }),
-});
-
-export const collections = { home, features, usage, faq, download };
+export const collections = { home, features, usage, faq };

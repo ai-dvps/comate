@@ -1,0 +1,18 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import LanguagePicker from '../../components/LanguagePicker.astro';
+import UsageContent from '../../components/UsageContent.astro';
+---
+
+<BaseLayout title="Usage — Comate" description="How to use Comate">
+  <Nav>
+    <LanguagePicker slot="language-picker" />
+    <LanguagePicker slot="language-picker-mobile" />
+  </Nav>
+
+  <UsageContent locale="en" />
+
+  <Footer />
+</BaseLayout>
