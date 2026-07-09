@@ -69,12 +69,13 @@ export function isWrapperShape(text: string): boolean {
 
 export type ViewItem =
   | { kind: 'message'; message: ChatMessage }
-  | { kind: 'meta'; event: CliMetaEvent; messageId: string }
+  | { kind: 'meta'; event: CliMetaEvent; messageId: string; timestamp?: number }
   | {
       kind: 'meta-paired'
       slash: SlashCommandEvent
       output: LocalStdoutEvent | LocalStderrEvent
       messageIds: [string, string]
+      timestamp?: number
     }
 
 const MAX_PAIRED_OUTPUT_CHARS = 80
@@ -119,7 +120,7 @@ export function pairCliMeta(messages: ChatMessage[]): ViewItem[] {
       continue
     }
 
-    intermediate.push({ kind: 'meta', event, messageId: message.id })
+    intermediate.push({ kind: 'meta', event, messageId: message.id, timestamp: message.timestamp })
   }
 
   const result: ViewItem[] = []
@@ -140,6 +141,7 @@ export function pairCliMeta(messages: ChatMessage[]): ViewItem[] {
         slash: current.event,
         output: next.event,
         messageIds: [current.messageId, next.messageId],
+        timestamp: current.timestamp,
       })
       i++
       continue

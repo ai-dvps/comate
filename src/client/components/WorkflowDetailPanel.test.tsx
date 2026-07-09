@@ -16,9 +16,10 @@ vi.mock('react-i18next', () => ({
   I18nextProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
-let mockStoreState: { workflows: Record<string, WorkflowState[]>; subagents: Record<string, SubagentState[]> } = {
+let mockStoreState: { workflows: Record<string, WorkflowState[]>; subagents: Record<string, SubagentState[]>; messages: Record<string, unknown[]> } = {
   workflows: {},
   subagents: {},
+  messages: {},
 }
 
 vi.mock('../stores/chat-store', () => ({
@@ -58,7 +59,7 @@ function makeWorkflow(runId: string): WorkflowState {
 
 describe('WorkflowDetailPanel', () => {
   beforeEach(() => {
-    mockStoreState = { workflows: {}, subagents: {} }
+    mockStoreState = { workflows: {}, subagents: {}, messages: {} }
   })
 
   it('renders workflow name, status, and phases', () => {
@@ -97,6 +98,7 @@ describe('WorkflowDetailPanel', () => {
           },
         ],
       },
+      messages: {},
     }
     const { container } = render(
       <WorkflowDetailPanel
