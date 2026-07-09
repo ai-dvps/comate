@@ -160,6 +160,29 @@ describe('MessageList search integration', () => {
     expect(timestamp).toHaveClass('opacity-0')
   })
 
+  it('does not render timestamp for system-reminder meta message', () => {
+    mockStore.sessions.ws1 = [makeSession()]
+    mockStore.activeSessionIds.ws1 = 's1'
+    mockStore.domCache.ws1 = ['s1']
+    mockStore.messages.s1 = [
+      {
+        id: 'msg-reminder',
+        role: 'user',
+        parts: [
+          {
+            type: 'text',
+            text: '<system-reminder>Please remember to check the logs</system-reminder>',
+          },
+        ],
+        timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+      },
+    ]
+
+    renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />)
+
+    expect(screen.queryByText('2026-07-08 14:32')).not.toBeInTheDocument()
+  })
+
   it('renders paired slash-command output with timestamp', () => {
     mockStore.sessions.ws1 = [makeSession()]
     mockStore.activeSessionIds.ws1 = 's1'

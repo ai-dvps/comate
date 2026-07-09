@@ -18,8 +18,9 @@ vi.mock('react-i18next', () => ({
   I18nextProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
-let mockStoreState: { workflows: Record<string, WorkflowState[]> } = {
+let mockStoreState: { workflows: Record<string, WorkflowState[]>; subagents: Record<string, unknown[]> } = {
   workflows: {},
+  subagents: {},
 }
 
 vi.mock('../stores/chat-store', () => ({
@@ -46,7 +47,7 @@ const baseProps = {
 
 describe('ChatMessageRenderer search highlights', () => {
   beforeEach(() => {
-    mockStoreState = { workflows: {} }
+    mockStoreState = { workflows: {}, subagents: {} }
   })
   it('renders inline highlights for user text', () => {
     const message = makeTextMessage('hello world', 'user')
@@ -174,7 +175,7 @@ describe('ChatMessageRenderer timestamps', () => {
     expect(timestamp).toHaveClass('opacity-0')
   })
 
-  it('renders timestamp for api_retry system messages', () => {
+  it('does not render timestamp for api_retry system messages', () => {
     const message: RenderableMessage = {
       id: 'msg-1',
       role: 'system',
@@ -184,16 +185,79 @@ describe('ChatMessageRenderer timestamps', () => {
     }
 
     render(<ChatMessageRenderer {...baseProps} message={message} />)
-    const timestamp = screen.getByText('2026-07-08 14:32')
-    expect(timestamp).toBeInTheDocument()
-    expect(timestamp).toHaveClass('opacity-0')
+    expect(screen.queryByText('2026-07-08 14:32')).not.toBeInTheDocument()
   })
 
-  it('renders timestamp for generic system messages', () => {
+  it('does not render timestamp for generic system messages', () => {
     const message: RenderableMessage = {
       id: 'msg-1',
       role: 'system',
       parts: [{ type: 'text', text: 'system warning' }],
+      timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    expect(screen.queryByText('2026-07-08 14:32')).not.toBeInTheDocument()
+  })
+
+  it('does not render timestamp for assistant messages with thinking part', () => {
+    const message: RenderableMessage = {
+      id: 'msg-1',
+      role: 'assistant',
+      parts: [{ type: 'thinking', text: 'thinking...', isStreaming: false }],
+      timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    expect(screen.queryByText('2026-07-08 14:32')).not.toBeInTheDocument()
+  })
+
+  it('does not render timestamp for assistant messages with tool_use part', () => {
+    const message: RenderableMessage = {
+      id: 'msg-1',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-1',
+          toolName: 'read_file',
+          input: { path: '/config.json' },
+          isStreaming: false,
+        },
+      ],
+      timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    expect(screen.queryByText('2026-07-08 14:32')).not.toBeInTheDocument()
+  })
+
+  it('does not render timestamp for assistant messages with subagent part', () => {
+    const message: RenderableMessage = {
+      id: 'msg-1',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-1',
+          toolName: 'Agent',
+          input: { task: 'research' },
+          isStreaming: false,
+        },
+      ],
+      timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    expect(screen.queryByText('2026-07-08 14:32')).not.toBeInTheDocument()
+  })
+
+  it('renders timestamp for Interrupt system messages', () => {
+    const message: RenderableMessage = {
+      id: 'msg-1',
+      role: 'system',
+      subType: 'Interrupt',
+      parts: [{ type: 'text', text: 'Interrupted' }],
       timestamp: new Date(2026, 6, 8, 14, 32).getTime(),
     }
 
@@ -242,7 +306,7 @@ describe('ChatMessageRenderer Workflow card', () => {
   }
 
   beforeEach(() => {
-    mockStoreState = { workflows: {} }
+    mockStoreState = { workflows: {}, subagents: {} }
   })
 
   it('renders Workflow card with status badge and progress hint', () => {

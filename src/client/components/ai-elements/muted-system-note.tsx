@@ -137,7 +137,7 @@ function StderrBlock({ body, timestamp }: { body: string; timestamp?: number }) 
   )
 }
 
-function SystemReminderNote({ body, timestamp }: { body: string; timestamp?: number }) {
+function SystemReminderNote({ body }: { body: string }) {
   const [open, setOpen] = useState(false)
   const firstLine = body.split('\n')[0]
   const preview =
@@ -174,11 +174,6 @@ function SystemReminderNote({ body, timestamp }: { body: string; timestamp?: num
                 )}
               />
             </CollapsibleTrigger>
-          )}
-          {timestamp && (
-            <span className="flex-shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-              {formatMessageTimestamp(timestamp)}
-            </span>
           )}
         </div>
         {hasMore && (
@@ -224,6 +219,6 @@ export function MutedSystemNote(props: MutedSystemNoteProps) {
     case 'local-stderr':
       return <StderrBlock body={event.body} timestamp={timestamp} />
     case 'system-reminder':
-      return <SystemReminderNote body={event.body} timestamp={timestamp} />
+      return <SystemReminderNote body={event.body} />
   }
 }

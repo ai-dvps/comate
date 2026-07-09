@@ -182,6 +182,7 @@ export default function ChatMessageRenderer({
     // rendered as subtle inline text instead.
     const text = message.parts.find((p) => p.type === 'text')?.text ?? ''
     const ranges = getPartSearchRanges(searchMatches, currentMatch, message.id, 0)
+    const showTimestamp = message.subType === 'Interrupt'
     if (message.subType === 'api_retry') {
       return (
         <div className="group flex flex-col items-start">
@@ -192,7 +193,9 @@ export default function ChatMessageRenderer({
               text
             )}
           </div>
-          <MessageTimestamp timestamp={message.timestamp} align="left" />
+          {showTimestamp && (
+            <MessageTimestamp timestamp={message.timestamp} align="left" />
+          )}
         </div>
       )
     }
@@ -215,10 +218,17 @@ export default function ChatMessageRenderer({
             )}
           </span>
         </div>
-        <MessageTimestamp timestamp={message.timestamp} align="left" />
+        {showTimestamp && (
+          <MessageTimestamp timestamp={message.timestamp} align="left" />
+        )}
       </div>
     )
   }
+
+  const showTimestamp =
+    message.role === 'user' ||
+    (message.role === 'assistant' &&
+      message.parts.every((p) => p.type === 'text'))
 
   return (
     <div
@@ -364,10 +374,12 @@ export default function ChatMessageRenderer({
           })}
         </MessageContent>
       </Message>
-      <MessageTimestamp
-        timestamp={message.timestamp}
-        align={message.role === 'user' ? 'right' : 'left'}
-      />
+      {showTimestamp && (
+        <MessageTimestamp
+          timestamp={message.timestamp}
+          align={message.role === 'user' ? 'right' : 'left'}
+        />
+      )}
     </div>
   )
 }
