@@ -30,7 +30,7 @@ export default function SlashCommandMessage({
         </div>
       </MessageContent>
       {timestamp && (
-        <div className="mt-1 text-right text-xs text-text-tertiary">
+        <div className="mt-1 text-right text-xs text-text-tertiary opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           {formatMessageTimestamp(timestamp)}
         </div>
       )}

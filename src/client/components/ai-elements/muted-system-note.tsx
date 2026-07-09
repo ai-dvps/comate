@@ -41,11 +41,11 @@ function NoteFrame({ children, timestamp }: { children: React.ReactNode; timesta
   return (
     <div
       role="note"
-      className="my-1 flex items-center gap-2 text-xs text-text-tertiary"
+      className="group my-1 flex items-center gap-2 text-xs text-text-tertiary"
     >
       {children}
       {timestamp && (
-        <span className="ml-auto flex-shrink-0">
+        <span className="ml-auto flex-shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           {formatMessageTimestamp(timestamp)}
         </span>
       )}
@@ -99,7 +99,7 @@ function StdoutBlock({ body, timestamp }: { body: string; timestamp?: number }) 
   return (
     <div
       role="note"
-      className="my-1 flex items-start gap-2 text-xs text-text-tertiary"
+      className="group my-1 flex items-start gap-2 text-xs text-text-tertiary"
     >
       <span className="font-medium uppercase tracking-wide text-[10px] mt-0.5">
         stdout
@@ -108,7 +108,7 @@ function StdoutBlock({ body, timestamp }: { body: string; timestamp?: number }) 
         {body}
       </pre>
       {timestamp && (
-        <span className="flex-shrink-0">
+        <span className="flex-shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           {formatMessageTimestamp(timestamp)}
         </span>
       )}
@@ -120,7 +120,7 @@ function StderrBlock({ body, timestamp }: { body: string; timestamp?: number }) 
   return (
     <div
       role="note"
-      className="my-1 flex items-start gap-2 text-xs text-text-secondary"
+      className="group my-1 flex items-start gap-2 text-xs text-text-secondary"
     >
       <span className="font-semibold uppercase tracking-wide text-[10px] mt-0.5">
         stderr
@@ -129,7 +129,7 @@ function StderrBlock({ body, timestamp }: { body: string; timestamp?: number }) 
         {body}
       </pre>
       {timestamp && (
-        <span className="flex-shrink-0">
+        <span className="flex-shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           {formatMessageTimestamp(timestamp)}
         </span>
       )}
@@ -149,7 +149,7 @@ function SystemReminderNote({ body, timestamp }: { body: string; timestamp?: num
   return (
     <div
       role="note"
-      className="my-1 text-xs text-text-tertiary"
+      className="group my-1 text-xs text-text-tertiary"
     >
       <Collapsible open={open} onOpenChange={setOpen}>
         <div className="flex items-center gap-2">
@@ -176,7 +176,7 @@ function SystemReminderNote({ body, timestamp }: { body: string; timestamp?: num
             </CollapsibleTrigger>
           )}
           {timestamp && (
-            <span className="flex-shrink-0">
+            <span className="flex-shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
               {formatMessageTimestamp(timestamp)}
             </span>
           )}
