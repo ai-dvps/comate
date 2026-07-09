@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: hsl(var(--color-bg-hsl));
+  --color-surface: hsl(var(--color-surface-hsl));
+  --color-surface-hover: hsl(var(--color-surface-hover-hsl));
+  --color-surface-active: hsl(var(--color-surface-active-hsl));
+  --color-border: hsl(var(--color-border-hsl));
+  --color-border-hover: hsl(var(--color-border-hover-hsl));
+  --color-accent: hsl(var(--color-accent-hsl));
+  --color-accent-hover: hsl(var(--color-accent-hover-hsl));
+  --color-accent-foreground: hsl(var(--color-accent-foreground-hsl));
+  --color-text-primary: hsl(var(--color-text-primary-hsl));
+  --color-text-secondary: hsl(var(--color-text-secondary-hsl));
+  --color-text-tertiary: hsl(var(--color-text-tertiary-hsl));
+  --color-destructive: hsl(var(--color-destructive-hsl));
+  --color-success: hsl(var(--color-success-hsl));
+  --color-warning: hsl(var(--color-warning-hsl));
+}
+
+:root {
+  --color-bg-hsl: 40 20% 96%;
+  --color-surface-hsl: 40 15% 98%;
+  --color-surface-hover-hsl: 40 10% 94%;
+  --color-surface-active-hsl: 40 10% 92%;
+  --color-border-hsl: 40 10% 85%;
+  --color-border-hover-hsl: 40 10% 80%;
+  --color-accent-hsl: 18 75% 55%;
+  --color-accent-hover-hsl: 20 84% 61%;
+  --color-accent-foreground-hsl: 0 0% 100%;
+  --color-text-primary-hsl: 40 10% 15%;
+  --color-text-secondary-hsl: 40 5% 40%;
+  --color-text-tertiary-hsl: 40 5% 55%;
+  --color-destructive-hsl: 0 70% 45%;
+  --color-success-hsl: 140 60% 35%;
+  --color-warning-hsl: 35 90% 45%;
+}
+
+.dark {
+  --color-bg-hsl: 0 0% 5%;
+  --color-surface-hsl: 0 0% 8%;
+  --color-surface-hover-hsl: 0 0% 10%;
+  --color-surface-active-hsl: 0 0% 12%;
+  --color-border-hsl: 0 0% 15%;
+  --color-border-hover-hsl: 0 0% 20%;
+  --color-accent-hsl: 18 75% 55%;
+  --color-accent-hover-hsl: 20 84% 61%;
+  --color-accent-foreground-hsl: 0 0% 100%;
+  --color-text-primary-hsl: 0 0% 96%;
+  --color-text-secondary-hsl: 0 0% 64%;
+  --color-text-tertiary-hsl: 0 0% 45%;
+  --color-destructive-hsl: 0 70% 50%;
+  --color-success-hsl: 140 60% 45%;
+  --color-warning-hsl: 35 90% 50%;
+}
+
+@layer base {
+  html {
+    @apply bg-bg text-text-primary;
+  }
+
+  body {
+    @apply antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
+  }
+
+  a {
+    @apply text-accent hover:text-accent-hover transition-colors;
+  }
+
+  button {
+    @apply transition-colors;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border-hover-hsl)) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border-hover-hsl));
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-text-tertiary-hsl));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
