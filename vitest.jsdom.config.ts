@@ -20,6 +20,7 @@ export default defineProject({
       'src/client/stores/chat-store.test.ts',
       'src/client/stores/bot-store.test.ts',
       'src/client/lib/bot-filter.test.ts',
+      'src/client/lib/format-message-timestamp.test.ts',
       'src/client/lib/workflow-utils.test.ts',
     ],
     exclude: [
