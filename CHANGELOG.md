@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Message timestamps** — chat messages now display a timestamp below the message content: `HH:mm` for messages sent today and `YYYY-MM-DD HH:mm` for older messages. Timestamps appear for user, assistant, system, and meta (slash command / muted system note) messages in both the standard and virtualized message lists. No backend changes were required; the UI consumes the existing `ChatMessage.timestamp` field.
+- **Message timestamps** — chat messages now display a timestamp below the message content: `HH:mm` for messages sent today and `YYYY-MM-DD HH:mm` for older messages. Timestamps appear for user messages, assistant final-text replies, stdout/stderr meta messages, and Interrupt system messages. They remain hidden on thinking, tool_use, subagent, api_retry, system-reminder, and generic system messages to reduce whitespace between messages. Timestamps are revealed on hover and use the existing `ChatMessage.timestamp` field.
 
 - **Bot member plaintext management** — bot member rows now show the channel user ID alongside its resolved plaintext user ID (and Feishu display name when available). Members with an unresolved plaintext ID are marked as "Pending" and can be resolved in bulk via a "Resolve pending" button, or manually by typing a fallback plaintext ID inline. A dedicated "Refresh" button reloads only the member list. WeCom and Feishu message handlers now automatically add first-time messengers as `normal` bot members, while preserving existing `owner`/`admin` roles. English and Simplified Chinese i18n keys added.
 
