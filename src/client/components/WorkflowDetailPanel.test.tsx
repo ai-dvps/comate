@@ -66,6 +66,7 @@ describe('WorkflowDetailPanel', () => {
     mockStoreState = {
       workflows: { 'session-1': [makeWorkflow('wf-1')] },
       subagents: {},
+      messages: {},
     }
     render(
       <WorkflowDetailPanel
@@ -120,6 +121,7 @@ describe('WorkflowDetailPanel', () => {
     mockStoreState = {
       workflows: { 'session-1': [makeWorkflow('wf-1')] },
       subagents: {},
+      messages: {},
     }
     render(
       <WorkflowDetailPanel
