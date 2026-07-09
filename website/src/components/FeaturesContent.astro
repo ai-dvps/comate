@@ -1,0 +1,47 @@
+---
+import { getCollection } from 'astro:content';
+import { getLocalizedEntries, type Lang } from '../i18n/utils.js';
+import FeatureCard from './FeatureCard.astro';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const allEntries = await getCollection('features');
+const entries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.order - b.data.order);
+
+const categories = [...new Set(entries.map((e) => e.data.category))];
+---
+
+<section class="mx-auto max-w-5xl px-4 py-16 md:py-24">
+  <h1 class="text-4xl font-bold text-text-primary md:text-5xl">
+    {locale === 'zh' ? '功能特性' : 'Features'}
+  </h1>
+  <p class="mt-4 max-w-2xl text-lg text-text-secondary">
+    {locale === 'zh'
+      ? 'Comate 将 AI 工作区、文件管理、团队协作和桌面体验融为一体。'
+      : 'Comate brings together AI workspaces, file management, team collaboration, and a polished desktop experience.'}
+  </p>
+
+  {
+    categories.map((category) => (
+      <div class="mt-12">
+        <h2 class="text-xl font-semibold text-text-primary">{category}</h2>
+        <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {entries
+            .filter((e) => e.data.category === category)
+            .map((entry) => (
+              <FeatureCard
+                title={entry.data.title}
+                description={entry.data.description}
+                category={entry.data.category}
+                image={entry.data.image}
+                imageAlt={entry.data.imageAlt}
+              />
+            ))}
+        </div>
+      </div>
+    ))
+  }
+</section>
