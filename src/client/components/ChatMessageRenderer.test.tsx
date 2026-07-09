@@ -332,6 +332,7 @@ describe('ChatMessageRenderer Workflow card', () => {
           },
         ],
       },
+      subagents: {},
     }
 
     const message = makeWorkflowMessage('tu-wf-1')
@@ -361,6 +362,7 @@ describe('ChatMessageRenderer Workflow card', () => {
           },
         ],
       },
+      subagents: {},
     }
 
     const message = makeWorkflowMessage('tu-wf-2')

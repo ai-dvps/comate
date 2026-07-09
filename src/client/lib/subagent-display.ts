@@ -6,6 +6,7 @@ type ToolResultPart = Extract<MessagePart, { type: 'tool_result' }>
 export type SubagentDisplayState =
   | 'async_launched'
   | 'running_in_background'
+  | 'running'
   | 'completed'
   | 'error'
 
