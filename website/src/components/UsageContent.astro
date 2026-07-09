@@ -1,0 +1,45 @@
+---
+import { getCollection, render } from 'astro:content';
+import { getLocalizedEntries, type Lang } from '../i18n/utils.js';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const allEntries = await getCollection('usage');
+const entries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.step - b.data.step);
+const rendered = await Promise.all(
+  entries.map(async (entry) => {
+    const { Content } = await render(entry);
+    return { data: entry.data, Content };
+  })
+);
+---
+
+<section class="mx-auto max-w-3xl px-4 py-16 md:py-24">
+  <h1 class="text-4xl font-bold text-text-primary md:text-5xl">
+    {locale === 'zh' ? '使用方法' : 'Usage'}
+  </h1>
+  <p class="mt-4 max-w-2xl text-lg text-text-secondary">
+    {locale === 'zh'
+      ? '从下载安装到第一次与 AI 协作，只需几步即可上手 Comate。'
+      : 'From download to your first AI collaboration — get started with Comate in a few steps.'}
+  </p>
+
+  <ol class="mt-12 space-y-8">
+    {
+      rendered.map(({ data, Content }, index) => (
+        <li class="relative rounded-lg border border-border bg-surface p-6">
+          <span class="absolute -top-3 left-6 inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-foreground">
+            {index + 1}
+          </span>
+          <h2 class="text-xl font-semibold text-text-primary">{data.title}</h2>
+          <div class="prose mt-3 max-w-none text-text-secondary">
+            <Content />
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+</section>
