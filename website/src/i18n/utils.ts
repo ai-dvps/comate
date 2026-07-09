@@ -14,6 +14,15 @@ export function stripLocalePrefix(path: string): string {
   return path.replace(localeSegmentPattern, '/');
 }
 
+export const contentLocaleMap: Record<Lang, string> = {
+  zh: 'zh-CN',
+  en: 'en',
+};
+
+export function getContentLocale(locale: Lang): string {
+  return contentLocaleMap[locale];
+}
+
 export function localizePath(path: string, targetLocale: Lang): string {
   const normalized = stripLocalePrefix(path);
   if (normalized === '/') {
@@ -21,3 +30,4 @@ export function localizePath(path: string, targetLocale: Lang): string {
   }
   return `/${targetLocale}${normalized}`;
 }
+
