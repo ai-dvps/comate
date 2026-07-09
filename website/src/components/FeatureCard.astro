@@ -3,11 +3,33 @@ export interface Props {
   title: string;
   description: string;
   category: string;
+  icon?: string;
   image?: string;
   imageAlt?: string;
 }
 
-const { title, description, category, image, imageAlt } = Astro.props;
+const { title, description, category, icon, image, imageAlt } = Astro.props;
+
+const icons: Record<string, string> = {
+  workspaces:
+    'M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2Zm4 0v12 M11 7v12',
+  chat:
+    'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  'file-explorer':
+    'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z',
+  'interactive-surfaces':
+    'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
+  'prompt-input':
+    'M4 7V4h3 M4 17v3h3 M20 7V4h-3 M20 17v3h-3 M9 9h6v6H9z',
+  'desktop-experience':
+    'M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.5 3H2.5L4 16',
+  'wecom-bot':
+    'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  'task-tracking':
+    'M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
+};
+
+const iconPath = icon && icons[icon] ? icons[icon] : icons['prompt-input'];
 ---
 
 <article class="flex flex-col rounded-lg border border-border bg-surface p-5 transition-colors hover:border-border-hover">
@@ -32,9 +54,7 @@ const { title, description, category, image, imageAlt } = Astro.props;
           stroke-linejoin="round"
           aria-hidden="true"
         >
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-          <line x1="8" y1="12" x2="16" y2="12" />
-          <line x1="12" y1="8" x2="12" y2="16" />
+          <path d={iconPath} />
         </svg>
       </div>
     )
