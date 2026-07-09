@@ -212,6 +212,7 @@ describe('ChatPanel', () => {
 
     const wrapper = screen.getByTestId('workflow-floating-panel').parentElement
     expect(wrapper).toHaveClass('absolute', 'top-4', 'right-4', 'z-20')
-    expect(wrapper).toHaveClass('flex', 'flex-col', 'gap-2')
+    expect(wrapper).toHaveClass('flex', 'flex-col', 'items-end', 'gap-2')
+    expect(wrapper).not.toHaveClass('max-w-xs')
   })
 })
