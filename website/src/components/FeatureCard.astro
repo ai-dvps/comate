@@ -1,0 +1,47 @@
+---
+export interface Props {
+  title: string;
+  description: string;
+  category: string;
+  image?: string;
+  imageAlt?: string;
+}
+
+const { title, description, category, image, imageAlt } = Astro.props;
+---
+
+<article class="flex flex-col rounded-lg border border-border bg-surface p-5 transition-colors hover:border-border-hover">
+  {
+    image ? (
+      <img
+        src={image}
+        alt={imageAlt ?? title}
+        loading="lazy"
+        class="mb-4 h-40 w-full rounded-md object-cover"
+      />
+    ) : (
+      <div class="mb-4 flex h-40 w-full items-center justify-center rounded-md bg-bg text-accent">
+        <svg
+          width="48"
+          height="48"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+          <line x1="8" y1="12" x2="16" y2="12" />
+          <line x1="12" y1="8" x2="12" y2="16" />
+        </svg>
+      </div>
+    )
+  }
+  <p class="text-xs font-medium uppercase tracking-wide text-text-tertiary">
+    {category}
+  </p>
+  <h3 class="mt-1 text-lg font-semibold text-text-primary">{title}</h3>
+  <p class="mt-2 text-sm leading-relaxed text-text-secondary">{description}</p>
+</article>

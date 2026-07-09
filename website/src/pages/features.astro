@@ -1,0 +1,20 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import LanguagePicker from '../components/LanguagePicker.astro';
+import FeaturesContent from '../components/FeaturesContent.astro';
+
+const locale = 'zh';
+---
+
+<BaseLayout title="功能特性 — Comate" description="Comate 功能特性介绍">
+  <Nav>
+    <LanguagePicker slot="language-picker" />
+    <LanguagePicker slot="language-picker-mobile" />
+  </Nav>
+
+  <FeaturesContent locale={locale} />
+
+  <Footer />
+</BaseLayout>
