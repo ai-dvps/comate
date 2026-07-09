@@ -43,6 +43,15 @@ describe('TaskPanel', () => {
     expect(screen.getByText('0/1')).toBeInTheDocument()
   })
 
+  it('does not stretch to the full width of a shared floating wrapper', () => {
+    mockStore.tasks.s1 = [{ id: 't1', subject: 'Pending task', status: 'pending' }]
+    const { container } = render(<TaskPanel sessionId="s1" />)
+    const root = container.firstChild as HTMLElement
+    expect(root).not.toBeNull()
+    expect(root.className).toContain('max-w-xs')
+    expect(root.className).not.toContain('w-full')
+  })
+
   it('expands to show task rows when clicked', async () => {
     mockStore.tasks.s1 = [{ id: 't1', subject: 'Pending task', status: 'pending' }]
     render(<TaskPanel sessionId="s1" />)
