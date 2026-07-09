@@ -1,0 +1,75 @@
+---
+import '../styles/global.css';
+import { getRelativeLocaleUrl } from 'astro:i18n';
+
+interface Props {
+  title: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const { title, description, ogImage } = Astro.props;
+const locale = Astro.currentLocale ?? 'zh';
+const htmlLang = locale === 'zh' ? 'zh-CN' : 'en';
+const siteUrl = 'https://ai-dvps.github.io/comate';
+const pageUrl = `${siteUrl}${Astro.url.pathname}`;
+const ogImageUrl = ogImage ? (ogImage.startsWith('http') ? ogImage : `${siteUrl}${ogImage}`) : undefined;
+---
+
+<!DOCTYPE html>
+<html lang={htmlLang} class="antialiased">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+    <meta property="og:title" content={title} />
+    {description && <meta property="og:description" content={description} />}
+    <meta property="og:url" content={pageUrl} />
+    {ogImageUrl && <meta property="og:image" content={ogImageUrl} />}
+    <link rel="icon" type="image/svg+xml" href={getRelativeLocaleUrl(locale, '/favicon.svg')} />
+    <link rel="alternate icon" href={getRelativeLocaleUrl(locale, '/favicon.ico')} />
+    <script is:inline>
+      (function () {
+        const STORAGE_KEY = 'comate-website-theme';
+        const root = document.documentElement;
+        function apply(theme) {
+          if (theme === 'dark') {
+            root.classList.add('dark');
+          } else {
+            root.classList.remove('dark');
+          }
+        }
+        let theme;
+        try {
+          theme = localStorage.getItem(STORAGE_KEY);
+        } catch {}
+        if (!theme) {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        apply(theme);
+        function onToggle() {
+          const isDark = root.classList.toggle('dark');
+          try {
+            localStorage.setItem(STORAGE_KEY, isDark ? 'dark' : 'light');
+          } catch {}
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', attach);
+        } else {
+          attach();
+        }
+        function attach() {
+          document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+            btn.addEventListener('click', onToggle);
+          });
+        }
+      })();
+    </script>
+    <slot name="head" />
+  </head>
+  <body class="min-h-screen bg-bg text-text-primary">
+    <slot />
+  </body>
+</html>
