@@ -94,9 +94,17 @@
   "toolCount_other": "{{count}} tools",
   "subagentStatus": {
     "running": "Running",
+    "runningInBackground": "Running in background",
     "completed": "Completed",
-    "error": "Error"
+    "error": "Error",
+    "asyncLaunched": "Async"
   },
+  "subagentHint": {
+    "asyncLaunched": "Launched in background. You can keep working.",
+    "runningInBackground": "Running in background...",
+    "aggregatingResult": "Aggregating result..."
+  },
+  "openSubagentPanel": "Open panel",
   "workflow": "Workflow",
   "workflowStatus": {
     "running": "Running",

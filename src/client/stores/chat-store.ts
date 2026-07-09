@@ -761,6 +761,18 @@ function findToolName(
   return undefined
 }
 
+/**
+ * Check whether a TaskCreate input should be treated as an internal task.
+ * Matches the Claude Code convention: tasks created with
+ * `metadata: { _internal: true }` are hidden from user-facing task lists.
+ */
+function isInternalTaskInput(input: unknown): boolean {
+  if (!input || typeof input !== 'object') return false
+  const metadata = (input as Record<string, unknown>).metadata
+  if (!metadata || typeof metadata !== 'object') return false
+  return (metadata as Record<string, unknown>)._internal === true
+}
+
 function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
   const tasks: TaskItem[] = []
   const taskMap = new Map<string, TaskItem>()
@@ -774,7 +786,7 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
           const input = part.input as
             | { subject: string; description?: string; activeForm?: string }
             | undefined
-          if (input?.subject) {
+          if (input?.subject && !isInternalTaskInput(input)) {
             pendingCreates.set(part.toolUseId, {
               subject: input.subject,
               description: input.description,
@@ -1177,7 +1189,7 @@ export function handleSseEvent(
           const createInput = input as
             | { subject: string; description?: string; activeForm?: string }
             | undefined
-          if (createInput?.subject) {
+          if (createInput?.subject && !isInternalTaskInput(createInput)) {
             const pending = state.pendingTaskCreates[sessionId] || {}
             updates.pendingTaskCreates = {
               ...state.pendingTaskCreates,
@@ -1262,12 +1274,58 @@ export function handleSseEvent(
       if (!toolUseId) return
       set((state) => {
         const existing = state.messages[sessionId] || []
-        const alreadyHasResult = existing.some((m) =>
+        const existingMessageIndex = existing.findIndex((m) =>
           m.parts.some((p) => p?.type === 'tool_result' && p.toolUseId === toolUseId),
         )
-        if (alreadyHasResult) {
-          // Reconnect replay — tool_result already exists, skip
-          return {}
+        const existingPartIndex =
+          existingMessageIndex >= 0
+            ? existing[existingMessageIndex].parts.findIndex(
+                (p) => p?.type === 'tool_result' && p.toolUseId === toolUseId,
+              )
+            : -1
+        const existingPart =
+          existingMessageIndex >= 0 && existingPartIndex >= 0
+            ? (existing[existingMessageIndex].parts[existingPartIndex] as {
+                type: 'tool_result'
+                toolUseId: string
+                output: string
+                isError: boolean
+                toolUseResult?: unknown
+              })
+            : undefined
+
+        if (existingPart) {
+          const isAsyncPlaceholder =
+            existingPart.toolUseResult &&
+            typeof existingPart.toolUseResult === 'object' &&
+            (existingPart.toolUseResult as Record<string, unknown>).status === 'async_launched'
+          if (!isAsyncPlaceholder) {
+            // Reconnect replay — tool_result already exists, skip
+            return {}
+          }
+          // Replace the async-placeholder result in-place with the final result.
+          const replacedMessages: ChatMessage[] = existing.map((m, mi) => {
+            if (mi !== existingMessageIndex) return m
+            return {
+              ...m,
+              parts: m.parts.map((p, pi) => {
+                if (pi !== existingPartIndex) return p
+                return {
+                  type: 'tool_result' as const,
+                  toolUseId,
+                  output,
+                  isError,
+                  ...(toolUseResult !== undefined && { toolUseResult }),
+                }
+              }),
+            }
+          })
+          return {
+            messages: {
+              ...state.messages,
+              [sessionId]: pruneWindow(replacedMessages, state.windowCap),
+            },
+          }
         }
         const newMessages: ChatMessage[] = [
           ...existing,

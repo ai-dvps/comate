@@ -1390,6 +1390,28 @@ describe('task scanning and filtering', () => {
     }
   }
 
+  function makeInternalTaskCreateMessages(): { id: string; role: 'assistant'; timestamp: number; parts: unknown[] } {
+    return {
+      id: 'm1',
+      role: 'assistant',
+      timestamp: 1,
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tool-create-internal',
+          toolName: 'TaskCreate',
+          input: { subject: 'Reading src/client/components/ChatPanel.tsx', metadata: { _internal: true } },
+        },
+        {
+          type: 'tool_result',
+          toolUseId: 'tool-create-internal',
+          output: JSON.stringify({ task: { id: 'task-internal', subject: 'Reading src/client/components/ChatPanel.tsx' } }),
+          isError: false,
+        },
+      ],
+    }
+  }
+
   function makeTaskUpdateMessages(): { id: string; role: 'assistant'; timestamp: number; parts: unknown[] } {
     return {
       id: 'm1',
@@ -1436,6 +1458,18 @@ describe('task scanning and filtering', () => {
       tasks: [{ id: 'todowrite-0', subject: 'Server todo', status: 'in_progress' }],
       subagents: [],
     })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      const state = useChatStore.getState()
+      assert.deepStrictEqual(state.tasks['s1'], [])
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('loadMessages filters out TaskCreate entries marked as internal', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ messages: [makeInternalTaskCreateMessages()], tasks: [], subagents: [] })
 
     try {
       await useChatStore.getState().loadMessages('ws-1', 's1')
@@ -1514,6 +1548,91 @@ describe('task scanning and filtering', () => {
     assert.ok(state.pendingTaskCreates['s1']?.['tool-create'])
     assert.strictEqual(state.pendingTaskCreates['s1']['tool-create'].subject, 'Write tests')
     assert.strictEqual(state.pendingTaskCreates['s1']['tool-create'].activeForm, 'Planning test cases')
+  })
+
+  it('live internal TaskCreate tool_use_done does not store pending task create', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 'tool-create-internal',
+      toolName: 'TaskCreate',
+    })
+
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_done', {
+      toolUseId: 'tool-create-internal',
+      input: { subject: 'Reading src/client/components/ChatPanel.tsx', metadata: { _internal: true } },
+    })
+
+    const state = useChatStore.getState()
+    assert.strictEqual(state.pendingTaskCreates['s1']?.['tool-create-internal'], undefined)
+  })
+})
+
+describe('handleSseEvent tool_result replacement', () => {
+  beforeEach(() => {
+    useChatStore.setState({ messages: {}, totalMessageCount: {} })
+  })
+
+  it('replaces an async-placeholder tool_result with the final result', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', {
+      toolUseId: 'tu-agent-1',
+      output: 'Async agent launched successfully',
+      isError: false,
+      toolUseResult: { status: 'async_launched', agentId: 'agent-1' },
+    })
+
+    const afterPlaceholder = useChatStore.getState()
+    assert.strictEqual(afterPlaceholder.messages['s1'].length, 1)
+    const placeholderPart = afterPlaceholder.messages['s1'][0].parts[0]
+    assert.strictEqual(placeholderPart.type, 'tool_result')
+    assert.deepStrictEqual(
+      (placeholderPart as { toolUseResult?: unknown }).toolUseResult,
+      { status: 'async_launched', agentId: 'agent-1' },
+    )
+
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', {
+      toolUseId: 'tu-agent-1',
+      output: 'Final collected result',
+      isError: false,
+      toolUseResult: { status: 'completed' },
+    })
+
+    const afterFinal = useChatStore.getState()
+    assert.strictEqual(afterFinal.messages['s1'].length, 1)
+    const finalPart = afterFinal.messages['s1'][0].parts[0]
+    assert.strictEqual(finalPart.type, 'tool_result')
+    assert.strictEqual((finalPart as { output: string }).output, 'Final collected result')
+    assert.deepStrictEqual(
+      (finalPart as { toolUseResult?: unknown }).toolUseResult,
+      { status: 'completed' },
+    )
+  })
+
+  it('skips duplicate tool_result for non-async results', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', {
+      toolUseId: 'tu-sync-1',
+      output: 'First result',
+      isError: false,
+    })
+
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', {
+      toolUseId: 'tu-sync-1',
+      output: 'Duplicate result',
+      isError: false,
+    })
+
+    const state = useChatStore.getState()
+    assert.strictEqual(state.messages['s1'].length, 1)
+    assert.strictEqual(
+      (state.messages['s1'][0].parts[0] as { output: string }).output,
+      'First result',
+    )
   })
 })
 

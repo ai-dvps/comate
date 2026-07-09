@@ -5,17 +5,24 @@ import {
   CheckCircleIcon,
   ClockIcon,
   PanelRightOpen,
+  Rocket,
   XCircleIcon,
 } from 'lucide-react'
 
 import { useChatStore } from '../stores/chat-store'
 import type { SubagentState } from '../stores/chat-store'
 import type { MessagePart } from '../types/message'
+import {
+  getSubagentDisplayState,
+  isAsyncPlaceholder,
+  type SubagentDisplayState,
+} from '../lib/subagent-display'
 
-type ToolResultPart = Extract<MessagePart, { type: 'tool_result' }>
 import { formatDuration } from '../lib/time'
 import { cn } from './ui/utils'
 import { CompactableContainer } from './ai-elements/compactable-container'
+
+type ToolResultPart = Extract<MessagePart, { type: 'tool_result' }>
 
 interface SubagentBriefStatusProps {
   parentToolUseId: string
@@ -75,7 +82,6 @@ export default function SubagentBriefStatus({
   input,
   result,
 }: SubagentBriefStatusProps) {
-  const { t } = useTranslation('chat')
   const subagent = useChatStore((s) =>
     (s.subagents[sessionId] || []).find(
       (sa) => sa.parentToolUseId === parentToolUseId,
@@ -83,41 +89,23 @@ export default function SubagentBriefStatus({
   )
   const subagentType = getSubagentType(input)
   const prompt = getAgentPrompt(input)
+  const displayState = getSubagentDisplayState(subagent, result)
 
   if (!subagent) {
     return (
-      <div className="mb-4 w-full rounded-md border border-border bg-surface p-3 text-sm text-text-secondary">
-        <div className="flex items-center gap-2">
-          <Bot className="size-4 text-text-tertiary" />
-          <span>{t('agentLabel', { type: subagentType || t('agent') })}</span>
-        </div>
-        {(prompt || result) && (
-          <CompactableContainer compactHeight={0} alwaysShowToggle className="mt-2">
-            {prompt && (
-              <div className="text-xs text-text-secondary whitespace-pre-wrap">
-                {prompt}
-              </div>
-            )}
-            {result && (
-              <div className="mt-2">
-                <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
-                  {result.isError ? t('subagentStatus.error') : t('result')}
-                </h4>
-                {prompt && <hr className="border-border/50 my-1" />}
-                <div className={cn('text-xs whitespace-pre-wrap', result.isError ? 'text-destructive' : 'text-text-secondary')}>
-                  {result.output}
-                </div>
-              </div>
-            )}
-          </CompactableContainer>
-        )}
-      </div>
+      <NoStateCard
+        displayState={displayState}
+        subagentType={subagentType}
+        prompt={prompt}
+        onClick={() => onOpenDrawer(parentToolUseId)}
+      />
     )
   }
 
   return (
     <StatusCard
       subagent={subagent}
+      displayState={displayState}
       subagentType={subagentType}
       prompt={prompt}
       result={result}
@@ -126,7 +114,27 @@ export default function SubagentBriefStatus({
   )
 }
 
-const statusConfig = {
+const statusConfig: Record<
+  SubagentDisplayState,
+  {
+    icon: React.ReactNode
+    labelKey: string
+    badgeClass: string
+    borderClass: string
+  }
+> = {
+  async_launched: {
+    icon: <Rocket className="size-3.5 text-accent" />,
+    labelKey: 'subagentStatus.asyncLaunched',
+    badgeClass: 'bg-accent/10 text-accent border-accent/20',
+    borderClass: 'border-l-2 border-l-accent',
+  },
+  running_in_background: {
+    icon: <ClockIcon className="size-3.5 animate-pulse text-warning" />,
+    labelKey: 'subagentStatus.runningInBackground',
+    badgeClass: 'bg-warning/10 text-warning border-warning/20',
+    borderClass: 'border-l-2 border-l-warning',
+  },
   running: {
     icon: <ClockIcon className="size-3.5 animate-pulse text-warning" />,
     labelKey: 'subagentStatus.running',
@@ -147,25 +155,114 @@ const statusConfig = {
   },
 }
 
+function NoStateCard({
+  displayState,
+  subagentType,
+  prompt,
+  onClick,
+}: {
+  displayState: SubagentDisplayState
+  subagentType?: string
+  prompt?: string
+  onClick: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const config = statusConfig[displayState]
+  const showAsyncMetadata = displayState === 'async_launched'
+
+  return (
+    <div
+      className={cn(
+        'mb-4 w-full rounded-md border border-border bg-surface text-left',
+        config.borderClass,
+      )}
+    >
+      <div className="flex w-full items-start justify-between gap-3 p-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <Bot className="size-4 shrink-0 text-text-tertiary" />
+            <span className="truncate text-sm font-medium text-text-primary">
+              {t('agentLabel', { type: subagentType || t('agent') })}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium',
+              config.badgeClass,
+            )}
+          >
+            {config.icon}
+            {t(config.labelKey)}
+          </span>
+          <OpenPanelButton onClick={onClick} />
+        </div>
+      </div>
+
+      {(prompt || showAsyncMetadata) && (
+        <CompactableContainer compactHeight={0} alwaysShowToggle>
+          <div className="px-3 pb-3">
+            {prompt && (
+              <CompactableContainer>
+                <div className="space-y-1">
+                  <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
+                    {t('prompt')}
+                  </h4>
+                  <div className="text-xs text-text-secondary whitespace-pre-wrap">
+                    {prompt}
+                  </div>
+                </div>
+              </CompactableContainer>
+            )}
+            {showAsyncMetadata && (
+              <div className="mt-1.5 text-xs text-text-secondary">
+                {t('subagentHint.asyncLaunched')}
+              </div>
+            )}
+          </div>
+        </CompactableContainer>
+      )}
+
+      <span aria-live="polite" className="sr-only">
+        {t(config.labelKey)}
+      </span>
+    </div>
+  )
+}
+
 function StatusCard({
   subagent,
+  displayState,
   subagentType,
   prompt,
   result,
   onClick,
 }: {
   subagent: SubagentState
+  displayState: SubagentDisplayState
   subagentType?: string
   prompt?: string
   result?: ToolResultPart
   onClick: () => void
 }) {
   const { t } = useTranslation('chat')
-  const isRunning = subagent.state === 'running'
+  const isRunning =
+    displayState === 'running' ||
+    displayState === 'running_in_background' ||
+    displayState === 'async_launched'
   const elapsed = useElapsed(subagent.startTime, subagent.endTime, isRunning)
 
-  const config = statusConfig[subagent.state]
-  const hasContent = subagent.description || prompt || result
+  const config = statusConfig[displayState]
+  const showAggregatingHint =
+    displayState === 'completed' && isAsyncPlaceholder(result)
+  const hasBodyContent =
+    subagent.description ||
+    prompt ||
+    displayState === 'async_launched' ||
+    displayState === 'running_in_background' ||
+    showAggregatingHint ||
+    subagent.progressHint
 
   return (
     <div
@@ -199,18 +296,12 @@ function StatusCard({
             {config.icon}
             {t(config.labelKey)}
           </span>
-          <button
-            onClick={onClick}
-            title={t('openSubagentPanel')}
-            className="inline-flex items-center justify-center rounded-md border border-border bg-surface p-1.5 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary"
-          >
-            <PanelRightOpen className="size-4" />
-          </button>
+          <OpenPanelButton onClick={onClick} />
         </div>
       </div>
 
       {/* Collapsible body */}
-      {hasContent && (
+      {hasBodyContent && (
         <CompactableContainer compactHeight={0} alwaysShowToggle>
           <div className="px-3 pb-3">
             {/* Description */}
@@ -234,24 +325,22 @@ function StatusCard({
               </CompactableContainer>
             )}
 
-            {/* Result */}
-            {result && (
-              <CompactableContainer className="mt-2">
-                <div>
-                  <h4 className="font-medium text-text-tertiary text-[10px] uppercase tracking-wide">
-                    {result.isError ? 'Error' : 'Result'}
-                  </h4>
-                  {prompt && <hr className="border-border/50 my-1" />}
-                  <div
-                    className={cn(
-                      'text-xs whitespace-pre-wrap',
-                      result.isError ? 'text-destructive' : 'text-text-secondary',
-                    )}
-                  >
-                    {result.output}
-                  </div>
-                </div>
-              </CompactableContainer>
+            {displayState === 'async_launched' && (
+              <div className="mt-1.5 text-xs text-text-secondary">
+                {t('subagentHint.asyncLaunched')}
+              </div>
+            )}
+
+            {displayState === 'running_in_background' && (
+              <div className="mt-1.5 text-xs text-text-secondary">
+                {t('subagentHint.runningInBackground')}
+              </div>
+            )}
+
+            {showAggregatingHint && (
+              <div className="mt-1.5 text-xs text-text-secondary">
+                {t('subagentHint.aggregatingResult')}
+              </div>
             )}
 
             {subagent.progressHint && (
@@ -264,6 +353,26 @@ function StatusCard({
           </div>
         </CompactableContainer>
       )}
+
+      <span aria-live="polite" className="sr-only">
+        {t(config.labelKey)}
+      </span>
     </div>
+  )
+}
+
+function OpenPanelButton({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation('chat')
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={t('openSubagentPanel')}
+      aria-expanded={false}
+      title={t('openSubagentPanel')}
+      className="inline-flex items-center justify-center rounded-md border border-border bg-surface p-1.5 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1"
+    >
+      <PanelRightOpen className="size-4" />
+    </button>
   )
 }
