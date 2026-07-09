@@ -1,0 +1,44 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { useTranslations, type Lang, type UIKey } from '../i18n/utils.js';
+
+const locale = (Astro.currentLocale ?? 'zh') as Lang;
+const t = useTranslations(locale);
+
+const footerItems = [
+  { key: 'nav.home', href: getRelativeLocaleUrl(locale, '/') },
+  { key: 'nav.features', href: getRelativeLocaleUrl(locale, '/features/') },
+  { key: 'nav.usage', href: getRelativeLocaleUrl(locale, '/usage/') },
+  { key: 'nav.download', href: getRelativeLocaleUrl(locale, '/download/') },
+  { key: 'nav.about', href: getRelativeLocaleUrl(locale, '/about/') },
+];
+---
+
+<footer class="border-t border-border bg-surface">
+  <div class="mx-auto max-w-5xl px-4 py-8">
+    <div class="flex flex-col items-start justify-between gap-4 sm:flex-row">
+      <div class="flex flex-wrap gap-4">
+        {
+          footerItems.map((item) => (
+            <a
+              href={item.href}
+              class="text-sm text-text-secondary no-underline hover:text-text-primary"
+            >
+              {t(item.key as UIKey)}
+            </a>
+          ))
+        }
+      </div>
+
+      <div class="flex flex-wrap gap-4 text-sm text-text-tertiary">
+        <a
+          href="https://github.com/ai-dvps/comate"
+          class="no-underline hover:text-text-secondary"
+        >
+          {t('footer.repo')}
+        </a>
+        <span>{t('footer.license')}</span>
+      </div>
+    </div>
+  </div>
+</footer>

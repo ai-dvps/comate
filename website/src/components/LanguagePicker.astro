@@ -1,0 +1,33 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { type Lang } from '../i18n/utils.js';
+
+const locale = (Astro.currentLocale ?? 'zh') as Lang;
+const currentPath = Astro.url.pathname;
+const strippedPath = currentPath.replace(/^\/(zh|en)\//, '/');
+
+const locales: { code: Lang; label: string }[] = [
+  { code: 'zh', label: '中文' },
+  { code: 'en', label: 'English' },
+];
+---
+
+<div class="relative">
+  <label class="sr-only" for="language-picker">Switch language</label>
+  <select
+    id="language-picker"
+    class="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text-primary hover:border-border-hover focus-visible:ring-2 focus-visible:ring-accent"
+    onchange="window.location.href = this.value"
+  >
+    {
+      locales.map((loc) => {
+        const href = getRelativeLocaleUrl(loc.code, strippedPath);
+        return (
+          <option value={href} selected={loc.code === locale}>
+            {loc.label}
+          </option>
+        );
+      })
+    }
+  </select>
+</div>

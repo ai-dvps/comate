@@ -1,0 +1,107 @@
+---
+import { useTranslations, type Lang, type UIKey } from '../i18n/utils.js';
+import ThemeToggle from './ThemeToggle.astro';
+
+interface Props {
+  items: { key: string; href: string }[];
+}
+
+const locale = (Astro.currentLocale ?? 'zh') as Lang;
+const t = useTranslations(locale);
+const { items } = Astro.props;
+---
+
+<div class="md:hidden">
+  <button
+    type="button"
+    id="mobile-nav-toggle"
+    aria-expanded="false"
+    aria-controls="mobile-nav-panel"
+    class="inline-flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent"
+  >
+    <svg
+      id="mobile-nav-icon-open"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+    <svg
+      id="mobile-nav-icon-close"
+      class="hidden"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  </button>
+
+  <div
+    id="mobile-nav-panel"
+    hidden
+    class="absolute left-0 right-0 top-14 border-b border-border bg-bg shadow-lg"
+  >
+    <nav aria-label={t('nav.home')} class="mx-auto max-w-5xl px-4 py-4">
+      <ul class="flex flex-col gap-2">
+        {
+          items.map((item) => (
+            <li>
+              <a
+                href={item.href}
+                class="block rounded-md px-3 py-2 text-base font-medium text-text-secondary no-underline hover:bg-surface-hover hover:text-text-primary"
+              >
+                {t(item.key as UIKey)}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+      <div class="mt-4 flex items-center gap-3 border-t border-border pt-4">
+        <ThemeToggle label={t('languagePicker.label')} />
+        <span class="text-sm text-text-secondary">{t('languagePicker.label')}</span>
+      </div>
+    </nav>
+  </div>
+
+  <script is:inline>
+    (function () {
+      const toggle = document.getElementById('mobile-nav-toggle');
+      const panel = document.getElementById('mobile-nav-panel');
+      const iconOpen = document.getElementById('mobile-nav-icon-open');
+      const iconClose = document.getElementById('mobile-nav-icon-close');
+      if (!toggle || !panel || !iconOpen || !iconClose) return;
+
+      function set(open) {
+        toggle.setAttribute('aria-expanded', String(open));
+        panel.hidden = !open;
+        iconOpen.classList.toggle('hidden', open);
+        iconClose.classList.toggle('hidden', !open);
+      }
+
+      toggle.addEventListener('click', () => {
+        set(toggle.getAttribute('aria-expanded') !== 'true');
+      });
+
+      panel.querySelectorAll('a').forEach((link) => {
+        link.addEventListener('click', () => set(false));
+      });
+    })();
+  </script>
+</div>
