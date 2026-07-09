@@ -1,6 +1,5 @@
 ---
 import '../styles/global.css';
-import { getRelativeLocaleUrl } from 'astro:i18n';
 
 interface Props {
   title: string;
@@ -11,6 +10,7 @@ interface Props {
 const { title, description, ogImage } = Astro.props;
 const locale = Astro.currentLocale ?? 'zh';
 const htmlLang = locale === 'zh' ? 'zh-CN' : 'en';
+const base = import.meta.env.BASE_URL;
 const siteUrl = 'https://ai-dvps.github.io/comate';
 const pageUrl = `${siteUrl}${Astro.url.pathname}`;
 const ogImageUrl = ogImage ? (ogImage.startsWith('http') ? ogImage : `${siteUrl}${ogImage}`) : undefined;
@@ -28,8 +28,8 @@ const ogImageUrl = ogImage ? (ogImage.startsWith('http') ? ogImage : `${siteUrl}
     {description && <meta property="og:description" content={description} />}
     <meta property="og:url" content={pageUrl} />
     {ogImageUrl && <meta property="og:image" content={ogImageUrl} />}
-    <link rel="icon" type="image/svg+xml" href={getRelativeLocaleUrl(locale, '/favicon.svg')} />
-    <link rel="alternate icon" href={getRelativeLocaleUrl(locale, '/favicon.ico')} />
+    <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+    <link rel="alternate icon" href={`${base}favicon.ico`} />
     <script is:inline>
       (function () {
         const STORAGE_KEY = 'comate-website-theme';

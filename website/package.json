@@ -11,7 +11,7 @@
     "preview": "astro preview",
     "check": "astro check",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "node scripts/verify-site.js"
   },
   "dependencies": {
     "@astrojs/mdx": "^7.0.2",
