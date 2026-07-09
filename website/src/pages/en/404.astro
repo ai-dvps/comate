@@ -1,0 +1,31 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import LanguagePicker from '../../components/LanguagePicker.astro';
+import { useTranslations } from '../../i18n/utils.js';
+
+const locale = 'en';
+const t = useTranslations(locale);
+---
+
+<BaseLayout title={t('404.title')} description={t('404.message')}>
+  <Nav>
+    <LanguagePicker slot="language-picker" />
+    <LanguagePicker slot="language-picker-mobile" />
+  </Nav>
+
+  <main class="mx-auto flex max-w-5xl flex-col items-center justify-center px-4 py-24 text-center">
+    <h1 class="text-6xl font-bold text-text-primary">404</h1>
+    <p class="mt-4 text-xl text-text-secondary">{t('404.message')}</p>
+    <a
+      href={getRelativeLocaleUrl(locale, '/')}
+      class="mt-8 inline-flex rounded-md bg-accent px-5 py-2.5 font-medium text-accent-foreground no-underline hover:bg-accent-hover"
+    >
+      {t('404.backHome')}
+    </a>
+  </main>
+
+  <Footer />
+</BaseLayout>

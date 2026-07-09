@@ -1,12 +1,24 @@
 ---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import LanguagePicker from '../../components/LanguagePicker.astro';
+import { useTranslations } from '../../i18n/utils.js';
+
+const locale = 'en';
+const t = useTranslations(locale);
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Comate</title>
-  </head>
-  <body>
-    <h1>Comate</h1>
-  </body>
-</html>
+<BaseLayout title="Comate" description="Your friendly AI workspace companion">
+  <Nav>
+    <LanguagePicker slot="language-picker" />
+    <LanguagePicker slot="language-picker-mobile" />
+  </Nav>
+
+  <main class="mx-auto max-w-5xl px-4 py-12">
+    <h1 class="text-4xl font-bold text-text-primary">Comate</h1>
+    <p class="mt-4 text-lg text-text-secondary">{t('nav.home')}</p>
+  </main>
+
+  <Footer />
+</BaseLayout>

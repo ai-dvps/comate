@@ -1,0 +1,67 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { useTranslations, type Lang, type UIKey } from '../i18n/utils.js';
+import ThemeToggle from './ThemeToggle.astro';
+import MobileNav from './MobileNav.astro';
+
+const locale = (Astro.currentLocale ?? 'zh') as Lang;
+const t = useTranslations(locale);
+
+const navItems = [
+  { key: 'nav.home', href: getRelativeLocaleUrl(locale, '/') },
+  { key: 'nav.features', href: getRelativeLocaleUrl(locale, '/features/') },
+  { key: 'nav.usage', href: getRelativeLocaleUrl(locale, '/usage/') },
+  { key: 'nav.download', href: getRelativeLocaleUrl(locale, '/download/') },
+  { key: 'nav.about', href: getRelativeLocaleUrl(locale, '/about/') },
+];
+---
+
+<header class="sticky top-0 z-50 border-b border-border bg-bg/80 backdrop-blur">
+  <div class="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
+    <a
+      href={getRelativeLocaleUrl(locale, '/')}
+      class="flex items-center gap-2 text-lg font-semibold text-text-primary no-underline hover:text-text-primary"
+    >
+      <svg
+        class="text-accent"
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="3" y="3" width="18" height="18" rx="4" ry="4" />
+        <path d="M8 12h8" />
+        <path d="M12 8v8" />
+      </svg>
+      <span>Comate</span>
+    </a>
+
+    <nav aria-label={t('nav.home')} class="hidden items-center gap-1 md:flex">
+      {
+        navItems.map((item) => (
+          <a
+            href={item.href}
+            class="rounded-md px-3 py-2 text-sm font-medium text-text-secondary no-underline hover:bg-surface-hover hover:text-text-primary"
+          >
+            {t(item.key as UIKey)}
+          </a>
+        ))
+      }
+    </nav>
+
+    <div class="hidden items-center gap-2 md:flex">
+      <ThemeToggle />
+      <slot name="language-picker" />
+    </div>
+
+    <div class="flex items-center gap-2 md:hidden">
+      <slot name="language-picker-mobile" />
+      <MobileNav items={navItems} />
+    </div>
+  </div>
+</header>
