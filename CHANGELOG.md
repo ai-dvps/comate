@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-07-09
+
 ### Added
 
 - **Message timestamps** — chat messages now display a timestamp below the message content: `HH:mm` for messages sent today and `YYYY-MM-DD HH:mm` for older messages. Timestamps appear for user messages, assistant final-text replies, stdout/stderr meta messages, and Interrupt system messages. They remain hidden on thinking, tool_use, subagent, api_retry, system-reminder, and generic system messages to reduce whitespace between messages. Timestamps are revealed on hover and use the existing `ChatMessage.timestamp` field.
