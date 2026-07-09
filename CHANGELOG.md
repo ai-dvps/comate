@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Bot channel credential reveal** — saved WeCom/Feishu secret fields in Bot Management are now populated automatically when the Channels section opens, masked by default. The eye button toggles between masked and plaintext display; plaintext is fetched from the server only when needed and writes a `channel_credentials_viewed` audit log entry. Credentials remain encrypted at rest. New endpoint: `GET /api/bots/:id/channels/:channelKey/credentials`. English and Simplified Chinese i18n keys reused existing credential labels.
+- **Message timestamps** — chat messages now display a timestamp below the message content: `HH:mm` for messages sent today and `YYYY-MM-DD HH:mm` for older messages. Timestamps appear for user, assistant, system, and meta (slash command / muted system note) messages in both the standard and virtualized message lists. No backend changes were required; the UI consumes the existing `ChatMessage.timestamp` field.
 
 - **Bot member plaintext management** — bot member rows now show the channel user ID alongside its resolved plaintext user ID (and Feishu display name when available). Members with an unresolved plaintext ID are marked as "Pending" and can be resolved in bulk via a "Resolve pending" button, or manually by typing a fallback plaintext ID inline. A dedicated "Refresh" button reloads only the member list. WeCom and Feishu message handlers now automatically add first-time messengers as `normal` bot members, while preserving existing `owner`/`admin` roles. English and Simplified Chinese i18n keys added.
 

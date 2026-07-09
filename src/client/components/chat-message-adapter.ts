@@ -33,6 +33,7 @@ export interface RenderableMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   subType?: string
+  timestamp?: number
   parts: RenderablePart[]
 }
 
@@ -45,6 +46,7 @@ export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
     id: msg.id,
     role: msg.role,
     subType: msg.subType,
+    timestamp: msg.timestamp,
     parts: msg.parts.map((part): RenderablePart | null => {
       if (!part) return null
       switch (part.type) {

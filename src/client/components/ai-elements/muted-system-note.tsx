@@ -9,6 +9,8 @@
 import { ChevronDownIcon, Slash } from 'lucide-react'
 import { useState } from 'react'
 
+import { formatMessageTimestamp } from '../../lib/format-message-timestamp'
+
 import {
   Collapsible,
   CollapsibleContent,
@@ -27,20 +29,26 @@ const PREVIEW_CHARS = 120
 const ARGS_PREVIEW_CHARS = 80
 
 export type MutedSystemNoteProps =
-  | { kind: 'single'; event: CliMetaEvent }
+  | { kind: 'single'; event: CliMetaEvent; timestamp?: number }
   | {
       kind: 'paired'
       slash: SlashCommandEvent
       output: LocalStdoutEvent | LocalStderrEvent
+      timestamp?: number
     }
 
-function NoteFrame({ children }: { children: React.ReactNode }) {
+function NoteFrame({ children, timestamp }: { children: React.ReactNode; timestamp?: number }) {
   return (
     <div
       role="note"
       className="my-1 flex items-center gap-2 text-xs text-text-tertiary"
     >
       {children}
+      {timestamp && (
+        <span className="ml-auto flex-shrink-0">
+          {formatMessageTimestamp(timestamp)}
+        </span>
+      )}
     </div>
   )
 }
@@ -87,7 +95,7 @@ function SlashCommandLine({ event }: { event: SlashCommandEvent }) {
   )
 }
 
-function StdoutBlock({ body }: { body: string }) {
+function StdoutBlock({ body, timestamp }: { body: string; timestamp?: number }) {
   return (
     <div
       role="note"
@@ -99,11 +107,16 @@ function StdoutBlock({ body }: { body: string }) {
       <pre className="whitespace-pre-wrap break-words flex-1 min-w-0 font-mono">
         {body}
       </pre>
+      {timestamp && (
+        <span className="flex-shrink-0">
+          {formatMessageTimestamp(timestamp)}
+        </span>
+      )}
     </div>
   )
 }
 
-function StderrBlock({ body }: { body: string }) {
+function StderrBlock({ body, timestamp }: { body: string; timestamp?: number }) {
   return (
     <div
       role="note"
@@ -115,11 +128,16 @@ function StderrBlock({ body }: { body: string }) {
       <pre className="whitespace-pre-wrap break-words flex-1 min-w-0 font-mono">
         {body}
       </pre>
+      {timestamp && (
+        <span className="flex-shrink-0">
+          {formatMessageTimestamp(timestamp)}
+        </span>
+      )}
     </div>
   )
 }
 
-function SystemReminderNote({ body }: { body: string }) {
+function SystemReminderNote({ body, timestamp }: { body: string; timestamp?: number }) {
   const [open, setOpen] = useState(false)
   const firstLine = body.split('\n')[0]
   const preview =
@@ -157,6 +175,11 @@ function SystemReminderNote({ body }: { body: string }) {
               />
             </CollapsibleTrigger>
           )}
+          {timestamp && (
+            <span className="flex-shrink-0">
+              {formatMessageTimestamp(timestamp)}
+            </span>
+          )}
         </div>
         {hasMore && (
           <CollapsibleContent className="mt-1">
@@ -172,10 +195,10 @@ function SystemReminderNote({ body }: { body: string }) {
 
 export function MutedSystemNote(props: MutedSystemNoteProps) {
   if (props.kind === 'paired') {
-    const { slash, output } = props
+    const { slash, output, timestamp } = props
     const trimmedOutput = output.body.trim()
     return (
-      <NoteFrame>
+      <NoteFrame timestamp={timestamp}>
         <SlashCommandLine event={slash} />
         <span className="text-text-tertiary flex-shrink-0">·</span>
         <span className={cn(
@@ -188,19 +211,19 @@ export function MutedSystemNote(props: MutedSystemNoteProps) {
     )
   }
 
-  const { event } = props
+  const { event, timestamp } = props
   switch (event.kind) {
     case 'slash-command':
       return (
-        <NoteFrame>
+        <NoteFrame timestamp={timestamp}>
           <SlashCommandLine event={event} />
         </NoteFrame>
       )
     case 'local-stdout':
-      return <StdoutBlock body={event.body} />
+      return <StdoutBlock body={event.body} timestamp={timestamp} />
     case 'local-stderr':
-      return <StderrBlock body={event.body} />
+      return <StderrBlock body={event.body} timestamp={timestamp} />
     case 'system-reminder':
-      return <SystemReminderNote body={event.body} />
+      return <SystemReminderNote body={event.body} timestamp={timestamp} />
   }
 }
