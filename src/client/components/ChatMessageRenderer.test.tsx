@@ -159,7 +159,9 @@ describe('ChatMessageRenderer timestamps', () => {
     message.timestamp = new Date(2026, 6, 9, 14, 32).getTime()
 
     render(<ChatMessageRenderer {...baseProps} message={message} />)
-    expect(screen.getByText('14:32')).toBeInTheDocument()
+    const timestamp = screen.getByText('14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
   })
 
   it('renders older timestamp for an assistant message', () => {
@@ -167,7 +169,9 @@ describe('ChatMessageRenderer timestamps', () => {
     message.timestamp = new Date(2026, 6, 8, 14, 32).getTime()
 
     render(<ChatMessageRenderer {...baseProps} message={message} />)
-    expect(screen.getByText('2026-07-08 14:32')).toBeInTheDocument()
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
   })
 
   it('renders timestamp for api_retry system messages', () => {
@@ -180,7 +184,9 @@ describe('ChatMessageRenderer timestamps', () => {
     }
 
     render(<ChatMessageRenderer {...baseProps} message={message} />)
-    expect(screen.getByText('2026-07-08 14:32')).toBeInTheDocument()
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
   })
 
   it('renders timestamp for generic system messages', () => {
@@ -192,7 +198,9 @@ describe('ChatMessageRenderer timestamps', () => {
     }
 
     render(<ChatMessageRenderer {...baseProps} message={message} />)
-    expect(screen.getByText('2026-07-08 14:32')).toBeInTheDocument()
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
   })
 })
 

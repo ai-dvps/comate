@@ -130,7 +130,9 @@ describe('MessageList search integration', () => {
 
     renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />)
 
-    expect(screen.getByText('2026-07-08 14:32')).toBeInTheDocument()
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
   })
 
   it('renders muted system note with timestamp', () => {
@@ -153,7 +155,9 @@ describe('MessageList search integration', () => {
 
     renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />)
 
-    expect(screen.getByText('2026-07-08 14:32')).toBeInTheDocument()
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
   })
 
   it('renders paired slash-command output with timestamp', () => {
@@ -187,6 +191,8 @@ describe('MessageList search integration', () => {
 
     renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />)
 
-    expect(screen.getByText('2026-07-08 14:32')).toBeInTheDocument()
+    const timestamp = screen.getByText('2026-07-08 14:32')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp).toHaveClass('opacity-0')
   })
 })

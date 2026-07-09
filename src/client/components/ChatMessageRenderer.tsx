@@ -126,7 +126,7 @@ function MessageTimestamp({
   return (
     <div
       className={cn(
-        'mt-1 text-xs text-text-tertiary',
+        'mt-1 text-xs text-text-tertiary opacity-0 transition-opacity duration-200 group-hover:opacity-100',
         align === 'right' ? 'text-right' : 'text-left',
       )}
     >
@@ -184,7 +184,7 @@ export default function ChatMessageRenderer({
     const ranges = getPartSearchRanges(searchMatches, currentMatch, message.id, 0)
     if (message.subType === 'api_retry') {
       return (
-        <div className="flex flex-col items-start">
+        <div className="group flex flex-col items-start">
           <div className="px-3 py-1 text-xs text-text-muted/70">
             {ranges.length > 0 ? (
               <HighlightText text={text} ranges={ranges} />
@@ -197,7 +197,7 @@ export default function ChatMessageRenderer({
       )
     }
     return (
-      <div className="flex flex-col items-start">
+      <div className="group flex flex-col items-start">
         <div
           className={cn(
             'flex items-start gap-2 rounded-lg border px-3 py-2',
@@ -223,7 +223,7 @@ export default function ChatMessageRenderer({
   return (
     <div
       className={cn(
-        'flex w-full max-w-[95%] flex-col',
+        'group flex w-full max-w-[95%] flex-col',
         message.role === 'user' ? 'ml-auto items-end' : 'items-start',
       )}
     >
