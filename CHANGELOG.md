@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bot role lookup matches either channel id** — `BotService.getMemberRole` now resolves a member by either their encrypted channel user id or their resolved plaintext user id. Previously, querying by plaintext id against a member stored under the encrypted channel id returned `null`, so Owner/Admin users were treated as Normal and denied workspace writes with `outside-user-dir-write`.
+
 - **Bot role changes now apply immediately to file-path checks** — when a WeCom/Feishu user's bot role is promoted to Owner or Admin, file Write/Edit/Read/Glob/Grep calls in an already-running session are now evaluated against the current role instead of the role snapshot taken when the runtime started. This fixes `outside-user-dir-write` denials for users who had already been granted Owner/Admin rights.
 
 - **Message panel double scrollbar** — the `Conversation` wrapper no longer sets `overflow-y-auto`; only the inner `StickToBottom.Content` scroll container is used. This removes the duplicate scrollbar that appeared in the message panel when the non-virtualized message list was active.

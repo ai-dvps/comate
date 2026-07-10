@@ -378,7 +378,9 @@ export class BotService {
   getMemberRole(botId: string, channelKey: BotChannelKey, channelUserId: string): BotRoleKey | null {
     const channel = this.store.getBotChannelByKey(botId, channelKey);
     if (!channel) return null;
-    const user = this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId);
+    const user =
+      this.store.getBotUserByChannelIdentity(botId, channel.id, channelUserId) ??
+      this.store.getBotUserByChannelPlaintext(botId, channel.id, channelUserId);
     return user?.roleKey ?? null;
   }
 

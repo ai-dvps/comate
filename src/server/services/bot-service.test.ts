@@ -234,6 +234,23 @@ describe('BotService', { concurrency: false }, () => {
       assert.ok(logs.some((l) => l.eventType === 'user_added'));
       assert.ok(logs.some((l) => l.eventType === 'user_role_changed'));
     });
+
+    it('resolves role by plaintext id when member was stored with encrypted channel id', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-1', roleKey: 'admin', plaintextUserId: 'plain-1' });
+
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'enc-1'), 'admin');
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'plain-1'), 'admin');
+    });
+
+    it('prefers exact channel identity over plaintext when ids differ', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-1', roleKey: 'owner', plaintextUserId: 'plain-1' });
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'plain-1', roleKey: 'normal' });
+
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'enc-1'), 'owner');
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'plain-1'), 'normal');
+    });
   });
 
   describe('updateBot', () => {
