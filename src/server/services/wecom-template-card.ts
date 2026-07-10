@@ -469,3 +469,58 @@ export function verifySessionOwner(
   if (!ownerChannelUserId) return false;
   return ownerChannelUserId === wecomUserId;
 }
+
+/** Approximate character cap for a folded question prompt (KTD4). */
+const FOLD_QUESTION_PROMPT_MAX = 200;
+
+function truncateFold(text: string, max: number = FOLD_QUESTION_PROMPT_MAX): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…`;
+}
+
+/**
+ * Format the resolved AskUserQuestion fold for the streaming reply (R2, KTD3).
+ *
+ * Emits one `❓{question}` line and one `↳ 你的选择：{labels}` line per
+ * question that has a non-empty answer, in question order. Questions with no
+ * answer (or a whitespace-only answer) are omitted, and an all-empty result
+ * returns `''` so the caller can skip the append. Multi-select labels arrive
+ * pre-joined in `answers` (see `buildAnswersFromCardEvent`). Question prompts
+ * are capped at ~200 characters with an ellipsis. Pure function, no I/O.
+ */
+export function formatQuestionFold(
+  questions: ReadonlyArray<{ question: string }>,
+  answers: Record<string, string>,
+): string {
+  const blocks: string[] = [];
+  for (const q of questions) {
+    const answer = answers[q.question];
+    if (!answer || !answer.trim()) continue;
+    blocks.push(`❓${truncateFold(q.question)}\n↳ 你的选择：${answer}`);
+  }
+  return blocks.join('\n\n');
+}
+
+/** Permission outcomes that can be folded into the streaming reply. */
+export type PermissionFoldAction = 'allow' | 'deny' | 'always_allow';
+
+const PERMISSION_FOLD_OUTCOME: Record<PermissionFoldAction, string> = {
+  allow: '已允许',
+  deny: '已拒绝',
+  always_allow: '已始终允许',
+};
+
+/**
+ * Format the resolved permission fold line for the streaming reply (R3, KTD3).
+ *
+ * Intentionally accepts ONLY the tool name and the action — never the tool
+ * input, command, or file path — so long or sensitive arguments cannot be
+ * echoed into the persistent WeCom bubble. Returns `''` for an unrecognized
+ * action (caller skips the append). Pure function, no I/O.
+ */
+export function formatPermissionFold(toolName: string, action: PermissionFoldAction): string {
+  const outcome = PERMISSION_FOLD_OUTCOME[action];
+  if (!outcome) return '';
+  const tool = toolName && toolName.trim() ? toolName.trim() : 'unknown';
+  return `🔐 ${tool} → ${outcome}`;
+}

@@ -49,6 +49,16 @@ export interface StreamReplyResult {
    * safeguard has fired (the caller should send the message proactively).
    */
   interrupt: (message: string) => boolean;
+  /**
+   * Append a resolved narrative block (e.g. a folded question/permission
+   * receipt) into the passive stream WITHOUT finalizing it, so the agent's
+   * continuation keeps streaming into the same bubble below the block. Mirrors
+   * `interrupt` (clears the active placeholder, ensures one blank-line
+   * separator, appends to the same buffer, flushes) minus the finalize. Returns
+   * `false` and changes nothing when the stream is finalized, the 9-minute
+   * safeguard has closed the passive reply, or the text is empty/whitespace.
+   */
+  appendNarrative: (text: string) => boolean;
 }
 
 export interface StreamReplyCallbacks {
@@ -332,6 +342,28 @@ export function createStreamReply(
     return true;
   };
 
+  const appendNarrative = (text: string): boolean => {
+    if (streamFinalized || passiveClosed) {
+      diagLog(
+        `[WeComStreamReply ${sessionId}] appendNarrative skipped: streamFinalized=${streamFinalized}, passiveClosed=${passiveClosed}`,
+      );
+      return false;
+    }
+    if (!text || !text.trim()) {
+      return false;
+    }
+    clearPlaceholder();
+    if (responseText && !responseText.endsWith('\n\n')) {
+      responseText += '\n\n';
+    }
+    responseText += text;
+    diagLog(
+      `[WeComStreamReply ${sessionId}] appending narrative block (no finalize) len=${text.length}`,
+    );
+    flushStream.flush();
+    return true;
+  };
+
   const handler = Object.assign(
     (id: number, event: SseEvent) => {
       if (streamFinalized) return;
@@ -437,5 +469,5 @@ export function createStreamReply(
     },
   );
 
-  return { handler, finalizeStream, setPlaceholder, interrupt };
+  return { handler, finalizeStream, setPlaceholder, interrupt, appendNarrative };
 }

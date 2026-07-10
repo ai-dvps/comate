@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Message panel double scrollbar** — the `Conversation` wrapper no longer sets `overflow-y-auto`; only the inner `StickToBottom.Content` scroll container is used. This removes the duplicate scrollbar that appeared in the message panel when the non-virtualized message list was active.
 
+- **WeCom card answers no longer read backward** — when a WeCom bot asks a question or requests tool permission via a template card, the resolved answer/outcome is now folded into the same streaming reply bubble (above the agent's continuation) the moment the card is tapped, and the card flips to a compact terminal receipt. Previously the agent's continuation kept streaming above the card, so the answer appeared above the question it answered — and past the 9-minute safeguard it arrived as a separate later message. Question folds show the question and chosen label(s); permission folds show only the tool name and outcome (`已允许` / `已拒绝` / `已始终允许`), never the command, file path, or diff.
+
 ## [0.0.21] - 2026-07-09
 
 ### Added
