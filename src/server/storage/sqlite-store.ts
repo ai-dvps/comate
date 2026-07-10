@@ -2260,6 +2260,13 @@ export class SqliteStore {
     return rows.map((r) => parseBotUserRow(r, this.db));
   }
 
+  getBotUserByChannelPlaintext(botId: string, channelId: string, plaintextUserId: string): BotUser | null {
+    const row = this.db.prepare(`
+      SELECT * FROM bot_users WHERE bot_id = ? AND channel_id = ? AND plaintext_user_id = ?
+    `).get(botId, channelId, plaintextUserId) as RawBotUserRow | undefined;
+    return row ? parseBotUserRow(row, this.db) : null;
+  }
+
   getBotUserByPlaintext(plaintextUserId: string): BotUser | null {
     const row = this.db.prepare('SELECT * FROM bot_users WHERE plaintext_user_id = ? LIMIT 1').get(plaintextUserId) as RawBotUserRow | undefined;
     return row ? parseBotUserRow(row, this.db) : null;
