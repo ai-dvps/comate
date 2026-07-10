@@ -1,0 +1,77 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { useTranslations, type Lang } from '../i18n/utils.js';
+import FeatureCard from './FeatureCard.astro';
+
+interface Feature {
+  title: string;
+  description: string;
+  category: string;
+  icon?: string;
+  image?: string;
+  imageAlt?: string;
+  gradientFrom?: string;
+  gradientTo?: string;
+}
+
+interface Props {
+  locale: Lang;
+  features: Feature[];
+}
+
+const { locale, features } = Astro.props;
+const t = useTranslations(locale);
+---
+
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-24">
+  <div class="mb-10 flex flex-col items-start justify-between gap-4 md:flex-row md:items-end">
+    <div class="max-w-2xl">
+      <h2 class="text-3xl font-bold tracking-tight text-text-primary md:text-4xl">
+        {locale === 'zh' ? '为开发者打造的核心能力' : 'Built for the way you work'}
+      </h2>
+      <p class="mt-4 text-lg text-text-secondary">
+        {
+          locale === 'zh'
+            ? '从工作区管理到团队协作，Comate 把 AI 能力落到每一个开发场景。'
+            : 'From workspace management to team collaboration, Comate brings AI into every development workflow.'
+        }
+      </p>
+    </div>
+    <a
+      href={getRelativeLocaleUrl(locale, '/features/')}
+      class="inline-flex items-center gap-1 text-base font-medium no-underline"
+    >
+      {t('home.featureCta')}
+      <svg
+        class="h-4 w-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M5 12h14M12 5l7 7-7 7" />
+      </svg>
+    </a>
+  </div>
+
+  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    {
+      features.map((feature) => (
+        <FeatureCard
+          title={feature.title}
+          description={feature.description}
+          category={feature.category}
+          icon={feature.icon}
+          image={feature.image}
+          imageAlt={feature.imageAlt}
+          gradientFrom={feature.gradientFrom}
+          gradientTo={feature.gradientTo}
+          compact
+        />
+      ))
+    }
+  </div>
+</section>

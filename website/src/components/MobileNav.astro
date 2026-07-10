@@ -1,4 +1,5 @@
 ---
+import { getRelativeLocaleUrl } from 'astro:i18n';
 import { useTranslations, type Lang, type UIKey } from '../i18n/utils.js';
 import ThemeToggle from './ThemeToggle.astro';
 
@@ -58,14 +59,14 @@ const { items } = Astro.props;
     hidden
     class="absolute left-0 right-0 top-14 border-b border-border bg-bg shadow-lg"
   >
-    <nav aria-label={t('nav.home')} class="mx-auto max-w-5xl px-4 py-4">
-      <ul class="flex flex-col gap-2">
+    <nav aria-label={t('nav.home')} class="mx-auto max-w-6xl px-4 py-4">
+      <ul class="flex flex-col gap-1">
         {
           items.map((item) => (
             <li>
               <a
                 href={item.href}
-                class="block rounded-md px-3 py-2 text-base font-medium text-text-secondary no-underline hover:bg-surface-hover hover:text-text-primary"
+                class="block rounded-md px-3 py-3 text-base font-medium text-text-secondary no-underline hover:bg-surface-hover hover:text-text-primary"
               >
                 {t(item.key as UIKey)}
               </a>
@@ -73,6 +74,16 @@ const { items } = Astro.props;
           ))
         }
       </ul>
+
+      <div class="mt-4 border-t border-border pt-4">
+        <a
+          href={getRelativeLocaleUrl(locale, '/download/')}
+          class="flex min-h-12 items-center justify-center rounded-lg bg-accent px-4 py-3 text-base font-semibold text-accent-foreground no-underline hover:bg-accent-hover"
+        >
+          {t('nav.downloadCta')}
+        </a>
+      </div>
+
       <div class="mt-4 flex items-center gap-3 border-t border-border pt-4">
         <ThemeToggle label={t('languagePicker.label')} />
         <span class="text-sm text-text-secondary">{t('languagePicker.label')}</span>

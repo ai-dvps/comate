@@ -3,42 +3,63 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import Nav from '../../components/Nav.astro';
 import Footer from '../../components/Footer.astro';
 import LanguagePicker from '../../components/LanguagePicker.astro';
+import DownloadPanel from '../../components/DownloadPanel.astro';
 
+const locale = 'zh';
 const releasesUrl = 'https://github.com/ai-dvps/comate/releases';
 ---
 
-<BaseLayout title="下载 Comate" description="下载 Comate 桌面应用">
+<BaseLayout title="下载 Comate" description="下载 Comate 桌面应用，支持 macOS 和 Windows。">
   <Nav>
     <LanguagePicker slot="language-picker" />
     <LanguagePicker slot="language-picker-mobile" />
   </Nav>
 
-  <main class="mx-auto max-w-3xl px-4 py-16 md:py-24">
-    <h1 class="text-4xl font-bold text-text-primary">下载 Comate</h1>
-    <p class="mt-4 text-lg text-text-secondary">
-      获取最新版本，支持 macOS 和 Windows。
-    </p>
+  <main class="mx-auto max-w-4xl px-4 py-16 md:py-24">
+    <DownloadPanel locale={locale} />
 
-    <div class="mt-8 rounded-lg border border-border bg-surface p-6">
-      <h2 class="text-xl font-semibold text-text-primary">从 GitHub Releases 安装</h2>
-      <ol class="mt-4 list-decimal space-y-2 pl-5 text-text-secondary">
-        <li>访问 GitHub Releases 页面。</li>
-        <li>下载适合您系统的安装包（.dmg 或 .exe）。</li>
-        <li>运行安装程序并按提示完成安装。</li>
-      </ol>
-      <a
-        href={releasesUrl}
-        class="mt-6 inline-flex items-center rounded-md bg-accent px-5 py-2.5 font-medium text-accent-foreground no-underline hover:bg-accent-hover"
-      >
-        前往 GitHub Releases
-      </a>
+    <div class="reveal mt-8 grid gap-6 md:grid-cols-2">
+      <div class="rounded-2xl border border-border bg-surface p-6">
+        <h2 class="text-xl font-semibold text-text-primary">安装步骤</h2>
+        <ol class="mt-4 list-decimal space-y-3 pl-5 text-text-secondary">
+          <li>访问 GitHub Releases，下载适合系统的安装包（.dmg 或 .msi）。</li>
+          <li>运行安装程序并按提示完成安装。</li>
+          <li>首次打开时允许开发者身份验证，然后创建或加入工作区。</li>
+        </ol>
+      </div>
+
+      <div class="rounded-2xl border border-border bg-surface p-6">
+        <h2 class="text-xl font-semibold text-text-primary">系统要求</h2>
+        <ul class="mt-4 space-y-2 text-text-secondary">
+          <li class="flex items-center gap-2">
+            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              ><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg
+            >
+            <span>macOS 12 或更高版本 / Windows 10 或更高版本</span>
+          </li>
+          <li class="flex items-center gap-2">
+            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg
+            >
+            <span>约 200 MB 可用磁盘空间</span>
+          </li>
+          <li class="flex items-center gap-2">
+            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              ><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg
+            >
+            <span>首次运行需要联网完成环境准备</span>
+          </li>
+        </ul>
+      </div>
     </div>
 
-    <p class="mt-6 text-sm text-text-tertiary">
-      更新记录同样托管在
-      <a href={releasesUrl} class="underline-offset-2">GitHub Releases</a>
-      上。
-    </p>
+    <div class="reveal mt-8 text-center">
+      <p class="text-sm text-text-tertiary">
+        更新记录同样托管在
+        <a href={releasesUrl} class="underline-offset-2">GitHub Releases</a>
+        上。
+      </p>
+    </div>
   </main>
 
   <Footer />

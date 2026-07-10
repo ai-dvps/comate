@@ -1,7 +1,11 @@
 ---
 import { getCollection, render } from 'astro:content';
-import { getRelativeLocaleUrl } from 'astro:i18n';
-import { getContentLocale, type Lang } from '../i18n/utils.js';
+import { getContentLocale, getLocalizedEntries, type Lang } from '../i18n/utils.js';
+import HeroSection from './HeroSection.astro';
+import StatsBand from './StatsBand.astro';
+import FeatureHighlightGrid from './FeatureHighlightGrid.astro';
+import BeforeAfterStrip from './BeforeAfterStrip.astro';
+import CTASection from './CTASection.astro';
 
 interface Props {
   locale: Lang;
@@ -9,33 +13,45 @@ interface Props {
 
 const { locale } = Astro.props;
 const contentLocale = getContentLocale(locale).toLowerCase();
-const entries = await getCollection('home');
-const entry =
-  entries.find((e) => e.id === `${contentLocale}/hero`) ??
-  entries.find((e) => e.id === `zh-cn/hero`);
-if (!entry) {
+
+const homeEntries = await getCollection('home');
+const homeEntry =
+  homeEntries.find((e) => e.id === `${contentLocale}/hero`) ??
+  homeEntries.find((e) => e.id === `zh-cn/hero`);
+if (!homeEntry) {
   throw new Error(`Missing hero content for locale ${locale}`);
 }
-const { Content } = await render(entry);
-const { title, description, ctaText, ctaHref } = entry.data;
+const { Content } = await render(homeEntry);
+const { title, description, headline, subheadline, ctaText, ctaHref, secondaryCtaText, secondaryCtaHref, stats } =
+  homeEntry.data;
+
+const allFeatures = await getCollection('features');
+const features = getLocalizedEntries(allFeatures, locale)
+  .sort((a, b) => a.data.order - b.data.order)
+  .slice(0, 6)
+  .map((entry) => ({ ...entry.data }));
 ---
 
-<section class="mx-auto max-w-5xl px-4 py-16 md:py-24">
-  <div class="flex flex-col items-start gap-6">
-    <h1 class="text-4xl font-bold tracking-tight text-text-primary md:text-6xl">
-      {title}
-    </h1>
-    <p class="max-w-2xl text-lg text-text-secondary md:text-xl">
-      {description}
-    </p>
-    <div class="mt-2 max-w-2xl text-text-secondary">
-      <Content />
-    </div>
-    <a
-      href={getRelativeLocaleUrl(locale, ctaHref)}
-      class="mt-4 inline-flex items-center rounded-md bg-accent px-6 py-3 text-base font-medium text-accent-foreground no-underline shadow-sm hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-    >
-      {ctaText}
-    </a>
-  </div>
-</section>
+<div class="space-y-4">
+  <HeroSection
+    locale={locale}
+    headline={headline ?? title}
+    subheadline={subheadline ?? description}
+    ctaText={ctaText}
+    ctaHref={ctaHref}
+    secondaryCtaText={secondaryCtaText}
+    secondaryCtaHref={secondaryCtaHref}
+  />
+
+  {stats && stats.length > 0 && <StatsBand stats={stats} />}
+
+  <FeatureHighlightGrid locale={locale} features={features} />
+
+  <BeforeAfterStrip locale={locale} />
+
+  <CTASection locale={locale} />
+
+  <section class="mx-auto max-w-3xl px-4 pb-16 text-center text-text-tertiary">
+    <Content />
+  </section>
+</div>

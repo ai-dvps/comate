@@ -1,5 +1,6 @@
 ---
 import { getCollection } from 'astro:content';
+import { getRelativeLocaleUrl } from 'astro:i18n';
 import { getLocalizedEntries, type Lang } from '../i18n/utils.js';
 import FeatureCard from './FeatureCard.astro';
 
@@ -14,21 +15,33 @@ const entries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.or
 const categories = [...new Set(entries.map((e) => e.data.category))];
 ---
 
-<section class="mx-auto max-w-5xl px-4 py-16 md:py-24">
-  <h1 class="text-4xl font-bold text-text-primary md:text-5xl">
-    {locale === 'zh' ? '功能特性' : 'Features'}
-  </h1>
-  <p class="mt-4 max-w-2xl text-lg text-text-secondary">
-    {locale === 'zh'
-      ? 'Comate 将 AI 工作区、文件管理、团队协作和桌面体验融为一体。'
-      : 'Comate brings together AI workspaces, file management, team collaboration, and a polished desktop experience.'}
-  </p>
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-24">
+  <div class="mb-12 flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
+    <div class="max-w-2xl">
+      <h1 class="text-4xl font-bold tracking-tight text-text-primary md:text-5xl">
+        {locale === 'zh' ? '功能特性' : 'Features'}
+      </h1>
+      <p class="mt-4 text-lg text-text-secondary">
+        {
+          locale === 'zh'
+            ? 'Comate 将 AI 工作区、文件管理、团队协作和桌面体验融为一体。'
+            : 'Comate brings together AI workspaces, file management, team collaboration, and a polished desktop experience.'
+        }
+      </p>
+    </div>
+    <a
+      href={getRelativeLocaleUrl(locale, '/download/')}
+      class="inline-flex min-h-12 items-center justify-center rounded-lg bg-accent px-6 py-3 text-base font-semibold text-accent-foreground no-underline shadow-lg shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30"
+    >
+      {locale === 'zh' ? '立即下载体验' : 'Download and try it now'}
+    </a>
+  </div>
 
   {
     categories.map((category) => (
-      <div class="mt-12">
-        <h2 class="text-xl font-semibold text-text-primary">{category}</h2>
-        <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div class="reveal mt-12 first:mt-0">
+        <h2 class="mb-4 text-xl font-semibold text-text-primary">{category}</h2>
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {entries
             .filter((e) => e.data.category === category)
             .map((entry) => (
@@ -39,10 +52,29 @@ const categories = [...new Set(entries.map((e) => e.data.category))];
                 icon={entry.data.icon}
                 image={entry.data.image}
                 imageAlt={entry.data.imageAlt}
+                gradientFrom={entry.data.gradientFrom}
+                gradientTo={entry.data.gradientTo}
               />
             ))}
         </div>
       </div>
     ))
   }
+
+  <div class="reveal mt-16 rounded-2xl border border-border bg-surface p-8 text-center">
+    <h2 class="text-2xl font-bold text-text-primary md:text-3xl">
+      {locale === 'zh' ? '亲自体验这些能力' : 'Experience it yourself'}
+    </h2>
+    <p class="mx-auto mt-3 max-w-xl text-text-secondary">
+      {locale === 'zh'
+        ? '下载 Comate，创建工作区，与你的第一个项目开始对话。'
+        : 'Download Comate, create a workspace, and start talking to your first project.'}
+    </p>
+    <a
+      href={getRelativeLocaleUrl(locale, '/download/')}
+      class="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-accent px-8 py-3 text-base font-semibold text-accent-foreground no-underline shadow-lg shadow-accent/20 hover:bg-accent-hover"
+    >
+      {locale === 'zh' ? '立即下载' : 'Download now'}
+    </a>
+  </div>
 </section>
