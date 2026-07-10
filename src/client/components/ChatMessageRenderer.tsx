@@ -1,6 +1,7 @@
 import { AlertCircle } from 'lucide-react'
 
 import { summarizeToolInput } from '../lib/summarize-tool-input'
+import { detectStructuredReport } from '../lib/structured-report'
 import type { MessageSearchMatch, SearchHighlightRange } from '../hooks/useMessageSearch'
 
 import { Message, MessageContent } from './ai-elements/message'
@@ -10,6 +11,7 @@ import {
   ReasoningTrigger,
 } from './ai-elements/reasoning'
 import CompactableText from './ai-elements/compactable-text'
+import { StructuredReport } from './ai-elements/structured-report'
 import {
   Tool,
   ToolContent,
@@ -256,6 +258,19 @@ export default function ChatMessageRenderer({
                   <p key={partKey} className="whitespace-pre-wrap">
                     <HighlightText text={part.text} ranges={ranges} />
                   </p>
+                )
+              }
+              const report = detectStructuredReport(part.text)
+              if (report) {
+                return (
+                  <StructuredReport
+                    key={partKey}
+                    {...report}
+                    raw={part.text}
+                    forceExpanded={isCurrentInPart}
+                    hasSearchMatch={hasMatchInPart}
+                    isCurrentSearchMatch={isCurrentInPart}
+                  />
                 )
               }
               return (
