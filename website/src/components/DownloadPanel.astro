@@ -1,0 +1,116 @@
+---
+import { useTranslations, type Lang } from '../i18n/utils.js';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const t = useTranslations(locale);
+
+const releasesUrl = 'https://github.com/ai-dvps/comate/releases';
+const latestReleaseUrl = 'https://github.com/ai-dvps/comate/releases/latest';
+---
+
+<div class="rounded-2xl border border-border bg-surface p-6 shadow-sm md:p-8">
+  <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+    <div class="space-y-2">
+      <p class="text-sm font-medium text-accent">{t('download.latestVersion')}</p>
+      <h2 class="text-2xl font-bold text-text-primary md:text-3xl" id="download-headline">
+        {locale === 'zh' ? '获取 Comate' : 'Get Comate'}
+      </h2>
+      <p class="text-text-secondary">
+        {locale === 'zh' ? '选择适合你的平台，几分钟内开始体验。' : 'Pick your platform and get started in minutes.'}
+      </p>
+    </div>
+
+    <div class="flex flex-col gap-3 sm:flex-row">
+      <a
+        id="download-primary"
+        href={latestReleaseUrl}
+        class="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-accent px-6 py-3 text-base font-semibold text-accent-foreground no-underline shadow-lg shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30"
+      >
+        <svg
+          id="download-primary-icon"
+          class="h-5 w-5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+        </svg>
+        <span id="download-primary-text">{t('download.macos')}</span>
+      </a>
+
+      <a
+        id="download-secondary"
+        href={latestReleaseUrl}
+        class="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-border bg-bg px-6 py-3 text-base font-semibold text-text-primary no-underline hover:border-border-hover hover:bg-surface-hover"
+      >
+        <span id="download-secondary-text">{t('download.windows')}</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="mt-6 flex flex-wrap items-center gap-4 border-t border-border pt-6 text-sm text-text-secondary">
+    <a
+      href={releasesUrl}
+      class="inline-flex items-center gap-1 no-underline hover:text-accent"
+    >
+      {t('download.allReleases')}
+      <svg
+        class="h-4 w-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" />
+      </svg>
+    </a>
+    <span class="hidden text-border-hover sm:inline">·</span>
+    <a
+      href={`${releasesUrl}#:~:text=Release%20Notes`}
+      class="no-underline hover:text-accent"
+    >
+      {t('download.releaseNotes')}
+    </a>
+  </div>
+
+  <script is:inline define:vars={{ macText: t('download.macos'), winText: t('download.windows') }}>
+    (function () {
+      const primary = document.getElementById('download-primary');
+      const primaryText = document.getElementById('download-primary-text');
+      const secondary = document.getElementById('download-secondary');
+      const secondaryText = document.getElementById('download-secondary-text');
+      if (!primary || !primaryText || !secondary || !secondaryText) return;
+
+      const ua = navigator.userAgent.toLowerCase();
+      // @ts-ignore — navigator.platform is deprecated but widely supported
+      const platform = navigator.platform?.toLowerCase() || '';
+      const isWindows = /windows/.test(ua) || /win32/.test(platform);
+
+      const macHref = 'https://github.com/ai-dvps/comate/releases/latest';
+      const winHref = 'https://github.com/ai-dvps/comate/releases/latest';
+
+      if (isWindows) {
+        primaryText.textContent = winText;
+        primary.href = winHref;
+        secondaryText.textContent = macText;
+        secondary.href = macHref;
+      } else {
+        primaryText.textContent = macText;
+        primary.href = macHref;
+        secondaryText.textContent = winText;
+        secondary.href = winHref;
+      }
+    })();
+  </script>
+</div>

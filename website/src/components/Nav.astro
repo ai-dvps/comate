@@ -15,10 +15,15 @@ const navItems = [
   { key: 'nav.about', href: getRelativeLocaleUrl(locale, '/about/') },
   { key: 'nav.faq', href: getRelativeLocaleUrl(locale, '/faq/') },
 ];
+
+const currentPath = Astro.url.pathname;
+function isActive(href: string) {
+  return currentPath === href || currentPath.startsWith(href.replace(/\/$/, ''));
+}
 ---
 
-<header class="sticky top-0 z-50 border-b border-border bg-bg/80 backdrop-blur">
-  <div class="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
+<header class="sticky top-0 z-50 border-b border-border bg-bg/80 backdrop-blur-md">
+  <div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
     <a
       href={getRelativeLocaleUrl(locale, '/')}
       class="flex items-center gap-2 text-lg font-semibold text-text-primary no-underline hover:text-text-primary"
@@ -47,7 +52,12 @@ const navItems = [
         navItems.map((item) => (
           <a
             href={item.href}
-            class="rounded-md px-3 py-2 text-sm font-medium text-text-secondary no-underline hover:bg-surface-hover hover:text-text-primary"
+            class:list={[
+              'rounded-md px-3 py-2 text-sm font-medium no-underline transition-colors duration-200',
+              isActive(item.href)
+                ? 'bg-accent/10 text-accent'
+                : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary',
+            ]}
           >
             {t(item.key as UIKey)}
           </a>
@@ -58,6 +68,12 @@ const navItems = [
     <div class="hidden items-center gap-2 md:flex">
       <ThemeToggle />
       <slot name="language-picker" />
+      <a
+        href={getRelativeLocaleUrl(locale, '/download/')}
+        class="ml-2 inline-flex min-h-9 items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground no-underline hover:bg-accent-hover"
+      >
+        {t('nav.downloadCta')}
+      </a>
     </div>
 
     <div class="flex items-center gap-2 md:hidden">

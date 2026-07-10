@@ -7,8 +7,21 @@ const home = defineCollection({
   schema: z.object({
     title: z.string(),
     description: z.string(),
+    headline: z.string().optional(),
+    subheadline: z.string().optional(),
     ctaText: z.string(),
     ctaHref: z.string(),
+    secondaryCtaText: z.string().optional(),
+    secondaryCtaHref: z.string().optional(),
+    stats: z
+      .array(
+        z.object({
+          label: z.string(),
+          value: z.string(),
+          icon: z.string().optional(),
+        })
+      )
+      .optional(),
   }),
 });
 
@@ -22,6 +35,8 @@ const features = defineCollection({
     image: z.string().optional(),
     imageAlt: z.string().optional(),
     order: z.number().default(0),
+    gradientFrom: z.string().optional(),
+    gradientTo: z.string().optional(),
   }),
 });
 

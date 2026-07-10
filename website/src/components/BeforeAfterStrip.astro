@@ -1,0 +1,68 @@
+---
+import { useTranslations, type Lang } from '../i18n/utils.js';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const t = useTranslations(locale);
+
+const items =
+  locale === 'zh'
+    ? [
+        {
+          problem: '在浏览器与编辑器之间反复切换',
+          solution: '一个桌面窗口管理对话、文件与任务',
+        },
+        {
+          problem: '每次对话都从零开始',
+          solution: '以项目文件夹为上下文，历史可追溯',
+        },
+        {
+          problem: 'AI 工具调用不透明',
+          solution: '每一次读/写/执行都清晰可见、可控授权',
+        },
+      ]
+    : [
+        {
+          problem: 'Jumping between browser and editor',
+          solution: 'One desktop window for chat, files, and tasks',
+        },
+        {
+          problem: 'Every chat starts from scratch',
+          solution: 'Project folder context with traceable history',
+        },
+        {
+          problem: 'AI tool calls are a black box',
+          solution: 'Every read/write/execute is visible and approved',
+        },
+      ];
+---
+
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-24">
+  <h2 class="mb-10 text-center text-3xl font-bold tracking-tight text-text-primary md:text-4xl">
+    {locale === 'zh' ? '告别低效的 AI 协作方式' : 'Leave inefficient AI collaboration behind'}
+  </h2>
+
+  <div class="grid gap-6 md:grid-cols-3">
+    {
+      items.map((item) => (
+        <div class="reveal overflow-hidden rounded-xl border border-border bg-surface">
+          <div class="border-b border-border bg-bg/50 p-5">
+            <p class="text-sm font-semibold uppercase tracking-wide text-text-tertiary">
+              {t('home.beforeAfter.problem')}
+            </p>
+            <p class="mt-2 text-text-secondary">{item.problem}</p>
+          </div>
+          <div class="p-5">
+            <p class="text-sm font-semibold uppercase tracking-wide text-accent">
+              {t('home.beforeAfter.solution')}
+            </p>
+            <p class="mt-2 font-medium text-text-primary">{item.solution}</p>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</section>

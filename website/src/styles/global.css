@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
 @theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
   --color-bg: hsl(var(--color-bg-hsl));
   --color-surface: hsl(var(--color-surface-hsl));
   --color-surface-hover: hsl(var(--color-surface-hover-hsl));
@@ -9,6 +12,8 @@
   --color-border-hover: hsl(var(--color-border-hover-hsl));
   --color-accent: hsl(var(--color-accent-hsl));
   --color-accent-hover: hsl(var(--color-accent-hover-hsl));
+  --color-accent-secondary: hsl(var(--color-accent-secondary-hsl));
+  --color-accent-secondary-hover: hsl(var(--color-accent-secondary-hover-hsl));
   --color-accent-foreground: hsl(var(--color-accent-foreground-hsl));
   --color-text-primary: hsl(var(--color-text-primary-hsl));
   --color-text-secondary: hsl(var(--color-text-secondary-hsl));
@@ -16,51 +21,65 @@
   --color-destructive: hsl(var(--color-destructive-hsl));
   --color-success: hsl(var(--color-success-hsl));
   --color-warning: hsl(var(--color-warning-hsl));
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 :root {
-  --color-bg-hsl: 40 20% 96%;
-  --color-surface-hsl: 40 15% 98%;
-  --color-surface-hover-hsl: 40 10% 94%;
-  --color-surface-active-hsl: 40 10% 92%;
-  --color-border-hsl: 40 10% 85%;
-  --color-border-hover-hsl: 40 10% 80%;
-  --color-accent-hsl: 18 75% 55%;
-  --color-accent-hover-hsl: 20 84% 61%;
+  --color-bg-hsl: 220 14% 96%;
+  --color-surface-hsl: 0 0% 100%;
+  --color-surface-hover-hsl: 220 14% 94%;
+  --color-surface-active-hsl: 220 14% 92%;
+  --color-border-hsl: 220 13% 88%;
+  --color-border-hover-hsl: 220 13% 80%;
+  --color-accent-hsl: 255 85% 60%;
+  --color-accent-hover-hsl: 255 90% 66%;
+  --color-accent-secondary-hsl: 190 90% 50%;
+  --color-accent-secondary-hover-hsl: 190 95% 55%;
   --color-accent-foreground-hsl: 0 0% 100%;
-  --color-text-primary-hsl: 40 10% 15%;
-  --color-text-secondary-hsl: 40 5% 40%;
-  --color-text-tertiary-hsl: 40 5% 55%;
-  --color-destructive-hsl: 0 70% 45%;
-  --color-success-hsl: 140 60% 35%;
-  --color-warning-hsl: 35 90% 45%;
+  --color-text-primary-hsl: 220 20% 12%;
+  --color-text-secondary-hsl: 220 10% 42%;
+  --color-text-tertiary-hsl: 220 8% 58%;
+  --color-destructive-hsl: 0 70% 50%;
+  --color-success-hsl: 145 70% 40%;
+  --color-warning-hsl: 38 90% 50%;
 }
 
 .dark {
-  --color-bg-hsl: 0 0% 5%;
-  --color-surface-hsl: 0 0% 8%;
-  --color-surface-hover-hsl: 0 0% 10%;
-  --color-surface-active-hsl: 0 0% 12%;
-  --color-border-hsl: 0 0% 15%;
-  --color-border-hover-hsl: 0 0% 20%;
-  --color-accent-hsl: 18 75% 55%;
-  --color-accent-hover-hsl: 20 84% 61%;
+  --color-bg-hsl: 220 18% 6%;
+  --color-surface-hsl: 220 16% 10%;
+  --color-surface-hover-hsl: 220 16% 14%;
+  --color-surface-active-hsl: 220 16% 18%;
+  --color-border-hsl: 220 12% 20%;
+  --color-border-hover-hsl: 220 12% 28%;
+  --color-accent-hsl: 255 85% 65%;
+  --color-accent-hover-hsl: 255 90% 72%;
+  --color-accent-secondary-hsl: 190 90% 55%;
+  --color-accent-secondary-hover-hsl: 190 95% 60%;
   --color-accent-foreground-hsl: 0 0% 100%;
   --color-text-primary-hsl: 0 0% 96%;
-  --color-text-secondary-hsl: 0 0% 64%;
-  --color-text-tertiary-hsl: 0 0% 45%;
-  --color-destructive-hsl: 0 70% 50%;
-  --color-success-hsl: 140 60% 45%;
-  --color-warning-hsl: 35 90% 50%;
+  --color-text-secondary-hsl: 220 10% 64%;
+  --color-text-tertiary-hsl: 220 8% 46%;
+  --color-destructive-hsl: 0 70% 55%;
+  --color-success-hsl: 145 65% 50%;
+  --color-warning-hsl: 38 90% 55%;
 }
 
 @layer base {
   html {
     @apply bg-bg text-text-primary;
+    font-family: var(--font-sans);
   }
 
   body {
     @apply antialiased;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
   }
 
   :focus-visible {
@@ -68,11 +87,11 @@
   }
 
   a {
-    @apply text-accent hover:text-accent-hover transition-colors;
+    @apply text-accent hover:text-accent-hover transition-colors duration-200 ease-out;
   }
 
   button {
-    @apply transition-colors;
+    @apply transition-all duration-200 ease-out;
   }
 
   * {
@@ -104,6 +123,41 @@
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
     }
+  }
+}
+
+@layer utilities {
+  .reveal {
+    opacity: 0;
+    transform: translateY(1rem);
+    transition:
+      opacity 0.5s var(--ease-out-expo),
+      transform 0.5s var(--ease-out-expo);
+  }
+
+  .reveal.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, hsl(var(--color-accent-hsl)), hsl(var(--color-accent-secondary-hsl)));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
 }

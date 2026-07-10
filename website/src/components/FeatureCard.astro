@@ -1,4 +1,6 @@
 ---
+import { cn } from '../lib/cn.js';
+
 export interface Props {
   title: string;
   description: string;
@@ -6,9 +8,12 @@ export interface Props {
   icon?: string;
   image?: string;
   imageAlt?: string;
+  gradientFrom?: string;
+  gradientTo?: string;
+  compact?: boolean;
 }
 
-const { title, description, category, icon, image, imageAlt } = Astro.props;
+const { title, description, category, icon, image, imageAlt, gradientFrom, gradientTo, compact } = Astro.props;
 
 const icons: Record<string, string> = {
   workspaces:
@@ -34,26 +39,36 @@ const icons: Record<string, string> = {
 };
 
 const iconPath = icon && icons[icon] ? icons[icon] : icons['prompt-input'];
+const from = gradientFrom ?? '255 85% 60%';
+const to = gradientTo ?? '190 90% 50%';
 ---
 
-<article class="flex flex-col rounded-lg border border-border bg-surface p-5 transition-colors hover:border-border-hover">
+<article
+  class={cn(
+    'group flex flex-col rounded-xl border border-border bg-surface p-5 shadow-sm transition-all duration-200 ease-out hover:-translate-y-1 hover:border-border-hover hover:shadow-lg',
+    compact ? 'gap-3' : 'gap-4'
+  )}
+>
   {
     image ? (
       <img
         src={image}
         alt={imageAlt ?? title}
         loading="lazy"
-        class="mb-4 h-40 w-full rounded-md object-cover"
+        class="mb-1 h-40 w-full rounded-lg object-cover"
       />
     ) : (
-      <div class="mb-4 flex h-40 w-full items-center justify-center rounded-md bg-bg text-accent">
+      <div
+        class="mb-1 flex h-12 w-12 items-center justify-center rounded-xl text-accent-foreground"
+        style={`background: linear-gradient(135deg, hsl(${from}), hsl(${to}))`}
+      >
         <svg
-          width="48"
-          height="48"
+          width="24"
+          height="24"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
-          stroke-width="1.5"
+          stroke-width="2"
           stroke-linecap="round"
           stroke-linejoin="round"
           aria-hidden="true"
@@ -63,9 +78,15 @@ const iconPath = icon && icons[icon] ? icons[icon] : icons['prompt-input'];
       </div>
     )
   }
-  <p class="text-xs font-medium uppercase tracking-wide text-text-tertiary">
-    {category}
-  </p>
-  <h3 class="mt-1 text-lg font-semibold text-text-primary">{title}</h3>
-  <p class="mt-2 text-sm leading-relaxed text-text-secondary">{description}</p>
+  <div class="flex flex-col gap-1">
+    <p class="text-xs font-medium uppercase tracking-wide text-text-tertiary">
+      {category}
+    </p>
+    <h3 class={cn('font-semibold text-text-primary', compact ? 'text-base' : 'text-lg')}>
+      {title}
+    </h3>
+    <p class={cn('leading-relaxed text-text-secondary', compact ? 'text-sm' : 'text-sm')}>
+      {description}
+    </p>
+  </div>
 </article>

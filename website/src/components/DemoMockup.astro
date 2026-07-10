@@ -1,0 +1,105 @@
+---
+import { useTranslations, type Lang } from '../i18n/utils.js';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const t = useTranslations(locale);
+
+const messages = {
+  zh: {
+    userMessage: '帮我在 store.ts 里加一个按创建时间排序的 selector。',
+    aiIntro: '已添加 `selectSortedByCreatedAt`，并补上了对应单元测试。',
+    fileName: 'store.ts',
+    diff: '+12 −2',
+    code: 'export const selectSortedByCreatedAt = (state: State) =>\n  [...state.items].sort((a, b) => b.createdAt - a.createdAt);',
+  },
+  en: {
+    userMessage: 'Add a selector in store.ts that sorts items by creation time.',
+    aiIntro: 'Added `selectSortedByCreatedAt` and the corresponding unit test.',
+    fileName: 'store.ts',
+    diff: '+12 −2',
+    code: 'export const selectSortedByCreatedAt = (state: State) =>\n  [...state.items].sort((a, b) => b.createdAt - a.createdAt);',
+  },
+};
+
+const m = messages[locale] ?? messages.en;
+---
+
+<div class="relative mx-auto w-full max-w-xl">
+  <div
+    class="relative overflow-hidden rounded-xl border border-border bg-surface shadow-2xl shadow-accent/5 dark:shadow-black/30"
+  >
+    <div class="flex items-center gap-2 border-b border-border bg-bg/80 px-4 py-3">
+      <div class="flex gap-1.5">
+        <span class="h-3 w-3 rounded-full bg-destructive/80"></span>
+        <span class="h-3 w-3 rounded-full bg-warning/80"></span>
+        <span class="h-3 w-3 rounded-full bg-success/80"></span>
+      </div>
+      <span class="ml-2 text-xs text-text-tertiary">Comate — workspace/</span>
+    </div>
+
+    <div class="grid grid-cols-3 divide-x divide-border">
+      <div class="col-span-1 hidden p-3 sm:block">
+        <div class="mb-2 text-xs font-medium text-text-tertiary">EXPLORER</div>
+        <ul class="space-y-1.5 text-sm text-text-secondary">
+          <li class="flex items-center gap-1.5">
+            <svg class="h-4 w-4 text-accent-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              ><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg
+            >
+            <span>src/</span>
+          </li>
+          <li class="flex items-center gap-1.5 pl-5">
+            <svg class="h-4 w-4 text-text-tertiary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              ><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg
+            >
+            <span>api.ts</span>
+          </li>
+          <li class="flex items-center gap-1.5 pl-5">
+            <svg class="h-4 w-4 text-text-tertiary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              ><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg
+            >
+            <span class="text-text-primary">store.ts</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="col-span-3 flex flex-col gap-4 p-4 sm:col-span-2">
+        <div class="flex items-start gap-3">
+          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-bold text-accent-foreground"
+          >C</div>
+          <div class="rounded-2xl rounded-tl-none border border-border bg-bg px-4 py-2.5 text-sm text-text-primary shadow-sm"
+          >
+            {m.userMessage}
+          </div>
+        </div>
+
+        <div class="flex items-start gap-3">
+          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-hover text-sm font-bold text-text-secondary"
+          >AI</div>
+          <div class="space-y-3 rounded-2xl rounded-tl-none border border-border bg-surface px-4 py-3 text-sm text-text-primary shadow-sm"
+          >
+            <p>{m.aiIntro}</p>
+            <div class="overflow-hidden rounded-lg border border-border bg-bg">
+              <div class="flex items-center justify-between border-b border-border bg-surface-hover px-3 py-1.5 text-xs text-text-tertiary"
+              >
+                <span>{m.fileName}</span>
+                <span class="text-success">{m.diff}</span>
+              </div>
+              <pre class="overflow-x-auto p-3 text-xs leading-relaxed text-text-secondary"
+              ><code><span class="text-accent-secondary">export</span> <span class="text-accent-secondary">const</span> selectSortedByCreatedAt = (state: State) =>
+  [...state.items].sort((a, b) => b.createdAt - a.createdAt);
+</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="mt-4 text-center text-sm text-text-tertiary">
+    {t('home.demoCaption')}
+  </p>
+</div>
