@@ -10,6 +10,8 @@ import {
   buildTerminalCard,
   parseTemplateCardEvent,
   verifySessionOwner,
+  formatQuestionFold,
+  formatPermissionFold,
 } from './wecom-template-card.js';
 
 describe('wecom-template-card', () => {
@@ -521,6 +523,69 @@ describe('wecom-template-card', () => {
       const getChannelUserIdBySession = () => null;
       const result = verifySessionOwner('user-abc', 'sess-1', 'ws-1', getChannelUserIdBySession);
       assert.strictEqual(result, false);
+    });
+  });
+
+  describe('formatQuestionFold', () => {
+    it('renders a single question as ❓/↳ lines', () => {
+      const text = formatQuestionFold([{ question: 'Continue?' }], { 'Continue?': 'Yes' });
+      assert.strictEqual(text, '❓Continue?\n↳ 你的选择：Yes');
+    });
+
+    it('renders one pair per question in order and never lists unselected options', () => {
+      const text = formatQuestionFold(
+        [{ question: 'Color' }, { question: 'Size' }],
+        { Color: 'Red', Size: 'Large' },
+      );
+      assert.strictEqual(
+        text,
+        '❓Color\n↳ 你的选择：Red\n\n❓Size\n↳ 你的选择：Large',
+      );
+      assert.ok(!text.includes('Blue'), 'unselected option never appears');
+    });
+
+    it('renders a multi-select answer as a single joined choice string', () => {
+      const text = formatQuestionFold([{ question: 'Pick' }], { Pick: 'A, B' });
+      assert.ok(text.includes('↳ 你的选择：A, B'));
+    });
+
+    it('truncates an over-long question prompt with an ellipsis', () => {
+      const long = 'x'.repeat(250);
+      const text = formatQuestionFold([{ question: long }], { [long]: 'ok' });
+      const firstLine = text.split('\n')[0];
+      assert.ok(firstLine.startsWith('❓'));
+      assert.ok(firstLine.endsWith('…'), 'long prompt ends with ellipsis');
+      assert.ok(firstLine.length <= 1 + 200 + 1, `prompt capped, got length ${firstLine.length}`);
+    });
+
+    it('omits a question whose answer is empty or missing', () => {
+      assert.strictEqual(
+        formatQuestionFold([{ question: 'A' }, { question: 'B' }], { A: 'yes' }),
+        '❓A\n↳ 你的选择：yes',
+        'B (no answer) is omitted',
+      );
+      assert.strictEqual(formatQuestionFold([{ question: 'A' }], {}), '');
+      assert.strictEqual(formatQuestionFold([{ question: 'A' }], { A: '   ' }), '');
+    });
+  });
+
+  describe('formatPermissionFold', () => {
+    it('maps actions to 已允许 / 已拒绝 / 已始终允许', () => {
+      assert.strictEqual(formatPermissionFold('Bash', 'allow'), '🔐 Bash → 已允许');
+      assert.strictEqual(formatPermissionFold('Bash', 'deny'), '🔐 Bash → 已拒绝');
+      assert.strictEqual(formatPermissionFold('Edit', 'always_allow'), '🔐 Edit → 已始终允许');
+    });
+
+    it('never echoes command arguments (signature accepts only tool + action)', () => {
+      const out = formatPermissionFold('Bash', 'allow');
+      assert.ok(out.includes('Bash'));
+      assert.ok(out.includes('已允许'));
+      assert.ok(!out.includes('--') && !out.includes('/') && !out.includes('rm '));
+    });
+
+    it('falls back to "unknown" for an empty tool name', () => {
+      assert.strictEqual(formatPermissionFold('', 'allow'), '🔐 unknown → 已允许');
+      assert.strictEqual(formatPermissionFold('   ', 'deny'), '🔐 unknown → 已拒绝');
     });
   });
 });

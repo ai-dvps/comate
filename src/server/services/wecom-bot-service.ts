@@ -35,7 +35,10 @@ import {
   decodeButtonKey,
   parseTemplateCardEvent,
   verifySessionOwner,
+  formatQuestionFold,
+  formatPermissionFold,
   type NormalizedSelectedItem,
+  type PermissionFoldAction,
 } from './wecom-template-card.js';
 
 const MAX_SEND_FILE_SIZE_BYTES = 20 * 1024 * 1024;
@@ -1352,6 +1355,15 @@ export class WeComBotService {
     }
 
     if (pending.type === 'approval') {
+      // Fold the resolved permission into the streaming reply BEFORE the agent
+      // resumes, so the receipt lands above the continuation in one bubble
+      // (R1/R6). Redacted to tool name + outcome only (R3).
+      const foldAction: PermissionFoldAction =
+        parsed.action === 'deny' ? 'deny' : parsed.action === 'always_allow' ? 'always_allow' : 'allow';
+      this.foldIntoActiveStream(
+        parsed.sessionId,
+        formatPermissionFold(pending.toolName ?? 'unknown', foldAction),
+      );
       if (parsed.action === 'deny') {
         const toolName = pending.toolName ?? 'unknown';
         const toolUseId = pending.toolUseId ?? 'none';
@@ -1371,8 +1383,11 @@ export class WeComBotService {
       return;
     }
 
-    // Question: parse selected options and resolve with answers.
+    // Question: parse selected options and resolve with answers. Fold the
+    // resolved Q&A into the streaming reply BEFORE resuming the agent so the
+    // answer sits above the continuation in one bubble (R1/R2/R6).
     const answers = this.buildAnswersFromCardEvent(parsed, pending.questions);
+    this.foldIntoActiveStream(parsed.sessionId, formatQuestionFold(pending.questions, answers));
     runtime.resolveApproval(parsed.requestId, {
       behavior: 'allow',
       updatedInput: { questions: pending.questions, answers },
@@ -1485,6 +1500,23 @@ export class WeComBotService {
       `已切换到工作空间：${workspace?.name ?? targetWorkspaceId}`,
     );
     await this.switchActiveWorkspace(botId, targetWorkspaceId, parsed.wecomUserId);
+  }
+
+  /**
+   * Fold a resolved card receipt (question answer or permission outcome) into
+   * the session's active streaming reply so the receipt and the agent's
+   * continuation share one bubble (R1/R6). Appends WITHOUT finalizing the
+   * stream. No-ops when the text is empty, when there is no active stream for
+   * the session (turn already finalized, replaced by a newer turn, or past the
+   * 9-minute safeguard), or when the append itself reports the passive reply is
+   * closed — in all those cases the card still flips terminal and, if the
+   * passive reply is closed, the result is delivered proactively as usual.
+   */
+  private foldIntoActiveStream(sessionId: string, text: string): void {
+    if (!text || !text.trim()) return;
+    const stream = this.activeStreamReplies.get(sessionId);
+    if (!stream) return;
+    stream.appendNarrative(text);
   }
 
   private buildAnswersFromCardEvent(
