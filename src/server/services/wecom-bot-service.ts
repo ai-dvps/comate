@@ -565,6 +565,7 @@ export class WeComBotService {
     if (!frame.body) return;
     const wecomUserId = frame.body.from.userid;
     const content = frame.body.text.content;
+    diagLog(`[WeComBotService] recv text workspace=${workspaceId} from=${wecomUserId} len=${content.length}`);
 
     // Fire-and-forget: queue unseen user IDs for batch resolution
     wecomUserResolver.resolveOnMessage(workspaceId, wecomUserId).catch(() => {
@@ -964,6 +965,7 @@ export class WeComBotService {
     if (!frame.body) return;
     const wecomUserId = frame.body.from.userid;
     const msgtype = frame.body.msgtype;
+    diagLog(`[WeComBotService] recv ${msgtype} workspace=${workspaceId} from=${wecomUserId}`);
 
     // Fire-and-forget: queue unseen user IDs for batch resolution
     wecomUserResolver.resolveOnMessage(workspaceId, wecomUserId).catch(() => {});
@@ -1303,6 +1305,9 @@ export class WeComBotService {
       }>,
     );
     if (!parsed) return;
+    diagLog(
+      `[WeComBotService] recv template_card_event workspace=${workspaceId} from=${parsed.wecomUserId} action=${parsed.action} requestId=${parsed.requestId}`,
+    );
 
     // Per-user per-request rate limit to absorb duplicate SDK deliveries.
     const now = Date.now();
