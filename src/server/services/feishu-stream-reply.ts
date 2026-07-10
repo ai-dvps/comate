@@ -12,6 +12,7 @@ import { feishuCardActionHandler } from './feishu-card-action-handler.js';
 import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
 import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { sendPlainTextMessage } from './feishu-message-utils.js';
+import { diagLog } from '../utils/diag-logger.js';
 
 export interface FeishuStreamReplyHandle {
   handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
@@ -65,11 +66,14 @@ export class FeishuStreamReply {
     this.onWaiting = options?.onWaiting ?? this.onWaiting;
     this.callbacks = { onFinalized: options?.onFinalized, onCleanup: options?.onCleanup };
 
+    diagLog(`[FeishuStreamReply ${this.sessionId}] start openId=${this.openId}`);
     this.controller = new FeishuCardStream(this.larkClient, this.openId);
     try {
       await this.controller.start(this.initialHint ?? getRandomAcknowledgment());
+      diagLog(`[FeishuStreamReply ${this.sessionId}] streaming card started`);
     } catch (err) {
       console.error('[FeishuStreamReply] Failed to start streaming card:', err);
+      diagLog(`[FeishuStreamReply ${this.sessionId}] streaming card start FAIL err=${err instanceof Error ? err.message : String(err)}`);
       this.controller = null;
       throw err;
     }
@@ -80,6 +84,9 @@ export class FeishuStreamReply {
       },
       {
         cleanup: () => {
+          diagLog(
+            `[FeishuStreamReply ${this.sessionId}] handler cleanup finalized=${this.finalized} (removes active stream-reply registration)`,
+          );
           this.callbacks?.onCleanup?.();
           void this.finalize();
         },
@@ -100,6 +107,7 @@ export class FeishuStreamReply {
 
     switch (event.type) {
       case 'assistant_start':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=assistant_start`);
         this.collecting = true;
         this.clearPlaceholderState();
         if (this.responseText && !this.responseText.endsWith('\n\n')) {
@@ -139,6 +147,7 @@ export class FeishuStreamReply {
         this.clearPlaceholder();
         break;
       case 'error_note':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=error_note`);
         this.clearPlaceholder();
         if (event.text) {
           this.responseText += `\n\n⚠️ ${event.text}`;
@@ -147,6 +156,7 @@ export class FeishuStreamReply {
         void this.finalize();
         break;
       case 'result':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=result isError=${event.isError}`);
         this.clearPlaceholder();
         if (event.isError) {
           this.responseText += '\n\n⚠️ 处理失败，请稍后重试。';
@@ -155,15 +165,18 @@ export class FeishuStreamReply {
         void this.finalize();
         break;
       case 'interrupted':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=interrupted`);
         this.clearPlaceholder();
         this.updateController();
         void this.finalize();
         break;
       case 'pending_approval':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=pending_approval requestId=${event.requestId}`);
         this.signalWaiting();
         this.postApprovalCard(event);
         break;
       case 'pending_question':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=pending_question requestId=${event.requestId}`);
         this.signalWaiting();
         this.postQuestionCard(event);
         break;
@@ -226,6 +239,9 @@ export class FeishuStreamReply {
     if (this.finalized) {
       return this.finishPromise ?? Promise.resolve();
     }
+    diagLog(
+      `[FeishuStreamReply ${this.sessionId}] finalize len=${this.responseText.length} hasController=${!!this.controller}`,
+    );
     this.finalized = true;
     this.collecting = false;
     this.clearPlaceholderState();
@@ -238,13 +254,28 @@ export class FeishuStreamReply {
     if (!this.controller) {
       // If the controller was never started (should not happen in normal flow),
       // there is nothing to finalize.
+      diagLog(`[FeishuStreamReply ${this.sessionId}] finalize skipped: no controller`);
       this.emitFinalized();
       return Promise.resolve();
     }
 
-    this.finishPromise = this.controller.finish(this.responseText).finally(() => {
-      this.emitFinalized();
-    });
+    this.finishPromise = this.controller
+      .finish(this.responseText)
+      .then(
+        (value) => {
+          diagLog(`[FeishuStreamReply ${this.sessionId}] finish OK len=${this.responseText.length}`);
+          return value;
+        },
+        (err: unknown) => {
+          diagLog(
+            `[FeishuStreamReply ${this.sessionId}] finish FAIL err=${err instanceof Error ? err.message : String(err)}`,
+          );
+          throw err;
+        },
+      )
+      .finally(() => {
+        this.emitFinalized();
+      });
     return this.finishPromise;
   }
 
@@ -287,19 +318,32 @@ export class FeishuStreamReply {
   }
 
   private async sendCard(card: FeishuCard): Promise<void> {
-    await this.larkClient.im.v1.message.create({
-      params: { receive_id_type: 'open_id' },
-      data: {
-        receive_id: this.openId,
-        msg_type: 'interactive',
-        content: JSON.stringify(card),
-      },
-    });
+    const content = JSON.stringify(card);
+    diagLog(`[FeishuStreamReply ${this.sessionId}] send card openId=${this.openId} len=${content.length}`);
+    try {
+      await this.larkClient.im.v1.message.create({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: this.openId,
+          msg_type: 'interactive',
+          content,
+        },
+      });
+      diagLog(`[FeishuStreamReply ${this.sessionId}] send card OK`);
+    } catch (err) {
+      diagLog(`[FeishuStreamReply ${this.sessionId}] send card FAIL err=${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
   }
 
   private sendTextMessage(text: string): void {
-    sendPlainTextMessage(this.larkClient, this.openId, text).catch((err) => {
-      console.error('[FeishuStreamReply] Failed to send text:', err);
-    });
+    diagLog(`[FeishuStreamReply ${this.sessionId}] send text openId=${this.openId} len=${text.length}`);
+    sendPlainTextMessage(this.larkClient, this.openId, text).then(
+      () => diagLog(`[FeishuStreamReply ${this.sessionId}] send text OK`),
+      (err: unknown) => {
+        console.error('[FeishuStreamReply] Failed to send text:', err);
+        diagLog(`[FeishuStreamReply ${this.sessionId}] send text FAIL err=${err instanceof Error ? err.message : String(err)}`);
+      },
+    );
   }
 }
