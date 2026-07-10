@@ -617,6 +617,7 @@ export class FeishuBotService {
 
       const feishuUserId = message.author.userId;
       const text = (message.text ?? '').trim();
+      diagLog(`[FeishuBotService] recv message from=${feishuUserId} len=${text.length} threadId=${thread.id}`);
 
       const connection = this.getActiveConnection();
       const workspaceId = connection?.workspaceId;
