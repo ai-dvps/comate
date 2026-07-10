@@ -448,6 +448,8 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
   let resolvedApprovals: Array<{ requestId: string; result: any }>;
   let updatedCards: Array<{ frame: any; card: any }>;
   let pendingCardState: any;
+  let foldedTexts: string[];
+  let callOrder: string[];
 
   beforeEach(async () => {
     service = new WeComBotService();
@@ -455,6 +457,8 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
 
     resolvedApprovals = [];
     updatedCards = [];
+    foldedTexts = [];
+    callOrder = [];
     pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-deny-1', suggestions: [{ id: 'suggestion-1' }] };
 
     // Set up workspace, bot, and user
@@ -493,6 +497,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
       ({
         getPendingCardState: () => pendingCardState,
         resolveApproval: (requestId: string, result: any) => {
+          callOrder.push('resolve');
           resolvedApprovals.push({ requestId, result });
         },
       }) as any;
@@ -539,6 +544,21 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
         },
       },
     };
+  }
+
+  // Register a fake active streaming reply for the card's session. The spy
+  // records the folded text and a 'fold' marker so tests can assert the fold
+  // lands before resolveApproval ('resolve'). `appendReturns` simulates the
+  // passive reply still being open (true) or already closed by the 9-minute
+  // safeguard / a finalized turn (false).
+  function injectActiveStream(appendReturns = true) {
+    (service as any).activeStreamReplies.set(testSessionId, {
+      appendNarrative: (text: string) => {
+        foldedTexts.push(text);
+        callOrder.push('fold');
+        return appendReturns;
+      },
+    });
   }
 
   it('sends a template card via sendTemplateCard', async () => {
@@ -737,6 +757,131 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, {
       'Pick all that apply': 'A, C',
     });
+  });
+
+  it('folds an approved permission into the active stream before resolving (R1/R3/R6)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-1', suggestions: [] };
+    injectActiveStream();
+
+    const key = encodeButtonKey('req-1', 'allow', testSessionId);
+    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
+
+    assert.deepStrictEqual(foldedTexts, ['🔐 Bash → 已允许']);
+    assert.deepStrictEqual(callOrder, ['fold', 'resolve']);
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
+  });
+
+  it('folds a denied permission into the active stream before resolving (R3/R6)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-1', suggestions: [] };
+    injectActiveStream();
+
+    const key = encodeButtonKey('req-1', 'deny', testSessionId);
+    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
+
+    assert.deepStrictEqual(foldedTexts, ['🔐 Bash → 已拒绝']);
+    assert.deepStrictEqual(callOrder, ['fold', 'resolve']);
+    assert.strictEqual(resolvedApprovals[0].result.behavior, 'deny');
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已拒绝');
+  });
+
+  it('folds an always_allow permission with the always-allow outcome (R3)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = { type: 'approval', toolName: 'Edit', toolUseId: 'tu-2', suggestions: [{ id: 's-1' }] };
+    injectActiveStream();
+
+    const key = encodeButtonKey('req-1', 'always_allow', testSessionId);
+    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
+
+    assert.deepStrictEqual(foldedTexts, ['🔐 Edit → 已始终允许']);
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedPermissions, [{ id: 's-1' }]);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已始终允许');
+  });
+
+  it('folds a resolved question answer into the active stream before resolving (R2/R6)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = {
+      type: 'question',
+      questions: [{ question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }],
+    };
+    injectActiveStream();
+
+    const key = encodeButtonKey('req-1', 'allow', testSessionId);
+    await (service as any).handleTemplateCardEvent(
+      ws.id,
+      makeCardEvent(key, {
+        event: { selected_items: [{ question_key: key, option_ids: ['1'] }] },
+      }),
+    );
+
+    assert.deepStrictEqual(foldedTexts, ['❓Choose one\n↳ 你的选择：B']);
+    assert.deepStrictEqual(callOrder, ['fold', 'resolve']);
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, { 'Choose one': 'B' });
+  });
+
+  it('folds multi-select question answers with joined labels (R2)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = {
+      type: 'question',
+      questions: [{ question: 'Pick all', options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }], multiSelect: true }],
+    };
+    injectActiveStream();
+
+    const key = encodeButtonKey('req-1', 'allow', testSessionId);
+    await (service as any).handleTemplateCardEvent(
+      ws.id,
+      makeCardEvent(key, {
+        event: { selected_items: [{ question_key: key, option_ids: ['0', '2'] }] },
+      }),
+    );
+
+    assert.deepStrictEqual(foldedTexts, ['❓Pick all\n↳ 你的选择：A, C']);
+  });
+
+  it('skips the fold when no stream is active and still resolves (R4/AE5)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    // No injectActiveStream — activeStreamReplies is empty (turn finalized / abandoned card).
+
+    const key = encodeButtonKey('req-1', 'allow', testSessionId);
+    await assert.doesNotReject(() => (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key)));
+
+    assert.deepStrictEqual(foldedTexts, []);
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
+  });
+
+  it('skips the fold when a question resolves with no answer (empty fold) (R4)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = {
+      type: 'question',
+      questions: [{ question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }],
+    };
+    injectActiveStream();
+
+    // Submit with no selected_items → answers {} → formatQuestionFold returns '' → fold skipped.
+    const key = encodeButtonKey('req-1', 'allow', testSessionId);
+    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
+
+    assert.deepStrictEqual(foldedTexts, []);
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, {});
+  });
+
+  it('tolerates the stream reporting a closed passive reply (append returns false) (R7)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-1', suggestions: [] };
+    injectActiveStream(false);
+
+    const key = encodeButtonKey('req-1', 'allow', testSessionId);
+    await assert.doesNotReject(() => (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key)));
+
+    // The handler offered the fold but ignored the false return and continued.
+    assert.deepStrictEqual(foldedTexts, ['🔐 Bash → 已允许']);
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
   });
 });
 
