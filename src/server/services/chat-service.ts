@@ -1482,7 +1482,14 @@ export class ChatService {
             }
 
             if (FILE_TOOLS.has(toolName) && pathContext) {
-              const r = validateToolInput(pathContext, toolName, input);
+              // Path context is built when the runtime starts, but role changes must
+              // be respected immediately (R14). Recompute the owner/admin flag from
+              // the freshly resolved role instead of the stale snapshot.
+              const effectivePathContext = {
+                ...pathContext,
+                isAdminOrOwner: isOwnerOrAdmin(role),
+              };
+              const r = validateToolInput(effectivePathContext, toolName, input);
               if (!r.allowed) {
                 diagLog(
                   `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'path-denied'}`,
