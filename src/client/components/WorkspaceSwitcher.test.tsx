@@ -275,4 +275,25 @@ describe('WorkspaceSwitcher search and pin', () => {
     expect(screen.getByText('comate-website')).toBeInTheDocument()
     expect(screen.getByText('playground')).toBeInTheDocument()
   })
+
+  it('focuses the search input when the popover opens', async () => {
+    seedWorkspaces()
+    renderWithI18n(<WorkspaceSwitcher open onOpenChange={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Search workspaces...')).toHaveFocus()
+    })
+  })
+
+  it('selects the workspace when a row is activated with Enter or Space', () => {
+    seedWorkspaces()
+    renderWithI18n(<WorkspaceSwitcher open onOpenChange={() => {}} />)
+
+    fireEvent.keyDown(rowFor('playground'), { key: 'Enter' })
+    expect(mockStore.openWorkspace).toHaveBeenCalledWith('ws-play')
+
+    mockStore.openWorkspace.mockClear()
+    fireEvent.keyDown(rowFor('comate-website'), { key: ' ' })
+    expect(mockStore.openWorkspace).toHaveBeenCalledWith('ws-comate')
+  })
 })
