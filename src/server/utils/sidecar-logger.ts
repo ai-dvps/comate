@@ -1,23 +1,14 @@
-import { createWriteStream, existsSync, mkdirSync } from 'fs';
-import path from 'path';
-import { getLogsDir } from './log-cleanup.js';
+import { RotatingWriter } from './rotating-writer.js';
 
-const logFile = path.join(getLogsDir(), 'sidecar.log');
 const mirrorToConsole = process.env.COMATE_SIDECAR !== '1';
 
-if (!existsSync(path.dirname(logFile))) {
-  try {
-    mkdirSync(path.dirname(logFile), { recursive: true });
-  } catch {
-    // Ignore directory creation errors
-  }
-}
-
-const stream = createWriteStream(logFile, { flags: 'a' });
-stream.on('error', (err) => {
-  if (mirrorToConsole) {
-    console.error('[sidecar-logger] stream error:', err.message);
-  }
+const writer = new RotatingWriter({
+  name: 'sidecar.log',
+  onError: (err) => {
+    if (mirrorToConsole) {
+      console.error('[sidecar-logger] stream error:', err.message);
+    }
+  },
 });
 
 function timestamp(): string {
@@ -31,9 +22,7 @@ export function sidecarLog(...args: unknown[]): void {
   if (mirrorToConsole) {
     console.log(line);
   }
-  if (stream.writable) {
-    stream.write(line + '\n');
-  }
+  writer.write(line);
 }
 
 export function sidecarError(...args: unknown[]): void {
@@ -41,7 +30,5 @@ export function sidecarError(...args: unknown[]): void {
   if (mirrorToConsole) {
     console.error(line);
   }
-  if (stream.writable) {
-    stream.write(line + '\n');
-  }
+  writer.write(line);
 }
