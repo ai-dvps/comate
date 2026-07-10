@@ -79,6 +79,33 @@ export function createStreamReply(
   let finalizedNotified = false;
   const sentTemplateCards = new Set<string>();
 
+  diagLog(`[WeComStreamReply ${sessionId}] create streamId=${streamId} user=${wecomUserId}`);
+
+  // Behavior-preserving send logger: logs attempt + settle (OK/FAIL) without
+  // altering the promise chain the caller sees. Logs lengths/flags only — never
+  // message content — to avoid leaking secrets.
+  const logSend = (
+    label: string,
+    contentLen: number,
+    finish: boolean | undefined,
+    promise: Promise<unknown>,
+  ): Promise<unknown> => {
+    diagLog(
+      `[WeComStreamReply ${sessionId}] send ${label} streamId=${streamId} user=${wecomUserId} len=${contentLen} finish=${finish === true}`,
+    );
+    return promise.then(
+      (value) => {
+        diagLog(`[WeComStreamReply ${sessionId}] send ${label} OK streamId=${streamId}`);
+        return value;
+      },
+      (err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        diagLog(`[WeComStreamReply ${sessionId}] send ${label} FAIL streamId=${streamId} err=${msg}`);
+        throw err;
+      },
+    );
+  };
+
   const clearSafeguardTimer = () => {
     if (safeguardTimer) {
       clearTimeout(safeguardTimer);
@@ -131,7 +158,12 @@ export function createStreamReply(
     });
   };
 
-  conn.client.replyStream(frame, streamId, `${placeholderMessage}.`, false).catch((err: Error) => {
+  logSend(
+    'placeholder',
+    `${placeholderMessage}.`.length,
+    false,
+    conn.client.replyStream(frame, streamId, `${placeholderMessage}.`, false),
+  ).catch((err: Error) => {
     console.error('Failed to send WeCom processing placeholder:', err);
   });
   animationInterval = setInterval(sendAnimationFrame, 600);
@@ -180,6 +212,9 @@ export function createStreamReply(
   // reply with finish=true, falling back to a proactive message on send error.
   const finalizeStream = () => {
     if (streamFinalized) return;
+    diagLog(
+      `[WeComStreamReply ${sessionId}] finalizeStream streamId=${streamId} len=${responseText.length} passiveClosed=${passiveClosed}`,
+    );
     clearSafeguardTimer();
     streamFinalized = true;
     collecting = false;
@@ -187,14 +222,19 @@ export function createStreamReply(
     stopPlaceholderAnimation();
     flushStream.abort();
 
-    conn.client.replyStream(frame, streamId, responseText, true).catch((err: Error) => {
+    logSend('final', responseText.length, true, conn.client.replyStream(frame, streamId, responseText, true)).catch((err: Error) => {
       console.error('Failed to send WeCom stream final frame:', err);
       diagLog(`[WeComStreamReply ${sessionId}] final replyStream failed, falling back to sendMessage`);
       if (responseText.trim()) {
-        conn.client.sendMessage(wecomUserId, {
-          msgtype: 'markdown',
-          markdown: { content: responseText },
-        }).catch((fallbackErr: Error) => {
+        logSend(
+          'final-fallback',
+          responseText.length,
+          undefined,
+          conn.client.sendMessage(wecomUserId, {
+            msgtype: 'markdown',
+            markdown: { content: responseText },
+          }),
+        ).catch((fallbackErr: Error) => {
           console.error('Failed to send WeCom fallback response:', fallbackErr);
         });
       }
@@ -214,21 +254,32 @@ export function createStreamReply(
     const body = responseText.trim();
     if (!body) return; // nothing to deliver (AE3)
     const chunks = splitWecomMessage(body);
+    diagLog(`[WeComStreamReply ${sessionId}] finalizeProactive streamId=${streamId} len=${body.length} chunks=${chunks.length}`);
     let aborted = false;
-    const sendOne = (chunk: string): Promise<void> =>
-      conn.client
-        .sendMessage(wecomUserId, { msgtype: 'markdown', markdown: { content: chunk } })
+    const sendOne = (chunk: string, index: number): Promise<void> =>
+      logSend(
+        `proactive#${index + 1}/${chunks.length}`,
+        chunk.length,
+        undefined,
+        conn.client.sendMessage(wecomUserId, { msgtype: 'markdown', markdown: { content: chunk } }),
+      )
         .catch((err: Error) => {
           console.error('Failed to send WeCom proactive chunk, retrying:', err);
           return conn.client.sendMessage(wecomUserId, { msgtype: 'markdown', markdown: { content: chunk } });
         })
         .catch((err: Error) => {
           console.error('Failed to send WeCom proactive chunk after retry, aborting:', err);
+          diagLog(
+            `[WeComStreamReply ${sessionId}] proactive chunk ${index + 1}/${chunks.length} FAIL after retry, aborting remainder`,
+          );
           aborted = true;
         })
         .then(() => undefined);
     chunks
-      .reduce<Promise<void>>((p, chunk) => p.then(() => (aborted ? Promise.resolve() : sendOne(chunk))), Promise.resolve())
+      .reduce<Promise<void>>(
+        (p, chunk, index) => p.then(() => (aborted ? Promise.resolve() : sendOne(chunk, index))),
+        Promise.resolve(),
+      )
       .catch((err: Error) => {
         console.error('Failed to deliver WeCom proactive result:', err);
       });
@@ -251,15 +302,19 @@ export function createStreamReply(
   function fireSafeguard() {
     safeguardTimer = null;
     if (passiveClosed || streamFinalized) return;
+    diagLog(`[WeComStreamReply ${sessionId}] safeguard fired streamId=${streamId}; passive reply closed, switching to proactive`);
     passiveClosed = true;
     stopAnimation();
     stopPlaceholderAnimation();
     flushStream.abort();
-    conn.client
-      .sendMessage(wecomUserId, { msgtype: 'markdown', markdown: { content: LONG_TASK_NOTICE } })
-      .catch((err: Error) => {
-        console.error('Failed to send WeCom long-task notice:', err);
-      });
+    logSend(
+      'safeguard-notice',
+      LONG_TASK_NOTICE.length,
+      undefined,
+      conn.client.sendMessage(wecomUserId, { msgtype: 'markdown', markdown: { content: LONG_TASK_NOTICE } }),
+    ).catch((err: Error) => {
+      console.error('Failed to send WeCom long-task notice:', err);
+    });
   }
 
   const interrupt = (message: string): boolean => {
@@ -282,6 +337,7 @@ export function createStreamReply(
       if (streamFinalized) return;
 
       if (event.type === 'assistant_start') {
+        diagLog(`[WeComStreamReply ${sessionId}] handler event=assistant_start streamId=${streamId}`);
         collecting = true;
         clearPlaceholder();
         if (responseText && !responseText.endsWith('\n\n')) {
@@ -312,18 +368,21 @@ export function createStreamReply(
         }
         flushStream.flush();
       } else if (event.type === 'error_note') {
+        diagLog(`[WeComStreamReply ${sessionId}] handler event=error_note streamId=${streamId}`);
         clearPlaceholder();
         if (event.text) {
           responseText += `\n\n⚠️ ${event.text}`;
         }
         handleTerminal();
       } else if (event.type === 'result') {
+        diagLog(`[WeComStreamReply ${sessionId}] handler event=result isError=${event.isError} streamId=${streamId}`);
         clearPlaceholder();
         if (event.isError) {
           responseText += '\n\n⚠️ 处理失败，请稍后重试。';
         }
         handleTerminal();
       } else if (event.type === 'interrupted') {
+        diagLog(`[WeComStreamReply ${sessionId}] handler event=interrupted streamId=${streamId}`);
         clearPlaceholder();
         handleTerminal();
       } else if (event.type === 'pending_approval') {
@@ -337,9 +396,14 @@ export function createStreamReply(
           description: event.description,
           taskId: event.requestId,
         });
-        conn.sendTemplateCard?.(card).catch((err: Error) => {
-          console.error('Failed to send WeCom approval card:', err);
-        });
+        diagLog(`[WeComStreamReply ${sessionId}] send approval-card requestId=${event.requestId} tool=${event.toolName}`);
+        conn.sendTemplateCard?.(card).then(
+          () => diagLog(`[WeComStreamReply ${sessionId}] send approval-card OK requestId=${event.requestId}`),
+          (err: Error) => {
+            console.error('Failed to send WeCom approval card:', err);
+            diagLog(`[WeComStreamReply ${sessionId}] send approval-card FAIL requestId=${event.requestId} err=${err.message}`);
+          },
+        );
       } else if (event.type === 'pending_question') {
         if (sentTemplateCards.has(event.requestId)) return;
         sentTemplateCards.add(event.requestId);
@@ -349,13 +413,21 @@ export function createStreamReply(
           questions: event.questions,
           taskId: event.requestId,
         });
-        conn.sendTemplateCard?.(card).catch((err: Error) => {
-          console.error('Failed to send WeCom question card:', err);
-        });
+        diagLog(`[WeComStreamReply ${sessionId}] send question-card requestId=${event.requestId}`);
+        conn.sendTemplateCard?.(card).then(
+          () => diagLog(`[WeComStreamReply ${sessionId}] send question-card OK requestId=${event.requestId}`),
+          (err: Error) => {
+            console.error('Failed to send WeCom question card:', err);
+            diagLog(`[WeComStreamReply ${sessionId}] send question-card FAIL requestId=${event.requestId} err=${err.message}`);
+          },
+        );
       }
     },
     {
       cleanup: () => {
+        diagLog(
+          `[WeComStreamReply ${sessionId}] handler cleanup streamId=${streamId} finalized=${streamFinalized} (removes active stream-reply registration)`,
+        );
         stopAnimation();
         stopPlaceholderAnimation();
         clearSafeguardTimer();
