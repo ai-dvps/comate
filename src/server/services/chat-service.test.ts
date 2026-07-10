@@ -2211,6 +2211,26 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
     const allowed = await canUseTool('Bash', { command: 'cat /etc/passwd' });
     assert.strictEqual(allowed.behavior, 'allow');
   });
+
+  it('file Write permission picks up role promotion dynamically without reopening the runtime', async () => {
+    const { canUseTool, folderPath, botId } = await setupBotSession('normal');
+    const sharedFile = path.join(folderPath, 'shared', 'x.txt');
+
+    const denied = await canUseTool('Write', { file_path: sharedFile });
+    assert.strictEqual(denied.behavior, 'deny');
+
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
+    botService.setMemberRole(
+      botId,
+      'wecom',
+      'user-1',
+      'admin',
+      { type: 'wecom', channelKey: 'wecom', channelUserId: 'owner-1' },
+    );
+
+    const allowed = await canUseTool('Write', { file_path: sharedFile });
+    assert.strictEqual(allowed.behavior, 'allow');
+  });
 });
 
 describe('chat-service buildSdkOptions persona injection', { concurrency: false }, () => {
