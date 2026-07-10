@@ -621,7 +621,12 @@
   "workspaceSwitcher": {
     "switchWorkspace": "Switch workspace",
     "workspaces": "Workspaces",
-    "noWorkspaces": "No workspaces yet"
+    "noWorkspaces": "No workspaces yet",
+    "searchPlaceholder": "Search workspaces...",
+    "clearSearch": "Clear search",
+    "noMatchingWorkspaces": "No matching workspaces",
+    "pinWorkspace": "Pin workspace",
+    "unpinWorkspace": "Unpin workspace"
   },
   "workspaceTabs": {
     "botConnected": "WeCom bot connected",

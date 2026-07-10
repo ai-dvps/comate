@@ -621,7 +621,12 @@
   "workspaceSwitcher": {
     "switchWorkspace": "切换工作区",
     "workspaces": "工作区",
-    "noWorkspaces": "还没有工作区"
+    "noWorkspaces": "还没有工作区",
+    "searchPlaceholder": "搜索工作区...",
+    "clearSearch": "清除搜索",
+    "noMatchingWorkspaces": "没有匹配的工作区",
+    "pinWorkspace": "置顶工作区",
+    "unpinWorkspace": "取消置顶"
   },
   "workspaceTabs": {
     "botConnected": "企业微信机器人已连接",
