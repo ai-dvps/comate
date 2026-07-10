@@ -189,5 +189,19 @@
   "messageSearchPrevious": "Previous match",
   "messageSearchNext": "Next match",
   "messageSearchClose": "Close search",
-  "messageSearchClear": "Clear search"
+  "messageSearchClear": "Clear search",
+  "structuredReport": {
+    "label": "JSON",
+    "keys_one": "{{count}} key",
+    "keys_other": "{{count}} keys",
+    "items_one": "{{count}} item",
+    "items_other": "{{count}} items",
+    "size": "{{size}} chars",
+    "expand": "Expand JSON",
+    "collapse": "Collapse JSON",
+    "copy": "Copy JSON",
+    "copied": "Copied",
+    "highlightSkipped": "Syntax highlighting skipped for a large payload",
+    "copyFailed": "Copy failed"
+  }
 }

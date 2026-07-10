@@ -433,3 +433,97 @@ describe('ChatMessageRenderer Workflow card', () => {
     expect(screen.getByText('/config.json')).toBeInTheDocument()
   })
 })
+
+describe('ChatMessageRenderer JSON text parts', () => {
+  beforeEach(() => {
+    mockStoreState = { workflows: {}, subagents: {} }
+  })
+
+  it('renders an assistant JSON text part as StructuredReport (AE1)', () => {
+    const message = makeTextMessage('{"a":1}', 'assistant')
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(screen.getByText('structuredReport.label')).toBeInTheDocument()
+    expect(document.querySelector('[data-language="json"]')).toBeInTheDocument()
+  })
+
+  it('leaves assistant prose on the markdown path (R9)', () => {
+    const message = makeTextMessage('hello world', 'assistant')
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(screen.getByText('hello world')).toBeInTheDocument()
+    expect(screen.queryByText('structuredReport.label')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-language="json"]')).not.toBeInTheDocument()
+  })
+
+  it('flips from markdown to StructuredReport once a streaming part becomes valid JSON (AE4)', () => {
+    const partial = makeTextMessage('{"status":"com', 'assistant')
+    const { rerender } = render(<ChatMessageRenderer {...baseProps} message={partial} />)
+
+    expect(screen.queryByText('structuredReport.label')).not.toBeInTheDocument()
+
+    const complete = makeTextMessage('{"status":"complete"}', 'assistant')
+    rerender(<ChatMessageRenderer {...baseProps} message={complete} />)
+
+    expect(screen.getByText('structuredReport.label')).toBeInTheDocument()
+  })
+
+  it('renders only the JSON text part as StructuredReport in a mixed message', () => {
+    const message: RenderableMessage = {
+      id: 'msg-mix',
+      role: 'assistant',
+      parts: [
+        { type: 'text', text: 'intro' },
+        { type: 'text', text: '{"a":1}' },
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-read',
+          toolName: 'read_file',
+          input: { path: '/config.json' },
+          isStreaming: false,
+        },
+      ],
+    }
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(screen.getByText('intro')).toBeInTheDocument()
+    expect(screen.getByText('read_file')).toBeInTheDocument()
+    expect(screen.getAllByText('structuredReport.label')).toHaveLength(1)
+  })
+
+  it('keeps a user JSON message as a plain paragraph (AE8)', () => {
+    const message = makeTextMessage('{"a":1}', 'user')
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(screen.getByText('{"a":1}')).toBeInTheDocument()
+    expect(screen.queryByText('structuredReport.label')).not.toBeInTheDocument()
+  })
+
+  it('renders StructuredReport for an assistant JSON reply on the shared render path (AE6)', () => {
+    // SubagentConversation renders ChatMessageRenderer for adapted subagent
+    // messages, so an assistant-role JSON reply reaches this same branch.
+    const message = makeTextMessage('{"ok":true}', 'assistant')
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(screen.getByText('structuredReport.label')).toBeInTheDocument()
+  })
+
+  it('passes search props to StructuredReport for a matched JSON part', () => {
+    const message = makeTextMessage('{"a":1}', 'assistant')
+    const matches: MessageSearchMatch[] = [
+      { messageId: 'msg-1', partIndex: 0, start: 0, end: 1 },
+    ]
+    render(
+      <ChatMessageRenderer
+        {...baseProps}
+        message={message}
+        searchMatches={matches}
+        currentMatch={matches[0]}
+      />,
+    )
+
+    const container = document.querySelector('[data-language="json"]')
+    expect(container).toHaveClass('ring-1')
+    expect(screen.getByTestId('structured-report-body')).toBeVisible()
+  })
+})
