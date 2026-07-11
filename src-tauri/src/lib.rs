@@ -19,6 +19,9 @@ struct AppState {
     bot_status_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     session_count_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     badge_count: AtomicU32,
+    // Keeps the flexi_logger handle alive for the whole session so buffered
+    // records flush on shutdown. Dropping it would tear the logger down early.
+    logger_handle: Mutex<Option<flexi_logger::LoggerHandle>>,
 }
 
 #[tauri::command]
@@ -267,6 +270,38 @@ async fn run_tray_status_poller(app_handle: AppHandle) {
     }
 }
 
+fn init_flexi_logger(
+    logs_dir: Option<std::path::PathBuf>,
+) -> Result<flexi_logger::LoggerHandle, flexi_logger::FlexiLoggerError> {
+    // 100 MB, matching the Node RotatingWriter threshold so both sides roll at
+    // the same size.
+    const MAX_SIZE_BYTES: u64 = 100 * 1024 * 1024;
+
+    let mut logger = flexi_logger::Logger::try_with_str("info")?;
+    if let Some(dir) = logs_dir {
+        logger = logger
+            .log_to_file(
+                flexi_logger::FileSpec::default()
+                    .directory(dir)
+                    .basename("main")
+                    .suffix("log"),
+            )
+            .rotate(
+                flexi_logger::Criterion::AgeOrSize(flexi_logger::Age::Day, MAX_SIZE_BYTES),
+                flexi_logger::Naming::Timestamps,
+                flexi_logger::Cleanup::KeepForDays(7),
+            );
+        #[cfg(debug_assertions)]
+        {
+            logger = logger.duplicate_to_stdout(flexi_logger::Duplicate::All);
+        }
+    } else {
+        // No usable logs directory: fall back to stdout so records are not lost.
+        logger = logger.log_to_stdout();
+    }
+    logger.start()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -281,6 +316,7 @@ pub fn run() {
             bot_status_item: Mutex::new(None),
             session_count_item: Mutex::new(None),
             badge_count: AtomicU32::new(0),
+            logger_handle: Mutex::new(None),
         })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -302,48 +338,40 @@ pub fn run() {
             //
             // The file target lives in the app-data `logs/` folder — the same
             // directory the Node sidecar writes to (the shell passes app_data_dir
-            // as COMATE_DATA_DIR) — so Rust and Node logs co-locate, and the
-            // Node-side folder cleanup bounds both.
-            let mut targets: Vec<tauri_plugin_log::Target> = if cfg!(debug_assertions) {
-                vec![tauri_plugin_log::Target::new(
-                    tauri_plugin_log::TargetKind::Stdout,
-                )]
-            } else {
-                Vec::new()
-            };
-
-            // Resolve the logs directory; if it is unavailable or cannot be
-            // created, omit the file target and degrade silently rather than
-            // aborting startup.
-            let file_target = app
+            // as COMATE_DATA_DIR) — so Rust and Node logs co-locate.
+            //
+            // Rotation mirrors the Node side exactly: roll at local midnight OR
+            // when the active file exceeds 100 MB, and keep 7 days of archives
+            // (flexi_logger::Cleanup::KeepForDays). Age::Day keys on the local
+            // clock and the active file's creation day, so a restart after a
+            // missed midnight still rolls on startup — matching the Node startup
+            // cut.
+            //
+            // Naming note (R7a): with rotation enabled, flexi_logger writes the
+            // live file as `main_rCURRENT.log` and renames it to a timestamped
+            // archive on roll (`main_r<YYYY-MM-DD_HH-MM-SS>.log`). The live file
+            // is therefore not a bare `main.log` like the Node side, and Rust
+            // archives are timestamped rather than `<date>.<N>`. The strategy
+            // (trigger + 7-day retention + local midnight) is identical across
+            // both sides even though the file naming differs.
+            let logs_dir = app
                 .path()
                 .app_data_dir()
                 .ok()
                 .map(|dir| dir.join("logs"))
-                .and_then(|logs_dir| std::fs::create_dir_all(&logs_dir).ok().map(|_| logs_dir))
-                .map(|logs_dir| {
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
-                        path: logs_dir,
-                        file_name: Some("main".to_string()),
-                    })
-                });
-            if let Some(target) = file_target {
-                targets.push(target);
-            }
+                .and_then(|dir| std::fs::create_dir_all(&dir).ok().map(|_| dir));
 
-            app.handle().plugin(
-                tauri_plugin_log::Builder::default()
-                    .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
-                    .level(log::LevelFilter::Info)
-                    .targets(targets)
-                    // Best-effort in-process bounding (max_file_size is not always
-                    // enforced — tauri-apps/plugins-workspace#707). The Node-side
-                    // folder cleanup is the authoritative bound. KeepOne avoids the
-                    // KeepAll rotation bug (#1397).
-                    .max_file_size(5 * 1024 * 1024)
-                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
-                    .build(),
-            )?;
+            match init_flexi_logger(logs_dir) {
+                Ok(handle) => {
+                    let state = app.state::<AppState>();
+                    if let Ok(mut guard) = state.logger_handle.lock() {
+                        *guard = Some(handle);
+                    };
+                }
+                Err(e) => {
+                    eprintln!("Failed to initialize file logger: {}", e);
+                }
+            }
 
             // Build the tray menu. The two status items are disabled — they
             // render as read-only labels and the poller updates their text.
