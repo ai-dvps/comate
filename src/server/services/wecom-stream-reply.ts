@@ -78,10 +78,20 @@ export function createStreamReply(
 
   let responseText = '';
   let collecting = false;
-  let streamFinalized = false;
+  let bubbleFinalized = false;
+  // Index into responseText marking what has already been delivered (via the
+  // passive bubble on the first result, or a proactive send thereafter). Each
+  // later result delivers only responseText.slice(deliveredLength). It advances
+  // only once a send is confirmed, so content whose delivery failed stays in
+  // the next result's delta instead of being silently dropped.
+  let deliveredLength = 0;
   // True once the 9-minute safeguard has fired: the passive reply is no longer
   // refreshed and the final result must be delivered proactively.
   let passiveClosed = false;
+  // Serializes proactive deliveries: each terminal event's delta is computed
+  // and sent only after the previous delivery settles, so chunks from two
+  // overlapping results can never interleave on the wire.
+  let proactiveTail: Promise<void> = Promise.resolve();
   let animationInterval: NodeJS.Timeout | null = null;
   let currentPlaceholder: string | null = null;
   let placeholderAnimationInterval: NodeJS.Timeout | null = null;
@@ -180,8 +190,9 @@ export function createStreamReply(
   safeguardTimer = setTimeout(fireSafeguard, SAFEGUARD_DELAY_MS);
 
   const flushStream = debounce(() => {
-    // Skip passive refreshes once the safeguard has fired.
-    if (!responseText || passiveClosed) return;
+    // Skip passive refreshes once the safeguard has fired or the passive bubble
+    // has already been finished on an earlier result.
+    if (!responseText || passiveClosed || bubbleFinalized) return;
     conn.client.replyStreamNonBlocking(frame, streamId, responseText).catch((err: Error) => {
       console.error('Failed to send WeCom stream frame:', err);
     });
@@ -189,8 +200,9 @@ export function createStreamReply(
 
   const setPlaceholder = (text: string, animate: boolean = false) => {
     // Placeholders are passive-display hints; do not add them once the passive
-    // channel is closed (they are not part of the answer text).
-    if (passiveClosed) return;
+    // channel is closed (they are not part of the answer text) or the passive
+    // bubble has already been finished on an earlier result.
+    if (passiveClosed || bubbleFinalized) return;
     clearPlaceholder();
     currentPlaceholder = text;
     responseText += text;
@@ -221,50 +233,75 @@ export function createStreamReply(
   // Fast path: the turn finished before the safeguard. Finalize the passive
   // reply with finish=true, falling back to a proactive message on send error.
   const finalizeStream = () => {
-    if (streamFinalized) return;
+    if (bubbleFinalized) return;
     diagLog(
       `[WeComStreamReply ${sessionId}] finalizeStream streamId=${streamId} len=${responseText.length} passiveClosed=${passiveClosed}`,
     );
     clearSafeguardTimer();
-    streamFinalized = true;
+    bubbleFinalized = true;
+    // Snapshot the bubble payload: later turns keep growing responseText, and
+    // the async fallback below must send exactly what the bubble was meant to
+    // show — not content a proactive delivery may already have covered.
+    const finalText = responseText;
     collecting = false;
     stopAnimation();
     stopPlaceholderAnimation();
     flushStream.abort();
 
-    logSend('final', responseText.length, true, conn.client.replyStream(frame, streamId, responseText, true)).catch((err: Error) => {
-      console.error('Failed to send WeCom stream final frame:', err);
-      diagLog(`[WeComStreamReply ${sessionId}] final replyStream failed, falling back to sendMessage`);
-      if (responseText.trim()) {
-        logSend(
-          'final-fallback',
-          responseText.length,
-          undefined,
-          conn.client.sendMessage(wecomUserId, {
-            msgtype: 'markdown',
-            markdown: { content: responseText },
-          }),
-        ).catch((fallbackErr: Error) => {
-          console.error('Failed to send WeCom fallback response:', fallbackErr);
-        });
-      }
-    });
+    const markBubbleDelivered = () => {
+      // Never move the cursor backward if a proactive delivery already ran ahead.
+      deliveredLength = Math.max(deliveredLength, finalText.length);
+    };
+
+    logSend('final', finalText.length, true, conn.client.replyStream(frame, streamId, finalText, true))
+      .then(() => {
+        // The bubble shows the full snapshot: mark it delivered. If the final
+        // frame fails instead, the cursor stays put so a later result's delta
+        // still carries this content.
+        markBubbleDelivered();
+      })
+      .catch((err: Error) => {
+        console.error('Failed to send WeCom stream final frame:', err);
+        diagLog(`[WeComStreamReply ${sessionId}] final replyStream failed, falling back to sendMessage`);
+        if (finalText.trim()) {
+          logSend(
+            'final-fallback',
+            finalText.length,
+            undefined,
+            conn.client.sendMessage(wecomUserId, {
+              msgtype: 'markdown',
+              markdown: { content: finalText },
+            }),
+          )
+            .then(() => {
+              markBubbleDelivered();
+            })
+            .catch((fallbackErr: Error) => {
+              console.error('Failed to send WeCom fallback response:', fallbackErr);
+            });
+        }
+      });
     emitFinalized();
   };
 
-  // Proactive path: the safeguard already fired. Push the full accumulated
-  // result via sendMessage, split into byte-safe chunks, guarding empties and
-  // retrying a failed chunk once before aborting the remainder.
-  const finalizeProactive = () => {
-    if (streamFinalized) return;
-    clearSafeguardTimer();
-    streamFinalized = true;
-    collecting = false;
-    clearPlaceholder();
-    const body = responseText.trim();
-    if (!body) return; // nothing to deliver (AE3)
+  // Proactive path: the safeguard already fired, or the passive bubble already
+  // closed on an earlier result. Push only the new content since the last
+  // delivery via sendMessage, split into byte-safe chunks, guarding empties and
+  // retrying a failed chunk once before aborting the remainder. The whole batch
+  // advances the cursor only when every chunk is confirmed; an aborted batch
+  // leaves its unsent tail inside the next result's delta (a rare duplicate
+  // beats a silent drop).
+  const deliverNewContent = (): Promise<void> => {
+    const startLength = deliveredLength;
+    const rawDelta = responseText.slice(startLength);
+    const body = rawDelta.trim();
+    if (!body) return Promise.resolve(); // nothing new to deliver (AE3)
+    // Offset of `body` inside rawDelta: rawDelta = leading whitespace + body +
+    // trailing whitespace, and only the body went on the wire.
+    const leadTrim = rawDelta.length - rawDelta.trimStart().length;
     const chunks = splitWecomMessage(body);
     diagLog(`[WeComStreamReply ${sessionId}] finalizeProactive streamId=${streamId} len=${body.length} chunks=${chunks.length}`);
+    emitFinalized();
     let aborted = false;
     const sendOne = (chunk: string, index: number): Promise<void> =>
       logSend(
@@ -285,22 +322,37 @@ export function createStreamReply(
           aborted = true;
         })
         .then(() => undefined);
-    chunks
+    return chunks
       .reduce<Promise<void>>(
         (p, chunk, index) => p.then(() => (aborted ? Promise.resolve() : sendOne(chunk, index))),
         Promise.resolve(),
       )
+      .then(() => {
+        if (!aborted) {
+          deliveredLength = Math.max(deliveredLength, startLength + leadTrim + body.length);
+        }
+      })
       .catch((err: Error) => {
         console.error('Failed to deliver WeCom proactive result:', err);
       });
-    emitFinalized();
+  };
+
+  const finalizeProactive = () => {
+    clearSafeguardTimer();
+    collecting = false;
+    clearPlaceholder();
+    // Queue behind any in-flight delivery: the delta is computed inside the
+    // tail task so it always starts from the latest confirmed cursor, and two
+    // terminal events can never interleave chunks on the wire.
+    proactiveTail = proactiveTail.then(deliverNewContent, deliverNewContent);
   };
 
   // Route a terminal event to the right finalize path.
   const handleTerminal = () => {
     clearSafeguardTimer();
-    if (streamFinalized) return;
-    if (passiveClosed) {
+    // First terminal event finishes the passive bubble; every later one (or any
+    // after the safeguard) delivers its new content proactively.
+    if (passiveClosed || bubbleFinalized) {
       finalizeProactive();
     } else {
       finalizeStream();
@@ -311,7 +363,7 @@ export function createStreamReply(
   // the stream. The agent keeps running; finalizeProactive delivers later.
   function fireSafeguard() {
     safeguardTimer = null;
-    if (passiveClosed || streamFinalized) return;
+    if (passiveClosed || bubbleFinalized) return;
     diagLog(`[WeComStreamReply ${sessionId}] safeguard fired streamId=${streamId}; passive reply closed, switching to proactive`);
     passiveClosed = true;
     stopAnimation();
@@ -328,8 +380,8 @@ export function createStreamReply(
   }
 
   const interrupt = (message: string): boolean => {
-    if (streamFinalized || passiveClosed) {
-      diagLog(`[WeComStreamReply ${sessionId}] interrupt skipped: streamFinalized=${streamFinalized}, passiveClosed=${passiveClosed}`);
+    if (bubbleFinalized || passiveClosed) {
+      diagLog(`[WeComStreamReply ${sessionId}] interrupt skipped: bubbleFinalized=${bubbleFinalized}, passiveClosed=${passiveClosed}`);
       return false;
     }
     clearPlaceholder();
@@ -343,9 +395,9 @@ export function createStreamReply(
   };
 
   const appendNarrative = (text: string): boolean => {
-    if (streamFinalized || passiveClosed) {
+    if (bubbleFinalized || passiveClosed) {
       diagLog(
-        `[WeComStreamReply ${sessionId}] appendNarrative skipped: streamFinalized=${streamFinalized}, passiveClosed=${passiveClosed}`,
+        `[WeComStreamReply ${sessionId}] appendNarrative skipped: bubbleFinalized=${bubbleFinalized}, passiveClosed=${passiveClosed}`,
       );
       return false;
     }
@@ -366,8 +418,8 @@ export function createStreamReply(
 
   const handler = Object.assign(
     (id: number, event: SseEvent) => {
-      if (streamFinalized) return;
-
+      // Terminal events keep arriving after the passive bubble is finished (the
+      // SDK may emit more than one result per run); each one is delivered below.
       if (event.type === 'assistant_start') {
         diagLog(`[WeComStreamReply ${sessionId}] handler event=assistant_start streamId=${streamId}`);
         collecting = true;
@@ -458,7 +510,7 @@ export function createStreamReply(
     {
       cleanup: () => {
         diagLog(
-          `[WeComStreamReply ${sessionId}] handler cleanup streamId=${streamId} finalized=${streamFinalized} (removes active stream-reply registration)`,
+          `[WeComStreamReply ${sessionId}] handler cleanup streamId=${streamId} finalized=${bubbleFinalized} (removes active stream-reply registration)`,
         );
         stopAnimation();
         stopPlaceholderAnimation();
