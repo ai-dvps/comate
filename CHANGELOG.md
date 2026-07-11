@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **WeCom bots deliver every result from a single run** — when one WeCom-triggered run produces more than one main-agent result, the first result finishes the streaming reply bubble as before and each later result now arrives as a proactive follow-up message containing only its new content. Previously, results after the first were silently dropped once the bubble finished, so sub-agent follow-ups and retried turns never reached the user. Approval/question cards raised in later turns are now delivered too, and the 9-minute "still working" notice is unchanged.
+
 - **Bot role lookup matches either channel id** — `BotService.getMemberRole` now resolves a member by either their encrypted channel user id or their resolved plaintext user id. Previously, querying by plaintext id against a member stored under the encrypted channel id returned `null`, so Owner/Admin users were treated as Normal and denied workspace writes with `outside-user-dir-write`.
 
 - **Bot role changes now apply immediately to file-path checks** — when a WeCom/Feishu user's bot role is promoted to Owner or Admin, file Write/Edit/Read/Glob/Grep calls in an already-running session are now evaluated against the current role instead of the role snapshot taken when the runtime started. This fixes `outside-user-dir-write` denials for users who had already been granted Owner/Admin rights.
