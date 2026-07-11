@@ -1,24 +1,15 @@
-import { createWriteStream, existsSync, mkdirSync } from 'fs';
-import path from 'path';
 import util from 'util';
-import { getLogsDir } from './log-cleanup.js';
+import { RotatingWriter } from './rotating-writer.js';
 
-const logFile = path.join(getLogsDir(), 'sse-diag.log');
 const mirrorToConsole = () => process.env.COMATE_SIDECAR !== '1';
 
-if (!existsSync(path.dirname(logFile))) {
-  try {
-    mkdirSync(path.dirname(logFile), { recursive: true });
-  } catch {
-    // Ignore directory creation errors
-  }
-}
-
-const stream = createWriteStream(logFile, { flags: 'a' });
-stream.on('error', (err) => {
-  if (mirrorToConsole()) {
-    console.error('[diag-logger] stream error:', err.message);
-  }
+const writer = new RotatingWriter({
+  name: 'sse-diag.log',
+  onError: (err) => {
+    if (mirrorToConsole()) {
+      console.error('[diag-logger] stream error:', err.message);
+    }
+  },
 });
 
 function timestamp(): string {
@@ -38,9 +29,7 @@ export function diagLog(...args: unknown[]): void {
   if (mirrorToConsole()) {
     console.log(line);
   }
-  if (stream.writable) {
-    stream.write(line + '\n');
-  }
+  writer.write(line);
 }
 
 export function diagWarn(...args: unknown[]): void {
@@ -48,7 +37,5 @@ export function diagWarn(...args: unknown[]): void {
   if (mirrorToConsole()) {
     console.warn(line);
   }
-  if (stream.writable) {
-    stream.write(line + '\n');
-  }
+  writer.write(line);
 }
