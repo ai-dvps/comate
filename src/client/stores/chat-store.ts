@@ -110,12 +110,16 @@ function startBackgroundPolling(
           const next = { ...state.sessionStatus }
           const nextStreaming = { ...state.isStreaming }
           const nextLastActivityAt = { ...state.lastActivityAt }
+          const nextProcessing = { ...state.sessionProcessing }
+          const nextBackgroundTaskCount = { ...state.sessionBackgroundTaskCount }
           for (const session of state.sessions[workspaceId] ?? []) {
             if (
               !sessionSubscriptions.has(session.id) &&
               !Object.prototype.hasOwnProperty.call(statuses, session.id)
             ) {
               delete next[session.id]
+              delete nextProcessing[session.id]
+              delete nextBackgroundTaskCount[session.id]
               if (nextStreaming[session.id]) {
                 nextStreaming[session.id] = false
               }
@@ -125,6 +129,8 @@ function startBackgroundPolling(
             const prevPending = state.sessionStatus[sid]?.pendingCount ?? 0
             if (st.pendingCount === 0 && !st.isProcessing) {
               delete next[sid]
+              delete nextProcessing[sid]
+              delete nextBackgroundTaskCount[sid]
             } else {
               next[sid] = st
             }
@@ -139,7 +145,7 @@ function startBackgroundPolling(
               }
             }
           }
-          return { sessionStatus: next, isStreaming: nextStreaming, lastActivityAt: nextLastActivityAt }
+          return { sessionStatus: next, isStreaming: nextStreaming, lastActivityAt: nextLastActivityAt, sessionProcessing: nextProcessing, sessionBackgroundTaskCount: nextBackgroundTaskCount }
         })
       })
       .catch((err) => {
@@ -258,6 +264,8 @@ interface ChatState {
   drafts: Record<string, string>
   subagents: Record<string, SubagentState[]>
   sessionStatus: Record<string, { pendingCount: number; isProcessing?: boolean }>
+  sessionProcessing: Record<string, boolean>
+  sessionBackgroundTaskCount: Record<string, number>
   unreadCompletions: Record<string, boolean>
   lastActivityAt: Record<string, number>
   tasks: Record<string, TaskItem[]>
@@ -1714,9 +1722,11 @@ export function handleSseEvent(
       return
     }
     case 'interrupted': {
-      set((state) => ({
-        isStreaming: { ...state.isStreaming, [sessionId]: false },
-      }))
+      set((state) =>
+        state.sessionProcessing[sessionId]
+          ? {}
+          : { isStreaming: { ...state.isStreaming, [sessionId]: false } },
+      )
       return
     }
     case 'error_note': {
@@ -1776,21 +1786,26 @@ export function handleSseEvent(
           'Rate limit reached. Please wait a moment and try again.',
         )
       }
-      set((state) => ({
-        isStreaming: { ...state.isStreaming, [sessionId]: false },
-        messages: {
-          ...state.messages,
-          [sessionId]: [
-            ...(state.messages[sessionId] || []),
-            {
-              id: generateId(),
-              role: 'system',
-              parts: [{ type: 'text', text }],
-              timestamp: Date.now(),
-            },
-          ],
-        },
-      }))
+      set((state) => {
+        const updates: Partial<ChatState> = {
+          messages: {
+            ...state.messages,
+            [sessionId]: [
+              ...(state.messages[sessionId] || []),
+              {
+                id: generateId(),
+                role: 'system',
+                parts: [{ type: 'text', text }],
+                timestamp: Date.now(),
+              },
+            ],
+          },
+        }
+        if (!state.sessionProcessing[sessionId]) {
+          updates.isStreaming = { ...state.isStreaming, [sessionId]: false }
+        }
+        return updates
+      })
       return
     }
     case 'model_fallback': {
@@ -1846,8 +1861,13 @@ export function handleSseEvent(
     case 'result': {
       set((state) => {
         const next: Partial<ChatState> = {
-          isStreaming: { ...state.isStreaming, [sessionId]: false },
           ...applyActivityUpdate(state, workspaceId, sessionId),
+        }
+        // Keep the generating state while the server reports tracked
+        // background tasks still running; the final session_processing
+        // { processing: false } edge clears it.
+        if (!state.sessionProcessing[sessionId]) {
+          next.isStreaming = { ...state.isStreaming, [sessionId]: false }
         }
         if (!isSessionActive(state, sessionId)) {
           next.unreadCompletions = {
@@ -2076,6 +2096,25 @@ export function handleSseEvent(
       })
       return
     }
+    case 'session_processing': {
+      // The server's processing verdict is authoritative for subscribed
+      // sessions: it hydrates a session subscribed mid background-only task
+      // and keeps isStreaming true through a foreground `result` while
+      // tracked background tasks still run.
+      const processing = data.processing === true
+      const backgroundTaskCount =
+        typeof data.backgroundTaskCount === 'number' ? data.backgroundTaskCount : 0
+      if (!sessionId) return
+      set((state) => ({
+        sessionProcessing: { ...state.sessionProcessing, [sessionId]: processing },
+        sessionBackgroundTaskCount: {
+          ...state.sessionBackgroundTaskCount,
+          [sessionId]: backgroundTaskCount,
+        },
+        isStreaming: { ...state.isStreaming, [sessionId]: processing },
+      }))
+      return
+    }
     case 'auto_approval': {
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       const mode = data.mode === 'auto' || data.mode === 'readonly' ? data.mode : 'auto'
@@ -2295,6 +2334,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   drafts: {},
   subagents: {},
   sessionStatus: {},
+  sessionProcessing: {},
+  sessionBackgroundTaskCount: {},
   unreadCompletions: {},
   lastActivityAt: {},
   tasks: {},

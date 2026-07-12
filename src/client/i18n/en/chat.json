@@ -26,6 +26,8 @@
   "newMessages_other": "{{count}} new messages",
   "stopPopover": {
     "title": "Cancel current turn?",
+    "titleWithTasks_one": "Stop generating and {{count}} background task?",
+    "titleWithTasks_other": "Stop generating and {{count}} background tasks?",
     "cancel": "Cancel",
     "confirm": "Confirm",
     "stopping": "Stopping..."
