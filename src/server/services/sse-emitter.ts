@@ -1,7 +1,7 @@
 import type { Response } from 'express';
 import type { SDKMessage, SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sdk';
 
-import type { SseEvent, QuestionPayload, WorkflowStatus } from '../types/message.js';
+import type { SseEvent, QuestionPayload, WorkflowStatus, TaskSignal } from '../types/message.js';
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 
@@ -51,10 +51,16 @@ export class SseEmitter {
   private eventIndex = 0;
   private nextPartIndex = 0;
   private onEvent?: (id: number, event: SseEvent) => void;
+  private onTaskSignal?: (signal: TaskSignal) => void;
 
-  constructor(res: Response | null = null, onEvent?: (id: number, event: SseEvent) => void) {
+  constructor(
+    res: Response | null = null,
+    onEvent?: (id: number, event: SseEvent) => void,
+    onTaskSignal?: (signal: TaskSignal) => void,
+  ) {
     this.res = res;
     this.onEvent = onEvent;
+    this.onTaskSignal = onTaskSignal;
   }
 
   setResponse(res: Response | null): void {
@@ -306,6 +312,10 @@ export class SseEmitter {
   emitWebEvent(event: SseEvent): void {
     const id = this.eventIndex++;
     this.onEvent?.(id, event);
+  }
+
+  emitSessionProcessing(processing: boolean, backgroundTaskCount: number): void {
+    this.send({ type: 'session_processing', processing, backgroundTaskCount });
   }
 
   emitPendingApproval(

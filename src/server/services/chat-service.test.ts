@@ -17,9 +17,9 @@ import type { Workspace, McpServer } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import type { SseEvent } from '../types/message.js';
-import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, PermissionUpdate, Query } from '@anthropic-ai/claude-agent-sdk';
 import type { BotPersona, BotRole } from '../models/bot.js';
-import type { QuestionPayload } from '../types/message.js';
+import type { QuestionPayload, TaskSignal } from '../types/message.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -387,6 +387,58 @@ describe('chat-service idle-close', { concurrency: false }, () => {
 
     capturedSubscribed?.();
     assert.ok(!timeouts.has('s1'), 'onSubscribed should cancel idle timer');
+  });
+
+  it('idle-close defers while a background task is running (R5)', async () => {
+    setupStoreMocks();
+
+    // Use a real SessionRuntime (with a mock SDK client) so the reaper guard
+    // exercises the extended isProcessingTurn() predicate end to end.
+    let realRuntime: SessionRuntime | undefined;
+    SessionRuntime.open = ((...args: unknown[]) => {
+      const mockQuery = {
+        interrupt: () => Promise.resolve(),
+        close: () => {},
+      } as unknown as Query;
+      const client = {
+        createStreamingQuery: () => ({
+          query: mockQuery,
+          messages: (async function* () {})(),
+        }),
+      } as unknown as SdkClient;
+      realRuntime = originalOpen(
+        args[0] as string,
+        args[1] as string,
+        args[2] as string,
+        {} as Options,
+        client,
+        undefined,
+        args[6] as (() => void) | undefined,
+        args[7] as (() => void) | undefined,
+        args[8] as (() => void) | undefined,
+      );
+      return realRuntime;
+    }) as typeof SessionRuntime.open;
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    assert.ok(realRuntime);
+    assert.strictEqual(service.getActiveSessionCount(), 1);
+
+    const tracker = realRuntime as unknown as { handleTaskSignal: (signal: TaskSignal) => void };
+    tracker.handleTaskSignal({ kind: 'backgroundedPatch', taskId: 'bg-1' });
+    assert.strictEqual(realRuntime.isProcessingTurn(), true, 'confirmed background task extends processing');
+
+    // Grace period elapses, but the runtime stays open because the task runs.
+    await new Promise((r) => setTimeout(r, 150));
+    assert.strictEqual(service.getActiveSessionCount(), 1, 'runtime must survive the idle grace while a background task runs');
+    const timeouts = (service as unknown as { idleTimeouts: Map<string, NodeJS.Timeout> }).idleTimeouts;
+    assert.ok(timeouts.has('s1'), 'idle close should be rescheduled while the task runs');
+
+    // Once the task settles, the re-armed timer fires and closes the runtime.
+    tracker.handleTaskSignal({ kind: 'terminal', taskId: 'bg-1' });
+    assert.strictEqual(realRuntime.isProcessingTurn(), false);
+    await new Promise((r) => setTimeout(r, 150));
+    assert.strictEqual(service.getActiveSessionCount(), 0, 'runtime closes once the last background task settles');
   });
 
   it('notifies onRuntimeClose listener when runtime is closed', async () => {
