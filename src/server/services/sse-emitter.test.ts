@@ -875,7 +875,7 @@ describe('SseEmitter + SessionRuntime task-signal integration', { concurrency: f
     } as unknown as SdkClient;
   }
 
-  it('task_started + async_launched + result + task_notification yields exactly the {true} → {false} edge sequence', async () => {
+  it('task_started + async_launched + result + task_notification yields the {true} → count-edge → {false} edge sequence', async () => {
     const events: SseEvent[] = [];
     const messages: SDKMessage[] = [
       {
@@ -930,13 +930,16 @@ describe('SseEmitter + SessionRuntime task-signal integration', { concurrency: f
     );
     assert.deepStrictEqual(processing, [
       { type: 'session_processing', processing: true, backgroundTaskCount: 0 },
+      // Count-only edge: the task confirmation flips the count while the
+      // turn keeps the processing boolean true.
+      { type: 'session_processing', processing: true, backgroundTaskCount: 1 },
       { type: 'session_processing', processing: false, backgroundTaskCount: 0 },
     ]);
 
     // The foreground turn's result must arrive before the settle edge: the
     // confirmed background task held the session active past the turn result.
     const resultIdx = events.findIndex((e) => e.type === 'result');
-    const settleIdx = events.indexOf(processing[1]);
+    const settleIdx = events.indexOf(processing[2]);
     assert.ok(resultIdx !== -1, 'expected a result wire event');
     assert.ok(resultIdx < settleIdx, 'the turn result precedes the settle edge');
   });
