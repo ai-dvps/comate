@@ -1810,5 +1810,85 @@ describe('session_processing authoritative slice (U3)', () => {
     assert.strictEqual(state.sessionProcessing['s1'], false)
     assert.strictEqual(state.sessionBackgroundTaskCount['s1'], 0)
   })
+
+  it('result on an inactive session while sessionProcessing is true does not set unreadCompletions and keeps streaming', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      sessionProcessing: { s1: true },
+      sessionBackgroundTaskCount: { s1: 1 },
+      isStreaming: { s1: true },
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'result', {})
+    const state = useChatStore.getState()
+    assert.strictEqual(state.isStreaming['s1'], true, 'streaming retained while background tasks run')
+    assert.strictEqual(
+      state.unreadCompletions['s1'],
+      undefined,
+      'unread marker deferred until the final processing edge',
+    )
+  })
+
+  it('session_processing {false,0} on an inactive session sets unreadCompletions and clears streaming', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      sessionProcessing: { s1: true },
+      sessionBackgroundTaskCount: { s1: 1 },
+      isStreaming: { s1: true },
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'session_processing', {
+      processing: false,
+      backgroundTaskCount: 0,
+    })
+    const state = useChatStore.getState()
+    assert.strictEqual(state.isStreaming['s1'], false)
+    assert.strictEqual(state.sessionProcessing['s1'], false)
+    assert.strictEqual(state.unreadCompletions['s1'], true, 'unread marker lands on the final settle')
+  })
+
+  it('session_processing {false,0} on the active session does not set unreadCompletions', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      activeSessionIds: { 'ws-1': 's1' },
+      sessionProcessing: { s1: true },
+      sessionBackgroundTaskCount: { s1: 1 },
+      isStreaming: { s1: true },
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'session_processing', {
+      processing: false,
+      backgroundTaskCount: 0,
+    })
+    const state = useChatStore.getState()
+    assert.strictEqual(state.isStreaming['s1'], false)
+    assert.strictEqual(state.unreadCompletions['s1'], undefined)
+  })
+
+  it('an idle {false,0} verdict on an inactive session does not mark it unread (no prior processing)', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'session_processing', {
+      processing: false,
+      backgroundTaskCount: 0,
+    })
+    assert.strictEqual(useChatStore.getState().unreadCompletions['s1'], undefined)
+  })
+
+  it('no-op guard still skips a repeat identical session_processing verdict', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      sessionProcessing: { s1: false },
+      sessionBackgroundTaskCount: { s1: 0 },
+      isStreaming: { s1: false },
+      unreadCompletions: { s1: true },
+    })
+    const before = useChatStore.getState()
+    handleSseEvent(set, 'ws-1', 's1', 'session_processing', {
+      processing: false,
+      backgroundTaskCount: 0,
+    })
+    const after = useChatStore.getState()
+    assert.strictEqual(after.sessionProcessing, before.sessionProcessing, 'processing slice untouched')
+    assert.strictEqual(after.sessionBackgroundTaskCount, before.sessionBackgroundTaskCount)
+    assert.strictEqual(after.isStreaming, before.isStreaming, 'streaming slice untouched')
+    assert.strictEqual(after.unreadCompletions, before.unreadCompletions, 'unread slice untouched')
+  })
 })
 
