@@ -24,6 +24,44 @@ function collectDiagLogs(): { logs: string[]; restore: () => void } {
   };
 }
 
+// Shared scaffolding for the background-task tracker describes below.
+// Private-state casts go through this structural type.
+type TrackerRuntime = {
+  handleTaskSignal: (signal: TaskSignal) => void;
+  evaluateProcessingEdge: () => void;
+  currentMessageStartId?: string;
+  confirmedBackgroundTasks: Set<string>;
+  ringBuffer: Array<{ id: string; event: SseEvent }>;
+};
+
+function signal(rt: SessionRuntime, sig: TaskSignal): void {
+  (rt as unknown as TrackerRuntime).handleTaskSignal(sig);
+}
+
+function processingEvents(events: SseEvent[]) {
+  return events.filter(
+    (e): e is Extract<SseEvent, { type: 'session_processing' }> => e.type === 'session_processing',
+  );
+}
+
+function createEmptyMockSdkClient(): SdkClient {
+  const mockQuery = {
+    interrupt: () => Promise.resolve(),
+    close: () => {},
+  } as unknown as Query;
+
+  return {
+    createStreamingQuery: () => ({
+      query: mockQuery,
+      messages: (async function* () {})(),
+    }),
+  } as unknown as SdkClient;
+}
+
+function createMockResponse(): import('express').Response {
+  return { write: () => true } as unknown as import('express').Response;
+}
+
 describe('session-runtime activity callback', { concurrency: false }, () => {
   let activityCalls: number;
   let runtime: SessionRuntime | undefined;
@@ -1331,55 +1369,19 @@ describe('session-runtime background task tracking', { concurrency: false }, () 
     runtime = undefined;
   });
 
-  type TrackerRuntime = {
-    handleTaskSignal: (signal: TaskSignal) => void;
-    evaluateProcessingEdge: () => void;
-    currentMessageStartId?: string;
-    confirmedBackgroundTasks: Set<string>;
-    ringBuffer: Array<{ id: string; event: SseEvent }>;
-  };
-
-  function createMockSdkClient(): SdkClient {
-    const mockQuery = {
-      interrupt: () => Promise.resolve(),
-      close: () => {},
-    } as unknown as Query;
-
-    return {
-      createStreamingQuery: () => ({
-        query: mockQuery,
-        messages: (async function* () {})(),
-      }),
-    } as unknown as SdkClient;
-  }
-
-  function createMockResponse(): import('express').Response {
-    return { write: () => true } as unknown as import('express').Response;
-  }
-
   function openRuntime(events: SseEvent[]): SessionRuntime {
     return SessionRuntime.open(
       's1',
       'ws1',
       'nonce',
       {} as Options,
-      createMockSdkClient(),
+      createEmptyMockSdkClient(),
       (_id, event) => events.push(event),
     );
   }
 
-  function signal(rt: SessionRuntime, sig: TaskSignal): void {
-    (rt as unknown as TrackerRuntime).handleTaskSignal(sig);
-  }
-
   function edge(rt: SessionRuntime): void {
     (rt as unknown as TrackerRuntime).evaluateProcessingEdge();
-  }
-
-  function processingEvents(events: SseEvent[]) {
-    return events.filter(
-      (e): e is Extract<SseEvent, { type: 'session_processing' }> => e.type === 'session_processing',
-    );
   }
 
   it('stays processing after the turn result while a confirmed background task runs (F1)', () => {
@@ -1717,10 +1719,6 @@ describe('session-runtime marker-clear race', { concurrency: false }, () => {
     runtime = undefined;
   });
 
-  type TrackerRuntime = {
-    handleTaskSignal: (signal: TaskSignal) => void;
-  };
-
   function createControllableSdkClient(): {
     client: SdkClient;
     push: (msg: SDKMessage | null) => void;
@@ -1847,13 +1845,6 @@ describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
     runtime = undefined;
   });
 
-  type StopAllRuntime = {
-    handleTaskSignal: (signal: TaskSignal) => void;
-    evaluateProcessingEdge: () => void;
-    currentMessageStartId?: string;
-    confirmedBackgroundTasks: Set<string>;
-  };
-
   type QueryCalls = { interrupt: number; stopTask: string[] };
 
   function createMockSdkClient(handlers: {
@@ -1895,26 +1886,16 @@ describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
     );
   }
 
-  function signal(rt: SessionRuntime, sig: TaskSignal): void {
-    (rt as unknown as StopAllRuntime).handleTaskSignal(sig);
-  }
-
   function confirmTask(rt: SessionRuntime, taskId: string, toolUseId: string): void {
     signal(rt, { kind: 'started', taskId, toolUseId });
     signal(rt, { kind: 'asyncLaunched', toolUseId });
-  }
-
-  function processingEvents(events: SseEvent[]) {
-    return events.filter(
-      (e): e is Extract<SseEvent, { type: 'session_processing' }> => e.type === 'session_processing',
-    );
   }
 
   it('interrupts the turn and stops every confirmed task in one call (F2)', async () => {
     const events: SseEvent[] = [];
     const { client, calls } = createMockSdkClient();
     runtime = openRuntime(events, client);
-    const tracker = runtime as unknown as StopAllRuntime;
+    const tracker = runtime as unknown as TrackerRuntime;
 
     confirmTask(runtime, 't1', 'tu1');
     confirmTask(runtime, 't2', 'tu2');
@@ -1979,7 +1960,7 @@ describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
     assert.strictEqual(runtime.isProcessingTurn(), false);
     assert.strictEqual(processingEvents(events).length, edgesAfterStop, 'no extra edge');
     assert.strictEqual(
-      (runtime as unknown as StopAllRuntime).confirmedBackgroundTasks.size,
+      (runtime as unknown as TrackerRuntime).confirmedBackgroundTasks.size,
       0,
     );
   });
@@ -2001,7 +1982,7 @@ describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
 
     assert.deepStrictEqual(calls.stopTask, ['t1'], 'only the snapshot task is stopped');
     assert.strictEqual(
-      (runtime as unknown as StopAllRuntime).confirmedBackgroundTasks.has('t3'),
+      (runtime as unknown as TrackerRuntime).confirmedBackgroundTasks.has('t3'),
       true,
       'the late task stays tracked',
     );
@@ -2016,7 +1997,7 @@ describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
     });
     try {
       runtime = openRuntime(events, client);
-      const tracker = runtime as unknown as StopAllRuntime;
+      const tracker = runtime as unknown as TrackerRuntime;
       confirmTask(runtime, 't1', 'tu1');
       tracker.currentMessageStartId = 'msg-1';
 
@@ -2042,7 +2023,7 @@ describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
     });
     try {
       runtime = openRuntime(events, client);
-      const tracker = runtime as unknown as StopAllRuntime;
+      const tracker = runtime as unknown as TrackerRuntime;
       confirmTask(runtime, 't1', 'tu1');
       confirmTask(runtime, 't2', 'tu2');
 

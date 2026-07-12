@@ -18,6 +18,12 @@ interface BlockState {
   inputBuffer?: string;
 }
 
+// Terminal task statuses, per message shape: task_updated patches report
+// 'killed' while task_notification messages report 'stopped' — the sets are
+// deliberately different.
+const TERMINAL_PATCH_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'killed']);
+const TERMINAL_NOTIFICATION_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'stopped']);
+
 /**
  * Per-stream stateful SSE emitter for the chat route.
  *
@@ -154,7 +160,7 @@ export class SseEmitter {
               this.onTaskSignal?.({ kind: 'backgroundedPatch', taskId });
             }
             const rawStatus = patch?.status;
-            if (rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'killed') {
+            if (typeof rawStatus === 'string' && TERMINAL_PATCH_STATUSES.has(rawStatus)) {
               this.onTaskSignal?.({ kind: 'terminal', taskId });
             }
             const normalizedPatch = {
@@ -190,7 +196,7 @@ export class SseEmitter {
           const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
           const status = typeof taskMsg.status === 'string' ? taskMsg.status : '';
           if (taskId) {
-            if (status === 'completed' || status === 'failed' || status === 'stopped') {
+            if (TERMINAL_NOTIFICATION_STATUSES.has(status)) {
               this.onTaskSignal?.({ kind: 'terminal', taskId });
             }
             this.send({

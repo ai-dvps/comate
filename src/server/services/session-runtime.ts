@@ -554,6 +554,12 @@ export class SessionRuntime {
     return this.closed;
   }
 
+  /**
+   * Session-wide processing predicate: a foreground turn is streaming, a
+   * tool approval is pending, OR confirmed background tasks are still
+   * running (R1). Despite the historical name this is broader than a turn —
+   * use `isTurnActive()` for turn-only semantics (bot /stop gates).
+   */
   isProcessingTurn(): boolean {
     return (
       this.currentMessageStartId !== undefined ||

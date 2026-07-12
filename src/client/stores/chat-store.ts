@@ -2105,14 +2105,26 @@ export function handleSseEvent(
       const backgroundTaskCount =
         typeof data.backgroundTaskCount === 'number' ? data.backgroundTaskCount : 0
       if (!sessionId) return
-      set((state) => ({
-        sessionProcessing: { ...state.sessionProcessing, [sessionId]: processing },
-        sessionBackgroundTaskCount: {
-          ...state.sessionBackgroundTaskCount,
-          [sessionId]: backgroundTaskCount,
-        },
-        isStreaming: { ...state.isStreaming, [sessionId]: processing },
-      }))
+      set((state) => {
+        // The server force-emits this verdict on every (re)subscribe, so
+        // identical verdicts are common — skip the writes when nothing
+        // changed to avoid notifying the three slices' subscribers.
+        if (
+          state.sessionProcessing[sessionId] === processing &&
+          (state.sessionBackgroundTaskCount[sessionId] ?? 0) === backgroundTaskCount &&
+          state.isStreaming[sessionId] === processing
+        ) {
+          return {}
+        }
+        return {
+          sessionProcessing: { ...state.sessionProcessing, [sessionId]: processing },
+          sessionBackgroundTaskCount: {
+            ...state.sessionBackgroundTaskCount,
+            [sessionId]: backgroundTaskCount,
+          },
+          isStreaming: { ...state.isStreaming, [sessionId]: processing },
+        }
+      })
       return
     }
     case 'auto_approval': {
