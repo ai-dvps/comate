@@ -1836,3 +1836,244 @@ describe('session-runtime marker-clear race', { concurrency: false }, () => {
     });
   });
 });
+
+describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  type StopAllRuntime = {
+    handleTaskSignal: (signal: TaskSignal) => void;
+    evaluateProcessingEdge: () => void;
+    currentMessageStartId?: string;
+    confirmedBackgroundTasks: Set<string>;
+  };
+
+  type QueryCalls = { interrupt: number; stopTask: string[] };
+
+  function createMockSdkClient(handlers: {
+    interrupt?: () => Promise<void>;
+    stopTask?: (taskId: string) => Promise<void>;
+  } = {}): { client: SdkClient; calls: QueryCalls } {
+    const calls: QueryCalls = { interrupt: 0, stopTask: [] };
+    const mockQuery = {
+      interrupt: () => {
+        calls.interrupt++;
+        return (handlers.interrupt ?? (() => Promise.resolve()))();
+      },
+      stopTask: (taskId: string) => {
+        calls.stopTask.push(taskId);
+        return (handlers.stopTask ?? (() => Promise.resolve()))(taskId);
+      },
+      close: () => {},
+    } as unknown as Query;
+
+    return {
+      calls,
+      client: {
+        createStreamingQuery: () => ({
+          query: mockQuery,
+          messages: (async function* () {})(),
+        }),
+      } as unknown as SdkClient,
+    };
+  }
+
+  function openRuntime(events: SseEvent[], client: SdkClient): SessionRuntime {
+    return SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      client,
+      (_id, event) => events.push(event),
+    );
+  }
+
+  function signal(rt: SessionRuntime, sig: TaskSignal): void {
+    (rt as unknown as StopAllRuntime).handleTaskSignal(sig);
+  }
+
+  function confirmTask(rt: SessionRuntime, taskId: string, toolUseId: string): void {
+    signal(rt, { kind: 'started', taskId, toolUseId });
+    signal(rt, { kind: 'asyncLaunched', toolUseId });
+  }
+
+  function processingEvents(events: SseEvent[]) {
+    return events.filter(
+      (e): e is Extract<SseEvent, { type: 'session_processing' }> => e.type === 'session_processing',
+    );
+  }
+
+  it('interrupts the turn and stops every confirmed task in one call (F2)', async () => {
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient();
+    runtime = openRuntime(events, client);
+    const tracker = runtime as unknown as StopAllRuntime;
+
+    confirmTask(runtime, 't1', 'tu1');
+    confirmTask(runtime, 't2', 'tu2');
+    tracker.currentMessageStartId = 'msg-1';
+    tracker.evaluateProcessingEdge();
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+
+    await runtime.stopAll();
+
+    assert.strictEqual(calls.interrupt, 1, 'interrupt invoked exactly once');
+    assert.deepStrictEqual(calls.stopTask.sort(), ['t1', 't2'], 'stopTask per confirmed task');
+    assert.strictEqual(tracker.confirmedBackgroundTasks.size, 0, 'tasks untracked on resolve');
+
+    // The interrupted turn ends: the emitter clears the marker on the
+    // `interrupted` event. Simulate that and expect exactly one {false} edge.
+    tracker.currentMessageStartId = undefined;
+    tracker.evaluateProcessingEdge();
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    const falseEdges = processingEvents(events).filter((e) => e.processing === false);
+    assert.deepStrictEqual(
+      falseEdges,
+      [{ type: 'session_processing', processing: false, backgroundTaskCount: 0 }],
+      'exactly one final {false} edge',
+    );
+  });
+
+  it('stops confirmed tasks without interrupting when no turn is in flight', async () => {
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient();
+    runtime = openRuntime(events, client);
+
+    confirmTask(runtime, 't1', 'tu1');
+    confirmTask(runtime, 't2', 'tu2');
+    assert.strictEqual(runtime.isTurnActive(), false, 'background tasks alone are not a turn');
+
+    await runtime.stopAll();
+
+    assert.strictEqual(calls.interrupt, 0, 'no turn → no interrupt');
+    assert.deepStrictEqual(calls.stopTask.sort(), ['t1', 't2']);
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    const falseEdges = processingEvents(events).filter((e) => e.processing === false);
+    assert.deepStrictEqual(
+      falseEdges,
+      [{ type: 'session_processing', processing: false, backgroundTaskCount: 0 }],
+      '{false} fires once, after the last untrack',
+    );
+  });
+
+  it('is idempotent with the terminal stopped notification (R9 safety net)', async () => {
+    const events: SseEvent[] = [];
+    const { client } = createMockSdkClient();
+    runtime = openRuntime(events, client);
+
+    confirmTask(runtime, 't1', 'tu1');
+    await runtime.stopAll();
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    const edgesAfterStop = processingEvents(events).length;
+
+    // The SDK's terminal `stopped` notification arrives after the optimistic
+    // untrack: no resurrection, no extra edge.
+    signal(runtime, { kind: 'terminal', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.strictEqual(processingEvents(events).length, edgesAfterStop, 'no extra edge');
+    assert.strictEqual(
+      (runtime as unknown as StopAllRuntime).confirmedBackgroundTasks.size,
+      0,
+    );
+  });
+
+  it('does not stop a task confirmed after the snapshot', async () => {
+    const events: SseEvent[] = [];
+    const holder: { rt?: SessionRuntime } = {};
+    const { client, calls } = createMockSdkClient({
+      stopTask: async () => {
+        // A new background task is confirmed while stopAll iterates.
+        if (holder.rt) confirmTask(holder.rt, 't3', 'tu3');
+      },
+    });
+    runtime = openRuntime(events, client);
+    holder.rt = runtime;
+
+    confirmTask(runtime, 't1', 'tu1');
+    await runtime.stopAll();
+
+    assert.deepStrictEqual(calls.stopTask, ['t1'], 'only the snapshot task is stopped');
+    assert.strictEqual(
+      (runtime as unknown as StopAllRuntime).confirmedBackgroundTasks.has('t3'),
+      true,
+      'the late task stays tracked',
+    );
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+  });
+
+  it('still stops tasks when interrupt throws, logging the failure', async () => {
+    const { logs, restore } = collectDiagLogs();
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient({
+      interrupt: () => Promise.reject(new Error('boom')),
+    });
+    try {
+      runtime = openRuntime(events, client);
+      const tracker = runtime as unknown as StopAllRuntime;
+      confirmTask(runtime, 't1', 'tu1');
+      tracker.currentMessageStartId = 'msg-1';
+
+      await runtime.stopAll(); // must not throw
+
+      assert.strictEqual(calls.interrupt, 1);
+      assert.deepStrictEqual(calls.stopTask, ['t1'], 'the task loop still runs');
+      assert.ok(
+        logs.some((line) => line.includes('stopAll') && line.includes('boom')),
+        'interrupt failure is logged',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('keeps other stops and leaves the task tracked when one stopTask rejects', async () => {
+    const { logs, restore } = collectDiagLogs();
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient({
+      stopTask: (taskId) =>
+        taskId === 't2' ? Promise.reject(new Error('stop failed')) : Promise.resolve(),
+    });
+    try {
+      runtime = openRuntime(events, client);
+      const tracker = runtime as unknown as StopAllRuntime;
+      confirmTask(runtime, 't1', 'tu1');
+      confirmTask(runtime, 't2', 'tu2');
+
+      await runtime.stopAll(); // must not throw
+
+      assert.deepStrictEqual(calls.stopTask.sort(), ['t1', 't2'], 'both stops attempted');
+      assert.strictEqual(tracker.confirmedBackgroundTasks.has('t1'), false);
+      assert.strictEqual(
+        tracker.confirmedBackgroundTasks.has('t2'),
+        true,
+        'the rejected task stays tracked',
+      );
+      assert.strictEqual(runtime.isProcessingTurn(), true, 'predicate may stay true');
+      assert.ok(
+        logs.some((line) => line.includes('t2') && line.includes('stop failed')),
+        'stopTask failure is logged',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('is a no-op when nothing is running', async () => {
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient();
+    runtime = openRuntime(events, client);
+
+    await runtime.stopAll();
+
+    assert.strictEqual(calls.interrupt, 0);
+    assert.strictEqual(calls.stopTask.length, 0);
+    assert.strictEqual(processingEvents(events).length, 0, 'baseline idle emits nothing');
+  });
+});

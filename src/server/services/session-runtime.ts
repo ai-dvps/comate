@@ -870,6 +870,49 @@ export class SessionRuntime {
   }
 
   /**
+   * One-click clear-all (R8, KTD-5): interrupt the in-flight turn if any,
+   * then stop every tracked background task. Failure-isolated and never
+   * throws: a throwing interrupt must not skip the task loop, and a rejected
+   * stopTask only logs and leaves its task tracked until its own terminal
+   * signal (or runtime close) arrives.
+   */
+  async stopAll(): Promise<void> {
+    // Snapshot: a task confirmed after this point is not stopped (accepted
+    // documented semantics).
+    const taskIds = [...this.confirmedBackgroundTasks];
+
+    if (this.isTurnActive()) {
+      try {
+        await this.interrupt();
+      } catch (err) {
+        // interrupt() has already emitted its error note; swallow the rethrow
+        // so the task loop still runs.
+        diagLog(
+          `[Runtime ${this.sessionId}] stopAll: interrupt failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    const results = await Promise.allSettled(
+      taskIds.map((taskId) => this.query.stopTask(taskId)),
+    );
+    results.forEach((result, index) => {
+      const taskId = taskIds[index];
+      if (result.status === 'fulfilled') {
+        // The SDK documents a terminal `stopped` notification (the R9 path);
+        // untracking here through the same terminal path is an idempotent
+        // safety net in case that notification is ever dropped, and emits
+        // edges exactly the way the notification would.
+        this.handleTaskSignal({ kind: 'terminal', taskId });
+      } else {
+        const reason =
+          result.reason instanceof Error ? result.reason.message : String(result.reason);
+        diagLog(`[Runtime ${this.sessionId}] stopAll: stopTask(${taskId}) failed: ${reason}`);
+      }
+    });
+  }
+
+  /**
    * Resolve all pending tool approvals or questions as denied. Used when a turn
    * is interrupted so the user lands in a clean state and reconnecting clients
    * do not replay stale approval cards.
