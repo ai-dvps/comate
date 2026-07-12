@@ -5,24 +5,24 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService, ChatError } from '../services/chat-service.js';
 import { botService } from '../services/bot-service.js';
 
+function createMockRes() {
+  return {
+    statusCode: 200,
+    jsonBody: undefined as unknown,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body: unknown) {
+      this.jsonBody = body;
+    },
+  };
+}
+
 describe('chat route Feishu user info', { concurrency: false }, () => {
   beforeEach(() => {
     workspaceStore.resetData();
   });
-
-  function createMockRes() {
-    return {
-      statusCode: 200,
-      jsonBody: undefined as unknown,
-      status(code: number) {
-        this.statusCode = code;
-        return this;
-      },
-      json(body: unknown) {
-        this.jsonBody = body;
-      },
-    };
-  }
 
   async function importGetFeishuUserHandler() {
     const mod = await import('./chat.js');
@@ -107,20 +107,6 @@ describe('chat route interrupt (clear-all)', { concurrency: false }, () => {
   beforeEach(() => {
     workspaceStore.resetData();
   });
-
-  function createMockRes() {
-    return {
-      statusCode: 200,
-      jsonBody: undefined as unknown,
-      status(code: number) {
-        this.statusCode = code;
-        return this;
-      },
-      json(body: unknown) {
-        this.jsonBody = body;
-      },
-    };
-  }
 
   async function importInterruptHandler() {
     const mod = await import('./chat.js');
