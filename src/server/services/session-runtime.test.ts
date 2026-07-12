@@ -4,7 +4,7 @@ import assert from 'node:assert';
 import { SessionRuntime } from './session-runtime.js';
 import type { SdkClient } from './sdk-client.js';
 import type { Query, SDKMessage, Options } from '@anthropic-ai/claude-agent-sdk';
-import type { SseEvent } from '../types/message.js';
+import type { SseEvent, TaskSignal } from '../types/message.js';
 import type { Provider } from '../models/provider.js';
 
 function collectDiagLogs(): { logs: string[]; restore: () => void } {
@@ -22,6 +22,45 @@ function collectDiagLogs(): { logs: string[]; restore: () => void } {
       process.env.COMATE_SIDECAR = originalSidecar;
     },
   };
+}
+
+// Shared scaffolding for the background-task tracker describes below.
+// Private-state casts go through this structural type.
+type TrackerRuntime = {
+  handleTaskSignal: (signal: TaskSignal) => void;
+  evaluateProcessingEdge: () => void;
+  currentMessageStartId?: string;
+  confirmedBackgroundTasks: Set<string>;
+  terminatedTaskIds: Set<string>;
+  ringBuffer: Array<{ id: string; event: SseEvent }>;
+};
+
+function signal(rt: SessionRuntime, sig: TaskSignal): void {
+  (rt as unknown as TrackerRuntime).handleTaskSignal(sig);
+}
+
+function processingEvents(events: SseEvent[]) {
+  return events.filter(
+    (e): e is Extract<SseEvent, { type: 'session_processing' }> => e.type === 'session_processing',
+  );
+}
+
+function createEmptyMockSdkClient(): SdkClient {
+  const mockQuery = {
+    interrupt: () => Promise.resolve(),
+    close: () => {},
+  } as unknown as Query;
+
+  return {
+    createStreamingQuery: () => ({
+      query: mockQuery,
+      messages: (async function* () {})(),
+    }),
+  } as unknown as SdkClient;
+}
+
+function createMockResponse(): import('express').Response {
+  return { write: () => true } as unknown as import('express').Response;
 }
 
 describe('session-runtime activity callback', { concurrency: false }, () => {
@@ -1318,5 +1357,970 @@ describe('session-runtime Kimi loop detection', { concurrency: false }, () => {
       { signal, toolUseID: 'tu-3' },
     );
     assert.strictEqual(result.behavior, 'allow');
+  });
+});
+
+describe('session-runtime background task tracking', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function openRuntime(events: SseEvent[]): SessionRuntime {
+    return SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createEmptyMockSdkClient(),
+      (_id, event) => events.push(event),
+    );
+  }
+
+  function edge(rt: SessionRuntime): void {
+    (rt as unknown as TrackerRuntime).evaluateProcessingEdge();
+  }
+
+  it('stays processing after the turn result while a confirmed background task runs (F1)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1', toolUseId: 'tu1' });
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'confirmed task extends processing');
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 1 }],
+      'the {true} edge fires once, at confirmation',
+    );
+
+    // The foreground turn starts and ends around the running task.
+    const tracker = runtime as unknown as TrackerRuntime;
+    tracker.currentMessageStartId = 'msg-1';
+    edge(runtime);
+    tracker.currentMessageStartId = undefined;
+    edge(runtime);
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'task outlives the turn result');
+    assert.strictEqual(processingEvents(events).length, 1, 'no edge while the task outlives the turn');
+
+    signal(runtime, { kind: 'terminal', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [
+        { type: 'session_processing', processing: true, backgroundTaskCount: 1 },
+        { type: 'session_processing', processing: false, backgroundTaskCount: 0 },
+      ],
+      'a single {false} edge fires when the task settles',
+    );
+  });
+
+  it('stays active until the last of two confirmed tasks settles (AE4)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1', toolUseId: 'tu1' });
+    signal(runtime, { kind: 'started', taskId: 't2', toolUseId: 'tu2' });
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu1' });
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu2' });
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [
+        { type: 'session_processing', processing: true, backgroundTaskCount: 1 },
+        { type: 'session_processing', processing: true, backgroundTaskCount: 2 },
+      ],
+      'the first confirmation flips the predicate; the second emits a count-only edge',
+    );
+
+    signal(runtime, { kind: 'terminal', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'first settle keeps the session active');
+    const afterFirstSettle = processingEvents(events);
+    assert.deepStrictEqual(
+      afterFirstSettle[afterFirstSettle.length - 1],
+      { type: 'session_processing', processing: true, backgroundTaskCount: 1 },
+      'a count-only edge reports the remaining task',
+    );
+    assert.strictEqual(
+      afterFirstSettle.filter((e) => e.processing === false).length,
+      0,
+      'no {false} edge after the first settle',
+    );
+
+    signal(runtime, { kind: 'terminal', taskId: 't2' });
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    const falseEdges = processingEvents(events).filter((e) => e.processing === false);
+    assert.deepStrictEqual(
+      falseEdges,
+      [{ type: 'session_processing', processing: false, backgroundTaskCount: 0 }],
+      'exactly one {false} edge, after the second terminal',
+    );
+  });
+
+  it('confirms a candidate via an is_backgrounded task patch (R2 path c)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'bare candidate has no predicate effect');
+
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 1 }],
+    );
+
+    // Predicate extends past the turn end.
+    const tracker = runtime as unknown as TrackerRuntime;
+    tracker.currentMessageStartId = 'msg-1';
+    edge(runtime);
+    tracker.currentMessageStartId = undefined;
+    edge(runtime);
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+    assert.strictEqual(processingEvents(events).length, 1);
+  });
+
+  it('confirms directly from a Bash backgroundTaskId result with no prior candidate (R2 path b)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'bashBackgrounded', toolUseId: 'tu9', taskId: 'b1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'the Bash result is itself the confirmed signal');
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 1 }],
+    );
+  });
+
+  it('discards late confirmations for terminated tasks (ghost guard)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1', toolUseId: 'tu1' });
+    signal(runtime, { kind: 'terminal', taskId: 't1' });
+
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'tombstoned task must not resurrect');
+
+    signal(runtime, { kind: 'bashBackgrounded', toolUseId: 'tu1', taskId: 't1' });
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu1' });
+    signal(runtime, { kind: 'started', taskId: 't1', toolUseId: 'tu1' });
+
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.strictEqual(processingEvents(events).length, 0, 'no edges from ghost confirmations');
+    assert.strictEqual(
+      (runtime as unknown as TrackerRuntime).confirmedBackgroundTasks.size,
+      0,
+    );
+  });
+
+  it('evicts the oldest terminated tombstone beyond the cap (FIFO)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+    const tracker = runtime as unknown as TrackerRuntime;
+
+    // TERMINATED_TASK_IDS_CAP is 256: fire one more terminal signal than
+    // the cap so the oldest tombstone is evicted.
+    for (let i = 0; i <= 256; i++) {
+      signal(runtime, { kind: 'terminal', taskId: `term-${i}` });
+    }
+
+    assert.strictEqual(tracker.terminatedTaskIds.size, 256, 'tombstones are capped');
+    assert.strictEqual(tracker.terminatedTaskIds.has('term-0'), false, 'oldest id evicted');
+    assert.strictEqual(tracker.terminatedTaskIds.has('term-256'), true, 'newest id retained');
+
+    // The ghost guard still blocks confirmation for a retained tombstone.
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 'term-255' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'retained tombstone blocks confirmation');
+    assert.strictEqual(processingEvents(events).length, 0);
+
+    // Accepted consequence of FIFO eviction: an evicted id can be
+    // re-confirmed (documented behavior, not a goal).
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 'term-0' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'evicted id can be re-confirmed');
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 1 }],
+    );
+  });
+
+  it('confirms via pending confirmation when asyncLaunched arrives before task_started', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.strictEqual(processingEvents(events).length, 0, 'no confirmation without a candidate');
+
+    signal(runtime, { kind: 'started', taskId: 't1', toolUseId: 'tu1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'pending confirmation consumed by task_started');
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 1 }],
+    );
+  });
+
+  it('single-candidate fallback confirms an uncorrelated asyncLaunched', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1' });
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu-uncorrelated' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'sole candidate without toolUseId is confirmed');
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 1 }],
+    );
+  });
+
+  it('does not guess when two candidates await an uncorrelated asyncLaunched', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1' });
+    signal(runtime, { kind: 'started', taskId: 't2' });
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu-uncorrelated' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'no fallback with two candidates');
+    assert.strictEqual(processingEvents(events).length, 0);
+  });
+
+  it('consumes a single parked confirmation for an unkeyed task_started', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu-parked' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'no candidate yet: confirmation parks');
+
+    signal(runtime, { kind: 'started', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'sole unkeyed candidate consumes the parked confirmation');
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 1 }],
+    );
+  });
+
+  it('confirms the sole unkeyed candidate even when keyed candidates exist', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1', toolUseId: 'tu1' });
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu-parked' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'keyed candidate does not match: confirmation parks');
+
+    signal(runtime, { kind: 'started', taskId: 't2' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'the sole unkeyed candidate is confirmed');
+    const tracker = runtime as unknown as TrackerRuntime;
+    assert.strictEqual(tracker.confirmedBackgroundTasks.has('t2'), true);
+    assert.strictEqual(tracker.confirmedBackgroundTasks.has('t1'), false);
+  });
+
+  it('does not guess when a parked confirmation meets multiple unkeyed candidates', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1' });
+    signal(runtime, { kind: 'started', taskId: 't2' });
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu-parked' });
+    signal(runtime, { kind: 'started', taskId: 't3' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'ambiguous: no unkeyed candidate is confirmed');
+    assert.strictEqual(processingEvents(events).length, 0);
+  });
+
+  it('never tracks skip_transcript tasks (AE3)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, {
+      kind: 'started',
+      taskId: 't1',
+      toolUseId: 'tu1',
+      skipTranscript: true,
+      subagentType: 'general-purpose',
+    });
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.strictEqual(processingEvents(events).length, 0, 'no edges from ambient tasks');
+
+    signal(runtime, { kind: 'asyncLaunched', toolUseId: 'tu1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'no candidate exists to confirm');
+    assert.strictEqual(processingEvents(events).length, 0);
+  });
+
+  it('refuses later confirmation for a skip_transcript task id (R3)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, {
+      kind: 'started',
+      taskId: 't1',
+      toolUseId: 'tu1',
+      skipTranscript: true,
+    });
+
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'ambient task must never become tracked');
+    assert.strictEqual(
+      (runtime as unknown as TrackerRuntime).confirmedBackgroundTasks.size,
+      0,
+    );
+
+    signal(runtime, { kind: 'bashBackgrounded', toolUseId: 'tu1', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.strictEqual(processingEvents(events).length, 0, 'no edges from ambient task confirmations');
+  });
+
+  it('idles at the turn result when a candidate was never confirmed (AE2)', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    const tracker = runtime as unknown as TrackerRuntime;
+    tracker.currentMessageStartId = 'msg-1';
+    edge(runtime);
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 0 }],
+    );
+
+    signal(runtime, { kind: 'started', taskId: 't1', toolUseId: 'tu1' });
+
+    tracker.currentMessageStartId = undefined;
+    edge(runtime);
+    assert.strictEqual(runtime.isProcessingTurn(), false, 'unconfirmed candidate lets the session idle');
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [
+        { type: 'session_processing', processing: true, backgroundTaskCount: 0 },
+        { type: 'session_processing', processing: false, backgroundTaskCount: 0 },
+      ],
+    );
+  });
+
+  it('an unconfirmed candidate that never terminates has no predicate effect', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'started', taskId: 't1', toolUseId: 'tu1' });
+    edge(runtime);
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.strictEqual(processingEvents(events).length, 0);
+  });
+
+  it('treats a terminal signal for a never-seen task as a no-op', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'terminal', taskId: 'ghost' });
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.strictEqual(processingEvents(events).length, 0);
+  });
+
+  it('isTurnActive reflects only the turn marker and pending approvals', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    assert.strictEqual(runtime.isTurnActive(), false);
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 'bg-1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'background tasks extend processing');
+    assert.strictEqual(runtime.isTurnActive(), false, 'background tasks do not count as an active turn');
+
+    const tracker = runtime as unknown as TrackerRuntime;
+    tracker.currentMessageStartId = 'msg-1';
+    assert.strictEqual(runtime.isTurnActive(), true);
+    tracker.currentMessageStartId = undefined;
+
+    const pendingApprovals = (runtime as unknown as { pendingApprovals: Map<string, unknown> }).pendingApprovals;
+    pendingApprovals.set('req-1', { resolve: () => {}, input: {}, type: 'approval' });
+    assert.strictEqual(runtime.isTurnActive(), true);
+  });
+
+  it('logs every started signal with toolUseId, subagentType, and skipTranscript', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    const { logs, restore } = collectDiagLogs();
+    try {
+      signal(runtime, {
+        kind: 'started',
+        taskId: 't-obs',
+        toolUseId: 'tu-obs',
+        subagentType: 'Explore',
+        skipTranscript: false,
+      });
+    } finally {
+      restore();
+    }
+
+    const line = logs.find((l) => l.includes('task_started') && l.includes('t-obs'));
+    assert.ok(line, 'expected a task_started observation line');
+    assert.ok(line!.includes('tu-obs'), 'line should carry the toolUseId');
+    assert.ok(line!.includes('Explore'), 'line should carry the subagentType');
+    assert.ok(line!.includes('skipTranscript'), 'line should carry the skipTranscript flag');
+  });
+
+  it('subscribe force-emits the current verdict during background-only processing', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 'bg-1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+    events.length = 0;
+
+    runtime.subscribe(createMockResponse());
+
+    const emitted = processingEvents(events);
+    assert.deepStrictEqual(
+      emitted,
+      [{ type: 'session_processing', processing: true, backgroundTaskCount: 1 }],
+      'fresh subscriber mid background-only task gets the current verdict',
+    );
+  });
+
+  it('subscribeWebSocket replays first and force-emits last so the current verdict wins', () => {
+    const events: SseEvent[] = [];
+    runtime = openRuntime(events);
+
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 'bg-1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+
+    // Plant a stale verdict at the end of the ring buffer so replay alone
+    // would deliver the wrong state.
+    const ringBuffer = (runtime as unknown as TrackerRuntime).ringBuffer;
+    const firstId = ringBuffer[0].id;
+    ringBuffer.push({
+      id: 'stale-1',
+      event: { type: 'session_processing', processing: false, backgroundTaskCount: 0 },
+    });
+
+    const replayed: SseEvent[] = [];
+    runtime.subscribeWebSocket((_id, event) => replayed.push(event), firstId);
+
+    const sp = processingEvents(replayed);
+    assert.ok(sp.length >= 2, 'expected the replayed stale verdict and the force-emitted verdict');
+    assert.deepStrictEqual(
+      sp[sp.length - 1],
+      { type: 'session_processing', processing: true, backgroundTaskCount: 1 },
+      'force-emit lands after replay, so the current verdict wins',
+    );
+    const staleIndex = replayed.lastIndexOf(
+      sp.find((e) => e.processing === false)!,
+    );
+    const trueIndex = replayed.lastIndexOf(sp[sp.length - 1]);
+    assert.ok(trueIndex > staleIndex, 'force-emit must come after the replayed stale event');
+  });
+});
+
+describe('session-runtime marker-clear race', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+  let finishLoop: (() => void) | undefined;
+
+  afterEach(async () => {
+    finishLoop?.();
+    finishLoop = undefined;
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createControllableSdkClient(): {
+    client: SdkClient;
+    push: (msg: SDKMessage | null) => void;
+  } {
+    const queue: Array<SDKMessage | null> = [];
+    let resolveNext: ((msg: SDKMessage | null) => void) | null = null;
+    const messageGen = (async function* () {
+      while (true) {
+        let msg: SDKMessage | null;
+        if (queue.length > 0) {
+          msg = queue.shift()!;
+        } else {
+          msg = await new Promise<SDKMessage | null>((r) => {
+            resolveNext = r;
+          });
+        }
+        if (msg === null) break;
+        yield msg;
+      }
+    })();
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+      getContextUsage: () =>
+        Promise.resolve({
+          totalTokens: 0,
+          maxTokens: 1,
+          percentage: 0,
+          categories: [],
+        }),
+    } as unknown as Query;
+    return {
+      client: {
+        createStreamingQuery: () => ({ query: mockQuery, messages: messageGen }),
+      } as unknown as SdkClient,
+      push: (msg) => {
+        if (resolveNext) {
+          resolveNext(msg);
+          resolveNext = null;
+        } else {
+          queue.push(msg);
+        }
+      },
+    };
+  }
+
+  const tick = () => new Promise((r) => setTimeout(r, 30));
+
+  it('a real result message does not idle the session while a background task runs', async () => {
+    const events: SseEvent[] = [];
+    const { client, push } = createControllableSdkClient();
+    finishLoop = () => push(null);
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      client,
+      (_id, event) => events.push(event),
+    );
+
+    // Foreground turn starts: assistant_start sets the turn marker.
+    push({
+      type: 'assistant',
+      message: { id: 'm1', role: 'assistant', content: [] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+    await tick();
+    assert.strictEqual(runtime.isProcessingTurn(), true, 'turn marker set');
+    const sp = () =>
+      events.filter(
+        (e): e is Extract<SseEvent, { type: 'session_processing' }> => e.type === 'session_processing',
+      );
+    assert.deepStrictEqual(sp(), [
+      { type: 'session_processing', processing: true, backgroundTaskCount: 0 },
+    ]);
+
+    // A background task is confirmed mid-turn.
+    (runtime as unknown as TrackerRuntime).handleTaskSignal({
+      kind: 'backgroundedPatch',
+      taskId: 'bg-1',
+    });
+    const midTurn = sp();
+    assert.strictEqual(midTurn.length, 2, 'a count-only edge fires for the mid-turn confirmation');
+    assert.deepStrictEqual(midTurn[1], {
+      type: 'session_processing',
+      processing: true,
+      backgroundTaskCount: 1,
+    });
+
+    // The turn's result arrives and clears the marker — the original bug
+    // would idle the session here.
+    push({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+    await tick();
+    assert.strictEqual(
+      runtime.isProcessingTurn(),
+      true,
+      'result must not idle the session while a background task runs',
+    );
+    assert.ok(
+      !sp().some((e) => e.processing === false),
+      'no {false} edge on the marker clear',
+    );
+
+    // When the task settles, the session idles.
+    (runtime as unknown as TrackerRuntime).handleTaskSignal({
+      kind: 'terminal',
+      taskId: 'bg-1',
+    });
+    assert.deepStrictEqual(sp()[sp().length - 1], {
+      type: 'session_processing',
+      processing: false,
+      backgroundTaskCount: 0,
+    });
+  });
+});
+
+describe('session-runtime tracker reconciliation on loop death and close', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  const tick = () => new Promise((r) => setTimeout(r, 30));
+
+  function createFailingSdkClient(): { client: SdkClient; fail: (err: unknown) => void } {
+    let fail!: (err: unknown) => void;
+    const loopGate = new Promise<never>((_resolve, reject) => {
+      fail = reject;
+    });
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+    return {
+      fail: (err) => fail(err),
+      client: {
+        createStreamingQuery: () => ({
+          query: mockQuery,
+          messages: (async function* () {
+            // Unreachable yield: satisfies require-yield; the gate rejects.
+            await loopGate;
+            yield undefined as unknown as SDKMessage;
+          })(),
+        }),
+      } as unknown as SdkClient,
+    };
+  }
+
+  function createLiveLoopSdkClient(): SdkClient {
+    let endLoop!: () => void;
+    const loopGate = new Promise<void>((resolve) => {
+      endLoop = resolve;
+    });
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => endLoop(),
+    } as unknown as Query;
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: (async function* () {
+          // The gate only resolves from query.close() during close(), when
+          // the loop is already breaking on this.closed — the yield below
+          // is never consumed by the emitter.
+          await loopGate;
+          yield undefined as unknown as SDKMessage;
+        })(),
+      }),
+    } as unknown as SdkClient;
+  }
+
+  it('reconciles the tracker when the message loop dies with a confirmed task', async () => {
+    const events: SseEvent[] = [];
+    const { client, fail } = createFailingSdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      client,
+      (_id, event) => events.push(event),
+    );
+
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 'bg-1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+
+    fail(new Error('stream died'));
+    await tick();
+
+    assert.strictEqual(
+      runtime.isProcessingTurn(),
+      false,
+      'a dead loop must not pin the session in the processing state',
+    );
+    assert.strictEqual(
+      (runtime as unknown as TrackerRuntime).confirmedBackgroundTasks.size,
+      0,
+      'the confirmed set is cleared on loop death',
+    );
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [
+        { type: 'session_processing', processing: true, backgroundTaskCount: 1 },
+        { type: 'session_processing', processing: false, backgroundTaskCount: 0 },
+      ],
+      'a final {false} edge ships on loop death',
+    );
+  });
+
+  it('close() ships a final {false} edge to attached subscribers when a task is tracked', async () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createLiveLoopSdkClient(),
+      (_id, event) => events.push(event),
+    );
+
+    signal(runtime, { kind: 'backgroundedPatch', taskId: 'bg-1' });
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+
+    await runtime.close();
+
+    assert.deepStrictEqual(
+      processingEvents(events),
+      [
+        { type: 'session_processing', processing: true, backgroundTaskCount: 1 },
+        { type: 'session_processing', processing: false, backgroundTaskCount: 0 },
+      ],
+      'subscribers receive a final idle verdict on close',
+    );
+  });
+});
+
+describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  type QueryCalls = { interrupt: number; stopTask: string[] };
+
+  function createMockSdkClient(
+    handlers: {
+      interrupt?: () => Promise<void>;
+      stopTask?: (taskId: string) => Promise<void>;
+    } = {},
+    options: { liveLoop?: boolean } = {},
+  ): { client: SdkClient; calls: QueryCalls } {
+    const calls: QueryCalls = { interrupt: 0, stopTask: [] };
+    // A "live" loop stays open until the query closes, so tests that assert
+    // tracker state after an await are not disturbed by the loop-death
+    // reconciliation that fires when an (empty) message stream ends.
+    let endLoop: (() => void) | undefined;
+    const loopGate = options.liveLoop
+      ? new Promise<void>((resolve) => {
+          endLoop = resolve;
+        })
+      : undefined;
+    const mockQuery = {
+      interrupt: () => {
+        calls.interrupt++;
+        return (handlers.interrupt ?? (() => Promise.resolve()))();
+      },
+      stopTask: (taskId: string) => {
+        calls.stopTask.push(taskId);
+        return (handlers.stopTask ?? (() => Promise.resolve()))(taskId);
+      },
+      close: () => {
+        endLoop?.();
+      },
+    } as unknown as Query;
+
+    return {
+      calls,
+      client: {
+        createStreamingQuery: () => ({
+          query: mockQuery,
+          messages: loopGate
+            ? (async function* () {
+                // The gate only resolves from query.close() during close(),
+                // when the loop is already breaking on this.closed.
+                await loopGate;
+                yield undefined as unknown as SDKMessage;
+              })()
+            : (async function* () {})(),
+        }),
+      } as unknown as SdkClient,
+    };
+  }
+
+  function openRuntime(events: SseEvent[], client: SdkClient): SessionRuntime {
+    return SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      client,
+      (_id, event) => events.push(event),
+    );
+  }
+
+  function confirmTask(rt: SessionRuntime, taskId: string, toolUseId: string): void {
+    signal(rt, { kind: 'started', taskId, toolUseId });
+    signal(rt, { kind: 'asyncLaunched', toolUseId });
+  }
+
+  it('interrupts the turn and stops every confirmed task in one call (F2)', async () => {
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient();
+    runtime = openRuntime(events, client);
+    const tracker = runtime as unknown as TrackerRuntime;
+
+    confirmTask(runtime, 't1', 'tu1');
+    confirmTask(runtime, 't2', 'tu2');
+    tracker.currentMessageStartId = 'msg-1';
+    tracker.evaluateProcessingEdge();
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+
+    await runtime.stopAll();
+
+    assert.strictEqual(calls.interrupt, 1, 'interrupt invoked exactly once');
+    assert.deepStrictEqual(calls.stopTask.sort(), ['t1', 't2'], 'stopTask per confirmed task');
+    assert.strictEqual(tracker.confirmedBackgroundTasks.size, 0, 'tasks untracked on resolve');
+
+    // The interrupted turn ends: the emitter clears the marker on the
+    // `interrupted` event. Simulate that and expect exactly one {false} edge.
+    tracker.currentMessageStartId = undefined;
+    tracker.evaluateProcessingEdge();
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    const falseEdges = processingEvents(events).filter((e) => e.processing === false);
+    assert.deepStrictEqual(
+      falseEdges,
+      [{ type: 'session_processing', processing: false, backgroundTaskCount: 0 }],
+      'exactly one final {false} edge',
+    );
+  });
+
+  it('stops confirmed tasks without interrupting when no turn is in flight', async () => {
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient();
+    runtime = openRuntime(events, client);
+
+    confirmTask(runtime, 't1', 'tu1');
+    confirmTask(runtime, 't2', 'tu2');
+    assert.strictEqual(runtime.isTurnActive(), false, 'background tasks alone are not a turn');
+
+    await runtime.stopAll();
+
+    assert.strictEqual(calls.interrupt, 0, 'no turn → no interrupt');
+    assert.deepStrictEqual(calls.stopTask.sort(), ['t1', 't2']);
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    const falseEdges = processingEvents(events).filter((e) => e.processing === false);
+    assert.deepStrictEqual(
+      falseEdges,
+      [{ type: 'session_processing', processing: false, backgroundTaskCount: 0 }],
+      '{false} fires once, after the last untrack',
+    );
+  });
+
+  it('is idempotent with the terminal stopped notification (R9 safety net)', async () => {
+    const events: SseEvent[] = [];
+    const { client } = createMockSdkClient();
+    runtime = openRuntime(events, client);
+
+    confirmTask(runtime, 't1', 'tu1');
+    await runtime.stopAll();
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    const edgesAfterStop = processingEvents(events).length;
+
+    // The SDK's terminal `stopped` notification arrives after the optimistic
+    // untrack: no resurrection, no extra edge.
+    signal(runtime, { kind: 'terminal', taskId: 't1' });
+    assert.strictEqual(runtime.isProcessingTurn(), false);
+    assert.strictEqual(processingEvents(events).length, edgesAfterStop, 'no extra edge');
+    assert.strictEqual(
+      (runtime as unknown as TrackerRuntime).confirmedBackgroundTasks.size,
+      0,
+    );
+  });
+
+  it('does not stop a task confirmed after the snapshot', async () => {
+    const events: SseEvent[] = [];
+    const holder: { rt?: SessionRuntime } = {};
+    const { client, calls } = createMockSdkClient(
+      {
+        stopTask: async () => {
+          // A new background task is confirmed while stopAll iterates.
+          if (holder.rt) confirmTask(holder.rt, 't3', 'tu3');
+        },
+      },
+      { liveLoop: true },
+    );
+    runtime = openRuntime(events, client);
+    holder.rt = runtime;
+
+    confirmTask(runtime, 't1', 'tu1');
+    await runtime.stopAll();
+
+    assert.deepStrictEqual(calls.stopTask, ['t1'], 'only the snapshot task is stopped');
+    assert.strictEqual(
+      (runtime as unknown as TrackerRuntime).confirmedBackgroundTasks.has('t3'),
+      true,
+      'the late task stays tracked',
+    );
+    assert.strictEqual(runtime.isProcessingTurn(), true);
+  });
+
+  it('still stops tasks when interrupt throws, logging the failure', async () => {
+    const { logs, restore } = collectDiagLogs();
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient({
+      interrupt: () => Promise.reject(new Error('boom')),
+    });
+    try {
+      runtime = openRuntime(events, client);
+      const tracker = runtime as unknown as TrackerRuntime;
+      confirmTask(runtime, 't1', 'tu1');
+      tracker.currentMessageStartId = 'msg-1';
+
+      await runtime.stopAll(); // must not throw
+
+      assert.strictEqual(calls.interrupt, 1);
+      assert.deepStrictEqual(calls.stopTask, ['t1'], 'the task loop still runs');
+      assert.ok(
+        logs.some((line) => line.includes('stopAll') && line.includes('boom')),
+        'interrupt failure is logged',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('keeps other stops and leaves the task tracked when one stopTask rejects', async () => {
+    const { logs, restore } = collectDiagLogs();
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient(
+      {
+        stopTask: (taskId) =>
+          taskId === 't2' ? Promise.reject(new Error('stop failed')) : Promise.resolve(),
+      },
+      { liveLoop: true },
+    );
+    try {
+      runtime = openRuntime(events, client);
+      const tracker = runtime as unknown as TrackerRuntime;
+      confirmTask(runtime, 't1', 'tu1');
+      confirmTask(runtime, 't2', 'tu2');
+
+      await runtime.stopAll(); // must not throw
+
+      assert.deepStrictEqual(calls.stopTask.sort(), ['t1', 't2'], 'both stops attempted');
+      assert.strictEqual(tracker.confirmedBackgroundTasks.has('t1'), false);
+      assert.strictEqual(
+        tracker.confirmedBackgroundTasks.has('t2'),
+        true,
+        'the rejected task stays tracked',
+      );
+      assert.strictEqual(runtime.isProcessingTurn(), true, 'predicate may stay true');
+      assert.ok(
+        logs.some((line) => line.includes('t2') && line.includes('stop failed')),
+        'stopTask failure is logged',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('is a no-op when nothing is running', async () => {
+    const events: SseEvent[] = [];
+    const { client, calls } = createMockSdkClient();
+    runtime = openRuntime(events, client);
+
+    await runtime.stopAll();
+
+    assert.strictEqual(calls.interrupt, 0);
+    assert.strictEqual(calls.stopTask.length, 0);
+    assert.strictEqual(processingEvents(events).length, 0, 'baseline idle emits nothing');
   });
 });

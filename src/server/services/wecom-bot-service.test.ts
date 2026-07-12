@@ -1531,10 +1531,11 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     });
   }
 
-  function setRuntime(processing: boolean, failInterrupt = false) {
+  function setRuntime(processing: boolean, failInterrupt = false, turnActive = processing) {
     chatService.getRuntimeIfExists = () =>
       ({
         isProcessingTurn: () => processing,
+        isTurnActive: () => turnActive,
         interrupt: async () => {
           interruptCalls.push('interrupt');
           if (failInterrupt) throw new Error('interrupt failed');
@@ -1665,6 +1666,29 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     await (service as any).handleTextMessage(ws.id, makeTextFrame('/stop'));
 
     assert.strictEqual(interruptCalls.length, 0);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.ok(sentMessages[0].body.markdown.content.includes('当前没有正在进行的对话'));
+  });
+
+  it('replies with nothing in flight on a background-only session and does not interrupt (KTD-6)', async () => {
+    const { ws, bot, channel } = await setupWorkspace();
+    const conn = createMockConnection(ws.id, bot.id);
+    injectConnection(conn);
+
+    const botUser = workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, 'enc-user-1')!;
+    const session = workspaceStore.createLocalSession(ws.id, 'stop-test', undefined, undefined, 'wecom', undefined, bot.id);
+    workspaceStore.clearDraftFlag(session.id);
+    workspaceStore.addUserSession(ws.id, session.id, botUser.id);
+    workspaceStore.setActiveUserSession(botUser.id, session.id);
+
+    // Background tasks only: the extended predicate is true but no turn is
+    // active. /stop must stay turn-scoped — no interrupt, truthful idle reply.
+    setRuntime(true, false, false);
+
+    await (service as any).handleTextMessage(ws.id, makeTextFrame('/stop'));
+
+    assert.strictEqual(interruptCalls.length, 0, 'background tasks must not be interrupted by /stop');
+    assert.strictEqual(cancelPendingApprovalsCalls.length, 0);
     assert.strictEqual(sentMessages.length, 1);
     assert.ok(sentMessages[0].body.markdown.content.includes('当前没有正在进行的对话'));
   });
@@ -1802,6 +1826,7 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
           processing = true;
         },
         isProcessingTurn: () => processing,
+        isTurnActive: () => processing,
         interrupt: async () => {},
         cancelPendingApprovals: () => {},
       } as any;
@@ -1809,6 +1834,7 @@ describe('WeComBotService /stop command', { concurrency: false }, () => {
     chatService.getRuntimeIfExists = () =>
       ({
         isProcessingTurn: () => processing,
+        isTurnActive: () => processing,
         interrupt: async () => {},
         cancelPendingApprovals: () => {},
       }) as any;

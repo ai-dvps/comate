@@ -9,7 +9,7 @@ import type {
   SDKRateLimitInfo,
   SDKControlGetContextUsageResponse,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { SseEvent, QuestionPayload } from '../types/message.js';
+import type { SseEvent, QuestionPayload, TaskSignal } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import { PushableIterator } from './pushable-iterator.js';
@@ -20,6 +20,12 @@ import { KimiLoopDetector, isKimiProvider } from './kimi-loop-detector.js';
 
 
 const RING_BUFFER_CAP = 500;
+// Bounded FIFO tombstones: terminated task ids are remembered so a late
+// confirmation cannot resurrect a finished task as a ghost (Critical-Gap-2).
+const TERMINATED_TASK_IDS_CAP = 256;
+// Bounded FIFO record of ambient (skip_transcript) task ids so a later
+// backgrounded signal cannot confirm a task that must never be tracked (R3).
+const SKIPPED_TASK_IDS_CAP = 256;
 diagLog('[SessionRuntime] module loaded');
 
 const READONLY_TOOLS: readonly string[] = [
@@ -60,6 +66,21 @@ export class SessionRuntime {
   private closed = false;
   private messageLoopPromise: Promise<void> = Promise.resolve();
   private currentMessageStartId?: string;
+  // Background-task tracker (R1-R4). A bare task_started creates only a
+  // candidate; membership in confirmedBackgroundTasks requires a
+  // confirmed-background signal (asyncLaunched / bashBackgrounded /
+  // backgroundedPatch) or the single-candidate fallback.
+  private taskCandidates = new Map<string, { toolUseId?: string }>();
+  private confirmedBackgroundTasks = new Set<string>();
+  // tool_use_ids of asyncLaunched results that arrived before their task_started.
+  private pendingConfirmations = new Set<string>();
+  private terminatedTaskIds = new Set<string>();
+  private skippedTaskIds = new Set<string>();
+  // Baseline is idle: a fresh runtime never announces {processing: false}.
+  private lastEmittedProcessing = false;
+  // Count companion to lastEmittedProcessing: count-only changes (e.g. a
+  // second task confirmed while already processing) also ship an edge.
+  private lastEmittedBackgroundTaskCount = 0;
   private activeRes: Response | null = null;
   private heartbeatTimer?: NodeJS.Timeout;
   private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
@@ -188,7 +209,7 @@ export class SessionRuntime {
       ) {
         this.emitContextUsage();
       }
-    });
+    }, (signal) => this.handleTaskSignal(signal));
   }
 
   private start(): void {
@@ -219,6 +240,7 @@ export class SessionRuntime {
         if (this.closed) break;
         this.onActivity?.();
         this.emitter.handle(msg);
+        this.evaluateProcessingEdge();
       }
     } catch (err) {
       const errDetail = err instanceof Error
@@ -254,6 +276,15 @@ export class SessionRuntime {
       this.emitter.emitErrorNote(
         `Stream error: ${message}`,
       );
+    } finally {
+      // The loop is permanently dead (error or stream end) — no further
+      // task signals can arrive, so tracked background tasks can never
+      // settle. Reconcile the tracker so the session can idle instead of
+      // pinning in the processing state forever. The edge guard suppresses
+      // the emission when nothing actually changed.
+      this.taskCandidates.clear();
+      this.confirmedBackgroundTasks.clear();
+      this.evaluateProcessingEdge();
     }
   }
 
@@ -398,6 +429,7 @@ export class SessionRuntime {
     this.emitter.emitApprovalTimeout(requestId);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
+    this.evaluateProcessingEdge();
     pending.resolve({
       behavior: 'deny',
       message: 'Request timed out waiting for user response.',
@@ -442,6 +474,10 @@ export class SessionRuntime {
         );
       }
     }
+    // Force-emit the current processing verdict after replay and the
+    // approval re-emit: a fresh subscriber mid background-only task has no
+    // currentMessageStartId-anchored replay to restore the spinner from.
+    this.forceEmitSessionProcessing();
     this.onSubscribed?.();
     this.onActivity?.();
   }
@@ -473,6 +509,9 @@ export class SessionRuntime {
         );
       }
     }
+    // Force-emit after replay so the current verdict wins over any stale
+    // session_processing event in the ring buffer.
+    this.forceEmitSessionProcessing();
     this.onSubscribed?.();
     this.onActivity?.();
   }
@@ -531,8 +570,166 @@ export class SessionRuntime {
     return this.closed;
   }
 
+  /**
+   * Session-wide processing predicate: a foreground turn is streaming, a
+   * tool approval is pending, OR confirmed background tasks are still
+   * running (R1). Despite the historical name this is broader than a turn —
+   * use `isTurnActive()` for turn-only semantics (bot /stop gates).
+   */
   isProcessingTurn(): boolean {
+    return (
+      this.currentMessageStartId !== undefined ||
+      this.pendingApprovals.size > 0 ||
+      this.confirmedBackgroundTasks.size > 0
+    );
+  }
+
+  /**
+   * Turn-only predicate: a foreground turn is streaming or blocked on a
+   * pending approval. Background tasks do not count — bots use this for
+   * their turn-scoped /stop semantics.
+   */
+  isTurnActive(): boolean {
     return this.currentMessageStartId !== undefined || this.pendingApprovals.size > 0;
+  }
+
+  /**
+   * Fold a directional task signal from the emitter into the background-task
+   * tracker. Only confirmed-background signals (asyncLaunched /
+   * bashBackgrounded / backgroundedPatch) grant membership; a bare
+   * task_started creates an unconfirmed candidate (R2), and skip_transcript
+   * tasks never enter the tracker at all (R3).
+   */
+  private handleTaskSignal(signal: TaskSignal): void {
+    switch (signal.kind) {
+      case 'started': {
+        diagLog(
+          `[Runtime ${this.sessionId}] task_started taskId=${signal.taskId} toolUseId=${signal.toolUseId ?? 'none'} subagentType=${signal.subagentType ?? 'none'} skipTranscript=${signal.skipTranscript === true}`,
+        );
+        if (signal.skipTranscript) {
+          this.rememberSkippedTask(signal.taskId);
+          return;
+        }
+        if (this.terminatedTaskIds.has(signal.taskId)) return;
+        this.taskCandidates.set(signal.taskId, {
+          ...(signal.toolUseId !== undefined && { toolUseId: signal.toolUseId }),
+        });
+        if (signal.toolUseId && this.pendingConfirmations.has(signal.toolUseId)) {
+          this.pendingConfirmations.delete(signal.toolUseId);
+          this.confirmBackgroundTask(signal.taskId);
+          return;
+        }
+        // Reverse of the asyncLaunched single-candidate fallback: an unkeyed
+        // task_started can consume a parked confirmation only when the match
+        // is unambiguous — exactly one pending confirmation and this task is
+        // the sole candidate lacking a toolUseId.
+        if (signal.toolUseId === undefined && this.pendingConfirmations.size === 1) {
+          let unkeyedCandidates = 0;
+          for (const candidate of this.taskCandidates.values()) {
+            if (candidate.toolUseId === undefined) unkeyedCandidates++;
+          }
+          if (unkeyedCandidates === 1) {
+            const [toolUseId] = this.pendingConfirmations;
+            this.pendingConfirmations.delete(toolUseId);
+            this.confirmBackgroundTask(signal.taskId);
+          }
+        }
+        return;
+      }
+      case 'asyncLaunched': {
+        for (const [taskId, candidate] of this.taskCandidates) {
+          if (candidate.toolUseId === signal.toolUseId) {
+            this.confirmBackgroundTask(taskId);
+            return;
+          }
+        }
+        // Single-candidate fallback: an uncorrelated asyncLaunched confirms
+        // the sole candidate when it carries no toolUseId of its own. With
+        // two or more candidates there is no safe guess.
+        if (this.taskCandidates.size === 1) {
+          const [[taskId, candidate]] = this.taskCandidates;
+          if (candidate.toolUseId === undefined) {
+            this.confirmBackgroundTask(taskId);
+            return;
+          }
+        }
+        this.pendingConfirmations.add(signal.toolUseId);
+        return;
+      }
+      case 'bashBackgrounded':
+      case 'backgroundedPatch': {
+        this.confirmBackgroundTask(signal.taskId);
+        return;
+      }
+      case 'terminal': {
+        this.taskCandidates.delete(signal.taskId);
+        this.confirmedBackgroundTasks.delete(signal.taskId);
+        this.rememberTerminatedTask(signal.taskId);
+        this.evaluateProcessingEdge();
+        return;
+      }
+    }
+  }
+
+  private confirmBackgroundTask(taskId: string): void {
+    if (this.skippedTaskIds.has(taskId)) {
+      // R3: ambient (skip_transcript) tasks never enter the tracked set,
+      // even when a later backgrounded signal names them.
+      return;
+    }
+    if (this.terminatedTaskIds.has(taskId)) {
+      // Ghost guard: a confirmation arriving after the terminal signal must
+      // not resurrect a finished task and pin the session forever.
+      return;
+    }
+    this.taskCandidates.delete(taskId);
+    this.confirmedBackgroundTasks.add(taskId);
+    this.evaluateProcessingEdge();
+  }
+
+  private rememberTerminatedTask(taskId: string): void {
+    this.terminatedTaskIds.add(taskId);
+    while (this.terminatedTaskIds.size > TERMINATED_TASK_IDS_CAP) {
+      const oldest = this.terminatedTaskIds.values().next().value;
+      if (oldest === undefined) break;
+      this.terminatedTaskIds.delete(oldest);
+    }
+  }
+
+  private rememberSkippedTask(taskId: string): void {
+    this.skippedTaskIds.add(taskId);
+    while (this.skippedTaskIds.size > SKIPPED_TASK_IDS_CAP) {
+      const oldest = this.skippedTaskIds.values().next().value;
+      if (oldest === undefined) break;
+      this.skippedTaskIds.delete(oldest);
+    }
+  }
+
+  /**
+   * Single emission path for the processing verdict: emit only on a flip.
+   * Every mutation site (message loop, approvals, interrupt, tracker) calls
+   * this after mutating so all edges share one code path.
+   */
+  private evaluateProcessingEdge(): void {
+    const next = this.isProcessingTurn();
+    const count = this.confirmedBackgroundTasks.size;
+    if (next !== this.lastEmittedProcessing || count !== this.lastEmittedBackgroundTaskCount) {
+      this.lastEmittedProcessing = next;
+      this.lastEmittedBackgroundTaskCount = count;
+      this.emitter.emitSessionProcessing(next, count);
+    }
+  }
+
+  /**
+   * Hydration path for fresh subscribers: emit the current verdict even when
+   * it has not flipped, and record it so future edges still fire on change.
+   */
+  private forceEmitSessionProcessing(): void {
+    const processing = this.isProcessingTurn();
+    const count = this.confirmedBackgroundTasks.size;
+    this.lastEmittedProcessing = processing;
+    this.lastEmittedBackgroundTaskCount = count;
+    this.emitter.emitSessionProcessing(processing, count);
   }
 
   cancelIdleClose(): void {
@@ -558,6 +755,7 @@ export class SessionRuntime {
     this.clearPendingTimer(pending);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
+    this.evaluateProcessingEdge();
 
     // The SDK's Zod schema requires `updatedInput: Record<string, unknown>` on
     // every allow result, even though the TS type marks it optional. Callers
@@ -692,6 +890,7 @@ export class SessionRuntime {
         ...(data.expiresAt !== undefined && { expiresAt: data.expiresAt }),
         ...(data.timer !== undefined && { timer: data.timer }),
       });
+      this.evaluateProcessingEdge();
 
       if (data.signal) {
         const onAbort = () => {
@@ -703,6 +902,7 @@ export class SessionRuntime {
             this.clearPendingTimer(pending);
             this.pendingApprovals.delete(requestId);
             this.emitter.emitApprovalResolved(requestId);
+            this.evaluateProcessingEdge();
             resolve({
               behavior: 'deny',
               message: `Tool approval aborted by SDK: ${requestId}`,
@@ -718,6 +918,7 @@ export class SessionRuntime {
     try {
       await this.query.interrupt();
       this.emitter.emitInterrupted(null);
+      this.evaluateProcessingEdge();
     } catch (err) {
       console.error('Interrupt failed:', err);
       this.emitter.emitErrorNote(
@@ -725,6 +926,49 @@ export class SessionRuntime {
       );
       throw err;
     }
+  }
+
+  /**
+   * One-click clear-all (R8, KTD-5): interrupt the in-flight turn if any,
+   * then stop every tracked background task. Failure-isolated and never
+   * throws: a throwing interrupt must not skip the task loop, and a rejected
+   * stopTask only logs and leaves its task tracked until its own terminal
+   * signal (or runtime close) arrives.
+   */
+  async stopAll(): Promise<void> {
+    // Snapshot: a task confirmed after this point is not stopped (accepted
+    // documented semantics).
+    const taskIds = [...this.confirmedBackgroundTasks];
+
+    if (this.isTurnActive()) {
+      try {
+        await this.interrupt();
+      } catch (err) {
+        // interrupt() has already emitted its error note; swallow the rethrow
+        // so the task loop still runs.
+        diagLog(
+          `[Runtime ${this.sessionId}] stopAll: interrupt failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    const results = await Promise.allSettled(
+      taskIds.map((taskId) => this.query.stopTask(taskId)),
+    );
+    results.forEach((result, index) => {
+      const taskId = taskIds[index];
+      if (result.status === 'fulfilled') {
+        // The SDK documents a terminal `stopped` notification (the R9 path);
+        // untracking here through the same terminal path is an idempotent
+        // safety net in case that notification is ever dropped, and emits
+        // edges exactly the way the notification would.
+        this.handleTaskSignal({ kind: 'terminal', taskId });
+      } else {
+        const reason =
+          result.reason instanceof Error ? result.reason.message : String(result.reason);
+        diagLog(`[Runtime ${this.sessionId}] stopAll: stopTask(${taskId}) failed: ${reason}`);
+      }
+    });
   }
 
   /**
@@ -739,6 +983,7 @@ export class SessionRuntime {
       this.emitter.emitApprovalResolved(requestId);
       pending.resolve({ behavior: 'deny', message });
     }
+    this.evaluateProcessingEdge();
   }
 
   private replayFrom(lastEventId: string, res: Response): void {
@@ -804,8 +1049,8 @@ export class SessionRuntime {
       // Ignore close errors during cleanup
     }
     await this.messageLoopPromise.catch(() => {});
-    this.unsubscribe();
     // Resolve any dangling pending approvals so their Promises don't leak
+    // (ahead of the final verdict so it reflects a fully idle session).
     for (const [requestId, pending] of this.pendingApprovals) {
       this.clearPendingTimer(pending);
       pending.resolve({
@@ -814,6 +1059,14 @@ export class SessionRuntime {
       });
     }
     this.pendingApprovals.clear();
+    // The runtime is dead: reconcile the tracker one last time so attached
+    // subscribers receive a final {processing:false, backgroundTaskCount:0}
+    // verdict before they are detached. The edge guard suppresses the
+    // emission when the loop-death reconciliation already shipped it.
+    this.taskCandidates.clear();
+    this.confirmedBackgroundTasks.clear();
+    this.evaluateProcessingEdge();
+    this.unsubscribe();
   }
 }
 

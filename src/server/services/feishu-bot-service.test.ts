@@ -78,11 +78,15 @@ describe('FeishuBotService', () => {
 
   function makeMockRuntime(overrides?: {
     isProcessingTurn?: boolean;
+    isTurnActive?: boolean;
     interrupt?: () => Promise<void>;
     cancelPendingApprovals?: (message?: string) => void;
   }) {
     return {
       isProcessingTurn: () => overrides?.isProcessingTurn ?? true,
+      // Turn-only gate default mirrors isProcessingTurn so pre-U4 tests keep
+      // their meaning; background-only scenarios pass isTurnActive: false.
+      isTurnActive: () => overrides?.isTurnActive ?? overrides?.isProcessingTurn ?? true,
       interrupt: overrides?.interrupt ?? (async () => {}),
       cancelPendingApprovals: overrides?.cancelPendingApprovals ?? (() => {}),
     };
@@ -1264,6 +1268,33 @@ describe('FeishuBotService', () => {
 
       await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'stop');
 
+      const text = textCalls();
+      assert.strictEqual(text.length, 1);
+      assert.ok((text[0].args as { data: { content: string } }).data.content.includes('当前没有正在进行的对话'));
+    });
+
+    it('"stop" on a background-only session replies idle and does not interrupt (KTD-6)', async () => {
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-1');
+      let interruptCalled = false;
+      let cancelCalled = false;
+      // Background tasks only: the extended predicate is true but no turn is
+      // active. stopTurn must stay turn-scoped — no interrupt, idle reply.
+      chatService.getRuntimeIfExists = () =>
+        makeMockRuntime({
+          isProcessingTurn: true,
+          isTurnActive: false,
+          interrupt: async () => {
+            interruptCalled = true;
+          },
+          cancelPendingApprovals: () => {
+            cancelCalled = true;
+          },
+        });
+
+      await service.handleMenuEvent(makeMenuLarkClient(), workspace, feishuUserId, 'stop');
+
+      assert.strictEqual(interruptCalled, false, 'background tasks must not be interrupted by stop');
+      assert.strictEqual(cancelCalled, false);
       const text = textCalls();
       assert.strictEqual(text.length, 1);
       assert.ok((text[0].args as { data: { content: string } }).data.content.includes('当前没有正在进行的对话'));

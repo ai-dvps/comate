@@ -252,14 +252,20 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
 });
 
 // POST /api/workspaces/:id/sessions/:sessionId/interrupt
-// Interrupt the current turn
+// One-click clear-all: interrupt the in-flight turn (if any) and stop every
+// tracked background task. A missing runtime means nothing is running —
+// stopping nothing is success, and a stale stop must never spawn a fresh
+// Claude process (hence getRuntimeIfExists, not getOrCreateRuntime).
 router.post('/sessions/:sessionId/interrupt', async (req, res) => {
   const sessionId = req.params.sessionId;
-  const workspaceId = (req.params as unknown as { id: string }).id;
 
   try {
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
-    await runtime.interrupt();
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    if (!runtime) {
+      res.json({ ok: true });
+      return;
+    }
+    await runtime.stopAll();
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to interrupt:', error);

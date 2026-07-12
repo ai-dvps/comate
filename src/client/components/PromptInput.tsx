@@ -96,6 +96,9 @@ export default function PromptInput({
   )
   const setDraft = useChatStore((s) => s.setDraft)
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
+  const backgroundTaskCount = useChatStore(
+    (s) => s.sessionBackgroundTaskCount[sessionId] ?? 0,
+  )
   const { suggest, train } = useNgramCompletion(workspaceId)
 
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
@@ -1028,7 +1031,9 @@ export default function PromptInput({
                     className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
                   >
                     <p className="text-text-primary mb-3">
-                      {t('stopPopover.title')}
+                      {backgroundTaskCount > 0
+                        ? t('stopPopover.titleWithTasks', { count: backgroundTaskCount })
+                        : t('stopPopover.title')}
                     </p>
                     <div className="flex items-center justify-end gap-2">
                       <button
