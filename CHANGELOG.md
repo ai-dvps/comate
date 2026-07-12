@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Session stays active while background tasks run** — a session no longer drops its active state the moment the foreground turn's `result` arrives while an async sub-agent or background Bash command it launched is still running. The server now tracks confirmed background tasks (confirmed via `async_launched` tool results, Bash `backgroundTaskId`, or `is_backgrounded` patches — never a bare `task_started`, and never `skip_transcript` housekeeping tasks) and folds them into the processing state that drives the session-list spinner, the open chat's generating state, the status poll, and the idle reaper, so a runtime is no longer reclaimed — killing its still-running tasks — while background work continues. A new `session_processing` event carries the server's verdict to the client, which keeps the generating state until the last task settles; visuals are unchanged.
+
+- **Stop button is a one-click clear-all** — clicking stop now interrupts the in-flight turn and stops every running background task via the SDK stop API in one action; stopped tasks clear the active state through the normal terminal path. The confirmation popover names the background tasks it will stop ("Stop generating and N background tasks?"), and clicking a stale stop no longer spawns a fresh Claude process. WeCom/Feishu bot `/stop` stays turn-scoped and now truthfully replies 当前没有正在进行的对话。 on background-only sessions instead of reporting a turn interrupted while tasks keep running.
+
 ### Added
 
 - **Marketing website** — added a bilingual (Chinese/English) static marketing site under `website/` built with Astro 7 and Tailwind CSS 4. It includes Home, Features, Usage, Download, About, and FAQ pages, light/dark theme support, and a GitHub Pages deployment workflow at `.github/workflows/deploy-website.yml`.
