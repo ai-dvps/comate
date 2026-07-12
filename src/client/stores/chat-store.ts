@@ -1868,11 +1868,16 @@ export function handleSseEvent(
         // { processing: false } edge clears it.
         if (!state.sessionProcessing[sessionId]) {
           next.isStreaming = { ...state.isStreaming, [sessionId]: false }
-        }
-        if (!isSessionActive(state, sessionId)) {
-          next.unreadCompletions = {
-            ...state.unreadCompletions,
-            [sessionId]: true,
+          // The unread completion marker must land together with the
+          // streaming clear: while background tasks still run, the session
+          // is not done, and deriveSessionState would otherwise prioritize
+          // 'finished-unread' over 'streaming' and hide the spinner. The
+          // final session_processing { processing: false } edge sets it.
+          if (!isSessionActive(state, sessionId)) {
+            next.unreadCompletions = {
+              ...state.unreadCompletions,
+              [sessionId]: true,
+            }
           }
         }
 
@@ -2106,17 +2111,29 @@ export function handleSseEvent(
         typeof data.backgroundTaskCount === 'number' ? data.backgroundTaskCount : 0
       if (!sessionId) return
       set((state) => {
+        // A { processing: false } edge after the session was processing is
+        // the final settle: streaming clears here (the foreground `result`
+        // left it set), so the unread completion marker for an inactive
+        // session lands here too, mirroring the pre-change foreground
+        // behavior. Requiring the prior verdict to be true keeps an idle
+        // (re)subscribe verdict from spuriously marking the session unread.
+        const completionPending =
+          !processing &&
+          state.sessionProcessing[sessionId] === true &&
+          !isSessionActive(state, sessionId) &&
+          !state.unreadCompletions[sessionId]
         // The server force-emits this verdict on every (re)subscribe, so
         // identical verdicts are common — skip the writes when nothing
         // changed to avoid notifying the three slices' subscribers.
         if (
           state.sessionProcessing[sessionId] === processing &&
           (state.sessionBackgroundTaskCount[sessionId] ?? 0) === backgroundTaskCount &&
-          state.isStreaming[sessionId] === processing
+          state.isStreaming[sessionId] === processing &&
+          !completionPending
         ) {
           return {}
         }
-        return {
+        const next: Partial<ChatState> = {
           sessionProcessing: { ...state.sessionProcessing, [sessionId]: processing },
           sessionBackgroundTaskCount: {
             ...state.sessionBackgroundTaskCount,
@@ -2124,6 +2141,13 @@ export function handleSseEvent(
           },
           isStreaming: { ...state.isStreaming, [sessionId]: processing },
         }
+        if (completionPending) {
+          next.unreadCompletions = {
+            ...state.unreadCompletions,
+            [sessionId]: true,
+          }
+        }
+        return next
       })
       return
     }
