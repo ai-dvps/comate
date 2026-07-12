@@ -977,7 +977,9 @@ export class FeishuBotService {
     sendText: (text: string) => Promise<void>,
   ): Promise<void> {
     const runtime = chatService.getRuntimeIfExists(sessionId);
-    if (!runtime || !runtime.isProcessingTurn()) {
+    // Turn-only gate (KTD-6): background tasks alone do not count, so /stop
+    // never interrupts an idle query while a task keeps running.
+    if (!runtime || !runtime.isTurnActive()) {
       await sendText('当前没有正在进行的对话。');
       return;
     }

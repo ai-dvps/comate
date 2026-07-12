@@ -782,7 +782,9 @@ export class WeComBotService {
       }
 
       const runtime = chatService.getRuntimeIfExists(sessionId);
-      if (!runtime || !runtime.isProcessingTurn()) {
+      // Turn-only gate (KTD-6): background tasks alone do not count, so /stop
+      // never interrupts an idle query while a task keeps running.
+      if (!runtime || !runtime.isTurnActive()) {
         diagLog(`[WeComBotService] /stop for ${sessionId}: no runtime or not processing`);
         await conn.client.sendMessage(wecomUserId, {
           msgtype: 'markdown',

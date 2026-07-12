@@ -303,6 +303,7 @@ export type SseEvent =
       state: 'completed' | 'error'
     }
   | { type: 'task_started'; taskId: string; description: string }
+  | { type: 'session_processing'; processing: boolean; backgroundTaskCount: number }
   | {
       type: 'task_updated'
       taskId: string
@@ -325,3 +326,16 @@ export type SseEvent =
   | { type: 'compact_boundary' }
   | { type: 'compact_status'; active: boolean }
   | { type: 'heartbeat' }
+
+/**
+ * Directional signals from the SSE emitter to the SessionRuntime
+ * background-task tracker. A task enters the confirmed set only through a
+ * confirmed-background signal (asyncLaunched / bashBackgrounded /
+ * backgroundedPatch); a bare `started` creates an unconfirmed candidate.
+ */
+export type TaskSignal =
+  | { kind: 'started'; taskId: string; toolUseId?: string; skipTranscript?: boolean; subagentType?: string }
+  | { kind: 'asyncLaunched'; toolUseId: string; agentId?: string }
+  | { kind: 'bashBackgrounded'; toolUseId: string; taskId: string }
+  | { kind: 'backgroundedPatch'; taskId: string }
+  | { kind: 'terminal'; taskId: string }
