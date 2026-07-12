@@ -23,6 +23,9 @@ const RING_BUFFER_CAP = 500;
 // Bounded FIFO tombstones: terminated task ids are remembered so a late
 // confirmation cannot resurrect a finished task as a ghost (Critical-Gap-2).
 const TERMINATED_TASK_IDS_CAP = 256;
+// Bounded FIFO record of ambient (skip_transcript) task ids so a later
+// backgrounded signal cannot confirm a task that must never be tracked (R3).
+const SKIPPED_TASK_IDS_CAP = 256;
 diagLog('[SessionRuntime] module loaded');
 
 const READONLY_TOOLS: readonly string[] = [
@@ -72,8 +75,12 @@ export class SessionRuntime {
   // tool_use_ids of asyncLaunched results that arrived before their task_started.
   private pendingConfirmations = new Set<string>();
   private terminatedTaskIds = new Set<string>();
+  private skippedTaskIds = new Set<string>();
   // Baseline is idle: a fresh runtime never announces {processing: false}.
   private lastEmittedProcessing = false;
+  // Count companion to lastEmittedProcessing: count-only changes (e.g. a
+  // second task confirmed while already processing) also ship an edge.
+  private lastEmittedBackgroundTaskCount = 0;
   private activeRes: Response | null = null;
   private heartbeatTimer?: NodeJS.Timeout;
   private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
@@ -269,6 +276,15 @@ export class SessionRuntime {
       this.emitter.emitErrorNote(
         `Stream error: ${message}`,
       );
+    } finally {
+      // The loop is permanently dead (error or stream end) — no further
+      // task signals can arrive, so tracked background tasks can never
+      // settle. Reconcile the tracker so the session can idle instead of
+      // pinning in the processing state forever. The edge guard suppresses
+      // the emission when nothing actually changed.
+      this.taskCandidates.clear();
+      this.confirmedBackgroundTasks.clear();
+      this.evaluateProcessingEdge();
     }
   }
 
@@ -590,7 +606,10 @@ export class SessionRuntime {
         diagLog(
           `[Runtime ${this.sessionId}] task_started taskId=${signal.taskId} toolUseId=${signal.toolUseId ?? 'none'} subagentType=${signal.subagentType ?? 'none'} skipTranscript=${signal.skipTranscript === true}`,
         );
-        if (signal.skipTranscript) return;
+        if (signal.skipTranscript) {
+          this.rememberSkippedTask(signal.taskId);
+          return;
+        }
         if (this.terminatedTaskIds.has(signal.taskId)) return;
         this.taskCandidates.set(signal.taskId, {
           ...(signal.toolUseId !== undefined && { toolUseId: signal.toolUseId }),
@@ -598,6 +617,22 @@ export class SessionRuntime {
         if (signal.toolUseId && this.pendingConfirmations.has(signal.toolUseId)) {
           this.pendingConfirmations.delete(signal.toolUseId);
           this.confirmBackgroundTask(signal.taskId);
+          return;
+        }
+        // Reverse of the asyncLaunched single-candidate fallback: an unkeyed
+        // task_started can consume a parked confirmation only when the match
+        // is unambiguous — exactly one pending confirmation and this task is
+        // the sole candidate lacking a toolUseId.
+        if (signal.toolUseId === undefined && this.pendingConfirmations.size === 1) {
+          let unkeyedCandidates = 0;
+          for (const candidate of this.taskCandidates.values()) {
+            if (candidate.toolUseId === undefined) unkeyedCandidates++;
+          }
+          if (unkeyedCandidates === 1) {
+            const [toolUseId] = this.pendingConfirmations;
+            this.pendingConfirmations.delete(toolUseId);
+            this.confirmBackgroundTask(signal.taskId);
+          }
         }
         return;
       }
@@ -637,6 +672,11 @@ export class SessionRuntime {
   }
 
   private confirmBackgroundTask(taskId: string): void {
+    if (this.skippedTaskIds.has(taskId)) {
+      // R3: ambient (skip_transcript) tasks never enter the tracked set,
+      // even when a later backgrounded signal names them.
+      return;
+    }
     if (this.terminatedTaskIds.has(taskId)) {
       // Ghost guard: a confirmation arriving after the terminal signal must
       // not resurrect a finished task and pin the session forever.
@@ -656,6 +696,15 @@ export class SessionRuntime {
     }
   }
 
+  private rememberSkippedTask(taskId: string): void {
+    this.skippedTaskIds.add(taskId);
+    while (this.skippedTaskIds.size > SKIPPED_TASK_IDS_CAP) {
+      const oldest = this.skippedTaskIds.values().next().value;
+      if (oldest === undefined) break;
+      this.skippedTaskIds.delete(oldest);
+    }
+  }
+
   /**
    * Single emission path for the processing verdict: emit only on a flip.
    * Every mutation site (message loop, approvals, interrupt, tracker) calls
@@ -663,9 +712,11 @@ export class SessionRuntime {
    */
   private evaluateProcessingEdge(): void {
     const next = this.isProcessingTurn();
-    if (next !== this.lastEmittedProcessing) {
+    const count = this.confirmedBackgroundTasks.size;
+    if (next !== this.lastEmittedProcessing || count !== this.lastEmittedBackgroundTaskCount) {
       this.lastEmittedProcessing = next;
-      this.emitter.emitSessionProcessing(next, this.confirmedBackgroundTasks.size);
+      this.lastEmittedBackgroundTaskCount = count;
+      this.emitter.emitSessionProcessing(next, count);
     }
   }
 
@@ -675,8 +726,10 @@ export class SessionRuntime {
    */
   private forceEmitSessionProcessing(): void {
     const processing = this.isProcessingTurn();
+    const count = this.confirmedBackgroundTasks.size;
     this.lastEmittedProcessing = processing;
-    this.emitter.emitSessionProcessing(processing, this.confirmedBackgroundTasks.size);
+    this.lastEmittedBackgroundTaskCount = count;
+    this.emitter.emitSessionProcessing(processing, count);
   }
 
   cancelIdleClose(): void {
@@ -996,8 +1049,8 @@ export class SessionRuntime {
       // Ignore close errors during cleanup
     }
     await this.messageLoopPromise.catch(() => {});
-    this.unsubscribe();
     // Resolve any dangling pending approvals so their Promises don't leak
+    // (ahead of the final verdict so it reflects a fully idle session).
     for (const [requestId, pending] of this.pendingApprovals) {
       this.clearPendingTimer(pending);
       pending.resolve({
@@ -1006,6 +1059,14 @@ export class SessionRuntime {
       });
     }
     this.pendingApprovals.clear();
+    // The runtime is dead: reconcile the tracker one last time so attached
+    // subscribers receive a final {processing:false, backgroundTaskCount:0}
+    // verdict before they are detached. The edge guard suppresses the
+    // emission when the loop-death reconciliation already shipped it.
+    this.taskCandidates.clear();
+    this.confirmedBackgroundTasks.clear();
+    this.evaluateProcessingEdge();
+    this.unsubscribe();
   }
 }
 
