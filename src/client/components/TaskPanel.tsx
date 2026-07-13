@@ -97,7 +97,10 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
   const { chatFontSize } = useAppSettings()
   const [expanded, setExpanded] = useState(false)
 
-  const completedCount = tasks.filter((t) => t.status === 'completed').length
+  const finishedCount = tasks.filter(
+    (t) => t.status === 'completed' || t.status === 'failed' || t.status === 'killed',
+  ).length
+  const failedCount = tasks.filter((t) => t.status === 'failed').length
   const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length
   const total = tasks.length
 
@@ -120,7 +123,7 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
 
   if (total === 0) return null
 
-  const progressPercent = total > 0 ? (completedCount / total) * 100 : 0
+  const progressPercent = total > 0 ? (finishedCount / total) * 100 : 0
 
   return (
     <div className="pointer-events-auto rounded-lg border border-border bg-surface p-3 shadow-lg max-w-xs">
@@ -142,7 +145,7 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
               />
             </div>
             <span className="text-xs text-text-secondary shrink-0">
-              {completedCount}/{total}
+              {finishedCount}/{total}
             </span>
           </div>
         </div>
@@ -150,6 +153,12 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
           <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning shrink-0">
             <Loader2 className="size-3 animate-spin" />
             {inProgressCount}
+          </span>
+        )}
+        {failedCount > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive shrink-0">
+            <XCircle className="size-3" />
+            {failedCount}
           </span>
         )}
         {expanded ? (
