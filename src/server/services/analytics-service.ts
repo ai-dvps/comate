@@ -21,12 +21,14 @@
  * coverage on a heavily-compacted session).
  */
 
+import { join } from 'path';
+
 import type { SDKSessionInfo, ListSessionsOptions } from '@anthropic-ai/claude-agent-sdk';
 
 import { store } from '../storage/sqlite-store.js';
 import type { Workspace } from '../models/workspace.js';
 import {
-  resolveTranscriptFile,
+  resolveTranscriptDir,
   statTranscript,
 } from './analytics-transcript-path.js';
 import { extractSessionAnalytics } from './analytics-transcript-reader.js';
@@ -122,11 +124,15 @@ export class AnalyticsService {
     );
     if (staleIds.size === 0) return;
 
+    // The transcript directory is invariant for the whole workspace — resolve
+    // it once (it canonicalizes via realpath) instead of per session.
+    const transcriptDir = resolveTranscriptDir(ws.folderPath);
+    if (!transcriptDir) return;
+
     const extractedAt = Date.now();
     for (const session of sessions) {
       if (!staleIds.has(session.sessionId)) continue;
-      const transcriptPath = resolveTranscriptFile(ws.folderPath, session.sessionId);
-      if (!transcriptPath) continue;
+      const transcriptPath = join(transcriptDir, `${session.sessionId}.jsonl`);
 
       // The SDK may report a session whose JSONL is unreadable right now
       // (concurrent write, partial flush). Skip those without clobbering the
