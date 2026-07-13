@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.23] - 2026-07-13
+
 ### Fixed
 
 - **Windows: analytics/statistics always empty** — the project-directory encoding used to locate Claude Code transcripts only replaced path separators and the drive-letter colon, while Claude Code replaces EVERY non-alphanumeric character with `-` and encodes the realpath-resolved path. On Windows, where user profiles and repo paths routinely contain dots, spaces, underscores, or CJK characters, the resolved transcript directory never existed, so every session was silently skipped and the global/workspace summaries returned all zeros. The encoding now mirrors the SDK exactly (all non-alphanumerics → `-`, realpath canonicalization, 200-char truncation with a base36 hash suffix), and the projects root honors `CLAUDE_CONFIG_DIR` with the SDK's NFC normalization (an empty value is treated as unset). This completes an earlier fix that added only the drive-letter colon to the encoding.
