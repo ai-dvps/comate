@@ -131,6 +131,28 @@ describe('useBotStore channel status', () => {
     assert.strictEqual(status.errors?.feishu, 'Auth failed');
   });
 
+  it('fetchStatus skips the store write when the status is unchanged', async () => {
+    // Fresh Response per call — a shared Response instance can only be read once
+    // and would make the second fetch silently fail into the catch branch.
+    global.fetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ wecom: 'connected', feishu: 'not_configured' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    await useBotStore.getState().fetchStatus('bot-1');
+    const firstRef = useBotStore.getState().channelStatusByBotId;
+
+    const returned = await useBotStore.getState().fetchStatus('bot-1');
+
+    assert.strictEqual(useBotStore.getState().channelStatusByBotId, firstRef);
+    // Callers still get the fresh status even though the store write was skipped.
+    assert.deepStrictEqual(returned, { wecom: 'connected', feishu: 'not_configured' });
+  });
+
   it('reconnectChannel updates stored status on success', async () => {
     global.fetch = mockFetch({
       status: 200,

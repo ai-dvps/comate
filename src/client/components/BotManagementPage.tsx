@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, AlertTriangle, Save } from 'lucide-react';
-import { useBotStore, type Bot as BotType, type BotPersona, type BotRole } from '../stores/bot-store';
+import { useBotStore, type Bot as BotType, type BotChannelStatuses, type BotPersona, type BotRole } from '../stores/bot-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
 import BotTabShell, { BotEmptyState } from './BotTabShell';
 import BotGeneralSection from './BotGeneralSection';
@@ -106,6 +106,9 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
     const [pendingSwitchSource, setPendingSwitchSource] = useState<'manual' | 'filter' | null>(null);
     const [pageError, setPageError] = useState<string | null>(null);
     const [revealedCredentials, setRevealedCredentials] = useState<Record<string, string>>({});
+    // Bumped on save/discard so secret inputs remount and drop their local
+    // visibility/edited state instead of leaking it across form resets.
+    const [formEpoch, setFormEpoch] = useState(0);
     const [isSaving, setIsSaving] = useState(false);
     const [isPersonaDirty, setIsPersonaDirty] = useState(false);
     const [isRolesDirty, setIsRolesDirty] = useState(false);
@@ -203,15 +206,37 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       }
     }, [selectedBotId, tempBot, fetchMembers, fetchStatus]);
 
+    // Clear optimistic channel hints once a status fetch reports a terminal
+    // status. Driven by fetch results (not by store-reference changes) so it
+    // still fires when the poll skips the store write for unchanged statuses.
+    const reconcilePendingActions = useCallback((status: BotChannelStatuses | null | undefined) => {
+      if (!status) return;
+      setPendingChannelActions((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const key of ['wecom', 'feishu'] as const) {
+          const terminal = status[key] === 'connected' || status[key] === 'error' || status[key] === 'disconnected';
+          if (terminal && next[key] !== null) {
+            next[key] = null;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, []);
+
     // Poll channel status while the Channels section is active.
     useEffect(() => {
       if (!selectedBotId || tempBot?.id.startsWith('temp-') || activeSection !== 'channels') {
         return;
       }
-      void fetchStatus(selectedBotId);
-      const interval = setInterval(() => void fetchStatus(selectedBotId), 5000);
+      const poll = async () => {
+        reconcilePendingActions(await fetchStatus(selectedBotId));
+      };
+      void poll();
+      const interval = setInterval(() => void poll(), 5000);
       return () => clearInterval(interval);
-    }, [selectedBotId, tempBot, activeSection, fetchStatus]);
+    }, [selectedBotId, tempBot, activeSection, fetchStatus, reconcilePendingActions]);
 
     // Fetch saved channel credentials so secret fields are populated (masked) on open.
     useEffect(() => {
@@ -243,23 +268,6 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
         setRevealedCredentials(nextRevealed);
       })();
     }, [selectedBotId, tempBot, activeSection, selectedBot, fetchChannelCredentials]);
-
-    // Clear optimistic channel hints once polling reports a terminal status.
-    useEffect(() => {
-      if (!selectedBotId) return;
-      const status = channelStatusByBotId[selectedBotId];
-      if (!status) return;
-      setPendingChannelActions((prev) => {
-        const next = { ...prev };
-        for (const key of ['wecom', 'feishu'] as const) {
-          const terminal = status[key] === 'connected' || status[key] === 'error' || status[key] === 'disconnected';
-          if (terminal) {
-            next[key] = null;
-          }
-        }
-        return next;
-      });
-    }, [channelStatusByBotId, selectedBotId]);
 
     const isBasicDirty = useCallback(() => {
       if (!selectedBotId) return false;
@@ -339,6 +347,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
 
           setTempBot(null);
           setSelectedBotId(bot.id);
+          setFormEpoch((n) => n + 1);
           setSnapshots((prev) => ({
             ...prev,
             [bot.id]: botToForm(bot),
@@ -374,14 +383,17 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
             [selectedBotId]: postForm,
           }));
           setPageError(null);
-          void fetchStatus(selectedBotId);
+          setFormEpoch((n) => n + 1);
+          void (async () => {
+            reconcilePendingActions(await fetchStatus(selectedBotId));
+          })();
         } else {
           const err = storeError || t('common:unknownError');
           setPageError(err);
           throw new Error(err);
         }
       }
-    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t, addMember, fetchStatus, snapshots]);
+    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t, addMember, fetchStatus, snapshots, reconcilePendingActions]);
 
     const handleCancelBasic = useCallback(() => {
       if (!selectedBotId) return;
@@ -406,6 +418,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
         }));
       }
       setPageError(null);
+      setFormEpoch((n) => n + 1);
     }, [selectedBotId, tempBot, previousBotId, snapshots]);
 
     const handleReconnectChannel = useCallback(
@@ -415,13 +428,15 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
         const result = await reconnectChannel(selectedBotId, channelKey);
         if (result.ok) {
           setPageError(null);
-          void fetchStatus(selectedBotId);
+          void (async () => {
+            reconcilePendingActions(await fetchStatus(selectedBotId));
+          })();
         } else {
           setPendingChannelActions((prev) => ({ ...prev, [channelKey]: null }));
           setPageError(result.error || t('common:unknownError'));
         }
       },
-      [selectedBotId, reconnectChannel, fetchStatus, t],
+      [selectedBotId, reconnectChannel, fetchStatus, reconcilePendingActions, t],
     );
 
     const handleRevealCredential = useCallback(
@@ -672,6 +687,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
               onReconnect={handleReconnectChannel}
               onRevealCredential={handleRevealCredential}
               revealedCredentials={revealedCredentials}
+              secretsResetKey={`${selectedBot.id}:${formEpoch}`}
             />
           )}
 
