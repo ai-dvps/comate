@@ -164,14 +164,11 @@ async function parseJsonlMessages(filePath: string): Promise<SessionMessage[]> {
 }
 
 async function loadWorkflowSubagents(
-  folderPath: string,
+  transcriptDir: string,
   sessionId: string,
   runId: string,
   progress: WorkflowProgressItem[],
 ): Promise<SubagentState[]> {
-  const transcriptDir = resolveTranscriptDir(folderPath);
-  if (!transcriptDir) return [];
-
   const subagentDir = path.join(transcriptDir, sessionId, 'subagents', 'workflows', runId);
   if (!existsSync(subagentDir)) return [];
 
@@ -333,7 +330,7 @@ export async function loadWorkflowState(options: LoadWorkflowOptions): Promise<W
   const startTime = asNumber(data.startTime) || Date.now();
   const phases = parsePhases(data.phases);
   const progress = parseProgress(data.workflowProgress);
-  const subagents = await loadWorkflowSubagents(folderPath, sessionId, runId, progress);
+  const subagents = await loadWorkflowSubagents(transcriptDir, sessionId, runId, progress);
 
   return {
     runId,

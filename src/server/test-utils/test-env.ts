@@ -19,6 +19,14 @@ if (!process.env.COMATE_DATA_DIR || looksLikeProductionStorageDir(process.env.CO
 // while tests are running. Must be set before any storage module loads.
 process.env.COMATE_TEST_MODE = '1';
 
+// Neutralize CLAUDE_CONFIG_DIR from the developer's shell. The SDK and
+// analytics-transcript-path resolve transcripts under
+// `<CLAUDE_CONFIG_DIR>/projects` with top priority, so an exported value
+// (e.g. CLAUDE_CONFIG_DIR=~/.claude) would silently hijack tests that set up
+// a fake HOME — they would resolve against the developer's real Claude
+// projects tree instead of the test fixture.
+delete process.env.CLAUDE_CONFIG_DIR;
+
 // Preventive load-order check. data-dir.ts records the moment getStorageDir()
 // first runs. If that already happened before we reached this line, some module
 // imported ahead of us already constructed the store against an unguarded path.
