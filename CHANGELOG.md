@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Windows: analytics/statistics always empty** — the project-directory encoding used to locate Claude Code transcripts only replaced path separators and the drive-letter colon, while Claude Code replaces EVERY non-alphanumeric character with `-` and encodes the realpath-resolved path. On Windows, where user profiles and repo paths routinely contain dots, spaces, underscores, or CJK characters, the resolved transcript directory never existed, so every session was silently skipped and the global/workspace summaries returned all zeros. The encoding now mirrors the SDK exactly (all non-alphanumerics → `-`, realpath canonicalization, 200-char truncation with a base36 hash suffix), and the projects root honors `CLAUDE_CONFIG_DIR` with the SDK's NFC normalization (an empty value is treated as unset). This completes an earlier fix that added only the drive-letter colon to the encoding.
+
 - **Windows: all Tauri IPC blocked by Content Security Policy** — added `http://ipc.localhost` to the `connect-src` directive in `src-tauri/tauri.conf.json`. On Windows, WebView2 cannot register truly custom protocol schemes, so Tauri v2 aliases the `ipc://localhost` scheme used for `invoke()` calls to `http://ipc.localhost`. The CSP only allowed the macOS/Linux form (`ipc://localhost`), so every Tauri command (starting with `get_api_port`, which the client needs to learn the sidecar API port) failed with a CSP violation, leaving the app unable to reach the backend on Windows.
 
 ## [0.0.22] - 2026-07-13
