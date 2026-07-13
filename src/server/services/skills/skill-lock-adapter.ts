@@ -15,7 +15,7 @@
 
 import { readFile } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
+import { getPrimaryHomeDir } from '../../utils/home-dir.js';
 import type {
   GlobalSkillLockFile,
   GlobalSkillLockEntry,
@@ -98,24 +98,17 @@ export const GLOBAL_LOCK_CURRENT_VERSION = 3;
  * Mirrors upstream: honor `$XDG_STATE_HOME/skills/.skill-lock.json` if set,
  * otherwise `~/.agents/.skill-lock.json`.
  *
- * HOME resolution follows the same `USERPROFILE` → `HOME` →
- * `HOMEDRIVE+HOMEPATH` → `os.homedir()` cascade as `claude-settings.ts:48-58`,
- * which matters under Tauri where env propagation may be incomplete.
+ * HOME resolution uses the shared cascade from
+ * `src/server/utils/home-dir.ts` ($USERPROFILE → $HOME → HOMEDRIVE+HOMEPATH
+ * → `os.homedir()`), which matters under Tauri where env propagation may be
+ * incomplete.
  */
 export function getGlobalLockPath(): string {
   const xdgStateHome = process.env.XDG_STATE_HOME;
   if (xdgStateHome) {
     return join(xdgStateHome, 'skills', GLOBAL_LOCK_FILENAME);
   }
-  const home = (
-    process.env.USERPROFILE ||
-    process.env.HOME ||
-    (process.env.HOMEDRIVE && process.env.HOMEPATH
-      ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
-      : undefined) ||
-    homedir()
-  );
-  return join(home, GLOBAL_LOCK_DIRNAME, GLOBAL_LOCK_FILENAME);
+  return join(getPrimaryHomeDir(), GLOBAL_LOCK_DIRNAME, GLOBAL_LOCK_FILENAME);
 }
 
 /**

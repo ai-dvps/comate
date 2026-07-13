@@ -7,8 +7,9 @@
  * Claude Code actually reads.
  */
 
-import { homedir } from 'os';
 import { join } from 'path';
+
+import { getPrimaryHomeDir } from '../../utils/home-dir.js';
 
 /**
  * Project-scoped skills directory: `<workspace>/.claude/skills/`.
@@ -32,21 +33,12 @@ export function getProjectSkillsDir(workspacePath: string): string {
 /**
  * Resolve the global-scoped skills directory (`~/.claude/skills/`).
  *
- * Mirrors the HOME-candidate resolution from `claude-settings.ts:48-58`:
- * prefer $USERPROFILE (Windows), then $HOME, then $HOMEDRIVE+$HOMEPATH,
- * finally `os.homedir()` as a fallback. This matters under Tauri where
- * env propagation may be incomplete.
+ * Uses the shared home cascade from `src/server/utils/home-dir.ts`:
+ * $USERPROFILE (Windows) → $HOME → $HOMEDRIVE+$HOMEPATH → `os.homedir()`.
+ * This matters under Tauri where env propagation may be incomplete.
  */
 export function getGlobalSkillsDir(): string {
-  const home = (
-    process.env.USERPROFILE ||
-    process.env.HOME ||
-    (process.env.HOMEDRIVE && process.env.HOMEPATH
-      ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
-      : undefined) ||
-    homedir()
-  );
-  return join(home, GLOBAL_SKILLS_SUBDIR);
+  return join(getPrimaryHomeDir(), GLOBAL_SKILLS_SUBDIR);
 }
 
 /**
