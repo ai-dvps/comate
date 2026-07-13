@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-07-13
+
 ### Added
 
 - **Marketing website** — added a bilingual (Chinese/English) static marketing site under `website/` built with Astro 7 and Tailwind CSS 4. It includes Home, Features, Usage, Download, About, and FAQ pages, light/dark theme support, and a GitHub Pages deployment workflow at `.github/workflows/deploy-website.yml`.
