@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows: all Tauri IPC blocked by Content Security Policy** — added `http://ipc.localhost` to the `connect-src` directive in `src-tauri/tauri.conf.json`. On Windows, WebView2 cannot register truly custom protocol schemes, so Tauri v2 aliases the `ipc://localhost` scheme used for `invoke()` calls to `http://ipc.localhost`. The CSP only allowed the macOS/Linux form (`ipc://localhost`), so every Tauri command (starting with `get_api_port`, which the client needs to learn the sidecar API port) failed with a CSP violation, leaving the app unable to reach the backend on Windows.
+
 ## [0.0.22] - 2026-07-13
 
 ### Added
