@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { sidecarLog } from './sidecar-logger.js';
+import { getHomeCandidates, getPrimaryHomeDir } from './home-dir.js';
 
 /**
  * Read the user's Claude Code settings.json and extract ANTHROPIC_* string values.
@@ -41,20 +41,8 @@ function resolveClaudeSettingsPath(): {
   const settingsPath = homeCandidates
     .map((home) => join(home, '.claude', 'settings.json'))
     .find((candidate) => existsSync(candidate))
-    ?? join(homeCandidates[0] ?? homedir(), '.claude', 'settings.json');
+    ?? join(getPrimaryHomeDir(), '.claude', 'settings.json');
   return { settingsPath, homeCandidates };
-}
-
-function getHomeCandidates(): string[] {
-  const candidates = [
-    process.env.USERPROFILE,
-    process.env.HOME,
-    process.env.HOMEDRIVE && process.env.HOMEPATH
-      ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
-      : undefined,
-    homedir(),
-  ];
-  return [...new Set(candidates.filter((value): value is string => !!value))];
 }
 
 function getObject(value: unknown): Record<string, unknown> {
