@@ -21,8 +21,9 @@
  */
 
 import { existsSync, realpathSync, statSync } from 'fs';
-import { homedir } from 'os';
 import { join, resolve } from 'path';
+
+import { getHomeCandidates } from '../utils/home-dir.js';
 
 /** Max encoded project-dir length before truncation kicks in (SDK `Ss`). */
 const MAX_PROJECT_DIR_LENGTH = 200;
@@ -76,31 +77,6 @@ export function resolveProjectPath(folderPath: string): string {
 }
 
 /**
- * Return the list of plausible `~` candidates in resolution order. Mirrors the
- * multi-candidate home resolution already used in
- * `src/server/utils/claude-settings.ts` so analytics honors the same env
- * overrides (USERPROFILE on Windows, HOMEDRIVE+HOMEPATH, HOME, homedir()).
- */
-function getHomeCandidates(): string[] {
-  const candidates = [
-    process.env.USERPROFILE,
-    process.env.HOME,
-    process.env.HOMEDRIVE && process.env.HOMEPATH
-      ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
-      : undefined,
-    homedir(),
-  ];
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const candidate of candidates) {
-    if (!candidate || seen.has(candidate)) continue;
-    seen.add(candidate);
-    result.push(candidate);
-  }
-  return result;
-}
-
-/**
  * Resolve the projects root directory (`<config>/projects`). Honors
  * `CLAUDE_CONFIG_DIR` when set to a non-empty value — mirroring the SDK's
  * config-dir resolution (`Xt`: `CLAUDE_CONFIG_DIR ?? ~/.claude`). An explicit
@@ -112,8 +88,9 @@ function getHomeCandidates(): string[] {
  *     meaningless for this long-lived server process (whose cwd differs from
  *     the Claude child process's workspace cwd);
  *   - without it, picks the first `~/.claude/projects` that exists under the
- *     home candidates — existence is the strongest signal there since env
- *     vars can lag a home directory move.
+ *     home candidates (shared cascade in `src/server/utils/home-dir.ts`) —
+ *     existence is the strongest signal there since env vars can lag a home
+ *     directory move.
  * Like Xt, the result is NFC-normalized on every platform.
  */
 export function resolveClaudeProjectsDir(): string | null {
