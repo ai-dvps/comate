@@ -16,9 +16,13 @@ export default function SecretInput({ id, label, value, placeholder, original, o
   const [show, setShow] = useState(false);
   const [revealed, setRevealed] = useState<string | null>(null);
   const [isRevealing, setIsRevealing] = useState(false);
+  // Once the user edits the field, the draft value is shown verbatim — including
+  // an empty string — so clearing the input is not visually "restored" by the
+  // fallback to the revealed/original secret.
+  const [edited, setEdited] = useState(false);
   const isSet = isSecretSet(original) && value === '';
   const revealedOriginal = typeof original === 'string' ? original : null;
-  const displayValue = value || revealed || revealedOriginal || '';
+  const displayValue = value || (edited ? '' : revealed || revealedOriginal || '');
 
   const handleToggle = async () => {
     if (value === '' && original === true && onReveal && !revealed && !isRevealing) {
@@ -26,7 +30,10 @@ export default function SecretInput({ id, label, value, placeholder, original, o
       try {
         const plaintext = await onReveal();
         if (plaintext !== undefined) {
+          // Revealing is an explicit "show me the current secret" action and
+          // wins over the edited flag (e.g. after the user cleared the field).
           setRevealed(plaintext);
+          setEdited(false);
           setShow(true);
           return;
         }
@@ -46,6 +53,7 @@ export default function SecretInput({ id, label, value, placeholder, original, o
           type={show ? 'text' : 'password'}
           value={displayValue}
           onChange={(e) => {
+            setEdited(true);
             setRevealed(null);
             onChange(e.target.value);
           }}

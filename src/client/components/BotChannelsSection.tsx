@@ -17,6 +17,11 @@ interface BotChannelsSectionProps {
   onReconnect?: (channelKey: 'wecom' | 'feishu') => void;
   onRevealCredential?: (fieldKey: string) => Promise<string | undefined>;
   revealedCredentials?: Record<string, string>;
+  /**
+   * Remounts the secret inputs when it changes (bot switch, save, discard), so
+   * their local visibility/edited state does not leak across form resets.
+   */
+  secretsResetKey?: string;
 }
 
 function getChannelLabel(
@@ -62,29 +67,14 @@ function isChannelDirty(
   );
 }
 
-export default function BotChannelsSection({
-  form,
-  onUpdate,
-  originalBot,
-  channelStatus,
-  pendingActions,
-  onReconnect,
-  onRevealCredential,
-  revealedCredentials,
-}: BotChannelsSectionProps) {
-  const { t } = useTranslation('settings');
-  const getOriginal = (fieldKey: string, channelValue: string | true | undefined) =>
-    revealedCredentials?.[fieldKey] ?? channelValue;
+interface ToggleProps {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  label: string;
+}
 
-  const Toggle = ({
-    checked,
-    onChange,
-    label,
-  }: {
-    checked: boolean;
-    onChange: (value: boolean) => void;
-    label: string;
-  }) => (
+function Toggle({ checked, onChange, label }: ToggleProps) {
+  return (
     <div className="flex items-center justify-between">
       <label className="text-xs font-medium text-text-secondary">{label}</label>
       <button
@@ -103,96 +93,132 @@ export default function BotChannelsSection({
       </button>
     </div>
   );
+}
 
-  const ChannelCard = ({
-    channel,
-    title,
-    children,
-  }: {
-    channel: 'wecom' | 'feishu';
-    title: string;
-    children: React.ReactNode;
-  }) => {
-    const enabled = channel === 'wecom' ? form.wecomEnabled : form.feishuEnabled;
-    const status: ChannelStatus = channelStatus?.[channel] ?? 'not_configured';
-    const pending = pendingActions?.[channel];
-    const errorMessage = channelStatus?.errors?.[channel];
-    const dirty = isChannelDirty(form, originalBot, channel);
-    const canReconnect =
-      enabled &&
-      !dirty &&
-      status === 'disconnected' &&
-      !pending &&
-      !!onReconnect;
+interface ChannelCardProps {
+  channel: 'wecom' | 'feishu';
+  title: string;
+  enabled: boolean;
+  status: ChannelStatus;
+  pending?: 'connect' | 'disconnect' | null;
+  errorMessage?: string;
+  dirty: boolean;
+  toggleLabel: string;
+  onToggle: (value: boolean) => void;
+  onReconnect?: (channelKey: 'wecom' | 'feishu') => void;
+  children: React.ReactNode;
+}
 
-    const statusLabel = pending
-      ? t(`bots.${pending === 'connect' ? 'channelReconnecting' : 'channelDisconnecting'}`)
-      : getChannelLabel(channel, status, t);
+function ChannelCard({
+  channel,
+  title,
+  enabled,
+  status,
+  pending,
+  errorMessage,
+  dirty,
+  toggleLabel,
+  onToggle,
+  onReconnect,
+  children,
+}: ChannelCardProps) {
+  const { t } = useTranslation('settings');
+  const canReconnect =
+    enabled &&
+    !dirty &&
+    status === 'disconnected' &&
+    !pending &&
+    !!onReconnect;
 
-    return (
-      <div className="border border-border rounded-lg p-4 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h4 className="text-xs font-medium text-text-secondary">{title}</h4>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span
-              className={`flex items-center gap-1.5 text-xs ${enabled ? 'text-text-secondary' : 'text-text-tertiary opacity-60'}`}
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              aria-describedby={errorMessage ? `${channel}-error` : undefined}
-            >
-              <span
-                className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  pending ? 'bg-blue-500 animate-pulse' : CHANNEL_STATUS_DOT[status]
-                }`}
-                aria-hidden="true"
-              />
-              {pending && (
-                <Loader2 className="w-3 h-3 animate-spin text-text-tertiary" aria-hidden="true" />
-              )}
-              <span>
-                {statusLabel}
-                {!enabled && !pending && ` ${t('bots.channelStatusDisabled')}`}
-              </span>
-            </span>
-            {canReconnect && (
-              <button
-                type="button"
-                onClick={() => onReconnect?.(channel)}
-                className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-md transition-colors"
-              >
-                <RefreshCw className="w-3 h-3" />
-                {t('bots.reconnectButton')}
-              </button>
-            )}
-          </div>
-        </div>
+  const statusLabel = pending
+    ? t(`bots.${pending === 'connect' ? 'channelReconnecting' : 'channelDisconnecting'}`)
+    : getChannelLabel(channel, status, t);
 
-        {errorMessage && (
-          <p
-            id={`${channel}-error`}
-            className="text-[11px] text-warning"
+  return (
+    <div className="border border-border rounded-lg p-4 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h4 className="text-xs font-medium text-text-secondary">{title}</h4>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span
+            className={`flex items-center gap-1.5 text-xs ${enabled ? 'text-text-secondary' : 'text-text-tertiary opacity-60'}`}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            aria-describedby={errorMessage ? `${channel}-error` : undefined}
           >
-            {errorMessage}
-          </p>
-        )}
-
-        <Toggle
-          label={t(channel === 'wecom' ? 'bots.wecomEnable' : 'bots.feishuEnable')}
-          checked={enabled}
-          onChange={(value) =>
-            onUpdate(channel === 'wecom' ? { wecomEnabled: value } : { feishuEnabled: value })
-          }
-        />
-
-        {children}
+            <span
+              className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                pending ? 'bg-blue-500 animate-pulse' : CHANNEL_STATUS_DOT[status]
+              }`}
+              aria-hidden="true"
+            />
+            {pending && (
+              <Loader2 className="w-3 h-3 animate-spin text-text-tertiary" aria-hidden="true" />
+            )}
+            <span>
+              {statusLabel}
+              {!enabled && !pending && ` ${t('bots.channelStatusDisabled')}`}
+            </span>
+          </span>
+          {canReconnect && (
+            <button
+              type="button"
+              onClick={() => onReconnect?.(channel)}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-md transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" />
+              {t('bots.reconnectButton')}
+            </button>
+          )}
+        </div>
       </div>
-    );
-  };
+
+      {errorMessage && (
+        <p
+          id={`${channel}-error`}
+          className="text-[11px] text-warning"
+        >
+          {errorMessage}
+        </p>
+      )}
+
+      <Toggle label={toggleLabel} checked={enabled} onChange={onToggle} />
+
+      {children}
+    </div>
+  );
+}
+
+export default function BotChannelsSection({
+  form,
+  onUpdate,
+  originalBot,
+  channelStatus,
+  pendingActions,
+  onReconnect,
+  onRevealCredential,
+  revealedCredentials,
+  secretsResetKey,
+}: BotChannelsSectionProps) {
+  const { t } = useTranslation('settings');
+  const getOriginal = (fieldKey: string, channelValue: string | true | undefined) =>
+    revealedCredentials?.[fieldKey] ?? channelValue;
+  const secretKey = (id: string) => (secretsResetKey ? `${secretsResetKey}-${id}` : undefined);
 
   return (
     <div className="max-w-xl space-y-6">
-      <ChannelCard channel="wecom" title={t('bots.channelWecom')}>
+      <ChannelCard
+        channel="wecom"
+        title={t('bots.channelWecom')}
+        enabled={form.wecomEnabled}
+        status={channelStatus?.wecom ?? 'not_configured'}
+        pending={pendingActions?.wecom}
+        errorMessage={channelStatus?.errors?.wecom}
+        dirty={isChannelDirty(form, originalBot, 'wecom')}
+        toggleLabel={t('bots.wecomEnable')}
+        onToggle={(value) => onUpdate({ wecomEnabled: value })}
+        onReconnect={onReconnect}
+      >
         {form.wecomEnabled && (
           <div className="space-y-3 pl-1 border-l-2 border-border/50">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -220,6 +246,7 @@ export default function BotChannelsSection({
               </div>
             </div>
             <SecretInput
+              key={secretKey('wecomBotSecret')}
               id="wecomBotSecret"
               label={`${t('bots.wecomBotSecret')}${originalBot ? '' : ' *'}`}
               value={form.wecomBotSecret}
@@ -241,6 +268,7 @@ export default function BotChannelsSection({
                 />
               </div>
               <SecretInput
+                key={secretKey('wecomCorpSecret')}
                 id="wecomCorpSecret"
                 label={t('bots.wecomCorpSecret')}
                 value={form.wecomCorpSecret}
@@ -268,7 +296,18 @@ export default function BotChannelsSection({
         )}
       </ChannelCard>
 
-      <ChannelCard channel="feishu" title={t('bots.channelFeishu')}>
+      <ChannelCard
+        channel="feishu"
+        title={t('bots.channelFeishu')}
+        enabled={form.feishuEnabled}
+        status={channelStatus?.feishu ?? 'not_configured'}
+        pending={pendingActions?.feishu}
+        errorMessage={channelStatus?.errors?.feishu}
+        dirty={isChannelDirty(form, originalBot, 'feishu')}
+        toggleLabel={t('bots.feishuEnable')}
+        onToggle={(value) => onUpdate({ feishuEnabled: value })}
+        onReconnect={onReconnect}
+      >
         {form.feishuEnabled && (
           <div className="space-y-3 pl-1 border-l-2 border-border/50">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -296,6 +335,7 @@ export default function BotChannelsSection({
               </div>
             </div>
             <SecretInput
+              key={secretKey('feishuAppSecret')}
               id="feishuAppSecret"
               label={`${t('bots.feishuAppSecret')}${originalBot ? '' : ' *'}`}
               value={form.feishuAppSecret}
@@ -306,6 +346,7 @@ export default function BotChannelsSection({
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <SecretInput
+                key={secretKey('feishuEncryptKey')}
                 id="feishuEncryptKey"
                 label={t('bots.feishuEncryptKey')}
                 value={form.feishuEncryptKey}
@@ -315,6 +356,7 @@ export default function BotChannelsSection({
                 onReveal={onRevealCredential ? () => onRevealCredential('feishuEncryptKey') : undefined}
               />
               <SecretInput
+                key={secretKey('feishuVerificationToken')}
                 id="feishuVerificationToken"
                 label={t('bots.feishuVerificationToken')}
                 value={form.feishuVerificationToken}
