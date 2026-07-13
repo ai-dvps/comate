@@ -11,6 +11,7 @@ import { join } from 'node:path';
 
 import { AnalyticsCache } from '../storage/analytics-cache.js';
 import { AnalyticsService, type AnalyticsSdkLike, type AnalyticsStoreLike } from './analytics-service.js';
+import { resolveTranscriptDir } from './analytics-transcript-path.js';
 import type { Workspace } from '../models/workspace.js';
 
 /**
@@ -105,15 +106,15 @@ describe('AnalyticsService', () => {
   });
 
   it('extracts a workspace session from disk, caches it, and rolls it up', async () => {
-    // Stage a fake transcript at the resolved path. The service resolves the
-    // path via resolveTranscriptFile(folderPath, sessionId); rather than mock
-    // that, we point folderPath at a temp dir and place the file at the
-    // expected location under .claude/projects/<encoded-cwd>/.
+    // Stage a fake transcript at the path the production resolver computes:
+    // rather than duplicate the encoding inline, create the projects root and
+    // ask resolveTranscriptDir(folderPath) where the file belongs.
     const home = mkdtempSync(join(tmpdir(), 'analytics-svc-home-'));
     process.env.HOME = home;
     const folderPath = join(home, 'my-project');
-    const encoded = folderPath.replace(/[/\\]/g, '-');
-    const projectsDir = join(home, '.claude', 'projects', encoded);
+    mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
+    const projectsDir = resolveTranscriptDir(folderPath);
+    assert.ok(projectsDir);
     mkdirSync(projectsDir, { recursive: true });
     writeFileSync(join(projectsDir, 'sess-1.jsonl'), assistantJson());
 
@@ -150,8 +151,9 @@ describe('AnalyticsService', () => {
     const home = mkdtempSync(join(tmpdir(), 'analytics-svc-home-'));
     process.env.HOME = home;
     const folderPath = join(home, 'my-project');
-    const encoded = folderPath.replace(/[/\\]/g, '-');
-    const projectsDir = join(home, '.claude', 'projects', encoded);
+    mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
+    const projectsDir = resolveTranscriptDir(folderPath);
+    assert.ok(projectsDir);
     mkdirSync(projectsDir, { recursive: true });
     writeFileSync(join(projectsDir, 'sess-stable.jsonl'), assistantJson());
 
@@ -181,8 +183,9 @@ describe('AnalyticsService', () => {
     const home = mkdtempSync(join(tmpdir(), 'analytics-svc-home-'));
     process.env.HOME = home;
     const folderPath = join(home, 'my-project');
-    const encoded = folderPath.replace(/[/\\]/g, '-');
-    const projectsDir = join(home, '.claude', 'projects', encoded);
+    mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
+    const projectsDir = resolveTranscriptDir(folderPath);
+    assert.ok(projectsDir);
     mkdirSync(projectsDir, { recursive: true });
     writeFileSync(join(projectsDir, 'sess-grow.jsonl'), assistantJson());
 
@@ -223,10 +226,11 @@ describe('AnalyticsService', () => {
     const folderB = join(home, 'proj-b');
     const sessionIds = ['sess-a', 'sess-b'];
     const folders = [folderA, folderB];
+    mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
     for (let i = 0; i < folders.length; i++) {
       const folder = folders[i]!;
-      const encoded = folder.replace(/[/\\]/g, '-');
-      const dir = join(home, '.claude', 'projects', encoded);
+      const dir = resolveTranscriptDir(folder);
+      assert.ok(dir);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, `${sessionIds[i]}.jsonl`), assistantJson());
     }
