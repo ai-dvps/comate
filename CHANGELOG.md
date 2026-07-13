@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bot channel secret fields reset while editing** — the WeCom/Feishu channel cards on the Bot Channels settings page were defined as components inside `BotChannelsSection`, so every parent re-render remounted the whole card subtree: revealed secrets flipped back to masked within one 5-second status-poll tick, and every input in the card lost focus on each keystroke. Clearing a secret field also visually restored the previous value, because `SecretInput` fell back to the auto-fetched original credential whenever the draft was empty. The cards are now module-level components, `fetchStatus` skips the store write (and the resulting full-page re-render) when the polled status is unchanged, and `SecretInput` shows the draft value verbatim once the user has edited the field.
+
 ## [0.0.23] - 2026-07-13
 
 ### Fixed

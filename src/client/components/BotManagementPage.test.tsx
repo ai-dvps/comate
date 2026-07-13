@@ -312,6 +312,54 @@ describe('BotManagementPage', () => {
     expect(secretInput.type).toBe('password');
   });
 
+  it('clears the reconnecting hint after save even when the polled status is unchanged', async () => {
+    let resolveStatus!: (value: { wecom: string; feishu: string }) => void;
+    const fetchStatus = vi.fn().mockImplementation(
+      () => new Promise<{ wecom: string; feishu: string }>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const updateBot = vi.fn().mockResolvedValue(
+      makeBot({
+        channelSettings: { wecom: { enabled: true, botId: 'bid-2', botSecret: true } },
+      }),
+    );
+    (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      ...mockState,
+      bots: [
+        makeBot({
+          channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+        }),
+      ],
+      channelStatusByBotId: { 'bot-1': { wecom: 'connected', feishu: 'not_configured' } },
+      fetchStatus,
+      updateBot,
+    });
+
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Channels/i }));
+
+    const botIdInput = await screen.findByPlaceholderText('your-bot-id');
+    fireEvent.change(botIdInput, { target: { value: 'bid-2' } });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+
+    // The optimistic hint appears once the save derives a connect action...
+    await waitFor(() => expect(screen.getByText('Reconnecting…')).toBeInTheDocument());
+
+    // ...and must clear once a status fetch reports a terminal status, even
+    // though the status value is identical to what was already stored.
+    await act(async () => {
+      resolveStatus({ wecom: 'connected', feishu: 'not_configured' });
+    });
+
+    await waitFor(() => expect(screen.queryByText('Reconnecting…')).not.toBeInTheDocument());
+  });
+
   it('shows unsaved-changes dialog when switching bots with dirty persona config', async () => {
     (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       ...mockState,

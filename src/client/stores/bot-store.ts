@@ -135,7 +135,7 @@ export interface BotState {
     plaintextUserId: string,
   ) => Promise<BotUser | null>;
   refreshMembers: (botId: string) => Promise<void>;
-  fetchStatus: (botId: string) => Promise<void>;
+  fetchStatus: (botId: string) => Promise<BotChannelStatuses | null>;
   reconnectChannel: (botId: string, channelKey: BotChannel) => Promise<{ ok: boolean; statuses?: BotChannelStatuses; error?: string }>;
   fetchChannelCredentials: (botId: string, channelKey: BotChannel) => Promise<WeComChannelConfig | FeishuChannelConfig | null>;
   runMigration: (dryRun?: boolean) => Promise<MigrationResult | null>;
@@ -143,6 +143,16 @@ export interface BotState {
 }
 
 const API_BASE = '/api';
+
+function channelStatusesEqual(a: BotChannelStatuses, b: BotChannelStatuses): boolean {
+  if (a.wecom !== b.wecom || a.feishu !== b.feishu) return false;
+  const aErrors = a.errors ?? {};
+  const bErrors = b.errors ?? {};
+  const aKeys = Object.keys(aErrors) as (keyof typeof aErrors)[];
+  const bKeys = Object.keys(bErrors) as (keyof typeof bErrors)[];
+  if (aKeys.length !== bKeys.length) return false;
+  return bKeys.every((k) => aErrors[k] === bErrors[k]);
+}
 
 async function handleError(res: Response): Promise<string> {
   try {
@@ -396,13 +406,20 @@ export const useBotStore = create<BotState>((set, get) => ({
   fetchStatus: async (botId) => {
     try {
       const res = await fetch(`${API_BASE}/bots/${botId}/status`);
-      if (!res.ok) return;
+      if (!res.ok) return null;
       const data = (await res.json()) as BotChannelStatuses;
-      set({
-        channelStatusByBotId: { ...get().channelStatusByBotId, [botId]: data },
-      });
+      // Skip the store write when nothing changed — an unconditional set would
+      // re-render every store subscriber on each poll tick.
+      const current = get().channelStatusByBotId[botId];
+      if (!current || !channelStatusesEqual(current, data)) {
+        set({
+          channelStatusByBotId: { ...get().channelStatusByBotId, [botId]: data },
+        });
+      }
+      return data;
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
+      return null;
     }
   },
 
