@@ -194,6 +194,62 @@ describe('BotChannelsSection', () => {
     expect(onRevealCredential).toHaveBeenCalledWith('wecomBotSecret');
   });
 
+  it('preserves secret visibility and input focus across parent re-renders', () => {
+    const props = {
+      form: { ...emptyForm(), wecomEnabled: true },
+      onUpdate: vi.fn(),
+      revealedCredentials: { wecomBotSecret: 'plain-secret' },
+      channelStatus: { wecom: 'connected', feishu: 'not_configured' },
+    } as const;
+    const { rerender } = renderWithI18n(<BotChannelsSection {...props} />);
+
+    // Focus a plain input inside the channel card.
+    const botIdInput = screen.getByPlaceholderText('your-bot-id');
+    botIdInput.focus();
+    expect(document.activeElement).toBe(botIdInput);
+
+    // Reveal the already-known secret (plain visibility toggle, no fetch).
+    const secretInput = screen.getByDisplayValue('plain-secret') as HTMLInputElement;
+    const eyeButton = secretInput.parentElement!.querySelector('button')!;
+    fireEvent.click(eyeButton);
+    expect(secretInput.type).toBe('text');
+
+    // Simulate a status poll re-render: identical data, fresh references.
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <BotChannelsSection
+          {...props}
+          channelStatus={{ wecom: 'connected', feishu: 'not_configured' }}
+        />
+      </I18nextProvider>,
+    );
+
+    expect((screen.getByDisplayValue('plain-secret') as HTMLInputElement).type).toBe('text');
+    expect(document.activeElement).toBe(botIdInput);
+  });
+
+  it('resets secret visibility when the reset key changes (e.g. after save)', () => {
+    const props = {
+      form: { ...emptyForm(), wecomEnabled: true },
+      onUpdate: vi.fn(),
+      revealedCredentials: { wecomBotSecret: 'plain-secret' },
+      secretsResetKey: 'bot-1:0',
+    };
+    const { rerender } = renderWithI18n(<BotChannelsSection {...props} />);
+
+    const secretInput = screen.getByDisplayValue('plain-secret') as HTMLInputElement;
+    fireEvent.click(secretInput.parentElement!.querySelector('button')!);
+    expect(secretInput.type).toBe('text');
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <BotChannelsSection {...props} secretsResetKey="bot-1:1" />
+      </I18nextProvider>,
+    );
+
+    expect((screen.getByDisplayValue('plain-secret') as HTMLInputElement).type).toBe('password');
+  });
+
   it('appends disabled descriptor when a channel toggle is off', () => {
     const originalBot: Bot = {
       id: 'bot-1',
