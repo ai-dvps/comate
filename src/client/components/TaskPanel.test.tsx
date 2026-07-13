@@ -52,6 +52,39 @@ describe('TaskPanel', () => {
     expect(root.className).not.toContain('w-full')
   })
 
+  it('counts terminal tasks (completed, failed, killed) toward progress', () => {
+    mockStore.tasks.s1 = [
+      ...Array.from({ length: 13 }, (_, i) => ({
+        id: `c${i}`,
+        subject: `Done ${i}`,
+        status: 'completed' as const,
+      })),
+      { id: 'f1', subject: 'Failed task', status: 'failed' as const },
+      { id: 'k1', subject: 'Killed task', status: 'killed' as const },
+    ]
+    const { container } = render(<TaskPanel sessionId="s1" />)
+    expect(screen.getByText('15/15')).toBeInTheDocument()
+    expect(container.querySelector('[style*="width: 100%"]')).not.toBeNull()
+  })
+
+  it('shows a failed-count badge when tasks have failed', () => {
+    mockStore.tasks.s1 = [
+      { id: 'c1', subject: 'Done', status: 'completed' },
+      { id: 'f1', subject: 'Failed', status: 'failed' },
+    ]
+    const { container } = render(<TaskPanel sessionId="s1" />)
+    expect(container.querySelector('.bg-destructive\\/10')).not.toBeNull()
+  })
+
+  it('hides the failed-count badge when nothing has failed', () => {
+    mockStore.tasks.s1 = [
+      { id: 'c1', subject: 'Done', status: 'completed' },
+      { id: 'p1', subject: 'Pending', status: 'pending' },
+    ]
+    const { container } = render(<TaskPanel sessionId="s1" />)
+    expect(container.querySelector('.bg-destructive\\/10')).toBeNull()
+  })
+
   it('expands to show task rows when clicked', async () => {
     mockStore.tasks.s1 = [{ id: 't1', subject: 'Pending task', status: 'pending' }]
     render(<TaskPanel sessionId="s1" />)
