@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "comate"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "flexi_logger",
  "log",
