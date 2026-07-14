@@ -5,6 +5,7 @@ import { AlertCircle, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useResizableWidth } from './hooks/use-resizable-width'
+import { useSidebarKeyboardShortcut } from './hooks/use-sidebar-keyboard-shortcut'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 import WorkspaceEmptyState from './components/WorkspaceEmptyState'
@@ -138,28 +139,7 @@ function App() {
     toggleCollapse: toggleSidebarCollapse,
   } = useSidebarWidth()
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const isToggleSidebar =
-        (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b'
-
-      if (!isToggleSidebar) return
-
-      const active = document.activeElement
-      const isEditableInput =
-        active instanceof HTMLInputElement ||
-        active instanceof HTMLTextAreaElement ||
-        active?.getAttribute('contenteditable') === 'true'
-
-      if (isEditableInput) return
-
-      event.preventDefault()
-      toggleSidebarCollapse()
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [toggleSidebarCollapse])
+  useSidebarKeyboardShortcut(toggleSidebarCollapse)
 
   const handleFileClick = async (path: string, name: string) => {
     if (!activeWorkspaceId) return

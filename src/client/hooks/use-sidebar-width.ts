@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useResizableWidth } from './use-resizable-width'
 
-const RAIL_WIDTH = 48
+export const RAIL_WIDTH = 48
 const MIN_WIDTH = 200
 const MAX_WIDTH = 600
 const DEFAULT_WIDTH = 288
@@ -52,10 +52,6 @@ function writePreviousWidth(value: number): void {
   }
 }
 
-function clampWidth(value: number): number {
-  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value))
-}
-
 export function useSidebarWidth() {
   const { width: expandedWidth, setWidth: setExpandedWidth } = useResizableWidth({
     storageKey: WIDTH_KEY,
@@ -65,8 +61,17 @@ export function useSidebarWidth() {
   })
 
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => readCollapsed())
-  const [previousWidth, setPreviousWidth] = useState<number>(() =>
-    readPreviousWidth(expandedWidth),
+  const [previousWidth, setPreviousWidth] = useState<number>(() => readPreviousWidth(expandedWidth))
+
+  const setWidth = useCallback(
+    (value: number) => {
+      setExpandedWidth(value)
+      if (isCollapsed) {
+        setPreviousWidth(value)
+        writePreviousWidth(value)
+      }
+    },
+    [isCollapsed, setExpandedWidth],
   )
 
   const toggleCollapse = useCallback(() => {
@@ -77,8 +82,7 @@ export function useSidebarWidth() {
         setPreviousWidth(currentWidth)
         writePreviousWidth(currentWidth)
       } else {
-        const restoredWidth = clampWidth(previousWidth)
-        setExpandedWidth(restoredWidth)
+        setExpandedWidth(previousWidth)
       }
       writeCollapsed(nextCollapsed)
       return nextCollapsed
@@ -87,7 +91,7 @@ export function useSidebarWidth() {
 
   return {
     width: isCollapsed ? RAIL_WIDTH : expandedWidth,
-    setWidth: setExpandedWidth,
+    setWidth,
     isCollapsed,
     toggleCollapse,
   }

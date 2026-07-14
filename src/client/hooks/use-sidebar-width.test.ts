@@ -88,4 +88,41 @@ describe('useSidebarWidth', () => {
     expect(result.current.isCollapsed).toBe(false)
     expect(result.current.width).toBe(288)
   })
+
+  it('clamps a restored previous width to the minimum bound', () => {
+    storage.set('sidebar-width', '400')
+    storage.set('sidebar-previous-width', '50')
+    storage.set('sidebar-collapsed', 'true')
+    const { result } = renderHook(() => useSidebarWidth())
+
+    act(() => {
+      result.current.toggleCollapse()
+    })
+
+    expect(result.current.width).toBe(200)
+  })
+
+  it('keeps previous width in sync when setWidth is called while collapsed', () => {
+    storage.set('sidebar-width', '400')
+    const { result } = renderHook(() => useSidebarWidth())
+
+    act(() => {
+      result.current.toggleCollapse()
+    })
+
+    expect(result.current.width).toBe(48)
+
+    act(() => {
+      result.current.setWidth(500)
+    })
+
+    expect(result.current.width).toBe(48)
+    expect(storage.get('sidebar-previous-width')).toBe('500')
+
+    act(() => {
+      result.current.toggleCollapse()
+    })
+
+    expect(result.current.width).toBe(500)
+  })
 })

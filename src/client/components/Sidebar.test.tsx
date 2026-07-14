@@ -152,6 +152,24 @@ describe('Sidebar', () => {
     expect(onToggleCollapse).toHaveBeenCalledTimes(1);
   });
 
+  it('calls onToggleCollapse when the collapse button is clicked in expanded state', () => {
+    const onToggleCollapse = vi.fn();
+    renderWithI18n(
+      <Sidebar
+        width={240}
+        onWidthChange={vi.fn()}
+        onFileClick={vi.fn()}
+        onFileDoubleClick={vi.fn()}
+        isCollapsed={false}
+        onToggleCollapse={onToggleCollapse}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+
+    expect(onToggleCollapse).toHaveBeenCalledTimes(1);
+  });
+
   it('switches between sessions, todos, and files in both expanded and collapsed states', () => {
     const { rerender } = renderWithI18n(
       <Sidebar

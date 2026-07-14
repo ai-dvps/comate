@@ -1,9 +1,10 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare, CheckSquare, Folder, ChevronRight } from 'lucide-react'
+import { MessageSquare, CheckSquare, Folder, ChevronRight, ChevronLeft } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { RAIL_WIDTH } from '../hooks/use-sidebar-width'
 import SessionList from './SessionList'
 import FileExplorer from './FileExplorer'
 import TodoList from './TodoList'
@@ -19,9 +20,6 @@ interface SidebarProps {
 
 type SidebarTab = 'sessions' | 'files' | 'todos'
 
-const MIN_WIDTH = 200
-const MAX_WIDTH = 600
-
 export default function Sidebar({
   width,
   onWidthChange,
@@ -33,6 +31,16 @@ export default function Sidebar({
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<SidebarTab>('sessions')
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
+  const dragRef = useRef<{ move: (e: MouseEvent) => void; up: () => void } | null>(null)
+
+  const endDrag = useCallback(() => {
+    if (!dragRef.current) return
+    document.removeEventListener('mousemove', dragRef.current.move)
+    document.removeEventListener('mouseup', dragRef.current.up)
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+    dragRef.current = null
+  }, [])
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -42,27 +50,33 @@ export default function Sidebar({
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const delta = moveEvent.clientX - startX
-        const newWidth = Math.min(
-          MAX_WIDTH,
-          Math.max(MIN_WIDTH, startWidth + delta)
-        )
-        onWidthChange(newWidth)
+        onWidthChange(startWidth + delta)
       }
 
       const handleMouseUp = () => {
-        document.removeEventListener('mousemove', handleMouseMove)
-        document.removeEventListener('mouseup', handleMouseUp)
-        document.body.style.userSelect = ''
-        document.body.style.cursor = ''
+        endDrag()
       }
 
+      dragRef.current = { move: handleMouseMove, up: handleMouseUp }
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'col-resize'
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     },
-    [width, onWidthChange]
+    [width, onWidthChange, endDrag],
   )
+
+  useEffect(() => {
+    return () => {
+      endDrag()
+    }
+  }, [endDrag])
+
+  useEffect(() => {
+    if (isCollapsed) {
+      endDrag()
+    }
+  }, [isCollapsed, endDrag])
 
   const tabs: { id: SidebarTab; label: string; tooltip: string; icon: React.ReactNode }[] = [
     {
@@ -89,9 +103,8 @@ export default function Sidebar({
     <aside
       className={cn(
         'relative bg-surface border-r border-border flex flex-col h-full flex-shrink-0',
-        isCollapsed && 'w-12'
       )}
-      style={{ width }}
+      style={{ width: isCollapsed ? RAIL_WIDTH : width }}
     >
       {isCollapsed ? (
         <>
@@ -105,7 +118,7 @@ export default function Sidebar({
                       'p-2 rounded-md transition-colors',
                       activeTab === tab.id
                         ? 'text-text-primary bg-accent/10'
-                        : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
                     )}
                     aria-label={tab.tooltip}
                     onClick={() => setActiveTab(tab.id)}
@@ -145,7 +158,7 @@ export default function Sidebar({
                   'flex-1 py-3 font-medium text-center transition-all',
                   activeTab === tab.id
                     ? 'text-text-primary border-b-2 border-accent'
-                    : 'text-text-secondary hover:text-text-primary'
+                    : 'text-text-secondary hover:text-text-primary',
                 )}
                 onClick={() => setActiveTab(tab.id)}
               >
@@ -185,6 +198,22 @@ export default function Sidebar({
                 onFileDoubleClick={onFileDoubleClick}
               />
             )}
+          </div>
+
+          {/* Collapse button */}
+          <div className="flex-shrink-0 border-t border-border/50 p-2 flex justify-center">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+                  aria-label={t('sidebar.collapse')}
+                  onClick={() => onToggleCollapse?.()}
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{t('sidebar.collapse')}</TooltipContent>
+            </Tooltip>
           </div>
 
           {/* Resize Handle */}
