@@ -105,7 +105,7 @@ export default function VirtualizedMessageList({
 
   // Auto-scroll the current search match into view.
   useEffect(() => {
-    if (!currentMatch) return
+    if (!isVisible || !currentMatch) return
     const index = viewItems.findIndex((item) => {
       if (item.kind === 'message') return item.message.id === currentMatch.messageId
       if (item.kind === 'meta') return item.messageId === currentMatch.messageId
@@ -128,21 +128,27 @@ export default function VirtualizedMessageList({
         setTimeout(scrollActive, 0)
       })
     })
-  }, [currentMatch, viewItems, virtualizer])
+  }, [isVisible, currentMatch, viewItems, virtualizer])
 
-  // Remeasure virtualizer when transitioning from hidden to visible
+  // Remeasure virtualizer when transitioning from hidden to visible, and jump
+  // to the bottom so the latest background-stream content is in view.
   const wasVisibleRef = useRef(isVisible)
   useEffect(() => {
     if (isVisible && !wasVisibleRef.current) {
       requestAnimationFrame(() => {
         virtualizer.measure()
+        if (viewItems.length > 0) {
+          virtualizer.scrollToIndex(viewItems.length - 1, { align: 'end' })
+          setIsAtBottom(true)
+        }
       })
     }
     wasVisibleRef.current = isVisible
-  }, [isVisible, virtualizer])
+  }, [isVisible, virtualizer, viewItems.length])
 
   // Detect prepend and anchor scroll position
   useEffect(() => {
+    if (!isVisible) return
     const prev = prevViewItemsRef.current
     const prevLen = prev.length
     const currLen = viewItems.length
@@ -170,7 +176,7 @@ export default function VirtualizedMessageList({
     }
 
     prevViewItemsRef.current = viewItems
-  }, [viewItems, virtualizer])
+  }, [isVisible, viewItems, virtualizer])
 
   // Capture first visible key before each render for potential anchoring
   useEffect(() => {
@@ -183,7 +189,7 @@ export default function VirtualizedMessageList({
   // Detect scroll position for auto-scroll and scroll-to-bottom button
   useEffect(() => {
     const el = parentRef.current
-    if (!el) return
+    if (!el || !isVisible) return
 
     const handleScroll = () => {
       const atBottom =
@@ -193,19 +199,19 @@ export default function VirtualizedMessageList({
 
     el.addEventListener('scroll', handleScroll, { passive: true })
     return () => el.removeEventListener('scroll', handleScroll)
-  }, [])
+  }, [isVisible])
 
   // Auto-scroll to bottom when new messages arrive and user is at bottom
   useEffect(() => {
-    if (messages.length > prevMessageCount.current && isAtBottom) {
+    if (isVisible && messages.length > prevMessageCount.current && isAtBottom) {
       virtualizer.scrollToIndex(viewItems.length - 1, { align: 'end' })
     }
     prevMessageCount.current = messages.length
-  }, [messages.length, isAtBottom, virtualizer, viewItems.length])
+  }, [isVisible, messages.length, isAtBottom, virtualizer, viewItems.length])
 
-  // Scroll to bottom on initial mount if messages exist
+  // Scroll to bottom on initial mount if messages exist and the list is visible
   useEffect(() => {
-    if (viewItems.length > 0) {
+    if (isVisible && viewItems.length > 0) {
       virtualizer.scrollToIndex(viewItems.length - 1, { align: 'end' })
       setIsAtBottom(true)
     }
@@ -216,7 +222,7 @@ export default function VirtualizedMessageList({
   // Detect scroll-up near top and fetch older messages
   useEffect(() => {
     const el = parentRef.current
-    if (!el) return
+    if (!el || !isVisible) return
 
     const handleScroll = () => {
       if (isFetchingRef.current || isLoadingOlder) return
@@ -237,7 +243,7 @@ export default function VirtualizedMessageList({
 
     el.addEventListener('scroll', handleScroll, { passive: true })
     return () => el.removeEventListener('scroll', handleScroll)
-  }, [messages.length, totalMessageCount, isLoadingOlder, fetchOlderMessages, workspaceId, sessionId])
+  }, [isVisible, messages.length, totalMessageCount, isLoadingOlder, fetchOlderMessages, workspaceId, sessionId])
 
   useEffect(() => {
     if (!import.meta.env.DEV) return

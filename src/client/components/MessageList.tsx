@@ -83,12 +83,12 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOp
   }, [visibleMessages])
 
   useEffect(() => {
-    if (!currentMatch) return
+    if (!isVisible || !currentMatch) return
     const el = document.querySelector('[data-search-active="true"]')
     if (el instanceof HTMLElement) {
       el.scrollIntoView({ block: 'center', behavior: 'smooth' })
     }
-  }, [currentMatch])
+  }, [isVisible, currentMatch])
 
   if (messages.length > VIRTUALIZATION_THRESHOLD) {
     return (
