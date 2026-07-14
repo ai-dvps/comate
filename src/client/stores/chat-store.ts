@@ -23,16 +23,6 @@ interface WorkflowPollEntry {
 
 const workflowPollTimers = new Map<string, WorkflowPollEntry>()
 
-function closeSessionSubscriptions(exceptSessionId?: string): void {
-  for (const [sessionId, sub] of sessionSubscriptions) {
-    if (sessionId !== exceptSessionId) {
-      sub.close()
-      sessionSubscriptions.delete(sessionId)
-      stopAllWorkflowPollingForSession(sessionId)
-    }
-  }
-}
-
 function closeWorkspaceSessionSubscriptions(workspaceId: string): void {
   for (const [sessionId, sub] of sessionSubscriptions) {
     if (sub.workspaceId === workspaceId) {
@@ -53,6 +43,61 @@ function closeSingleSessionSubscription(set: SseSetter, sessionId: string): void
   set((state) => ({
     serverNonce: { ...state.serverNonce, [sessionId]: '' },
   }))
+}
+
+function computeDomCacheUpdate(
+  state: ChatState,
+  workspaceId: string,
+  sessionId: string,
+): { nextCache: string[]; evicted: string | null } {
+  const currentCache = state.domCache[workspaceId] || []
+  const withoutSession = currentCache.filter((id) => id !== sessionId)
+  const nextCache = [...withoutSession, sessionId]
+  let evicted: string | null = null
+  if (nextCache.length > DOM_CACHE_LIMIT) {
+    evicted = nextCache.shift() || null
+  }
+  return { nextCache, evicted }
+}
+
+function addBackgroundSession(
+  state: ChatState,
+  workspaceId: string,
+  sessionId: string,
+): Partial<ChatState> {
+  const list = state.backgroundSessions[workspaceId] || []
+  if (list.includes(sessionId)) return {}
+  return {
+    backgroundSessions: {
+      ...state.backgroundSessions,
+      [workspaceId]: [...list, sessionId],
+    },
+  }
+}
+
+function removeBackgroundSession(
+  state: ChatState,
+  workspaceId: string,
+  sessionId: string,
+): Partial<ChatState> {
+  const list = state.backgroundSessions[workspaceId] || []
+  if (!list.includes(sessionId)) return {}
+  return {
+    backgroundSessions: {
+      ...state.backgroundSessions,
+      [workspaceId]: list.filter((id) => id !== sessionId),
+    },
+  }
+}
+
+function closeBackgroundSessionSubscription(
+  set: SseSetter,
+  workspaceId: string,
+  sessionId: string,
+): void {
+  if (!sessionId) return
+  set((state) => removeBackgroundSession(state, workspaceId, sessionId))
+  closeSingleSessionSubscription(set, sessionId)
 }
 
 function stopAllWorkflowPolling(): void {
@@ -84,6 +129,7 @@ export function clearAllSessionSubscriptions(set: SseSetter): void {
   stopAllWorkflowPolling()
   set(() => ({
     serverNonce: {},
+    backgroundSessions: {},
     // Keep pendingSend: subscription_ack will drain it after reconnect.
     // Keep lastEventId: it is the replay cursor for reconnect.
   }))
@@ -280,6 +326,7 @@ interface ChatState {
   resultMeta: Record<string, ResultMeta>
   lastCompletion: Record<string, TurnCompletion>
   domCache: Record<string, string[]>
+  backgroundSessions: Record<string, string[]>
   isRestartingRuntime: Record<string, boolean>
   workflows: Record<string, WorkflowState[]>
 
@@ -324,7 +371,7 @@ function generateId(): string {
 }
 
 const DEFAULT_WINDOW_CAP = 200
-const DOM_CACHE_LIMIT = 3
+const DOM_CACHE_LIMIT = 5
 
 function sanitizeMessagePart(part: unknown): MessagePart | null {
   if (!part || typeof part !== 'object') return null
@@ -1044,7 +1091,7 @@ function updateSubagentToolUse(
   }))
 }
 
-export function handleWsEvent(set: SseSetter, msg: WsEventMessage): void {
+export function handleWsEvent(set: SseSetter, get: SseGetter, msg: WsEventMessage): void {
   if (msg.eventType === 'sse' && msg.sessionId && msg.workspaceId) {
     // Remember the highest event id we've processed so a reconnect can request
     // replay from this point. Without this, a WebSocket reconnect during an
@@ -1056,12 +1103,15 @@ export function handleWsEvent(set: SseSetter, msg: WsEventMessage): void {
     if (typeof data.type === 'string') {
       handleSseEvent(set, msg.workspaceId, msg.sessionId, data.type, msg.data)
     }
+    // Any event from a subscribed session is worth keeping alive in the
+    // background until the server reports it idle.
+    set((state) => addBackgroundSession(state, msg.workspaceId, msg.sessionId))
   } else if (msg.eventType === 'runtime_closed' && msg.sessionId) {
     // The server closed this session's runtime (e.g. idle timeout). Tear down
     // the stale local subscription and clear the server nonce so the next
     // sendMessage re-subscribes to a fresh runtime instead of posting to the
     // void.
-    closeSingleSessionSubscription(set, msg.sessionId)
+    closeBackgroundSessionSubscription(set, msg.workspaceId, msg.sessionId)
   }
 }
 
@@ -2260,8 +2310,6 @@ function subscribeToSession(
   workspaceId: string,
   sessionId: string,
 ): void {
-  closeSessionSubscriptions(sessionId)
-
   const existing = sessionSubscriptions.get(sessionId)
   if (existing) {
     existing.close()
@@ -2288,6 +2336,8 @@ function subscribeToSession(
       set((state) => ({
         isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
       }))
+      // The subscription is now a background-stream candidate for this workspace.
+      set((state) => addBackgroundSession(state, workspaceId, sessionId))
     } catch (err) {
       set((state) => ({
         isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: false },
@@ -2386,6 +2436,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   resultMeta: {},
   lastCompletion: {},
   domCache: {},
+  backgroundSessions: {},
   isRestartingRuntime: {},
   workflows: {},
 
@@ -2393,7 +2444,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   ...(typeof window !== 'undefined' && typeof WebSocket !== 'undefined'
     ? (() => {
         wsClient.onEvent((msg: WsEventMessage) => {
-          handleWsEvent(set, msg)
+          handleWsEvent(set, get, msg)
         })
         wsClient.onDisconnect(() => {
           clearAllSessionSubscriptions(set)
@@ -2464,16 +2515,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       if (!res.ok) throw new Error(i18next.t('common:failedToCreateSession', 'Failed to create session'))
       const session: ChatSession = await res.json()
-      closeSessionSubscriptions(session.id)
+      const { nextCache, evicted } = computeDomCacheUpdate(get(), workspaceId, session.id)
       set((state) => {
         const nextUnread = { ...state.unreadCompletions }
         delete nextUnread[session.id]
-        const currentCache = state.domCache[workspaceId] || []
-        const withoutSession = currentCache.filter((id) => id !== session.id)
-        const nextCache = [...withoutSession, session.id]
-        if (nextCache.length > DOM_CACHE_LIMIT) {
-          nextCache.shift()
-        }
         return {
           sessions: {
             ...state.sessions,
@@ -2485,6 +2530,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...applyActivityUpdate(state, workspaceId, session.id),
         }
       })
+      if (evicted) {
+        closeBackgroundSessionSubscription(set, workspaceId, evicted)
+      }
     } catch (err) {
       console.error('Failed to create session:', err)
     }
@@ -2502,7 +2550,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!forkedSessionId) {
         throw new Error(i18next.t('common:failedToForkSession', 'Failed to fork session'))
       }
-      closeSessionSubscriptions(forkedSessionId)
       const fetchResult = await get().fetchSessions(workspaceId)
       if (fetchResult.ok) {
         set((state) => ({
@@ -2521,16 +2568,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addSession: (workspaceId: string, session: ChatSession) => {
-    closeSessionSubscriptions(session.id)
+    const { nextCache, evicted } = computeDomCacheUpdate(get(), workspaceId, session.id)
     set((state) => {
       const nextUnread = { ...state.unreadCompletions }
       delete nextUnread[session.id]
-      const currentCache = state.domCache[workspaceId] || []
-      const withoutSession = currentCache.filter((id) => id !== session.id)
-      const nextCache = [...withoutSession, session.id]
-      if (nextCache.length > DOM_CACHE_LIMIT) {
-        nextCache.shift()
-      }
       return {
         sessions: {
           ...state.sessions,
@@ -2542,6 +2583,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...applyActivityUpdate(state, workspaceId, session.id),
       }
     })
+    if (evicted) {
+      closeBackgroundSessionSubscription(set, workspaceId, evicted)
+    }
   },
 
   renameSession: async (workspaceId: string, sessionId: string, name: string) => {
@@ -2667,17 +2711,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // leave the session unsubscribed when the user switches back.
     if (get().activeSessionIds[workspaceId] === sessionId && sessionSubscriptions.has(sessionId)) return
 
-    closeSessionSubscriptions(sessionId)
+    const { nextCache, evicted } = computeDomCacheUpdate(get(), workspaceId, sessionId)
+
     set((state) => {
       const nextUnread = { ...state.unreadCompletions }
       if (sessionId) delete nextUnread[sessionId]
-      // Update DOM cache: move session to most-recent, evict oldest if over limit
-      const currentCache = state.domCache[workspaceId] || []
-      const withoutSession = currentCache.filter((id) => id !== sessionId)
-      const nextCache = [...withoutSession, sessionId]
-      if (nextCache.length > DOM_CACHE_LIMIT) {
-        nextCache.shift()
-      }
       return {
         activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
         unreadCompletions: nextUnread,
@@ -2685,6 +2723,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...(sessionId ? applyActivityUpdate(state, workspaceId, sessionId) : {}),
       }
     })
+
+    if (evicted) {
+      closeBackgroundSessionSubscription(set, workspaceId, evicted)
+    }
+
     // Auto-subscribe when switching to a session (skip for bot sessions)
     if (sessionId) {
       const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
@@ -2695,18 +2738,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   touchDomCache: (workspaceId: string, sessionId: string) => {
-    let evicted: string | null = null
-    set((state) => {
-      const currentCache = state.domCache[workspaceId] || []
-      const withoutSession = currentCache.filter((id) => id !== sessionId)
-      const nextCache = [...withoutSession, sessionId]
-      if (nextCache.length > DOM_CACHE_LIMIT) {
-        evicted = nextCache.shift() || null
-      }
-      return {
-        domCache: { ...state.domCache, [workspaceId]: nextCache },
-      }
-    })
+    const { nextCache, evicted } = computeDomCacheUpdate(get(), workspaceId, sessionId)
+    set((state) => ({
+      domCache: { ...state.domCache, [workspaceId]: nextCache },
+    }))
+    if (evicted) {
+      closeBackgroundSessionSubscription(set, workspaceId, evicted)
+    }
     return evicted
   },
 
@@ -2802,7 +2840,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const nextPromptHistory = { ...state.promptHistory }
       delete nextPromptHistory[workspaceId]
-      return { promptHistory: nextPromptHistory }
+      const nextBackgroundSessions = { ...state.backgroundSessions }
+      delete nextBackgroundSessions[workspaceId]
+      return { promptHistory: nextPromptHistory, backgroundSessions: nextBackgroundSessions }
     })
   },
 
