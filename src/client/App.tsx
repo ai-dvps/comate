@@ -131,6 +131,36 @@ function App() {
     }
   }, [providerCheck.ok])
 
+  const {
+    width: sidebarWidth,
+    setWidth: setSidebarWidth,
+    isCollapsed: isSidebarCollapsed,
+    toggleCollapse: toggleSidebarCollapse,
+  } = useSidebarWidth()
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isToggleSidebar =
+        (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b'
+
+      if (!isToggleSidebar) return
+
+      const active = document.activeElement
+      const isEditableInput =
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active?.getAttribute('contenteditable') === 'true'
+
+      if (isEditableInput) return
+
+      event.preventDefault()
+      toggleSidebarCollapse()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [toggleSidebarCollapse])
+
   const handleFileClick = async (path: string, name: string) => {
     if (!activeWorkspaceId) return
 
@@ -198,7 +228,6 @@ function App() {
     setActiveSession(activeWorkspaceId, activeWorkspaceSessionId)
   }, [activeWorkspaceId, activeWorkspaceSessionId, setActiveSession])
 
-  const { width: sidebarWidth, setWidth: setSidebarWidth } = useSidebarWidth()
   const { width: filePanelWidth, setWidth: setFilePanelWidth } = useResizableWidth({
     storageKey: 'file-panel-width',
     defaultWidth: 384,
@@ -324,6 +353,8 @@ function App() {
         <Sidebar
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={toggleSidebarCollapse}
           onFileClick={handleFileClick}
           onFileDoubleClick={handleFileDoubleClick}
         />
