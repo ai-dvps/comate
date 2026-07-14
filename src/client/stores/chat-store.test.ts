@@ -561,7 +561,11 @@ describe('setActiveSession multi-workspace re-subscribe', () => {
       useChatStore.getState().setActiveSession('ws-1', 's1')
       await new Promise((r) => setTimeout(r, 0))
 
-      // Switch to workspace 2: s1 should be closed and s2 subscribed.
+      // Simulate leaving workspace 1: its subscription is torn down.
+      useChatStore.getState().cleanupWorkspace('ws-1')
+      await new Promise((r) => setTimeout(r, 0))
+
+      // Switch to workspace 2.
       useChatStore.getState().setActiveSession('ws-2', 's2')
       await new Promise((r) => setTimeout(r, 0))
 
@@ -583,11 +587,7 @@ describe('setActiveSession multi-workspace re-subscribe', () => {
         (call) => (call[1] as Record<string, unknown>).sessionId === 's1',
       )
       assert.ok(unsubscribeForS1, 's1 unsubscribed when leaving ws-1')
-      const unsubscribeForS2 = unsubscribeCalls.find(
-        (call) => (call[1] as Record<string, unknown>).sessionId === 's2',
-      )
-      assert.ok(unsubscribeForS2, 's2 unsubscribed when leaving ws-2')
-      assert.strictEqual(unsubscribeCalls.length, 2, 'each prior session unsubscribed once')
+      assert.strictEqual(unsubscribeCalls.length, 1, 'only the explicit workspace cleanup unsubscribes')
     } finally {
       requestSpy.mockRestore()
     }
@@ -726,7 +726,7 @@ describe('subscription state after disconnect', () => {
 
   it('keeps lastEventId as the reconnect cursor after clearing subscriptions', () => {
     const set = useChatStore.setState as unknown as SseSetter
-    handleWsEvent(set, {
+    handleWsEvent(set, useChatStore.getState, {
       type: 'event',
       eventType: 'sse',
       workspaceId: 'ws-1',
@@ -770,7 +770,7 @@ describe('WebSocket event lastEventId tracking', () => {
       eventId: 'evt-42',
       data: { type: 'text_delta', text: 'hello' },
     }
-    handleWsEvent(set, msg)
+    handleWsEvent(set, useChatStore.getState, msg)
     assert.strictEqual(getLastEventId('s1'), 'evt-42')
   })
 
@@ -783,7 +783,7 @@ describe('WebSocket event lastEventId tracking', () => {
       sessionId: 's1',
       data: { type: 'text_delta', text: 'hello' },
     }
-    handleWsEvent(set, msg)
+    handleWsEvent(set, useChatStore.getState, msg)
     assert.strictEqual(getLastEventId('s1'), undefined)
   })
 
@@ -799,7 +799,7 @@ describe('WebSocket event lastEventId tracking', () => {
 
     // Simulate a prior event having set the cursor.
     const set = useChatStore.setState as unknown as SseSetter
-    handleWsEvent(set, {
+    handleWsEvent(set, useChatStore.getState, {
       type: 'event',
       eventType: 'sse',
       workspaceId: 'ws-1',
@@ -880,7 +880,7 @@ describe('runtime_closed WebSocket event', () => {
       )
 
       // Server reports the runtime was closed (e.g. idle timeout).
-      handleWsEvent(set, {
+      handleWsEvent(set, useChatStore.getState, {
         type: 'event',
         eventType: 'runtime_closed',
         workspaceId: 'ws-1',
@@ -906,6 +906,175 @@ describe('runtime_closed WebSocket event', () => {
         workspaceId: 'ws-1',
         content: 'second',
       })
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+})
+
+describe('background session streaming', () => {
+  function makeGuiSession(id: string, workspaceId: string): ReturnType<typeof useChatStore.getState>['sessions'][string][number] {
+    return {
+      id,
+      workspaceId,
+      name: 'Test',
+      source: 'gui' as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  beforeEach(() => {
+    clearLastEventId()
+    clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
+    useChatStore.setState({
+      sessions: {
+        'ws-1': [
+          makeGuiSession('s1', 'ws-1'),
+          makeGuiSession('s2', 'ws-1'),
+          makeGuiSession('s3', 'ws-1'),
+          makeGuiSession('s4', 'ws-1'),
+          makeGuiSession('s5', 'ws-1'),
+          makeGuiSession('s6', 'ws-1'),
+        ],
+      },
+      activeSessionIds: {},
+      messages: {},
+      drafts: {},
+      subagents: {},
+      workflows: {},
+      tasks: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      approvalQueue: {},
+      serverNonce: {},
+      pendingSend: {},
+      backgroundSessions: {},
+    })
+  })
+
+  it('keeps the previous session subscribed when switching to another session', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+
+      useChatStore.getState().setActiveSession('ws-1', 's2')
+      await new Promise((r) => setTimeout(r, 0))
+
+      const subscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'subscribe')
+      assert.strictEqual(subscribeCalls.length, 2, 'both sessions should be subscribed')
+
+      const unsubscribeForS1 = requestSpy.mock.calls.find(
+        (call) => call[0] === 'unsubscribe' && (call[1] as Record<string, unknown>).sessionId === 's1',
+      )
+      assert.strictEqual(unsubscribeForS1, undefined, 'must not tear down s1 when switching away')
+
+      const state = useChatStore.getState()
+      assert.ok(state.backgroundSessions['ws-1']?.includes('s1'))
+      assert.ok(state.backgroundSessions['ws-1']?.includes('s2'))
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('adds a session to the background registry when it receives an SSE event', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+
+    handleWsEvent(set, useChatStore.getState, {
+      type: 'event',
+      eventType: 'sse',
+      workspaceId: 'ws-1',
+      sessionId: 's1',
+      eventId: 'evt-1',
+      data: { type: 'text_delta', text: 'hello' },
+    })
+
+    assert.ok(useChatStore.getState().backgroundSessions['ws-1']?.includes('s1'))
+  })
+
+  it('removes a session from the background registry on runtime_closed and tears down its subscription', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+    const set = useChatStore.setState as unknown as SseSetter
+
+    try {
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+      requestSpy.mockClear()
+
+      handleWsEvent(set, useChatStore.getState, {
+        type: 'event',
+        eventType: 'runtime_closed',
+        workspaceId: 'ws-1',
+        sessionId: 's1',
+        data: {},
+      })
+
+      const state = useChatStore.getState()
+      assert.strictEqual(state.backgroundSessions['ws-1']?.includes('s1'), false)
+      assert.strictEqual(state.serverNonce['s1'], '')
+
+      const unsubscribeCalls = requestSpy.mock.calls.filter((call) => call[0] === 'unsubscribe')
+      assert.strictEqual(unsubscribeCalls.length, 1)
+      assert.strictEqual((unsubscribeCalls[0][1] as Record<string, unknown>).sessionId, 's1')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('evicts the oldest cached session from the background registry when the DOM cache overflows', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      for (const id of ['s1', 's2', 's3', 's4', 's5']) {
+        useChatStore.getState().setActiveSession('ws-1', id)
+        await new Promise((r) => setTimeout(r, 0))
+      }
+
+      requestSpy.mockClear()
+
+      // Adding a sixth session pushes s1 out of the DOM cache.
+      useChatStore.getState().setActiveSession('ws-1', 's6')
+      await new Promise((r) => setTimeout(r, 0))
+
+      const state = useChatStore.getState()
+      assert.strictEqual(state.domCache['ws-1']?.length, 5)
+      assert.strictEqual(state.domCache['ws-1']?.includes('s1'), false)
+      assert.strictEqual(state.backgroundSessions['ws-1']?.includes('s1'), false)
+      assert.ok(state.backgroundSessions['ws-1']?.includes('s6'))
+
+      const unsubscribeForS1 = requestSpy.mock.calls.find(
+        (call) => call[0] === 'unsubscribe' && (call[1] as Record<string, unknown>).sessionId === 's1',
+      )
+      assert.ok(unsubscribeForS1, 'evicted session should be unsubscribed')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('clears the background registry for a workspace on cleanupWorkspace', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+    const set = useChatStore.setState as unknown as SseSetter
+
+    try {
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+
+      handleWsEvent(set, useChatStore.getState, {
+        type: 'event',
+        eventType: 'sse',
+        workspaceId: 'ws-1',
+        sessionId: 's2',
+        eventId: 'evt-1',
+        data: { type: 'text_delta', text: 'hello' },
+      })
+
+      assert.ok(useChatStore.getState().backgroundSessions['ws-1']?.includes('s2'))
+
+      useChatStore.getState().cleanupWorkspace('ws-1')
+
+      assert.strictEqual(useChatStore.getState().backgroundSessions['ws-1'], undefined)
     } finally {
       requestSpy.mockRestore()
     }
@@ -1021,7 +1190,7 @@ describe('setSessionProvider', () => {
       isRestartingRuntime: {},
     })
     // Clear any lingering subscriptions from other test suites.
-    useChatStore.getState().setActiveSession('ws-1', '')
+    clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
   })
 
   afterEach(() => {
@@ -1774,7 +1943,7 @@ describe('session_processing authoritative slice (U3)', () => {
 
   it('routes session_processing through handleWsEvent', () => {
     const set = useChatStore.setState as unknown as SseSetter
-    handleWsEvent(set, {
+    handleWsEvent(set, useChatStore.getState, {
       type: 'event',
       eventType: 'sse',
       workspaceId: 'ws-1',
