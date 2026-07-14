@@ -78,7 +78,7 @@ describe('Sidebar', () => {
     expect(screen.queryByTestId('sidebar-resize-handle')).not.toBeInTheDocument();
   });
 
-  it('renders three icon buttons and an expand button when collapsed', () => {
+  it('renders three icon buttons when collapsed', () => {
     renderWithI18n(
       <Sidebar
         width={48}
@@ -92,82 +92,10 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: 'Show sessions' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show todos' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show files' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument();
 
     expect(screen.queryByRole('button', { name: 'Sessions' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Todos' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument();
-  });
-
-  it('switches the active tab from a collapsed icon without expanding', () => {
-    const onToggleCollapse = vi.fn();
-    const { rerender } = renderWithI18n(
-      <Sidebar
-        width={48}
-        onWidthChange={vi.fn()}
-        onFileClick={vi.fn()}
-        onFileDoubleClick={vi.fn()}
-        isCollapsed={true}
-        onToggleCollapse={onToggleCollapse}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show files' }));
-
-    expect(onToggleCollapse).not.toHaveBeenCalled();
-
-    rerender(
-      <I18nextProvider i18n={i18n}>
-        <Sidebar
-          width={240}
-          onWidthChange={vi.fn()}
-          onFileClick={vi.fn()}
-          onFileDoubleClick={vi.fn()}
-          isCollapsed={false}
-          onToggleCollapse={onToggleCollapse}
-        />
-      </I18nextProvider>,
-    );
-
-    expect(screen.getByRole('button', { name: 'Files' })).toHaveClass('border-b-2');
-    expect(screen.getByRole('button', { name: 'Sessions' })).not.toHaveClass('border-b-2');
-    expect(screen.getByRole('button', { name: 'Todos' })).not.toHaveClass('border-b-2');
-  });
-
-  it('calls onToggleCollapse when the expand button is clicked', () => {
-    const onToggleCollapse = vi.fn();
-    renderWithI18n(
-      <Sidebar
-        width={48}
-        onWidthChange={vi.fn()}
-        onFileClick={vi.fn()}
-        onFileDoubleClick={vi.fn()}
-        isCollapsed={true}
-        onToggleCollapse={onToggleCollapse}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }));
-
-    expect(onToggleCollapse).toHaveBeenCalledTimes(1);
-  });
-
-  it('calls onToggleCollapse when the collapse button is clicked in expanded state', () => {
-    const onToggleCollapse = vi.fn();
-    renderWithI18n(
-      <Sidebar
-        width={240}
-        onWidthChange={vi.fn()}
-        onFileClick={vi.fn()}
-        onFileDoubleClick={vi.fn()}
-        isCollapsed={false}
-        onToggleCollapse={onToggleCollapse}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
-
-    expect(onToggleCollapse).toHaveBeenCalledTimes(1);
   });
 
   it('switches between sessions, todos, and files in both expanded and collapsed states', () => {

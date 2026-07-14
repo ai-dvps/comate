@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import ChatPanel from './ChatPanel'
 import i18n from '../i18n'
@@ -198,21 +198,58 @@ describe('ChatPanel', () => {
     expect(screen.queryByTestId('task-panel')).not.toBeInTheDocument()
   })
 
-  it('renders the shared floating wrapper with both panels when workflows and tasks are active', () => {
+  it('renders the sidebar toggle in the header when a callback is provided', () => {
     mockChatStore.activeSessionIds = { ws1: 's1' }
     mockChatStore.domCache = { ws1: ['s1'] }
     mockChatStore.messages = { s1: [] }
-    mockChatStore.workflows = { s1: [{ runId: 'wf-1' }] }
-    mockChatStore.tasks = { s1: [{ id: 't1', subject: 'Task', status: 'pending' }] }
 
-    renderWithI18n(<ChatPanel workspaceId="ws1" />)
+    renderWithI18n(
+      <ChatPanel
+        workspaceId="ws1"
+        isSidebarCollapsed={false}
+        onToggleSidebarCollapse={vi.fn()}
+      />,
+    )
 
-    expect(screen.getByTestId('workflow-floating-panel')).toBeInTheDocument()
-    expect(screen.getByTestId('task-panel')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Collapse sidebar' }),
+    ).toBeInTheDocument()
+  })
 
-    const wrapper = screen.getByTestId('workflow-floating-panel').parentElement
-    expect(wrapper).toHaveClass('absolute', 'top-4', 'right-4', 'z-20')
-    expect(wrapper).toHaveClass('flex', 'flex-col', 'items-end', 'gap-2')
-    expect(wrapper).not.toHaveClass('max-w-xs')
+  it('uses the expand label when the sidebar is collapsed', () => {
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.messages = { s1: [] }
+
+    renderWithI18n(
+      <ChatPanel
+        workspaceId="ws1"
+        isSidebarCollapsed={true}
+        onToggleSidebarCollapse={vi.fn()}
+      />,
+    )
+
+    expect(
+      screen.getByRole('button', { name: 'Expand sidebar' }),
+    ).toBeInTheDocument()
+  })
+
+  it('calls onToggleSidebarCollapse when the header toggle is clicked', () => {
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.messages = { s1: [] }
+
+    const onToggle = vi.fn()
+    renderWithI18n(
+      <ChatPanel
+        workspaceId="ws1"
+        isSidebarCollapsed={false}
+        onToggleSidebarCollapse={onToggle}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
+
+    expect(onToggle).toHaveBeenCalledTimes(1)
   })
 })
