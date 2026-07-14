@@ -5,6 +5,7 @@ import { AlertCircle, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useResizableWidth } from './hooks/use-resizable-width'
+import { useSidebarKeyboardShortcut } from './hooks/use-sidebar-keyboard-shortcut'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 import WorkspaceEmptyState from './components/WorkspaceEmptyState'
@@ -131,6 +132,15 @@ function App() {
     }
   }, [providerCheck.ok])
 
+  const {
+    width: sidebarWidth,
+    setWidth: setSidebarWidth,
+    isCollapsed: isSidebarCollapsed,
+    toggleCollapse: toggleSidebarCollapse,
+  } = useSidebarWidth()
+
+  useSidebarKeyboardShortcut(toggleSidebarCollapse)
+
   const handleFileClick = async (path: string, name: string) => {
     if (!activeWorkspaceId) return
 
@@ -198,7 +208,6 @@ function App() {
     setActiveSession(activeWorkspaceId, activeWorkspaceSessionId)
   }, [activeWorkspaceId, activeWorkspaceSessionId, setActiveSession])
 
-  const { width: sidebarWidth, setWidth: setSidebarWidth } = useSidebarWidth()
   const { width: filePanelWidth, setWidth: setFilePanelWidth } = useResizableWidth({
     storageKey: 'file-panel-width',
     defaultWidth: 384,
@@ -324,6 +333,8 @@ function App() {
         <Sidebar
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={toggleSidebarCollapse}
           onFileClick={handleFileClick}
           onFileDoubleClick={handleFileDoubleClick}
         />

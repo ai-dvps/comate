@@ -11,6 +11,11 @@
     "sessions": "Sessions",
     "todos": "Todos",
     "files": "Files",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar",
+    "showSessions": "Show sessions",
+    "showTodos": "Show todos",
+    "showFiles": "Show files",
     "noWorkspace": "Open a workspace to view sessions"
   },
   "status": {

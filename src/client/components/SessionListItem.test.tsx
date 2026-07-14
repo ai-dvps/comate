@@ -59,6 +59,18 @@ describe('SessionListItem', () => {
     expect(screen.queryByText('Draft')).toBeNull()
   })
 
+  it('does not render an approval-mode badge for auto sessions', () => {
+    renderWithI18n(<SessionListItem session={makeSession({ approvalMode: 'auto' })} {...baseProps} />)
+    expect(screen.queryByText('Auto')).toBeNull()
+  })
+
+  it('does not render an approval-mode badge for readonly sessions', () => {
+    renderWithI18n(
+      <SessionListItem session={makeSession({ approvalMode: 'readonly' })} {...baseProps} />,
+    )
+    expect(screen.queryByText('Readonly')).toBeNull()
+  })
+
   describe('bot icon active/inactive distinction', () => {
     it('renders the WeCom icon at full color when active', () => {
       renderWithI18n(
