@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Collapsible main sidebar** — the session/todo/file sidebar can now be collapsed into a narrow icon rail to free up horizontal space on small screens. Clicking a tab icon switches tabs without expanding, and the bottom chevron restores the sidebar to its previously resized width. The collapsed state and width persist across app restarts, and `Cmd/Ctrl+B` toggles collapse from anywhere except text inputs.
 ## [0.0.24] - 2026-07-14
 
 ### Fixed
