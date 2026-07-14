@@ -11,6 +11,11 @@
     "sessions": "会话",
     "todos": "待办",
     "files": "文件",
+    "collapse": "收起侧边栏",
+    "expand": "展开侧边栏",
+    "showSessions": "显示会话",
+    "showTodos": "显示待办",
+    "showFiles": "显示文件",
     "noWorkspace": "打开工作区以查看会话"
   },
   "status": {
