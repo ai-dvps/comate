@@ -139,7 +139,7 @@ export class ComateWebSocketServer {
     };
 
     runtime.subscribeWebSocket(handler, lastEventId);
-    unsubscribersBySession.set(ctx.socket, () => runtime.removeWebEventHandler(handler));
+    unsubscribersBySession.set(ctx.socket, () => runtime.unsubscribeWebSocket(handler));
 
     this.sendOk(ctx.socket, req.id, { subscribed: true });
     diagLog(`[WebSocket] subscribe response sent sessionId=${sessionId} elapsed=${Date.now() - startedAt}ms`);
@@ -151,7 +151,7 @@ export class ComateWebSocketServer {
     this.sendOk(ctx.socket, req.id, { unsubscribed: true });
   }
 
-  private unsubscribe(ctx: ClientContext, workspaceId: string, sessionId: string): void {
+  private unsubscribe(ctx: ClientContext, _workspaceId: string, sessionId: string): void {
     ctx.subscriptions.delete(sessionId);
 
     const unsubscribersBySession = this.runtimeEventUnsubscribers.get(sessionId);
@@ -164,11 +164,6 @@ export class ComateWebSocketServer {
       if (unsubscribersBySession.size === 0) {
         this.runtimeEventUnsubscribers.delete(sessionId);
       }
-    }
-
-    const runtime = chatService.getRuntimeIfExists(sessionId);
-    if (runtime) {
-      runtime.unsubscribe();
     }
   }
 

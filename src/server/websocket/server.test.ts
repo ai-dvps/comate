@@ -6,7 +6,7 @@ import { WebSocket } from 'ws';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
 import { ComateWebSocketServer } from './server.js';
-import type { WsResponse, WsErrorResponse, WsEventMessage } from './types.js';
+import type { WsResponse, WsEventMessage } from './types.js';
 
 describe('ComateWebSocketServer', { concurrency: false }, () => {
   let server: http.Server;
@@ -146,6 +146,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
           eventHandler = handler;
         },
         removeWebEventHandler: () => {},
+        unsubscribeWebSocket: () => {},
         unsubscribe: () => {},
       }) as unknown as ReturnType<typeof originalGetOrCreateRuntime>;
 
@@ -175,6 +176,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       ({
         subscribeWebSocket: () => {},
         removeWebEventHandler: () => {},
+        unsubscribeWebSocket: () => {},
         unsubscribe: () => {},
       }) as unknown as ReturnType<typeof originalGetOrCreateRuntime>;
 
@@ -196,12 +198,48 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     }
   });
 
-  it('returns an error for unknown request types', async () => {
-    ws = await connect();
-    sendRequest(ws, 'bad-1', 'unknownType', {});
+  it('does not call runtime.unsubscribe when one of several WebSocket sockets disconnects', async () => {
+    const originalGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
+    let unsubscribeWebSocketCalls = 0;
+    let unsubscribeCalls = 0;
 
-    const response = await waitForMessage<WsErrorResponse>(ws, (msg) => 'id' in msg && (msg as WsErrorResponse).id === 'bad-1');
-    assert.strictEqual(response.ok, false);
-    assert.match((response as WsErrorResponse).error.message, /Unknown request type/);
+    chatService.getOrCreateRuntime = async () =>
+      ({
+        subscribeWebSocket: () => {},
+        removeWebEventHandler: () => {},
+        unsubscribeWebSocket: () => {
+          unsubscribeWebSocketCalls++;
+        },
+        unsubscribe: () => {
+          unsubscribeCalls++;
+        },
+      }) as unknown as ReturnType<typeof originalGetOrCreateRuntime>;
+
+    try {
+      const ws1 = await connect();
+      const ws2 = await connect();
+
+      sendRequest(ws1, 'sub-1', 'subscribe', { workspaceId: 'ws-1', sessionId: 'session-a' });
+      sendRequest(ws2, 'sub-2', 'subscribe', { workspaceId: 'ws-1', sessionId: 'session-a' });
+
+      const subOk1 = await waitForMessage<WsResponse>(ws1, (msg) => 'id' in msg && (msg as WsResponse).id === 'sub-1');
+      assert.strictEqual(subOk1.ok, true);
+      const subOk2 = await waitForMessage<WsResponse>(ws2, (msg) => 'id' in msg && (msg as WsResponse).id === 'sub-2');
+      assert.strictEqual(subOk2.ok, true);
+
+      ws1.close();
+      await new Promise((r) => setTimeout(r, 50));
+
+      assert.strictEqual(unsubscribeWebSocketCalls, 1);
+      assert.strictEqual(unsubscribeCalls, 0);
+
+      ws2.close();
+      await new Promise((r) => setTimeout(r, 50));
+
+      assert.strictEqual(unsubscribeWebSocketCalls, 2);
+      assert.strictEqual(unsubscribeCalls, 0);
+    } finally {
+      chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
+    }
   });
 });

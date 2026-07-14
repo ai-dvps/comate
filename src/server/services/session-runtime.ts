@@ -532,6 +532,17 @@ export class SessionRuntime {
     }
   }
 
+  unsubscribeWebSocket(handler: (id: number, event: SseEvent) => void): void {
+    this.removeWebEventHandler(handler);
+    // Only tear down SSE heartbeat/response state when no SSE response is
+    // active and no web handlers remain. This keeps a runtime alive for a
+    // sibling SSE subscriber when a WebSocket client disconnects.
+    if (this.activeRes || this.webEventHandlers.size > 0) {
+      return;
+    }
+    this.unsubscribe();
+  }
+
   getStatus(): { pendingCount: number; isProcessing: boolean; workspaceId: string } {
     return {
       pendingCount: this.pendingApprovals.size,

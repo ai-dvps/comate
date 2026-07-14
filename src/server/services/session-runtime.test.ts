@@ -191,6 +191,134 @@ describe('session-runtime activity callback', { concurrency: false }, () => {
   });
 });
 
+describe('session-runtime mixed-channel unsubscribe guard', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(messages: SDKMessage[] = []): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+
+    const messageGen = (async function* () {
+      for (const msg of messages) {
+        yield msg;
+      }
+    })();
+
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: messageGen,
+      }),
+    } as unknown as SdkClient;
+  }
+
+  function createMockResponse(): import('express').Response {
+    return { write: () => true } as unknown as import('express').Response;
+  }
+
+  function getWebEventHandlers(rt: SessionRuntime) {
+    return (rt as unknown as { webEventHandlers: Set<unknown> }).webEventHandlers;
+  }
+
+  function getHeartbeatTimer(rt: SessionRuntime) {
+    return (rt as unknown as { heartbeatTimer?: NodeJS.Timeout }).heartbeatTimer;
+  }
+
+  function getActiveRes(rt: SessionRuntime) {
+    return (rt as unknown as { activeRes: import('express').Response | null }).activeRes;
+  }
+
+  it('keeps SSE state intact when a WebSocket handler unsubscribes while an SSE response is active', () => {
+    let unsubscribedCalls = 0;
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      undefined,
+      undefined,
+      () => {
+        unsubscribedCalls++;
+      },
+    );
+
+    const res = createMockResponse();
+    runtime.subscribe(res);
+    assert.strictEqual(getActiveRes(runtime), res);
+    assert.ok(getHeartbeatTimer(runtime));
+
+    const handler = () => {};
+    runtime.subscribeWebSocket(handler);
+    runtime.unsubscribeWebSocket(handler);
+
+    assert.strictEqual(getActiveRes(runtime), res);
+    assert.ok(getHeartbeatTimer(runtime));
+    assert.strictEqual(unsubscribedCalls, 0);
+  });
+
+  it('keeps other WebSocket handlers alive when one socket unsubscribes', () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    runtime.subscribe(createMockResponse());
+
+    const handler1 = () => {};
+    const handler2 = () => {};
+    runtime.subscribeWebSocket(handler1);
+    runtime.subscribeWebSocket(handler2);
+    assert.strictEqual(getWebEventHandlers(runtime).size, 2);
+
+    runtime.unsubscribeWebSocket(handler1);
+
+    assert.strictEqual(getWebEventHandlers(runtime).size, 1);
+    assert.ok(getWebEventHandlers(runtime).has(handler2));
+    assert.ok(getActiveRes(runtime));
+    assert.ok(getHeartbeatTimer(runtime));
+  });
+
+  it('clears SSE state only after the SSE response and all web handlers are gone', () => {
+    let unsubscribedCalls = 0;
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+      undefined,
+      undefined,
+      () => {
+        unsubscribedCalls++;
+      },
+    );
+
+    const res = createMockResponse();
+    runtime.subscribe(res);
+
+    const handler = () => {};
+    runtime.subscribeWebSocket(handler);
+
+    // Drop the SSE response first; web handler still keeps the runtime subscribed.
+    runtime.unsubscribe(res);
+    assert.strictEqual(unsubscribedCalls, 1);
+
+    // SSE state should already be cleared by the explicit SSE unsubscribe.
+    // Now drop the web handler: with no SSE response and no web handlers,
+    // unsubscribeWebSocket should be a no-op for SSE state.
+    runtime.unsubscribeWebSocket(handler);
+    assert.strictEqual(getActiveRes(runtime), null);
+    assert.strictEqual(getHeartbeatTimer(runtime), undefined);
+    assert.strictEqual(getWebEventHandlers(runtime).size, 0);
+  });
+});
+
 describe('session-runtime idle state', { concurrency: false }, () => {
   let runtime: SessionRuntime | undefined;
 
