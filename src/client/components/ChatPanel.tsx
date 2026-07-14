@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { PanelLeft, PanelLeftOpen } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useProviderStore } from '../stores/provider-store'
@@ -20,10 +22,16 @@ const EMPTY_ARRAY: [] = []
 
 interface ChatPanelProps {
   workspaceId: string
+  isSidebarCollapsed?: boolean
+  onToggleSidebarCollapse?: () => void
 }
 
-export default function ChatPanel({ workspaceId }: ChatPanelProps) {
-  const { t } = useTranslation('chat')
+export default function ChatPanel({
+  workspaceId,
+  isSidebarCollapsed = false,
+  onToggleSidebarCollapse,
+}: ChatPanelProps) {
+  const { t } = useTranslation(['chat', 'common'])
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
@@ -334,7 +342,33 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   return (
     <div className="flex flex-col h-full bg-bg">
       {/* Chat Header */}
-      <div className="flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
+      <div className="relative flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
+        {onToggleSidebarCollapse && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+                aria-label={
+                  isSidebarCollapsed
+                    ? t('common:sidebar.expand')
+                    : t('common:sidebar.collapse')
+                }
+                onClick={() => onToggleSidebarCollapse()}
+              >
+                {isSidebarCollapsed ? (
+                  <PanelLeftOpen className="w-5 h-5" />
+                ) : (
+                  <PanelLeft className="w-5 h-5" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {isSidebarCollapsed
+                ? t('common:sidebar.expand')
+                : t('common:sidebar.collapse')}
+            </TooltipContent>
+          </Tooltip>
+        )}
         <div className="flex items-center gap-2 min-w-0 max-w-full px-4">
           <span className="font-medium text-text-primary truncate max-w-md">
             {activeSession?.name || t('noSession')}

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare, CheckSquare, Folder, ChevronRight, ChevronLeft } from 'lucide-react'
+import { MessageSquare, CheckSquare, Folder } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
@@ -15,7 +15,6 @@ interface SidebarProps {
   onFileClick: (path: string, name: string) => void
   onFileDoubleClick?: (path: string, name: string) => void
   isCollapsed?: boolean
-  onToggleCollapse?: () => void
 }
 
 type SidebarTab = 'sessions' | 'files' | 'todos'
@@ -26,7 +25,6 @@ export default function Sidebar({
   onFileClick,
   onFileDoubleClick,
   isCollapsed = false,
-  onToggleCollapse,
 }: SidebarProps) {
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<SidebarTab>('sessions')
@@ -131,21 +129,6 @@ export default function Sidebar({
             ))}
           </div>
 
-          {/* Expand button */}
-          <div className="mt-auto flex flex-col items-center py-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
-                  aria-label={t('sidebar.expand')}
-                  onClick={() => onToggleCollapse?.()}
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">{t('sidebar.expand')}</TooltipContent>
-            </Tooltip>
-          </div>
         </>
       ) : (
         <>
@@ -198,22 +181,6 @@ export default function Sidebar({
                 onFileDoubleClick={onFileDoubleClick}
               />
             )}
-          </div>
-
-          {/* Collapse button */}
-          <div className="flex-shrink-0 border-t border-border/50 p-2 flex justify-center">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
-                  aria-label={t('sidebar.collapse')}
-                  onClick={() => onToggleCollapse?.()}
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">{t('sidebar.collapse')}</TooltipContent>
-            </Tooltip>
           </div>
 
           {/* Resize Handle */}

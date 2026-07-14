@@ -334,7 +334,6 @@ function App() {
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
           isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={toggleSidebarCollapse}
           onFileClick={handleFileClick}
           onFileDoubleClick={handleFileDoubleClick}
         />
@@ -364,7 +363,11 @@ function App() {
                 aria-hidden={wsId !== activeWorkspaceId}
                 {...(wsId !== activeWorkspaceId ? { inert: '' } : {})}
               >
-                <ChatPanel workspaceId={wsId} />
+                <ChatPanel
+                  workspaceId={wsId}
+                  isSidebarCollapsed={isSidebarCollapsed}
+                  onToggleSidebarCollapse={toggleSidebarCollapse}
+                />
               </div>
             ))
           ) : (
