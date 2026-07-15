@@ -78,7 +78,7 @@
     "title": "结果视图：突出结果，折叠中间过程",
     "result": "结果",
     "linear": "线性",
-    "processWord": "执行了",
+    "processWord": "已执行",
     "thinking": "思考中",
     "steps_other": "{{count}} 步",
     "ghostLabel": "过程区域，共 {{count}} 步，最新：{{latest}}。点击展开。",
