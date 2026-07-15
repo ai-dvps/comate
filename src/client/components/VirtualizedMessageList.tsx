@@ -21,6 +21,7 @@ import { Button } from './ui/button'
 import CompactingIndicator from './CompactingIndicator'
 import ChatMessageRenderer, { CompactBoundary } from './ChatMessageRenderer'
 import { adaptChatMessage, buildResultMap } from './chat-message-adapter'
+import { mergeAssistantTurns } from './message-grouping'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 
 const EMPTY_ARRAY: [] = []
@@ -86,7 +87,10 @@ export default function VirtualizedMessageList({
     () => messages.filter((m) => !isToolResultOnly(m)),
     [messages],
   )
-  const viewItems = useMemo(() => pairCliMeta(visibleMessages), [visibleMessages])
+  const viewItems = useMemo(
+    () => pairCliMeta(displayMode === 'result' ? mergeAssistantTurns(visibleMessages) : visibleMessages),
+    [visibleMessages, displayMode],
+  )
 
   const virtualizer = useVirtualizer({
     count: viewItems.length,

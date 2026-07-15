@@ -1,4 +1,5 @@
 import type { RenderablePart } from './chat-message-adapter'
+import type { ChatMessage, MessagePart } from '../types/message'
 
 /**
  * Result-focused display mode: an assistant turn's parts are reinterpreted as
@@ -34,6 +35,53 @@ export type MessageRegion = TextRegion | ProcessRegion
 /** A part belongs to a process region unless it is text (text breaks runs). */
 function isProcessPart(part: RenderablePart): boolean {
   return part.type !== 'text'
+}
+
+/**
+ * Result-focused mode: a single user turn can span multiple assistant messages
+ * in the SDK transcript (the API stores one assistant message per tool step,
+ * with results in separate user messages that are already filtered out). Merge
+ * consecutive assistant messages into one so the whole turn's thinking + tool
+ * runs collapse into a single ghost instead of one ghost per step.
+ *
+ * The merged message's id joins the source ids with '|' so the drawer can split
+ * it back apart to read each source message. Single assistant messages pass
+ * through unchanged (preserving their real id for search/scroll).
+ */
+export function mergeAssistantTurns(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = []
+  let buffer: ChatMessage[] = []
+  const flush = (): void => {
+    if (buffer.length === 0) return
+    if (buffer.length === 1) {
+      out.push(buffer[0])
+    } else {
+      const parts: MessagePart[] = []
+      const ids: string[] = []
+      for (const m of buffer) {
+        parts.push(...m.parts)
+        ids.push(m.id)
+      }
+      out.push({
+        id: ids.join('|'),
+        role: 'assistant',
+        parts,
+        timestamp: buffer[0].timestamp,
+        isStreaming: buffer.some((m) => m.isStreaming),
+      })
+    }
+    buffer = []
+  }
+  for (const m of messages) {
+    if (m.role === 'assistant') {
+      buffer.push(m)
+    } else {
+      flush()
+      out.push(m)
+    }
+  }
+  flush()
+  return out
 }
 
 /**
