@@ -222,5 +222,10 @@
     "copied": "已复制",
     "highlightSkipped": "负载较大，已跳过语法高亮",
     "copyFailed": "复制失败"
+  },
+  "askUserQuestion": {
+    "title": "询问用户",
+    "multiSelect": "多选",
+    "optionFallback": "选项 {{number}}"
   }
 }
