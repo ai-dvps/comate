@@ -5,11 +5,13 @@ import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useProviderStore } from '../stores/provider-store'
 import { useMessageSearch } from '../hooks/useMessageSearch'
+import { useAppSettings } from '../hooks/use-app-settings'
 import ChatEmptyState from './ChatEmptyState'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
 import SubagentDrawer from './SubagentDrawer'
+import ProcessRegionDrawer from './ProcessRegionDrawer'
 import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
 import MessageSearchBar from './MessageSearchBar'
@@ -71,6 +73,17 @@ export default function ChatPanel({
   >(null)
   const [openWorkflowRunId, setOpenWorkflowRunId] = useState<string | null>(null)
   const [subagentPanelWidth, setSubagentPanelWidth] = useState(400)
+  const [openProcessRegion, setOpenProcessRegion] = useState<{
+    messageId: string
+    regionIndex: number
+  } | null>(null)
+  const [processRegionWidth, setProcessRegionWidth] = useState(400)
+  const { displayMode } = useAppSettings()
+
+  // Close the process-region drawer if the user leaves result-focused mode (R4).
+  useEffect(() => {
+    if (displayMode !== 'result') setOpenProcessRegion(null)
+  }, [displayMode])
   const [refreshMeta, setRefreshMeta] = useState<{
     lastRefreshedAt: Date | null
     lastNewCount: number
@@ -338,6 +351,17 @@ export default function ChatPanel({
     setOpenWorkflowRunId(null)
   }, [])
 
+  const handleOpenProcessRegion = useCallback(
+    (messageId: string, regionIndex: number) => {
+      setOpenProcessRegion({ messageId, regionIndex })
+    },
+    [],
+  )
+
+  const handleCloseProcessRegion = useCallback(() => {
+    setOpenProcessRegion(null)
+  }, [])
+
   return (
     <div className="flex flex-col h-full bg-bg">
       {/* Chat Header */}
@@ -406,6 +430,7 @@ export default function ChatPanel({
                   workspaceId={workspaceId}
                   onOpenDrawer={setOpenDrawerToolUseId}
                   onOpenWorkflow={setOpenWorkflowRunId}
+                  onOpenProcessRegion={handleOpenProcessRegion}
                   isVisible={sessionId === activeSessionId}
                   searchMatches={searchMatches}
                   currentMatch={currentMatch}
@@ -495,6 +520,18 @@ export default function ChatPanel({
             runId={openWorkflowRunId}
             sessionId={activeSessionId}
             onClose={handleCloseWorkflow}
+          />
+        )}
+
+        {/* Process Region Drawer (result-focused mode) */}
+        {activeSessionId && openProcessRegion && (
+          <ProcessRegionDrawer
+            messageId={openProcessRegion.messageId}
+            regionIndex={openProcessRegion.regionIndex}
+            sessionId={activeSessionId}
+            width={processRegionWidth}
+            onClose={handleCloseProcessRegion}
+            onWidthChange={setProcessRegionWidth}
           />
         )}
       </div>

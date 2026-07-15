@@ -80,7 +80,9 @@
     "linear": "Linear",
     "thinking": "Thinking",
     "steps": "{{count}} steps",
-    "ghostLabel": "Process region, {{count}} steps, latest: {{latest}}. Activate to expand."
+    "ghostLabel": "Process region, {{count}} steps, latest: {{latest}}. Activate to expand.",
+    "drawerTitle": "Process region — {{count}} steps",
+    "emptyRegion": "No steps in this region."
   },
   "loadingSessions": "Loading sessions...",
   "noSessions": "No sessions yet.",
