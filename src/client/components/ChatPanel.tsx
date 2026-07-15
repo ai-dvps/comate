@@ -347,7 +347,7 @@ export default function ChatPanel({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+                className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
                 aria-label={
                   isSidebarCollapsed
                     ? t('common:sidebar.expand')
@@ -356,9 +356,9 @@ export default function ChatPanel({
                 onClick={() => onToggleSidebarCollapse()}
               >
                 {isSidebarCollapsed ? (
-                  <PanelLeftOpen className="w-5 h-5" />
+                  <PanelLeftOpen className="w-4 h-4" />
                 ) : (
-                  <PanelLeft className="w-5 h-5" />
+                  <PanelLeft className="w-4 h-4" />
                 )}
               </button>
             </TooltipTrigger>
