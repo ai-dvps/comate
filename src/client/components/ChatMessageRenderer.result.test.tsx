@@ -78,7 +78,7 @@ describe('ChatMessageRenderer result-focused mode', () => {
   it('flags a ghost when a tool in its region errored (R8 error indicator)', () => {
     const msg = assistantMessage([tool('Bash'), text('done')])
     const resultMap = new Map([
-      ['Bash', { type: 'tool_result', toolUseId: 'Bash', output: 'boom', isError: true }],
+      ['Bash', { type: 'tool_result' as const, toolUseId: 'Bash', output: 'boom', isError: true }],
     ])
     renderWithI18n(
       <ChatMessageRenderer

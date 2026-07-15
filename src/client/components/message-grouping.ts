@@ -32,11 +32,6 @@ export interface ProcessRegion {
 
 export type MessageRegion = TextRegion | ProcessRegion
 
-/** A part belongs to a process region unless it is text (text breaks runs). */
-function isProcessPart(part: RenderablePart): boolean {
-  return part.type !== 'text'
-}
-
 /**
  * Result-focused mode: a single user turn can span multiple assistant messages
  * in the SDK transcript (the API stores one assistant message per tool step,
@@ -113,7 +108,7 @@ export function groupMessageParts(parts: RenderablePart[]): MessageRegion[] {
     // `text_delta` skips empty deltas but later parts still advance the index)
     // must not fragment a single process run into multiple ghosts. Ignore it.
     if (part.type === 'text' && part.text.trim() === '') return
-    if (isProcessPart(part)) {
+    if (part.type !== 'text') {
       current.push(part)
       currentIndices.push(index)
     } else {
