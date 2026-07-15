@@ -83,6 +83,7 @@
     "steps_other": "{{count}} 步",
     "ghostLabel": "过程区域，共 {{count}} 步，最新：{{latest}}。点击展开。",
     "drawerTitle": "过程区域 — {{count}} 步",
+    "processRegion": "过程区域",
     "emptyRegion": "此区域没有步骤。"
   },
   "loadingSessions": "正在加载会话...",
@@ -109,6 +110,7 @@
   "wecomBotSession": "企业微信机器人会话",
   "feishuBotSession": "飞书机器人会话",
   "close": "关闭",
+  "back": "返回",
   "toolCount_one": "{{count}} 个工具",
   "toolCount_other": "{{count}} 个工具",
   "subagentStatus": {

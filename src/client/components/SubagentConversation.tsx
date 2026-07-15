@@ -16,12 +16,14 @@ interface SubagentConversationProps {
   messages: SubagentMessage[]
   isRunning: boolean
   sessionId: string
+  onOpenDrawer?: (parentToolUseId: string) => void
 }
 
 export default function SubagentConversation({
   messages,
   isRunning,
   sessionId,
+  onOpenDrawer,
 }: SubagentConversationProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -53,7 +55,7 @@ export default function SubagentConversation({
             key={msg.id}
             message={adapted}
             resultMap={resultMap}
-            onOpenDrawer={() => {}}
+            onOpenDrawer={onOpenDrawer ?? (() => {})}
             sessionId={sessionId}
           />
         )
