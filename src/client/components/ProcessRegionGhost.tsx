@@ -43,7 +43,7 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
       className="group/ghost my-0.5 inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-text-tertiary transition-colors motion-reduce:transition-none hover:bg-surface-hover hover:text-text-secondary"
     >
       <span aria-hidden="true" className="text-text-tertiary/60">
-        ⋯
+        {t('displayMode.processWord')}
       </span>
       <span className="tabular-nums">{t('displayMode.steps', { count: stepCount })}</span>
       <span aria-hidden="true">·</span>

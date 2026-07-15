@@ -78,6 +78,7 @@
     "title": "Result-focused view: emphasize results, collapse the process",
     "result": "Results",
     "linear": "Linear",
+    "processWord": "worked",
     "thinking": "Thinking",
     "steps_one": "{{count}} step",
     "steps_other": "{{count}} steps",

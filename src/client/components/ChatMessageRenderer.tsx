@@ -188,6 +188,11 @@ export default function ChatMessageRenderer({
   onOpenProcessRegion,
 }: ChatMessageRendererProps) {
   const hasAnyMatch = searchMatches.some((m) => m.messageId === message.id)
+  const isResultMode = displayMode === 'result' && message.role === 'assistant'
+  const regions = useMemo(
+    () => (isResultMode ? groupMessageParts(message.parts) : []),
+    [isResultMode, message.parts],
+  )
 
   if (message.role === 'system') {
     // Compact boundary is handled externally; generic system messages
@@ -242,12 +247,6 @@ export default function ChatMessageRenderer({
     message.role === 'user' ||
     (message.role === 'assistant' &&
       message.parts.every((p) => p.type === 'text'))
-
-  const isResultMode = displayMode === 'result' && message.role === 'assistant'
-  const regions = useMemo(
-    () => (isResultMode ? groupMessageParts(message.parts) : []),
-    [isResultMode, message.parts],
-  )
 
   // Assistant text rendering, shared by the linear path and the result-mode
   // text regions (preserves structured-report detection + search highlights).
