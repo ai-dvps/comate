@@ -4,9 +4,10 @@ import { Layers, X } from 'lucide-react'
 
 import { useChatStore } from '../stores/chat-store'
 import { adaptChatMessage, buildResultMap } from './chat-message-adapter'
+import type { RenderableMessage, RenderablePart } from './chat-message-adapter'
 import { groupMessageParts } from './message-grouping'
 import ChatMessageRenderer from './ChatMessageRenderer'
-import type { RenderableMessage } from './chat-message-adapter'
+import type { ChatMessage } from '../types/message'
 
 interface ProcessRegionDrawerProps {
   messageId: string
@@ -41,18 +42,25 @@ export default function ProcessRegionDrawer({
   const previouslyFocused = useRef<HTMLElement | null>(null)
 
   const messages = useChatStore((s) => s.messages[sessionId] ?? [])
-  const message = useMemo(
-    () => messages.find((m) => m.id === messageId),
+  // messageId may be a '|'-joined set of source ids when a turn spanned multiple
+  // assistant messages (see mergeAssistantTurns).
+  const turnMessages = useMemo(
+    () =>
+      messageId
+        .split('|')
+        .map((id) => messages.find((m) => m.id === id))
+        .filter((m): m is ChatMessage => Boolean(m)),
     [messages, messageId],
   )
   // Session-level resultMap so tool_results (separate messages) link to tool_use.
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
 
   const region = useMemo(() => {
-    if (!message) return null
-    const regions = groupMessageParts(adaptChatMessage(message).parts)
-    return regions[regionIndex] ?? null
-  }, [message, regionIndex])
+    if (turnMessages.length === 0) return null
+    const parts: RenderablePart[] = []
+    for (const m of turnMessages) parts.push(...adaptChatMessage(m).parts)
+    return groupMessageParts(parts)[regionIndex] ?? null
+  }, [turnMessages, regionIndex])
 
   // Focus management: move focus in on open, trap Tab, restore focus on close.
   useEffect(() => {
@@ -117,7 +125,7 @@ export default function ProcessRegionDrawer({
       ? {
           id: `${messageId}-r${regionIndex}`,
           role: 'assistant',
-          timestamp: message?.timestamp,
+          timestamp: turnMessages[0]?.timestamp,
           parts: region.parts,
         }
       : null

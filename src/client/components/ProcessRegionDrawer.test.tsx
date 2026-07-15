@@ -64,4 +64,36 @@ describe('ProcessRegionDrawer', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  it('reads a multi-message turn via the joined id', () => {
+    const m1: ChatMessage = {
+      id: 'm1', role: 'assistant', timestamp: 1,
+      parts: [
+        { type: 'thinking', text: 'h', state: 'complete' },
+        { type: 'tool_use', toolUseId: 'Bash', toolName: 'Bash', input: {}, state: 'complete' },
+      ],
+    }
+    const m2: ChatMessage = {
+      id: 'm2', role: 'assistant', timestamp: 2,
+      parts: [
+        { type: 'thinking', text: 'h', state: 'complete' },
+        { type: 'tool_use', toolUseId: 'Edit', toolName: 'Edit', input: {}, state: 'complete' },
+      ],
+    }
+    mockStore.messages.s1 = [m1, m2]
+    renderWithI18n(
+      <ProcessRegionDrawer
+        messageId="m1|m2"
+        regionIndex={0}
+        sessionId="s1"
+        width={400}
+        onClose={vi.fn()}
+        onWidthChange={() => {}}
+      />,
+    )
+    const dialog = screen.getByRole('dialog')
+    // The whole turn's process merged into one region renders both tools.
+    expect(dialog).toHaveTextContent('Bash')
+    expect(dialog).toHaveTextContent('Edit')
+  })
 })

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { groupMessageParts } from './message-grouping'
+import { groupMessageParts, mergeAssistantTurns } from './message-grouping'
 import type { RenderablePart } from './chat-message-adapter'
+import type { ChatMessage, MessagePart } from '../types/message'
 
 const text = (t: string): RenderablePart => ({ type: 'text', text: t })
 const think = (t = 'thinking'): RenderablePart => ({ type: 'thinking', text: t, isStreaming: false })
@@ -10,6 +11,22 @@ const tool = (name: string, id = name): RenderablePart => ({
   toolName: name,
   input: {},
   isStreaming: false,
+})
+
+const mText = (t: string): MessagePart => ({ type: 'text', text: t })
+const mThink = (t = 'h'): MessagePart => ({ type: 'thinking', text: t, state: 'complete' })
+const mTool = (name: string, id = name): MessagePart => ({
+  type: 'tool_use',
+  toolUseId: id,
+  toolName: name,
+  input: {},
+  state: 'complete',
+})
+const cmsg = (id: string, role: ChatMessage['role'], parts: MessagePart[]): ChatMessage => ({
+  id,
+  role,
+  parts,
+  timestamp: 1,
 })
 
 describe('groupMessageParts', () => {
@@ -119,5 +136,39 @@ describe('groupMessageParts', () => {
     const proc = regions[0]
     if (proc.type !== 'process') throw new Error('expected process region')
     expect((proc.latest as { isStreaming?: boolean }).isStreaming).toBe(true)
+  })
+})
+
+describe('mergeAssistantTurns', () => {
+  it('merges consecutive assistant messages into one turn', () => {
+    const merged = mergeAssistantTurns([
+      cmsg('u1', 'user', [mText('prompt')]),
+      cmsg('a1', 'assistant', [mThink(), mTool('Edit')]),
+      cmsg('a2', 'assistant', [mThink(), mTool('Bash')]),
+      cmsg('a3', 'assistant', [mText('done')]),
+    ])
+    expect(merged.map((m) => m.id)).toEqual(['u1', 'a1|a2|a3'])
+    expect(merged[1].parts.map((p) => p.type)).toEqual([
+      'thinking',
+      'tool_use',
+      'thinking',
+      'tool_use',
+      'text',
+    ])
+  })
+
+  it('breaks a turn at a user prompt', () => {
+    const merged = mergeAssistantTurns([
+      cmsg('a1', 'assistant', [mTool('Edit')]),
+      cmsg('u1', 'user', [mText('again')]),
+      cmsg('a2', 'assistant', [mTool('Bash')]),
+    ])
+    expect(merged.map((m) => m.id)).toEqual(['a1', 'u1', 'a2'])
+  })
+
+  it('passes a single assistant message through unchanged', () => {
+    const merged = mergeAssistantTurns([cmsg('a1', 'assistant', [mTool('Edit')])])
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe('a1')
   })
 })
