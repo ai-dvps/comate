@@ -1035,7 +1035,7 @@ export function GeneralTab({
 
 function AppearanceTab() {
   const { theme, isFollowingSystem, setTheme, resetToSystem } = useTheme()
-  const { language, setLanguage, chatFontSize, setChatFontSize, uiFontSize, setUiFontSize } = useAppSettings()
+  const { language, setLanguage, chatFontSize, setChatFontSize, uiFontSize, setUiFontSize, displayMode, setDisplayMode } = useAppSettings()
   const { t } = useTranslation('settings')
 
   const handleLanguageChange = (lang: string) => {
@@ -1047,6 +1047,11 @@ function AppearanceTab() {
     { value: 'small', label: t('appearance.fontSizeSmall') },
     { value: 'medium', label: t('appearance.fontSizeMedium') },
     { value: 'large', label: t('appearance.fontSizeLarge') },
+  ]
+
+  const displayModePresets: { value: 'result' | 'linear'; label: string }[] = [
+    { value: 'result', label: t('appearance.displayModeResult') },
+    { value: 'linear', label: t('appearance.displayModeLinear') },
   ]
 
   return (
@@ -1148,6 +1153,25 @@ function AppearanceTab() {
                 onClick={() => setUiFontSize(preset.value)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   uiFontSize === preset.value
+                    ? 'bg-accent text-accent-foreground border-accent'
+                    : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-2">{t('appearance.displayMode')}</label>
+          <div className="flex items-center gap-2">
+            {displayModePresets.map((preset) => (
+              <button
+                key={preset.value}
+                onClick={() => setDisplayMode(preset.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  displayMode === preset.value
                     ? 'bg-accent text-accent-foreground border-accent'
                     : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
                 }`}

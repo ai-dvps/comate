@@ -12,7 +12,6 @@ import { useAppSettings } from '../hooks/use-app-settings'
 import { useNgramCompletion } from '../hooks/useNgramCompletion'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
-import DisplayModeToggle from './DisplayModeToggle'
 import FastModeToggle from './FastModeToggle'
 import ProviderSelector from './ProviderSelector'
 import PromptGhostText from './PromptGhostText'
@@ -960,7 +959,6 @@ export default function PromptInput({
                   <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
                   <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
                   <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
-                  <DisplayModeToggle disabled={isStreaming || isRestarting} />
                 </>
               )}
             </div>
