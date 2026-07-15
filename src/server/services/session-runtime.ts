@@ -238,7 +238,6 @@ export class SessionRuntime {
     try {
       for await (const msg of messages) {
         if (this.closed) break;
-        this.onActivity?.();
         this.emitter.handle(msg);
         this.evaluateProcessingEdge();
       }
