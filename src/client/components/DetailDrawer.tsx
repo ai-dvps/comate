@@ -156,7 +156,7 @@ export default function DetailDrawer({
       </div>
 
       {/* Body */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {view.kind === 'process' && (
           <ProcessBody
             messageId={view.messageId}
