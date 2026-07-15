@@ -80,7 +80,9 @@
     "linear": "线性",
     "thinking": "思考中",
     "steps": "{{count}} 步",
-    "ghostLabel": "过程区域，共 {{count}} 步，最新：{{latest}}。点击展开。"
+    "ghostLabel": "过程区域，共 {{count}} 步，最新：{{latest}}。点击展开。",
+    "drawerTitle": "过程区域 — {{count}} 步",
+    "emptyRegion": "此区域没有步骤。"
   },
   "loadingSessions": "正在加载会话...",
   "noSessions": "还没有会话。",
