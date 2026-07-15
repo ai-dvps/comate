@@ -10,13 +10,13 @@ import ChatEmptyState from './ChatEmptyState'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
-import SubagentDrawer from './SubagentDrawer'
-import ProcessRegionDrawer from './ProcessRegionDrawer'
+import DetailDrawer from './DetailDrawer'
+import type { DrawerView } from './detail-drawer-view'
 import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
 import MessageSearchBar from './MessageSearchBar'
 import WorkflowFloatingPanel from './WorkflowFloatingPanel'
-import WorkflowDetailPanel from './WorkflowDetailPanel'
+
 import { isBotSession } from '../lib/session-filter'
 
 const EMPTY_ARRAY: [] = []
@@ -68,21 +68,13 @@ export default function ChatPanel({
   const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(
     null,
   )
-  const [openDrawerToolUseId, setOpenDrawerToolUseId] = useState<
-    string | null
-  >(null)
-  const [openWorkflowRunId, setOpenWorkflowRunId] = useState<string | null>(null)
-  const [subagentPanelWidth, setSubagentPanelWidth] = useState(400)
-  const [openProcessRegion, setOpenProcessRegion] = useState<{
-    messageId: string
-    regionIndex: number
-  } | null>(null)
-  const [processRegionWidth, setProcessRegionWidth] = useState(400)
+  const [drawerStack, setDrawerStack] = useState<DrawerView[]>([])
+  const [drawerWidth, setDrawerWidth] = useState(400)
   const { displayMode } = useAppSettings()
 
-  // Close the process-region drawer if the user leaves result-focused mode (R4).
+  // Close the drawer if the user leaves result-focused mode (R4).
   useEffect(() => {
-    if (displayMode !== 'result') setOpenProcessRegion(null)
+    if (displayMode !== 'result') setDrawerStack([])
   }, [displayMode])
   const [refreshMeta, setRefreshMeta] = useState<{
     lastRefreshedAt: Date | null
@@ -160,8 +152,7 @@ export default function ChatPanel({
 
   useEffect(() => {
     // Close drawer when switching sessions
-    setOpenDrawerToolUseId(null)
-    setOpenWorkflowRunId(null)
+    setDrawerStack([])
   }, [activeSessionId])
 
   useEffect(() => {
@@ -343,24 +334,19 @@ export default function ChatPanel({
     }
   }
 
-  const handleCloseDrawer = useCallback(() => {
-    setOpenDrawerToolUseId(null)
-  }, [])
-
-  const handleCloseWorkflow = useCallback(() => {
-    setOpenWorkflowRunId(null)
-  }, [])
-
-  const handleOpenProcessRegion = useCallback(
-    (messageId: string, regionIndex: number) => {
-      setOpenProcessRegion({ messageId, regionIndex })
-    },
+  const handleOpenDrawerView = useCallback(
+    (view: DrawerView) => setDrawerStack([view]),
     [],
   )
-
-  const handleCloseProcessRegion = useCallback(() => {
-    setOpenProcessRegion(null)
-  }, [])
+  const handlePushDrawer = useCallback(
+    (view: DrawerView) => setDrawerStack((s) => [...s, view]),
+    [],
+  )
+  const handlePopDrawer = useCallback(
+    () => setDrawerStack((s) => (s.length > 1 ? s.slice(0, -1) : s)),
+    [],
+  )
+  const handleCloseDrawerPanel = useCallback(() => setDrawerStack([]), [])
 
   return (
     <div className="flex flex-col h-full bg-bg">
@@ -428,9 +414,9 @@ export default function ChatPanel({
                 <MessageList
                   sessionId={sessionId}
                   workspaceId={workspaceId}
-                  onOpenDrawer={setOpenDrawerToolUseId}
-                  onOpenWorkflow={setOpenWorkflowRunId}
-                  onOpenProcessRegion={handleOpenProcessRegion}
+                  onOpenDrawer={(toolUseId: string) => handleOpenDrawerView({ kind: 'subagent', parentToolUseId: toolUseId })}
+                  onOpenWorkflow={(runId: string) => handleOpenDrawerView({ kind: 'workflow', runId })}
+                  onOpenProcessRegion={(messageId: string, regionIndex: number) => handleOpenDrawerView({ kind: 'process', messageId, regionIndex })}
                   isVisible={sessionId === activeSessionId}
                   searchMatches={searchMatches}
                   currentMatch={currentMatch}
@@ -445,7 +431,7 @@ export default function ChatPanel({
             <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2 pointer-events-none">
               <WorkflowFloatingPanel
                 sessionId={activeSessionId}
-                onOpenWorkflow={setOpenWorkflowRunId}
+                onOpenWorkflow={(runId: string) => handleOpenDrawerView({ kind: 'workflow', runId })}
               />
               <TaskPanel sessionId={activeSessionId} />
             </div>
@@ -503,35 +489,16 @@ export default function ChatPanel({
           )}
         </div>
 
-        {/* Subagent Drawer */}
-        {activeSessionId && openDrawerToolUseId && (
-          <SubagentDrawer
-            parentToolUseId={openDrawerToolUseId}
+        {/* Unified Detail Drawer */}
+        {activeSessionId && drawerStack.length > 0 && (
+          <DetailDrawer
+            stack={drawerStack}
             sessionId={activeSessionId}
-            width={subagentPanelWidth}
-            onClose={handleCloseDrawer}
-            onWidthChange={setSubagentPanelWidth}
-          />
-        )}
-
-        {/* Workflow Detail Panel */}
-        {activeSessionId && openWorkflowRunId && (
-          <WorkflowDetailPanel
-            runId={openWorkflowRunId}
-            sessionId={activeSessionId}
-            onClose={handleCloseWorkflow}
-          />
-        )}
-
-        {/* Process Region Drawer (result-focused mode) */}
-        {activeSessionId && openProcessRegion && (
-          <ProcessRegionDrawer
-            messageId={openProcessRegion.messageId}
-            regionIndex={openProcessRegion.regionIndex}
-            sessionId={activeSessionId}
-            width={processRegionWidth}
-            onClose={handleCloseProcessRegion}
-            onWidthChange={setProcessRegionWidth}
+            width={drawerWidth}
+            onWidthChange={setDrawerWidth}
+            onPop={handlePopDrawer}
+            onClose={handleCloseDrawerPanel}
+            onPush={handlePushDrawer}
           />
         )}
       </div>
