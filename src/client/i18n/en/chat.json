@@ -74,6 +74,11 @@
     "title": "Fast mode: lower latency, lighter reasoning",
     "unsupportedTooltip": "The current model does not support fast mode"
   },
+  "displayMode": {
+    "title": "Result-focused view: emphasize results, collapse the process",
+    "result": "Results",
+    "linear": "Linear"
+  },
   "loadingSessions": "Loading sessions...",
   "noSessions": "No sessions yet.",
   "createSessionPrompt": "Create one to start chatting.",

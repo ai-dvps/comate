@@ -74,6 +74,11 @@
     "title": "快速模式：响应更快，推理更轻量",
     "unsupportedTooltip": "当前模型不支持快速模式"
   },
+  "displayMode": {
+    "title": "结果视图：突出结果，折叠中间过程",
+    "result": "结果",
+    "linear": "线性"
+  },
   "loadingSessions": "正在加载会话...",
   "noSessions": "还没有会话。",
   "createSessionPrompt": "创建一个以开始聊天。",

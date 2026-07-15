@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import i18n from '../i18n'
 
 type FontSizePreset = 'small' | 'medium' | 'large'
+export type DisplayMode = 'result' | 'linear'
 
 interface AppSettings {
   defaultModel: string
@@ -15,6 +16,7 @@ interface AppSettings {
   notificationSoundsEnabled: boolean
   notificationSoundsVolume: number
   lastUpdateCheckAt: string | null
+  displayMode: DisplayMode
 }
 
 const STORAGE_KEY = 'app-settings'
@@ -27,46 +29,60 @@ function isValidFontSize(value: unknown): value is FontSizePreset {
   return typeof value === 'string' && FONT_SIZE_PRESETS.includes(value as FontSizePreset)
 }
 
+const defaultSettings: AppSettings = {
+  defaultModel: '',
+  reopenLastWorkspace: false,
+  useModifierToSubmit: true,
+  language: i18n.language,
+  chatFontSize: 'small',
+  uiFontSize: 'medium',
+  archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS,
+  autoCheckUpdates: true,
+  notificationSoundsEnabled: true,
+  notificationSoundsVolume: 100,
+  lastUpdateCheckAt: null,
+  // Result-focused mode is the primary experience for new sessions.
+  displayMode: 'result',
+}
+
+/** Validate/migrate a parsed stored blob into a complete AppSettings object. */
+function fromStored(parsed: Partial<AppSettings> | null | undefined): AppSettings {
+  if (!parsed) return { ...defaultSettings }
+  const archiveThresholdDays =
+    typeof parsed.archiveThresholdDays === 'number' && parsed.archiveThresholdDays > 0
+      ? parsed.archiveThresholdDays
+      : DEFAULT_ARCHIVE_THRESHOLD_DAYS
+  return {
+    defaultModel: typeof parsed.defaultModel === 'string' ? parsed.defaultModel : '',
+    reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
+    useModifierToSubmit: typeof parsed.useModifierToSubmit === 'boolean' ? parsed.useModifierToSubmit : true,
+    language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : i18n.language,
+    chatFontSize: isValidFontSize(parsed.chatFontSize) ? parsed.chatFontSize : 'small',
+    uiFontSize: isValidFontSize(parsed.uiFontSize) ? parsed.uiFontSize : 'medium',
+    archiveThresholdDays,
+    autoCheckUpdates: typeof parsed.autoCheckUpdates === 'boolean' ? parsed.autoCheckUpdates : true,
+    notificationSoundsEnabled:
+      typeof parsed.notificationSoundsEnabled === 'boolean' ? parsed.notificationSoundsEnabled : true,
+    notificationSoundsVolume:
+      typeof parsed.notificationSoundsVolume === 'number' &&
+      parsed.notificationSoundsVolume >= 0 &&
+      parsed.notificationSoundsVolume <= 100
+        ? parsed.notificationSoundsVolume
+        : 100,
+    lastUpdateCheckAt:
+      typeof parsed.lastUpdateCheckAt === 'string' && parsed.lastUpdateCheckAt ? parsed.lastUpdateCheckAt : null,
+    displayMode: parsed.displayMode === 'linear' ? 'linear' : 'result',
+  }
+}
+
 export function getInitialSettings(): AppSettings {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
-      const parsed = JSON.parse(stored) as Partial<AppSettings>
-      const archiveThresholdDays =
-        typeof parsed.archiveThresholdDays === 'number' && parsed.archiveThresholdDays > 0
-          ? parsed.archiveThresholdDays
-          : DEFAULT_ARCHIVE_THRESHOLD_DAYS
-      const autoCheckUpdates = typeof parsed.autoCheckUpdates === 'boolean' ? parsed.autoCheckUpdates : true
-      const notificationSoundsEnabled =
-        typeof parsed.notificationSoundsEnabled === 'boolean' ? parsed.notificationSoundsEnabled : true
-      const notificationSoundsVolume =
-        typeof parsed.notificationSoundsVolume === 'number' &&
-        parsed.notificationSoundsVolume >= 0 &&
-        parsed.notificationSoundsVolume <= 100
-          ? parsed.notificationSoundsVolume
-          : 100
-      const lastUpdateCheckAt =
-        typeof parsed.lastUpdateCheckAt === 'string' && parsed.lastUpdateCheckAt
-          ? parsed.lastUpdateCheckAt
-          : null
-      return {
-        defaultModel: typeof parsed.defaultModel === 'string' ? parsed.defaultModel : '',
-        reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
-        useModifierToSubmit: typeof parsed.useModifierToSubmit === 'boolean' ? parsed.useModifierToSubmit : true,
-        language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : i18n.language,
-        chatFontSize: isValidFontSize(parsed.chatFontSize) ? parsed.chatFontSize : 'small',
-        uiFontSize: isValidFontSize(parsed.uiFontSize) ? parsed.uiFontSize : 'medium',
-        archiveThresholdDays,
-        autoCheckUpdates,
-        notificationSoundsEnabled,
-        notificationSoundsVolume,
-        lastUpdateCheckAt,
-      }
-    }
+    if (stored) return fromStored(JSON.parse(stored))
   } catch {
     // localStorage not available or corrupt data
   }
-  return { defaultModel: '', reopenLastWorkspace: false, useModifierToSubmit: true, language: i18n.language, chatFontSize: 'small', uiFontSize: 'medium', archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS, autoCheckUpdates: true, notificationSoundsEnabled: true, notificationSoundsVolume: 100, lastUpdateCheckAt: null }
+  return { ...defaultSettings }
 }
 
 function saveSettings(settings: AppSettings) {
@@ -77,8 +93,61 @@ function saveSettings(settings: AppSettings) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Shared reactive store                                              */
+/* ------------------------------------------------------------------ */
+//
+// Previously each component calling `useAppSettings()` held its own useState
+// copy, so a change written by one (e.g. the display-mode toggle) was invisible
+// to others until a full reload. The settings now live in a module-level
+// singleton with a subscribe/notify pair consumed via useSyncExternalStore, so
+// every caller observes the same state and re-renders on change (R4).
+let currentSettings: AppSettings = getInitialSettings()
+const listeners = new Set<() => void>()
+
+function emitChange() {
+  for (const l of listeners) l()
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+function getSnapshot(): AppSettings {
+  return currentSettings
+}
+
+function commitSettings(next: AppSettings) {
+  currentSettings = next
+  saveSettings(next)
+  emitChange()
+}
+
+// Keep multiple open windows/tabs in sync.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === STORAGE_KEY && e.newValue) {
+      try {
+        currentSettings = fromStored(JSON.parse(e.newValue))
+        emitChange()
+      } catch {
+        // ignore malformed cross-tab payload
+      }
+    }
+  })
+}
+
+/** Re-read settings from storage and notify subscribers (reset, e.g. for tests). */
+export function resetAppSettings() {
+  currentSettings = getInitialSettings()
+  emitChange()
+}
+
 export function useAppSettings() {
-  const [settings, setSettings] = useState<AppSettings>(getInitialSettings)
+  const settings = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   // Sync stored language preference to i18next on mount
   useEffect(() => {
@@ -88,92 +157,52 @@ export function useAppSettings() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const setDefaultModel = useCallback((defaultModel: string) => {
-    setSettings((prev) => {
-      const next = { ...prev, defaultModel }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, defaultModel })
   }, [])
 
   const setReopenLastWorkspace = useCallback((reopenLastWorkspace: boolean) => {
-    setSettings((prev) => {
-      const next = { ...prev, reopenLastWorkspace }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, reopenLastWorkspace })
   }, [])
 
   const setLanguage = useCallback((language: string) => {
-    setSettings((prev) => {
-      const next = { ...prev, language }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, language })
   }, [])
 
   const setChatFontSize = useCallback((chatFontSize: FontSizePreset) => {
-    setSettings((prev) => {
-      const next = { ...prev, chatFontSize }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, chatFontSize })
   }, [])
 
   const setUiFontSize = useCallback((uiFontSize: FontSizePreset) => {
-    setSettings((prev) => {
-      const next = { ...prev, uiFontSize }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, uiFontSize })
   }, [])
 
   const setUseModifierToSubmit = useCallback((useModifierToSubmit: boolean) => {
-    setSettings((prev) => {
-      const next = { ...prev, useModifierToSubmit }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, useModifierToSubmit })
   }, [])
 
   const setArchiveThresholdDays = useCallback((archiveThresholdDays: number) => {
-    setSettings((prev) => {
-      const next = { ...prev, archiveThresholdDays }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, archiveThresholdDays })
   }, [])
 
   const setAutoCheckUpdates = useCallback((autoCheckUpdates: boolean) => {
-    setSettings((prev) => {
-      const next = { ...prev, autoCheckUpdates }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, autoCheckUpdates })
   }, [])
 
   const setNotificationSoundsEnabled = useCallback((notificationSoundsEnabled: boolean) => {
-    setSettings((prev) => {
-      const next = { ...prev, notificationSoundsEnabled }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, notificationSoundsEnabled })
   }, [])
 
   const setNotificationSoundsVolume = useCallback((notificationSoundsVolume: number) => {
-    setSettings((prev) => {
-      const clamped = Math.min(100, Math.max(0, notificationSoundsVolume))
-      const next = { ...prev, notificationSoundsVolume: clamped }
-      saveSettings(next)
-      return next
-    })
+    const clamped = Math.min(100, Math.max(0, notificationSoundsVolume))
+    commitSettings({ ...currentSettings, notificationSoundsVolume: clamped })
   }, [])
 
   const setLastUpdateCheckAt = useCallback((lastUpdateCheckAt: string | null) => {
-    setSettings((prev) => {
-      const next = { ...prev, lastUpdateCheckAt }
-      saveSettings(next)
-      return next
-    })
+    commitSettings({ ...currentSettings, lastUpdateCheckAt })
+  }, [])
+
+  const setDisplayMode = useCallback((displayMode: DisplayMode) => {
+    commitSettings({ ...currentSettings, displayMode })
   }, [])
 
   return {
@@ -188,6 +217,7 @@ export function useAppSettings() {
     notificationSoundsEnabled: settings.notificationSoundsEnabled,
     notificationSoundsVolume: settings.notificationSoundsVolume,
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
+    displayMode: settings.displayMode,
     setDefaultModel,
     setReopenLastWorkspace,
     setUseModifierToSubmit,
@@ -199,5 +229,6 @@ export function useAppSettings() {
     setNotificationSoundsEnabled,
     setNotificationSoundsVolume,
     setLastUpdateCheckAt,
+    setDisplayMode,
   }
 }
