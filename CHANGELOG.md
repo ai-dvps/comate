@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Tooltip styling** — tooltips now use a neutral surface background with a subtle border and shadow instead of the primary accent color, and the rotated-square arrow has been removed for a cleaner look. This improves the appearance of tooltips on the collapsed sidebar icon rail and across the app.
 - **Session-list approval-mode badge removed** — the colored auto/readonly badge no longer appears on each session-list row; the current session's approval mode is still shown and controllable via the prompt-input toggle.
 ## [0.0.24] - 2026-07-14
 
