@@ -87,6 +87,26 @@ describe('groupMessageParts', () => {
     expect(proc.latest.type).toBe('tool_use')
   })
 
+  it('does not fragment on empty/whitespace text between process parts', () => {
+    // The store pads empty text parts when the SDK content-block index jumps;
+    // these must not split one process run into multiple ghosts.
+    const regions = groupMessageParts([
+      think(),
+      tool('Edit'),
+      text('   '),
+      think(),
+      tool('Bash'),
+      text(''),
+      think(),
+    ])
+    expect(regions).toHaveLength(1)
+    expect(regions[0].type).toBe('process')
+    const proc = regions[0]
+    if (proc.type !== 'process') throw new Error('expected process region')
+    expect(proc.parts).toHaveLength(5)
+    expect(proc.latest.type).toBe('thinking')
+  })
+
   it('preserves streaming flags on process parts', () => {
     const streamingTool: RenderablePart = {
       type: 'tool_use',
