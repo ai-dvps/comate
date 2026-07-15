@@ -114,7 +114,10 @@
     "uiFontSize": "UI Font Size",
     "fontSizeSmall": "Small",
     "fontSizeMedium": "Medium",
-    "fontSizeLarge": "Large"
+    "fontSizeLarge": "Large",
+    "displayMode": "Chat Display",
+    "displayModeResult": "Result-focused",
+    "displayModeLinear": "Linear"
   },
   "workspaceSections": {
     "general": "Basic Info",
