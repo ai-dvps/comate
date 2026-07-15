@@ -182,13 +182,13 @@ function renderViewItem(
 
   if (adapted.role === 'system') {
     if (item.message.isCompactBoundary) {
-      return <CompactBoundary key={adapted.id} />
+      return <CompactBoundary key={adapted.id.split('|')[0]} />
     }
   }
 
   return (
     <ChatMessageRenderer
-      key={adapted.id}
+      key={adapted.id.split('|')[0]}
       message={adapted}
       resultMap={resultMap}
       onOpenDrawer={onOpenDrawer}
