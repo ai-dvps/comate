@@ -26,6 +26,7 @@ const chatStoreMock = vi.hoisted(() => {
     messages: {} as Record<string, { id: string; role: 'user' | 'assistant' | 'system'; parts: { type: string; text?: string }[]; timestamp: number }[]>,
     promptHistory: {} as Record<string, string[]>,
     isRestartingRuntime: {} as Record<string, boolean>,
+    sessionBackgroundTaskCount: {} as Record<string, number>,
     setDraft: vi.fn((sessionId: string, content: string) => {
       if (content === '') {
         delete state.drafts[sessionId]
@@ -122,6 +123,12 @@ vi.mock('./ApprovalModeToggle', () => ({
   default: () => <div data-testid="approval-mode-toggle" />,
 }))
 
+vi.mock('./FastModeToggle', () => ({
+  default: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="fast-mode-toggle" data-disabled={disabled ? 'true' : 'false'} />
+  ),
+}))
+
 describe('PromptInput browser', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -130,6 +137,7 @@ describe('PromptInput browser', () => {
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().promptHistory = {}
     chatStoreMock.getState().isRestartingRuntime = {}
+    chatStoreMock.getState().sessionBackgroundTaskCount = {}
     filesMock.results = []
     filesMock.truncated = false
     appSettingsMock.useModifierToSubmit = false

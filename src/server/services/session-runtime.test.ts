@@ -144,7 +144,7 @@ describe('session-runtime activity callback', { concurrency: false }, () => {
     assert.strictEqual(activityCalls, 1);
   });
 
-  it('invokes onActivity for each SDK message in runMessageLoop', async () => {
+  it('does not invoke onActivity for each SDK message in runMessageLoop', async () => {
     const messages: SDKMessage[] = [
       { type: 'text', text: 'hello' } as SDKMessage,
       { type: 'text', text: 'world' } as SDKMessage,
@@ -166,7 +166,7 @@ describe('session-runtime activity callback', { concurrency: false }, () => {
 
     // Allow the message loop to process the pre-staged messages.
     await new Promise((r) => setTimeout(r, 50));
-    assert.strictEqual(activityCalls, 2);
+    assert.strictEqual(activityCalls, 0, 'streaming chunks should not bump the idle timer');
   });
 
   it('does not invoke onActivity on unsubscribe', () => {

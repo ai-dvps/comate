@@ -233,6 +233,7 @@ export class ChatService {
           session.isWip = localSession?.isWip;
           session.isArchived = localSession?.isArchived;
           session.approvalMode = localSession?.approvalMode;
+          session.fastMode = localSession?.fastMode;
           session.botId = localSession?.botId;
           session.source = localSession?.source;
           workspaceStore.syncSdkSession(session);
@@ -267,6 +268,7 @@ export class ChatService {
       if (input.name !== undefined) draftInput.name = input.name;
       if (input.providerId !== undefined) draftInput.providerId = input.providerId;
       if (input.isArchived !== undefined) draftInput.isArchived = input.isArchived;
+      if (input.fastMode !== undefined) draftInput.fastMode = input.fastMode;
       const updated = workspaceStore.updateLocalSession(id, draftInput);
 
       // Schedule rebuild if provider changed so next message creates a fresh runtime
@@ -295,6 +297,7 @@ export class ChatService {
     const localUpdates: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
     if (input.providerId !== undefined) localUpdates.providerId = input.providerId;
     if (input.isArchived !== undefined) localUpdates.isArchived = input.isArchived;
+    if (input.fastMode !== undefined) localUpdates.fastMode = input.fastMode;
     if (Object.keys(localUpdates).length > 0) {
       workspaceStore.updateLocalSession(id, localUpdates);
     }
@@ -319,6 +322,7 @@ export class ChatService {
       session.isWip = localSession?.isWip;
       session.isArchived = localSession?.isArchived;
       session.approvalMode = localSession?.approvalMode;
+      session.fastMode = localSession?.fastMode;
       session.providerId = localSession?.providerId;
       return session;
     }
@@ -1332,10 +1336,15 @@ export class ChatService {
     sidecarLog(`[ChatService.buildSdkOptions] provider=${resolvedProvider.name} model=${resolvedProvider.model || 'default'}`);
     sidecarLog(`[ChatService.buildSdkOptions] sessionId=${session.id} isDraft=${!!session.isDraft}`);
     sidecarLog(`[ChatService.buildSdkOptions] platform=${process.platform} arch=${process.arch}`);
+
+    const providerSupportsFastMode = resolvedProvider.supportsFastMode !== false;
+    const fastMode = session.fastMode === true && providerSupportsFastMode;
+    sidecarLog(`[ChatService.buildSdkOptions] fastMode=${fastMode}`);
+
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
       cwd: normalizedCwd,
       env,
-      settings: { env: settingsEnv },
+      settings: { env: settingsEnv, fastMode },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: resolvedProvider.model || undefined,
       includePartialMessages: false,

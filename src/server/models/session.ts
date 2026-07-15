@@ -10,6 +10,7 @@ export interface ChatSession {
   source?: 'gui' | 'wecom' | 'feishu';
   approvalMode?: ApprovalMode;
   providerId?: string;
+  fastMode?: boolean;
   /** Bot that created this session, if any. */
   botId?: string;
   createdAt: string;
@@ -39,4 +40,5 @@ export interface UpdateSessionInput {
   isArchived?: boolean;
   approvalMode?: ApprovalMode;
   providerId?: string;
+  fastMode?: boolean;
 }

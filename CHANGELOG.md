@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Collapsible main sidebar** — the session/todo/file sidebar can now be collapsed into a narrow icon rail to free up horizontal space on small screens. Clicking a tab icon switches tabs without expanding. The toggle is now a single icon button in the chat panel header instead of a fixed button at the bottom of the sidebar, saving vertical space in the rail. The collapsed state and width persist across app restarts, and `Cmd/Ctrl+B` toggles collapse from anywhere except text inputs.
+- **Session fast-mode toggle** — each chat session now has a fast-mode switch in the prompt-input toolbar. The preference is persisted per session and passed to the Claude Agent SDK via `Options.fastMode`. It is disabled while the session is streaming or restarting, and the toolbar shows a tooltip when the active provider/model does not support fast mode.
 
 ### Changed
 
