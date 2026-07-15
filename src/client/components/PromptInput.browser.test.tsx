@@ -114,7 +114,7 @@ vi.mock('../hooks/use-app-settings', () => ({
 }))
 
 vi.mock('./ProviderSelector', () => ({
-  default: ({ disabled }: { disabled?: boolean }) => (
+  default: ({ disabled }: { disabled?: boolean; hideNameBelowSm?: boolean }) => (
     <div data-testid="provider-selector" data-disabled={disabled ? 'true' : 'false'} />
   ),
 }))
@@ -275,6 +275,21 @@ describe('PromptInput browser', () => {
     expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Skills/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Files/i })).toBeInTheDocument()
+  })
+
+  it('renders toolbar controls and Send in the same bottom row', () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const card = inputCardElement()
+    const skillsButton = screen.getByRole('button', { name: /Skills/i })
+    const filesButton = screen.getByRole('button', { name: /Files/i })
+    const historyButton = screen.getByRole('button', { name: /History/i })
+    const sendButton = screen.getByTitle('Send')
+
+    expect(card).toContainElement(skillsButton)
+    expect(card).toContainElement(filesButton)
+    expect(card).toContainElement(historyButton)
+    expect(card).toContainElement(sendButton)
+    expect(skillsButton.compareDocumentPosition(sendButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('shows placeholder when empty and hides it on focus', async () => {

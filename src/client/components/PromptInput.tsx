@@ -871,97 +871,6 @@ export default function PromptInput({
       ) : (
         <div ref={inputCardRef} className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
           <>
-            <div className="flex items-center px-2 pt-2 gap-1">
-              <CommandPicker
-                ref={pickerHandleRef}
-                workspaceId={workspaceId}
-                open={pickerOpen}
-                onOpenChange={(open) => {
-                  setPickerOpen(open)
-                  if (!open) setSlashTriggerStart(null)
-                }}
-                onSelect={handleCommandSelect}
-                side="top"
-                align="start"
-                initialFilter={pickerFilter}
-                hideFilterInput={pickerSource === 'slash'}
-                refetchOnOpen
-                contentWidth={contentWidth}
-                anchor={
-                  <button
-                    type="button"
-                    onClick={handleCommandsClick}
-                    disabled={commandsDisabled}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={t('skills')}
-                  >
-                    <SlashSquare className="w-3 h-3" />
-                    <span>{t('skills')}</span>
-                  </button>
-                }
-              />
-              <FilePicker
-                ref={filePickerHandleRef}
-                workspaceId={workspaceId}
-                open={filePickerOpen}
-                onOpenChange={(open) => {
-                  setFilePickerOpen(open)
-                  if (!open) setFileTriggerStart(null)
-                }}
-                onSelect={handleFileSelect}
-                side="top"
-                align="start"
-                initialFilter={filePickerFilter}
-                hideFilterInput={filePickerSource === 'at'}
-                refetchOnOpen
-                contentWidth={contentWidth}
-                anchor={
-                  <button
-                    type="button"
-                    onClick={handleFilesClick}
-                    disabled={filesDisabled}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={t('files')}
-                  >
-                    <Paperclip className="w-3 h-3" />
-                    <span>{t('files')}</span>
-                  </button>
-                }
-              />
-              <HistoryPicker
-                ref={historyPickerHandleRef}
-                workspaceId={workspaceId}
-                open={historyPickerOpen}
-                onOpenChange={(open) => {
-                  setHistoryPickerOpen(open)
-                }}
-                onSelect={handleHistorySelect}
-                side="top"
-                align="start"
-                initialFilter={historyPickerFilter}
-                contentWidth={contentWidth}
-                anchor={
-                  <button
-                    type="button"
-                    onClick={handleHistoryClick}
-                    disabled={historyDisabled}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={`${t('history')} (${t('historyShortcutHint')})`}
-                  >
-                    <History className="w-3 h-3" />
-                    <span>{t('history')}</span>
-                  </button>
-                }
-              />
-              <div className="flex-1" />
-              {sessionId && !isBotSession && (
-                <>
-                  <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
-                  <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
-                  <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
-                </>
-              )}
-            </div>
             <div className="relative">
               {placeholderVisible && (
                 <div
@@ -999,89 +908,181 @@ export default function PromptInput({
                 completionSuggestion={completionSuggestion}
               />
             </div>
-            <div className="flex items-center justify-end px-2 pb-2 pt-1 gap-1">
-              {showClear && (
-                <button
-                  onClick={handleClear}
-                  disabled={isInterrupting}
-                  className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary transition-colors"
-                  title={t('clear')}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-              {isStreaming ? (
-                <Popover open={stopPopoverOpen} onOpenChange={setStopPopoverOpen}>
-                  <PopoverTrigger asChild>
+            <div className="flex items-center justify-between px-2 pb-2 pt-1 gap-1">
+              <div className="flex items-center gap-1">
+                <CommandPicker
+                  ref={pickerHandleRef}
+                  workspaceId={workspaceId}
+                  open={pickerOpen}
+                  onOpenChange={(open) => {
+                    setPickerOpen(open)
+                    if (!open) setSlashTriggerStart(null)
+                  }}
+                  onSelect={handleCommandSelect}
+                  side="top"
+                  align="start"
+                  initialFilter={pickerFilter}
+                  hideFilterInput={pickerSource === 'slash'}
+                  refetchOnOpen
+                  contentWidth={contentWidth}
+                  anchor={
                     <button
-                      disabled={isInterrupting}
-                      className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
+                      type="button"
+                      onClick={handleCommandsClick}
+                      disabled={commandsDisabled}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={t('skills')}
                     >
-                      {isInterrupting ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <span className="relative w-5 h-5 flex items-center justify-center">
-                          <Loader2 className="absolute inset-0 w-5 h-5 animate-spin opacity-60" />
-                          <Square className="w-2.5 h-2.5 fill-current" />
-                        </span>
-                      )}
+                      <SlashSquare className="w-3 h-3" />
+                      <span className="hidden sm:inline">{t('skills')}</span>
                     </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    side="top"
-                    align="center"
-                    className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
+                  }
+                />
+                <FilePicker
+                  ref={filePickerHandleRef}
+                  workspaceId={workspaceId}
+                  open={filePickerOpen}
+                  onOpenChange={(open) => {
+                    setFilePickerOpen(open)
+                    if (!open) setFileTriggerStart(null)
+                  }}
+                  onSelect={handleFileSelect}
+                  side="top"
+                  align="start"
+                  initialFilter={filePickerFilter}
+                  hideFilterInput={filePickerSource === 'at'}
+                  refetchOnOpen
+                  contentWidth={contentWidth}
+                  anchor={
+                    <button
+                      type="button"
+                      onClick={handleFilesClick}
+                      disabled={filesDisabled}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={t('files')}
+                    >
+                      <Paperclip className="w-3 h-3" />
+                      <span className="hidden sm:inline">{t('files')}</span>
+                    </button>
+                  }
+                />
+                <HistoryPicker
+                  ref={historyPickerHandleRef}
+                  workspaceId={workspaceId}
+                  open={historyPickerOpen}
+                  onOpenChange={(open) => {
+                    setHistoryPickerOpen(open)
+                  }}
+                  onSelect={handleHistorySelect}
+                  side="top"
+                  align="start"
+                  initialFilter={historyPickerFilter}
+                  contentWidth={contentWidth}
+                  anchor={
+                    <button
+                      type="button"
+                      onClick={handleHistoryClick}
+                      disabled={historyDisabled}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={`${t('history')} (${t('historyShortcutHint')})`}
+                    >
+                      <History className="w-3 h-3" />
+                      <span className="hidden sm:inline">{t('history')}</span>
+                    </button>
+                  }
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                {sessionId && !isBotSession && (
+                  <>
+                    <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} hideNameBelowSm />
+                    <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
+                    <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
+                  </>
+                )}
+                {showClear && (
+                  <button
+                    onClick={handleClear}
+                    disabled={isInterrupting}
+                    className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary transition-colors"
+                    title={t('clear')}
                   >
-                    <p className="text-text-primary mb-3">
-                      {backgroundTaskCount > 0
-                        ? t('stopPopover.titleWithTasks', { count: backgroundTaskCount })
-                        : t('stopPopover.title')}
-                    </p>
-                    <div className="flex items-center justify-end gap-2">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+                {isStreaming ? (
+                  <Popover open={stopPopoverOpen} onOpenChange={setStopPopoverOpen}>
+                    <PopoverTrigger asChild>
                       <button
-                        onClick={() => setStopPopoverOpen(false)}
                         disabled={isInterrupting}
-                        className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
-                      >
-                        {t('stopPopover.cancel')}
-                      </button>
-                      <button
-                        onClick={() => {
-                          onStop()
-                          setStopPopoverOpen(false)
-                        }}
-                        disabled={isInterrupting}
-                        className="px-3 py-1.5 font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
+                        className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
                       >
                         {isInterrupting ? (
-                          <span className="flex items-center gap-1">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            {t('stopPopover.stopping')}
-                          </span>
+                          <Loader2 className="w-5 h-5 animate-spin" />
                         ) : (
-                          t('stopPopover.confirm')
+                          <span className="relative w-5 h-5 flex items-center justify-center">
+                            <Loader2 className="absolute inset-0 w-5 h-5 animate-spin opacity-60" />
+                            <Square className="w-2.5 h-2.5 fill-current" />
+                          </span>
                         )}
                       </button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              ) : (
-                <>
-                  {useModifierToSubmit && (
-                    <span className="text-[10px] text-text-tertiary select-none hidden sm:inline">
-                      {/Mac|iPod|iPhone|iPad/.test(navigator.platform) ? 'Cmd+Enter' : 'Ctrl+Enter'}
-                    </span>
-                  )}
-                  <button
-                    onClick={handleSend}
-                    disabled={!canSend}
-                    className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={t('send')}
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
-                </>
-              )}
+                    </PopoverTrigger>
+                    <PopoverContent
+                      side="top"
+                      align="center"
+                      className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
+                    >
+                      <p className="text-text-primary mb-3">
+                        {backgroundTaskCount > 0
+                          ? t('stopPopover.titleWithTasks', { count: backgroundTaskCount })
+                          : t('stopPopover.title')}
+                      </p>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setStopPopoverOpen(false)}
+                          disabled={isInterrupting}
+                          className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
+                        >
+                          {t('stopPopover.cancel')}
+                        </button>
+                        <button
+                          onClick={() => {
+                            onStop()
+                            setStopPopoverOpen(false)
+                          }}
+                          disabled={isInterrupting}
+                          className="px-3 py-1.5 font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
+                        >
+                          {isInterrupting ? (
+                            <span className="flex items-center gap-1">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              {t('stopPopover.stopping')}
+                            </span>
+                          ) : (
+                            t('stopPopover.confirm')
+                          )}
+                        </button>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                ) : (
+                  <>
+                    {useModifierToSubmit && (
+                      <span className="text-[10px] text-text-tertiary select-none hidden sm:inline">
+                        {/Mac|iPod|iPhone|iPad/.test(navigator.platform) ? 'Cmd+Enter' : 'Ctrl+Enter'}
+                      </span>
+                    )}
+                    <button
+                      onClick={handleSend}
+                      disabled={!canSend}
+                      className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={t('send')}
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </>
         </div>
