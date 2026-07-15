@@ -225,5 +225,10 @@
     "copied": "Copied",
     "highlightSkipped": "Syntax highlighting skipped for a large payload",
     "copyFailed": "Copy failed"
+  },
+  "askUserQuestion": {
+    "title": "Ask User Question",
+    "multiSelect": "Multi-select",
+    "optionFallback": "Option {{number}}"
   }
 }
