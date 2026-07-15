@@ -61,6 +61,10 @@ export function groupMessageParts(parts: RenderablePart[]): MessageRegion[] {
   }
 
   parts.forEach((part, index) => {
+    // Empty/whitespace text (e.g. block-index padding in the store, where
+    // `text_delta` skips empty deltas but later parts still advance the index)
+    // must not fragment a single process run into multiple ghosts. Ignore it.
+    if (part.type === 'text' && part.text.trim() === '') return
     if (isProcessPart(part)) {
       current.push(part)
       currentIndices.push(index)

@@ -79,7 +79,7 @@
     "result": "结果",
     "linear": "线性",
     "thinking": "思考中",
-    "steps": "{{count}} 步",
+    "steps_other": "{{count}} 步",
     "ghostLabel": "过程区域，共 {{count}} 步，最新：{{latest}}。点击展开。",
     "drawerTitle": "过程区域 — {{count}} 步",
     "emptyRegion": "此区域没有步骤。"
