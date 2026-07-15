@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Collapsible main sidebar** — the session/todo/file sidebar can now be collapsed into a narrow icon rail to free up horizontal space on small screens. Clicking a tab icon switches tabs without expanding. The toggle is now a single icon button in the chat panel header instead of a fixed button at the bottom of the sidebar, saving vertical space in the rail. The collapsed state and width persist across app restarts, and `Cmd/Ctrl+B` toggles collapse from anywhere except text inputs.
 - **Session fast-mode toggle** — each chat session now has a fast-mode switch in the prompt-input toolbar. The preference is persisted per session and passed to the Claude Agent SDK via `Options.fastMode`. It is disabled while the session is streaming or restarting, and the toolbar shows a tooltip when the active provider/model does not support fast mode.
+- **Result-focused chat display mode** — a second chat display mode (the default for new sessions) collapses each assistant turn's consecutive thinking + tool-use runs into a minimal one-line "process" indicator that live-updates the latest step and expands into a side drawer showing that region's steps in time order. Text results stay visible inline, and a failed tool surfaces an error marker on the indicator. A header toggle switches back to the linear view; the preference is global and persisted. Scoped to the primary (non-bot) chat panel.
 
 ### Changed
 
+- **App settings are now reactive** — `useAppSettings` was converted from per-component state to a shared reactive store, so changing a preference (display mode, font size, etc.) now updates every open view immediately instead of requiring a reload.
 - **Tooltip styling** — tooltips now use a neutral surface background with a subtle border and shadow instead of the primary accent color, and the rotated-square arrow has been removed for a cleaner look. This improves the appearance of tooltips on the collapsed sidebar icon rail and across the app.
 - **Session-list approval-mode badge removed** — the colored auto/readonly badge no longer appears on each session-list row; the current session's approval mode is still shown and controllable via the prompt-input toggle.
 ## [0.0.24] - 2026-07-14
