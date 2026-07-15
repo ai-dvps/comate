@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PanelLeft, PanelLeftOpen } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useProviderStore } from '../stores/provider-store'
@@ -344,30 +343,21 @@ export default function ChatPanel({
       {/* Chat Header */}
       <div className="relative flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
         {onToggleSidebarCollapse && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-                aria-label={
-                  isSidebarCollapsed
-                    ? t('common:sidebar.expand')
-                    : t('common:sidebar.collapse')
-                }
-                onClick={() => onToggleSidebarCollapse()}
-              >
-                {isSidebarCollapsed ? (
-                  <PanelLeftOpen className="w-4 h-4" />
-                ) : (
-                  <PanelLeft className="w-4 h-4" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {isSidebarCollapsed
+          <button
+            className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+            aria-label={
+              isSidebarCollapsed
                 ? t('common:sidebar.expand')
-                : t('common:sidebar.collapse')}
-            </TooltipContent>
-          </Tooltip>
+                : t('common:sidebar.collapse')
+            }
+            onClick={() => onToggleSidebarCollapse()}
+          >
+            {isSidebarCollapsed ? (
+              <PanelLeftOpen className="w-4 h-4" />
+            ) : (
+              <PanelLeft className="w-4 h-4" />
+            )}
+          </button>
         )}
         <div className="flex items-center gap-2 min-w-0 max-w-full px-4">
           <span className="font-medium text-text-primary truncate max-w-md">
