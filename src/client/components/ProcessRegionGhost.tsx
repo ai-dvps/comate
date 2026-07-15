@@ -40,7 +40,7 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
       onClick={onOpen}
       aria-label={t('displayMode.ghostLabel', { count: stepCount, latest: label })}
       data-error={hasError ? 'true' : undefined}
-      className="group/ghost my-0.5 inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-text-tertiary transition-colors motion-reduce:transition-none hover:bg-surface-hover hover:text-text-secondary"
+      className="group/ghost my-0.5 inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-text-tertiary transition-colors motion-reduce:transition-none hover:text-text-primary"
     >
       <span aria-hidden="true" className="text-text-tertiary/60">
         {t('displayMode.processWord')}
