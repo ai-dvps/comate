@@ -478,6 +478,7 @@ describe('setActiveSession subscribe timeout', () => {
       serverNonce: {},
       pendingSend: {},
     })
+    clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
   })
 
   it('uses DEFAULT_TIMEOUT for subscribe requests', async () => {
@@ -639,6 +640,7 @@ describe('sendMessage subscription gating', () => {
       serverNonce: {},
       pendingSend: {},
     })
+    clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
   })
 
   it('queues sendMessage in pendingSend when the subscription lacks a server nonce', async () => {
@@ -1196,6 +1198,7 @@ describe('setSessionProvider', () => {
   afterEach(() => {
     requestSpy.mockRestore()
     vi.unstubAllGlobals()
+    clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
   })
 
   it('re-subscribes and clears loading after a provider switch for an active session', async () => {

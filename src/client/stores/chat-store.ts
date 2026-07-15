@@ -95,7 +95,6 @@ function closeBackgroundSessionSubscription(
   workspaceId: string,
   sessionId: string,
 ): void {
-  if (!sessionId) return
   set((state) => removeBackgroundSession(state, workspaceId, sessionId))
   closeSingleSessionSubscription(set, sessionId)
 }
@@ -1093,25 +1092,35 @@ function updateSubagentToolUse(
 
 export function handleWsEvent(set: SseSetter, get: SseGetter, msg: WsEventMessage): void {
   if (msg.eventType === 'sse' && msg.sessionId && msg.workspaceId) {
+    const workspaceId = msg.workspaceId
+    const sessionId = msg.sessionId
     // Remember the highest event id we've processed so a reconnect can request
     // replay from this point. Without this, a WebSocket reconnect during an
     // active turn misses events emitted while the client was disconnected.
     if (msg.eventId) {
-      lastEventId.set(msg.sessionId, msg.eventId)
+      lastEventId.set(sessionId, msg.eventId)
     }
     const data = msg.data as { type?: string }
     if (typeof data.type === 'string') {
-      handleSseEvent(set, msg.workspaceId, msg.sessionId, data.type, msg.data)
+      handleSseEvent(set, workspaceId, sessionId, data.type, msg.data)
     }
     // Any event from a subscribed session is worth keeping alive in the
-    // background until the server reports it idle.
-    set((state) => addBackgroundSession(state, msg.workspaceId, msg.sessionId))
+    // background until the server reports it idle. Skip the update when the
+    // session is already registered to avoid listener churn on every delta.
+    const state = get()
+    if (!(state.backgroundSessions[workspaceId] || []).includes(sessionId)) {
+      set((state) => addBackgroundSession(state, workspaceId, sessionId))
+    }
   } else if (msg.eventType === 'runtime_closed' && msg.sessionId) {
     // The server closed this session's runtime (e.g. idle timeout). Tear down
     // the stale local subscription and clear the server nonce so the next
     // sendMessage re-subscribes to a fresh runtime instead of posting to the
     // void.
-    closeBackgroundSessionSubscription(set, msg.workspaceId, msg.sessionId)
+    if (msg.workspaceId) {
+      closeBackgroundSessionSubscription(set, msg.workspaceId, msg.sessionId)
+    } else {
+      closeSingleSessionSubscription(set, msg.sessionId)
+    }
   }
 }
 
@@ -2728,8 +2737,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       closeBackgroundSessionSubscription(set, workspaceId, evicted)
     }
 
-    // Auto-subscribe when switching to a session (skip for bot sessions)
-    if (sessionId) {
+    // Auto-subscribe when switching to a session (skip for bot sessions and
+    // sessions that are already background-subscribed).
+    if (sessionId && !sessionSubscriptions.has(sessionId)) {
       const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
       if (session && !isBotSession(session.source)) {
         subscribeToSession(set, get, workspaceId, sessionId)
@@ -3251,6 +3261,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
 
     try {
+      // Snapshot whether the session had a live subscription before the fetch.
+      // A runtime_closed event may arrive mid-flight and tear down the
+      // subscription; we still want to recreate it after a successful provider
+      // change if it was alive when the request started.
+      const hadActiveSubscription = sessionSubscriptions.has(sessionId)
+
       const res = await fetch(
         `/api/workspaces/${workspaceId}/sessions/${sessionId}`,
         {
@@ -3260,10 +3276,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       )
       if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
-      // If the session has an active WebSocket subscription, the server just closed its
-      // runtime. Recreate the subscription so a fresh runtime with the new provider is
+      // If the session had a live subscription, the server closed its runtime.
+      // Recreate the subscription so a fresh runtime with the new provider is
       // created; the resulting subscription_ack clears the loading state.
-      if (sessionSubscriptions.has(sessionId)) {
+      if (hadActiveSubscription) {
         set((state) => ({
           isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: true },
         }))

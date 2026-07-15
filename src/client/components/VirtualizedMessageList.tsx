@@ -148,29 +148,30 @@ export default function VirtualizedMessageList({
 
   // Detect prepend and anchor scroll position
   useEffect(() => {
-    if (!isVisible) return
-    const prev = prevViewItemsRef.current
-    const prevLen = prev.length
-    const currLen = viewItems.length
+    if (isVisible) {
+      const prev = prevViewItemsRef.current
+      const prevLen = prev.length
+      const currLen = viewItems.length
 
-    if (currLen > prevLen && anchorKeyRef.current !== null) {
-      // Check if tail matches (indicates prepend)
-      let tailMatches = true
-      for (let i = 0; i < prevLen; i++) {
-        if (getViewItemKey(prev[i]) !== getViewItemKey(viewItems[currLen - prevLen + i])) {
-          tailMatches = false
-          break
+      if (currLen > prevLen && anchorKeyRef.current !== null) {
+        // Check if tail matches (indicates prepend)
+        let tailMatches = true
+        for (let i = 0; i < prevLen; i++) {
+          if (getViewItemKey(prev[i]) !== getViewItemKey(viewItems[currLen - prevLen + i])) {
+            tailMatches = false
+            break
+          }
         }
-      }
 
-      if (tailMatches) {
-        const newIndex = viewItems.findIndex(
-          (item) => getViewItemKey(item) === anchorKeyRef.current,
-        )
-        if (newIndex >= 0) {
-          requestAnimationFrame(() => {
-            virtualizer.scrollToIndex(newIndex, { align: 'start' })
-          })
+        if (tailMatches) {
+          const newIndex = viewItems.findIndex(
+            (item) => getViewItemKey(item) === anchorKeyRef.current,
+          )
+          if (newIndex >= 0) {
+            requestAnimationFrame(() => {
+              virtualizer.scrollToIndex(newIndex, { align: 'start' })
+            })
+          }
         }
       }
     }
