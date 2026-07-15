@@ -2064,3 +2064,57 @@ describe('session_processing authoritative slice (U3)', () => {
   })
 })
 
+describe('setSessionFastMode', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {
+        'ws-1': [
+          {
+            id: 's1',
+            workspaceId: 'ws-1',
+            name: 'Test',
+            fastMode: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    })
+  })
+
+  it('optimistically updates session fastMode and calls the update endpoint', async () => {
+    const fetchFn = vi.fn(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+    ) as unknown as Mock & typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+
+    try {
+      await useChatStore.getState().setSessionFastMode('ws-1', 's1', true)
+      assert.strictEqual(useChatStore.getState().sessions['ws-1'][0].fastMode, true)
+      assert.strictEqual(fetchFn.mock.calls.length, 1)
+      assert.strictEqual((fetchFn.mock.calls[0][0] as string), '/api/workspaces/ws-1/sessions/s1')
+      assert.strictEqual((fetchFn.mock.calls[0][1] as RequestInit).method, 'PUT')
+      assert.ok(
+        ((fetchFn.mock.calls[0][1] as RequestInit).body as string).includes('"fastMode":true'),
+      )
+    } finally {
+      fetchFn.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('reverts the optimistic update when the request fails', async () => {
+    const fetchFn = vi.fn(() => Promise.resolve({ ok: false, status: 500 })) as unknown as Mock &
+      typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+
+    try {
+      await useChatStore.getState().setSessionFastMode('ws-1', 's1', true)
+      assert.strictEqual(useChatStore.getState().sessions['ws-1'][0].fastMode, false)
+    } finally {
+      fetchFn.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+})
+

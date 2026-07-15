@@ -11,6 +11,7 @@ export interface Provider {
   subagentModel?: string;
   effortLevel?: string;
   customEnvVars?: Record<string, string>;
+  supportsFastMode?: boolean;
   createdAt: string;
   updatedAt: string;
 }

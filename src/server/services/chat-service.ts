@@ -233,6 +233,7 @@ export class ChatService {
           session.isWip = localSession?.isWip;
           session.isArchived = localSession?.isArchived;
           session.approvalMode = localSession?.approvalMode;
+          session.fastMode = localSession?.fastMode;
           session.botId = localSession?.botId;
           session.source = localSession?.source;
           workspaceStore.syncSdkSession(session);
@@ -267,6 +268,7 @@ export class ChatService {
       if (input.name !== undefined) draftInput.name = input.name;
       if (input.providerId !== undefined) draftInput.providerId = input.providerId;
       if (input.isArchived !== undefined) draftInput.isArchived = input.isArchived;
+      if (input.fastMode !== undefined) draftInput.fastMode = input.fastMode;
       const updated = workspaceStore.updateLocalSession(id, draftInput);
 
       // Schedule rebuild if provider changed so next message creates a fresh runtime
@@ -295,6 +297,7 @@ export class ChatService {
     const localUpdates: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
     if (input.providerId !== undefined) localUpdates.providerId = input.providerId;
     if (input.isArchived !== undefined) localUpdates.isArchived = input.isArchived;
+    if (input.fastMode !== undefined) localUpdates.fastMode = input.fastMode;
     if (Object.keys(localUpdates).length > 0) {
       workspaceStore.updateLocalSession(id, localUpdates);
     }
@@ -319,6 +322,7 @@ export class ChatService {
       session.isWip = localSession?.isWip;
       session.isArchived = localSession?.isArchived;
       session.approvalMode = localSession?.approvalMode;
+      session.fastMode = localSession?.fastMode;
       session.providerId = localSession?.providerId;
       return session;
     }
@@ -1345,6 +1349,10 @@ export class ChatService {
         if (trimmed) sidecarLog(`[ChatService.claude.stderr] ${trimmed}`);
       },
     };
+
+    const providerSupportsFastMode = resolvedProvider.supportsFastMode !== false;
+    options.fastMode = session.fastMode === true && providerSupportsFastMode;
+    sidecarLog(`[ChatService.buildSdkOptions] fastMode=${options.fastMode}`);
 
     if (isBotSession) {
       // Sanitize the child process environment for bot sessions: remove WeCom

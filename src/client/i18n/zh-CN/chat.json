@@ -68,6 +68,12 @@
     "auto": "自动",
     "autoDesc": "自动审批所有工具"
   },
+  "fastMode": {
+    "on": "快速",
+    "off": "快速",
+    "title": "快速模式：响应更快，推理更轻量",
+    "unsupportedTooltip": "当前模型不支持快速模式"
+  },
   "loadingSessions": "正在加载会话...",
   "noSessions": "还没有会话。",
   "createSessionPrompt": "创建一个以开始聊天。",
