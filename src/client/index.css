@@ -219,4 +219,14 @@
     0% { transform: translateX(-100%); }
     100% { transform: translateX(300%); }
   }
+
+  /* Slide-in from bottom for the result-focused ghost's latest-step update. */
+  .animate-slide-in-from-bottom {
+    animation: slide-in-from-bottom 0.2s ease-out;
+  }
+
+  @keyframes slide-in-from-bottom {
+    from { transform: translateY(0.4rem); opacity: 0.4; }
+    to { transform: translateY(0); opacity: 1; }
+  }
 }

@@ -77,7 +77,10 @@
   "displayMode": {
     "title": "Result-focused view: emphasize results, collapse the process",
     "result": "Results",
-    "linear": "Linear"
+    "linear": "Linear",
+    "thinking": "Thinking",
+    "steps": "{{count}} steps",
+    "ghostLabel": "Process region, {{count}} steps, latest: {{latest}}. Activate to expand."
   },
   "loadingSessions": "Loading sessions...",
   "noSessions": "No sessions yet.",
