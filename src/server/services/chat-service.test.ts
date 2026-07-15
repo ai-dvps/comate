@@ -2628,17 +2628,17 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
 
   it('passes fastMode true when session has fastMode enabled and provider supports it', async () => {
     const { options } = await setupGuiSession({ fastMode: true, providerModel: 'claude-3-5-haiku' });
-    assert.strictEqual(options.fastMode, true);
+    assert.strictEqual((options.settings as Record<string, unknown>)?.fastMode, true);
   });
 
   it('passes fastMode false when session has fastMode disabled', async () => {
     const { options } = await setupGuiSession({ fastMode: false, providerModel: 'claude-3-5-haiku' });
-    assert.strictEqual(options.fastMode, false);
+    assert.strictEqual((options.settings as Record<string, unknown>)?.fastMode, false);
   });
 
   it('passes fastMode false when provider does not support fast mode', async () => {
     const { options } = await setupGuiSession({ fastMode: true, providerModel: 'claude-3-opus' });
-    assert.strictEqual(options.fastMode, false);
+    assert.strictEqual((options.settings as Record<string, unknown>)?.fastMode, false);
   });
 });
 

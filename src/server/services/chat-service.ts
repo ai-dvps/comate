@@ -1336,10 +1336,15 @@ export class ChatService {
     sidecarLog(`[ChatService.buildSdkOptions] provider=${resolvedProvider.name} model=${resolvedProvider.model || 'default'}`);
     sidecarLog(`[ChatService.buildSdkOptions] sessionId=${session.id} isDraft=${!!session.isDraft}`);
     sidecarLog(`[ChatService.buildSdkOptions] platform=${process.platform} arch=${process.arch}`);
+
+    const providerSupportsFastMode = resolvedProvider.supportsFastMode !== false;
+    const fastMode = session.fastMode === true && providerSupportsFastMode;
+    sidecarLog(`[ChatService.buildSdkOptions] fastMode=${fastMode}`);
+
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
       cwd: normalizedCwd,
       env,
-      settings: { env: settingsEnv },
+      settings: { env: settingsEnv, fastMode },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: resolvedProvider.model || undefined,
       includePartialMessages: false,
@@ -1349,10 +1354,6 @@ export class ChatService {
         if (trimmed) sidecarLog(`[ChatService.claude.stderr] ${trimmed}`);
       },
     };
-
-    const providerSupportsFastMode = resolvedProvider.supportsFastMode !== false;
-    options.fastMode = session.fastMode === true && providerSupportsFastMode;
-    sidecarLog(`[ChatService.buildSdkOptions] fastMode=${options.fastMode}`);
 
     if (isBotSession) {
       // Sanitize the child process environment for bot sessions: remove WeCom
