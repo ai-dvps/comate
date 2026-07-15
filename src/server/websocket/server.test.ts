@@ -6,7 +6,7 @@ import { WebSocket } from 'ws';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
 import { ComateWebSocketServer } from './server.js';
-import type { WsResponse, WsEventMessage } from './types.js';
+import type { WsResponse, WsErrorResponse, WsEventMessage } from './types.js';
 
 describe('ComateWebSocketServer', { concurrency: false }, () => {
   let server: http.Server;
@@ -241,5 +241,14 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     } finally {
       chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
     }
+  });
+
+  it('returns an error for unknown request types', async () => {
+    ws = await connect();
+    sendRequest(ws, 'bad-1', 'unknownType', {});
+
+    const response = await waitForMessage<WsErrorResponse>(ws, (msg) => 'id' in msg && (msg as WsResponse).id === 'bad-1');
+    assert.strictEqual(response.ok, false);
+    assert.match((response as WsErrorResponse).error.message, /Unknown request type/);
   });
 });
