@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bot } from 'lucide-react'
 
-import { useAppSettings } from '../hooks/use-app-settings'
+import { useAppSettings, type DisplayMode } from '../hooks/use-app-settings'
 import { fontSizeClass } from '../lib/font-size'
 import { useChatStore } from '../stores/chat-store'
 import {
@@ -36,6 +36,7 @@ interface MessageListProps {
   workspaceId: string
   onOpenDrawer: (parentToolUseId: string) => void
   onOpenWorkflow?: (runId: string) => void
+  onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
   isVisible?: boolean
   searchMatches?: MessageSearchMatch[]
   currentMatch?: MessageSearchMatch | null
@@ -51,9 +52,9 @@ function isToolResultOnly(msg: ChatMessage): boolean {
   )
 }
 
-export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOpenWorkflow, isVisible = true, searchMatches = [], currentMatch = null }: MessageListProps) {
+export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOpenWorkflow, onOpenProcessRegion, isVisible = true, searchMatches = [], currentMatch = null }: MessageListProps) {
   const { t } = useTranslation('chat')
-  const { chatFontSize } = useAppSettings()
+  const { chatFontSize, displayMode } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] ?? EMPTY_ARRAY)
   const autoApprovedTools = useChatStore((s) => s.autoApprovedTools[sessionId])
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
@@ -97,6 +98,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOp
         workspaceId={workspaceId}
         onOpenDrawer={onOpenDrawer}
         onOpenWorkflow={onOpenWorkflow}
+        onOpenProcessRegion={onOpenProcessRegion}
         isVisible={isVisible}
         searchMatches={searchMatches}
         currentMatch={currentMatch}
@@ -121,7 +123,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOp
   return (
     <Conversation>
       <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)}`}>
-        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, onOpenWorkflow, sessionId, autoApprovedTools, searchMatches, currentMatch))}
+        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, onOpenWorkflow, sessionId, autoApprovedTools, searchMatches, currentMatch, displayMode, onOpenProcessRegion))}
         <CompactingIndicator sessionId={sessionId} />
       </ConversationContent>
       <ConversationScrollButton />
@@ -138,6 +140,8 @@ function renderViewItem(
   autoApprovedTools?: Record<string, 'auto' | 'readonly'>,
   searchMatches?: MessageSearchMatch[],
   currentMatch?: MessageSearchMatch | null,
+  displayMode: DisplayMode = 'linear',
+  onOpenProcessRegion?: (messageId: string, regionIndex: number) => void,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     if (item.event.kind === 'slash-command') {
@@ -189,6 +193,8 @@ function renderViewItem(
       autoApprovedTools={autoApprovedTools}
       searchMatches={searchMatches}
       currentMatch={currentMatch}
+      displayMode={displayMode}
+      onOpenProcessRegion={onOpenProcessRegion}
     />
   )
 }

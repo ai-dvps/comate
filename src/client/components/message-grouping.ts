@@ -14,6 +14,8 @@ import type { RenderablePart } from './chat-message-adapter'
 export interface TextRegion {
   type: 'text'
   part: Extract<RenderablePart, { type: 'text' }>
+  /** Original index of this part in the message — preserves search ranges. */
+  partIndex: number
   isFinal: boolean
 }
 
@@ -21,6 +23,8 @@ export interface TextRegion {
 export interface ProcessRegion {
   type: 'process'
   parts: RenderablePart[]
+  /** Original indices of these parts in the message. */
+  partIndices: number[]
   /** The most recent part in the run — what the ghost shows as "latest step". */
   latest: RenderablePart
 }
@@ -41,22 +45,30 @@ function isProcessPart(part: RenderablePart): boolean {
 export function groupMessageParts(parts: RenderablePart[]): MessageRegion[] {
   const regions: MessageRegion[] = []
   let current: RenderablePart[] = []
+  let currentIndices: number[] = []
 
   const flushProcess = (): void => {
     if (current.length > 0) {
-      regions.push({ type: 'process', parts: current, latest: current[current.length - 1] })
+      regions.push({
+        type: 'process',
+        parts: current,
+        latest: current[current.length - 1],
+        partIndices: currentIndices,
+      })
       current = []
+      currentIndices = []
     }
   }
 
-  for (const part of parts) {
+  parts.forEach((part, index) => {
     if (isProcessPart(part)) {
       current.push(part)
+      currentIndices.push(index)
     } else {
       flushProcess()
-      regions.push({ type: 'text', part, isFinal: false })
+      regions.push({ type: 'text', part, partIndex: index, isFinal: false })
     }
-  }
+  })
   flushProcess()
 
   // The final result is a text part that ends the turn (the last region, if it

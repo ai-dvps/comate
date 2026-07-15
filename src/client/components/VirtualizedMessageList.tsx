@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDown, Bot } from 'lucide-react'
 
-import { useAppSettings } from '../hooks/use-app-settings'
+import { useAppSettings, type DisplayMode } from '../hooks/use-app-settings'
 import { fontSizeClass } from '../lib/font-size'
 import { useChatStore } from '../stores/chat-store'
 import {
@@ -30,6 +30,7 @@ interface VirtualizedMessageListProps {
   workspaceId: string
   onOpenDrawer: (parentToolUseId: string) => void
   onOpenWorkflow?: (runId: string) => void
+  onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
   isVisible?: boolean
   searchMatches?: MessageSearchMatch[]
   currentMatch?: MessageSearchMatch | null
@@ -62,12 +63,13 @@ export default function VirtualizedMessageList({
   workspaceId,
   onOpenDrawer,
   onOpenWorkflow,
+  onOpenProcessRegion,
   isVisible = true,
   searchMatches = [],
   currentMatch = null,
 }: VirtualizedMessageListProps) {
   const { t } = useTranslation('chat')
-  const { chatFontSize } = useAppSettings()
+  const { chatFontSize, displayMode } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] ?? EMPTY_ARRAY)
   const totalMessageCount = useChatStore((s) => s.totalMessageCount[sessionId] || 0)
   const isLoadingOlder = useChatStore((s) => s.isLoadingOlderMessages[sessionId] || false)
@@ -326,6 +328,8 @@ export default function VirtualizedMessageList({
                   autoApprovedTools,
                   searchMatches,
                   currentMatch,
+                  displayMode,
+                  onOpenProcessRegion,
                 )}
               </div>
             )
@@ -361,6 +365,8 @@ function renderViewItem(
   autoApprovedTools?: Record<string, 'auto' | 'readonly'>,
   searchMatches?: MessageSearchMatch[],
   currentMatch?: MessageSearchMatch | null,
+  displayMode: DisplayMode = 'linear',
+  onOpenProcessRegion?: (messageId: string, regionIndex: number) => void,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     if (item.event.kind === 'slash-command') {
@@ -412,6 +418,8 @@ function renderViewItem(
       autoApprovedTools={autoApprovedTools}
       searchMatches={searchMatches}
       currentMatch={currentMatch}
+      displayMode={displayMode}
+      onOpenProcessRegion={onOpenProcessRegion}
     />
   )
 }

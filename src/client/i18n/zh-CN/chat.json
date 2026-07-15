@@ -77,7 +77,10 @@
   "displayMode": {
     "title": "结果视图：突出结果，折叠中间过程",
     "result": "结果",
-    "linear": "线性"
+    "linear": "线性",
+    "thinking": "思考中",
+    "steps": "{{count}} 步",
+    "ghostLabel": "过程区域，共 {{count}} 步，最新：{{latest}}。点击展开。"
   },
   "loadingSessions": "正在加载会话...",
   "noSessions": "还没有会话。",

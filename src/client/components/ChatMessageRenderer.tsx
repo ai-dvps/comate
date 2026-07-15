@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { AlertCircle } from 'lucide-react'
 
 import { summarizeToolInput } from '../lib/summarize-tool-input'
@@ -34,6 +35,10 @@ import {
 
 export type { RenderableMessage, RenderablePart } from './chat-message-adapter'
 
+import { groupMessageParts } from './message-grouping'
+import ProcessRegionGhost from './ProcessRegionGhost'
+import type { DisplayMode } from '../hooks/use-app-settings'
+
 /* ------------------------------------------------------------------ */
 /*  Component props                                                     */
 /* ------------------------------------------------------------------ */
@@ -47,6 +52,10 @@ export interface ChatMessageRendererProps {
   autoApprovedTools?: Record<string, 'auto' | 'readonly'>
   searchMatches?: MessageSearchMatch[]
   currentMatch?: MessageSearchMatch | null
+  /** 'result' collapses thinking + tool-use runs into a ghost; 'linear' (default) renders parts inline. */
+  displayMode?: DisplayMode
+  /** Open the per-region drawer (U4). Keyed by message id + region index. */
+  onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
 }
 
 export function HighlightText({
@@ -175,6 +184,8 @@ export default function ChatMessageRenderer({
   autoApprovedTools,
   searchMatches = [],
   currentMatch = null,
+  displayMode = 'linear',
+  onOpenProcessRegion,
 }: ChatMessageRendererProps) {
   const hasAnyMatch = searchMatches.some((m) => m.messageId === message.id)
 
@@ -232,6 +243,47 @@ export default function ChatMessageRenderer({
     (message.role === 'assistant' &&
       message.parts.every((p) => p.type === 'text'))
 
+  const isResultMode = displayMode === 'result' && message.role === 'assistant'
+  const regions = useMemo(
+    () => (isResultMode ? groupMessageParts(message.parts) : []),
+    [isResultMode, message.parts],
+  )
+
+  // Assistant text rendering, shared by the linear path and the result-mode
+  // text regions (preserves structured-report detection + search highlights).
+  const renderAssistantText = (
+    part: Extract<RenderablePart, { type: 'text' }>,
+    partIndex: number,
+  ) => {
+    const ranges = getPartSearchRanges(searchMatches, currentMatch, message.id, partIndex)
+    const isCurrentInPart = ranges.some((r) => r.isActive)
+    const hasMatchInPart = ranges.length > 0
+    const partKey = `${message.id}-${partIndex}`
+    const report = detectStructuredReport(part.text)
+    if (report) {
+      return (
+        <StructuredReport
+          key={partKey}
+          {...report}
+          raw={part.text}
+          forceExpanded={isCurrentInPart}
+          hasSearchMatch={hasMatchInPart}
+          isCurrentSearchMatch={isCurrentInPart}
+        />
+      )
+    }
+    return (
+      <CompactableText
+        key={partKey}
+        forceExpanded={isCurrentInPart}
+        hasSearchMatch={hasMatchInPart}
+        isCurrentSearchMatch={isCurrentInPart}
+      >
+        {part.text}
+      </CompactableText>
+    )
+  }
+
   return (
     <div
       className={cn(
@@ -246,7 +298,22 @@ export default function ChatMessageRenderer({
               'ring-1 ring-accent/30 rounded-lg',
           )}
         >
-          {message.parts.map((part, idx) => {
+          {isResultMode
+            ? regions.map((region, regionIndex) =>
+                region.type === 'text' ? (
+                  renderAssistantText(region.part, region.partIndex)
+                ) : (
+                  <ProcessRegionGhost
+                    key={`ghost-${message.id}-${regionIndex}`}
+                    region={region}
+                    hasError={region.parts.some(
+                      (p) => p.type === 'tool_use' && resultMap.get(p.toolUseId)?.isError,
+                    )}
+                    onOpen={() => onOpenProcessRegion?.(message.id, regionIndex)}
+                  />
+                ),
+              )
+            : message.parts.map((part, idx) => {
             const partKey = `${message.id}-${idx}`
             const ranges = getPartSearchRanges(searchMatches, currentMatch, message.id, idx)
             const isCurrentInPart = ranges.some((r) => r.isActive)
@@ -260,29 +327,7 @@ export default function ChatMessageRenderer({
                   </p>
                 )
               }
-              const report = detectStructuredReport(part.text)
-              if (report) {
-                return (
-                  <StructuredReport
-                    key={partKey}
-                    {...report}
-                    raw={part.text}
-                    forceExpanded={isCurrentInPart}
-                    hasSearchMatch={hasMatchInPart}
-                    isCurrentSearchMatch={isCurrentInPart}
-                  />
-                )
-              }
-              return (
-                <CompactableText
-                  key={partKey}
-                  forceExpanded={isCurrentInPart}
-                  hasSearchMatch={hasMatchInPart}
-                  isCurrentSearchMatch={isCurrentInPart}
-                >
-                  {part.text}
-                </CompactableText>
-              )
+              return renderAssistantText(part, idx)
             }
             if (part.type === 'thinking') {
               return (
