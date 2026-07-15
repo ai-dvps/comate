@@ -26,6 +26,7 @@ import type {
 import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
+import { providerSupportsFastMode } from '../utils/provider-capability.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
 import type { WeComMediaCacheEntry, CreateWeComMediaCacheInput } from '../models/wecom-media-cache.js';
 import { getStorageDir } from './data-dir.js';
@@ -225,6 +226,7 @@ export class SqliteStore {
         is_archived INTEGER NOT NULL DEFAULT 0,
         source TEXT,
         approval_mode TEXT,
+        fast_mode INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         summary TEXT,
@@ -247,6 +249,9 @@ export class SqliteStore {
     }
     if (!sessionColumns.some(col => col.name === 'is_archived')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!sessionColumns.some(col => col.name === 'fast_mode')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN fast_mode INTEGER NOT NULL DEFAULT 0');
     }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_prompt_history (
@@ -1488,19 +1493,20 @@ export class SqliteStore {
       isDraft: true,
       source,
       approvalMode: mode as ChatSession['approvalMode'],
+      fastMode: false,
       botId,
       createdAt: now,
       updatedAt: now,
       customTitle,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, provider_id, bot_id, created_at, updated_at, custom_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, provider_id, bot_id, created_at, updated_at, custom_title)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, 0, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null);
     return session;
   }
 
-  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null }): ChatSession | null {
+  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null; fastMode?: boolean }): ChatSession | null {
     const existing = this.getLocalSession(id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -1524,6 +1530,10 @@ export class SqliteStore {
     if (input.providerId !== undefined) {
       sets.push('provider_id = ?');
       values.push(input.providerId);
+    }
+    if (input.fastMode !== undefined) {
+      sets.push('fast_mode = ?');
+      values.push(input.fastMode ? 1 : 0);
     }
     if (sets.length === 0) return existing;
     sets.push('updated_at = ?');
@@ -1555,8 +1565,8 @@ export class SqliteStore {
 
   syncSdkSession(session: ChatSession): void {
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, bot_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, bot_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title, fast_mode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         is_draft = excluded.is_draft,
@@ -1568,7 +1578,8 @@ export class SqliteStore {
         last_modified = excluded.last_modified,
         first_prompt = excluded.first_prompt,
         git_branch = excluded.git_branch,
-        custom_title = excluded.custom_title
+        custom_title = excluded.custom_title,
+        fast_mode = COALESCE(sessions.fast_mode, excluded.fast_mode, 0)
     `).run(
       session.id,
       session.workspaceId,
@@ -1585,7 +1596,8 @@ export class SqliteStore {
       session.lastModified ?? null,
       session.firstPrompt ?? null,
       session.gitBranch ?? null,
-      session.customTitle ?? null
+      session.customTitle ?? null,
+      session.fastMode ? 1 : 0
     );
   }
 
@@ -1649,6 +1661,7 @@ export class SqliteStore {
       subagentModel: input.subagentModel,
       effortLevel: input.effortLevel,
       customEnvVars: input.customEnvVars,
+      supportsFastMode: providerSupportsFastMode(input.model),
       createdAt: now,
       updatedAt: now,
     };
@@ -1696,6 +1709,9 @@ export class SqliteStore {
       ...(input.subagentModel !== undefined && { subagentModel: input.subagentModel }),
       ...(input.effortLevel !== undefined && { effortLevel: input.effortLevel }),
       ...(input.customEnvVars !== undefined && { customEnvVars: input.customEnvVars }),
+      supportsFastMode: providerSupportsFastMode(
+        (input.model !== undefined ? input.model : existing.model) ?? undefined,
+      ),
       updatedAt: new Date().toISOString(),
     };
     const optionsJson = JSON.stringify({
@@ -2416,6 +2432,7 @@ interface RawSessionRow {
   approval_mode: string | null;
   provider_id: string | null;
   bot_id: string | null;
+  fast_mode: number;
   created_at: string;
   updated_at: string;
   summary: string | null;
@@ -2436,6 +2453,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     source: (row.source as 'gui' | 'wecom' | 'feishu') ?? undefined,
     approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
     providerId: row.provider_id ?? undefined,
+    fastMode: row.fast_mode === 1,
     botId: row.bot_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -2628,6 +2646,7 @@ function parseProviderRow(row: RawProviderRow): Provider {
     customEnvVars: typeof options.customEnvVars === 'object' && options.customEnvVars !== null
       ? (options.customEnvVars as Record<string, string>)
       : undefined,
+    supportsFastMode: providerSupportsFastMode(row.model ?? undefined),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

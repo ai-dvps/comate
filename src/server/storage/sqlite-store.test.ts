@@ -891,6 +891,94 @@ describe('SqliteStore bot management (unified schema)', { concurrency: false }, 
   });
 });
 
+describe('SqliteStore session fast mode', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  async function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  it('creates sessions with fastMode off by default', async () => {
+    const ws = await createWorkspace('Fast Default');
+    const session = store.createLocalSession(ws.id, 'Test');
+    assert.strictEqual(session.fastMode, false);
+    assert.strictEqual(store.getLocalSession(session.id)?.fastMode, false);
+  });
+
+  it('persists fastMode through updateLocalSession', async () => {
+    const ws = await createWorkspace('Fast Update');
+    const session = store.createLocalSession(ws.id, 'Test');
+    const updated = store.updateLocalSession(session.id, { fastMode: true });
+    assert.strictEqual(updated?.fastMode, true);
+    assert.strictEqual(store.getLocalSession(session.id)?.fastMode, true);
+  });
+
+  it('preserves existing fastMode during syncSdkSession', async () => {
+    const ws = await createWorkspace('Fast Sync');
+    const session = store.createLocalSession(ws.id, 'Test');
+    store.updateLocalSession(session.id, { fastMode: true });
+    const sdkSession: ChatSession = { ...session, isDraft: false };
+    store.syncSdkSession(sdkSession);
+    assert.strictEqual(store.getLocalSession(session.id)?.fastMode, true);
+  });
+});
+
+describe('SqliteStore provider fast mode capability', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  it('marks known unsupported models as not supporting fast mode', () => {
+    const provider = store.createProvider({
+      name: 'Opus',
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: 'claude-3-opus-20240229',
+    });
+    assert.strictEqual(provider.supportsFastMode, false);
+    assert.strictEqual(store.getProvider(provider.id)?.supportsFastMode, false);
+  });
+
+  it('marks known supported models as supporting fast mode', () => {
+    const provider = store.createProvider({
+      name: 'Haiku',
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: 'claude-3-5-haiku-20241022',
+    });
+    assert.strictEqual(provider.supportsFastMode, true);
+  });
+
+  it('defaults no model to supporting fast mode', () => {
+    const provider = store.createProvider({
+      name: 'Default',
+      baseUrl: 'http://test',
+      authToken: 'test',
+    });
+    assert.strictEqual(provider.supportsFastMode, true);
+  });
+
+  it('updates capability when model changes', () => {
+    const provider = store.createProvider({
+      name: 'Switch',
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: 'claude-3-5-haiku',
+    });
+    assert.strictEqual(provider.supportsFastMode, true);
+    const updated = store.updateProvider(provider.id, { model: 'claude-3-opus' });
+    assert.strictEqual(updated?.supportsFastMode, false);
+  });
+});
+
 describe('SqliteStore unified schema migration', { concurrency: false }, () => {
   const migrationDbPath = join(testDbDir, 'migration-data.db');
 

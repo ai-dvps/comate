@@ -68,6 +68,12 @@
     "auto": "Auto",
     "autoDesc": "Auto-approve all tools"
   },
+  "fastMode": {
+    "on": "Fast",
+    "off": "Fast",
+    "title": "Fast mode: lower latency, lighter reasoning",
+    "unsupportedTooltip": "The current model does not support fast mode"
+  },
   "loadingSessions": "Loading sessions...",
   "noSessions": "No sessions yet.",
   "createSessionPrompt": "Create one to start chatting.",

@@ -214,6 +214,7 @@ export interface ChatSession {
   source?: 'gui' | 'wecom' | 'feishu'
   approvalMode?: ApprovalMode
   providerId?: string
+  fastMode?: boolean
   createdAt: string
   updatedAt: string
   summary?: string
@@ -362,6 +363,7 @@ interface ChatState {
   refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
   setWindowCap: (cap: number) => void
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
+  setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
 }
 
@@ -3240,6 +3242,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : session?.approvalMode
         const nextSessions = workspaceSessions.map((s) =>
           s.id === sessionId ? { ...s, approvalMode: prevMode } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+    }
+  },
+
+  setSessionFastMode: async (workspaceId: string, sessionId: string, fastMode: boolean) => {
+    // Snapshot the previous value before the optimistic update so the revert
+    // restores the exact prior state instead of the newly-set value.
+    let previousFastMode = false
+    set((state) => {
+      const workspaceSessions = state.sessions[workspaceId] || []
+      const session = workspaceSessions.find((s) => s.id === sessionId)
+      previousFastMode = session?.fastMode ?? false
+      const nextSessions = workspaceSessions.map((s) =>
+        s.id === sessionId ? { ...s, fastMode } : s,
+      )
+      return {
+        sessions: { ...state.sessions, [workspaceId]: nextSessions },
+      }
+    })
+
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fastMode }),
+        },
+      )
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+    } catch (err) {
+      console.error('Failed to set session fast mode:', err)
+      // Revert optimistic update on error
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, fastMode: previousFastMode } : s,
         )
         return {
           sessions: { ...state.sessions, [workspaceId]: nextSessions },

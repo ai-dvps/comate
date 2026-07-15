@@ -64,23 +64,25 @@ router.put('/sessions/:sessionId', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const { name, isWip, providerId, isArchived } = req.body;
+    const { name, isWip, providerId, isArchived, fastMode } = req.body;
 
     const hasName = name !== undefined && typeof name === 'string' && name.trim() !== '';
     const hasWip = isWip !== undefined && typeof isWip === 'boolean';
     const hasProviderId = providerId !== undefined;
     const hasArchived = isArchived !== undefined && typeof isArchived === 'boolean';
+    const hasFastMode = fastMode !== undefined && typeof fastMode === 'boolean';
 
-    if (!hasName && !hasWip && !hasProviderId && !hasArchived) {
-      res.status(400).json({ error: 'name, isWip, providerId, or isArchived is required' });
+    if (!hasName && !hasWip && !hasProviderId && !hasArchived && !hasFastMode) {
+      res.status(400).json({ error: 'name, isWip, providerId, isArchived, or fastMode is required' });
       return;
     }
 
-    const input: { name?: string; isWip?: boolean; providerId?: string; isArchived?: boolean } = {};
+    const input: { name?: string; isWip?: boolean; providerId?: string; isArchived?: boolean; fastMode?: boolean } = {};
     if (hasName) input.name = name.trim();
     if (hasWip) input.isWip = isWip;
     if (hasProviderId) input.providerId = providerId;
     if (hasArchived) input.isArchived = isArchived;
+    if (hasFastMode) input.fastMode = fastMode;
 
     const session = await chatService.updateSession(sessionId, input, workspaceId);
     if (!session) {

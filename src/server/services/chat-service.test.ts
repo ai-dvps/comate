@@ -2590,6 +2590,56 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     assert.strictEqual(runtimeA?.isClosed(), false);
     assert.strictEqual(runtimeB?.isClosed(), true);
   });
+
+  async function setupGuiSession(config: { fastMode?: boolean; providerModel?: string }) {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-fast-mode-'));
+    const workspace = await workspaceStore.create({
+      name: 'Fast Mode Workspace',
+      folderPath,
+    });
+    const provider = workspaceStore.createProvider({
+      name: `Fast Mode Provider ${crypto.randomUUID()}`,
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: config.providerModel,
+      isDefault: false,
+    });
+    const session = workspaceStore.createLocalSession(
+      workspace.id,
+      'Fast Mode Session',
+      undefined,
+      provider.id,
+      'gui',
+    );
+    if (config.fastMode !== undefined) {
+      workspaceStore.updateLocalSession(session.id, { fastMode: config.fastMode });
+    }
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime(session.id, workspace.id);
+    assert.ok(capturedOptions, 'options must be captured');
+    return { options: capturedOptions, session, workspace, provider };
+  }
+
+  it('passes fastMode true when session has fastMode enabled and provider supports it', async () => {
+    const { options } = await setupGuiSession({ fastMode: true, providerModel: 'claude-3-5-haiku' });
+    assert.strictEqual((options.settings as Record<string, unknown>)?.fastMode, true);
+  });
+
+  it('passes fastMode false when session has fastMode disabled', async () => {
+    const { options } = await setupGuiSession({ fastMode: false, providerModel: 'claude-3-5-haiku' });
+    assert.strictEqual((options.settings as Record<string, unknown>)?.fastMode, false);
+  });
+
+  it('passes fastMode false when provider does not support fast mode', async () => {
+    const { options } = await setupGuiSession({ fastMode: true, providerModel: 'claude-3-opus' });
+    assert.strictEqual((options.settings as Record<string, unknown>)?.fastMode, false);
+  });
 });
 
 describe('chat-service deferred runtime rebuild', { concurrency: false }, () => {
