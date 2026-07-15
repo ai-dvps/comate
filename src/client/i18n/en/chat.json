@@ -84,6 +84,7 @@
     "steps_other": "{{count}} steps",
     "ghostLabel": "Process region, {{count}} steps, latest: {{latest}}. Activate to expand.",
     "drawerTitle": "Process region — {{count}} steps",
+    "processRegion": "Process region",
     "emptyRegion": "No steps in this region."
   },
   "loadingSessions": "Loading sessions...",
@@ -110,6 +111,7 @@
   "wecomBotSession": "WeCom bot session",
   "feishuBotSession": "Feishu bot session",
   "close": "Close",
+  "back": "Back",
   "toolCount_one": "{{count}} tool",
   "toolCount_other": "{{count}} tools",
   "subagentStatus": {
