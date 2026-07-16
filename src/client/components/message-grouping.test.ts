@@ -157,6 +157,17 @@ describe('mergeAssistantTurns', () => {
     ])
   })
 
+  it('preserves per-message timestamps for merged parts', () => {
+    const merged = mergeAssistantTurns([
+      cmsg('u1', 'user', [mText('prompt')]),
+      { id: 'a1', role: 'assistant', parts: [mThink(), mTool('Edit')], timestamp: 1000 },
+      { id: 'a2', role: 'assistant', parts: [mTool('Bash')], timestamp: 2000 },
+      { id: 'a3', role: 'assistant', parts: [mText('done')], timestamp: 3000 },
+    ])
+    expect(merged.map((m) => m.id)).toEqual(['u1', 'a1|a2|a3'])
+    expect(merged[1].sourceTimestamps).toEqual([1000, 1000, 2000, 3000])
+  })
+
   it('breaks a turn at a user prompt', () => {
     const merged = mergeAssistantTurns([
       cmsg('a1', 'assistant', [mTool('Edit')]),
