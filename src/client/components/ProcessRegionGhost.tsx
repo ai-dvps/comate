@@ -55,6 +55,8 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
   const endTime = isStreaming ? undefined : findLastTimestamp(region.timestamps)
   const duration = useElapsed(startTime, endTime, isStreaming)
   const durationPlaceholder = t('displayMode.durationPlaceholder')
+  const lessThanOneSecond = t('displayMode.durationLessThanOneSecond')
+  const displayDuration = duration === '0s' ? lessThanOneSecond : duration
 
   // Throttle live duration announcements so screen readers are not interrupted
   // every second while a region is streaming.
@@ -74,6 +76,8 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
     }, 5000)
     return () => clearInterval(id)
   }, [isStreaming])
+  const displayAnnounced =
+    announcedDuration === '0s' ? lessThanOneSecond : announcedDuration
 
   return (
     <button
@@ -91,10 +95,10 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
       </span>
       <span className="tabular-nums">{t('displayMode.steps', { count: stepCount })}</span>
       <span aria-hidden="true">·</span>
-      <span className="tabular-nums" data-testid="duration-visible">{duration ?? durationPlaceholder}</span>
+      <span className="tabular-nums" data-testid="duration-visible">{displayDuration ?? durationPlaceholder}</span>
       <span aria-hidden="true">·</span>
       <span aria-live="polite" aria-atomic="true" className="sr-only" data-testid="duration-live">
-        {announcedDuration ?? durationPlaceholder}
+        {displayAnnounced ?? durationPlaceholder}
       </span>
       <span className="inline-flex items-center gap-1">
         {/* Keyed by the latest step so each new step replays the slide-in. */}
