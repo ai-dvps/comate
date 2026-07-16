@@ -166,6 +166,7 @@ export const ToolHeader = ({
 }
 
 export type ToolContentProps = ComponentProps<'div'> & {
+  alwaysExpanded?: boolean
   forceExpanded?: boolean
   hasSearchMatch?: boolean
   isCurrentSearchMatch?: boolean
@@ -174,24 +175,30 @@ export type ToolContentProps = ComponentProps<'div'> & {
 export const ToolContent = ({
   className,
   children,
+  alwaysExpanded = true,
   forceExpanded,
   hasSearchMatch,
   isCurrentSearchMatch,
   ...props
-}: ToolContentProps) => (
-  <CompactableContainer
-    className={cn(className)}
-    alwaysExpanded
-    forceExpanded={forceExpanded}
-    hasSearchMatch={hasSearchMatch}
-    isCurrentSearchMatch={isCurrentSearchMatch}
-    {...props}
-  >
-    <div className="space-y-2 p-2 text-text-primary">
-      {children}
-    </div>
-  </CompactableContainer>
-)
+}: ToolContentProps) => {
+  const { t } = useTranslation('chat')
+  return (
+    <CompactableContainer
+      className={cn(className)}
+      alwaysExpanded={alwaysExpanded}
+      forceExpanded={forceExpanded}
+      hasSearchMatch={hasSearchMatch}
+      isCurrentSearchMatch={isCurrentSearchMatch}
+      showMoreLabel={t('showDetails')}
+      showLessLabel={t('hideDetails')}
+      {...props}
+    >
+      <div className="space-y-2 p-2 text-text-primary">
+        {children}
+      </div>
+    </CompactableContainer>
+  )
+}
 
 export type ToolInputProps = ComponentProps<'div'> & {
   input: ToolPart['input']

@@ -19,6 +19,8 @@
   "send": "发送",
   "refresh": "刷新",
   "notSet": "未设置",
+  "showDetails": "显示详情",
+  "hideDetails": "收起详情",
   "neverRefreshed": "从未刷新",
   "noNewMessages": "无新消息",
   "refreshFailed": "刷新失败",

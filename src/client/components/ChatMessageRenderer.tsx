@@ -56,6 +56,8 @@ export interface ChatMessageRendererProps {
   displayMode?: DisplayMode
   /** Open the per-region drawer (U4). Keyed by message id + region index. */
   onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
+  /** When false, tool cards inside this renderer start collapsed. Defaults to true. */
+  defaultToolExpanded?: boolean
 }
 
 export function HighlightText({
@@ -186,6 +188,7 @@ function ChatMessageRenderer({
   currentMatch = null,
   displayMode = 'linear',
   onOpenProcessRegion,
+  defaultToolExpanded = true,
 }: ChatMessageRendererProps) {
   const hasAnyMatch = searchMatches.some((m) => m.messageId === message.id)
   const isResultMode = displayMode === 'result' && message.role === 'assistant'
@@ -404,6 +407,7 @@ function ChatMessageRenderer({
                   <ToolContent
                     hasSearchMatch={hasMatchInPart}
                     isCurrentSearchMatch={isCurrentInPart}
+                    alwaysExpanded={defaultToolExpanded}
                   >
                     {isStreaming && streamingJson.length > 0 ? (
                       <StreamingToolInputPreview partialJson={streamingJson} />
@@ -489,6 +493,7 @@ function areEqual(
   if (prevProps.onOpenWorkflow !== nextProps.onOpenWorkflow) return false
   if (prevProps.onOpenProcessRegion !== nextProps.onOpenProcessRegion) return false
   if (prevProps.autoApprovedTools !== nextProps.autoApprovedTools) return false
+  if (prevProps.defaultToolExpanded !== nextProps.defaultToolExpanded) return false
 
   if (
     searchPropsAffectMessage(

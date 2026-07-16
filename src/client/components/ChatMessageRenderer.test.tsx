@@ -527,3 +527,67 @@ describe('ChatMessageRenderer JSON text parts', () => {
     expect(screen.getByTestId('structured-report-body')).toBeVisible()
   })
 })
+
+describe('ChatMessageRenderer tool expansion', () => {
+  let originalScrollHeight: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    originalScrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')
+  })
+
+  afterEach(() => {
+    if (originalScrollHeight) {
+      Object.defineProperty(Element.prototype, 'scrollHeight', originalScrollHeight)
+    } else {
+      delete (Element.prototype as { scrollHeight?: number }).scrollHeight
+    }
+  })
+
+  it('renders tool cards expanded by default in linear mode', () => {
+    const message: RenderableMessage = {
+      id: 'msg-tool',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-read',
+          toolName: 'read_file',
+          input: { path: '/config.json' },
+          isStreaming: false,
+        },
+      ],
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(screen.getByText('read_file')).toBeInTheDocument()
+    expect(screen.getByText('/config.json')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /showDetails/i })).not.toBeInTheDocument()
+  })
+
+  it('collapses tool cards in linear mode when defaultToolExpanded is false', () => {
+    Object.defineProperty(Element.prototype, 'scrollHeight', {
+      configurable: true,
+      value: 300,
+    })
+
+    const message: RenderableMessage = {
+      id: 'msg-tool',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-read',
+          toolName: 'read_file',
+          input: { path: '/config.json' },
+          isStreaming: false,
+        },
+      ],
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} defaultToolExpanded={false} />)
+
+    expect(screen.getByText('read_file')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /showDetails/i })).toBeInTheDocument()
+  })
+})
