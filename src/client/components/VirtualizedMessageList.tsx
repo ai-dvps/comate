@@ -25,6 +25,10 @@ import { mergeAssistantTurns } from './message-grouping'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 
 const EMPTY_ARRAY: [] = []
+const EMPTY_RESULT_MAP = new Map<
+  string,
+  Extract<import('./ChatMessageRenderer').RenderablePart, { type: 'tool_result' }>
+>()
 
 interface VirtualizedMessageListProps {
   sessionId: string
@@ -76,6 +80,8 @@ export default function VirtualizedMessageList({
   const isLoadingOlder = useChatStore((s) => s.isLoadingOlderMessages[sessionId] || false)
   const isCompacting = useChatStore((s) => s.isCompacting[sessionId] || false)
   const autoApprovedTools = useChatStore((s) => s.autoApprovedTools[sessionId])
+  const stableSearchMatches = searchMatches.length === 0 ? EMPTY_ARRAY : searchMatches
+  const stableCurrentMatch = currentMatch ?? null
   const fetchOlderMessages = useChatStore((s) => s.fetchOlderMessages)
   const parentRef = useRef<HTMLDivElement>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -363,8 +369,8 @@ export default function VirtualizedMessageList({
                   onOpenWorkflow,
                   sessionId,
                   autoApprovedTools,
-                  searchMatches,
-                  currentMatch,
+                  stableSearchMatches,
+                  stableCurrentMatch,
                   displayMode,
                   onOpenProcessRegion,
                 )}
@@ -447,11 +453,17 @@ function renderViewItem(
     }
   }
 
+  const messageResultMap =
+    adapted.role === 'assistant' &&
+    adapted.parts.some((p) => p.type === 'tool_use')
+      ? resultMap
+      : EMPTY_RESULT_MAP
+
   return (
     <ChatMessageRenderer
       key={adapted.id.split('|')[0]}
       message={adapted}
-      resultMap={resultMap}
+      resultMap={messageResultMap}
       onOpenDrawer={onOpenDrawer}
       onOpenWorkflow={onOpenWorkflow}
       sessionId={sessionId}

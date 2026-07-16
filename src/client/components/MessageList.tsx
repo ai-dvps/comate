@@ -30,6 +30,10 @@ import CompactingIndicator from './CompactingIndicator'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 
 const EMPTY_ARRAY: [] = []
+const EMPTY_RESULT_MAP = new Map<
+  string,
+  Extract<import('./ChatMessageRenderer').RenderablePart, { type: 'tool_result' }>
+>()
 
 const VIRTUALIZATION_THRESHOLD = 50
 
@@ -59,6 +63,8 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOp
   const { chatFontSize, displayMode } = useAppSettings()
   const messages = useChatStore((s) => s.messages[sessionId] ?? EMPTY_ARRAY)
   const autoApprovedTools = useChatStore((s) => s.autoApprovedTools[sessionId])
+  const stableSearchMatches = searchMatches.length === 0 ? EMPTY_ARRAY : searchMatches
+  const stableCurrentMatch = currentMatch ?? null
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
   const visibleMessages = useMemo(
     () => messages.filter((m) => !isToolResultOnly(m)),
@@ -133,7 +139,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOp
             key={index}
             className={index === viewItems.length - 1 ? 'mb-4' : ''}
           >
-            {renderViewItem(item, resultMap, onOpenDrawer, onOpenWorkflow, sessionId, autoApprovedTools, searchMatches, currentMatch, displayMode, onOpenProcessRegion)}
+            {renderViewItem(item, resultMap, onOpenDrawer, onOpenWorkflow, sessionId, autoApprovedTools, stableSearchMatches, stableCurrentMatch, displayMode, onOpenProcessRegion)}
           </div>
         ))}
         <CompactingIndicator sessionId={sessionId} />
@@ -203,11 +209,17 @@ function renderViewItem(
     }
   }
 
+  const messageResultMap =
+    adapted.role === 'assistant' &&
+    adapted.parts.some((p) => p.type === 'tool_use')
+      ? resultMap
+      : EMPTY_RESULT_MAP
+
   return (
     <ChatMessageRenderer
       key={adapted.id.split('|')[0]}
       message={adapted}
-      resultMap={resultMap}
+      resultMap={messageResultMap}
       onOpenDrawer={onOpenDrawer}
       onOpenWorkflow={onOpenWorkflow}
       sessionId={sessionId}
