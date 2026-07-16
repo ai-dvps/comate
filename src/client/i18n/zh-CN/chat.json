@@ -81,7 +81,8 @@
     "processWord": "已执行",
     "thinking": "思考中",
     "steps_other": "{{count}} 步",
-    "ghostLabel": "过程区域，共 {{count}} 步，{{duration}}，最新：{{latest}}。点击展开。",
+    "ghostLabel": "过程区域，共 {{count}} 步，最新：{{latest}}。点击展开。",
+    "durationPlaceholder": "—",
     "drawerTitle": "过程区域 — {{count}} 步",
     "processRegion": "过程区域",
     "emptyRegion": "此区域没有步骤。"

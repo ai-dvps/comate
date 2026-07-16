@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { adaptChatMessage, buildResultMap, toToolState } from './chat-message-adapter'
 import type { ChatMessage, MessagePart } from '../types/message'
 
-const msg = (parts: MessagePart[], timestamp = 1000, sourceTimestamps?: number[]): ChatMessage => ({
+const msg = (parts: MessagePart[], timestamp = 1000, sourceTimestamps?: number[]): ChatMessage & { sourceTimestamps?: number[] } => ({
   id: 'm1',
   role: 'assistant',
   parts,
@@ -42,18 +42,23 @@ describe('adaptChatMessage', () => {
     }
   })
 
-  it('uses sourceTimestamps when present, falling back to msg.timestamp', () => {
+  it('uses sourceTimestamps when present, falling back to msg.timestamp for missing entries', () => {
     const adapted = adaptChatMessage(
       msg(
         [textPart('a'), thinkingPart('b'), toolUsePart('C'), toolResultPart('tu-C')],
         9999,
-        [1000, undefined as unknown as number, 3000, 9999],
+        [1000, 3000],
       ),
     )
     expect(adapted.parts[0].timestamp).toBe(1000)
-    expect(adapted.parts[1].timestamp).toBe(9999)
-    expect(adapted.parts[2].timestamp).toBe(3000)
+    expect(adapted.parts[1].timestamp).toBe(3000)
+    expect(adapted.parts[2].timestamp).toBe(9999)
     expect(adapted.parts[3].timestamp).toBe(9999)
+  })
+
+  it('does not treat sourceTimestamp 0 as missing', () => {
+    const adapted = adaptChatMessage(msg([textPart('a')], 9999, [0]))
+    expect(adapted.parts[0].timestamp).toBe(0)
   })
 
   it('preserves existing part fields', () => {

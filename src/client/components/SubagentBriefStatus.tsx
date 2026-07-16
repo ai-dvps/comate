@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bot,
@@ -18,7 +17,7 @@ import {
   type SubagentDisplayState,
 } from '../lib/subagent-display'
 
-import { formatDuration } from '../lib/time'
+import { useElapsed } from '../hooks/use-elapsed'
 import { cn } from './ui/utils'
 import { CompactableContainer } from './ai-elements/compactable-container'
 
@@ -50,29 +49,6 @@ function getAgentPrompt(input: unknown): string | undefined {
     }
   }
   return undefined
-}
-
-function useElapsed(
-  startTime: number,
-  endTime: number | undefined,
-  isRunning: boolean,
-): string {
-  const base = isRunning ? Date.now() : (endTime ?? Date.now())
-  const [elapsed, setElapsed] = useState(base - startTime)
-
-  useEffect(() => {
-    const newElapsed = (isRunning ? Date.now() : (endTime ?? Date.now())) - startTime
-    setElapsed(newElapsed)
-    if (!isRunning) {
-      return
-    }
-    const id = setInterval(() => {
-      setElapsed(Date.now() - startTime)
-    }, 1000)
-    return () => clearInterval(id)
-  }, [startTime, endTime, isRunning])
-
-  return formatDuration(elapsed)
 }
 
 export default function SubagentBriefStatus({

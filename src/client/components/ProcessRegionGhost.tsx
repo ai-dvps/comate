@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertCircle, ChevronDown, Clock } from 'lucide-react'
 
-import { formatDuration } from '../lib/time'
+import { useElapsed } from '../hooks/use-elapsed'
 import type { ProcessRegion } from './message-grouping'
 import type { RenderablePart } from './chat-message-adapter'
 
@@ -26,45 +26,6 @@ function findLastTimestamp(timestamps: (number | undefined)[]): number | undefin
   return undefined
 }
 
-function useRegionDuration(
-  timestamps: (number | undefined)[],
-  isRunning: boolean,
-): string | undefined {
-  const startTime = findFirstTimestamp(timestamps)
-  const endTime = isRunning ? undefined : findLastTimestamp(timestamps)
-
-  const [state, setState] = useState(() => {
-    if (startTime === undefined) return { elapsed: 0, maxElapsed: 0 }
-    const base = isRunning ? Date.now() : (endTime ?? Date.now())
-    const elapsed = base - startTime
-    return { elapsed, maxElapsed: elapsed }
-  })
-
-  useEffect(() => {
-    if (startTime === undefined) return
-
-    const update = () => {
-      const base = isRunning ? Date.now() : (endTime ?? Date.now())
-      const next = base - startTime
-      setState((prev) => ({
-        elapsed: next,
-        maxElapsed: Math.max(prev.maxElapsed, next),
-      }))
-    }
-
-    update()
-    if (!isRunning) return
-
-    const id = setInterval(update, 1000)
-    return () => clearInterval(id)
-  }, [startTime, endTime, isRunning])
-
-  if (startTime === undefined) return undefined
-
-  const finalElapsed = isRunning ? state.elapsed : Math.max(state.elapsed, state.maxElapsed)
-  return formatDuration(finalElapsed)
-}
-
 /** A stable key for the latest part so a new step remounts and replays the slide-in. */
 function latestKey(part: RenderablePart): string {
   if (part.type === 'tool_use') return `tool-${part.toolUseId}`
@@ -74,8 +35,9 @@ function latestKey(part: RenderablePart): string {
 
 /**
  * The collapsed representation of a process region in result-focused mode: a
- * low-weight one-line button showing the step count and the latest step. It
- * expands into a side drawer on activation (U4). Stays collapsed by design.
+ * low-weight one-line button showing the step count, elapsed duration, and the
+ * latest step. It expands into a side drawer on activation (U4). Stays collapsed
+ * by design.
  */
 export default function ProcessRegionGhost({ region, hasError, onOpen }: ProcessRegionGhostProps) {
   const { t } = useTranslation('chat')
@@ -88,7 +50,30 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
         ? t('displayMode.thinking')
         : latest.type
   const stepCount = region.parts.length
-  const duration = useRegionDuration(region.timestamps, isStreaming)
+
+  const startTime = findFirstTimestamp(region.timestamps)
+  const endTime = isStreaming ? undefined : findLastTimestamp(region.timestamps)
+  const duration = useElapsed(startTime, endTime, isStreaming)
+  const durationPlaceholder = t('displayMode.durationPlaceholder')
+
+  // Throttle live duration announcements so screen readers are not interrupted
+  // every second while a region is streaming.
+  const durationRef = useRef(duration)
+  const [announcedDuration, setAnnouncedDuration] = useState(duration)
+  useEffect(() => {
+    durationRef.current = duration
+  }, [duration])
+  useEffect(() => {
+    if (!isStreaming) {
+      setAnnouncedDuration(durationRef.current)
+      return
+    }
+    setAnnouncedDuration(durationRef.current)
+    const id = setInterval(() => {
+      setAnnouncedDuration(durationRef.current)
+    }, 5000)
+    return () => clearInterval(id)
+  }, [isStreaming])
 
   return (
     <button
@@ -96,7 +81,6 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
       onClick={onOpen}
       aria-label={t('displayMode.ghostLabel', {
         count: stepCount,
-        duration: duration ?? '—',
         latest: label,
       })}
       data-error={hasError ? 'true' : undefined}
@@ -107,9 +91,12 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
       </span>
       <span className="tabular-nums">{t('displayMode.steps', { count: stepCount })}</span>
       <span aria-hidden="true">·</span>
-      <span className="tabular-nums">{duration ?? '—'}</span>
+      <span className="tabular-nums" data-testid="duration-visible">{duration ?? durationPlaceholder}</span>
       <span aria-hidden="true">·</span>
-      <span aria-live="polite" className="inline-flex items-center gap-1">
+      <span aria-live="polite" aria-atomic="true" className="sr-only" data-testid="duration-live">
+        {announcedDuration ?? durationPlaceholder}
+      </span>
+      <span className="inline-flex items-center gap-1">
         {/* Keyed by the latest step so each new step replays the slide-in. */}
         <span
           key={latestKey(latest)}

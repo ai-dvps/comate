@@ -35,6 +35,12 @@ export interface ProcessRegion {
 export type MessageRegion = TextRegion | ProcessRegion
 
 /**
+ * Client-only extension that preserves the original message timestamp for each
+ * part after consecutive assistant turns are merged. Never sent to the server.
+ */
+export type TimestampedChatMessage = ChatMessage & { sourceTimestamps?: number[] }
+
+/**
  * Result-focused mode: a single user turn can span multiple assistant messages
  * in the SDK transcript (the API stores one assistant message per tool step,
  * with results in separate user messages that are already filtered out). Merge
@@ -45,8 +51,8 @@ export type MessageRegion = TextRegion | ProcessRegion
  * it back apart to read each source message. Single assistant messages pass
  * through unchanged (preserving their real id for search/scroll).
  */
-export function mergeAssistantTurns(messages: ChatMessage[]): ChatMessage[] {
-  const out: ChatMessage[] = []
+export function mergeAssistantTurns(messages: ChatMessage[]): TimestampedChatMessage[] {
+  const out: TimestampedChatMessage[] = []
   let buffer: ChatMessage[] = []
   const flush = (): void => {
     if (buffer.length === 0) return
