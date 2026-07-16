@@ -869,7 +869,7 @@ export default function PromptInput({
           </div>
         </div>
       ) : (
-        <div ref={inputCardRef} className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
+        <div ref={inputCardRef} data-testid="input-card" className="relative bg-surface border border-border rounded-xl shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] focus-within:border-border-hover transition-colors">
           <>
             <div
               className={`grid transition-[grid-template-rows] duration-300 ease-out ${isStreaming ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
