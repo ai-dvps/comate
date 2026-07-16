@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
@@ -39,6 +39,19 @@ function assistantMessage(parts: RenderablePart[], id = 'm1'): RenderableMessage
 const GHOST_NAME = /Process region/
 
 describe('ChatMessageRenderer result-focused mode', () => {
+  let originalScrollHeight: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    originalScrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')
+  })
+
+  afterEach(() => {
+    if (originalScrollHeight) {
+      Object.defineProperty(Element.prototype, 'scrollHeight', originalScrollHeight)
+    } else {
+      delete (Element.prototype as { scrollHeight?: number }).scrollHeight
+    }
+  })
   it('renders process regions as ghosts and keeps text visible (R5/R6/R8)', () => {
     const msg = assistantMessage([
       think(),
@@ -141,8 +154,8 @@ describe('ChatMessageRenderer result-focused mode', () => {
     expect(screen.getByRole('button', { name: GHOST_NAME })).toHaveAttribute('data-error', 'true')
   })
 
-  it('linear mode renders parts inline with no ghosts (R1/R4 regression)', () => {
-    const msg = assistantMessage([think(), tool('Bash'), text('done')])
+  it('linear mode renders tool cards expanded by default (R5)', () => {
+    const msg = assistantMessage([toolInput('Bash', { command: 'npm test' })])
     renderWithI18n(
       <ChatMessageRenderer
         message={msg}
@@ -152,7 +165,48 @@ describe('ChatMessageRenderer result-focused mode', () => {
         displayMode="linear"
       />,
     )
-    expect(screen.queryByRole('button', { name: GHOST_NAME })).toBeNull()
-    expect(screen.getByText('done')).toBeInTheDocument()
+
+    expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.getByText('Parameters')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Show details/i })).not.toBeInTheDocument()
+  })
+
+  it('linear mode collapses tool cards when defaultToolExpanded is false (R2)', () => {
+    Object.defineProperty(Element.prototype, 'scrollHeight', {
+      configurable: true,
+      value: 300,
+    })
+
+    const msg = assistantMessage([toolInput('Bash', { command: 'npm test' })])
+    renderWithI18n(
+      <ChatMessageRenderer
+        message={msg}
+        resultMap={new Map()}
+        onOpenDrawer={() => {}}
+        sessionId="s1"
+        displayMode="linear"
+        defaultToolExpanded={false}
+      />,
+    )
+
+    expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Show details/i })).toBeInTheDocument()
+  })
+
+  it('result mode ignores defaultToolExpanded and still renders ghosts (R5)', () => {
+    const msg = assistantMessage([think(), tool('Bash'), text('done')])
+    renderWithI18n(
+      <ChatMessageRenderer
+        message={msg}
+        resultMap={new Map()}
+        onOpenDrawer={() => {}}
+        sessionId="s1"
+        displayMode="result"
+        defaultToolExpanded={false}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: GHOST_NAME })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Show details/i })).not.toBeInTheDocument()
   })
 })
