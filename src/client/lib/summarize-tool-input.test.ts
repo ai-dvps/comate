@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { summarizeToolInput } from './summarize-tool-input'
+import { summarizeToolInput, hasMeaningfulSummary } from './summarize-tool-input'
 
 describe('summarizeToolInput', () => {
   it('returns undefined for null', () => {
@@ -122,5 +122,40 @@ describe('summarizeToolInput', () => {
       summarizeToolInput({ foo: long }),
       'foo: ' + 'a'.repeat(120) + '…',
     )
+  })
+})
+
+describe('hasMeaningfulSummary', () => {
+  it('is false for null/undefined/empty object', () => {
+    assert.strictEqual(hasMeaningfulSummary(null), false)
+    assert.strictEqual(hasMeaningfulSummary(undefined), false)
+    assert.strictEqual(hasMeaningfulSummary({}), false)
+  })
+
+  it('is false for an unrecognized key (firstKey fallback territory)', () => {
+    assert.strictEqual(hasMeaningfulSummary({ foo: 'bar' }), false)
+  })
+
+  it('is true for recognized primary keys', () => {
+    assert.strictEqual(hasMeaningfulSummary({ command: 'npm test' }), true)
+    assert.strictEqual(hasMeaningfulSummary({ file_path: 'a/b.ts' }), true)
+    assert.strictEqual(hasMeaningfulSummary({ url: 'https://x.com' }), true)
+  })
+
+  it('is true only for a string description', () => {
+    assert.strictEqual(hasMeaningfulSummary({ description: 'Run tests' }), true)
+    assert.strictEqual(hasMeaningfulSummary({ description: 42 }), false)
+  })
+
+  it('is true only for a non-empty questions array with text', () => {
+    assert.strictEqual(hasMeaningfulSummary({ questions: [{ question: 'q?' }] }), true)
+    assert.strictEqual(hasMeaningfulSummary({ questions: [{ header: 'h' }] }), true)
+    assert.strictEqual(hasMeaningfulSummary({ questions: [] }), false)
+    assert.strictEqual(hasMeaningfulSummary({ questions: [{}] }), false)
+  })
+
+  it('is true only for short content (<=120 chars)', () => {
+    assert.strictEqual(hasMeaningfulSummary({ content: 'short' }), true)
+    assert.strictEqual(hasMeaningfulSummary({ content: 'a'.repeat(200) }), false)
   })
 })

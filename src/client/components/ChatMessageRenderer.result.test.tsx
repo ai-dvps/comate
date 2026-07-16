@@ -23,6 +23,13 @@ const tool = (name: string, id = name): RenderablePart => ({
   input: {},
   isStreaming: false,
 })
+const toolInput = (name: string, input: unknown, id = name): RenderablePart => ({
+  type: 'tool_use',
+  toolUseId: id,
+  toolName: name,
+  input,
+  isStreaming: false,
+})
 const text = (t: string): RenderablePart => ({ type: 'text', text: t })
 
 function assistantMessage(parts: RenderablePart[], id = 'm1'): RenderableMessage {
@@ -56,6 +63,27 @@ describe('ChatMessageRenderer result-focused mode', () => {
     expect(ghosts[0].getAttribute('aria-label')).toMatch(/Bash/)
     expect(screen.getByText('mid text')).toBeInTheDocument()
     expect(screen.getByText('final answer')).toBeInTheDocument()
+  })
+
+  it('shows the latest tool key parameter in the result-mode ghost (R1)', () => {
+    const msg = assistantMessage([
+      think(),
+      toolInput('Bash', { command: 'npm test' }),
+      text('done'),
+    ])
+    renderWithI18n(
+      <ChatMessageRenderer
+        message={msg}
+        resultMap={new Map()}
+        onOpenDrawer={() => {}}
+        sessionId="s1"
+        displayMode="result"
+      />,
+    )
+    const ghosts = screen.getAllByRole('button', { name: GHOST_NAME })
+    expect(ghosts).toHaveLength(1)
+    expect(ghosts[0].getAttribute('aria-label')).toMatch(/Bash ▸ npm test/)
+    expect(ghosts[0].textContent).toContain('npm test')
   })
 
   it('renders process region duration in result mode (U4)', () => {
