@@ -7,8 +7,8 @@ import type { MessageSearchMatch, SearchHighlightRange } from '../hooks/useMessa
 /* ------------------------------------------------------------------ */
 
 export type RenderablePart =
-  | { type: 'text'; text: string }
-  | { type: 'thinking'; text: string; isStreaming: boolean }
+  | { type: 'text'; text: string; timestamp?: number }
+  | { type: 'thinking'; text: string; isStreaming: boolean; timestamp?: number }
   | {
       type: 'tool_use'
       toolUseId: string
@@ -16,6 +16,7 @@ export type RenderablePart =
       input: unknown
       inputJsonStream?: string
       isStreaming: boolean
+      timestamp?: number
       meta?: {
         displayName?: string
         iconUrl?: string
@@ -26,6 +27,7 @@ export type RenderablePart =
       toolUseId: string
       output: string
       isError: boolean
+      timestamp?: number
       toolUseResult?: unknown
     }
 
@@ -47,16 +49,18 @@ export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
     role: msg.role,
     subType: msg.subType,
     timestamp: msg.timestamp,
-    parts: msg.parts.map((part): RenderablePart | null => {
+    parts: msg.parts.map((part, index): RenderablePart | null => {
       if (!part) return null
+      const timestamp = msg.sourceTimestamps?.[index] ?? msg.timestamp
       switch (part.type) {
         case 'text':
-          return { type: 'text', text: part.text }
+          return { type: 'text', text: part.text, timestamp }
         case 'thinking':
           return {
             type: 'thinking',
             text: part.text,
             isStreaming: part.state === 'streaming',
+            timestamp,
           }
         case 'tool_use':
           return {
@@ -67,6 +71,7 @@ export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
             inputJsonStream: part.inputJsonStream,
             isStreaming: part.state === 'streaming',
             meta: part.meta,
+            timestamp,
           }
         case 'tool_result':
           return {
@@ -74,6 +79,7 @@ export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
             toolUseId: part.toolUseId,
             output: part.output,
             isError: part.isError,
+            timestamp,
             ...(part.toolUseResult !== undefined && { toolUseResult: part.toolUseResult }),
           }
         default:
