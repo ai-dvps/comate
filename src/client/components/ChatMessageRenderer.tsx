@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { AlertCircle } from 'lucide-react'
 
 import { summarizeToolInput } from '../lib/summarize-tool-input'
@@ -175,7 +175,7 @@ function extractWorkflowRunId(
 /*  Component                                                           */
 /* ------------------------------------------------------------------ */
 
-export default function ChatMessageRenderer({
+function ChatMessageRenderer({
   message,
   resultMap,
   onOpenDrawer,
@@ -440,6 +440,87 @@ export default function ChatMessageRenderer({
     </div>
   )
 }
+
+/* ------------------------------------------------------------------ */
+/*  Memoized export                                                   */
+/* ------------------------------------------------------------------ */
+
+function messageHasToolUse(message: RenderableMessage): boolean {
+  return (
+    message.role === 'assistant' &&
+    message.parts.some((p) => p.type === 'tool_use')
+  )
+}
+
+function resultMapAffectsMessage(
+  prevResultMap: Map<string, Extract<RenderablePart, { type: 'tool_result' }>>,
+  nextResultMap: Map<string, Extract<RenderablePart, { type: 'tool_result' }>>,
+  message: RenderableMessage,
+): boolean {
+  if (!messageHasToolUse(message)) return false
+  for (const part of message.parts) {
+    if (part.type === 'tool_use') {
+      const prevResult = prevResultMap.get(part.toolUseId)
+      const nextResult = nextResultMap.get(part.toolUseId)
+      if (prevResult !== nextResult) return true
+    }
+  }
+  return false
+}
+
+function searchPropsAffectMessage(
+  searchMatches: MessageSearchMatch[] | undefined,
+  currentMatch: MessageSearchMatch | null | undefined,
+  messageId: string,
+): boolean {
+  if (searchMatches?.some((m) => m.messageId === messageId)) return true
+  if (currentMatch?.messageId === messageId) return true
+  return false
+}
+
+function areEqual(
+  prevProps: ChatMessageRendererProps,
+  nextProps: ChatMessageRendererProps,
+): boolean {
+  if (prevProps.message !== nextProps.message) return false
+  if (prevProps.displayMode !== nextProps.displayMode) return false
+  if (prevProps.sessionId !== nextProps.sessionId) return false
+  if (prevProps.onOpenDrawer !== nextProps.onOpenDrawer) return false
+  if (prevProps.onOpenWorkflow !== nextProps.onOpenWorkflow) return false
+  if (prevProps.onOpenProcessRegion !== nextProps.onOpenProcessRegion) return false
+  if (prevProps.autoApprovedTools !== nextProps.autoApprovedTools) return false
+
+  if (
+    searchPropsAffectMessage(
+      nextProps.searchMatches,
+      nextProps.currentMatch,
+      nextProps.message.id,
+    ) ||
+    searchPropsAffectMessage(
+      prevProps.searchMatches,
+      prevProps.currentMatch,
+      prevProps.message.id,
+    )
+  ) {
+    if (prevProps.searchMatches !== nextProps.searchMatches) return false
+    if (prevProps.currentMatch !== nextProps.currentMatch) return false
+  }
+
+  if (
+    resultMapAffectsMessage(
+      prevProps.resultMap,
+      nextProps.resultMap,
+      nextProps.message,
+    )
+  ) {
+    return false
+  }
+
+  return true
+}
+
+const MemoizedChatMessageRenderer = memo(ChatMessageRenderer, areEqual)
+export default MemoizedChatMessageRenderer
 
 /* ------------------------------------------------------------------ */
 /*  Re-export compact boundary for consumers that need it               */

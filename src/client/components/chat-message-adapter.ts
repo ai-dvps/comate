@@ -43,54 +43,67 @@ export interface RenderableMessage {
 /*  Adapter functions                                                   */
 /* ------------------------------------------------------------------ */
 
-export function adaptChatMessage(msg: ChatMessage & { sourceTimestamps?: number[] }): RenderableMessage {
-  return {
+const adaptCache = new WeakMap<
+  ChatMessage & { sourceTimestamps?: number[] },
+  RenderableMessage
+>()
+
+export function adaptChatMessage(
+  msg: ChatMessage & { sourceTimestamps?: number[] },
+): RenderableMessage {
+  const cached = adaptCache.get(msg)
+  if (cached) return cached
+  const result: RenderableMessage = {
     id: msg.id,
     role: msg.role,
     subType: msg.subType,
     timestamp: msg.timestamp,
-    parts: msg.parts.map((part, index): RenderablePart | null => {
-      if (!part) return null
-      const sourceTimestamps = msg.sourceTimestamps
-      const timestamp =
-        sourceTimestamps != null && index < sourceTimestamps.length
-          ? sourceTimestamps[index]
-          : msg.timestamp
-      switch (part.type) {
-        case 'text':
-          return { type: 'text', text: part.text, timestamp }
-        case 'thinking':
-          return {
-            type: 'thinking',
-            text: part.text,
-            isStreaming: part.state === 'streaming',
-            timestamp,
-          }
-        case 'tool_use':
-          return {
-            type: 'tool_use',
-            toolUseId: part.toolUseId,
-            toolName: part.toolName,
-            input: part.input,
-            inputJsonStream: part.inputJsonStream,
-            isStreaming: part.state === 'streaming',
-            meta: part.meta,
-            timestamp,
-          }
-        case 'tool_result':
-          return {
-            type: 'tool_result',
-            toolUseId: part.toolUseId,
-            output: part.output,
-            isError: part.isError,
-            timestamp,
-            ...(part.toolUseResult !== undefined && { toolUseResult: part.toolUseResult }),
-          }
-        default:
-          return null
-      }
-    }).filter((p): p is RenderablePart => p !== null),
+    parts: msg.parts
+      .map((part, index): RenderablePart | null => {
+        if (!part) return null
+        const sourceTimestamps = msg.sourceTimestamps
+        const timestamp =
+          sourceTimestamps != null && index < sourceTimestamps.length
+            ? sourceTimestamps[index]
+            : msg.timestamp
+        switch (part.type) {
+          case 'text':
+            return { type: 'text', text: part.text, timestamp }
+          case 'thinking':
+            return {
+              type: 'thinking',
+              text: part.text,
+              isStreaming: part.state === 'streaming',
+              timestamp,
+            }
+          case 'tool_use':
+            return {
+              type: 'tool_use',
+              toolUseId: part.toolUseId,
+              toolName: part.toolName,
+              input: part.input,
+              inputJsonStream: part.inputJsonStream,
+              isStreaming: part.state === 'streaming',
+              meta: part.meta,
+              timestamp,
+            }
+          case 'tool_result':
+            return {
+              type: 'tool_result',
+              toolUseId: part.toolUseId,
+              output: part.output,
+              isError: part.isError,
+              timestamp,
+              ...(part.toolUseResult !== undefined && { toolUseResult: part.toolUseResult }),
+            }
+          default:
+            return null
+        }
+      })
+      .filter((p): p is RenderablePart => p !== null),
   }
+  adaptCache.set(msg, result)
+  return result
 }
 
 export function adaptSubagentMessage(
