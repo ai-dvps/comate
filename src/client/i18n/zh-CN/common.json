@@ -92,6 +92,7 @@
   "failedToSearchFiles": "搜索文件失败",
   "approvalError": "审批错误",
   "interruptError": "中断错误",
+  "interrupted": "用户已中断",
   "requestFailed": "请求失败",
   "failedToUpdateApprovalMode": "更新审批模式失败",
   "failedToUpdateSession": "更新会话失败",

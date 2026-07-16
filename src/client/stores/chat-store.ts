@@ -961,6 +961,7 @@ function addSystemMessage(
   state: ChatState,
   sessionId: string,
   text: string,
+  subType?: string,
 ): Partial<ChatState> {
   return {
     messages: {
@@ -970,6 +971,7 @@ function addSystemMessage(
         {
           id: generateId(),
           role: 'system',
+          ...(subType !== undefined && { subType }),
           parts: [{ type: 'text', text }],
           timestamp: Date.now(),
         },
@@ -1783,11 +1785,26 @@ export function handleSseEvent(
       return
     }
     case 'interrupted': {
-      set((state) =>
-        state.sessionProcessing[sessionId]
-          ? {}
-          : { isStreaming: { ...state.isStreaming, [sessionId]: false } },
-      )
+      set((state) => {
+        // The interrupted event clears the in-flight turn but, unlike
+        // terminal events (error_note, rate_limit, …), historically added no
+        // message — so a stopped turn was invisible, especially in result
+        // mode where the partial assistant content collapses into a ghost.
+        // Append an Interrupt system message so the stop is always shown.
+        const withNotice = addSystemMessage(
+          state,
+          sessionId,
+          i18next.t('common:interrupted', 'Interrupted by user'),
+          'Interrupt',
+        )
+        // Background tasks may still be running (sessionProcessing); keep the
+        // active/streaming state in that case, but always show the notice.
+        if (state.sessionProcessing[sessionId]) return withNotice
+        return {
+          ...withNotice,
+          isStreaming: { ...state.isStreaming, [sessionId]: false },
+        }
+      })
       return
     }
     case 'error_note': {

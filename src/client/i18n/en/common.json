@@ -92,6 +92,7 @@
   "failedToSearchFiles": "Failed to search files",
   "approvalError": "Approval error",
   "interruptError": "Interrupt error",
+  "interrupted": "Interrupted by user",
   "requestFailed": "Request failed",
   "failedToUpdateApprovalMode": "Failed to update approval mode",
   "failedToUpdateSession": "Failed to update session",

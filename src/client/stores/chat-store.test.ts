@@ -1896,21 +1896,29 @@ describe('session_processing authoritative slice (U3)', () => {
     assert.strictEqual(useChatStore.getState().isStreaming['s1'], false)
   })
 
-  it('interrupted retains isStreaming while sessionProcessing is true', () => {
+  it('interrupted retains isStreaming while sessionProcessing is true but still appends the notice', () => {
     const set = useChatStore.setState as unknown as SseSetter
     useChatStore.setState({
       sessionProcessing: { s1: true },
       isStreaming: { s1: true },
     })
     handleSseEvent(set, 'ws-1', 's1', 'interrupted', { messageId: null })
-    assert.strictEqual(useChatStore.getState().isStreaming['s1'], true)
+    const state = useChatStore.getState()
+    assert.strictEqual(state.isStreaming['s1'], true)
+    assert.strictEqual(state.messages['s1']?.length, 1, 'interrupt notice appended even while background tasks run')
+    assert.strictEqual(state.messages['s1']?.[0]?.role, 'system')
+    assert.strictEqual(state.messages['s1']?.[0]?.subType, 'Interrupt')
   })
 
-  it('interrupted clears isStreaming when no sessionProcessing entry exists', () => {
+  it('interrupted clears isStreaming when no sessionProcessing entry exists and appends the notice', () => {
     const set = useChatStore.setState as unknown as SseSetter
     useChatStore.setState({ isStreaming: { s1: true } })
     handleSseEvent(set, 'ws-1', 's1', 'interrupted', { messageId: null })
-    assert.strictEqual(useChatStore.getState().isStreaming['s1'], false)
+    const state = useChatStore.getState()
+    assert.strictEqual(state.isStreaming['s1'], false)
+    assert.strictEqual(state.messages['s1']?.length, 1, 'interrupt notice appended')
+    assert.strictEqual(state.messages['s1']?.[0]?.role, 'system')
+    assert.strictEqual(state.messages['s1']?.[0]?.subType, 'Interrupt')
   })
 
   it('rate_limit retains isStreaming while sessionProcessing is true but still appends the notice', () => {
