@@ -28,6 +28,8 @@ export interface ProcessRegion {
   partIndices: number[]
   /** The most recent part in the run — what the ghost shows as "latest step". */
   latest: RenderablePart
+  /** The source message timestamp for each part (aligned 1:1 with parts). */
+  timestamps: (number | undefined)[]
 }
 
 export type MessageRegion = TextRegion | ProcessRegion
@@ -92,6 +94,7 @@ export function groupMessageParts(parts: RenderablePart[]): MessageRegion[] {
   const regions: MessageRegion[] = []
   let current: RenderablePart[] = []
   let currentIndices: number[] = []
+  let currentTimestamps: (number | undefined)[] = []
 
   const flushProcess = (): void => {
     if (current.length > 0) {
@@ -100,9 +103,11 @@ export function groupMessageParts(parts: RenderablePart[]): MessageRegion[] {
         parts: current,
         latest: current[current.length - 1],
         partIndices: currentIndices,
+        timestamps: currentTimestamps,
       })
       current = []
       currentIndices = []
+      currentTimestamps = []
     }
   }
 
@@ -114,6 +119,7 @@ export function groupMessageParts(parts: RenderablePart[]): MessageRegion[] {
     if (part.type !== 'text') {
       current.push(part)
       currentIndices.push(index)
+      currentTimestamps.push(part.timestamp)
     } else {
       flushProcess()
       regions.push({ type: 'text', part, partIndex: index, isFinal: false })

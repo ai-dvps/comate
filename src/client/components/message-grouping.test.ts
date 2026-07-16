@@ -104,6 +104,22 @@ describe('groupMessageParts', () => {
     expect(proc.latest.type).toBe('tool_use')
   })
 
+  it('process region exposes source timestamps aligned with parts', () => {
+    const regions = groupMessageParts([
+      { ...think(), timestamp: 1000 },
+      { ...tool('Edit'), timestamp: 1000 },
+      text('mid text'),
+      { ...think(), timestamp: 2000 },
+    ])
+    expect(regions.map((r) => r.type)).toEqual(['process', 'text', 'process'])
+    const proc0 = regions[0]
+    if (proc0.type !== 'process') throw new Error('expected process region')
+    expect(proc0.timestamps).toEqual([1000, 1000])
+    const proc1 = regions[2]
+    if (proc1.type !== 'process') throw new Error('expected process region')
+    expect(proc1.timestamps).toEqual([2000])
+  })
+
   it('does not fragment on empty/whitespace text between process parts', () => {
     // The store pads empty text parts when the SDK content-block index jumps;
     // these must not split one process run into multiple ghosts.
