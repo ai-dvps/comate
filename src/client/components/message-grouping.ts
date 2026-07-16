@@ -52,9 +52,11 @@ export function mergeAssistantTurns(messages: ChatMessage[]): ChatMessage[] {
       out.push(buffer[0])
     } else {
       const parts: MessagePart[] = []
+      const sourceTimestamps: number[] = []
       const ids: string[] = []
       for (const m of buffer) {
         parts.push(...m.parts)
+        sourceTimestamps.push(...m.parts.map(() => m.timestamp))
         ids.push(m.id)
       }
       out.push({
@@ -62,6 +64,7 @@ export function mergeAssistantTurns(messages: ChatMessage[]): ChatMessage[] {
         role: 'assistant',
         parts,
         timestamp: buffer[0].timestamp,
+        sourceTimestamps,
         isStreaming: buffer.some((m) => m.isStreaming),
       })
     }

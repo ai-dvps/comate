@@ -46,6 +46,8 @@ export interface ChatMessage {
   role: MessageRole
   parts: MessagePart[]
   timestamp: number
+  /** Client-side only: when assistant turns are merged, the timestamp of each original message per part. */
+  sourceTimestamps?: number[]
   isStreaming?: boolean
   isCompactBoundary?: boolean
   subType?: string
