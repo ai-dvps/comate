@@ -871,42 +871,48 @@ export default function PromptInput({
       ) : (
         <div ref={inputCardRef} className="relative bg-surface border border-border rounded-xl focus-within:border-border-hover transition-colors">
           <>
-            <div className="relative">
-              {placeholderVisible && (
-                <div
-                  aria-hidden
-                  className="absolute inset-0 z-0 px-4 py-3 text-text-tertiary pointer-events-none select-none whitespace-pre-wrap break-words"
-                >
-                  {placeholder}
+            <div
+              className={`grid transition-[grid-template-rows] duration-300 ease-out ${isStreaming ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
+            >
+              <div className="overflow-hidden min-h-0">
+                <div className="relative">
+                  {placeholderVisible && (
+                    <div
+                      aria-hidden
+                      className="absolute inset-0 z-0 px-4 py-3 text-text-tertiary pointer-events-none select-none whitespace-pre-wrap break-words"
+                    >
+                      {placeholder}
+                    </div>
+                  )}
+                  <div
+                    ref={editableRef}
+                    role="textbox"
+                    aria-multiline="true"
+                    aria-placeholder={placeholder}
+                    aria-disabled={!editableEnabled}
+                    contentEditable={editableEnabled ? contentEditableMode : 'false'}
+                    tabIndex={editableEnabled ? 0 : -1}
+                    onInput={handleInput}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
+                    onKeyDown={handleKeyDown}
+                    onKeyUp={handleKeyUp}
+                    onFocus={handleFocus}
+                    onBlur={handleBlur}
+                    onPaste={handlePaste}
+                    onDrop={handleDrop}
+                    onBeforeInput={handleBeforeInput}
+                    className={`relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words ${!editableEnabled ? 'opacity-50' : ''}`}
+                    style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
+                  />
+                  <PromptGhostText
+                    input={input}
+                    argumentHint={argumentHint}
+                    lastInsertedCommand={lastInsertedCommand}
+                    completionSuggestion={completionSuggestion}
+                  />
                 </div>
-              )}
-              <div
-                ref={editableRef}
-                role="textbox"
-                aria-multiline="true"
-                aria-placeholder={placeholder}
-                aria-disabled={!editableEnabled}
-                contentEditable={editableEnabled ? contentEditableMode : 'false'}
-                tabIndex={editableEnabled ? 0 : -1}
-                onInput={handleInput}
-                onCompositionStart={handleCompositionStart}
-                onCompositionEnd={handleCompositionEnd}
-                onKeyDown={handleKeyDown}
-                onKeyUp={handleKeyUp}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
-                onPaste={handlePaste}
-                onDrop={handleDrop}
-                onBeforeInput={handleBeforeInput}
-                className={`relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words ${!editableEnabled ? 'opacity-50' : ''}`}
-                style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
-              />
-              <PromptGhostText
-                input={input}
-                argumentHint={argumentHint}
-                lastInsertedCommand={lastInsertedCommand}
-                completionSuggestion={completionSuggestion}
-              />
+              </div>
             </div>
             <div className="flex items-center justify-between px-2 pb-2 pt-1 gap-1">
               <div className="flex items-center gap-1">
