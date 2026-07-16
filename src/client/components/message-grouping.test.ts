@@ -199,4 +199,69 @@ describe('mergeAssistantTurns', () => {
     expect(merged).toHaveLength(1)
     expect(merged[0].id).toBe('a1')
   })
+
+  it('returns referentially stable merged turns when source messages are unchanged', () => {
+    // The store gives a new ref only to the message that changed on each
+    // streaming delta; untouched messages keep their ref. A merged turn whose
+    // sources are unchanged must return the SAME object so the downstream
+    // adapter WeakMap + ChatMessageRenderer memo can skip re-rendering it.
+    const a1 = cmsg('a1', 'assistant', [mThink(), mTool('Edit')])
+    const a2 = cmsg('a2', 'assistant', [mThink(), mTool('Bash')])
+    const first = mergeAssistantTurns([a1, a2])
+    const second = mergeAssistantTurns([a1, a2])
+    expect(second[0]).toBe(first[0]) // same merged object reference
+  })
+
+  it('rebuilds only the merged turn whose source message changed reference', () => {
+    // Two separate merged turns, separated by a user message.
+    const u0 = cmsg('u0', 'user', [mText('first')])
+    const e1 = cmsg('e1', 'assistant', [mTool('Grep')])
+    const e2 = cmsg('e2', 'assistant', [mTool('Glob')])
+    const u1 = cmsg('u1', 'user', [mText('second')])
+    const a1 = cmsg('a1', 'assistant', [mThink(), mTool('Edit')])
+    const a2 = cmsg('a2', 'assistant', [mThink(), mTool('Bash')])
+
+    const first = mergeAssistantTurns([u0, e1, e2, u1, a1, a2])
+    // out: [u0, e1|e2, u1, a1|a2]
+    const stableMerged = first[1]
+    const changingMerged = first[3]
+
+    // Simulate a streaming delta: only a2 gets a new ref; everything else is stable.
+    const a2Next = { ...a2, parts: [...a2.parts, mText('more')] }
+    const second = mergeAssistantTurns([u0, e1, e2, u1, a1, a2Next])
+
+    expect(second[1]).toBe(stableMerged) // unchanged turn reused → memo can skip
+    expect(second[3]).not.toBe(changingMerged) // changed turn rebuilt (the streaming one)
+    // Full rebuild fidelity — a subset check would pass even if parts were dropped/reordered.
+    expect(second[3].id).toBe('a1|a2')
+    expect(second[3].parts.map((p) => p.type)).toEqual([
+      'thinking',
+      'tool_use',
+      'thinking',
+      'tool_use',
+      'text',
+    ])
+    expect(second[3].sourceTimestamps).toEqual([1, 1, 1, 1, 1])
+    // The rebuilt turn is itself cached: the next same-ref call reuses it (real streaming
+    // oscillates build → reuse → rebuild → reuse across deltas).
+    expect(mergeAssistantTurns([u0, e1, e2, u1, a1, a2Next])[3]).toBe(second[3])
+  })
+
+  it('rebuilds a merged turn when a source flips isStreaming on a new ref', () => {
+    // The cache freezes isStreaming at build time and only recomputes when a
+    // source message REFERENCE changes, so finishing a stream must mint a new
+    // ref (the store does) for the merged turn to rebuild with isStreaming:false.
+    const a1 = cmsg('a1', 'assistant', [mThink(), mTool('Edit')])
+    const a2Streaming: ChatMessage = { ...cmsg('a2', 'assistant', [mTool('Bash')]), isStreaming: true }
+    const first = mergeAssistantTurns([a1, a2Streaming])
+    expect(first[0].isStreaming).toBe(true)
+    // Same refs → cached, value frozen.
+    expect(mergeAssistantTurns([a1, a2Streaming])[0]).toBe(first[0])
+
+    // Stream finishes: a2 is replaced by a NEW ref with isStreaming cleared.
+    const a2Done = { ...a2Streaming, isStreaming: false }
+    const second = mergeAssistantTurns([a1, a2Done])
+    expect(second[0]).not.toBe(first[0]) // rebuilt because a2's ref changed
+    expect(second[0].isStreaming).toBe(false)
+  })
 })
