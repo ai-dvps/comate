@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Send, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
+import { ArrowUp, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
@@ -1015,14 +1015,14 @@ export default function PromptInput({
                     <PopoverTrigger asChild>
                       <button
                         disabled={isInterrupting}
-                        className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
+                        className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
                       >
                         {isInterrupting ? (
-                          <Loader2 className="w-5 h-5 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
-                          <span className="relative w-5 h-5 flex items-center justify-center">
-                            <Loader2 className="absolute inset-0 w-5 h-5 animate-spin opacity-60" />
-                            <Square className="w-2.5 h-2.5 fill-current" />
+                          <span className="relative w-4 h-4 flex items-center justify-center">
+                            <Loader2 className="absolute inset-0 w-4 h-4 animate-spin opacity-60" />
+                            <Square className="w-2 h-2 fill-current" />
                           </span>
                         )}
                       </button>
@@ -1075,10 +1075,10 @@ export default function PromptInput({
                     <button
                       onClick={handleSend}
                       disabled={!canSend}
-                      className="p-1.5 rounded-md text-text-tertiary hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="p-1.5 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 hover:text-accent/80 transition-colors flex items-center gap-1.5 border border-accent/20 disabled:opacity-40 disabled:cursor-not-allowed"
                       title={t('send')}
                     >
-                      <Send className="w-4 h-4" />
+                      <ArrowUp className="w-4 h-4" />
                     </button>
                   </>
                 )}
