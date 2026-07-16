@@ -16,6 +16,13 @@ const think = (text = 'hmm', timestamp?: number, isStreaming = false): Renderabl
   ({ type: 'thinking', text, isStreaming, timestamp })
 const tool = (name: string, timestamp?: number, isStreaming = false): RenderablePart =>
   ({ type: 'tool_use', toolUseId: name, toolName: name, input: {}, isStreaming, timestamp })
+const toolWith = (
+  name: string,
+  input: unknown,
+  timestamp?: number,
+  isStreaming = false,
+): RenderablePart =>
+  ({ type: 'tool_use', toolUseId: name, toolName: name, input, isStreaming, timestamp })
 
 function makeRegion(parts: RenderablePart[]): ProcessRegion {
   return {
@@ -188,5 +195,47 @@ describe('ProcessRegionGhost', () => {
     ])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
     expect(screen.getByTestId('duration-visible').textContent).toBe('1s')
+  })
+
+  it('shows the latest tool key parameter next to its name (R1)', () => {
+    const region = makeRegion([toolWith('Bash', { command: 'npm test' })])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    const button = screen.getByRole('button')
+    expect(button.textContent).toContain('Bash')
+    expect(button.textContent).toContain('npm test')
+    expect(button.textContent).toContain('▸')
+  })
+
+  it('includes the key parameter in the aria-label (R6)', () => {
+    const region = makeRegion([toolWith('Bash', { command: 'npm test' })])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    expect(screen.getByRole('button').getAttribute('aria-label')).toMatch(/Bash ▸ npm test/)
+  })
+
+  it('shows the tool name only when there is no key parameter (R2)', () => {
+    const region = makeRegion([toolWith('Task', { foo: 'bar' })])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    const button = screen.getByRole('button')
+    expect(button.textContent).toContain('Task')
+    expect(button.textContent).not.toContain('▸')
+    expect(button.textContent).not.toContain('bar')
+  })
+
+  it('shows the tool name only while the latest tool is streaming (KTD4)', () => {
+    const region = makeRegion([toolWith('Bash', { command: 'npm test' }, undefined, true)])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    const button = screen.getByRole('button')
+    expect(button.textContent).toContain('Bash')
+    expect(button.textContent).not.toContain('npm test')
+    expect(button.textContent).not.toContain('▸')
+  })
+
+  it('left-truncates a long file path so the filename survives (AE2)', () => {
+    const deep = `src/${'a/'.repeat(30)}BashRenderer.tsx`
+    const region = makeRegion([toolWith('Edit', { file_path: deep })])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    const button = screen.getByRole('button')
+    expect(button.textContent).toContain('BashRenderer.tsx')
+    expect(button.textContent).not.toContain(deep)
   })
 })

@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { AlertCircle, ChevronDown, Clock } from 'lucide-react'
 
 import { useElapsed } from '../hooks/use-elapsed'
+import { truncateStart } from './tool-renderers/path-utils'
+import { ghostLatestLabel } from './process-region-ghost-label'
 import type { ProcessRegion } from './message-grouping'
 import type { RenderablePart } from './chat-message-adapter'
 
@@ -33,22 +35,35 @@ function latestKey(part: RenderablePart): string {
   return part.type
 }
 
+// Mirror FilePath's default cap so a long path left-truncates to its filename.
+const PATH_DISPLAY_MAX = 40
+
 /**
  * The collapsed representation of a process region in result-focused mode: a
  * low-weight one-line button showing the step count, elapsed duration, and the
- * latest step. It expands into a side drawer on activation (U4). Stays collapsed
- * by design.
+ * latest step — including that step's key parameter (e.g. `Bash ▸ npm test`) so
+ * a user can see what the agent is doing without opening the drawer (U4). It
+ * expands into a side drawer on activation. Stays collapsed by design.
  */
 export default function ProcessRegionGhost({ region, hasError, onOpen }: ProcessRegionGhostProps) {
   const { t } = useTranslation('chat')
   const latest = region.latest
   const isStreaming = (latest as { isStreaming?: boolean }).isStreaming === true
-  const label =
-    latest.type === 'tool_use'
-      ? latest.meta?.displayName ?? latest.toolName
-      : latest.type === 'thinking'
-        ? t('displayMode.thinking')
-        : latest.type
+
+  const info = ghostLatestLabel(latest)
+  const toolName = info.kind === 'tool' ? info.name : undefined
+  const thinkingLabel = t('displayMode.thinking')
+  // While the latest tool streams, its input is incomplete ({}) — show the name
+  // only and reveal the parameter once the input lands (KTD4).
+  const value = info.kind === 'tool' && !isStreaming ? info.value : undefined
+  const displayValue =
+    value !== undefined && info.kind === 'tool' && info.truncate === 'keep-tail'
+      ? truncateStart(value, PATH_DISPLAY_MAX)
+      : value
+  const nameLabel = info.kind === 'thinking' ? thinkingLabel : (toolName ?? latest.type)
+  // The aria string carries the full parameter (pre-truncation) for screen readers.
+  const label = value !== undefined && toolName ? `${toolName} ▸ ${value}` : nameLabel
+
   const stepCount = region.parts.length
 
   const startTime = findFirstTimestamp(region.timestamps)
@@ -88,7 +103,7 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
         latest: label,
       })}
       data-error={hasError ? 'true' : undefined}
-      className="group/ghost my-0.5 inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-text-tertiary transition-colors motion-reduce:transition-none hover:text-text-primary"
+      className="group/ghost my-0.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-text-tertiary transition-colors motion-reduce:transition-none hover:text-text-primary"
     >
       <span aria-hidden="true" className="text-text-tertiary/60">
         {t('displayMode.processWord')}
@@ -100,19 +115,27 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
       <span aria-live="polite" aria-atomic="true" className="sr-only" data-testid="duration-live">
         {displayAnnounced ?? durationPlaceholder}
       </span>
-      <span className="inline-flex items-center gap-1">
+      <span className="inline-flex min-w-0 items-center gap-1">
         {/* Keyed by the latest step so each new step replays the slide-in. */}
         <span
           key={latestKey(latest)}
-          className="inline-block animate-slide-in-from-bottom motion-reduce:animate-none"
+          className="inline-flex min-w-0 animate-slide-in-from-bottom items-center gap-1 motion-reduce:animate-none"
         >
-          {label}
+          {displayValue !== undefined && toolName ? (
+            <>
+              <span>{toolName}</span>
+              <span aria-hidden="true" className="text-text-tertiary/60">▸</span>
+              <span className="min-w-0 truncate font-mono">{displayValue}</span>
+            </>
+          ) : (
+            <span>{nameLabel}</span>
+          )}
         </span>
         {isStreaming && <Clock className="size-3 animate-pulse text-warning" aria-hidden="true" />}
       </span>
       {hasError && <AlertCircle className="size-3 text-destructive" aria-hidden="true" />}
       <ChevronDown
-        className="size-3 opacity-60 transition-opacity group-hover/ghost:opacity-100"
+        className="size-3 shrink-0 opacity-60 transition-opacity group-hover/ghost:opacity-100"
         aria-hidden="true"
       />
     </button>
