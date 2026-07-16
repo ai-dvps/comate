@@ -3,7 +3,7 @@ import type { ReactElement } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
-import { ToolHeader } from './tool'
+import { ToolHeader, ToolContent } from './tool'
 import i18n from '../../i18n'
 import { ToolRendererProvider } from '../tool-renderers/ToolRendererContext'
 
@@ -137,5 +137,33 @@ describe('ToolHeader', () => {
     )
 
     expect(screen.getByText('https://example.com/path')).toBeInTheDocument()
+  })
+})
+
+describe('ToolContent', () => {
+  it('renders children fully without a toggle', () => {
+    renderWithProviders(
+      <ToolContent>
+        <div>tool body content</div>
+      </ToolContent>,
+    )
+
+    expect(screen.getByText('tool body content')).toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByText('Show details')).not.toBeInTheDocument()
+    expect(screen.queryByText('Hide details')).not.toBeInTheDocument()
+  })
+
+  it('applies search-match ring classes when matched', () => {
+    const { container } = renderWithProviders(
+      <ToolContent hasSearchMatch isCurrentSearchMatch>
+        <div>matched tool body</div>
+      </ToolContent>,
+    )
+
+    const wrapper = container.firstChild as HTMLElement
+    expect(wrapper).toHaveClass('ring-1')
+    expect(wrapper).toHaveClass('ring-accent')
+    expect(wrapper).toHaveClass('bg-accent/5')
   })
 })

@@ -181,8 +181,7 @@ export const ToolContent = ({
 }: ToolContentProps) => (
   <CompactableContainer
     className={cn(className)}
-    compactHeight={0}
-    alwaysShowToggle
+    alwaysExpanded
     forceExpanded={forceExpanded}
     hasSearchMatch={hasSearchMatch}
     isCurrentSearchMatch={isCurrentSearchMatch}
