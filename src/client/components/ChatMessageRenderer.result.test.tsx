@@ -58,6 +58,27 @@ describe('ChatMessageRenderer result-focused mode', () => {
     expect(screen.getByText('final answer')).toBeInTheDocument()
   })
 
+  it('renders process region duration in result mode (U4)', () => {
+    const msg = assistantMessage([
+      { ...think(), timestamp: 1000 },
+      { ...tool('Bash'), timestamp: 2000 },
+      text('final answer'),
+    ])
+    renderWithI18n(
+      <ChatMessageRenderer
+        message={msg}
+        resultMap={new Map()}
+        onOpenDrawer={() => {}}
+        sessionId="s1"
+        displayMode="result"
+      />,
+    )
+    const ghost = screen.getByRole('button', { name: GHOST_NAME })
+    expect(ghost.textContent).toMatch(/2 steps/)
+    expect(ghost.textContent).toMatch(/1s/)
+    expect(ghost.textContent).toMatch(/Bash/)
+  })
+
   it('activating a ghost opens the per-region drawer (R11)', () => {
     const msg = assistantMessage([think(), tool('Bash'), text('done')])
     const onOpen = vi.fn()
