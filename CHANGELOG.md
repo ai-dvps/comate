@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Process region drawer now stays in sync and starts collapsed** — opening a process region in result-focused mode previously showed tool cards fully expanded and could lag behind streaming updates. The drawer now subscribes to live message updates as the turn streams, and each tool card inside the drawer starts collapsed (header + "Show details" toggle) so the overall flow is easier to scan. Thinking cards remain collapsed as before, and the normal linear chat view still expands tool cards by default.
 - **Prompt-input controls unified** — the provider selector, approval-mode toggle, and fast-mode toggle in the prompt-input toolbar are now borderless and background-less, with state indicated only by text color and a shared hover surface. This gives the right-hand control group a consistent, flatter visual style.
 - **Send/stop button styling** — the prompt-input send and stop buttons are now smaller (`p-1.5`, `w-4 h-4` icon) and share the same rounded shape. The send button uses a soft accent style (`bg-accent/15`, `border-accent/20`, `text-accent`) instead of the previous plain icon, while the stop button keeps its destructive style at the reduced size.
 - **App settings are now reactive** — `useAppSettings` was converted from per-component state to a shared reactive store, so changing a preference (display mode, font size, etc.) now updates every open view immediately instead of requiring a reload.

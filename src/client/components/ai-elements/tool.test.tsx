@@ -154,6 +154,48 @@ describe('ToolContent', () => {
     expect(screen.queryByText('Hide details')).not.toBeInTheDocument()
   })
 
+  it('collapses overflowing content and expands on toggle click', async () => {
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      'scrollHeight',
+    )
+    Object.defineProperty(Element.prototype, 'scrollHeight', {
+      configurable: true,
+      value: 300,
+    })
+
+    renderWithProviders(
+      <ToolContent alwaysExpanded={false}>
+        <div style={{ height: '300px' }}> tall tool body </div>
+      </ToolContent>,
+    )
+
+    expect(screen.getByText('tall tool body')).toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: /Show details/i })
+    expect(toggle).toBeInTheDocument()
+
+    await userEvent.click(toggle)
+    expect(screen.getByRole('button', { name: /Hide details/i })).toBeInTheDocument()
+
+    if (originalScrollHeight) {
+      Object.defineProperty(Element.prototype, 'scrollHeight', originalScrollHeight)
+    } else {
+      delete (Element.prototype as { scrollHeight?: number }).scrollHeight
+    }
+  })
+
+  it('keeps content expanded when forceExpanded is true', () => {
+    renderWithProviders(
+      <ToolContent alwaysExpanded={false} forceExpanded>
+        <div style={{ height: '300px' }}> forced tool body </div>
+      </ToolContent>,
+    )
+
+    expect(screen.getByText('forced tool body')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Show details/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Hide details/i })).not.toBeInTheDocument()
+  })
+
   it('applies search-match ring classes when matched', () => {
     const { container } = renderWithProviders(
       <ToolContent hasSearchMatch isCurrentSearchMatch>
