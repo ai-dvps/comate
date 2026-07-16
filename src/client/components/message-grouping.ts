@@ -41,6 +41,32 @@ export type MessageRegion = TextRegion | ProcessRegion
 export type TimestampedChatMessage = ChatMessage & { sourceTimestamps?: number[] }
 
 /**
+ * Cache of already-built merged turns, keyed by the turn's first source message
+ * (referentially stable for any multi-message turn — the store only hands out a
+ * new ref for the message that actually changed, and the first message of a
+ * turn is never the one streaming once a second message exists). A merged turn
+ * is reused whenever its source messages are referentially unchanged, so every
+ * *other* merged turn stays on a stable reference. That stability is what lets
+ * `adaptChatMessage`'s WeakMap hit and `ChatMessageRenderer`'s `React.memo`
+ * skip — so a streaming delta re-renders only the turn that is actually
+ * streaming, not the whole list.
+ *
+ * `WeakMap` (not `Map`) so entries are reclaimed once their source messages are
+ * pruned from the live window / dropped on session switch — no unbounded
+ * retention in this long-lived desktop process. The `refs` array inside each
+ * entry is what we compare to detect a streaming change to a later message.
+ */
+const mergedTurnCache = new WeakMap<ChatMessage, { refs: ChatMessage[]; result: TimestampedChatMessage }>()
+
+function sameRefs(a: ChatMessage[], b: ChatMessage[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+/**
  * Result-focused mode: a single user turn can span multiple assistant messages
  * in the SDK transcript (the API stores one assistant message per tool step,
  * with results in separate user messages that are already filtered out). Merge
@@ -51,6 +77,7 @@ export type TimestampedChatMessage = ChatMessage & { sourceTimestamps?: number[]
  * it back apart to read each source message. Single assistant messages pass
  * through unchanged (preserving their real id for search/scroll).
  */
+
 export function mergeAssistantTurns(messages: ChatMessage[]): TimestampedChatMessage[] {
   const out: TimestampedChatMessage[] = []
   let buffer: ChatMessage[] = []
@@ -59,22 +86,30 @@ export function mergeAssistantTurns(messages: ChatMessage[]): TimestampedChatMes
     if (buffer.length === 1) {
       out.push(buffer[0])
     } else {
-      const parts: MessagePart[] = []
-      const sourceTimestamps: number[] = []
       const ids: string[] = []
-      for (const m of buffer) {
-        parts.push(...m.parts)
-        sourceTimestamps.push(...m.parts.map(() => m.timestamp))
-        ids.push(m.id)
+      for (const m of buffer) ids.push(m.id)
+      const id = ids.join('|')
+      const cached = mergedTurnCache.get(buffer[0])
+      if (cached && sameRefs(cached.refs, buffer)) {
+        out.push(cached.result)
+      } else {
+        const parts: MessagePart[] = []
+        const sourceTimestamps: number[] = []
+        for (const m of buffer) {
+          parts.push(...m.parts)
+          sourceTimestamps.push(...m.parts.map(() => m.timestamp))
+        }
+        const result: TimestampedChatMessage = {
+          id,
+          role: 'assistant',
+          parts,
+          timestamp: buffer[0].timestamp,
+          sourceTimestamps,
+          isStreaming: buffer.some((m) => m.isStreaming),
+        }
+        mergedTurnCache.set(buffer[0], { refs: buffer.slice(), result })
+        out.push(result)
       }
-      out.push({
-        id: ids.join('|'),
-        role: 'assistant',
-        parts,
-        timestamp: buffer[0].timestamp,
-        sourceTimestamps,
-        isStreaming: buffer.some((m) => m.isStreaming),
-      })
     }
     buffer = []
   }
