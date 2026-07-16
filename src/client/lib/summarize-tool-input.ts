@@ -1,3 +1,43 @@
+/**
+ * Keys {@link summarizeToolInput} treats as a meaningful parameter, in priority
+ * order. Hoisted to module scope so the meaningful-vs-fallback decision can
+ * reuse the same single source of truth instead of being re-derived elsewhere.
+ */
+const SUMMARY_PRIMARY_KEYS = [
+  'command', 'file_path', 'path', 'pattern', 'patterns', 'url', 'query',
+  'prompt', 'code', 'language', 'old_string', 'new_string',
+  'oldString', 'newString', 'model', 'topic', 'message',
+] as const
+
+/**
+ * Whether `input` would produce a *meaningful* summary from
+ * {@link summarizeToolInput} — i.e. one of its recognized branches matches —
+ * rather than the generic `firstKey: value` / JSON fallback. Mirrors the exact
+ * type, length, and array guards of the recognized branches so consumers can
+ * decide "show a value vs. show nothing" without re-deriving (and drifting
+ * from) the helper's logic.
+ */
+export function hasMeaningfulSummary(input: unknown): boolean {
+  if (input === null || typeof input !== 'object') return false
+  const obj = input as Record<string, unknown>
+
+  if (typeof obj.description === 'string') return true
+
+  if (Array.isArray(obj.questions) && obj.questions.length > 0) {
+    const first = obj.questions[0]
+    if (first !== null && typeof first === 'object') {
+      const q = first as Record<string, unknown>
+      if (typeof q.question === 'string' || typeof q.header === 'string') return true
+    }
+  }
+
+  if (SUMMARY_PRIMARY_KEYS.some((key) => obj[key] !== undefined)) return true
+
+  if (typeof obj.content === 'string' && obj.content.length <= 120) return true
+
+  return false
+}
+
 export function summarizeToolInput(input: unknown): string | undefined {
   if (input === null || input === undefined) return undefined
 
@@ -27,13 +67,7 @@ export function summarizeToolInput(input: unknown): string | undefined {
       }
     }
 
-    const primaryKeys = [
-      'command', 'file_path', 'path', 'pattern', 'patterns', 'url', 'query',
-      'prompt', 'code', 'language', 'old_string', 'new_string',
-      'oldString', 'newString', 'model', 'topic', 'message',
-    ]
-
-    for (const key of primaryKeys) {
+    for (const key of SUMMARY_PRIMARY_KEYS) {
       if (obj[key] !== undefined) {
         const value = String(obj[key])
 

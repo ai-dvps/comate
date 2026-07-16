@@ -238,4 +238,19 @@ describe('ProcessRegionGhost', () => {
     expect(button.textContent).toContain('BashRenderer.tsx')
     expect(button.textContent).not.toContain(deep)
   })
+
+  it('does not JS-pre-slice keep-head values; a long command renders in full (AE3)', () => {
+    const longCmd = `git commit -m ${'x'.repeat(80)}`
+    const region = makeRegion([toolWith('Bash', { command: longCmd })])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    expect(screen.getByRole('button').textContent).toContain(longCmd)
+  })
+
+  it('carries the full pre-truncation path in the aria-label (R6)', () => {
+    const deep = `src/${'a/'.repeat(30)}BashRenderer.tsx`
+    const region = makeRegion([toolWith('Edit', { file_path: deep })])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    const aria = screen.getByRole('button').getAttribute('aria-label') ?? ''
+    expect(aria).toContain(deep)
+  })
 })

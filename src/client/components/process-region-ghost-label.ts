@@ -1,4 +1,4 @@
-import { summarizeToolInput } from '../lib/summarize-tool-input'
+import { hasMeaningfulSummary, summarizeToolInput } from '../lib/summarize-tool-input'
 import type { RenderablePart } from './chat-message-adapter'
 
 /**
@@ -15,26 +15,6 @@ export type GhostLabelTruncate = 'keep-tail' | 'keep-head'
 export type GhostLatestLabel =
   | { kind: 'thinking' }
   | { kind: 'tool'; name: string; value: string | undefined; truncate: GhostLabelTruncate }
-
-/**
- * Keys `summarizeToolInput` treats as a meaningful parameter. When the input
- * has none of these, the helper's output is its generic `firstKey: value` or
- * `{}` fallback — noise in the compact ghost — so the caller shows the tool
- * name only (R2). Kept in sync with the keys `summarizeToolInput` prefers.
- */
-const MEANINGFUL_KEYS = [
-  'description', 'questions',
-  'command', 'file_path', 'path', 'pattern', 'patterns', 'url', 'query',
-  'prompt', 'code', 'language', 'old_string', 'new_string', 'oldString',
-  'newString', 'model', 'topic', 'message', 'content',
-] as const
-
-function hasMeaningfulKey(input: unknown): boolean {
-  if (input === null || typeof input !== 'object') return false
-  const obj = input as Record<string, unknown>
-  if (Object.keys(obj).length === 0) return false
-  return MEANINGFUL_KEYS.some((key) => obj[key] !== undefined)
-}
 
 const URL_SCHEME = /^https?:\/\//i
 
@@ -55,13 +35,16 @@ export function ghostLatestLabel(part: RenderablePart): GhostLatestLabel {
   }
 
   const name = part.meta?.displayName ?? part.toolName
-  if (!hasMeaningfulKey(part.input)) {
+  // `hasMeaningfulSummary` mirrors summarizeToolInput's recognized branches, so
+  // unrecognized/empty inputs fall back to the tool name only (R2) instead of
+  // leaking the helper's `firstKey: value` / `{}` fallback into the ghost.
+  if (!hasMeaningfulSummary(part.input)) {
     return { kind: 'tool', name, value: undefined, truncate: 'keep-head' }
   }
 
   const raw = summarizeToolInput(part.input)
-  // `{}` is the helper's stringify fallback for an empty object; treat as none.
-  const value = raw === undefined || raw === '{}' ? undefined : raw
+  // An empty/whitespace summary (e.g. command: "") is not worth showing.
+  const value = raw === undefined || raw.trim() === '' ? undefined : raw
   return {
     kind: 'tool',
     name,
