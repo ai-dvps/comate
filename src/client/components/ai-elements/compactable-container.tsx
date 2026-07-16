@@ -9,6 +9,7 @@ const COMPACTABLE_MAX_HEIGHT_PX = 192
 export type CompactableContainerProps = ComponentProps<'div'> & {
   compactHeight?: number
   alwaysShowToggle?: boolean
+  alwaysExpanded?: boolean
   forceExpanded?: boolean
   hasSearchMatch?: boolean
   isCurrentSearchMatch?: boolean
@@ -19,6 +20,7 @@ export const CompactableContainer = ({
   children,
   compactHeight = COMPACTABLE_MAX_HEIGHT_PX,
   alwaysShowToggle = false,
+  alwaysExpanded = false,
   forceExpanded = false,
   hasSearchMatch = false,
   isCurrentSearchMatch = false,
@@ -64,12 +66,12 @@ export const CompactableContainer = ({
       <div
         className="overflow-hidden"
         style={{
-          maxHeight: expanded ? undefined : `${compactHeight}px`,
+          maxHeight: alwaysExpanded ? undefined : `${compactHeight}px`,
         }}
       >
         <div ref={contentRef}>{children}</div>
       </div>
-      {(overflows || alwaysShowToggle) && (
+      {(overflows || alwaysShowToggle) && !alwaysExpanded && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}

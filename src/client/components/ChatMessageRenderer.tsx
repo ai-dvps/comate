@@ -274,7 +274,6 @@ export default function ChatMessageRenderer({
     return (
       <CompactableText
         key={partKey}
-        forceExpanded={isCurrentInPart}
         hasSearchMatch={hasMatchInPart}
         isCurrentSearchMatch={isCurrentInPart}
       >
@@ -403,7 +402,6 @@ export default function ChatMessageRenderer({
                     meta={part.meta}
                   />
                   <ToolContent
-                    forceExpanded={isCurrentInPart}
                     hasSearchMatch={hasMatchInPart}
                     isCurrentSearchMatch={isCurrentInPart}
                   >
