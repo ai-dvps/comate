@@ -10,6 +10,7 @@ export default defineProject({
       '@': path.resolve(__dirname, './src/client'),
       '@server': path.resolve(__dirname, './src/server'),
     },
+    dedupe: ['react', 'react-dom'],
   },
   test: {
     name: 'browser',
