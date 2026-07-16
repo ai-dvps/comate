@@ -83,4 +83,50 @@ describe('ghostLatestLabel', () => {
   it('treats a short pattern/query as keep-head', () => {
     expect(ghostLatestLabel(tool('Grep', { pattern: 'focusMode' }))).toMatchObject({ kind: 'tool', name: 'Grep', truncate: 'keep-head' })
   })
+
+  it('falls back to name-only for a non-string description (no firstKey noise)', () => {
+    expect(ghostLatestLabel(tool('Task', { description: 42 }))).toEqual({
+      kind: 'tool',
+      name: 'Task',
+      value: undefined,
+      truncate: 'keep-head',
+    })
+  })
+
+  it('falls back to name-only for an empty/malformed questions array', () => {
+    expect(ghostLatestLabel(tool('AskUserQuestion', { questions: [] }))).toEqual({
+      kind: 'tool',
+      name: 'AskUserQuestion',
+      value: undefined,
+      truncate: 'keep-head',
+    })
+  })
+
+  it('falls back to name-only for long content (exceeds the 120-char branch)', () => {
+    expect(ghostLatestLabel(tool('Write', { content: 'x'.repeat(200) }))).toEqual({
+      kind: 'tool',
+      name: 'Write',
+      value: undefined,
+      truncate: 'keep-head',
+    })
+  })
+
+  it('falls back to name-only for an empty/whitespace command (no dangling separator)', () => {
+    expect(ghostLatestLabel(tool('Bash', { command: '   ' }))).toEqual({
+      kind: 'tool',
+      name: 'Bash',
+      value: undefined,
+      truncate: 'keep-head',
+    })
+  })
+
+  it('returns a name-only tool label for a defensive non-tool/non-thinking part', () => {
+    const textPart = { type: 'text', text: 'hi' } as unknown as RenderablePart
+    expect(ghostLatestLabel(textPart)).toEqual({
+      kind: 'tool',
+      name: 'text',
+      value: undefined,
+      truncate: 'keep-head',
+    })
+  })
 })
