@@ -59,7 +59,7 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
         <button
           type="button"
           disabled={disabled}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-accent/10 border-accent/25 text-accent hover:bg-accent/20"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-accent hover:bg-surface-hover"
           title={t('provider.selectorTitle')}
         >
           <ProviderAvatar name={displayName} className="w-4 h-4 text-[9px]" />

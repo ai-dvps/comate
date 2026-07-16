@@ -70,7 +70,7 @@ export default function ApprovalModeToggle({ workspaceId, sessionId, disabled = 
         <button
           type="button"
           disabled={disabled}
-          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed ${meta.bg} ${meta.border} ${meta.color} ${meta.hoverBg}`}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed ${meta.color} hover:bg-surface-hover`}
           title={t(`approvalMode.${currentMode}Desc`)}
         >
           <Icon className="w-3 h-3" />

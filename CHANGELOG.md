@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Prompt-input controls unified** — the provider selector, approval-mode toggle, and fast-mode toggle in the prompt-input toolbar are now borderless and background-less, with state indicated only by text color and a shared hover surface. This gives the right-hand control group a consistent, flatter visual style.
+- **Send/stop button styling** — the prompt-input send and stop buttons are now smaller (`p-1.5`, `w-4 h-4` icon) and share the same rounded shape. The send button uses a soft accent style (`bg-accent/15`, `border-accent/20`, `text-accent`) instead of the previous plain icon, while the stop button keeps its destructive style at the reduced size.
 - **App settings are now reactive** — `useAppSettings` was converted from per-component state to a shared reactive store, so changing a preference (display mode, font size, etc.) now updates every open view immediately instead of requiring a reload.
 - **Tooltip styling** — tooltips now use a neutral surface background with a subtle border and shadow instead of the primary accent color, and the rotated-square arrow has been removed for a cleaner look. This improves the appearance of tooltips on the collapsed sidebar icon rail and across the app.
 - **Session-list approval-mode badge removed** — the colored auto/readonly badge no longer appears on each session-list row; the current session's approval mode is still shown and controllable via the prompt-input toggle.
