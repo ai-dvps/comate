@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDown, Bot } from 'lucide-react'
@@ -216,6 +216,37 @@ export default function VirtualizedMessageList({
     prevMessageCount.current = messages.length
   }, [isVisible, messages.length, isAtBottom, virtualizer, viewItems.length])
 
+  // Auto-scroll when content grows inside existing messages while the user is
+  // already at the bottom. In result mode, streaming text/thinking deltas update
+  // the merged last turn in place without changing messages.length, so the
+  // message-count effect above never fires. We detect the growing scrollHeight
+  // and keep the panel pinned to the bottom, but skip when the view item count
+  // changed (e.g. older messages prepended) to avoid jumping away from the
+  // anchored position.
+  const prevScrollHeightRef = useRef(0)
+  const prevViewItemsLengthRef = useRef(viewItems.length)
+  useLayoutEffect(() => {
+    const el = parentRef.current
+    if (!el || !isVisible) return
+
+    const scrollHeight = el.scrollHeight
+    const prevScrollHeight = prevScrollHeightRef.current
+    prevScrollHeightRef.current = scrollHeight
+
+    const viewItemsLength = viewItems.length
+    const prevViewItemsLength = prevViewItemsLengthRef.current
+    prevViewItemsLengthRef.current = viewItemsLength
+
+    if (
+      prevScrollHeight > 0 &&
+      scrollHeight > prevScrollHeight &&
+      isAtBottom &&
+      viewItemsLength === prevViewItemsLength
+    ) {
+      virtualizer.scrollToIndex(viewItems.length - 1, { align: 'end' })
+    }
+  })
+
   // Scroll to bottom on initial mount if messages exist and the list is visible
   useEffect(() => {
     if (isVisible && viewItems.length > 0) {
@@ -292,7 +323,7 @@ export default function VirtualizedMessageList({
 
   return (
     <div className="relative flex-1">
-      <div ref={parentRef} className="absolute inset-0 overflow-y-auto">
+      <div ref={parentRef} className="absolute inset-0 overflow-y-auto" data-testid="virtualized-message-list-scroll">
         {isLoadingOlder && (
           <div className="p-3 max-w-3xl mx-auto w-full text-center">
             <div className="flex gap-1 justify-center">

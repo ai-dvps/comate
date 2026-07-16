@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **App settings are now reactive** — `useAppSettings` was converted from per-component state to a shared reactive store, so changing a preference (display mode, font size, etc.) now updates every open view immediately instead of requiring a reload.
 - **Tooltip styling** — tooltips now use a neutral surface background with a subtle border and shadow instead of the primary accent color, and the rotated-square arrow has been removed for a cleaner look. This improves the appearance of tooltips on the collapsed sidebar icon rail and across the app.
 - **Session-list approval-mode badge removed** — the colored auto/readonly badge no longer appears on each session-list row; the current session's approval mode is still shown and controllable via the prompt-input toggle.
+
+### Fixed
+
+- **Virtualized message list stays pinned to bottom during streaming in result mode** — `VirtualizedMessageList` only auto-scrolled when `messages.length` increased, so streaming text/thinking deltas that grew the merged last turn in place (common in result-focused display mode) left the panel lagging behind the new bottom. A new layout effect now detects scroll-height growth while the user is at the bottom and pins the view to the latest content, while ignoring prepend (older-message fetch) cases so the anchored position is preserved.
+
 ## [0.0.24] - 2026-07-14
 
 ### Fixed
