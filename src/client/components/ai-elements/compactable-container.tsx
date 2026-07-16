@@ -13,6 +13,8 @@ export type CompactableContainerProps = ComponentProps<'div'> & {
   forceExpanded?: boolean
   hasSearchMatch?: boolean
   isCurrentSearchMatch?: boolean
+  showMoreLabel?: string
+  showLessLabel?: string
 }
 
 export const CompactableContainer = ({
@@ -24,6 +26,8 @@ export const CompactableContainer = ({
   forceExpanded = false,
   hasSearchMatch = false,
   isCurrentSearchMatch = false,
+  showMoreLabel = 'Show details',
+  showLessLabel = 'Hide details',
   ...props
 }: CompactableContainerProps) => {
   const [expanded, setExpanded] = useState(false)
@@ -66,7 +70,7 @@ export const CompactableContainer = ({
       <div
         className="overflow-hidden"
         style={{
-          maxHeight: alwaysExpanded ? undefined : `${compactHeight}px`,
+          maxHeight: alwaysExpanded || expanded ? undefined : `${compactHeight}px`,
         }}
       >
         <div ref={contentRef}>{children}</div>
@@ -81,12 +85,12 @@ export const CompactableContainer = ({
           {expanded ? (
             <>
               <ChevronUp className="w-3 h-3" />
-              Hide details
+              {showLessLabel}
             </>
           ) : (
             <>
               <ChevronDown className="w-3 h-3" />
-              Show details
+              {showMoreLabel}
             </>
           )}
         </button>

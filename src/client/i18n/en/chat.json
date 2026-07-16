@@ -19,6 +19,8 @@
   "send": "Send",
   "refresh": "Refresh",
   "notSet": "Not set",
+  "showDetails": "Show details",
+  "hideDetails": "Hide details",
   "neverRefreshed": "Never refreshed",
   "noNewMessages": "No new messages",
   "refreshFailed": "Refresh failed",
