@@ -103,7 +103,7 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
         latest: label,
       })}
       data-error={hasError ? 'true' : undefined}
-      className="group/ghost my-0.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-text-tertiary transition-colors motion-reduce:transition-none hover:text-text-primary"
+      className="group/ghost my-0.5 inline-flex max-w-full items-center gap-1.5 rounded-md py-0.5 pl-0 pr-1.5 text-xs text-text-tertiary transition-colors motion-reduce:transition-none hover:text-text-primary"
     >
       <span aria-hidden="true" className="text-text-tertiary/60">
         {t('displayMode.processWord')}
