@@ -43,7 +43,7 @@ describe('ProcessRegionGhost', () => {
       tool('Bash', 2000),
     ])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    expect(screen.getByText('1s')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('1s')
   })
 
   it('updates duration every second while streaming', () => {
@@ -52,17 +52,17 @@ describe('ProcessRegionGhost', () => {
       think('a', 0, true),
     ])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    expect(screen.getByText('1s')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('1s')
 
     act(() => {
       vi.advanceTimersByTime(1000)
     })
-    expect(screen.getByText('2s')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('2s')
 
     act(() => {
       vi.advanceTimersByTime(2000)
     })
-    expect(screen.getByText('4s')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('4s')
   })
 
   it('freezes duration when streaming completes', () => {
@@ -89,30 +89,30 @@ describe('ProcessRegionGhost', () => {
     }
 
     renderWithI18n(<Wrapper />)
-    expect(screen.getByText('4s')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('4s')
 
     act(() => {
       vi.advanceTimersByTime(2000)
     })
-    expect(screen.getByText('6s')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('6s')
 
     act(() => {
       fireEvent.click(screen.getByTestId('complete'))
     })
     // Completion timestamp equals start here, so without snap-back guard it would show 0s.
     // We expect the last streaming value (6s) to be preserved.
-    expect(screen.getByText('6s')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('6s')
 
     act(() => {
       vi.advanceTimersByTime(2000)
     })
-    expect(screen.getByText('6s')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('6s')
   })
 
   it('shows a placeholder when timestamp data is unavailable', () => {
     const region = makeRegion([think('a')])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    expect(screen.getByText('—')).toBeInTheDocument()
+    expect(screen.getByTestId('duration-visible').textContent).toBe('—')
   })
 
   it('renders duration between step count and latest step label', () => {
@@ -134,7 +134,7 @@ describe('ProcessRegionGhost', () => {
     expect(labelIndex).toBeGreaterThan(durationIndex)
   })
 
-  it('includes duration in the accessible label', () => {
+  it('does not include duration in the button aria-label', () => {
     vi.setSystemTime(3000)
     const region = makeRegion([
       think('a', 1000),
@@ -142,8 +142,40 @@ describe('ProcessRegionGhost', () => {
     ])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
     const button = screen.getByRole('button')
-    expect(button.getAttribute('aria-label')).toMatch(/1s/)
     expect(button.getAttribute('aria-label')).toMatch(/2 steps/)
     expect(button.getAttribute('aria-label')).toMatch(/Edit/)
+    expect(button.getAttribute('aria-label')).not.toMatch(/1s/)
+  })
+
+  it('announces duration through a live region', () => {
+    vi.setSystemTime(3000)
+    const region = makeRegion([
+      think('a', 1000),
+      tool('Edit', 2000),
+    ])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    expect(screen.getByTestId('duration-live').textContent).toBe('1s')
+  })
+
+  it('computes duration from the first defined timestamp', () => {
+    vi.setSystemTime(3000)
+    const region = makeRegion([
+      think('a', undefined),
+      tool('Bash', 1000),
+      think('b', 2000),
+    ])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    expect(screen.getByTestId('duration-visible').textContent).toBe('1s')
+  })
+
+  it('freezes duration at the last defined timestamp when trailing timestamps are missing', () => {
+    vi.setSystemTime(5000)
+    const region = makeRegion([
+      think('a', 1000),
+      tool('Bash', 2000),
+      think('b', undefined),
+    ])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    expect(screen.getByTestId('duration-visible').textContent).toBe('1s')
   })
 })

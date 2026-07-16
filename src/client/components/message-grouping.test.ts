@@ -124,13 +124,13 @@ describe('groupMessageParts', () => {
     // The store pads empty text parts when the SDK content-block index jumps;
     // these must not split one process run into multiple ghosts.
     const regions = groupMessageParts([
-      think(),
-      tool('Edit'),
+      { ...think(), timestamp: 1000 },
+      { ...tool('Edit'), timestamp: 1000 },
       text('   '),
-      think(),
-      tool('Bash'),
+      { ...think(), timestamp: 2000 },
+      { ...tool('Bash'), timestamp: 2000 },
       text(''),
-      think(),
+      { ...think(), timestamp: 3000 },
     ])
     expect(regions).toHaveLength(1)
     expect(regions[0].type).toBe('process')
@@ -138,6 +138,7 @@ describe('groupMessageParts', () => {
     if (proc.type !== 'process') throw new Error('expected process region')
     expect(proc.parts).toHaveLength(5)
     expect(proc.latest.type).toBe('thinking')
+    expect(proc.timestamps).toEqual([1000, 1000, 2000, 2000, 3000])
   })
 
   it('preserves streaming flags on process parts', () => {

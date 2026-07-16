@@ -1,33 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Sparkles } from 'lucide-react'
 
 import { useChatStore } from '../stores/chat-store'
-import { formatDuration } from '../lib/time'
+import { useElapsed } from '../hooks/use-elapsed'
 import { cn } from './ui/utils'
 
 interface CompactingIndicatorProps {
   sessionId: string
   className?: string
-}
-
-function useElapsed(startTime: number, isRunning: boolean): string {
-  const [elapsed, setElapsed] = useState(() => Date.now() - startTime)
-  const startRef = useRef(startTime)
-
-  useEffect(() => {
-    startRef.current = startTime
-    if (!isRunning) {
-      setElapsed(Date.now() - startRef.current)
-      return
-    }
-    const id = setInterval(() => {
-      setElapsed(Date.now() - startRef.current)
-    }, 1000)
-    return () => clearInterval(id)
-  }, [startTime, isRunning])
-
-  return formatDuration(elapsed)
 }
 
 export default function CompactingIndicator({
@@ -39,7 +19,7 @@ export default function CompactingIndicator({
   const compactingStartTime = useChatStore(
     (s) => s.compactingStartTime[sessionId] || 0,
   )
-  const elapsed = useElapsed(compactingStartTime, isCompacting)
+  const elapsed = useElapsed(compactingStartTime, undefined, isCompacting)
 
   if (!isCompacting) return null
 

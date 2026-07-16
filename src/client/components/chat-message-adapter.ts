@@ -43,7 +43,7 @@ export interface RenderableMessage {
 /*  Adapter functions                                                   */
 /* ------------------------------------------------------------------ */
 
-export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
+export function adaptChatMessage(msg: ChatMessage & { sourceTimestamps?: number[] }): RenderableMessage {
   return {
     id: msg.id,
     role: msg.role,
@@ -51,7 +51,11 @@ export function adaptChatMessage(msg: ChatMessage): RenderableMessage {
     timestamp: msg.timestamp,
     parts: msg.parts.map((part, index): RenderablePart | null => {
       if (!part) return null
-      const timestamp = msg.sourceTimestamps?.[index] ?? msg.timestamp
+      const sourceTimestamps = msg.sourceTimestamps
+      const timestamp =
+        sourceTimestamps != null && index < sourceTimestamps.length
+          ? sourceTimestamps[index]
+          : msg.timestamp
       switch (part.type) {
         case 'text':
           return { type: 'text', text: part.text, timestamp }
