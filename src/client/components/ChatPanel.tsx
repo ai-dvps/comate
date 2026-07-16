@@ -439,7 +439,7 @@ export default function ChatPanel({
 
           {/* Approval Surface or Prompt Input */}
           {activeSessionId && (
-            <div className="flex-shrink-0 border-t border-border/30 bg-bg">
+            <div className="flex-shrink-0">
               {currentApproval ? (
                 activeSessionIsBot ? (
                   <BotPendingBanner label={t('approval.botPending')} />

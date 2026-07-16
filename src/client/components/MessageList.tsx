@@ -13,6 +13,7 @@ import {
 } from '../lib/cli-meta'
 import type { ChatMessage } from '../types/message'
 
+import { useStickToBottomContext } from 'use-stick-to-bottom'
 import {
   Conversation,
   ConversationContent,
@@ -127,11 +128,27 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOp
   return (
     <Conversation>
       <ConversationContent className={`max-w-3xl mx-auto w-full ${fontSizeClass(chatFontSize)}`}>
-        {viewItems.map((item) => renderViewItem(item, resultMap, onOpenDrawer, onOpenWorkflow, sessionId, autoApprovedTools, searchMatches, currentMatch, displayMode, onOpenProcessRegion))}
+        {viewItems.map((item, index) => (
+          <div
+            key={index}
+            className={index === viewItems.length - 1 ? 'mb-4' : ''}
+          >
+            {renderViewItem(item, resultMap, onOpenDrawer, onOpenWorkflow, sessionId, autoApprovedTools, searchMatches, currentMatch, displayMode, onOpenProcessRegion)}
+          </div>
+        ))}
         <CompactingIndicator sessionId={sessionId} />
       </ConversationContent>
+      <BottomFadeOverlay />
       <ConversationScrollButton />
     </Conversation>
+  )
+}
+
+function BottomFadeOverlay() {
+  const { isAtBottom } = useStickToBottomContext()
+  if (isAtBottom) return null
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-bg to-transparent" />
   )
 }
 

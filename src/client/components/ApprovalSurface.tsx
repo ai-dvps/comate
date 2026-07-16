@@ -139,7 +139,7 @@ export default function ApprovalSurface({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-live="polite"
-        className="bg-surface border border-border/50 rounded-lg px-4 py-3"
+        className="bg-surface border border-border/50 rounded-lg shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] px-4 py-3"
       >
         <header className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2 min-w-0">

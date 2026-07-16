@@ -14,7 +14,7 @@ export default function StatusBar({
   modelUsage,
 }: StatusBarProps) {
   return (
-    <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/20 gap-3">
+    <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/10 gap-3">
       <div className="flex items-center gap-2 min-w-0 overflow-hidden">
         <WorkspaceFolderPath workspaceId={workspaceId} />
         <WorkspaceGitBranch workspaceId={workspaceId} />

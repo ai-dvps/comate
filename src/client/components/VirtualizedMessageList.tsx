@@ -340,6 +340,7 @@ export default function VirtualizedMessageList({
           {virtualItems.map((virtualItem) => {
             const item = viewItems[virtualItem.index]
             if (!item) return null
+            const isLast = virtualItem.index === viewItems.length - 1
             return (
               <div
                 key={virtualItem.key}
@@ -352,6 +353,7 @@ export default function VirtualizedMessageList({
                   right: '0.75rem',
                   transform: `translateY(${virtualItem.start}px)`,
                   contain: 'paint layout',
+                  paddingBottom: isLast ? '16px' : undefined,
                 }}
               >
                 {renderViewItem(
@@ -376,6 +378,9 @@ export default function VirtualizedMessageList({
           </div>
         )}
       </div>
+      {!isAtBottom && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-bg to-transparent" />
+      )}
       {!isAtBottom && (
         <Button
           className="absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full bg-bg hover:bg-surface-hover"
