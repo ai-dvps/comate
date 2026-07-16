@@ -115,6 +115,17 @@ describe('ProcessRegionGhost', () => {
     expect(screen.getByTestId('duration-visible').textContent).toBe('—')
   })
 
+  it('shows "less than 1s" for sub-second completed durations', () => {
+    vi.setSystemTime(3000)
+    const region = makeRegion([
+      think('a', 1000),
+      tool('Edit', 1500),
+    ])
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
+    expect(screen.getByTestId('duration-visible').textContent).toBe('less than 1s')
+    expect(screen.getByTestId('duration-live').textContent).toBe('less than 1s')
+  })
+
   it('renders duration between step count and latest step label', () => {
     vi.setSystemTime(3000)
     const region = makeRegion([

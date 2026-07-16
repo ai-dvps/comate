@@ -84,6 +84,7 @@
     "steps_other": "{{count}} steps",
     "ghostLabel": "Process region, {{count}} steps, latest: {{latest}}. Activate to expand.",
     "durationPlaceholder": "—",
+    "durationLessThanOneSecond": "less than 1s",
     "drawerTitle": "Process region — {{count}} steps",
     "processRegion": "Process region",
     "emptyRegion": "No steps in this region."

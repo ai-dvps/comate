@@ -83,6 +83,7 @@
     "steps_other": "{{count}} 步",
     "ghostLabel": "过程区域，共 {{count}} 步，最新：{{latest}}。点击展开。",
     "durationPlaceholder": "—",
+    "durationLessThanOneSecond": "少于 1 秒",
     "drawerTitle": "过程区域 — {{count}} 步",
     "processRegion": "过程区域",
     "emptyRegion": "此区域没有步骤。"
