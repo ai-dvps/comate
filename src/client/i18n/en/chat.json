@@ -82,7 +82,7 @@
     "thinking": "Thinking",
     "steps_one": "{{count}} step",
     "steps_other": "{{count}} steps",
-    "ghostLabel": "Process region, {{count}} steps, latest: {{latest}}. Activate to expand.",
+    "ghostLabel": "Process region, {{count}} steps, {{duration}}, latest: {{latest}}. Activate to expand.",
     "drawerTitle": "Process region — {{count}} steps",
     "processRegion": "Process region",
     "emptyRegion": "No steps in this region."
