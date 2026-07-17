@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useResizableWidth } from './use-resizable-width'
 
-export const RAIL_WIDTH = 48
+export const RAIL_WIDTH = 40
 const MIN_WIDTH = 200
 const MAX_WIDTH = 600
 const DEFAULT_WIDTH = 288
