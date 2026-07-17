@@ -337,7 +337,7 @@ export default function GitChangesPanel({
       className="relative bg-surface border-l border-border flex flex-col h-full flex-shrink-0 outline-none"
       style={{ width }}
     >
-      <div className="flex items-center justify-end px-3 py-2 border-b border-border/50 flex-shrink-0 gap-2">
+      <div className="flex items-center justify-end px-3 py-1 border-b border-border/50 flex-shrink-0 gap-2">
         <div className="flex items-center gap-1 flex-shrink-0">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -345,7 +345,7 @@ export default function GitChangesPanel({
                 data-testid="git-tree-view-button"
                 onClick={() => activeWorkspaceId && setViewMode(activeWorkspaceId, 'tree')}
                 className={cn(
-                  'p-1.5 rounded-md transition-colors',
+                  'h-6 w-6 flex items-center justify-center rounded-md transition-colors',
                   viewMode === 'tree'
                     ? 'text-text-primary bg-accent/10'
                     : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
@@ -364,7 +364,7 @@ export default function GitChangesPanel({
                 data-testid="git-flat-view-button"
                 onClick={() => activeWorkspaceId && setViewMode(activeWorkspaceId, 'flat')}
                 className={cn(
-                  'p-1.5 rounded-md transition-colors',
+                  'h-6 w-6 flex items-center justify-center rounded-md transition-colors',
                   viewMode === 'flat'
                     ? 'text-text-primary bg-accent/10'
                     : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
@@ -384,7 +384,7 @@ export default function GitChangesPanel({
                 onClick={handleRefresh}
                 disabled={statusLoading}
                 className={cn(
-                  'p-1.5 rounded-md transition-colors',
+                  'h-6 w-6 flex items-center justify-center rounded-md transition-colors',
                   statusLoading
                     ? 'text-text-tertiary'
                     : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
