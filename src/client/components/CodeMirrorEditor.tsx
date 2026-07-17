@@ -10,6 +10,7 @@ interface CodeMirrorEditorProps {
   readOnly: boolean
   className?: string
   extensions?: Extension[]
+  fontSize?: string
 }
 
 export default function CodeMirrorEditor({
@@ -18,6 +19,7 @@ export default function CodeMirrorEditor({
   readOnly,
   className,
   extensions = [],
+  fontSize,
 }: CodeMirrorEditorProps) {
   const { theme } = useTheme()
   const allExtensions = useMemo(() => {
@@ -30,8 +32,8 @@ export default function CodeMirrorEditor({
   }, [language, extensions])
 
   const themeExtension = useMemo(
-    () => getComateThemeExtension(theme),
-    [theme],
+    () => getComateThemeExtension(theme, fontSize),
+    [theme, fontSize],
   )
 
   return (
