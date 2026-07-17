@@ -3,9 +3,19 @@ import type { ReactElement } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
-import { ToolHeader, ToolContent } from './tool'
+import { ToolHeader, ToolContent, ToolOutput } from './tool'
 import i18n from '../../i18n'
 import { ToolRendererProvider } from '../tool-renderers/ToolRendererContext'
+
+const openUrlMock = vi.fn()
+
+vi.mock('../../lib/open-url', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/open-url')>()
+  return {
+    ...actual,
+    openUrlInBrowser: (...args: unknown[]) => openUrlMock(...args),
+  }
+})
 
 function renderWithProviders(
   ui: ReactElement,
@@ -207,5 +217,45 @@ describe('ToolContent', () => {
     expect(wrapper).toHaveClass('ring-1')
     expect(wrapper).toHaveClass('ring-accent')
     expect(wrapper).toHaveClass('bg-accent/5')
+  })
+})
+
+describe('ToolOutput', () => {
+  beforeEach(() => {
+    openUrlMock.mockClear()
+  })
+
+  it('renders error text with modifier-clickable URLs', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(
+      <ToolOutput errorText="Failed to fetch https://example.com/data" output={undefined} />,
+    )
+
+    const urlSpan = screen.getByText('https://example.com/data')
+    await user.keyboard('{Meta>}')
+    await user.click(urlSpan)
+    await user.keyboard('{/Meta}')
+
+    expect(openUrlMock).toHaveBeenCalledWith('https://example.com/data')
+  })
+
+  it('does not open URLs in error text on plain click', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(
+      <ToolOutput errorText="Failed to fetch https://example.com/data" output={undefined} />,
+    )
+
+    await user.click(screen.getByText('https://example.com/data'))
+    expect(openUrlMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps string output in CodeBlock without linkification', () => {
+    renderWithProviders(
+      <ToolOutput output="result: https://example.com/data" errorText={undefined} />,
+    )
+
+    expect(document.querySelector('[data-language="json"]')).toBeInTheDocument()
+    const urlSpan = screen.getByText(/https:\/\/example\.com\/data/)
+    expect(urlSpan.closest('a')).toBeNull()
   })
 })
