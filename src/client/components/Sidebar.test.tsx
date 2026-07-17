@@ -124,4 +124,19 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: 'Sessions' })).toHaveClass('border-b');
     expect(screen.getByRole('button', { name: 'Todos' })).not.toHaveClass('border-b-2');
   });
+
+  it('expands the sidebar when clicking an icon in collapsed state', () => {
+    const toggleCollapse = vi.fn();
+    renderWithI18n(
+      <Sidebar
+        width={48}
+        onWidthChange={vi.fn()}
+        isCollapsed={true}
+        onToggleCollapse={toggleCollapse}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show todos' }));
+    expect(toggleCollapse).toHaveBeenCalledTimes(1);
+  });
 });

@@ -286,6 +286,7 @@ function App() {
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
           isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={toggleSidebarCollapse}
         />
 
         {/* Main Area — keep all open workspace panels mounted */}
