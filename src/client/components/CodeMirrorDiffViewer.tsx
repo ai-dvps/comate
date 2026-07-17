@@ -119,7 +119,7 @@ export default function CodeMirrorDiffViewer({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border/50 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-1.5 border-b border-border/50 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <svg
             className="w-4 h-4 text-text-tertiary flex-shrink-0"
