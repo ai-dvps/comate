@@ -305,6 +305,8 @@ function App() {
                   workspaceId={wsId}
                   isSidebarCollapsed={isSidebarCollapsed}
                   onToggleSidebarCollapse={toggleSidebarCollapse}
+                  isRightPanelCollapsed={isRightPanelCollapsed}
+                  onToggleRightPanelCollapse={toggleRightPanelCollapse}
                 />
               </div>
             ))

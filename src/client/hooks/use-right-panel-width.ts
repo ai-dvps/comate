@@ -11,13 +11,13 @@ const PREVIOUS_WIDTH_KEY = 'right-panel-previous-width'
 function readCollapsed(): boolean {
   try {
     const stored = localStorage.getItem(COLLAPSED_KEY)
-    if (stored) {
-      return stored === 'true'
+    if (stored === 'false') {
+      return false
     }
   } catch {
     // localStorage not available or corrupt data
   }
-  return false
+  return true
 }
 
 function writeCollapsed(value: boolean): void {
