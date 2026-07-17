@@ -8,8 +8,28 @@ import ChatMessageRenderer, {
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 import type { WorkflowState } from '../types/message'
 
+const openUrlMock = vi.fn()
+
+vi.mock('../lib/open-url', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/open-url')>()
+  return {
+    ...actual,
+    openUrlInBrowser: (...args: unknown[]) => openUrlMock(...args),
+  }
+})
+
 vi.mock('streamdown', () => ({
-  Streamdown: ({ children }: { children: string }) => <div>{children}</div>,
+  Streamdown: ({ children, components }: { children: string; components?: Record<string, unknown> }) => {
+    const Anchor = components?.a as React.ComponentType<{ href?: string; children?: React.ReactNode }> | undefined
+    if (Anchor && /https?:\/\//.test(children)) {
+      return (
+        <div>
+          <Anchor href="https://example.com">https://example.com</Anchor>
+        </div>
+      )
+    }
+    return <div>{children}</div>
+  },
 }))
 
 vi.mock('react-i18next', () => ({
@@ -145,6 +165,61 @@ describe('ChatMessageRenderer search highlights', () => {
     expect(screen.getByText('Retrying API request (1/3) after 1000ms')).toBeInTheDocument()
     const alert = document.querySelector('[data-icon]')
     expect(alert).not.toBeInTheDocument()
+  })
+})
+
+describe('ChatMessageRenderer URL modifier-click', () => {
+  beforeEach(() => {
+    openUrlMock.mockClear()
+  })
+
+  it('opens a URL in a user message on Cmd+click', async () => {
+    const user = userEvent.setup()
+    const message = makeTextMessage('see https://example.com for details', 'user')
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    await user.keyboard('{Meta>}')
+    await user.click(screen.getByText('https://example.com'))
+    await user.keyboard('{/Meta}')
+
+    expect(openUrlMock).toHaveBeenCalledWith('https://example.com')
+  })
+
+  it('does not open a URL in a user message on plain click', async () => {
+    const user = userEvent.setup()
+    const message = makeTextMessage('see https://example.com for details', 'user')
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    await user.click(screen.getByText('https://example.com'))
+
+    expect(openUrlMock).not.toHaveBeenCalled()
+  })
+
+  it('opens a URL in an assistant message via the components.a override on Cmd+click', async () => {
+    const user = userEvent.setup()
+    const message = makeTextMessage('see https://example.com for details', 'assistant')
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    const link = screen.getByText('https://example.com')
+    expect(link.tagName).toBe('A')
+    expect(link).toHaveClass('underline')
+
+    await user.keyboard('{Meta>}')
+    await user.click(link)
+    await user.keyboard('{/Meta}')
+
+    expect(openUrlMock).toHaveBeenCalledWith('https://example.com')
+  })
+
+  it('preserves search highlighting in a user message with a URL', () => {
+    const message = makeTextMessage('see https://example.com for details', 'user')
+    const matches: MessageSearchMatch[] = [
+      { messageId: 'msg-1', partIndex: 0, start: 4, end: 23 },
+    ]
+    render(<ChatMessageRenderer {...baseProps} message={message} searchMatches={matches} currentMatch={matches[0]} />)
+
+    const active = document.querySelector('[data-search-active="true"]')
+    expect(active).toHaveTextContent('https://example.com')
   })
 })
 
