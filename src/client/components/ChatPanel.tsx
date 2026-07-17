@@ -373,7 +373,7 @@ export default function ChatPanel({
             )}
           </button>
         )}
-        <div className="flex items-center gap-2 min-w-0 max-w-full px-4">
+        <div className="flex items-center gap-2 min-w-0 max-w-full px-4 text-sm">
           <span className="font-medium text-text-primary truncate max-w-md">
             {activeSession?.name || t('noSession')}
           </span>
