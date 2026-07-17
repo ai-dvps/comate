@@ -103,7 +103,7 @@ export default function RightPanelContent({
               tabIndex={isActive ? 0 : -1}
               aria-selected={isActive}
               className={cn(
-                'group flex items-center gap-1.5 px-3 py-1 rounded-lg cursor-pointer text-xs transition-all whitespace-nowrap flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                'group flex items-center gap-1.5 px-3 py-0.5 rounded-lg cursor-pointer text-xs transition-all whitespace-nowrap flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-accent',
                 isActive
                   ? 'bg-surface-hover text-text-primary'
                   : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover',
