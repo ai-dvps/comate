@@ -3,7 +3,7 @@ import { AlertCircle } from 'lucide-react'
 
 import { summarizeToolInput } from '../lib/summarize-tool-input'
 import { detectStructuredReport } from '../lib/structured-report'
-import type { MessageSearchMatch, SearchHighlightRange } from '../hooks/useMessageSearch'
+import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 
 import { Message, MessageContent } from './ai-elements/message'
 import {
@@ -13,6 +13,7 @@ import {
 } from './ai-elements/reasoning'
 import CompactableText from './ai-elements/compactable-text'
 import { StructuredReport } from './ai-elements/structured-report'
+import HighlightText from './HighlightText'
 import LinkifiedText from './LinkifiedText'
 import {
   Tool,
@@ -59,68 +60,6 @@ export interface ChatMessageRendererProps {
   onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
   /** When false, tool cards inside this renderer start collapsed. Defaults to true. */
   defaultToolExpanded?: boolean
-}
-
-export function HighlightText({
-  text,
-  ranges,
-  className,
-}: {
-  text: string
-  ranges: SearchHighlightRange[]
-  className?: string
-}) {
-  if (ranges.length === 0) {
-    return (
-      <span className={className}>{text}</span>
-    )
-  }
-
-  const segments: { start: number; end: number; isActive: boolean }[] = []
-  let last = 0
-  for (const range of ranges) {
-    if (range.start > last) {
-      segments.push({ start: last, end: range.start, isActive: false })
-    }
-    segments.push({ start: range.start, end: range.end, isActive: range.isActive })
-    last = range.end
-  }
-  if (last < text.length) {
-    segments.push({ start: last, end: text.length, isActive: false })
-  }
-
-  return (
-    <span className={className}>
-      {segments.map((segment, idx) => {
-        const content = text.slice(segment.start, segment.end)
-        if (segment.isActive) {
-          return (
-            <mark
-              key={idx}
-              className="rounded bg-accent/70 px-0.5 text-text-primary ring-1 ring-accent"
-              data-search-active="true"
-            >
-              {content}
-            </mark>
-          )
-        }
-        if (ranges.some((r) => segment.start >= r.start && segment.end <= r.end)) {
-          // Defensive: should have been handled by isActive branch for exact matches,
-          // but mark any overlapping segment as a regular match.
-          return (
-            <mark
-              key={idx}
-              className="rounded bg-accent/40 px-0.5 text-text-primary"
-              data-search-match="true"
-            >
-              {content}
-            </mark>
-          )
-        }
-        return <span key={idx}>{content}</span>
-      })}
-    </span>
-  )
 }
 
 /* ------------------------------------------------------------------ */

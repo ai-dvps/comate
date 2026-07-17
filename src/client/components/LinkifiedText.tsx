@@ -1,6 +1,6 @@
 import { memo, useCallback } from 'react'
 import type { SearchHighlightRange } from '../hooks/useMessageSearch'
-import { HighlightText } from './ChatMessageRenderer'
+import HighlightText from './HighlightText'
 import { openUrlInBrowser, splitTextByUrls } from '../lib/open-url'
 
 export interface LinkifiedTextProps {
