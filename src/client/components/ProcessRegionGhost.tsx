@@ -110,7 +110,7 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
       </span>
       <span className="tabular-nums min-w-fit shrink-0 whitespace-nowrap">{t('displayMode.steps', { count: stepCount })}</span>
       <span aria-hidden="true">·</span>
-      <span className="tabular-nums" data-testid="duration-visible">{displayDuration ?? durationPlaceholder}</span>
+      <span className="tabular-nums min-w-fit shrink-0 whitespace-nowrap" data-testid="duration-visible">{displayDuration ?? durationPlaceholder}</span>
       <span aria-hidden="true">·</span>
       <span aria-live="polite" aria-atomic="true" className="sr-only" data-testid="duration-live">
         {displayAnnounced ?? durationPlaceholder}
