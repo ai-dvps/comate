@@ -578,8 +578,8 @@ function FileRow({
     >
       <span
         className={cn(
-          'flex items-center justify-center flex-shrink-0 w-5 h-4 rounded text-[10px] font-mono font-medium',
-          getStatusBadgeClass(statusCode),
+          'flex items-center justify-center flex-shrink-0 w-5 h-4 text-[10px] font-mono font-medium',
+          untracked ? 'text-text-secondary' : cn('rounded', getStatusBadgeClass(statusCode)),
         )}
         title={untracked ? t('gitChanges.statusUntracked') : statusCode}
       >
