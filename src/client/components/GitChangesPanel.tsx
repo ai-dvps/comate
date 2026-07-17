@@ -10,6 +10,8 @@ import {
   AlertTriangle,
   ChevronRight,
   File,
+  FilePenLine,
+  FilePlus,
   Folder,
   FolderOpen,
   GitBranch,
@@ -21,7 +23,6 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import { useGitChangesStore, useGitChanges, type GitStatusItem } from '../stores/git-changes-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
-import GitDiffView from './GitDiffView'
 import { RAIL_WIDTH } from '../hooks/use-sidebar-width'
 
 interface GitChangesPanelProps {
@@ -29,6 +30,7 @@ interface GitChangesPanelProps {
   isCollapsed: boolean
   onToggleCollapse: () => void
   onWidthChange: (width: number) => void
+  onOpenDiff: (path: string, name: string, indexStatus: string, workingTreeStatus: string) => void
 }
 
 interface TreeNode {
@@ -123,17 +125,17 @@ export default function GitChangesPanel({
   isCollapsed,
   onToggleCollapse,
   onWidthChange,
+  onOpenDiff,
 }: GitChangesPanelProps) {
   const { t } = useTranslation('common')
   const panelRef = useRef<HTMLDivElement>(null)
   const toggleButtonRef = useRef<HTMLButtonElement>(null)
   const dragRef = useRef<{ move: (e: MouseEvent) => void; up: () => void } | null>(null)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
-  const { setPanelVisible, setActiveWorkspaceId, refresh, openDiff, loadDiff, clearDiff, setViewMode } =
+  const { setPanelVisible, setActiveWorkspaceId, refresh, setViewMode } =
     useGitChangesStore.getState()
   const {
     statusItems,
-    selectedFile,
     statusLoading,
     statusError,
     viewMode,
@@ -241,13 +243,10 @@ export default function GitChangesPanel({
 
   const handleOpenFile = useCallback(
     (file: GitStatusItem) => {
-      if (!activeWorkspaceId) return
-      openDiff(activeWorkspaceId, file)
-      if (!isUntrackedFile(file)) {
-        void loadDiff(activeWorkspaceId)
-      }
+      const name = file.path.split('/').pop() || file.path
+      onOpenDiff(file.path, name, file.indexStatus, file.workingTreeStatus)
     },
-    [activeWorkspaceId, openDiff, loadDiff],
+    [onOpenDiff],
   )
 
   const handleSelect = useCallback((path: string) => {
@@ -430,20 +429,13 @@ export default function GitChangesPanel({
         </div>
       )}
 
-      {selectedFile ? (
-        <GitDiffView
-          workspaceId={activeWorkspaceId ?? ''}
-          panelWidth={width}
-          onBack={() => activeWorkspaceId && clearDiff(activeWorkspaceId)}
-        />
-      ) : (
-        <div
-          className="flex-1 overflow-y-auto"
-          role="tree"
-          aria-label={t('gitChanges.panelTitle')}
-          onKeyDown={(e) => viewMode === 'tree' && handleTreeKeyDown(e, allTreeNodes)}
-          tabIndex={0}
-        >
+      <div
+        className="flex-1 overflow-y-auto"
+        role="tree"
+        aria-label={t('gitChanges.panelTitle')}
+        onKeyDown={(e) => viewMode === 'tree' && handleTreeKeyDown(e, allTreeNodes)}
+        tabIndex={0}
+      >
           {statusLoading && statusItems.length === 0 && renderSkeleton()}
 
           {!statusLoading && statusItems.length === 0 && (
@@ -456,10 +448,54 @@ export default function GitChangesPanel({
             </div>
           )}
 
+          {trackedItems.length > 0 && (
+            <div data-testid="git-changed-tree" className="py-1">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/60 border-b border-border/50 text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
+                <FilePenLine className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                {t('gitChanges.statusModified')}
+                <span className="ml-auto text-text-tertiary normal-case">
+                  {trackedItems.length}
+                </span>
+              </div>
+              {viewMode === 'tree' ? (
+                tree.map((node) => (
+                  <TreeNodeView
+                    key={node.path}
+                    node={node}
+                    level={0}
+                    expandedPaths={expandedPaths}
+                    highlightedPath={highlightedPath}
+                    onToggleExpand={handleToggleExpand}
+                    onSelect={handleSelect}
+                    onOpen={handleOpenFile}
+                  />
+                ))
+              ) : (
+                trackedItems.map((file) => (
+                  <FileRow
+                    key={file.path}
+                    file={file}
+                    path={file.path}
+                    isHighlighted={highlightedPath === file.path}
+                    onSelect={() => handleSelect(file.path)}
+                    onOpen={() => handleOpenFile(file)}
+                  />
+                ))
+              )}
+            </div>
+          )}
+
           {untrackedItems.length > 0 && (
-            <div data-testid="git-untracked-group" className="py-1">
-              <div className="px-3 py-1 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">
+            <div
+              data-testid="git-untracked-group"
+              className={cn('py-1', trackedItems.length > 0 && 'border-t border-border/50')}
+            >
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/60 border-b border-border/50 text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
+                <FilePlus className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
                 {t('gitChanges.statusUntracked')}
+                <span className="ml-auto text-text-tertiary normal-case">
+                  {untrackedItems.length}
+                </span>
               </div>
               {viewMode === 'tree' ? (
                 untrackedTree.map((node) => (
@@ -488,38 +524,7 @@ export default function GitChangesPanel({
               )}
             </div>
           )}
-
-          {trackedItems.length > 0 && (
-            <div data-testid="git-changed-tree" className="py-1">
-              {viewMode === 'tree' ? (
-                tree.map((node) => (
-                  <TreeNodeView
-                    key={node.path}
-                    node={node}
-                    level={0}
-                    expandedPaths={expandedPaths}
-                    highlightedPath={highlightedPath}
-                    onToggleExpand={handleToggleExpand}
-                    onSelect={handleSelect}
-                    onOpen={handleOpenFile}
-                  />
-                ))
-              ) : (
-                trackedItems.map((file) => (
-                  <FileRow
-                    key={file.path}
-                    file={file}
-                    path={file.path}
-                    isHighlighted={highlightedPath === file.path}
-                    onSelect={() => handleSelect(file.path)}
-                    onOpen={() => handleOpenFile(file)}
-                  />
-                ))
-              )}
-            </div>
-          )}
         </div>
-      )}
 
       <div
         data-testid="git-changes-resize-handle"

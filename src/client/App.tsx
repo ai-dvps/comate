@@ -14,6 +14,7 @@ import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
 import FilePanel, { ViewedFile } from './components/FilePanel'
+import GitDiffPanel, { ViewedDiff } from './components/GitDiffPanel'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
@@ -53,6 +54,8 @@ function App() {
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const [openFiles, setOpenFiles] = useState<ViewedFile[]>([])
   const [activeFilePath, setActiveFilePath] = useState('')
+  const [openDiffs, setOpenDiffs] = useState<ViewedDiff[]>([])
+  const [activeDiffPath, setActiveDiffPath] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [showAnalytics, setShowAnalytics] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -200,9 +203,101 @@ function App() {
     }
   }
 
+  const handleOpenDiff = async (
+    path: string,
+    name: string,
+    indexStatus: string,
+    workingTreeStatus: string,
+  ) => {
+    if (!activeWorkspaceId) return
+
+    const existing = openDiffs.find((f) => f.path === path)
+    if (existing) {
+      setActiveDiffPath(path)
+      return
+    }
+
+    const isUntracked = indexStatus === '?' && workingTreeStatus === '?'
+    const isDeleted = indexStatus === 'D' || workingTreeStatus === 'D'
+    const staged = indexStatus !== ' ' && indexStatus !== '?' && indexStatus !== ''
+
+    try {
+      if (isUntracked) {
+        const res = await fetch(
+          `/api/workspaces/${activeWorkspaceId}/files/content?path=${encodeURIComponent(path)}`
+        )
+        if (!res.ok) throw new Error('Failed to load file')
+        const data = await res.json()
+        const diffFile: ViewedDiff = {
+          path,
+          name,
+          diff: '',
+          isBinary: data.isBinary ?? false,
+          truncated: false,
+          isUntracked: true,
+          isDeleted,
+          untrackedContent: data.isBinary ? '[Binary file]' : data.content,
+        }
+        setOpenDiffs((prev) => [...prev, diffFile])
+        setActiveDiffPath(path)
+        return
+      }
+
+      const url = `/api/workspaces/${activeWorkspaceId}/git-changes/diff?path=${encodeURIComponent(path)}&staged=${String(staged)}`
+      const res = await fetch(url)
+      if (!res.ok) throw new Error('Failed to load diff')
+      const data = await res.json()
+      const diffFile: ViewedDiff = {
+        path,
+        name,
+        diff: typeof data.diff === 'string' ? data.diff : '',
+        isBinary: data.isBinary === true,
+        truncated: data.truncated === true,
+        isUntracked: false,
+        isDeleted,
+      }
+      setOpenDiffs((prev) => [...prev, diffFile])
+      setActiveDiffPath(path)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load diff'
+      const diffFile: ViewedDiff = {
+        path,
+        name,
+        diff: '',
+        isBinary: false,
+        truncated: false,
+        isUntracked,
+        isDeleted,
+        error: message,
+      }
+      setOpenDiffs((prev) => [...prev, diffFile])
+      setActiveDiffPath(path)
+    }
+  }
+
+  const handleCloseDiff = (path: string) => {
+    setOpenDiffs((prev) => {
+      const next = prev.filter((f) => f.path !== path)
+      if (activeDiffPath === path && next.length > 0) {
+        const closedIndex = prev.findIndex((f) => f.path === path)
+        const nextIndex = Math.min(closedIndex, next.length - 1)
+        setActiveDiffPath(next[nextIndex].path)
+      } else if (next.length === 0) {
+        setActiveDiffPath('')
+      }
+      return next
+    })
+  }
+
+  const handleSelectDiff = (path: string) => {
+    setActiveDiffPath(path)
+  }
+
   useEffect(() => {
     setOpenFiles([])
     setActiveFilePath('')
+    setOpenDiffs([])
+    setActiveDiffPath('')
   }, [activeWorkspaceId])
 
   useEffect(() => {
@@ -222,6 +317,12 @@ function App() {
     isCollapsed: isGitChangesPanelCollapsed,
     toggleCollapse: toggleGitChangesPanelCollapse,
   } = useGitChangesPanelWidth()
+
+  const { width: gitDiffPanelWidth, setWidth: setGitDiffPanelWidth } = useResizableWidth({
+    storageKey: 'git-diff-panel-width',
+    defaultWidth: 384,
+    minWidth: 280,
+  })
 
   const handleDrag = (e: React.MouseEvent) => {
     if (!isMac || e.button !== 0) return
@@ -389,11 +490,23 @@ function App() {
           )}
         </main>
 
+        <GitDiffPanel
+          files={openDiffs}
+          activeFilePath={activeDiffPath}
+          width={gitDiffPanelWidth}
+          workspacePath={activeWorkspace?.folderPath}
+          uiFontSize={uiFontSize}
+          onSelectFile={handleSelectDiff}
+          onCloseFile={handleCloseDiff}
+          onWidthChange={setGitDiffPanelWidth}
+        />
+
         <GitChangesPanel
           width={gitChangesPanelWidth}
           isCollapsed={isGitChangesPanelCollapsed}
           onToggleCollapse={toggleGitChangesPanelCollapse}
           onWidthChange={setGitChangesPanelWidth}
+          onOpenDiff={handleOpenDiff}
         />
       </div>
 
