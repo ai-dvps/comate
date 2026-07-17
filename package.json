@@ -28,6 +28,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.207",
     "@chat-adapter/state-memory": "^4.31.0",
+    "@git-diff-view/react": "^0.1.7",
     "@larksuite/vercel-chat-adapter": "^0.1.2",
     "@larksuiteoapi/node-sdk": "^1.67.0",
     "@radix-ui/react-collapsible": "^1.1.0",

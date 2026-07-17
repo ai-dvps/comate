@@ -74,15 +74,12 @@ vi.mock('../stores/workspace-store', () => ({
     selector ? selector({ activeWorkspaceId: 'ws1' }) : { activeWorkspaceId: 'ws1' },
 }))
 
-vi.mock('./GitDiffView', () => ({
-  default: () => <div data-testid="git-diff-view" />,
-}))
-
 const DEFAULT_PROPS = {
   width: 320,
   isCollapsed: false,
   onToggleCollapse: vi.fn(),
   onWidthChange: vi.fn(),
+  onOpenDiff: vi.fn(),
 }
 
 describe('GitChangesPanel', () => {
@@ -114,7 +111,7 @@ describe('GitChangesPanel', () => {
     expect(screen.getByTestId('git-empty-state')).toBeInTheDocument()
   })
 
-  it('shows the untracked group above the changed files tree', () => {
+  it('shows the changed files tree above the untracked group', () => {
     gitChangesMock.state.statusItems = [
       { path: 'new.txt', indexStatus: '?', workingTreeStatus: '?' },
       { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: ' ' },
@@ -126,8 +123,8 @@ describe('GitChangesPanel', () => {
     const changedTree = screen.getByTestId('git-changed-tree')
     expect(untrackedGroup).toBeInTheDocument()
     expect(changedTree).toBeInTheDocument()
-    expect(container.textContent?.indexOf('new.txt')).toBeLessThan(
-      container.textContent?.indexOf('main.ts') ?? 0,
+    expect(container.textContent?.indexOf('main.ts')).toBeLessThan(
+      container.textContent?.indexOf('new.txt') ?? 0,
     )
   })
 
@@ -163,7 +160,7 @@ describe('GitChangesPanel', () => {
 
     renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
 
-    // Tree view: untracked files are grouped at the top and shown as a tree.
+    // Tree view: untracked files are grouped below changed files and shown as a tree.
     const untrackedGroup = screen.getByTestId('git-untracked-group')
     expect(untrackedGroup).toBeInTheDocument()
     expect(screen.getByText('newdir')).toBeInTheDocument()
@@ -178,7 +175,7 @@ describe('GitChangesPanel', () => {
     })
   })
 
-  it('calls openDiff and renders GitDiffView on double-click', async () => {
+  it('calls onOpenDiff with file path, name and statuses on double-click', async () => {
     gitChangesMock.state.statusItems = [
       { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: ' ' },
     ]
@@ -188,13 +185,7 @@ describe('GitChangesPanel', () => {
     const row = screen.getByTestId('git-file-row')
     fireEvent.doubleClick(row)
 
-    await waitFor(() => expect(gitChangesMock.actions.openDiff).toHaveBeenCalledWith('ws1', {
-      path: 'src/main.ts',
-      indexStatus: 'M',
-      workingTreeStatus: ' ',
-    }))
-    expect(gitChangesMock.actions.loadDiff).toHaveBeenCalledWith('ws1')
-    expect(screen.getByTestId('git-diff-view')).toBeInTheDocument()
+    await waitFor(() => expect(DEFAULT_PROPS.onOpenDiff).toHaveBeenCalledWith('src/main.ts', 'main.ts', 'M', ' '))
   })
 
   it('calls onToggleCollapse when the collapsed rail icon is clicked', () => {

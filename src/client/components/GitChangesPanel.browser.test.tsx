@@ -72,20 +72,6 @@ vi.mock('../stores/workspace-store', () => ({
     selector ? selector({ activeWorkspaceId: 'ws1' }) : { activeWorkspaceId: 'ws1' },
 }))
 
-vi.mock('./GitDiffView', () => ({
-  default: () => {
-    const { selectedFile } = gitChangesMock.useGitChanges()
-    if (!selectedFile) return null
-    return (
-      <div data-testid="git-diff-view">
-        {selectedFile.indexStatus === '?' && selectedFile.workingTreeStatus === '?'
-          ? `untracked:${selectedFile.path}`
-          : selectedFile.path}
-      </div>
-    )
-  },
-}))
-
 function TestHarness() {
   const [collapsed, setCollapsed] = useState(true)
   return (
@@ -94,6 +80,7 @@ function TestHarness() {
       isCollapsed={collapsed}
       onToggleCollapse={() => setCollapsed((c) => !c)}
       onWidthChange={() => {}}
+      onOpenDiff={() => {}}
     />
   )
 }
@@ -133,37 +120,35 @@ describe('GitChangesPanel browser', () => {
     expect(screen.getByText('new.txt')).toBeInTheDocument()
   })
 
-  it('double-clicking a modified file opens the diff view', async () => {
+  it('double-clicking a modified file calls onOpenDiff with path, name and statuses', async () => {
+    const onOpenDiff = vi.fn()
     renderWithI18n(<GitChangesPanel
       width={320}
       isCollapsed={false}
       onToggleCollapse={() => {}}
       onWidthChange={() => {}}
+      onOpenDiff={onOpenDiff}
     />)
 
     const row = screen.getByText('main.ts').closest('[data-testid="git-file-row"]') as HTMLElement
     await userEvent.dblClick(row)
 
-    await vi.waitFor(() => expect(screen.getByTestId('git-diff-view')).toBeInTheDocument())
-    expect(gitChangesMock.actions.openDiff).toHaveBeenCalledWith('ws1', {
-      path: 'src/main.ts',
-      indexStatus: ' ',
-      workingTreeStatus: 'M',
-    })
-    expect(gitChangesMock.actions.loadDiff).toHaveBeenCalledWith('ws1')
+    await vi.waitFor(() => expect(onOpenDiff).toHaveBeenCalledWith('src/main.ts', 'main.ts', ' ', 'M'))
   })
 
-  it('double-clicking an untracked file opens the content view', async () => {
+  it('double-clicking an untracked file calls onOpenDiff with path, name and statuses', async () => {
+    const onOpenDiff = vi.fn()
     renderWithI18n(<GitChangesPanel
       width={320}
       isCollapsed={false}
       onToggleCollapse={() => {}}
       onWidthChange={() => {}}
+      onOpenDiff={onOpenDiff}
     />)
 
     const row = screen.getByText('new.txt').closest('[data-testid="git-file-row"]') as HTMLElement
     await userEvent.dblClick(row)
 
-    await vi.waitFor(() => expect(screen.getByTestId('git-diff-view')).toHaveTextContent('untracked:new.txt'))
+    await vi.waitFor(() => expect(onOpenDiff).toHaveBeenCalledWith('new.txt', 'new.txt', '?', '?'))
   })
 })
