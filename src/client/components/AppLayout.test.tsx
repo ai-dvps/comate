@@ -27,6 +27,7 @@ vi.mock('../components/CreateWorkspaceModal', () => ({ default: () => <div data-
 vi.mock('../components/ToastContainer', () => ({ default: () => <div data-testid="toast-container" /> }))
 vi.mock('../components/UpdateNotification', () => ({ default: () => <div data-testid="update-notification" /> }))
 vi.mock('../components/UpdateRestartDialog', () => ({ default: () => <div data-testid="update-restart-dialog" /> }))
+vi.mock('../components/GitChangesPanel', () => ({ default: () => <div data-testid="git-changes-panel" /> }))
 vi.mock('../components/tool-renderers/ToolRendererContext', () => ({
   ToolRendererProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
@@ -54,6 +55,14 @@ vi.mock('../hooks/use-sidebar-width', () => ({
 }))
 vi.mock('../hooks/use-resizable-width', () => ({
   useResizableWidth: () => ({ width: 384, setWidth: vi.fn() }),
+}))
+vi.mock('../hooks/use-git-changes-panel-width', () => ({
+  useGitChangesPanelWidth: () => ({
+    width: 320,
+    setWidth: vi.fn(),
+    isCollapsed: false,
+    toggleCollapse: vi.fn(),
+  }),
 }))
 vi.mock('../hooks/use-sidebar-keyboard-shortcut', () => ({
   useSidebarKeyboardShortcut: () => {},

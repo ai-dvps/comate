@@ -5,6 +5,7 @@ import { AlertCircle, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useResizableWidth } from './hooks/use-resizable-width'
+import { useGitChangesPanelWidth } from './hooks/use-git-changes-panel-width'
 import { useSidebarKeyboardShortcut } from './hooks/use-sidebar-keyboard-shortcut'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
@@ -19,6 +20,7 @@ import ToastContainer from './components/ToastContainer'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useProviderStore } from './stores/provider-store'
 import { useChatStore } from './stores/chat-store'
+import GitChangesPanel from './components/GitChangesPanel'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
@@ -214,6 +216,13 @@ function App() {
     minWidth: 200,
   })
 
+  const {
+    width: gitChangesPanelWidth,
+    setWidth: setGitChangesPanelWidth,
+    isCollapsed: isGitChangesPanelCollapsed,
+    toggleCollapse: toggleGitChangesPanelCollapse,
+  } = useGitChangesPanelWidth()
+
   const handleDrag = (e: React.MouseEvent) => {
     if (!isMac || e.button !== 0) return
     getCurrentWindow().startDragging().catch(() => {})
@@ -379,6 +388,13 @@ function App() {
             />
           )}
         </main>
+
+        <GitChangesPanel
+          width={gitChangesPanelWidth}
+          isCollapsed={isGitChangesPanelCollapsed}
+          onToggleCollapse={toggleGitChangesPanelCollapse}
+          onWidthChange={setGitChangesPanelWidth}
+        />
       </div>
 
       {showSettings && (
