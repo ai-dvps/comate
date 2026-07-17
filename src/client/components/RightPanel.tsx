@@ -194,7 +194,7 @@ export default function RightPanel({
         style={{ width: listSidebarWidth }}
       >
         <div
-          className="flex border-b border-border/50 flex-shrink-0"
+          className="flex flex-shrink-0"
           role="tablist"
           aria-label={t('rightPanel.openTabs')}
         >
@@ -204,10 +204,10 @@ export default function RightPanel({
             aria-selected={activeListTab === 'files'}
             onClick={() => handleListTabClick('files')}
             className={cn(
-              'flex-1 py-2 text-xs font-medium text-center transition-all',
+              'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
               activeListTab === 'files'
-                ? 'text-text-primary border-b border-accent'
-                : 'text-text-secondary hover:text-text-primary',
+                ? 'text-text-primary border-accent'
+                : 'text-text-secondary hover:text-text-primary border-border/50',
             )}
           >
             {t('rightPanel.files')}
@@ -218,10 +218,10 @@ export default function RightPanel({
             aria-selected={activeListTab === 'git-changes'}
             onClick={() => handleListTabClick('git-changes')}
             className={cn(
-              'flex-1 py-2 text-xs font-medium text-center transition-all',
+              'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
               activeListTab === 'git-changes'
-                ? 'text-text-primary border-b border-accent'
-                : 'text-text-secondary hover:text-text-primary',
+                ? 'text-text-primary border-accent'
+                : 'text-text-secondary hover:text-text-primary border-border/50',
             )}
           >
             {t('rightPanel.gitChanges')}
