@@ -337,10 +337,7 @@ export default function GitChangesPanel({
       className="relative bg-surface border-l border-border flex flex-col h-full flex-shrink-0 outline-none"
       style={{ width }}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 flex-shrink-0 gap-2">
-        <h2 className="text-sm font-semibold text-text-primary truncate min-w-0">
-          {t('gitChanges.panelTitle')}
-        </h2>
+      <div className="flex items-center justify-end px-3 py-2 border-b border-border/50 flex-shrink-0 gap-2">
         <div className="flex items-center gap-1 flex-shrink-0">
           <Tooltip>
             <TooltipTrigger asChild>
