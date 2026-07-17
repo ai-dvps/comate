@@ -12,6 +12,7 @@ import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
 import gitStatusRoutes from './routes/git-status.js';
+import gitChangesRoutes from './routes/git-changes.js';
 import wecomBridgeRoutes from './routes/wecom-bridge.js';
 import wecomQueueRoutes from './routes/wecom-queue.js';
 import wecomSendRoutes from './routes/wecom-send.js';
@@ -43,6 +44,7 @@ import { initializeResolvedShellEnv } from './utils/resolve-shell-env.js';
 import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketplace-path.js';
 import { addExtraKnownMarketplace } from './utils/claude-settings.js';
 import { ComateWebSocketServer } from './websocket/server.js';
+import { gitChangesService } from './services/git-changes-service.js';
 
 function getDirname(): string {
   try {
@@ -90,6 +92,7 @@ app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/workspaces/:id/files', fileRoutes);
 app.use('/api/workspaces/:id/commands', workspaceCommandsRoutes);
 app.use('/api/workspaces/:id/git-ref', gitStatusRoutes);
+app.use('/api/workspaces/:id/git-changes', gitChangesRoutes);
 app.use('/api/workspaces/:id', chatRoutes);
 app.use('/api/workspaces/:id/todos', todoRoutes);
 app.use('/api/workspaces/:id/wecom-queue', wecomQueueRoutes);
@@ -296,6 +299,7 @@ async function shutdown(signal: string): Promise<void> {
   feishuBotService.disconnect();
   await wecomQueueWorker.shutdown();
   await wecomUserResolver.shutdown();
+  await gitChangesService.dispose();
   await chatService.closeAllRuntimes();
   server.close(() => {
     process.exit(0);
