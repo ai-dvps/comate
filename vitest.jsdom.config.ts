@@ -23,6 +23,7 @@ export default defineProject({
       'src/client/stores/right-panel-store.test.ts',
       'src/client/lib/bot-filter.test.ts',
       'src/client/lib/format-message-timestamp.test.ts',
+      'src/client/lib/font-size.test.ts',
       'src/client/lib/workflow-utils.test.ts',
       'src/client/lib/structured-report.test.ts',
       'src/client/lib/open-url.test.ts',

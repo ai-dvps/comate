@@ -87,15 +87,16 @@ const baseStyles = {
   },
 }
 
-export const comateLightTheme = EditorView.theme(baseStyles, { dark: false })
-export const comateDarkTheme = EditorView.theme(baseStyles, { dark: true })
-
-export function getComateThemeExtension(theme?: 'dark' | 'light') {
+export function getComateThemeExtension(theme?: 'dark' | 'light', fontSize?: string) {
   const isDark =
     theme === 'dark' ||
     (theme === undefined &&
       (typeof document === 'undefined'
         ? false
         : document.documentElement.classList.contains('dark')))
-  return isDark ? comateDarkTheme : comateLightTheme
+  const styles = {
+    ...baseStyles,
+    '&': { ...baseStyles['&'], fontSize: fontSize ?? '13px' },
+  }
+  return isDark ? EditorView.theme(styles, { dark: true }) : EditorView.theme(styles, { dark: false })
 }
