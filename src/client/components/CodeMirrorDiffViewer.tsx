@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Columns2, AlignLeft, FileWarning, FileX } from 'lucide-react'
 import { unifiedMergeView, MergeView } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorView, lineNumbers } from '@codemirror/view'
+import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import MarkdownPreview from './MarkdownPreview'
@@ -80,24 +81,21 @@ export default function CodeMirrorDiffViewer({
     }
 
     const themeExtension = getComateThemeExtension(theme, fontSize)
+    const baseExtensions = [
+      themeExtension,
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      lineNumbers(),
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    ]
     const view = new MergeView({
       a: {
         doc: tab.original,
-        extensions: [
-          themeExtension,
-          EditorState.readOnly.of(true),
-          EditorView.editable.of(false),
-          ...mergeViewLanguageExtensions,
-        ],
+        extensions: [...baseExtensions, ...mergeViewLanguageExtensions],
       },
       b: {
         doc: tab.modified,
-        extensions: [
-          themeExtension,
-          EditorState.readOnly.of(true),
-          EditorView.editable.of(false),
-          ...mergeViewLanguageExtensions,
-        ],
+        extensions: [...baseExtensions, ...mergeViewLanguageExtensions],
       },
       parent: mergeRef.current,
       highlightChanges: true,
