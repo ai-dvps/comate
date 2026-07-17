@@ -131,7 +131,9 @@
     "truncatedPlaceholder": "差异过大 — 仅显示前部",
     "deletedFileHeader": "文件已删除",
     "errorGeneric": "出错了",
-    "back": "返回文件列表"
+    "back": "返回文件列表",
+    "expandFolder": "展开文件夹",
+    "collapseFolder": "收起文件夹"
   },
   "update": {
     "checking": "正在检查更新...",

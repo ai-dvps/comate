@@ -8,6 +8,10 @@ import {
 import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
+  ChevronRight,
+  File,
+  Folder,
+  FolderOpen,
   GitBranch,
   List,
   ListTree,
@@ -541,12 +545,23 @@ interface FileRowProps {
   file: GitStatusItem
   path: string
   name?: string
+  level?: number
+  showFileIcon?: boolean
   isHighlighted: boolean
   onSelect: () => void
   onOpen: () => void
 }
 
-function FileRow({ file, path, name, isHighlighted, onSelect, onOpen }: FileRowProps) {
+function FileRow({
+  file,
+  path,
+  name,
+  level,
+  showFileIcon,
+  isHighlighted,
+  onSelect,
+  onOpen,
+}: FileRowProps) {
   const statusCode = getStatusCode(file)
   const displayName = name ?? path
   return (
@@ -558,6 +573,7 @@ function FileRow({ file, path, name, isHighlighted, onSelect, onOpen }: FileRowP
         'flex items-center gap-2 py-1 px-3 text-xs cursor-pointer select-none',
         isHighlighted ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
       )}
+      style={level !== undefined ? { paddingLeft: `${24 + level * 12}px` } : undefined}
       onClick={onSelect}
       onDoubleClick={onOpen}
     >
@@ -570,6 +586,9 @@ function FileRow({ file, path, name, isHighlighted, onSelect, onOpen }: FileRowP
       >
         {statusCode}
       </span>
+      {showFileIcon && (
+        <File className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" aria-hidden="true" />
+      )}
       <span className="truncate font-mono min-w-0" title={path}>
         {displayName}
       </span>
@@ -605,14 +624,35 @@ function TreeNodeView({
       <div role="treeitem" aria-expanded={isExpanded}>
         <div
           className={cn(
-            'flex items-center gap-1.5 py-1 px-3 text-xs cursor-pointer select-none',
+            'group flex items-center gap-1.5 py-1 px-3 text-xs cursor-pointer select-none',
             isHighlighted ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
           )}
           style={{ paddingLeft: `${12 + level * 12}px` }}
           onClick={() => onSelect(node.path)}
           onDoubleClick={() => onToggleExpand(node.path)}
         >
-          <span className="w-3 flex-shrink-0 text-center">{isExpanded ? '▼' : '▶'}</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleExpand(node.path)
+            }}
+            className="flex-shrink-0 p-0.5 rounded hover:bg-surface-hover transition-colors"
+            aria-label={isExpanded ? t('gitChanges.collapseFolder') : t('gitChanges.expandFolder')}
+          >
+            <ChevronRight
+              className={cn(
+                'w-3.5 h-3.5 text-text-tertiary transition-transform duration-150',
+                isExpanded && 'rotate-90',
+              )}
+              aria-hidden="true"
+            />
+          </button>
+          {isExpanded ? (
+            <FolderOpen className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" aria-hidden="true" />
+          ) : (
+            <Folder className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" aria-hidden="true" />
+          )}
           <span className="truncate">{node.name}</span>
         </div>
         {isExpanded && (
@@ -649,6 +689,8 @@ function TreeNodeView({
       file={node.file ?? { path: node.path, indexStatus: '?', workingTreeStatus: '?' }}
       path={node.path}
       name={node.name}
+      level={level}
+      showFileIcon
       isHighlighted={isHighlighted}
       onSelect={() => onSelect(node.path)}
       onOpen={() => node.file && onOpen(node.file)}
