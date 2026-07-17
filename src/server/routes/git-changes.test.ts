@@ -2,7 +2,7 @@ import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import { writeFile, rm, mkdtemp } from 'fs/promises';
+import { writeFile, rm, mkdtemp, mkdir } from 'fs/promises';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -109,6 +109,31 @@ describe('git-changes routes', { concurrency: false }, () => {
     assert.strictEqual(byPath.get('staged.txt')?.workingTreeStatus, ' ');
     assert.strictEqual(byPath.get('untracked.txt')?.indexStatus, '?');
     assert.strictEqual(byPath.get('untracked.txt')?.workingTreeStatus, '?');
+  });
+
+  it('GET / lists individual untracked files inside untracked directories', async () => {
+    await initGitRepo(tempDir);
+    await execFileAsync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: tempDir });
+
+    await mkdir(path.join(tempDir, 'newdir', 'subdir'), { recursive: true });
+    await writeFile(path.join(tempDir, 'newdir', 'a.txt'), 'a');
+    await writeFile(path.join(tempDir, 'newdir', 'subdir', 'b.txt'), 'b');
+
+    const workspaceId = await createWorkspaceInStore(tempDir);
+    const handlers = await importRouteHandlers();
+    const req = { params: { id: workspaceId } };
+    const res = createMockRes();
+
+    await handlers['/'].get(req, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    const items = (res.jsonBody as { items: GitStatusItem[] }).items;
+    const paths = items.map((i) => i.path).sort();
+    assert.deepStrictEqual(paths, ['newdir/a.txt', 'newdir/subdir/b.txt']);
+    for (const item of items) {
+      assert.strictEqual(item.indexStatus, '?');
+      assert.strictEqual(item.workingTreeStatus, '?');
+    }
   });
 
   it('GET / returns originalPath for renamed files', async () => {

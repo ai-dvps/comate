@@ -55,7 +55,7 @@ async function runGitStatus(folderPath: string): Promise<GitStatusItem[]> {
   try {
     const { stdout } = await execFileAsync(
       'git',
-      ['status', '--porcelain=v1'],
+      ['status', '--porcelain=v1', '--untracked-files=all'],
       {
         cwd: folderPath,
         timeout: 10000,
