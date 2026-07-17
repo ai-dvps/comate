@@ -76,13 +76,13 @@ export default function Sidebar({
       id: 'sessions',
       label: t('sidebar.sessions'),
       tooltip: t('sidebar.showSessions'),
-      icon: <MessageSquare className="w-5 h-5" />,
+      icon: <MessageSquare className="w-4 h-4" />,
     },
     {
       id: 'todos',
       label: t('sidebar.todos'),
       tooltip: t('sidebar.showTodos'),
-      icon: <CheckSquare className="w-5 h-5" />,
+      icon: <CheckSquare className="w-4 h-4" />,
     },
   ]
 
@@ -96,13 +96,13 @@ export default function Sidebar({
       {isCollapsed ? (
         <>
           {/* Collapsed icon rail */}
-          <div className="flex flex-col items-center py-2 gap-1">
+          <div className="flex flex-col items-center py-1.5 gap-0.5">
             {tabs.map((tab) => (
               <Tooltip key={tab.id}>
                 <TooltipTrigger asChild>
                   <button
                     className={cn(
-                      'p-2 rounded-md transition-colors',
+                      'p-1.5 rounded-md transition-colors',
                       activeTab === tab.id
                         ? 'text-text-primary bg-accent/10'
                         : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',

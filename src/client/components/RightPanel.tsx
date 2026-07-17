@@ -123,14 +123,14 @@ export default function RightPanel({
             data-testid="right-panel-files-icon"
             onClick={() => handleIconClick('files')}
             className={cn(
-              'p-2 rounded-md transition-colors',
+              'p-1.5 rounded-md transition-colors',
               activeListTab === 'files'
                 ? 'text-text-primary bg-accent/10'
                 : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
             )}
             aria-label={t('rightPanel.showFiles')}
           >
-            <Folder className="w-5 h-5" />
+            <Folder className="w-4 h-4" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="left">{t('rightPanel.showFiles')}</TooltipContent>
@@ -142,14 +142,14 @@ export default function RightPanel({
             data-testid="right-panel-git-icon"
             onClick={() => handleIconClick('git-changes')}
             className={cn(
-              'p-2 rounded-md transition-colors',
+              'p-1.5 rounded-md transition-colors',
               activeListTab === 'git-changes'
                 ? 'text-text-primary bg-accent/10'
                 : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
             )}
             aria-label={t('rightPanel.showGitChanges')}
           >
-            <GitBranch className="w-5 h-5" />
+            <GitBranch className="w-4 h-4" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="left">{t('rightPanel.showGitChanges')}</TooltipContent>
@@ -167,7 +167,7 @@ export default function RightPanel({
       >
         <div
           data-testid="right-panel-rail"
-          className="flex flex-col items-center py-2 gap-1"
+          className="flex flex-col items-center py-1.5 gap-0.5"
         >
           {railButtons}
         </div>
