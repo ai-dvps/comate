@@ -202,7 +202,7 @@ describe('git-changes routes', { concurrency: false }, () => {
     assert.strictEqual((res.jsonBody as { error: string }).error, 'Workspace not found');
   });
 
-  it('GET /diff returns text diff for an unstaged modified file', async () => {
+  it('GET /compare returns original HEAD and modified working tree for an unstaged file', async () => {
     await initGitRepo(tempDir);
     await writeFile(path.join(tempDir, 'file.txt'), 'original');
     await execFileAsync('git', ['add', 'file.txt'], { cwd: tempDir });
@@ -215,17 +215,24 @@ describe('git-changes routes', { concurrency: false }, () => {
     const req = { params: { id: workspaceId }, query: { path: 'file.txt' } };
     const res = createMockRes();
 
-    await handlers['/diff'].get(req, res);
+    await handlers['/compare'].get(req, res);
 
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { diff: string; isBinary: boolean; truncated: boolean };
-    assert.ok(body.diff.includes('-original'));
-    assert.ok(body.diff.includes('+modified'));
+    const body = res.jsonBody as {
+      original: string;
+      modified: string;
+      isBinary: boolean;
+      truncated: boolean;
+      isDeleted: boolean;
+    };
+    assert.strictEqual(body.original, 'original');
+    assert.strictEqual(body.modified, 'modified');
     assert.strictEqual(body.isBinary, false);
     assert.strictEqual(body.truncated, false);
+    assert.strictEqual(body.isDeleted, false);
   });
 
-  it('GET /diff returns cached diff when staged=true', async () => {
+  it('GET /compare returns original HEAD and modified index for a staged file', async () => {
     await initGitRepo(tempDir);
     await writeFile(path.join(tempDir, 'file.txt'), 'original');
     await execFileAsync('git', ['add', 'file.txt'], { cwd: tempDir });
@@ -239,49 +246,82 @@ describe('git-changes routes', { concurrency: false }, () => {
     const req = { params: { id: workspaceId }, query: { path: 'file.txt', staged: 'true' } };
     const res = createMockRes();
 
-    await handlers['/diff'].get(req, res);
+    await handlers['/compare'].get(req, res);
 
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { diff: string; isBinary: boolean; truncated: boolean };
-    assert.ok(body.diff.includes('-original'));
-    assert.ok(body.diff.includes('+working'));
+    const body = res.jsonBody as {
+      original: string;
+      modified: string;
+      isBinary: boolean;
+      truncated: boolean;
+      isDeleted: boolean;
+    };
+    assert.strictEqual(body.original, 'original');
+    assert.strictEqual(body.modified, 'working');
     assert.strictEqual(body.isBinary, false);
+    assert.strictEqual(body.truncated, false);
+    assert.strictEqual(body.isDeleted, false);
   });
 
-  it('GET /diff returns 403 when path is outside workspace', async () => {
+  it('GET /compare returns empty original for an added file', async () => {
     await initGitRepo(tempDir);
+    await execFileAsync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: tempDir });
+
+    await writeFile(path.join(tempDir, 'added.txt'), 'new content');
+
     const workspaceId = await createWorkspaceInStore(tempDir);
     const handlers = await importRouteHandlers();
-    const req = { params: { id: workspaceId }, query: { path: '../outside.txt' } };
+    const req = { params: { id: workspaceId }, query: { path: 'added.txt' } };
     const res = createMockRes();
 
-    await handlers['/diff'].get(req, res);
+    await handlers['/compare'].get(req, res);
 
-    assert.strictEqual(res.statusCode, 403);
-    assert.strictEqual((res.jsonBody as { error: string }).error, 'Path outside workspace');
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as {
+      original: string;
+      modified: string;
+      isBinary: boolean;
+      truncated: boolean;
+      isDeleted: boolean;
+    };
+    assert.strictEqual(body.original, '');
+    assert.strictEqual(body.modified, 'new content');
+    assert.strictEqual(body.isBinary, false);
+    assert.strictEqual(body.truncated, false);
+    assert.strictEqual(body.isDeleted, false);
   });
 
-  it('GET /diff treats shell metacharacters as literal path arguments', async () => {
+  it('GET /compare returns empty modified and isDeleted for a deleted file', async () => {
     await initGitRepo(tempDir);
-    await writeFile(path.join(tempDir, 'file;rm -rf .txt'), 'content');
-    await execFileAsync('git', ['add', 'file;rm -rf .txt'], { cwd: tempDir });
+    await writeFile(path.join(tempDir, 'deleted.txt'), 'gone');
+    await execFileAsync('git', ['add', 'deleted.txt'], { cwd: tempDir });
     await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: tempDir });
 
-    await writeFile(path.join(tempDir, 'file;rm -rf .txt'), 'changed');
+    await rm(path.join(tempDir, 'deleted.txt'));
 
     const workspaceId = await createWorkspaceInStore(tempDir);
     const handlers = await importRouteHandlers();
-    const req = { params: { id: workspaceId }, query: { path: 'file;rm -rf .txt' } };
+    const req = { params: { id: workspaceId }, query: { path: 'deleted.txt' } };
     const res = createMockRes();
 
-    await handlers['/diff'].get(req, res);
+    await handlers['/compare'].get(req, res);
 
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { diff: string };
-    assert.ok(body.diff.includes('+changed'));
+    const body = res.jsonBody as {
+      original: string;
+      modified: string;
+      isBinary: boolean;
+      truncated: boolean;
+      isDeleted: boolean;
+    };
+    assert.strictEqual(body.original, 'gone');
+    assert.strictEqual(body.modified, '');
+    assert.strictEqual(body.isBinary, false);
+    assert.strictEqual(body.truncated, false);
+    assert.strictEqual(body.isDeleted, true);
   });
 
-  it('GET /diff marks binary changes as isBinary', async () => {
+  it('GET /compare marks binary files as isBinary', async () => {
     await initGitRepo(tempDir);
     await writeFile(path.join(tempDir, 'binary.bin'), Buffer.from([0x00, 0x01, 0x02]));
     await execFileAsync('git', ['add', 'binary.bin'], { cwd: tempDir });
@@ -294,15 +334,49 @@ describe('git-changes routes', { concurrency: false }, () => {
     const req = { params: { id: workspaceId }, query: { path: 'binary.bin' } };
     const res = createMockRes();
 
-    await handlers['/diff'].get(req, res);
+    await handlers['/compare'].get(req, res);
 
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { diff: string; isBinary: boolean; truncated: boolean };
+    const body = res.jsonBody as {
+      original: string;
+      modified: string;
+      isBinary: boolean;
+      truncated: boolean;
+      isDeleted: boolean;
+    };
     assert.strictEqual(body.isBinary, true);
     assert.strictEqual(body.truncated, false);
+    assert.strictEqual(body.isDeleted, false);
   });
 
-  it('GET /diff returns truncated for large diffs', async () => {
+  it('GET /compare marks an untracked binary file as isBinary via null-byte scan', async () => {
+    await initGitRepo(tempDir);
+    await execFileAsync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: tempDir });
+
+    await writeFile(path.join(tempDir, 'untracked.bin'), Buffer.from([0x00, 0x01, 0x02]));
+
+    const workspaceId = await createWorkspaceInStore(tempDir);
+    const handlers = await importRouteHandlers();
+    const req = { params: { id: workspaceId }, query: { path: 'untracked.bin' } };
+    const res = createMockRes();
+
+    await handlers['/compare'].get(req, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as {
+      original: string;
+      modified: string;
+      isBinary: boolean;
+      truncated: boolean;
+      isDeleted: boolean;
+    };
+    assert.strictEqual(body.isBinary, true);
+    assert.strictEqual(body.original, '');
+    assert.strictEqual(body.modified, '');
+    assert.strictEqual(body.isDeleted, false);
+  });
+
+  it('GET /compare returns truncated for large content', async () => {
     await initGitRepo(tempDir);
     const originalLines = Array.from({ length: 6000 }, (_, i) => `line ${i}`).join('\n');
     await writeFile(path.join(tempDir, 'big.txt'), originalLines);
@@ -317,35 +391,87 @@ describe('git-changes routes', { concurrency: false }, () => {
     const req = { params: { id: workspaceId }, query: { path: 'big.txt' } };
     const res = createMockRes();
 
-    await handlers['/diff'].get(req, res);
+    await handlers['/compare'].get(req, res);
 
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { diff: string; isBinary: boolean; truncated: boolean };
+    const body = res.jsonBody as {
+      original: string;
+      modified: string;
+      isBinary: boolean;
+      truncated: boolean;
+      isDeleted: boolean;
+    };
     assert.strictEqual(body.isBinary, false);
     assert.strictEqual(body.truncated, true);
-    assert.ok(body.diff.split('\n').length <= 5000);
+    assert.ok(body.original.split('\n').length <= 5000);
+    assert.ok(body.modified.split('\n').length <= 5000);
   });
 
-  it('GET /diff returns deletion-only diff for a deleted file', async () => {
+  it('GET /compare returns 403 when path is outside workspace', async () => {
     await initGitRepo(tempDir);
-    await writeFile(path.join(tempDir, 'deleted.txt'), 'gone');
-    await execFileAsync('git', ['add', 'deleted.txt'], { cwd: tempDir });
+    const workspaceId = await createWorkspaceInStore(tempDir);
+    const handlers = await importRouteHandlers();
+    const req = { params: { id: workspaceId }, query: { path: '../outside.txt' } };
+    const res = createMockRes();
+
+    await handlers['/compare'].get(req, res);
+
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual((res.jsonBody as { error: string }).error, 'Path outside workspace');
+  });
+
+  it('GET /compare returns 400 when path is missing', async () => {
+    await initGitRepo(tempDir);
+    const workspaceId = await createWorkspaceInStore(tempDir);
+    const handlers = await importRouteHandlers();
+    const req = { params: { id: workspaceId }, query: {} };
+    const res = createMockRes();
+
+    await handlers['/compare'].get(req, res);
+
+    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual((res.jsonBody as { error: string }).error, 'path is required');
+  });
+
+  it('GET /compare returns 404 when workspace does not exist', async () => {
+    const handlers = await importRouteHandlers();
+    const req = { params: { id: 'missing-ws' }, query: { path: 'file.txt' } };
+    const res = createMockRes();
+
+    await handlers['/compare'].get(req, res);
+
+    assert.strictEqual(res.statusCode, 404);
+    assert.strictEqual((res.jsonBody as { error: string }).error, 'Workspace not found');
+  });
+
+  it('GET /compare resolves originalPath for renamed files', async () => {
+    await initGitRepo(tempDir);
+    await writeFile(path.join(tempDir, 'old.txt'), 'content');
+    await execFileAsync('git', ['add', 'old.txt'], { cwd: tempDir });
     await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: tempDir });
 
-    await rm(path.join(tempDir, 'deleted.txt'));
+    await execFileAsync('git', ['mv', 'old.txt', 'new.txt'], { cwd: tempDir });
 
     const workspaceId = await createWorkspaceInStore(tempDir);
     const handlers = await importRouteHandlers();
-    const req = { params: { id: workspaceId }, query: { path: 'deleted.txt' } };
+    const req = { params: { id: workspaceId }, query: { path: 'new.txt' } };
     const res = createMockRes();
 
-    await handlers['/diff'].get(req, res);
+    await handlers['/compare'].get(req, res);
 
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { diff: string; isBinary: boolean; truncated: boolean };
-    assert.ok(body.diff.includes('-gone'));
+    const body = res.jsonBody as {
+      original: string;
+      modified: string;
+      isBinary: boolean;
+      truncated: boolean;
+      isDeleted: boolean;
+    };
+    assert.strictEqual(body.original, 'content');
+    assert.strictEqual(body.modified, 'content');
     assert.strictEqual(body.isBinary, false);
     assert.strictEqual(body.truncated, false);
+    assert.strictEqual(body.isDeleted, false);
   });
 });
 

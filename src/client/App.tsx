@@ -4,8 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { AlertCircle, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
-import { useResizableWidth } from './hooks/use-resizable-width'
-import { useGitChangesPanelWidth } from './hooks/use-git-changes-panel-width'
+import { useRightPanelWidth } from './hooks/use-right-panel-width'
 import { useSidebarKeyboardShortcut } from './hooks/use-sidebar-keyboard-shortcut'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
@@ -13,15 +12,14 @@ import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
-import FilePanel, { ViewedFile } from './components/FilePanel'
-import GitDiffPanel, { ViewedDiff } from './components/GitDiffPanel'
+import RightPanel from './components/RightPanel'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useProviderStore } from './stores/provider-store'
 import { useChatStore } from './stores/chat-store'
-import GitChangesPanel from './components/GitChangesPanel'
+import { useRightPanelStore } from './stores/right-panel-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
@@ -52,10 +50,6 @@ function App() {
     activeWorkspaceId ? s.activeSessionIds[activeWorkspaceId] : undefined
   )
   const setActiveSession = useChatStore((s) => s.setActiveSession)
-  const [openFiles, setOpenFiles] = useState<ViewedFile[]>([])
-  const [activeFilePath, setActiveFilePath] = useState('')
-  const [openDiffs, setOpenDiffs] = useState<ViewedDiff[]>([])
-  const [activeDiffPath, setActiveDiffPath] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [showAnalytics, setShowAnalytics] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -146,158 +140,18 @@ function App() {
 
   useSidebarKeyboardShortcut(toggleSidebarCollapse)
 
-  const handleFileClick = async (path: string, name: string) => {
+  const handleFileClick = useCallback(async (path: string, name: string) => {
     if (!activeWorkspaceId) return
 
-    const existing = openFiles.find((f) => f.path === path)
-    if (existing) {
-      setActiveFilePath(path)
-      return
-    }
-
     try {
-      const res = await fetch(
-        `/api/workspaces/${activeWorkspaceId}/files/content?path=${encodeURIComponent(path)}`
-      )
-      if (!res.ok) throw new Error('Failed to load file')
-      const data = await res.json()
-      const file: ViewedFile = {
-        path,
-        name,
-        content: data.isBinary ? '[Binary file]' : data.content,
-      }
-      setOpenFiles((prev) => [...prev, file])
-      setActiveFilePath(path)
+      await useRightPanelStore.getState().openFile(activeWorkspaceId, path, name)
     } catch (err) {
-      console.error('Failed to load file:', err)
+      console.error('Failed to open file:', err)
     }
-  }
-
-  const handleFileDoubleClick = (_path: string, name: string) => {
-    // Placeholder for attach behavior (deferred per plan)
-    console.log(`Double-clicked file: ${name} — attach to chat context (deferred)`)
-  }
-
-  const handleCloseFile = (path: string) => {
-    setOpenFiles((prev) => {
-      const next = prev.filter((f) => f.path !== path)
-      if (activeFilePath === path && next.length > 0) {
-        const closedIndex = prev.findIndex((f) => f.path === path)
-        const nextIndex = Math.min(closedIndex, next.length - 1)
-        setActiveFilePath(next[nextIndex].path)
-      } else if (next.length === 0) {
-        setActiveFilePath('')
-      }
-      return next
-    })
-  }
-
-  const handleSelectFile = (path: string) => {
-    setActiveFilePath(path)
-  }
-
-  const copyFileContent = () => {
-    const file = openFiles.find((f) => f.path === activeFilePath)
-    if (file?.content) {
-      navigator.clipboard.writeText(file.content)
-    }
-  }
-
-  const handleOpenDiff = async (
-    path: string,
-    name: string,
-    indexStatus: string,
-    workingTreeStatus: string,
-  ) => {
-    if (!activeWorkspaceId) return
-
-    const existing = openDiffs.find((f) => f.path === path)
-    if (existing) {
-      setActiveDiffPath(path)
-      return
-    }
-
-    const isUntracked = indexStatus === '?' && workingTreeStatus === '?'
-    const isDeleted = indexStatus === 'D' || workingTreeStatus === 'D'
-    const staged = indexStatus !== ' ' && indexStatus !== '?' && indexStatus !== ''
-
-    try {
-      if (isUntracked) {
-        const res = await fetch(
-          `/api/workspaces/${activeWorkspaceId}/files/content?path=${encodeURIComponent(path)}`
-        )
-        if (!res.ok) throw new Error('Failed to load file')
-        const data = await res.json()
-        const diffFile: ViewedDiff = {
-          path,
-          name,
-          diff: '',
-          isBinary: data.isBinary ?? false,
-          truncated: false,
-          isUntracked: true,
-          isDeleted,
-          untrackedContent: data.isBinary ? '[Binary file]' : data.content,
-        }
-        setOpenDiffs((prev) => [...prev, diffFile])
-        setActiveDiffPath(path)
-        return
-      }
-
-      const url = `/api/workspaces/${activeWorkspaceId}/git-changes/diff?path=${encodeURIComponent(path)}&staged=${String(staged)}`
-      const res = await fetch(url)
-      if (!res.ok) throw new Error('Failed to load diff')
-      const data = await res.json()
-      const diffFile: ViewedDiff = {
-        path,
-        name,
-        diff: typeof data.diff === 'string' ? data.diff : '',
-        isBinary: data.isBinary === true,
-        truncated: data.truncated === true,
-        isUntracked: false,
-        isDeleted,
-      }
-      setOpenDiffs((prev) => [...prev, diffFile])
-      setActiveDiffPath(path)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load diff'
-      const diffFile: ViewedDiff = {
-        path,
-        name,
-        diff: '',
-        isBinary: false,
-        truncated: false,
-        isUntracked,
-        isDeleted,
-        error: message,
-      }
-      setOpenDiffs((prev) => [...prev, diffFile])
-      setActiveDiffPath(path)
-    }
-  }
-
-  const handleCloseDiff = (path: string) => {
-    setOpenDiffs((prev) => {
-      const next = prev.filter((f) => f.path !== path)
-      if (activeDiffPath === path && next.length > 0) {
-        const closedIndex = prev.findIndex((f) => f.path === path)
-        const nextIndex = Math.min(closedIndex, next.length - 1)
-        setActiveDiffPath(next[nextIndex].path)
-      } else if (next.length === 0) {
-        setActiveDiffPath('')
-      }
-      return next
-    })
-  }
-
-  const handleSelectDiff = (path: string) => {
-    setActiveDiffPath(path)
-  }
+  }, [activeWorkspaceId])
 
   useEffect(() => {
-    setOpenFiles([])
-    setActiveFilePath('')
-    setOpenDiffs([])
-    setActiveDiffPath('')
+    useRightPanelStore.getState().clearTabs()
   }, [activeWorkspaceId])
 
   useEffect(() => {
@@ -305,24 +159,12 @@ function App() {
     setActiveSession(activeWorkspaceId, activeWorkspaceSessionId)
   }, [activeWorkspaceId, activeWorkspaceSessionId, setActiveSession])
 
-  const { width: filePanelWidth, setWidth: setFilePanelWidth } = useResizableWidth({
-    storageKey: 'file-panel-width',
-    defaultWidth: 384,
-    minWidth: 200,
-  })
-
   const {
-    width: gitChangesPanelWidth,
-    setWidth: setGitChangesPanelWidth,
-    isCollapsed: isGitChangesPanelCollapsed,
-    toggleCollapse: toggleGitChangesPanelCollapse,
-  } = useGitChangesPanelWidth()
-
-  const { width: gitDiffPanelWidth, setWidth: setGitDiffPanelWidth } = useResizableWidth({
-    storageKey: 'git-diff-panel-width',
-    defaultWidth: 384,
-    minWidth: 280,
-  })
+    width: rightPanelWidth,
+    setWidth: setRightPanelWidth,
+    isCollapsed: isRightPanelCollapsed,
+    toggleCollapse: toggleRightPanelCollapse,
+  } = useRightPanelWidth()
 
   const handleDrag = (e: React.MouseEvent) => {
     if (!isMac || e.button !== 0) return
@@ -444,20 +286,6 @@ function App() {
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
           isCollapsed={isSidebarCollapsed}
-          onFileClick={handleFileClick}
-          onFileDoubleClick={handleFileDoubleClick}
-        />
-
-        {/* File panel */}
-        <FilePanel
-          files={openFiles}
-          activeFilePath={activeFilePath}
-          width={filePanelWidth}
-          workspacePath={activeWorkspace?.folderPath}
-          onSelectFile={handleSelectFile}
-          onCloseFile={handleCloseFile}
-          onWidthChange={setFilePanelWidth}
-          onCopy={copyFileContent}
         />
 
         {/* Main Area — keep all open workspace panels mounted */}
@@ -490,24 +318,16 @@ function App() {
           )}
         </main>
 
-        <GitDiffPanel
-          files={openDiffs}
-          activeFilePath={activeDiffPath}
-          width={gitDiffPanelWidth}
-          workspacePath={activeWorkspace?.folderPath}
-          uiFontSize={uiFontSize}
-          onSelectFile={handleSelectDiff}
-          onCloseFile={handleCloseDiff}
-          onWidthChange={setGitDiffPanelWidth}
-        />
-
-        <GitChangesPanel
-          width={gitChangesPanelWidth}
-          isCollapsed={isGitChangesPanelCollapsed}
-          onToggleCollapse={toggleGitChangesPanelCollapse}
-          onWidthChange={setGitChangesPanelWidth}
-          onOpenDiff={handleOpenDiff}
-        />
+        {activeWorkspaceId && (
+          <RightPanel
+            width={rightPanelWidth}
+            isCollapsed={isRightPanelCollapsed}
+            toggleCollapse={toggleRightPanelCollapse}
+            onWidthChange={setRightPanelWidth}
+            workspaceId={activeWorkspaceId}
+            workspacePath={activeWorkspace?.folderPath}
+          />
+        )}
       </div>
 
       {showSettings && (

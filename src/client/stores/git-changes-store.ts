@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { shallow } from 'zustand/shallow'
 import i18next from 'i18next'
 import type { WsEventMessage } from '@server/websocket/types'
 import { wsClient } from '../lib/websocket-client.js'
@@ -10,24 +11,10 @@ export interface GitStatusItem {
   originalPath?: string
 }
 
-export interface GitSelectedFile extends GitStatusItem {
-  staged: boolean
-}
-
-export interface GitDiffContent {
-  diff: string
-  isBinary: boolean
-  truncated: boolean
-}
-
 export type GitViewMode = 'tree' | 'flat'
 
 interface WorkspaceGitState {
   statusItems: GitStatusItem[]
-  selectedFile: GitSelectedFile | null
-  diffContent: GitDiffContent | null
-  diffLoading: boolean
-  diffError: string | null
   statusLoading: boolean
   statusError: string | null
   viewMode: GitViewMode
@@ -42,9 +29,6 @@ interface GitChangesState {
   setPanelVisible: (visible: boolean) => void
   setActiveWorkspaceId: (workspaceId: string | null) => void
   refresh: (workspaceId: string) => Promise<void>
-  openDiff: (workspaceId: string, file: GitStatusItem) => void
-  loadDiff: (workspaceId: string) => Promise<void>
-  clearDiff: (workspaceId: string) => void
   setViewMode: (workspaceId: string, mode: GitViewMode) => void
 
   // Internal setters used by the lifecycle manager and WebSocket handler.
@@ -63,10 +47,6 @@ interface GitChangesEventData {
 function getInitialWorkspaceState(): WorkspaceGitState {
   return {
     statusItems: [],
-    selectedFile: null,
-    diffContent: null,
-    diffLoading: false,
-    diffError: null,
     statusLoading: false,
     statusError: null,
     viewMode: 'tree',
@@ -79,18 +59,6 @@ function getWorkspaceState(
   workspaceId: string,
 ): WorkspaceGitState {
   return state.workspaces[workspaceId] ?? getInitialWorkspaceState()
-}
-
-function isUntrackedFile(file: GitStatusItem): boolean {
-  return file.indexStatus === '?' && file.workingTreeStatus === '?'
-}
-
-function deriveSelectedFile(file: GitStatusItem): GitSelectedFile {
-  const staged =
-    file.indexStatus !== ' ' &&
-    file.indexStatus !== '?' &&
-    file.indexStatus !== ''
-  return { ...file, staged }
 }
 
 const abortControllers = new Map<string, AbortController>()
@@ -207,11 +175,13 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
   workspaces: {},
 
   setPanelVisible: (visible: boolean) => {
+    if (get().panelVisible === visible) return
     set({ panelVisible: visible })
     syncLifecycle(get())
   },
 
   setActiveWorkspaceId: (workspaceId: string | null) => {
+    if (get().activeWorkspaceId === workspaceId) return
     set({ activeWorkspaceId: workspaceId })
     syncLifecycle(get())
   },
@@ -219,94 +189,6 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
   refresh: async (workspaceId: string) => {
     if (!workspaceId) return
     await refreshStatus(workspaceId)
-  },
-
-  openDiff: (workspaceId: string, file: GitStatusItem) => {
-    set((state) => ({
-      workspaces: {
-        ...state.workspaces,
-        [workspaceId]: {
-          ...getWorkspaceState(state, workspaceId),
-          selectedFile: deriveSelectedFile(file),
-          diffContent: null,
-          diffError: null,
-        },
-      },
-    }))
-  },
-
-  loadDiff: async (workspaceId: string) => {
-    const state = get()
-    const ws = getWorkspaceState(state, workspaceId)
-    const file = ws.selectedFile
-    if (!file || isUntrackedFile(file)) return
-
-    set((state) => ({
-      workspaces: {
-        ...state.workspaces,
-        [workspaceId]: {
-          ...getWorkspaceState(state, workspaceId),
-          diffLoading: true,
-          diffError: null,
-        },
-      },
-    }))
-
-    try {
-      const url = `/api/workspaces/${workspaceId}/git-changes/diff?path=${encodeURIComponent(file.path)}&staged=${String(file.staged)}`
-      const res = await fetch(url)
-      if (!res.ok) {
-        const body = await res
-          .json()
-          .catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }))
-        throw new Error(body.error || `HTTP ${res.status}`)
-      }
-      const data = (await res.json()) as GitDiffContent
-      set((state) => ({
-        workspaces: {
-          ...state.workspaces,
-          [workspaceId]: {
-            ...getWorkspaceState(state, workspaceId),
-            diffContent: {
-              diff: typeof data.diff === 'string' ? data.diff : '',
-              isBinary: data.isBinary === true,
-              truncated: data.truncated === true,
-            },
-            diffLoading: false,
-          },
-        },
-      }))
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : i18next.t('gitChanges.errorGeneric', 'Failed to load diff')
-      set((state) => ({
-        workspaces: {
-          ...state.workspaces,
-          [workspaceId]: {
-            ...getWorkspaceState(state, workspaceId),
-            diffLoading: false,
-            diffError: message,
-          },
-        },
-      }))
-    }
-  },
-
-  clearDiff: (workspaceId: string) => {
-    set((state) => ({
-      workspaces: {
-        ...state.workspaces,
-        [workspaceId]: {
-          ...getWorkspaceState(state, workspaceId),
-          selectedFile: null,
-          diffContent: null,
-          diffLoading: false,
-          diffError: null,
-        },
-      },
-    }))
   },
 
   setViewMode: (workspaceId: string, mode: GitViewMode) => {
@@ -323,11 +205,13 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
 
   // Internal setters used by the lifecycle manager and WebSocket handler.
   _setStatusItems: (workspaceId: string, items: GitStatusItem[]) => {
+    const current = getWorkspaceState(get(), workspaceId)
+    if (shallow(current.statusItems, items)) return
     set((state) => ({
       workspaces: {
         ...state.workspaces,
         [workspaceId]: {
-          ...getWorkspaceState(state, workspaceId),
+          ...current,
           statusItems: items,
           statusLoading: false,
           statusError: null,
@@ -337,11 +221,13 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
   },
 
   _setStatusLoading: (workspaceId: string, loading: boolean) => {
+    const current = getWorkspaceState(get(), workspaceId)
+    if (current.statusLoading === loading) return
     set((state) => ({
       workspaces: {
         ...state.workspaces,
         [workspaceId]: {
-          ...getWorkspaceState(state, workspaceId),
+          ...current,
           statusLoading: loading,
         },
       },
@@ -349,11 +235,13 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
   },
 
   _setStatusError: (workspaceId: string, error: string | null) => {
+    const current = getWorkspaceState(get(), workspaceId)
+    if (current.statusError === error) return
     set((state) => ({
       workspaces: {
         ...state.workspaces,
         [workspaceId]: {
-          ...getWorkspaceState(state, workspaceId),
+          ...current,
           statusError: error,
         },
       },
@@ -361,6 +249,8 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
   },
 
   _setWatcherAvailable: (workspaceId: string, available: boolean) => {
+    const current = getWorkspaceState(get(), workspaceId)
+    if (current.isWatcherAvailable === available) return
     set((state) => ({
       workspaces: {
         ...state.workspaces,
@@ -374,43 +264,17 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
 }))
 
 export function useGitChanges(workspaceId: string | null) {
-  const statusItems = useGitChangesStore((s) =>
-    workspaceId ? s.workspaces[workspaceId]?.statusItems : undefined,
+  return useGitChangesStore(
+    (s) => {
+      const ws = workspaceId ? s.workspaces[workspaceId] : undefined
+      return {
+        statusItems: ws?.statusItems ?? [],
+        statusLoading: Boolean(ws?.statusLoading),
+        statusError: ws?.statusError ?? null,
+        viewMode: ws?.viewMode ?? 'tree',
+        isWatcherAvailable: ws?.isWatcherAvailable ?? true,
+      }
+    },
+    shallow,
   )
-  const selectedFile = useGitChangesStore((s) =>
-    workspaceId ? s.workspaces[workspaceId]?.selectedFile : undefined,
-  )
-  const diffContent = useGitChangesStore((s) =>
-    workspaceId ? s.workspaces[workspaceId]?.diffContent : undefined,
-  )
-  const diffLoading = useGitChangesStore((s) =>
-    workspaceId ? Boolean(s.workspaces[workspaceId]?.diffLoading) : false,
-  )
-  const diffError = useGitChangesStore((s) =>
-    workspaceId ? s.workspaces[workspaceId]?.diffError : undefined,
-  )
-  const statusLoading = useGitChangesStore((s) =>
-    workspaceId ? Boolean(s.workspaces[workspaceId]?.statusLoading) : false,
-  )
-  const statusError = useGitChangesStore((s) =>
-    workspaceId ? s.workspaces[workspaceId]?.statusError : undefined,
-  )
-  const viewMode = useGitChangesStore((s) =>
-    workspaceId ? s.workspaces[workspaceId]?.viewMode : undefined,
-  )
-  const isWatcherAvailable = useGitChangesStore((s) =>
-    workspaceId ? s.workspaces[workspaceId]?.isWatcherAvailable : undefined,
-  )
-
-  return {
-    statusItems: statusItems ?? [],
-    selectedFile: selectedFile ?? null,
-    diffContent: diffContent ?? null,
-    diffLoading,
-    diffError,
-    statusLoading,
-    statusError,
-    viewMode: viewMode ?? 'tree',
-    isWatcherAvailable: isWatcherAvailable ?? true,
-  }
 }

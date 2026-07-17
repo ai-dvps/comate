@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { execFile } from 'child_process';
-import { realpath, lstat } from 'fs/promises';
+import { realpath, lstat, readFile } from 'fs/promises';
 import path from 'path';
 import { promisify } from 'util';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
@@ -140,19 +140,65 @@ async function resolveAndValidatePath(
   return resolvedRequested;
 }
 
-function capDiff(diff: string): { diff: string; truncated: boolean } {
-  if (diff.length > MAX_DIFF_SIZE) {
-    return { diff: diff.slice(0, MAX_DIFF_SIZE), truncated: true };
-  }
-  const lines = diff.split('\n');
-  if (lines.length > MAX_DIFF_LINES) {
-    return { diff: lines.slice(0, MAX_DIFF_LINES).join('\n'), truncated: true };
-  }
-  return { diff, truncated: false };
+function containsNullByte(buffer: Buffer): boolean {
+  return buffer.includes(0);
 }
 
-function isBinaryDiff(output: string): boolean {
-  return output.includes('Binary files ') && output.includes(' differ');
+function capContent(buffer: Buffer): { content: string; truncated: boolean } {
+  let truncated = false;
+  let working = buffer;
+  if (working.length > MAX_DIFF_SIZE) {
+    working = working.slice(0, MAX_DIFF_SIZE);
+    truncated = true;
+  }
+  const text = working.toString('utf-8');
+  const lines = text.split('\n');
+  if (lines.length > MAX_DIFF_LINES) {
+    return { content: lines.slice(0, MAX_DIFF_LINES).join('\n'), truncated: true };
+  }
+  return { content: text, truncated };
+}
+
+async function findStatusItem(
+  folderPath: string,
+  relativePath: string,
+): Promise<GitStatusItem | null> {
+  try {
+    const items = await runGitStatus(folderPath);
+    return items.find((item) => item.path === relativePath) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function detectBinary(
+  folderPath: string,
+  relativePath: string,
+  staged: boolean,
+  originalBuffer: Buffer,
+  modifiedBuffer: Buffer,
+): Promise<boolean> {
+  const args = staged
+    ? ['diff', '--cached', '--numstat', '--no-color', '--', relativePath]
+    : ['diff', '--numstat', '--no-color', '--', relativePath];
+  try {
+    const { stdout } = await execFileAsync('git', args, {
+      cwd: folderPath,
+      timeout: 30000,
+      encoding: 'utf-8',
+    });
+    const firstLine = stdout.split('\n').find((line) => line.length > 0);
+    if (firstLine) {
+      const parts = firstLine.split('\t');
+      if (parts.length >= 2 && parts[0] === '-' && parts[1] === '-') {
+        return true;
+      }
+      return false;
+    }
+  } catch {
+    // Fall through to null-byte scanning.
+  }
+  return containsNullByte(originalBuffer) || containsNullByte(modifiedBuffer);
 }
 
 // GET /api/workspaces/:id/git-changes
@@ -174,8 +220,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/workspaces/:id/git-changes/diff?path=&staged=
-router.get('/diff', async (req, res) => {
+// GET /api/workspaces/:id/git-changes/compare?path=&staged=
+router.get('/compare', async (req, res) => {
   try {
     const workspaceId = (req.params as { id: string }).id;
     const workspace = await workspaceStore.get(workspaceId);
@@ -197,27 +243,66 @@ router.get('/diff', async (req, res) => {
     }
 
     const staged = req.query.staged === 'true' || req.query.staged === '1';
-    const args = staged
-      ? ['diff', '--cached', '--no-color', '--', relativePath]
-      : ['diff', '--no-color', '--', relativePath];
 
-    const { stdout } = await execFileAsync('git', args, {
-      cwd: workspace.folderPath,
-      timeout: 30000,
-      encoding: 'utf-8',
-    });
+    const statusItem = await findStatusItem(workspace.folderPath, relativePath);
+    const originalRelativePath = statusItem?.originalPath ?? relativePath;
 
-    if (isBinaryDiff(stdout)) {
-      res.json({ diff: stdout, isBinary: true, truncated: false });
-      return;
+    const [originalResult, modifiedResult] = await Promise.all([
+      execFileAsync('git', ['show', `HEAD:${originalRelativePath}`], {
+        cwd: workspace.folderPath,
+        timeout: 30000,
+        encoding: 'buffer',
+      }).then(
+        ({ stdout }) => ({ buffer: stdout as Buffer, isDeleted: false }),
+        () => ({ buffer: Buffer.alloc(0), isDeleted: false }),
+      ),
+      staged
+        ? execFileAsync('git', ['show', `:0:${relativePath}`], {
+            cwd: workspace.folderPath,
+            timeout: 30000,
+            encoding: 'buffer',
+          }).then(
+            ({ stdout }) => ({ buffer: stdout as Buffer, isDeleted: false }),
+            () => ({ buffer: Buffer.alloc(0), isDeleted: true }),
+          )
+        : readFile(targetPath)
+            .then((buffer) => ({ buffer, isDeleted: false }))
+            .catch((error) => {
+              if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+                return { buffer: Buffer.alloc(0), isDeleted: true };
+              }
+              throw error;
+            }),
+    ]);
+
+    const originalBuffer = originalResult.buffer;
+    const modifiedBuffer = modifiedResult.buffer;
+    const isDeleted = modifiedResult.isDeleted;
+
+    const isBinary = await detectBinary(
+      workspace.folderPath,
+      relativePath,
+      staged,
+      originalBuffer,
+      modifiedBuffer,
+    );
+
+    let original = '';
+    let modified = '';
+    let truncated = false;
+    if (!isBinary) {
+      const originalCapped = capContent(originalBuffer);
+      const modifiedCapped = capContent(modifiedBuffer);
+      original = originalCapped.content;
+      modified = modifiedCapped.content;
+      truncated = originalCapped.truncated || modifiedCapped.truncated;
     }
 
-    const { diff, truncated } = capDiff(stdout);
-    res.json({ diff, isBinary: false, truncated });
+    res.json({ original, modified, isBinary, truncated, isDeleted });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    diagWarn('[git-changes] failed to get diff:', message);
-    res.status(500).json({ error: 'Failed to get git diff' });
+    diagWarn('[git-changes] failed to get compare:', message);
+    res.status(500).json({ error: 'Failed to get git compare' });
   }
 });
 
