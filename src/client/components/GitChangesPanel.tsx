@@ -11,7 +11,6 @@ import {
   ChevronRight,
   File,
   FilePenLine,
-  FilePlus,
   Folder,
   FolderOpen,
   GitBranch,
@@ -481,7 +480,7 @@ export default function GitChangesPanel({
               className={cn('py-1', trackedItems.length > 0 && 'border-t border-border/50')}
             >
               <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/60 border-b border-border/50 text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
-                <FilePlus className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                <HelpCircle className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
                 {t('gitChanges.statusUntracked')}
                 <span className="ml-auto text-text-tertiary normal-case">
                   {untrackedItems.length}
