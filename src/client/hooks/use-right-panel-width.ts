@@ -53,7 +53,7 @@ function writePreviousWidth(value: number): void {
 
 export function useRightPanelWidth() {
   const maxWidth = Math.floor(
-    typeof window !== 'undefined' ? window.innerWidth * 0.5 : DEFAULT_WIDTH,
+    typeof window !== 'undefined' ? window.innerWidth * 0.9 : DEFAULT_WIDTH,
   )
   const { width: expandedWidth, setWidth: setExpandedWidth } = useResizableWidth({
     storageKey: WIDTH_KEY,
