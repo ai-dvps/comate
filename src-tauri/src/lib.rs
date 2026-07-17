@@ -116,6 +116,18 @@ fn reveal_in_file_manager(path: String, _item_type: String) -> Result<(), String
     Ok(())
 }
 
+#[tauri::command]
+fn open_url(app_handle: AppHandle, url: String) -> Result<(), String> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(format!("Unsupported URL scheme: {}", url));
+    }
+    #[allow(deprecated)]
+    app_handle
+        .shell()
+        .open(&url, None)
+        .map_err(|e| format!("Failed to open URL: {}", e))
+}
+
 // Verified OS-level kill matrix for `perform_shutdown` reuse (R16):
 // - macOS Cmd-Q / Quit menu / Activity Monitor Force Quit -> Tauri emits
 //   WindowEvent::Destroyed on the main window before exit -> shutdown runs.
@@ -328,7 +340,8 @@ pub fn run() {
             get_api_port,
             prepare_updater_relaunch,
             update_badge_state,
-            reveal_in_file_manager
+            reveal_in_file_manager,
+            open_url
         ])
         .setup(|app| {
             // Persistent file logging for both debug and release builds. In a
