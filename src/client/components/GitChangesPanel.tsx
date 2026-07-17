@@ -521,13 +521,15 @@ function renderSkeleton() {
 interface FileRowProps {
   file: GitStatusItem
   path: string
+  name?: string
   isHighlighted: boolean
   onSelect: () => void
   onOpen: () => void
 }
 
-function FileRow({ file, path, isHighlighted, onSelect, onOpen }: FileRowProps) {
+function FileRow({ file, path, name, isHighlighted, onSelect, onOpen }: FileRowProps) {
   const statusCode = getStatusCode(file)
+  const displayName = name ?? path
   return (
     <div
       data-testid="git-file-row"
@@ -549,7 +551,9 @@ function FileRow({ file, path, isHighlighted, onSelect, onOpen }: FileRowProps) 
       >
         {statusCode}
       </span>
-      <span className="truncate font-mono min-w-0">{path}</span>
+      <span className="truncate font-mono min-w-0" title={path}>
+        {displayName}
+      </span>
     </div>
   )
 }
@@ -625,6 +629,7 @@ function TreeNodeView({
     <FileRow
       file={node.file ?? { path: node.path, indexStatus: '?', workingTreeStatus: '?' }}
       path={node.path}
+      name={node.name}
       isHighlighted={isHighlighted}
       onSelect={() => onSelect(node.path)}
       onOpen={() => node.file && onOpen(node.file)}

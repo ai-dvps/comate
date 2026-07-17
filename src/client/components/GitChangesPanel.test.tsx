@@ -127,26 +127,31 @@ describe('GitChangesPanel', () => {
     expect(untrackedGroup).toBeInTheDocument()
     expect(changedTree).toBeInTheDocument()
     expect(container.textContent?.indexOf('new.txt')).toBeLessThan(
-      container.textContent?.indexOf('src/main.ts') ?? 0,
+      container.textContent?.indexOf('main.ts') ?? 0,
     )
   })
 
   it('toggles between tree and flat views', async () => {
     gitChangesMock.state.statusItems = [
       { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: ' ' },
-      { path: 'src/lib/util.ts', indexStatus: 'A', workingTreeStatus: ' ' },
+      { path: 'src/util.ts', indexStatus: 'A', workingTreeStatus: ' ' },
     ]
 
     renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
 
+    // Tree view: folder headers and file names only.
     expect(screen.getByText('src')).toBeInTheDocument()
+    expect(screen.getByText('main.ts')).toBeInTheDocument()
+    expect(screen.getByText('util.ts')).toBeInTheDocument()
+    expect(screen.queryByText('src/main.ts')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('git-flat-view-button'))
 
     await waitFor(() => {
+      // Flat view: full paths, no folder headers.
       expect(screen.queryByText('src')).not.toBeInTheDocument()
       expect(screen.getByText('src/main.ts')).toBeInTheDocument()
-      expect(screen.getByText('src/lib/util.ts')).toBeInTheDocument()
+      expect(screen.getByText('src/util.ts')).toBeInTheDocument()
     })
   })
 
