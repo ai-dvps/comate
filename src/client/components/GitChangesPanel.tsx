@@ -17,7 +17,7 @@ import {
   GitBranch,
   List,
   ListTree,
-  Plus,
+  HelpCircle,
   RefreshCw,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
@@ -584,7 +584,7 @@ function FileRow({
         title={untracked ? t('gitChanges.statusUntracked') : statusCode}
       >
         {untracked ? (
-          <Plus className="w-3 h-3" />
+          <HelpCircle className="w-3 h-3" />
         ) : (
           statusCode
         )}
