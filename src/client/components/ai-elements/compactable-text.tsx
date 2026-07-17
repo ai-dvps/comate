@@ -1,5 +1,6 @@
 import { cn } from '../ui/utils'
 import { Response } from './response'
+import AssistantLink from '../AssistantLink'
 
 interface CompactableTextProps {
   children: string
@@ -20,7 +21,7 @@ export default function CompactableText({
         hasSearchMatch && (isCurrentSearchMatch ? 'ring-accent' : 'ring-accent/30'),
       )}
     >
-      <Response>{children}</Response>
+      <Response components={{ a: AssistantLink }}>{children}</Response>
     </div>
   )
 }

@@ -13,6 +13,7 @@ import {
 } from './ai-elements/reasoning'
 import CompactableText from './ai-elements/compactable-text'
 import { StructuredReport } from './ai-elements/structured-report'
+import LinkifiedText from './LinkifiedText'
 import {
   Tool,
   ToolContent,
@@ -324,7 +325,7 @@ function ChatMessageRenderer({
               if (message.role === 'user') {
                 return (
                   <p key={partKey} className="whitespace-pre-wrap">
-                    <HighlightText text={part.text} ranges={ranges} />
+                    <LinkifiedText text={part.text} ranges={ranges} />
                   </p>
                 )
               }
