@@ -122,12 +122,12 @@ export default function Sidebar({
       ) : (
         <>
           {/* Tab Switcher */}
-          <div className="flex border-b border-border/50">
+          <div className="flex border-b border-border/50 flex-shrink-0">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 className={cn(
-                  'flex-1 py-2 text-sm font-medium text-center transition-all',
+                  'flex-1 py-2 text-xs font-medium text-center transition-all',
                   activeTab === tab.id
                     ? 'text-text-primary border-b-2 border-accent'
                     : 'text-text-secondary hover:text-text-primary',
