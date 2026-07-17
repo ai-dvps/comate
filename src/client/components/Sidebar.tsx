@@ -127,7 +127,7 @@ export default function Sidebar({
               <button
                 key={tab.id}
                 className={cn(
-                  'flex-1 py-3 font-medium text-center transition-all',
+                  'flex-1 py-2 text-sm font-medium text-center transition-all',
                   activeTab === tab.id
                     ? 'text-text-primary border-b-2 border-accent'
                     : 'text-text-secondary hover:text-text-primary',
