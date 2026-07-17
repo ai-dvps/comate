@@ -10,12 +10,10 @@
   "sidebar": {
     "sessions": "Sessions",
     "todos": "Todos",
-    "files": "Files",
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar",
     "showSessions": "Show sessions",
     "showTodos": "Show todos",
-    "showFiles": "Show files",
     "noWorkspace": "Open a workspace to view sessions"
   },
   "status": {
@@ -133,7 +131,22 @@
     "errorGeneric": "Something went wrong",
     "back": "Back to file list",
     "expandFolder": "Expand folder",
-    "collapseFolder": "Collapse folder"
+    "collapseFolder": "Collapse folder",
+    "resize": "Resize panel"
+  },
+  "rightPanel": {
+    "files": "Files",
+    "gitChanges": "Git Changes",
+    "showFiles": "Show files",
+    "showGitChanges": "Show git changes",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "emptyState": "Open a file or change to view it",
+    "openTabs": "Open tabs",
+    "resize": "Resize panel",
+    "closeTab": "Close tab",
+    "diffModeUnified": "Unified diff",
+    "diffModeSideBySide": "Side-by-side diff"
   },
   "update": {
     "checking": "Checking for updates...",

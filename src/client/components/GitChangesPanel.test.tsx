@@ -14,10 +14,6 @@ const gitChangesMock = vi.hoisted(() => {
   const listeners = new Set<Listener>()
   const state = {
     statusItems: [] as { path: string; indexStatus: string; workingTreeStatus: string }[],
-    selectedFile: null as { path: string; indexStatus: string; workingTreeStatus: string; staged: boolean } | null,
-    diffContent: null as { diff: string; isBinary: boolean; truncated: boolean } | null,
-    diffLoading: false,
-    diffError: null as string | null,
     statusLoading: false,
     statusError: null as string | null,
     viewMode: 'tree' as 'tree' | 'flat',
@@ -38,22 +34,6 @@ const gitChangesMock = vi.hoisted(() => {
   }
   const actions = {
     refresh: vi.fn(),
-    openDiff: vi.fn((_workspaceId: string, file: { path: string; indexStatus: string; workingTreeStatus: string }) => {
-      state.selectedFile = {
-        ...file,
-        staged: file.indexStatus !== ' ' && file.indexStatus !== '?',
-      }
-      notify()
-    }),
-    loadDiff: vi.fn(async () => {
-      state.diffContent = { diff: 'test diff', isBinary: false, truncated: false }
-      notify()
-    }),
-    clearDiff: vi.fn(() => {
-      state.selectedFile = null
-      state.diffContent = null
-      notify()
-    }),
     setViewMode: vi.fn((_workspaceId: string, mode: 'tree' | 'flat') => {
       state.viewMode = mode
       notify()
@@ -69,6 +49,14 @@ vi.mock('../stores/git-changes-store', () => ({
   useGitChanges: gitChangesMock.useGitChanges,
 }))
 
+const rightPanelMock = vi.hoisted(() => ({
+  openDiff: vi.fn(() => Promise.resolve()),
+}))
+
+vi.mock('../stores/right-panel-store', () => ({
+  useRightPanelStore: { getState: () => ({ openDiff: rightPanelMock.openDiff }) },
+}))
+
 vi.mock('../stores/workspace-store', () => ({
   useWorkspaceStore: (selector?: (s: { activeWorkspaceId: string | null }) => unknown) =>
     selector ? selector({ activeWorkspaceId: 'ws1' }) : { activeWorkspaceId: 'ws1' },
@@ -79,7 +67,6 @@ const DEFAULT_PROPS = {
   isCollapsed: false,
   onToggleCollapse: vi.fn(),
   onWidthChange: vi.fn(),
-  onOpenDiff: vi.fn(),
 }
 
 describe('GitChangesPanel', () => {
@@ -87,10 +74,6 @@ describe('GitChangesPanel', () => {
     cleanup()
     vi.clearAllMocks()
     gitChangesMock.state.statusItems = []
-    gitChangesMock.state.selectedFile = null
-    gitChangesMock.state.diffContent = null
-    gitChangesMock.state.diffLoading = false
-    gitChangesMock.state.diffError = null
     gitChangesMock.state.statusLoading = false
     gitChangesMock.state.statusError = null
     gitChangesMock.state.viewMode = 'tree'
@@ -175,7 +158,7 @@ describe('GitChangesPanel', () => {
     })
   })
 
-  it('calls onOpenDiff with file path, name and statuses on double-click', async () => {
+  it('calls right-panel openDiff with workspace id and file on double-click', async () => {
     gitChangesMock.state.statusItems = [
       { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: ' ' },
     ]
@@ -185,7 +168,13 @@ describe('GitChangesPanel', () => {
     const row = screen.getByTestId('git-file-row')
     fireEvent.doubleClick(row)
 
-    await waitFor(() => expect(DEFAULT_PROPS.onOpenDiff).toHaveBeenCalledWith('src/main.ts', 'main.ts', 'M', ' '))
+    await waitFor(() =>
+      expect(rightPanelMock.openDiff).toHaveBeenCalledWith('ws1', {
+        path: 'src/main.ts',
+        indexStatus: 'M',
+        workingTreeStatus: ' ',
+      }),
+    )
   })
 
   it('calls onToggleCollapse when the collapsed rail icon is clicked', () => {

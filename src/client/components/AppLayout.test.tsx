@@ -21,13 +21,12 @@ vi.mock('../components/WorkspaceEmptyState', () => ({ default: () => <div data-t
 vi.mock('../components/ChatPanel', () => ({ default: () => <div data-testid="chat-panel" /> }))
 vi.mock('../components/SettingsPanel', () => ({ default: () => <div data-testid="settings-panel" /> }))
 vi.mock('../components/AnalyticsPanel', () => ({ default: () => <div data-testid="analytics-panel" /> }))
-vi.mock('../components/FilePanel', () => ({ default: () => <div data-testid="file-panel" /> }))
+vi.mock('../components/RightPanel', () => ({ default: () => <div data-testid="right-panel" /> }))
 vi.mock('../components/HeaderToolbar', () => ({ default: () => <div data-testid="header-toolbar" /> }))
 vi.mock('../components/CreateWorkspaceModal', () => ({ default: () => <div data-testid="create-workspace-modal" /> }))
 vi.mock('../components/ToastContainer', () => ({ default: () => <div data-testid="toast-container" /> }))
 vi.mock('../components/UpdateNotification', () => ({ default: () => <div data-testid="update-notification" /> }))
 vi.mock('../components/UpdateRestartDialog', () => ({ default: () => <div data-testid="update-restart-dialog" /> }))
-vi.mock('../components/GitChangesPanel', () => ({ default: () => <div data-testid="git-changes-panel" /> }))
 vi.mock('../components/tool-renderers/ToolRendererContext', () => ({
   ToolRendererProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
@@ -53,16 +52,15 @@ vi.mock('../hooks/use-sidebar-width', () => ({
     toggleCollapse: vi.fn(),
   }),
 }))
-vi.mock('../hooks/use-resizable-width', () => ({
-  useResizableWidth: () => ({ width: 384, setWidth: vi.fn() }),
-}))
-vi.mock('../hooks/use-git-changes-panel-width', () => ({
-  useGitChangesPanelWidth: () => ({
-    width: 320,
+vi.mock('../hooks/use-right-panel-width', () => ({
+  useRightPanelWidth: () => ({
+    width: 640,
     setWidth: vi.fn(),
     isCollapsed: false,
     toggleCollapse: vi.fn(),
+    expandedWidth: 640,
   }),
+  RAIL_WIDTH: 48,
 }))
 vi.mock('../hooks/use-sidebar-keyboard-shortcut', () => ({
   useSidebarKeyboardShortcut: () => {},
@@ -71,7 +69,13 @@ vi.mock('../hooks/use-migration-notice', () => ({
   useMigrationNotice: () => ({ visible: false, auditLogsCleared: 0, dismiss: vi.fn() }),
 }))
 
-const mockWorkspaceStore = {
+const mockWorkspaceStore: {
+  workspaces: Array<{ id: string; name: string; folderPath: string }>
+  activeWorkspaceId: string | null
+  openWorkspaceIds: string[]
+  fetchWorkspaces: ReturnType<typeof vi.fn>
+  openWorkspace: ReturnType<typeof vi.fn>
+} = {
   workspaces: [],
   activeWorkspaceId: null,
   openWorkspaceIds: [],
@@ -127,6 +131,9 @@ describe('App layout', () => {
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
+    mockWorkspaceStore.activeWorkspaceId = null
+    mockWorkspaceStore.openWorkspaceIds = []
+    mockWorkspaceStore.workspaces = []
   })
 
   it('clips the root container vertically to prevent the whole page from scrolling', async () => {
@@ -135,5 +142,18 @@ describe('App layout', () => {
     const root = container.firstElementChild
     expect(root).toHaveClass('overflow-hidden')
     expect(root).not.toHaveClass('overflow-x-hidden')
+  })
+
+  it('renders RightPanel and not legacy FilePanel/GitDiffPanel when a workspace is active', async () => {
+    mockWorkspaceStore.activeWorkspaceId = 'ws1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws1']
+    mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
+
+    const { findByTestId, queryByTestId } = renderWithI18n(<App />)
+    await findByTestId('chat-panel')
+
+    expect(queryByTestId('right-panel')).toBeInTheDocument()
+    expect(queryByTestId('file-panel')).not.toBeInTheDocument()
+    expect(queryByTestId('git-diff-panel')).not.toBeInTheDocument()
   })
 })

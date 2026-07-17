@@ -143,46 +143,6 @@ describe('git-changes-store', () => {
     )
   })
 
-  it('loads a diff with the correct staged flag', async () => {
-    global.fetch = vi.fn((url) =>
-      Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve(
-            String(url).includes('staged=true')
-              ? { diff: 'staged diff', isBinary: false, truncated: false }
-              : { diff: 'unstaged diff', isBinary: false, truncated: false },
-          ),
-      }),
-    ) as unknown as typeof global.fetch
-
-    const { openDiff, loadDiff } = useGitChangesStore.getState()
-
-    openDiff('ws1', { path: 'a.ts', indexStatus: 'M', workingTreeStatus: ' ' })
-    await loadDiff('ws1')
-
-    expect(useGitChangesStore.getState().workspaces['ws1']?.selectedFile?.staged).toBe(true)
-    expect(useGitChangesStore.getState().workspaces['ws1']?.diffContent?.diff).toBe('staged diff')
-
-    openDiff('ws1', { path: 'b.ts', indexStatus: ' ', workingTreeStatus: 'M' })
-    await loadDiff('ws1')
-
-    expect(useGitChangesStore.getState().workspaces['ws1']?.selectedFile?.staged).toBe(false)
-    expect(useGitChangesStore.getState().workspaces['ws1']?.diffContent?.diff).toBe('unstaged diff')
-  })
-
-  it('does not fetch a diff for untracked files', async () => {
-    const { openDiff, loadDiff } = useGitChangesStore.getState()
-    openDiff('ws1', { path: 'new.txt', indexStatus: '?', workingTreeStatus: '?' })
-    await loadDiff('ws1')
-
-    expect(global.fetch).not.toHaveBeenCalledWith(
-      expect.stringContaining('/git-changes/diff'),
-      expect.any(Object),
-    )
-    expect(useGitChangesStore.getState().workspaces['ws1']?.diffContent).toBeNull()
-  })
-
   it('switches view mode per workspace', () => {
     const { setViewMode } = useGitChangesStore.getState()
     setViewMode('ws1', 'flat')

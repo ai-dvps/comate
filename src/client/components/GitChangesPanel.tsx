@@ -21,16 +21,17 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useGitChangesStore, useGitChanges, type GitStatusItem } from '../stores/git-changes-store'
+import { useRightPanelStore } from '../stores/right-panel-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { RAIL_WIDTH } from '../hooks/use-sidebar-width'
+import { isUntrackedFile, getStatusBadgeClass } from '../lib/git-status-helpers'
 
 interface GitChangesPanelProps {
   width: number
   isCollapsed: boolean
   onToggleCollapse: () => void
   onWidthChange: (width: number) => void
-  onOpenDiff: (path: string, name: string, indexStatus: string, workingTreeStatus: string) => void
 }
 
 interface TreeNode {
@@ -43,31 +44,12 @@ interface TreeNode {
 
 const COLLAPSED_THRESHOLD_PX = 640
 
-function isUntrackedFile(file: GitStatusItem): boolean {
-  return file.indexStatus === '?' && file.workingTreeStatus === '?'
-}
-
 function getStatusCode(file: GitStatusItem): string {
-  if (isUntrackedFile(file)) return '??'
+  if (isUntrackedFile(file)) return '?'
   if (file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '') {
     return file.workingTreeStatus
   }
   return file.indexStatus
-}
-
-function getStatusBadgeClass(code: string): string {
-  switch (code) {
-    case 'M':
-      return 'bg-warning/10 text-warning'
-    case 'A':
-      return 'bg-success/10 text-success'
-    case 'D':
-      return 'bg-destructive/10 text-destructive'
-    case 'R':
-      return 'bg-accent/10 text-accent'
-    default:
-      return 'bg-surface-hover text-text-secondary'
-  }
 }
 
 function insertIntoTree(nodes: TreeNode[], item: GitStatusItem, parts: string[], depth = 0): void {
@@ -125,7 +107,6 @@ export default function GitChangesPanel({
   isCollapsed,
   onToggleCollapse,
   onWidthChange,
-  onOpenDiff,
 }: GitChangesPanelProps) {
   const { t } = useTranslation('common')
   const panelRef = useRef<HTMLDivElement>(null)
@@ -146,6 +127,9 @@ export default function GitChangesPanel({
 
   useEffect(() => {
     setPanelVisible(!isCollapsed)
+    return () => {
+      setPanelVisible(false)
+    }
   }, [isCollapsed, setPanelVisible])
 
   useEffect(() => {
@@ -243,10 +227,15 @@ export default function GitChangesPanel({
 
   const handleOpenFile = useCallback(
     (file: GitStatusItem) => {
-      const name = file.path.split('/').pop() || file.path
-      onOpenDiff(file.path, name, file.indexStatus, file.workingTreeStatus)
+      if (!activeWorkspaceId) return
+      useRightPanelStore
+        .getState()
+        .openDiff(activeWorkspaceId, file)
+        .catch((err) => {
+          console.error('[GitChangesPanel] failed to open diff:', err)
+        })
     },
-    [onOpenDiff],
+    [activeWorkspaceId],
   )
 
   const handleSelect = useCallback((path: string) => {
@@ -528,6 +517,8 @@ export default function GitChangesPanel({
 
       <div
         data-testid="git-changes-resize-handle"
+        role="separator"
+        aria-label={t('gitChanges.resize')}
         className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
         onMouseDown={handleResizeMouseDown}
       />

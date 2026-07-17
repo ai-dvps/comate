@@ -25,28 +25,23 @@ vi.mock('./TodoList', () => ({
   default: () => <div data-testid="todo-list">TodoList</div>,
 }));
 
-vi.mock('./FileExplorer', () => ({
-  default: () => <div data-testid="file-explorer">FileExplorer</div>,
-}));
 
 describe('Sidebar', () => {
   beforeEach(() => {
     cleanup();
   });
 
-  it('renders exactly three tabs: Sessions, Todos, and Files', () => {
+  it('renders exactly two tabs: Sessions and Todos', () => {
     renderWithI18n(
       <Sidebar
         width={240}
         onWidthChange={vi.fn()}
-        onFileClick={vi.fn()}
-        onFileDoubleClick={vi.fn()}
       />,
     );
 
     expect(screen.getByRole('button', { name: 'Sessions' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Todos' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Queue' })).not.toBeInTheDocument();
   });
 
@@ -55,8 +50,6 @@ describe('Sidebar', () => {
       <Sidebar
         width={240}
         onWidthChange={vi.fn()}
-        onFileClick={vi.fn()}
-        onFileDoubleClick={vi.fn()}
         isCollapsed={false}
       />,
     );
@@ -68,8 +61,6 @@ describe('Sidebar', () => {
         <Sidebar
           width={48}
           onWidthChange={vi.fn()}
-          onFileClick={vi.fn()}
-          onFileDoubleClick={vi.fn()}
           isCollapsed={true}
         />
       </I18nextProvider>,
@@ -78,33 +69,29 @@ describe('Sidebar', () => {
     expect(screen.queryByTestId('sidebar-resize-handle')).not.toBeInTheDocument();
   });
 
-  it('renders three icon buttons when collapsed', () => {
+  it('renders two icon buttons when collapsed', () => {
     renderWithI18n(
       <Sidebar
         width={48}
         onWidthChange={vi.fn()}
-        onFileClick={vi.fn()}
-        onFileDoubleClick={vi.fn()}
         isCollapsed={true}
       />,
     );
 
     expect(screen.getByRole('button', { name: 'Show sessions' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show todos' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show files' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show files' })).not.toBeInTheDocument();
 
     expect(screen.queryByRole('button', { name: 'Sessions' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Todos' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument();
   });
 
-  it('switches between sessions, todos, and files in both expanded and collapsed states', () => {
+  it('switches between sessions and todos in both expanded and collapsed states', () => {
     const { rerender } = renderWithI18n(
       <Sidebar
         width={240}
         onWidthChange={vi.fn()}
-        onFileClick={vi.fn()}
-        onFileDoubleClick={vi.fn()}
         isCollapsed={false}
       />,
     );
@@ -117,8 +104,6 @@ describe('Sidebar', () => {
         <Sidebar
           width={48}
           onWidthChange={vi.fn()}
-          onFileClick={vi.fn()}
-          onFileDoubleClick={vi.fn()}
           isCollapsed={true}
         />
       </I18nextProvider>,
@@ -131,8 +116,6 @@ describe('Sidebar', () => {
         <Sidebar
           width={240}
           onWidthChange={vi.fn()}
-          onFileClick={vi.fn()}
-          onFileDoubleClick={vi.fn()}
           isCollapsed={false}
         />
       </I18nextProvider>,
@@ -140,6 +123,5 @@ describe('Sidebar', () => {
 
     expect(screen.getByRole('button', { name: 'Sessions' })).toHaveClass('border-b-2');
     expect(screen.getByRole('button', { name: 'Todos' })).not.toHaveClass('border-b-2');
-    expect(screen.getByRole('button', { name: 'Files' })).not.toHaveClass('border-b-2');
   });
 });

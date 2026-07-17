@@ -1,29 +1,24 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare, CheckSquare, Folder } from 'lucide-react'
+import { MessageSquare, CheckSquare } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { RAIL_WIDTH } from '../hooks/use-sidebar-width'
 import SessionList from './SessionList'
-import FileExplorer from './FileExplorer'
 import TodoList from './TodoList'
 
 interface SidebarProps {
   width: number
   onWidthChange: (width: number) => void
-  onFileClick: (path: string, name: string) => void
-  onFileDoubleClick?: (path: string, name: string) => void
   isCollapsed?: boolean
 }
 
-type SidebarTab = 'sessions' | 'files' | 'todos'
+type SidebarTab = 'sessions' | 'todos'
 
 export default function Sidebar({
   width,
   onWidthChange,
-  onFileClick,
-  onFileDoubleClick,
   isCollapsed = false,
 }: SidebarProps) {
   const { t } = useTranslation('common')
@@ -88,12 +83,6 @@ export default function Sidebar({
       label: t('sidebar.todos'),
       tooltip: t('sidebar.showTodos'),
       icon: <CheckSquare className="w-5 h-5" />,
-    },
-    {
-      id: 'files',
-      label: t('sidebar.files'),
-      tooltip: t('sidebar.showFiles'),
-      icon: <Folder className="w-5 h-5" />,
     },
   ]
 
@@ -174,12 +163,6 @@ export default function Sidebar({
                   {t('sidebar.noWorkspace')}
                 </p>
               </div>
-            )}
-            {activeTab === 'files' && (
-              <FileExplorer
-                onFileClick={onFileClick}
-                onFileDoubleClick={onFileDoubleClick}
-              />
             )}
           </div>
 
