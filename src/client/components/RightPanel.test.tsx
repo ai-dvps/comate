@@ -85,7 +85,33 @@ describe('RightPanel', () => {
     expect(screen.queryByTestId('right-panel-content')).not.toBeInTheDocument()
   })
 
-  it('expands to show the list sidebar and content panel', () => {
+  it('expands to show the list sidebar and hides the content panel when no tabs are open', () => {
+    renderWithI18n(
+      <RightPanel
+        width={640}
+        isCollapsed={false}
+        toggleCollapse={vi.fn()}
+        onWidthChange={vi.fn()}
+        workspaceId="ws1"
+      />,
+    )
+
+    expect(screen.getByTestId('right-panel-list-sidebar')).toBeInTheDocument()
+    expect(screen.queryByTestId('right-panel-content')).not.toBeInTheDocument()
+    expect(screen.getByTestId('file-explorer')).toBeInTheDocument()
+  })
+
+  it('shows the content panel when at least one tab is open', () => {
+    const fileTab: FileTab = {
+      type: 'file',
+      id: 'file:src/App.tsx',
+      path: 'src/App.tsx',
+      name: 'App.tsx',
+      content: '',
+      isBinary: false,
+    }
+    useRightPanelStore.setState({ openTabs: [fileTab], activeTabId: fileTab.id })
+
     renderWithI18n(
       <RightPanel
         width={640}
@@ -98,7 +124,6 @@ describe('RightPanel', () => {
 
     expect(screen.getByTestId('right-panel-list-sidebar')).toBeInTheDocument()
     expect(screen.getByTestId('right-panel-content')).toBeInTheDocument()
-    expect(screen.getByTestId('file-explorer')).toBeInTheDocument()
   })
 
   it('clicking the Git icon switches to the Git Changes list tab', async () => {
