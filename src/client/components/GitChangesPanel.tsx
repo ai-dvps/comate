@@ -549,7 +549,7 @@ function FileRow({ file, path, isHighlighted, onSelect, onOpen }: FileRowProps) 
       >
         {statusCode}
       </span>
-      <span className="truncate font-mono">{path}</span>
+      <span className="truncate font-mono min-w-0">{path}</span>
     </div>
   )
 }
