@@ -35,6 +35,7 @@ import FilePath from '../tool-renderers/FilePath'
 
 import { CodeBlock } from './code-block'
 import { CompactableContainer } from './compactable-container'
+import LinkifiedText from '../LinkifiedText'
 
 export type { ToolPart, ToolState }
 
@@ -295,7 +296,7 @@ export const ToolOutput = ({
               : 'bg-surface-hover/50 text-text-primary',
           )}
         >
-          {errorText && <div>{errorText}</div>}
+          {errorText && <LinkifiedText text={errorText} />}
           {Output}
         </div>
       </div>
