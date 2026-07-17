@@ -206,7 +206,7 @@ export default function RightPanel({
             className={cn(
               'flex-1 py-2 text-xs font-medium text-center transition-all',
               activeListTab === 'files'
-                ? 'text-text-primary border-b-2 border-accent'
+                ? 'text-text-primary border-b border-accent'
                 : 'text-text-secondary hover:text-text-primary',
             )}
           >
@@ -220,7 +220,7 @@ export default function RightPanel({
             className={cn(
               'flex-1 py-2 text-xs font-medium text-center transition-all',
               activeListTab === 'git-changes'
-                ? 'text-text-primary border-b-2 border-accent'
+                ? 'text-text-primary border-b border-accent'
                 : 'text-text-secondary hover:text-text-primary',
             )}
           >

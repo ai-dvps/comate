@@ -355,7 +355,7 @@ export default function ChatPanel({
   return (
     <div className="flex flex-col h-full bg-bg">
       {/* Chat Header */}
-      <div className="relative flex items-center justify-center py-1.5 border-b-2 border-border/50 flex-shrink-0">
+      <div className="relative flex items-center justify-center py-1.5 border-b border-border/50 flex-shrink-0">
         {onToggleSidebarCollapse && (
           <button
             className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
