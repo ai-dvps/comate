@@ -115,7 +115,7 @@ describe('RightPanel', () => {
 
     expect(screen.getByTestId('file-explorer')).toBeInTheDocument()
 
-    await user.click(screen.getByLabelText('Show git changes'))
+    await user.click(screen.getByTestId('right-panel-git-tab'))
 
     expect(screen.getByTestId('git-changes-list')).toBeInTheDocument()
     expect(screen.queryByTestId('file-explorer')).not.toBeInTheDocument()

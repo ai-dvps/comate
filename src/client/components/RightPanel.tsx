@@ -5,11 +5,10 @@ import {
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Folder, GitBranch, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Folder, GitBranch } from 'lucide-react'
 import { useRightPanelStore } from '../stores/right-panel-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
-import { RAIL_WIDTH } from '../hooks/use-right-panel-width'
 import FileExplorer from './FileExplorer'
 import GitChangesPanel from './GitChangesPanel'
 import RightPanelContent from './RightPanelContent'
@@ -170,26 +169,13 @@ export default function RightPanel({
           data-testid="right-panel-rail"
           className="flex flex-col items-center py-2 gap-1"
         >
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                data-testid="right-panel-expand"
-                onClick={toggleCollapse}
-                className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
-                aria-label={t('rightPanel.expand')}
-              >
-                <PanelRightOpen className="w-5 h-5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="left">{t('rightPanel.expand')}</TooltipContent>
-          </Tooltip>
           {railButtons}
         </div>
       </aside>
     )
   }
 
-  const contentWidth = Math.max(0, width - listSidebarWidth - RAIL_WIDTH)
+  const contentWidth = Math.max(0, width - listSidebarWidth)
 
   return (
     <aside
@@ -238,20 +224,6 @@ export default function RightPanel({
               {t('rightPanel.gitChanges')}
             </button>
           </div>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                data-testid="right-panel-collapse"
-                onClick={toggleCollapse}
-                className="p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
-                aria-label={t('rightPanel.collapse')}
-              >
-                <PanelRightClose className="w-4 h-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t('rightPanel.collapse')}</TooltipContent>
-          </Tooltip>
         </div>
 
         <div className="flex-1 min-h-0 overflow-hidden">
@@ -267,14 +239,6 @@ export default function RightPanel({
             />
           )}
         </div>
-      </div>
-
-      <div
-        data-testid="right-panel-rail"
-        className="flex flex-col items-center py-2 gap-1 border-l border-border h-full flex-shrink-0"
-        style={{ width: RAIL_WIDTH }}
-      >
-        {railButtons}
       </div>
 
       <div
