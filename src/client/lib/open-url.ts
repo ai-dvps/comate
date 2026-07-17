@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { isTauri } from './tauri-api'
 
 const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g
-const TRAILING_PUNCTUATION = /[.,;:!?\)\]\}>"']+$/
+const TRAILING_PUNCTUATION = /[.,;:!?)\]}>"']+$/
 
 export interface TextSegment {
   type: 'text' | 'url'
