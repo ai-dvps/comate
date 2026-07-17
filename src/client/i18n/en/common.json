@@ -131,7 +131,9 @@
     "truncatedPlaceholder": "Diff too large — showing first part",
     "deletedFileHeader": "File deleted",
     "errorGeneric": "Something went wrong",
-    "back": "Back to file list"
+    "back": "Back to file list",
+    "expandFolder": "Expand folder",
+    "collapseFolder": "Collapse folder"
   },
   "update": {
     "checking": "Checking for updates...",
