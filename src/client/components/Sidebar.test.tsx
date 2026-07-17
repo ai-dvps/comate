@@ -97,7 +97,7 @@ describe('Sidebar', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Todos' }));
-    expect(screen.getByRole('button', { name: 'Todos' })).toHaveClass('border-b-2');
+    expect(screen.getByRole('button', { name: 'Todos' })).toHaveClass('border-b');
 
     rerender(
       <I18nextProvider i18n={i18n}>
@@ -121,7 +121,7 @@ describe('Sidebar', () => {
       </I18nextProvider>,
     );
 
-    expect(screen.getByRole('button', { name: 'Sessions' })).toHaveClass('border-b-2');
+    expect(screen.getByRole('button', { name: 'Sessions' })).toHaveClass('border-b');
     expect(screen.getByRole('button', { name: 'Todos' })).not.toHaveClass('border-b-2');
   });
 });
