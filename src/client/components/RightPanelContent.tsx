@@ -90,7 +90,7 @@ export default function RightPanelContent({
       <div
         role="tablist"
         aria-label={t('rightPanel.openTabs')}
-        className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-shrink-0 px-2 py-2 border-b border-border/50"
+        className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-shrink-0 px-2 border-b border-border/50"
         onKeyDown={handleKeyDown}
       >
         {openTabs.map((tab, index) => {
@@ -103,7 +103,7 @@ export default function RightPanelContent({
               tabIndex={isActive ? 0 : -1}
               aria-selected={isActive}
               className={cn(
-                'group flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer text-xs transition-all whitespace-nowrap flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                'group flex items-center gap-1.5 px-3 py-2 rounded-lg cursor-pointer text-xs transition-all whitespace-nowrap flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-accent',
                 isActive
                   ? 'bg-surface-hover text-text-primary'
                   : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover',
