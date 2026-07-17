@@ -17,6 +17,7 @@ import {
   GitBranch,
   List,
   ListTree,
+  Plus,
   RefreshCw,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
@@ -558,8 +559,10 @@ function FileRow({
   onSelect,
   onOpen,
 }: FileRowProps) {
+  const { t } = useTranslation('common')
   const statusCode = getStatusCode(file)
   const displayName = name ?? path
+  const untracked = isUntrackedFile(file)
   return (
     <div
       data-testid="git-file-row"
@@ -575,12 +578,16 @@ function FileRow({
     >
       <span
         className={cn(
-          'flex-shrink-0 px-1 py-0.5 rounded text-[10px] font-mono font-medium',
+          'flex items-center justify-center flex-shrink-0 w-5 h-4 rounded text-[10px] font-mono font-medium',
           getStatusBadgeClass(statusCode),
         )}
-        title={statusCode}
+        title={untracked ? t('gitChanges.statusUntracked') : statusCode}
       >
-        {statusCode}
+        {untracked ? (
+          <Plus className="w-3 h-3" />
+        ) : (
+          statusCode
+        )}
       </span>
       {showFileIcon && (
         <File className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" aria-hidden="true" />
