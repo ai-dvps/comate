@@ -96,7 +96,6 @@ function sortTree(nodes: TreeNode[]): void {
 function buildTree(items: GitStatusItem[]): TreeNode[] {
   const nodes: TreeNode[] = []
   for (const item of items) {
-    if (isUntrackedFile(item)) continue
     const parts = item.path.split('/')
     insertIntoTree(nodes, item, parts)
   }
@@ -152,7 +151,6 @@ export default function GitChangesPanel({
     setExpandedPaths(() => {
       const next = new Set<string>()
       for (const item of statusItems) {
-        if (isUntrackedFile(item)) continue
         const parts = item.path.split('/')
         if (parts.length > 1) {
           next.add(parts[0] as string)
@@ -230,6 +228,7 @@ export default function GitChangesPanel({
     [statusItems],
   )
   const tree = useMemo(() => buildTree(trackedItems), [trackedItems])
+  const untrackedTree = useMemo(() => buildTree(untrackedItems), [untrackedItems])
 
   const handleRefresh = useCallback(() => {
     if (!activeWorkspaceId) return
@@ -301,6 +300,11 @@ export default function GitChangesPanel({
       }
     },
     [expandedPaths, highlightedPath, handleToggleExpand, handleOpenFile],
+  )
+
+  const allTreeNodes = useMemo(
+    () => [...untrackedTree, ...tree],
+    [untrackedTree, tree],
   )
 
   if (isCollapsed) {
@@ -433,7 +437,7 @@ export default function GitChangesPanel({
           className="flex-1 overflow-y-auto"
           role="tree"
           aria-label={t('gitChanges.panelTitle')}
-          onKeyDown={(e) => viewMode === 'tree' && handleTreeKeyDown(e, tree)}
+          onKeyDown={(e) => viewMode === 'tree' && handleTreeKeyDown(e, allTreeNodes)}
           tabIndex={0}
         >
           {statusLoading && statusItems.length === 0 && renderSkeleton()}
@@ -453,16 +457,31 @@ export default function GitChangesPanel({
               <div className="px-3 py-1 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">
                 {t('gitChanges.statusUntracked')}
               </div>
-              {untrackedItems.map((file) => (
-                <FileRow
-                  key={file.path}
-                  file={file}
-                  path={file.path}
-                  isHighlighted={highlightedPath === file.path}
-                  onSelect={() => handleSelect(file.path)}
-                  onOpen={() => handleOpenFile(file)}
-                />
-              ))}
+              {viewMode === 'tree' ? (
+                untrackedTree.map((node) => (
+                  <TreeNodeView
+                    key={node.path}
+                    node={node}
+                    level={0}
+                    expandedPaths={expandedPaths}
+                    highlightedPath={highlightedPath}
+                    onToggleExpand={handleToggleExpand}
+                    onSelect={handleSelect}
+                    onOpen={handleOpenFile}
+                  />
+                ))
+              ) : (
+                untrackedItems.map((file) => (
+                  <FileRow
+                    key={file.path}
+                    file={file}
+                    path={file.path}
+                    isHighlighted={highlightedPath === file.path}
+                    onSelect={() => handleSelect(file.path)}
+                    onOpen={() => handleOpenFile(file)}
+                  />
+                ))
+              )}
             </div>
           )}
 

@@ -155,6 +155,29 @@ describe('GitChangesPanel', () => {
     })
   })
 
+  it('organizes untracked files into the tree in tree view', async () => {
+    gitChangesMock.state.statusItems = [
+      { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: ' ' },
+      { path: 'newdir/a.txt', indexStatus: '?', workingTreeStatus: '?' },
+    ]
+
+    renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+
+    // Tree view: untracked files are grouped at the top and shown as a tree.
+    const untrackedGroup = screen.getByTestId('git-untracked-group')
+    expect(untrackedGroup).toBeInTheDocument()
+    expect(screen.getByText('newdir')).toBeInTheDocument()
+    expect(screen.getByText('a.txt')).toBeInTheDocument()
+    expect(screen.queryByText('newdir/a.txt')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('git-flat-view-button'))
+
+    await waitFor(() => {
+      // Flat view: untracked files are shown as full paths in the top group.
+      expect(screen.getByText('newdir/a.txt')).toBeInTheDocument()
+    })
+  })
+
   it('calls openDiff and renders GitDiffView on double-click', async () => {
     gitChangesMock.state.statusItems = [
       { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: ' ' },
