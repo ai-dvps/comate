@@ -129,7 +129,7 @@ describe('GitChangesPanel browser', () => {
     await userEvent.click(screen.getByTestId('git-changes-toggle'))
 
     expect(screen.getByRole('tree')).toBeInTheDocument()
-    expect(screen.getByText('src/main.ts')).toBeInTheDocument()
+    expect(screen.getByText('main.ts')).toBeInTheDocument()
     expect(screen.getByText('new.txt')).toBeInTheDocument()
   })
 
@@ -141,7 +141,7 @@ describe('GitChangesPanel browser', () => {
       onWidthChange={() => {}}
     />)
 
-    const row = screen.getByText('src/main.ts').closest('[data-testid="git-file-row"]') as HTMLElement
+    const row = screen.getByText('main.ts').closest('[data-testid="git-file-row"]') as HTMLElement
     await userEvent.dblClick(row)
 
     await vi.waitFor(() => expect(screen.getByTestId('git-diff-view')).toBeInTheDocument())
