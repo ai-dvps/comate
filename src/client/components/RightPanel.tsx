@@ -193,37 +193,39 @@ export default function RightPanel({
         className="flex flex-col h-full border-l border-border/50 flex-shrink-0"
         style={{ width: listSidebarWidth }}
       >
-        <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 flex-shrink-0 gap-2">
-          <div className="flex items-center flex-1 gap-1" role="tablist" aria-label={t('rightPanel.openTabs')}>
-            <button
-              data-testid="right-panel-files-tab"
-              role="tab"
-              aria-selected={activeListTab === 'files'}
-              onClick={() => handleListTabClick('files')}
-              className={cn(
-                'flex-1 py-2 text-xs font-medium text-center transition-all',
-                activeListTab === 'files'
-                  ? 'text-text-primary border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary',
-              )}
-            >
-              {t('rightPanel.files')}
-            </button>
-            <button
-              data-testid="right-panel-git-tab"
-              role="tab"
-              aria-selected={activeListTab === 'git-changes'}
-              onClick={() => handleListTabClick('git-changes')}
-              className={cn(
-                'flex-1 py-2 text-xs font-medium text-center transition-all',
-                activeListTab === 'git-changes'
-                  ? 'text-text-primary border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary',
-              )}
-            >
-              {t('rightPanel.gitChanges')}
-            </button>
-          </div>
+        <div
+          className="flex border-b border-border/50 flex-shrink-0"
+          role="tablist"
+          aria-label={t('rightPanel.openTabs')}
+        >
+          <button
+            data-testid="right-panel-files-tab"
+            role="tab"
+            aria-selected={activeListTab === 'files'}
+            onClick={() => handleListTabClick('files')}
+            className={cn(
+              'flex-1 py-2 text-xs font-medium text-center transition-all',
+              activeListTab === 'files'
+                ? 'text-text-primary border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary',
+            )}
+          >
+            {t('rightPanel.files')}
+          </button>
+          <button
+            data-testid="right-panel-git-tab"
+            role="tab"
+            aria-selected={activeListTab === 'git-changes'}
+            onClick={() => handleListTabClick('git-changes')}
+            className={cn(
+              'flex-1 py-2 text-xs font-medium text-center transition-all',
+              activeListTab === 'git-changes'
+                ? 'text-text-primary border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary',
+            )}
+          >
+            {t('rightPanel.gitChanges')}
+          </button>
         </div>
 
         <div className="flex-1 min-h-0 overflow-hidden">
