@@ -36,10 +36,12 @@ export default function RightPanel({
 }: RightPanelProps) {
   const { t } = useTranslation('common')
   const activeListTab = useRightPanelStore((s) => s.activeListTab)
+  const openTabs = useRightPanelStore((s) => s.openTabs)
   const setActiveListTab = useRightPanelStore((s) => s.setActiveListTab)
   const [listSidebarWidth, setListSidebarWidth] = useState(LIST_SIDEBAR_WIDTH)
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ move: (e: MouseEvent) => void; up: () => void } | null>(null)
+  const hasOpenTabs = openTabs.length > 0
 
   const handleFileOpen = useCallback(
     (path: string, name: string) => {
@@ -175,6 +177,7 @@ export default function RightPanel({
     )
   }
 
+  const panelWidth = hasOpenTabs ? width : listSidebarWidth
   const contentWidth = Math.max(0, width - listSidebarWidth)
 
   return (
@@ -182,15 +185,20 @@ export default function RightPanel({
       ref={panelRef}
       data-testid="right-panel"
       className="relative bg-surface border-l border-border flex flex-row h-full flex-shrink-0"
-      style={{ width }}
+      style={{ width: panelWidth }}
     >
-      <div className="flex-1 min-w-0 flex flex-col h-full">
-        <RightPanelContent workspacePath={workspacePath} contentWidth={contentWidth} />
-      </div>
+      {hasOpenTabs && (
+        <div className="flex-1 min-w-0 flex flex-col h-full">
+          <RightPanelContent workspacePath={workspacePath} contentWidth={contentWidth} />
+        </div>
+      )}
 
       <div
         data-testid="right-panel-list-sidebar"
-        className="flex flex-col h-full border-l border-border/50 flex-shrink-0"
+        className={cn(
+          'flex flex-col h-full flex-shrink-0',
+          hasOpenTabs && 'border-l border-border/50',
+        )}
         style={{ width: listSidebarWidth }}
       >
         <div
@@ -243,13 +251,15 @@ export default function RightPanel({
         </div>
       </div>
 
-      <div
-        data-testid="right-panel-resize-handle"
-        role="separator"
-        aria-label={t('rightPanel.resize')}
-        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
-        onMouseDown={handleResizeMouseDown}
-      />
+      {hasOpenTabs && (
+        <div
+          data-testid="right-panel-resize-handle"
+          role="separator"
+          aria-label={t('rightPanel.resize')}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
+          onMouseDown={handleResizeMouseDown}
+        />
+      )}
     </aside>
   )
 }
