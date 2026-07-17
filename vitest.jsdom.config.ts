@@ -23,6 +23,7 @@ export default defineProject({
       'src/client/lib/format-message-timestamp.test.ts',
       'src/client/lib/workflow-utils.test.ts',
       'src/client/lib/structured-report.test.ts',
+      'src/client/lib/open-url.test.ts',
     ],
     exclude: [
       'src/client/lib/keyboard.test.ts',

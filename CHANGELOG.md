@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ctrl/Cmd+click to open URLs in chat messages** — holding Ctrl (Windows/Linux) or Cmd (macOS) and clicking an `http://` or `https://` URL in user messages, assistant markdown links, or tool error text now opens the link in the system default browser. Plain clicks keep the existing behavior (text selection, copy, and default link navigation), and URLs retain their current visual appearance.
 - **Collapsible prompt input while streaming** — the prompt-input text area now collapses with a height animation during active generation, leaving only the bottom toolbar controls visible. It expands again smoothly once the stream ends.
 - **Collapsible AskUserQuestion cards** — `AskUserQuestion` tool cards in the message panel now start expanded and can be folded down to a thin header line by clicking the header. The collapsed state is local to the card and resets on reload, and cards containing multiple questions collapse and expand together.
 - **Collapsible main sidebar** — the session/todo/file sidebar can now be collapsed into a narrow icon rail to free up horizontal space on small screens. Clicking a tab icon switches tabs without expanding. The toggle is now a single icon button in the chat panel header instead of a fixed button at the bottom of the sidebar, saving vertical space in the rail. The collapsed state and width persist across app restarts, and `Cmd/Ctrl+B` toggles collapse from anywhere except text inputs.
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **User prompt messages are more prominent** — user message bubbles in the chat message list now use an accent-tinted background (`bg-accent/10` light, `bg-accent/15` dark) with a subtle accent border instead of the near-background neutral gray, making it much easier to spot your own prompts when scanning a long conversation full of tool cards.
 - **Process region drawer now stays in sync and starts collapsed** — opening a process region in result-focused mode previously showed tool cards fully expanded and could lag behind streaming updates. The drawer now subscribes to live message updates as the turn streams, and each tool card inside the drawer starts collapsed (header + "Show details" toggle) so the overall flow is easier to scan. Thinking cards remain collapsed as before, and the normal linear chat view still expands tool cards by default.
 - **Prompt-input controls unified** — the provider selector, approval-mode toggle, and fast-mode toggle in the prompt-input toolbar are now borderless and background-less, with state indicated only by text color and a shared hover surface. This gives the right-hand control group a consistent, flatter visual style.
 - **Send/stop button styling** — the prompt-input send and stop buttons are now smaller (`p-1.5`, `w-4 h-4` icon) and share the same rounded shape. The send button uses a soft accent style (`bg-accent/15`, `border-accent/20`, `text-accent`) instead of the previous plain icon, while the stop button keeps its destructive style at the reduced size.
