@@ -12,6 +12,7 @@ interface SidebarProps {
   width: number
   onWidthChange: (width: number) => void
   isCollapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
 type SidebarTab = 'sessions' | 'todos'
@@ -20,6 +21,7 @@ export default function Sidebar({
   width,
   onWidthChange,
   isCollapsed = false,
+  onToggleCollapse,
 }: SidebarProps) {
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<SidebarTab>('sessions')
@@ -108,7 +110,10 @@ export default function Sidebar({
                         : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
                     )}
                     aria-label={tab.tooltip}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => {
+                      setActiveTab(tab.id)
+                      onToggleCollapse?.()
+                    }}
                   >
                     {tab.icon}
                   </button>
