@@ -7,7 +7,11 @@ import PromptInput from './PromptInput'
 import i18n from '../i18n'
 
 function renderWithI18n(ui: React.ReactElement) {
-  return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
+  return render(
+    <I18nextProvider i18n={i18n}>
+      <div style={{ width: '800px' }}>{ui}</div>
+    </I18nextProvider>,
+  )
 }
 
 const DEFAULT_PROPS = {
@@ -159,7 +163,7 @@ describe('PromptInput browser', () => {
   }
 
   function inputCardElement() {
-    return editableElement().parentElement?.parentElement as HTMLDivElement
+    return screen.getByTestId('input-card')
   }
 
   function popoverForPlaceholder(placeholder: RegExp) {
@@ -705,5 +709,127 @@ describe('PromptInput browser', () => {
 
     await userEvent.keyboard('{Meta>}z{/Meta}')
     await waitFor(() => expect(editableElement().textContent).toBe(''))
+  })
+
+  const LEFT_CONTROLS = ['skills', 'files', 'history']
+
+  function queryControl(name: string) {
+    switch (name) {
+      case 'skills':
+        return screen.queryByRole('button', { name: /Skills/i })
+      case 'files':
+        return screen.queryByRole('button', { name: /Files/i })
+      case 'history':
+        return screen.queryByRole('button', { name: /History/i })
+      case 'provider':
+        return screen.queryByTestId('provider-selector')
+      case 'fast':
+        return screen.queryByTestId('fast-mode-toggle')
+      case 'approval':
+        return screen.queryByTestId('approval-mode-toggle')
+      case 'clear':
+        return screen.queryByTitle('Clear')
+      case 'send':
+        return screen.queryByTitle('Send')
+      default:
+        throw new Error(`Unknown control: ${name}`)
+    }
+  }
+
+  function renderAtWidth(width: number) {
+    chatStoreMock.setDraft(DEFAULT_PROPS.sessionId, 'x')
+    return renderWithI18n(
+      <div style={{ width: `${width}px` }}>
+        <PromptInput {...DEFAULT_PROPS} />
+      </div>,
+    )
+  }
+
+  it.each([
+    {
+      label: 'wide',
+      width: 800,
+      visible: ['skills', 'files', 'history', 'provider', 'fast', 'approval', 'clear'],
+      hidden: [] as string[],
+    },
+    {
+      label: 'skills-collapsed',
+      width: 600,
+      visible: ['files', 'history', 'provider', 'fast', 'approval', 'clear'],
+      hidden: ['skills'],
+    },
+    {
+      label: 'skills-and-files-collapsed',
+      width: 520,
+      visible: ['history', 'provider', 'fast', 'approval', 'clear'],
+      hidden: ['skills', 'files'],
+    },
+    {
+      label: 'left-controls-collapsed',
+      width: 440,
+      visible: ['provider', 'fast', 'approval', 'clear'],
+      hidden: ['skills', 'files', 'history'],
+    },
+    {
+      label: 'provider-collapsed',
+      width: 380,
+      visible: ['fast', 'approval', 'clear'],
+      hidden: ['skills', 'files', 'history', 'provider'],
+    },
+    {
+      label: 'fast-collapsed',
+      width: 340,
+      visible: ['approval', 'clear'],
+      hidden: ['skills', 'files', 'history', 'provider', 'fast'],
+    },
+    {
+      label: 'approval-collapsed',
+      width: 290,
+      visible: ['clear'],
+      hidden: ['skills', 'files', 'history', 'provider', 'fast', 'approval'],
+    },
+    {
+      label: 'minimal',
+      width: 230,
+      visible: [] as string[],
+      hidden: ['skills', 'files', 'history', 'provider', 'fast', 'approval', 'clear'],
+    },
+  ])(
+    'responsive toolbar at $label width ($width px)',
+    async ({ width, visible, hidden }) => {
+      renderAtWidth(width)
+      await waitFor(() => {
+        visible.forEach((name) => {
+          const el = queryControl(name)
+          expect(el).toBeInTheDocument()
+          if (LEFT_CONTROLS.includes(name)) {
+            expect(el).not.toHaveClass('hidden')
+          }
+        })
+        hidden.forEach((name) => {
+          const el = queryControl(name)
+          if (LEFT_CONTROLS.includes(name)) {
+            expect(el).toBeInTheDocument()
+            expect(el).toHaveClass('hidden')
+          } else {
+            expect(el).not.toBeInTheDocument()
+          }
+        })
+      })
+      expect(queryControl('send')).toBeInTheDocument()
+    },
+  )
+
+  it('keeps slash and at triggers working when toolbar buttons are hidden', async () => {
+    renderAtWidth(230)
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /Skills/i })).toHaveClass('hidden'),
+    )
+
+    const input = editableLocator()
+    await input.fill('/')
+    await waitFor(() => expect(screen.getByText('/commit')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
   })
 })
