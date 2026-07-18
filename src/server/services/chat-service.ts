@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
@@ -30,6 +31,12 @@ import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOw
 import type { BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 import type { Provider } from '../models/provider.js';
+import {
+  BROWSER_MCP_SERVER_KEY,
+  BROWSER_STREAM_CLOSE_TIMEOUT_MS,
+  createBrowserMcpServer,
+  type BrowserApprovalRequester,
+} from './browser-mcp.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -107,6 +114,45 @@ export class ChatService {
   constructor(sdkClient?: SdkClient) {
     this.sdkClient = sdkClient ?? new SdkClient();
   }
+
+  /**
+   * Handler-level approval channel for the browser MCP tools (U3, KTD-4 ②).
+   * The submit tool calls this from INSIDE its handler — a workspace's
+   * `.claude/settings.json` `permissions.allow` can short-circuit the SDK's
+   * canUseTool evaluation, so the confirmation round-trip must not depend on
+   * the interception layer. Lazy runtime lookup is deliberate: the runtime
+   * may be rebuilt while the browser session lives on (KTD-5), and the lookup
+   * rebinds to whatever runtime currently owns the session. Fails closed when
+   * no runtime is live (the tool handler only runs during a runtime turn, so
+   * this is a defensive path).
+   */
+  private readonly browserApprovalRequester: BrowserApprovalRequester = async (
+    sessionId,
+    request,
+  ) => {
+    const runtime = this.getRuntimeIfExists(sessionId);
+    if (!runtime) {
+      return {
+        behavior: 'deny' as const,
+        message: 'No live runtime is available for the browser approval round-trip.',
+      };
+    }
+    const requestId = `browser-${randomUUID()}`;
+    const result = await runtime.requestToolApproval(
+      requestId,
+      request.toolName,
+      requestId,
+      request.payload,
+      {
+        title: request.title,
+        ...(request.description !== undefined && { description: request.description }),
+        ...(request.signal !== undefined && { signal: request.signal }),
+      },
+    );
+    return result.behavior === 'allow'
+      ? { behavior: 'allow' as const }
+      : { behavior: 'deny' as const, message: result.message };
+  };
 
   setOnRuntimeClose(callback: (sessionId: string) => void): void {
     this.onRuntimeClose = callback;
@@ -1327,6 +1373,21 @@ export class ChatService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       sidecarLog(`[ChatService.buildSdkOptions] Plugin MCP merge failed: ${message}`);
+    }
+
+    // Embedded browser MCP server (U3, KTD-3): GUI sessions only — bot
+    // sessions never get the browser tool surface (KTD-4 ③: the injection
+    // condition itself is the first line of bot defense). The instance is
+    // keyed by sessionId; the browser process outlives it via browserService.
+    if (!isBotSession) {
+      mcpServers[BROWSER_MCP_SERVER_KEY] = createBrowserMcpServer({
+        sessionId: session.id,
+        workspaceId: workspace.id,
+        approvalRequester: this.browserApprovalRequester,
+      });
+      // Submit/handoff handler approval round-trips can wait on a human far
+      // past the 60s SDK default — per-session env, never process-global.
+      env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT = BROWSER_STREAM_CLOSE_TIMEOUT_MS;
     }
 
     const claudePath = resolveSdkBinary();
