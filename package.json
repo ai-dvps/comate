@@ -14,6 +14,7 @@
     "build:server": "tsc -p tsconfig.server.json",
     "build:cli": "npm run build -w packages/wecom-cli",
     "build:sidecar": "tsx scripts/build-sidecar.ts",
+    "build:steel": "tsx scripts/build-steel-bundle.ts",
     "start": "node dist/server/index.js",
     "test:client": "vitest run --project jsdom",
     "test:client:watch": "vitest --project jsdom",
