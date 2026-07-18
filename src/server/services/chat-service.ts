@@ -37,6 +37,7 @@ import {
   createBrowserMcpServer,
   type BrowserApprovalRequester,
 } from './browser-mcp.js';
+import { isBrowserToolName } from './browser-tool-names.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -1502,13 +1503,29 @@ export class ChatService {
               decisionReasonType?: string;
             },
           ) => {
+            // Browser tools never run in bot sessions (U4, KTD-4 ③): the
+            // browser MCP server is not injected for bot sessions at all,
+            // this explicit deny is the second line (covers spoofed/legacy
+            // tool names) and must precede the 'unknown' fall-through below.
+            // Generic message — naming the capability would let an attacker
+            // probe the policy surface.
+            if (isBrowserToolName(toolName)) {
+              diagLog(
+                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=browser-tool-bot-session`,
+              );
+              return {
+                behavior: 'deny' as const,
+                message: "I can't do that in this workspace.",
+              };
+            }
+
             // Resolve role dynamically on every tool use so membership/role changes
             // take effect without restarting the runtime.
             const role = channel && channelUserId
               ? botService.getMemberRole(bot.id, channel, channelUserId)
               : null;
             const rolePolicy = botService.getRolePolicy(bot.id);
-            const decision = evaluateBotToolPermission(rolePolicy?.normalToolPolicy ?? { posture: 'safe', categoryDefaults: { fileRead: 'allow', fileWrite: 'deny', shell: 'deny', network: 'deny', subagents: 'deny', reply: 'allow' } }, role, toolName);
+            const decision = evaluateBotToolPermission(rolePolicy?.normalToolPolicy ?? SAFE_PRESET, role, toolName);
             // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
             // without a category fit). Fall through to today's allow-all behavior
             // per R10. The brainstorm explicitly defers MCP and Skills gating.
@@ -1593,7 +1610,7 @@ export class ChatService {
             }
 
             if (toolName === 'Skill') {
-              const r = evaluateBotSkill(rolePolicy ?? { normalToolPolicy: { posture: 'safe', categoryDefaults: { fileRead: 'allow', fileWrite: 'deny', shell: 'deny', network: 'deny', subagents: 'deny', reply: 'allow' } }, skillAllowlist: [], bashWhitelist: [] }, role, toolName, input);
+              const r = evaluateBotSkill(rolePolicy ?? { normalToolPolicy: SAFE_PRESET, skillAllowlist: [], bashWhitelist: [] }, role, toolName, input);
               if (!r.allowed) {
                 diagLog(
                   `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'skill-denied'}`,
@@ -1718,6 +1735,20 @@ export class ChatService {
             decisionReasonType?: string;
           },
         ) => {
+          // Browser tools never run in bot sessions (U4, KTD-4 ③) — explicit
+          // deny before the policy evaluation and the 'unknown' fall-through;
+          // applies to admins too (the admin bypass is void for the browser
+          // category). Generic anti-probing message.
+          if (isBrowserToolName(toolName)) {
+            diagLog(
+              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=browser-tool-bot-session`,
+            );
+            return {
+              behavior: 'deny' as const,
+              message: "I can't do that in this workspace.",
+            };
+          }
+
           const decision = evaluateToolPermission(policy, toolName, pathContext?.isAdminOrOwner ?? false);
           if (decision === 'deny') {
             const reason = getToolPermissionDenialReason(policy, toolName);

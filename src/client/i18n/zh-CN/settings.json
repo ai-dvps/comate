@@ -388,6 +388,10 @@
       "reply": {
         "name": "回复",
         "description": "向企业微信用户回发消息。禁用此选项会使机器人静默——代理仍会处理消息但无法回复。"
+      },
+      "browser": {
+        "name": "浏览器",
+        "description": "内嵌浏览器工具（mcp__comate-browser__*）。Bot 会话不会注入浏览器工具；此类别是失败即关闭的兜底，在两个预设中均保持禁用，管理员也不例外。"
       }
     },
     "defaultToggle": {

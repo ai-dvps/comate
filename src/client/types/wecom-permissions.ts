@@ -12,7 +12,8 @@ export type ToolCategory =
   | 'shell'
   | 'network'
   | 'subagents'
-  | 'reply';
+  | 'reply'
+  | 'browser';
 
 export type ToolPosture = 'allow-all' | 'safe' | 'custom';
 
@@ -31,9 +32,10 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
   'network',
   'subagents',
   'reply',
+  'browser',
 ];
 
-/** Maps each category to the SDK tool names it owns. Mirrors the server CATEGORY_TOOL_MAP. Reply is a sentinel-only category. */
+/** Maps each category to the SDK tool names it owns. Mirrors the server CATEGORY_TOOL_MAP. Reply is a sentinel-only category. Browser is a prefix entry (`mcp__comate-browser__*`). */
 export const CATEGORY_TOOLS: Record<ToolCategory, string[]> = {
   fileRead: ['Read', 'Glob', 'Grep'],
   fileWrite: ['Edit', 'Write', 'NotebookEdit'],
@@ -41,6 +43,7 @@ export const CATEGORY_TOOLS: Record<ToolCategory, string[]> = {
   network: ['WebFetch', 'WebSearch'],
   subagents: ['Agent', 'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskUpdate', 'TaskList'],
   reply: ['__wecom_reply__'],
+  browser: ['mcp__comate-browser__*'],
 };
 
 export const SAFE_PRESET: ToolPermissionPolicy = {
@@ -52,6 +55,7 @@ export const SAFE_PRESET: ToolPermissionPolicy = {
     network: 'deny',
     subagents: 'deny',
     reply: 'allow',
+    browser: 'deny',
   },
 };
 
@@ -64,5 +68,6 @@ export const ALLOW_ALL_PRESET: ToolPermissionPolicy = {
     network: 'allow',
     subagents: 'allow',
     reply: 'allow',
+    browser: 'deny',
   },
 };

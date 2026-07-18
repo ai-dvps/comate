@@ -388,6 +388,10 @@
       "reply": {
         "name": "Reply",
         "description": "Send messages back to the WeCom user. Denying this silences the bot — the agent still processes messages but cannot respond."
+      },
+      "browser": {
+        "name": "Browser",
+        "description": "Embedded browser tools (mcp__comate-browser__*). Bot sessions never receive browser tools; this category is a fail-closed backstop and stays denied in both presets, including for admins."
       }
     },
     "defaultToggle": {

@@ -3,6 +3,7 @@ export { StructuredFallback } from './StructuredFallback'
 
 // Auto-register all renderers
 import './renderers/BashRenderer'
+import './renderers/BrowserSubmitRenderer'
 import './renderers/EditRenderer'
 import './renderers/GrepRenderer'
 import './renderers/ReadRenderer'

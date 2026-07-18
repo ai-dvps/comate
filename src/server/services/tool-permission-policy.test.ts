@@ -6,6 +6,7 @@ import {
   CATEGORY_TOOL_MAP,
   REPLY_TOOL_NAME,
   SAFE_PRESET,
+  categorizeTool,
   evaluateToolPermission,
   getToolPermissionDenialReason,
   resolveEffectivePolicy,
@@ -153,16 +154,21 @@ describe('evaluateToolPermission', () => {
     assert.equal(SAFE_PRESET.categoryDefaults.reply, 'allow');
   });
 
-  it('ALLOW_ALL_PRESET allows every category', () => {
+  it('ALLOW_ALL_PRESET allows every category except browser (anti-grandfather, KTD-4 ①)', () => {
     assert.equal(ALLOW_ALL_PRESET.posture, 'allow-all');
-    for (const value of Object.values(ALLOW_ALL_PRESET.categoryDefaults)) {
-      assert.equal(value, 'allow');
+    for (const [category, value] of Object.entries(ALLOW_ALL_PRESET.categoryDefaults)) {
+      if (category === 'browser') {
+        assert.equal(value, 'deny', 'browser must stay denied even in allow-all');
+      } else {
+        assert.equal(value, 'allow');
+      }
     }
   });
 
-  it('CATEGORY_TOOL_MAP covers all six categories', () => {
+  it('CATEGORY_TOOL_MAP covers all seven categories', () => {
     const categories = Object.keys(CATEGORY_TOOL_MAP);
     assert.deepEqual(categories.sort(), [
+      'browser',
       'fileRead',
       'fileWrite',
       'network',
@@ -298,5 +304,97 @@ describe('resolveEffectivePolicy', () => {
     });
     const result = resolveEffectivePolicy(workspace);
     assert.equal(result.policy.posture, 'custom');
+  });
+});
+
+describe('browser category (U4, KTD-4 ①)', () => {
+  const BROWSER_TOOLS = [
+    'mcp__comate-browser__open',
+    'mcp__comate-browser__snapshot',
+    'mcp__comate-browser__act',
+    'mcp__comate-browser__submit',
+    'mcp__comate-browser__extract',
+    'mcp__comate-browser__requestHandoff',
+  ];
+
+  it('categorizes every comate-browser tool via the prefix entry, and only those', () => {
+    for (const tool of BROWSER_TOOLS) {
+      assert.equal(categorizeTool(tool), 'browser', `${tool} must be browser-category`);
+    }
+    // Other MCP servers stay uncategorized (fall through per R10).
+    assert.equal(categorizeTool('mcp__comate-browserX__open'), undefined);
+    assert.equal(categorizeTool('mcp__other__open'), undefined);
+    assert.equal(categorizeTool('Bash'), 'shell');
+  });
+
+  it('SAFE_PRESET denies the browser category', () => {
+    assert.equal(SAFE_PRESET.categoryDefaults.browser, 'deny');
+    for (const tool of BROWSER_TOOLS) {
+      assert.equal(evaluateToolPermission(SAFE_PRESET, tool), 'deny');
+    }
+  });
+
+  it('ALLOW_ALL_PRESET still denies the browser category (no grandfathered inheritance)', () => {
+    assert.equal(ALLOW_ALL_PRESET.categoryDefaults.browser, 'deny');
+    for (const tool of BROWSER_TOOLS) {
+      assert.equal(evaluateToolPermission(ALLOW_ALL_PRESET, tool), 'deny');
+    }
+  });
+
+  it('admin bypass does not apply to the browser category', () => {
+    for (const tool of BROWSER_TOOLS) {
+      assert.equal(evaluateToolPermission(ALLOW_ALL_PRESET, tool, true), 'deny');
+      assert.equal(evaluateToolPermission(SAFE_PRESET, tool, true), 'deny');
+    }
+    // Sanity: the bypass still works for non-browser categories.
+    assert.equal(evaluateToolPermission(SAFE_PRESET, 'Bash', true), 'allow');
+  });
+
+  it('per-tool overrides still apply to browser tools (category evaluation only)', () => {
+    const policy: ToolPermissionPolicy = {
+      posture: 'custom',
+      categoryDefaults: { ...SAFE_PRESET.categoryDefaults },
+      overrides: { 'mcp__comate-browser__snapshot': 'allow' },
+    };
+    assert.equal(evaluateToolPermission(policy, 'mcp__comate-browser__snapshot'), 'allow');
+    assert.equal(evaluateToolPermission(policy, 'mcp__comate-browser__act'), 'deny');
+  });
+
+  it('getToolPermissionDenialReason reports category-deny for browser tools', () => {
+    assert.equal(getToolPermissionDenialReason(SAFE_PRESET, 'mcp__comate-browser__open'), 'category-deny');
+    assert.equal(getToolPermissionDenialReason(ALLOW_ALL_PRESET, 'mcp__comate-browser__submit'), 'category-deny');
+    assert.equal(getToolPermissionDenialReason(SAFE_PRESET, 'mcp__other__open'), undefined);
+  });
+
+  it('MIGRATION CONTRACT: a stored pre-U4 policy (no browser key) sanitizes to browser=deny', () => {
+    const legacy = {
+      posture: 'allow-all',
+      categoryDefaults: {
+        fileRead: 'allow',
+        fileWrite: 'allow',
+        shell: 'allow',
+        network: 'allow',
+        subagents: 'allow',
+        reply: 'allow',
+        // browser: absent — this is the pre-U4 stored shape
+      },
+    } as unknown as ToolPermissionPolicy;
+    const workspace = createMockWorkspace({
+      settings: { wecomBotEnabled: true, wecomToolPermissions: legacy },
+    });
+    const result = resolveEffectivePolicy(workspace);
+    assert.equal(result.policy.categoryDefaults.browser, 'deny', 'sanitizePolicy must backfill browser from SAFE_PRESET');
+    // And the evaluator itself fails closed on the raw legacy shape too.
+    assert.equal(evaluateToolPermission(legacy, 'mcp__comate-browser__open'), 'deny');
+    assert.equal(evaluateToolPermission(legacy, 'mcp__comate-browser__open', true), 'deny');
+  });
+
+  it('grandfathered resolution (bot enabled, policy unset) resolves browser=deny', () => {
+    const workspace = createMockWorkspace({
+      settings: { wecomBotEnabled: true },
+    });
+    const result = resolveEffectivePolicy(workspace);
+    assert.equal(result.source, 'grandfathered-allow-all');
+    assert.equal(result.policy.categoryDefaults.browser, 'deny');
   });
 });
