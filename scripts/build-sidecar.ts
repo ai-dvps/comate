@@ -10,6 +10,7 @@ import {
 } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { buildSteelBundle } from './build-steel-bundle.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -119,6 +120,12 @@ async function build() {
       `--platform=node ` +
       `--target=node20 ` +
       `--format=cjs ` +
+      // The COMATE_STEEL=1 branch loads the vendored Steel entrypoint with a
+      // native dynamic import() from the real filesystem (pkg snapshot fs
+      // cannot serve Steel's __dirname-relative assets). esbuild must not
+      // rewrite that import() into require() — Steel's ESM graph uses
+      // top-level await, which require() cannot load.
+      `--supported:dynamic-import=true ` +
       `--outfile=${bundlePath} ` +
       `--external:better-sqlite3 ` +
       `--banner:js="#!/usr/bin/env node"`,
@@ -258,6 +265,10 @@ async function build() {
   } else {
     console.warn(`Warning: Built-in marketplace not found at ${marketplaceSource}`);
   }
+
+  // 10. Vendor the Steel browser bundle into src-tauri/resources/steel/
+  console.log('\n--- Vendoring Steel browser bundle ---');
+  await buildSteelBundle();
 
   console.log('\n=== Sidecar build complete ===');
 }
