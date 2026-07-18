@@ -3,6 +3,10 @@ import type { Server } from 'http';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
 import { gitChangesService } from '../services/git-changes-service.js';
+import {
+  createWsUpgradeVerifier,
+  type OriginGuardOptions,
+} from '../services/security/request-origin-guard.js';
 import type {
   WsRequest,
   WsResponse,
@@ -30,8 +34,15 @@ export class ComateWebSocketServer {
   private clients = new Map<WebSocket, ClientContext>();
   private runtimeEventUnsubscribers = new Map<string, Map<WebSocket, () => void>>();
 
-  attach(server: Server): void {
-    this.wss = new WebSocketServer({ server, path: '/ws' });
+  attach(server: Server, options: OriginGuardOptions = {}): void {
+    // Origin/Host check on the upgrade handshake (plan U9): cross-origin pages
+    // must not ride the event stream. Local non-browser clients (no Origin
+    // header) still pass per the guard's documented absent-Origin policy.
+    this.wss = new WebSocketServer({
+      server,
+      path: '/ws',
+      verifyClient: createWsUpgradeVerifier(options),
+    });
     this.wss.on('connection', (socket) => this.handleConnection(socket));
     chatService.setOnRuntimeClose((sessionId) => this.notifyRuntimeClosed(sessionId));
     diagLog('[WebSocket] server attached on /ws');
