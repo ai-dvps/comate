@@ -13,6 +13,7 @@ import {
   type SseSetter,
 } from './chat-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
+import { useToastStore } from './toast-store'
 import type { SubagentState, TaskItem, WorkflowState, WorkflowStatus } from '../types/message'
 import type { WsEventMessage } from '@server/websocket/types'
 
@@ -345,6 +346,43 @@ describe('handleSseEvent context_usage', () => {
     const state = useChatStore.getState()
     assert.strictEqual(state.contextUsage['s1'].percentage, 5)
     assert.strictEqual(state.contextUsage['s1'].totalTokens, 10)
+  })
+})
+
+describe('handleSseEvent approval_timeout', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {},
+      messages: {},
+      subagents: {},
+      workflows: {},
+      tasks: {},
+      approvalQueue: {},
+    })
+    useToastStore.setState({ toasts: [] })
+  })
+
+  it('surfaces a warning toast when a pending approval times out', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'approval_timeout', { requestId: 'req-1' })
+    const toasts = useToastStore.getState().toasts
+    assert.strictEqual(toasts.length, 1)
+    assert.strictEqual(toasts[0].severity, 'warning')
+    assert.ok(toasts[0].message.length > 0)
+  })
+
+  it('does not disturb the approval queue (approval_resolved removes the card)', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      approvalQueue: {
+        s1: [{ requestId: 'req-1', toolName: 'Bash', toolUseId: 't1', input: {}, inputSummary: '' }],
+      },
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'approval_timeout', { requestId: 'req-1' })
+    assert.strictEqual(useChatStore.getState().approvalQueue['s1'].length, 1)
+    // The paired approval_resolved event is what dismisses the card.
+    handleSseEvent(set, 'ws-1', 's1', 'approval_resolved', { requestId: 'req-1' })
+    assert.strictEqual(useChatStore.getState().approvalQueue['s1'].length, 0)
   })
 })
 

@@ -7,6 +7,7 @@ import path from 'path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Options, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import { BrowserService } from '../browser-service.js';
+import { BrowserControlService } from '../browser-control.js';
 import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
 import type { SteelCdpSession } from '../browser-cdp.js';
 import {
@@ -274,6 +275,7 @@ function makeHarness(options: {
     sessionId: 'chat-session-1',
     workspaceId: 'workspace-1',
     browserService,
+    handoffControl: new BrowserControlService({ browserService }),
     connectPage: async () => options.page,
     pageRegistry: new Map(),
     settleMs: 0,
@@ -733,18 +735,24 @@ describe('browser-mcp extract', () => {
 });
 
 // ---------------------------------------------------------------------------
-// requestHandoff (U3 placeholder — U5 wires the approval round-trip)
+// requestHandoff (U3 surface; the full U5 flow lives in browser-control.test.ts)
 // ---------------------------------------------------------------------------
 
 describe('browser-mcp requestHandoff', () => {
-  it('returns the structured handoff-requested placeholder', async () => {
-    const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+  it('fails closed when no approval channel is wired, leaving no stuck handoff', async () => {
+    const harness = makeHarness({
+      page: new FakePage({ extraction: makeExtraction() }),
+      withApprovalRequester: false,
+    });
+    await harness.call('open', { url: 'https://shop.example/checkout' });
     const result = await harness.call('requestHandoff', { reason: 'CAPTCHA on the login page' });
-    assert.strictEqual(result.isError, undefined);
-    const payload = resultPayload(result);
-    assert.strictEqual(payload.handoffRequested, true);
-    assert.strictEqual(payload.reason, 'CAPTCHA on the login page');
-    assert.strictEqual(payload.status, 'queued');
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(
+      (resultPayload(result).error as { code: string }).code,
+      'browser_approval_unavailable',
+    );
+    // The handoff was rolled back: the state machine is not stuck pending.
+    assert.strictEqual(harness.ctx.browserService.getControlState('chat-session-1'), 'agent_in_control');
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
 });

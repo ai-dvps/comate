@@ -6,6 +6,7 @@ import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
+import { useToastStore } from './toast-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
 
@@ -1781,6 +1782,20 @@ export function handleSseEvent(
             })
         }
         return updates
+      })
+      return
+    }
+    case 'approval_timeout': {
+      // The server timed a pending card out (timeoutDeny): the card itself is
+      // removed by the approval_resolved event that follows. Until now this
+      // event had no consumer and the card vanished silently — surface a
+      // toast so the user understands why (U5; the browser handoff timeout is
+      // the first server-fixed timeout to rely on it).
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      diagLog(`[Client] approval_timeout requestId=${requestId}`)
+      useToastStore.getState().addToast({
+        severity: 'warning',
+        message: i18next.t('common:approvalTimeout', 'Approval request timed out and was dismissed.'),
       })
       return
     }
