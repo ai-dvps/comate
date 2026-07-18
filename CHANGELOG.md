@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Virtualized message list stays pinned to bottom during streaming in result mode** — `VirtualizedMessageList` only auto-scrolled when `messages.length` increased, so streaming text/thinking deltas that grew the merged last turn in place (common in result-focused display mode) left the panel lagging behind the new bottom. A new layout effect now detects scroll-height growth while the user is at the bottom and pins the view to the latest content, while ignoring prepend (older-message fetch) cases so the anchored position is preserved.
 - **Interrupted turns now show a notice in the message list** — the `interrupted` event only cleared the streaming state and appended no message, so a stopped turn was invisible in the message list. This was especially pronounced in result-focused display mode, where the partial assistant content collapses into a compact process ghost with no final-result block, leaving no sign the turn was cut off. The handler now appends an "Interrupted by user" system message (with a timestamp via the existing Interrupt rendering path) while preserving the background-task streaming gate.
 
+### Security
+
+- **Dependency vulnerability remediation** — bumped `adm-zip` to `^0.6.0` (CVE-2026-39244: crafted ZIP triggering a 4GB memory allocation) and `serde_with` to `3.21.0` (KeyValueMap serialization panic on empty sequences), and removed an orphaned `esbuild` entry from the wecom-cli lockfile (Windows dev-server arbitrary file read). `npm audit` now reports 0 vulnerabilities for both the root and `packages/wecom-cli`. A remaining `glib` 0.18.x advisory (unsound `VariantStrIter` impl) is constrained by the pinned Tauri/GTK stack and is deferred to a Tauri upgrade.
+
 ## [0.0.24] - 2026-07-14
 
 ### Fixed
