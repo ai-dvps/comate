@@ -534,6 +534,17 @@ export class SessionRuntime {
     });
   }
 
+  /**
+   * timeoutDeny semantics for server-side timers that own their own clock
+   * (U5 browser handoff, KTD-6): the handoff controller's fixed 10-minute
+   * timer fires this so the pending card emits approval_timeout and resolves
+   * as a recoverable deny — identical to an input-driven timeout. No-op when
+   * the requestId is not pending.
+   */
+  timeoutDenyApproval(requestId: string): void {
+    this.timeoutDeny(requestId);
+  }
+
   private clearPendingTimer(pending: { timer?: NodeJS.Timeout }): void {
     if (pending.timer) {
       clearTimeout(pending.timer);

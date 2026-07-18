@@ -16,6 +16,11 @@ export type WsRequestType =
   | 'loadMessagesAfter'
   | 'subscribeGitChanges'
   | 'unsubscribeGitChanges'
+  | 'subscribeBrowserState'
+  | 'unsubscribeBrowserState'
+  | 'browserTakeover'
+  | 'browserHandback'
+  | 'browserActivityPing'
 
 export interface WsRequest {
   id: string
@@ -95,4 +100,35 @@ export interface SubscribeGitChangesPayload {
 
 export interface UnsubscribeGitChangesPayload {
   workspaceId: string
+}
+
+/**
+ * browser_state channel (U5, KTD-9): sessionId-keyed passive subscription —
+ * subscribing never creates a runtime or a browser session.
+ */
+export interface SubscribeBrowserStatePayload {
+  workspaceId: string
+  sessionId: string
+}
+
+export interface UnsubscribeBrowserStatePayload {
+  sessionId: string
+}
+
+/** F3 proactive takeover / grant a pending handoff (接管). */
+export interface BrowserTakeoverPayload {
+  sessionId: string
+}
+
+/** Hand control back to the agent (继续). */
+export interface BrowserHandbackPayload {
+  sessionId: string
+}
+
+/**
+ * Content-free activity ping (KTD-6): resets the server-fixed handoff timer.
+ * Keystrokes and page data NEVER travel on this verb.
+ */
+export interface BrowserActivityPingPayload {
+  sessionId: string
 }

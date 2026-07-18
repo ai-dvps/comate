@@ -3,6 +3,8 @@ import type { Server } from 'http';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
 import { gitChangesService } from '../services/git-changes-service.js';
+import { browserControlService } from '../services/browser-control.js';
+import { browserStateChannel } from './browser-state-channel.js';
 import {
   createWsUpgradeVerifier,
   type OriginGuardOptions,
@@ -21,6 +23,11 @@ import type {
   LoadMessagesAfterPayload,
   SubscribeGitChangesPayload,
   UnsubscribeGitChangesPayload,
+  SubscribeBrowserStatePayload,
+  UnsubscribeBrowserStatePayload,
+  BrowserTakeoverPayload,
+  BrowserHandbackPayload,
+  BrowserActivityPingPayload,
 } from './types.js';
 import type { SseEvent } from '../types/message.js';
 
@@ -61,6 +68,7 @@ export class ComateWebSocketServer {
   private handleDisconnect(ctx: ClientContext): void {
     diagLog('[WebSocket] client disconnected');
     void gitChangesService.unsubscribeSocket(ctx.socket);
+    browserStateChannel.unsubscribeSocket(ctx.socket);
     for (const [sessionId, workspaceId] of ctx.subscriptions) {
       this.unsubscribe(ctx, workspaceId, sessionId);
     }
@@ -108,6 +116,21 @@ export class ComateWebSocketServer {
           break;
         case 'unsubscribeGitChanges':
           await this.handleUnsubscribeGitChanges(ctx, req);
+          break;
+        case 'subscribeBrowserState':
+          this.handleSubscribeBrowserState(ctx, req);
+          break;
+        case 'unsubscribeBrowserState':
+          this.handleUnsubscribeBrowserState(ctx, req);
+          break;
+        case 'browserTakeover':
+          this.handleBrowserTakeover(ctx, req);
+          break;
+        case 'browserHandback':
+          this.handleBrowserHandback(ctx, req);
+          break;
+        case 'browserActivityPing':
+          this.handleBrowserActivityPing(ctx, req);
           break;
         default: {
           const _exhaustive: never = req.type;
@@ -261,6 +284,71 @@ export class ComateWebSocketServer {
     // for the same workspace cannot race the prior closeWatcher().
     await gitChangesService.unsubscribe(workspaceId, ctx.socket);
     this.sendOk(ctx.socket, req.id, { unsubscribed: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // browser_state channel (U5, KTD-9): sessionId-keyed, passive — subscribing
+  // never creates a runtime or a browser session.
+  // -------------------------------------------------------------------------
+
+  private handleSubscribeBrowserState(ctx: ClientContext, req: WsRequest): void {
+    const { workspaceId, sessionId } = req.payload as unknown as SubscribeBrowserStatePayload;
+    if (!workspaceId || !sessionId) {
+      throw new Error('subscribeBrowserState requires workspaceId and sessionId');
+    }
+    browserStateChannel.subscribe(sessionId, workspaceId, ctx.socket);
+    this.sendOk(ctx.socket, req.id, { subscribed: true });
+  }
+
+  private handleUnsubscribeBrowserState(ctx: ClientContext, req: WsRequest): void {
+    const { sessionId } = req.payload as unknown as UnsubscribeBrowserStatePayload;
+    if (!sessionId) {
+      throw new Error('unsubscribeBrowserState requires sessionId');
+    }
+    browserStateChannel.unsubscribe(sessionId, ctx.socket);
+    this.sendOk(ctx.socket, req.id, { unsubscribed: true });
+  }
+
+  private handleBrowserTakeover(ctx: ClientContext, req: WsRequest): void {
+    const { sessionId } = req.payload as unknown as BrowserTakeoverPayload;
+    if (!sessionId) {
+      throw new Error('browserTakeover requires sessionId');
+    }
+    const result = browserControlService.takeover(sessionId);
+    if (!result.ok) {
+      this.sendError(ctx.socket, req.id, {
+        message: result.message ?? 'Takeover unavailable',
+        ...(result.code !== undefined && { code: result.code }),
+      });
+      return;
+    }
+    this.sendOk(ctx.socket, req.id, { takenOver: true });
+  }
+
+  private handleBrowserHandback(ctx: ClientContext, req: WsRequest): void {
+    const { sessionId } = req.payload as unknown as BrowserHandbackPayload;
+    if (!sessionId) {
+      throw new Error('browserHandback requires sessionId');
+    }
+    const result = browserControlService.handback(sessionId);
+    if (!result.ok) {
+      this.sendError(ctx.socket, req.id, {
+        message: result.message ?? 'Handback unavailable',
+        ...(result.code !== undefined && { code: result.code }),
+      });
+      return;
+    }
+    this.sendOk(ctx.socket, req.id, { handedBack: true });
+  }
+
+  private handleBrowserActivityPing(ctx: ClientContext, req: WsRequest): void {
+    const { sessionId } = req.payload as unknown as BrowserActivityPingPayload;
+    if (!sessionId) {
+      throw new Error('browserActivityPing requires sessionId');
+    }
+    // Content-free: only the server-fixed handoff timer is reset (KTD-6).
+    browserControlService.recordActivity(sessionId);
+    this.sendOk(ctx.socket, req.id, { ok: true });
   }
 
   private sendOk(socket: WebSocket, id: string, payload: unknown): void {

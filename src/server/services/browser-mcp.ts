@@ -11,6 +11,13 @@ import {
   BrowserUnavailableError,
   browserService,
 } from './browser-service.js';
+import {
+  BrowserControlService,
+  BrowserHandoffError,
+  browserControlService,
+  type BrowserHandoffCompletion,
+  type HandoffPhase,
+} from './browser-control.js';
 import { connectSteelPage, type SteelCdpSession } from './browser-cdp.js';
 import {
   READ_PROBE_SCRIPT,
@@ -61,8 +68,12 @@ export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
  *  - Confirmation payloads pass through the KTD-8 sanitization ruleset:
  *    sensitive fields are listed by name only; values never enter the
  *    pending_approval event stream.
- *  - requestHandoff is a registration placeholder in U3 — the
- *    pending_approval wiring lands with U5 (KTD-6).
+ *  - requestHandoff's pending_approval round-trips live HERE in the handler
+ *    (KTD-6 — same settings.json short-circuit argument as submit). The
+ *    browser-control state machine drives the takeover/handback phases with
+ *    a server-fixed 10-minute timeout; the handback result carries the
+ *    KTD-8-sanitized state diff (sensitive field values are absent by
+ *    construction — the distiller never reads them out of the page).
  */
 
 export const BROWSER_MCP_SERVER_VERSION = '0.1.0';
@@ -78,6 +89,12 @@ export const BROWSER_STREAM_CLOSE_TIMEOUT_MS = '600000';
 
 export interface BrowserApprovalRequest {
   toolName: string;
+  /**
+   * Caller-minted requestId for the pending card. The handoff controller
+   * mints its own ids so its verbs/timeout/crash paths can resolve the exact
+   * live card; other callers leave this unset and chat-service mints one.
+   */
+  requestId?: string;
   /** Short card title (e.g. "Submit form 'login' to https://example.com"). */
   title: string;
   description?: string;
@@ -105,6 +122,11 @@ export interface BrowserMcpDeps {
   sessionId: string;
   workspaceId: string;
   browserService?: BrowserService;
+  /**
+   * Handoff/control state machine driver (U5). Defaults to the process
+   * singleton; tests inject a fresh instance per harness.
+   */
+  handoffControl?: BrowserControlService;
   approvalRequester?: BrowserApprovalRequester;
   /** CDP dial-out (tests inject a fake page). */
   connectPage?: (baseUrl: string) => Promise<SteelCdpSession>;
@@ -299,6 +321,19 @@ const UNAVAILABLE_RESOLUTIONS: Record<string, string> = {
     'The embedded browser process failed to start. Retry the call; check /api/health/browser if it persists.',
 };
 
+/**
+ * Recoverable handoff endings (R8/AE4): the agent gets an actionable
+ * explanation it can relay to the chat; the task is never left blocked.
+ */
+const HANDOFF_END_DETAILS: Record<string, string> = {
+  declined:
+    'The user declined the takeover request. Continue without the manual step if possible, or ask the user how to proceed.',
+  timeout:
+    'The handoff timed out after 10 minutes without a response. Explain in the chat that the task is paused and can resume whenever the user is ready — they can take over from the browser panel or you can request a new handoff.',
+  runtime_closed:
+    'The chat session was rebuilt while the handoff was pending. The browser session is unaffected; re-request the handoff if it is still needed.',
+};
+
 // ---------------------------------------------------------------------------
 // Session context — one per SDK MCP server instance (per chat session).
 // Holds the ref table and last model; the CDP page is shared per sessionId
@@ -312,12 +347,14 @@ export class BrowserToolContext {
   private readonly refTable = new RefTable();
   private lastModel: PageModel | null = null;
   private readonly svc: BrowserService;
+  private readonly handoffCtl: BrowserControlService;
   private readonly connectPage: (baseUrl: string) => Promise<SteelCdpSession>;
   private readonly pageRegistry: Map<string, Promise<SteelCdpSession>>;
   private readonly settleMs: number;
 
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
+    this.handoffCtl = deps.handoffControl ?? browserControlService;
     this.connectPage = deps.connectPage ?? connectSteelPage;
     this.pageRegistry = deps.pageRegistry ?? defaultPageRegistry;
     this.settleMs = deps.settleMs ?? 300;
@@ -886,18 +923,192 @@ export class BrowserToolContext {
     }
   }
 
-  // -- requestHandoff (U3 placeholder; pending_approval wiring lands in U5) ---
+  // -- requestHandoff (KTD-6: handler-body round-trips + state machine) ------
 
-  async handleRequestHandoff(args: { reason: string }): Promise<CallToolResult> {
-    diagLog(`[browser-mcp] handoff requested session=${this.deps.sessionId} reason=${args.reason}`);
+  /**
+   * Full handoff flow (U5):
+   *   request → card #1 (takeover) → user_in_control → card #2 (handback
+   *   wait) → agent receives the sanitized state diff.
+   * Both cards are issued from this handler (settings.json allow rules can
+   * short-circuit canUseTool — KTD-6) and share the controller's server-fixed
+   * 10-minute timer; panel activity pings reset it content-free. A handoff
+   * requested while the user is already driving (F3 race) skips card #1 —
+   * its card #2 is the session's single active card.
+   */
+  async handleRequestHandoff(args: { reason: string }, extra?: unknown): Promise<CallToolResult> {
+    const sessionId = this.deps.sessionId;
+    const ctl = this.handoffCtl;
+    const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
+    diagLog(`[browser-mcp] handoff requested session=${sessionId} reason=${args.reason}`);
+
+    // The browser must exist for a takeover; ensurePage also transparently
+    // rebuilds a session_lost browser (transition table: tool call → rebuild).
+    try {
+      await this.ensurePage();
+    } catch (err) {
+      return this.toErrorResult(err, 'control');
+    }
+
+    let phase: HandoffPhase;
+    try {
+      phase = ctl.beginHandoff(sessionId, args.reason).phase;
+    } catch (err) {
+      if (err instanceof BrowserHandoffError) {
+        return toolError(
+          err.code,
+          'control',
+          err.message,
+          err.code === 'browser_handoff_already_pending'
+            ? 'Wait for the current handoff to complete (or for its timeout), then retry.'
+            : 'Retry the tool call; if it persists, check /api/health/browser.',
+        );
+      }
+      throw err;
+    }
+
+    let completion: BrowserHandoffCompletion | null = null;
+    try {
+      if (phase === 'awaiting_takeover') {
+        // Card #1: ask the user to take over.
+        const cardId = ctl.beginCard(sessionId);
+        if (!cardId) {
+          completion = { reason: ctl.endedReason(sessionId) ?? 'crash', phase };
+        } else {
+          const origin = this.pageOrigin();
+          const decision = await this.requestApproval(
+            {
+              requestId: cardId,
+              toolName: `${BROWSER_TOOL_PREFIX}requestHandoff`,
+              title: 'Claude is asking you to take control of the browser',
+              description: args.reason,
+              payload: {
+                kind: 'browser_handoff',
+                phase: 'takeover',
+                reason: args.reason,
+                ...(origin !== undefined && { origin }),
+              },
+            },
+            signal,
+          );
+          if (!isApprovalDecision(decision)) return decision;
+          if (decision.behavior !== 'allow') {
+            completion = { reason: ctl.classifyDeny(sessionId), phase, detail: decision.message };
+          } else {
+            ctl.noteTakeoverApproved(sessionId);
+            phase = 'in_takeover';
+          }
+        }
+      }
+
+      if (!completion) {
+        // Card #2: the user is driving; wait for the handback ("继续").
+        const cardId = ctl.beginCard(sessionId);
+        if (!cardId) {
+          completion = { reason: ctl.endedReason(sessionId) ?? 'crash', phase };
+        } else {
+          const decision = await this.requestApproval(
+            {
+              requestId: cardId,
+              toolName: `${BROWSER_TOOL_PREFIX}requestHandoff`,
+              title: 'You are in control of the browser',
+              description:
+                'Claude is waiting while you drive. Click continue when you are done to hand control back with a summary of what changed.',
+              payload: {
+                kind: 'browser_handoff',
+                phase: 'handback',
+                reason: args.reason,
+              },
+            },
+            signal,
+          );
+          if (!isApprovalDecision(decision)) return decision;
+          if (decision.behavior === 'allow') {
+            completion = { reason: 'handed_back', phase };
+          } else {
+            completion = { reason: ctl.classifyDeny(sessionId), phase, detail: decision.message };
+          }
+        }
+      }
+
+      return await this.handoffCompletionResult(completion);
+    } finally {
+      ctl.completeHandoff(sessionId, completion?.reason ?? 'declined');
+    }
+  }
+
+  private pageOrigin(): string | undefined {
+    const url = this.lastModel?.url;
+    if (!url) return undefined;
+    try {
+      return new URL(url).origin;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Shape the handoff outcome (R7/R8/AE4): a handed-back (or takeover-phase)
+   * completion carries the state diff — the distilled model omits sensitive
+   * field values by construction (KTD-8 ruleset, AE1). All non-crash endings
+   * are recoverable plain results so the agent can explain and continue.
+   */
+  private async handoffCompletionResult(
+    completion: BrowserHandoffCompletion,
+  ): Promise<CallToolResult> {
+    if (completion.reason === 'crash') {
+      return toolError(
+        'browser_session_lost',
+        'control',
+        'The browser process crashed during the handoff; the takeover ended and in-progress page state was lost.',
+        'Retry the tool call — the browser session rebuilds automatically on the next call — then re-request the handoff if it is still needed.',
+      );
+    }
+
+    const includeDiff = completion.reason === 'handed_back' || completion.phase === 'in_takeover';
+    let delta: ReturnType<typeof diffPageModels> | undefined;
+    let model: PageModel | undefined;
+    if (includeDiff) {
+      try {
+        const page = await this.ensurePage();
+        const prev = this.lastModel;
+        model = await this.distill(page);
+        delta = diffPageModels(prev, model);
+      } catch (err) {
+        // The diff is best-effort on non-happy paths; never mask the outcome.
+        diagWarn(
+          `[browser-mcp] handback state diff failed session=${this.deps.sessionId}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+
+    if (completion.reason === 'handed_back') {
+      diagLog(`[browser-mcp] handoff handed back session=${this.deps.sessionId}`);
+      return toolJson({
+        ok: true,
+        handoffCompleted: true,
+        ...(delta !== undefined && { delta }),
+        ...(model !== undefined && { model }),
+        note: 'State diff follows the sanitization ruleset: sensitive field values (passwords, card numbers, one-time codes) are never included.',
+      });
+    }
+
+    diagLog(
+      `[browser-mcp] handoff ended session=${this.deps.sessionId} reason=${completion.reason}`,
+    );
+    // Controller-driven endings (timeout/runtime close) get the actionable
+    // explanation for the chat (R8); a user decline carries its own message.
+    const detail =
+      completion.reason === 'declined'
+        ? (completion.detail ?? HANDOFF_END_DETAILS.declined)
+        : (HANDOFF_END_DETAILS[completion.reason] ?? completion.detail);
     return toolJson({
-      handoffRequested: true,
-      reason: args.reason,
-      status: 'queued',
-      detail:
-        'Handoff takeover wiring (approval round-trip, control-state flip, activity timeout) ' +
-        'lands with the control-state unit. The request is registered but no takeover session ' +
-        'was started; continue with other tools if possible.',
+      ok: true,
+      handoffCompleted: false,
+      reason: completion.reason,
+      ...(detail !== undefined && { detail }),
+      ...(delta !== undefined && { delta }),
+      ...(model !== undefined && { model }),
     });
   }
 
@@ -1029,11 +1240,13 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
   const handoffDef = tool(
     'requestHandoff',
     'Ask the user to take control of the embedded browser (e.g. for a login, CAPTCHA, or ' +
-      'payment step the agent cannot or should not complete). Describe why control is needed.',
+      'payment step the agent cannot or should not complete). Describe why control is needed. ' +
+      'The call blocks until the user hands control back (with a sanitized summary of what ' +
+      'changed), declines, or the request times out recoverably.',
     {
       reason: z.string().describe('Why the user needs to take over (shown in the handoff card)'),
     },
-    async (args) => ctx.handleRequestHandoff(args),
+    async (args, extra) => ctx.handleRequestHandoff(args, extra),
   );
 
   // The cast reconciles handler-parameter variance: each tool() definition is

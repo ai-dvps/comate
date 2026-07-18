@@ -38,6 +38,7 @@ import {
   type BrowserApprovalRequester,
 } from './browser-mcp.js';
 import { isBrowserToolName } from './browser-tool-names.js';
+import { browserControlService } from './browser-control.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -110,10 +111,41 @@ export class ChatService {
   private pendingRebuilds = new Map<string, RuntimeContext>();
   private rebuildPollers = new Map<string, NodeJS.Timeout>();
   private onRuntimeClose?: (sessionId: string) => void;
+  /**
+   * Chained PRE-close listeners (KTD-5): the single-slot onRuntimeClose stays
+   * with the WS server; services that must react to a runtime close (the
+   * browser handoff controller) subscribe here instead of overwriting it.
+   * Fired BEFORE runtime.close() so a listener can mark its own state before
+   * close() resolves the session's pending cards with its generic deny.
+   */
+  private readonly runtimeClosingListeners = new Set<(sessionId: string) => void>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   constructor(sdkClient?: SdkClient) {
     this.sdkClient = sdkClient ?? new SdkClient();
+    // Wire the browser handoff controller's runtime channel (U5, KTD-6): the
+    // controller resolves/timeouts the session's live browser card through
+    // whatever runtime currently owns the session (lazy lookup — the runtime
+    // may be rebuilt while the browser lives on, KTD-5; a missing runtime
+    // no-ops, which the crash path relies on).
+    browserControlService.configureRuntimeChannel({
+      resolveApprovalCard: (sessionId, requestId, result, message) => {
+        const runtime = this.getRuntimeIfExists(sessionId);
+        if (!runtime) return;
+        runtime.resolveApproval(
+          requestId,
+          result === 'allow'
+            ? { behavior: 'allow' }
+            : { behavior: 'deny', message: message ?? 'The browser handoff was ended.' },
+        );
+      },
+      timeoutApprovalCard: (sessionId, requestId) => {
+        this.getRuntimeIfExists(sessionId)?.timeoutDenyApproval(requestId);
+      },
+    });
+    this.addOnRuntimeClosing((sessionId) => {
+      browserControlService.handleRuntimeClosing(sessionId);
+    });
   }
 
   /**
@@ -138,7 +170,7 @@ export class ChatService {
         message: 'No live runtime is available for the browser approval round-trip.',
       };
     }
-    const requestId = `browser-${randomUUID()}`;
+    const requestId = request.requestId ?? `browser-${randomUUID()}`;
     const result = await runtime.requestToolApproval(
       requestId,
       request.toolName,
@@ -157,6 +189,18 @@ export class ChatService {
 
   setOnRuntimeClose(callback: (sessionId: string) => void): void {
     this.onRuntimeClose = callback;
+  }
+
+  /**
+   * Chained pre-close listener subscription (KTD-5): complements the WS
+   * server's single-slot onRuntimeClose — listeners run BEFORE runtime.close()
+   * in closeRuntime. Returns an unsubscribe function.
+   */
+  addOnRuntimeClosing(listener: (sessionId: string) => void): () => void {
+    this.runtimeClosingListeners.add(listener);
+    return () => {
+      this.runtimeClosingListeners.delete(listener);
+    };
   }
 
   getActiveSessionCount(): number {
@@ -850,6 +894,16 @@ export class ChatService {
     this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
+    // Pre-close chained listeners (KTD-5): run BEFORE close() resolves the
+    // session's pending cards, so listeners can classify their own pendings
+    // (the browser handoff controller marks its cards runtime_closed here).
+    for (const listener of this.runtimeClosingListeners) {
+      try {
+        listener(sessionId);
+      } catch (err) {
+        diagLog(`[ChatService] runtime-closing listener threw for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     await runtime.close();
     this.onRuntimeClose?.(sessionId);
   }
