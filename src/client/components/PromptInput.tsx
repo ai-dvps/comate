@@ -57,6 +57,35 @@ function getRefreshStatusText(meta: RefreshMeta | undefined, t: TFunction): stri
   return `${timeAgo} · ${t('noNewMessages')}`
 }
 
+const TOOLBAR_BREAKPOINTS = [
+  { width: 680, hidden: [] as string[] },
+  { width: 600, hidden: ['skills'] },
+  { width: 520, hidden: ['skills', 'files'] },
+  { width: 440, hidden: ['skills', 'files', 'history'] },
+  { width: 380, hidden: ['skills', 'files', 'history', 'provider'] },
+  { width: 330, hidden: ['skills', 'files', 'history', 'provider', 'fast'] },
+  { width: 280, hidden: ['skills', 'files', 'history', 'provider', 'fast', 'approval'] },
+  { width: 220, hidden: ['skills', 'files', 'history', 'provider', 'fast', 'approval', 'clear'] },
+]
+
+function getToolbarVisibility(width: number | undefined) {
+  const hidden = new Set(
+    width === undefined
+      ? []
+      : (TOOLBAR_BREAKPOINTS.find((b) => width >= b.width)?.hidden ??
+          TOOLBAR_BREAKPOINTS[TOOLBAR_BREAKPOINTS.length - 1].hidden),
+  )
+  return {
+    showSkills: !hidden.has('skills'),
+    showFiles: !hidden.has('files'),
+    showHistory: !hidden.has('history'),
+    showProvider: !hidden.has('provider'),
+    showFast: !hidden.has('fast'),
+    showApproval: !hidden.has('approval'),
+    showClear: !hidden.has('clear'),
+  }
+}
+
 interface PromptInputProps {
   workspaceId: string
   sessionId: string
@@ -778,8 +807,17 @@ export default function PromptInput({
   }
 
   const canSend = input.trim().length > 0 && hasSession && !isStreaming && !isRestarting && !disabled
-  const showClear = input.length > 0
+  const canClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
+  const {
+    showSkills,
+    showFiles,
+    showHistory,
+    showProvider,
+    showFast,
+    showApproval,
+    showClear,
+  } = getToolbarVisibility(contentWidth)
 
   useEffect(() => {
     if (
@@ -914,7 +952,7 @@ export default function PromptInput({
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-between px-2 pb-2 pt-1 gap-1">
+            <div data-testid="prompt-input-toolbar" className="flex items-center justify-between px-2 pb-2 pt-1 gap-1">
               <div className="flex items-center gap-1">
                 <CommandPicker
                   ref={pickerHandleRef}
@@ -936,7 +974,7 @@ export default function PromptInput({
                       type="button"
                       onClick={handleCommandsClick}
                       disabled={commandsDisabled}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className={showSkills ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
                       title={t('skills')}
                     >
                       <SlashSquare className="w-3 h-3" />
@@ -964,7 +1002,7 @@ export default function PromptInput({
                       type="button"
                       onClick={handleFilesClick}
                       disabled={filesDisabled}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className={showFiles ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
                       title={t('files')}
                     >
                       <Paperclip className="w-3 h-3" />
@@ -989,7 +1027,7 @@ export default function PromptInput({
                       type="button"
                       onClick={handleHistoryClick}
                       disabled={historyDisabled}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className={showHistory ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
                       title={`${t('history')} (${t('historyShortcutHint')})`}
                     >
                       <History className="w-3 h-3" />
@@ -1001,12 +1039,12 @@ export default function PromptInput({
               <div className="flex items-center gap-1">
                 {sessionId && !isBotSession && (
                   <>
-                    <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} hideNameBelowSm />
-                    <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
-                    <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />
+                    {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} hideNameBelowSm />}
+                    {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />}
+                    {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />}
                   </>
                 )}
-                {showClear && (
+                {canClear && showClear && (
                   <button
                     onClick={handleClear}
                     disabled={isInterrupting}
