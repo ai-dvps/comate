@@ -17,6 +17,13 @@ import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { KimiLoopDetector, isKimiProvider } from './kimi-loop-detector.js';
+import { BROWSER_TOOL_NAMES } from './browser-tool-names.js';
+import {
+  commitSessionNavigation,
+  evaluateSessionNavigation,
+  isBrowserSubmitClassified,
+  redactSubmitGateInput,
+} from './browser-gate-state.js';
 
 
 const RING_BUFFER_CAP = 500;
@@ -35,6 +42,9 @@ const READONLY_TOOLS: readonly string[] = [
   'LSP',
   'WebSearch',
   'WebFetch',
+  // Browser read-only probes (U4, KTD-4 ③: annotated readOnlyHint in U3).
+  BROWSER_TOOL_NAMES.snapshot,
+  BROWSER_TOOL_NAMES.extract,
 ];
 
 export class SessionRuntime {
@@ -311,6 +321,95 @@ export class SessionRuntime {
           timeout,
           signal: options.signal,
         });
+      }
+
+      // ------------------------------------------------------------------
+      // Browser gates (U4, KTD-4 ②). These live in the BASE callback (the
+      // Kimi wrapper wraps around it) and BEFORE the auto branch so auto
+      // mode can never silently approve them.
+      //
+      // Submit classification: provable submits (submit tool; act clicking a
+      // submit-semantics control) always go through a per-call confirmation.
+      // This is the FIRST gate + UI entry — the real hard gate (sanitized
+      // manifest + TOCTOU re-read) lives in the submit tool's handler (U3)
+      // and fires even when a workspace `.claude/settings.json` allow rule
+      // short-circuits canUseTool entirely. The raw submit input is redacted
+      // here (KTD-8: field names may flow, values never).
+      if (isBrowserSubmitClassified(this.sessionId, toolName, input)) {
+        diagLog(`[Runtime ${this.sessionId}] browser-submit-gate requestId=${requestId} tool=${toolName}`);
+        return this.requestToolApproval(
+          requestId,
+          toolName,
+          options.toolUseID,
+          redactSubmitGateInput(toolName, input),
+          {
+            title: options.title ?? 'Confirm form submission',
+            description:
+              options.description ??
+              'This action submits a form. The browser tool will ask you to review the destination and fields before dispatching.',
+            signal: options.signal,
+            decisionReasonType: options.decisionReasonType,
+          },
+        );
+      }
+
+      // Navigation surface: in auto mode the session's first cross-eTLD+1
+      // navigation requires one confirmation (session-level memory in
+      // browser-gate-state — no persistent domain ledger, KTD-4 ②); later
+      // crossings pass with an audit marker (diagLog placeholder — the
+      // browser_audit table lands with U8). Manual/readonly modes follow the
+      // generic approval flow below and record the visit on approval.
+      if (toolName === BROWSER_TOOL_NAMES.open) {
+        const url = typeof input.url === 'string' ? input.url : undefined;
+        const nav = url
+          ? evaluateSessionNavigation(this.sessionId, url)
+          : ({ kind: 'invalid' } as const);
+        if (nav.kind === 'needs-confirm' && this.approvalMode === 'auto') {
+          diagLog(`[Runtime ${this.sessionId}] browser-navigation-confirm requestId=${requestId} domain=${nav.domain}`);
+          const result = await this.requestToolApproval(
+            requestId,
+            toolName,
+            options.toolUseID,
+            { kind: 'browser_navigation', url, domain: nav.domain },
+            {
+              title: `Navigate to a new site: ${nav.domain}`,
+              description:
+                'The embedded browser is leaving the sites it has already visited this session. Confirm this first cross-site navigation; later ones only get an audit marker.',
+              signal: options.signal,
+              decisionReasonType: options.decisionReasonType,
+            },
+          );
+          if (result.behavior === 'allow') {
+            commitSessionNavigation(this.sessionId, nav.domain, { confirmedCrossing: true });
+            diagLog(`[browser-audit] navigation session=${this.sessionId} domain=${nav.domain} kind=first-cross-confirmed`);
+            return { behavior: 'allow', updatedInput: input };
+          }
+          return result;
+        }
+        if (nav.kind === 'allow' && this.approvalMode === 'auto') {
+          commitSessionNavigation(this.sessionId, nav.domain);
+          if (nav.auditCrossing) {
+            diagLog(`[browser-audit] navigation session=${this.sessionId} domain=${nav.domain} kind=cross-domain-auto`);
+          }
+          diagLog(`[Runtime ${this.sessionId}] auto-approve tool=${toolName} requestId=${requestId}`);
+          this.emitter.emitAutoApproval(requestId, toolName, 'auto');
+          return { behavior: 'allow', updatedInput: input };
+        }
+        if (nav.kind !== 'invalid' && this.approvalMode !== 'auto') {
+          const result = await this.requestToolApproval(requestId, toolName, options.toolUseID, input, {
+            title: options.title,
+            description: options.description,
+            suggestions: options.suggestions,
+            timeout: this.parseTimeout(input),
+            signal: options.signal,
+            decisionReasonType: options.decisionReasonType,
+          });
+          if (result.behavior === 'allow') {
+            commitSessionNavigation(this.sessionId, nav.domain);
+          }
+          return result;
+        }
+        // nav.kind === 'invalid': fall through — the tool handler validates URLs.
       }
 
       // Check approval mode (after AskUserQuestion guard — questions always require user input)

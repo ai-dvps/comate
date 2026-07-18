@@ -1,4 +1,5 @@
 import type { Workspace } from '../models/workspace.js';
+import { BROWSER_TOOL_PREFIX } from './browser-tool-names.js';
 
 /**
  * Tool permission policy for WeCom bot sessions.
@@ -9,14 +10,15 @@ import type { Workspace } from '../models/workspace.js';
  * for the implementation plan.
  */
 
-/** The six fixed permission categories. Reply is a named exception: it gates the WeCom send-message path, not an SDK tool. */
+/** The fixed permission categories. Reply is a named exception: it gates the WeCom send-message path, not an SDK tool. Browser (U4) covers the embedded-browser MCP tools (`mcp__comate-browser__*`). */
 export type ToolCategory =
   | 'fileRead'
   | 'fileWrite'
   | 'shell'
   | 'network'
   | 'subagents'
-  | 'reply';
+  | 'reply'
+  | 'browser';
 
 /** Posture is UI shorthand only; the evaluator never reads it. Selecting a preset rewrites categoryDefaults; manual toggles flip posture to 'custom'. */
 export type ToolPosture = 'allow-all' | 'safe' | 'custom';
@@ -31,7 +33,12 @@ export interface ToolPermissionPolicy {
 /** Sentinel tool name for the Reply capability. Reply is not an SDK tool — it is the WeCom send-message path. */
 export const REPLY_TOOL_NAME = '__wecom_reply__';
 
-/** Maps each category to the SDK tool names it owns. Per R3 of the brainstorm. */
+/**
+ * Maps each category to the SDK tool names it owns. Per R3 of the brainstorm.
+ * Entries ending in `*` are PREFIX entries: `mcp__<server>__*` categorizes
+ * every tool of that MCP server (U4 — only the embedded browser server uses
+ * this; other MCP tools stay uncategorized and fall through per R10).
+ */
 export const CATEGORY_TOOL_MAP: Record<ToolCategory, string[]> = {
   fileRead: ['Read', 'Glob', 'Grep'],
   fileWrite: ['Edit', 'Write', 'NotebookEdit'],
@@ -47,20 +54,50 @@ export const CATEGORY_TOOL_MAP: Record<ToolCategory, string[]> = {
     'TaskList',
   ],
   reply: [REPLY_TOOL_NAME],
+  browser: [`${BROWSER_TOOL_PREFIX}*`],
 };
 
-/** Reverse lookup: tool name → category. Built once at module load. */
+/** Reverse lookup: exact tool name → category. Built once at module load. */
 const TOOL_TO_CATEGORY: Map<string, ToolCategory> = (() => {
   const map = new Map<string, ToolCategory>();
   for (const [category, tools] of Object.entries(CATEGORY_TOOL_MAP)) {
     for (const tool of tools) {
+      if (tool.endsWith('*')) continue; // prefix entries handled below
       map.set(tool, category as ToolCategory);
     }
   }
   return map;
 })();
 
-/** The safe preset: read-only + reply allowed; write/shell/network/sub-agents denied. Applied automatically to new bot-enabled workspaces per R6. */
+/** Prefix entries (`mcp__<server>__*` → category), longest prefix first. */
+const CATEGORY_PREFIXES: Array<{ prefix: string; category: ToolCategory }> = (() => {
+  const entries: Array<{ prefix: string; category: ToolCategory }> = [];
+  for (const [category, tools] of Object.entries(CATEGORY_TOOL_MAP)) {
+    for (const tool of tools) {
+      if (tool.endsWith('*')) {
+        entries.push({ prefix: tool.slice(0, -1), category: category as ToolCategory });
+      }
+    }
+  }
+  entries.sort((a, b) => b.prefix.length - a.prefix.length);
+  return entries;
+})();
+
+/**
+ * Categorize a tool: exact name match first, then `*` prefix entries.
+ * Returns undefined for tools in no category (other MCP servers, Skill,
+ * future SDK built-ins) — callers fall through per R10.
+ */
+export function categorizeTool(toolName: string): ToolCategory | undefined {
+  const exact = TOOL_TO_CATEGORY.get(toolName);
+  if (exact) return exact;
+  for (const { prefix, category } of CATEGORY_PREFIXES) {
+    if (toolName.startsWith(prefix)) return category;
+  }
+  return undefined;
+}
+
+/** The safe preset: read-only + reply allowed; write/shell/network/sub-agents denied. Applied automatically to new bot-enabled workspaces per R6. Browser stays denied (U4: bots never get browser tools). */
 export const SAFE_PRESET: ToolPermissionPolicy = {
   posture: 'safe',
   categoryDefaults: {
@@ -70,10 +107,16 @@ export const SAFE_PRESET: ToolPermissionPolicy = {
     network: 'deny',
     subagents: 'deny',
     reply: 'allow',
+    browser: 'deny',
   },
 };
 
-/** The allow-all posture: today's hardcoded behavior. Used for grandfathered pre-feature deployments per R5/R7. */
+/**
+ * The allow-all posture: today's hardcoded behavior. Used for grandfathered pre-feature deployments per R5/R7.
+ * EXCEPTION (U4, KTD-4 ①): `browser` is deny even here — allow-all predates
+ * the browser category, and grandfathered policies must not silently inherit
+ * a capability that did not exist when they were written.
+ */
 export const ALLOW_ALL_PRESET: ToolPermissionPolicy = {
   posture: 'allow-all',
   categoryDefaults: {
@@ -83,6 +126,7 @@ export const ALLOW_ALL_PRESET: ToolPermissionPolicy = {
     network: 'allow',
     subagents: 'allow',
     reply: 'allow',
+    browser: 'deny',
   },
 };
 
@@ -110,10 +154,13 @@ export function evaluateToolPermission(
   if (!policy) return 'unknown';
 
   // WeCom bot admins bypass category defaults and per-tool overrides for all
-  // categorized SDK tools and the Reply capability.
+  // categorized SDK tools and the Reply capability. EXCEPTION (U4, KTD-4 ①):
+  // the browser category is exempt from the admin bypass — browser tools are
+  // never injected into bot sessions, and the category is a fail-closed
+  // backstop, not an admin-reachable capability.
   if (isAdmin) {
-    const category = TOOL_TO_CATEGORY.get(toolName);
-    if (category) return 'allow';
+    const category = categorizeTool(toolName);
+    if (category && category !== 'browser') return 'allow';
   }
 
   // Per-tool override takes precedence
@@ -122,10 +169,12 @@ export function evaluateToolPermission(
   if (override === 'deny') return 'deny';
   if (override === 'ask') return 'ask';
 
-  // Category default
-  const category = TOOL_TO_CATEGORY.get(toolName);
+  // Category default. A category missing from a stored policy (e.g. `browser`
+  // in a pre-U4 policy) falls back to SAFE_PRESET — fail-closed migration
+  // contract: categories added later must never default to allow.
+  const category = categorizeTool(toolName);
   if (!category) return 'unknown';
-  return policy.categoryDefaults[category];
+  return policy.categoryDefaults[category] ?? SAFE_PRESET.categoryDefaults[category];
 }
 
 /** Reason for a policy-level denial. Mirrors the resolution order of `evaluateToolPermission`. */
@@ -148,10 +197,12 @@ export function getToolPermissionDenialReason(
   // regardless of the category default.
   if (override === 'allow' || override === 'ask') return undefined;
 
-  const category = TOOL_TO_CATEGORY.get(toolName);
+  const category = categorizeTool(toolName);
   if (!category) return undefined;
 
-  const decision = policy.categoryDefaults[category];
+  // Missing category key in a stored policy falls back to SAFE_PRESET
+  // (fail-closed), mirroring evaluateToolPermission.
+  const decision = policy.categoryDefaults[category] ?? SAFE_PRESET.categoryDefaults[category];
   if (decision === 'deny') return 'category-deny';
   return undefined;
 }
@@ -206,6 +257,13 @@ export function resolveEffectivePolicy(workspace: Workspace): ResolvedPolicy {
 /**
  * Normalize a stored policy into a valid shape. Fills missing categories from SAFE_PRESET defaults
  * (defensive — see doc-review finding about malformed-shape shadow path).
+ *
+ * MIGRATION CONTRACT (U4, KTD-4 ①): backfilling from SAFE_PRESET is the
+ * fail-closed migration path for categories added after a policy was stored.
+ * A pre-U4 policy has no `browser` key; sanitizePolicy rewrites it to
+ * `browser: 'deny'` (SAFE's value) rather than leaving a hole that could
+ * default to allow. This is a contract, not a behavior coincidence — pinned
+ * by tool-permission-policy.test.ts.
  */
 function sanitizePolicy(policy: ToolPermissionPolicy): ToolPermissionPolicy {
   const categoryDefaults = { ...SAFE_PRESET.categoryDefaults };

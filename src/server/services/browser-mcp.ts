@@ -26,6 +26,19 @@ import {
   type SubmitSnapshot,
 } from './browser-page-model.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
+import {
+  BROWSER_MCP_SERVER_KEY,
+  BROWSER_TOOL_PREFIX,
+} from './browser-tool-names.js';
+import {
+  clearSubmitSemanticsRefs,
+  setSubmitSemanticsRefs,
+} from './browser-gate-state.js';
+
+// Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
+// tests) keep working; the canonical home is browser-tool-names.ts (U4) so
+// policy modules can match names without loading the BrowserService chain.
+export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
@@ -52,9 +65,7 @@ import { diagLog, diagWarn } from '../utils/diag-logger.js';
  *    pending_approval wiring lands with U5 (KTD-6).
  */
 
-export const BROWSER_MCP_SERVER_KEY = 'comate-browser';
 export const BROWSER_MCP_SERVER_VERSION = '0.1.0';
-export const BROWSER_TOOL_PREFIX = `mcp__${BROWSER_MCP_SERVER_KEY}__`;
 
 // SDK MCP handler round-trips (submit approval) can wait on a human far past
 // the 60s default stream-close timeout; chat-service writes this into
@@ -263,6 +274,22 @@ function toolJson(payload: Record<string, unknown>): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
 }
 
+/**
+ * Type guards for the `RefEntry | CallToolResult` / decision unions.
+ * `CallToolResult` carries an index signature (`[x: string]: unknown`), so
+ * `'kind' in value` / `'behavior' in value` cannot narrow it away — these
+ * predicates do the discriminating explicitly.
+ */
+function isRefEntry(value: RefEntry | CallToolResult): value is RefEntry {
+  return typeof (value as RefEntry).ref === 'string';
+}
+
+function isApprovalDecision(
+  value: BrowserApprovalDecision | CallToolResult,
+): value is BrowserApprovalDecision {
+  return typeof (value as BrowserApprovalDecision).behavior === 'string';
+}
+
 const UNAVAILABLE_RESOLUTIONS: Record<string, string> = {
   browser_limit_reached:
     'The concurrent browser limit is reached. Close another chat session\'s browser and retry.',
@@ -319,9 +346,12 @@ export class BrowserToolContext {
           this.pageRegistry.delete(key);
         }
         // This context's refs/model describe the dead page — drop them so the
-        // next call re-distills against the rebuilt browser.
+        // next call re-distills against the rebuilt browser. The canUseTool
+        // gate's ref view (U4) is cleared too; navigation memory survives
+        // (session-level, KTD-4 ②).
         this.refTable.clear();
         this.lastModel = null;
+        clearSubmitSemanticsRefs(key);
       });
       return page;
     } catch (err) {
@@ -356,6 +386,15 @@ export class BrowserToolContext {
   private async distill(page: SteelCdpSession): Promise<PageModel> {
     const model = await distillPageModel(page, this.refTable);
     this.lastModel = model;
+    // Publish the session's submit-semantics refs for the canUseTool-layer
+    // classification gate (U4, KTD-4 ② — the runtime has no ref table of its
+    // own; this module-level registry is the bridge, rewritten per distill).
+    setSubmitSemanticsRefs(
+      this.deps.sessionId,
+      model.forms.flatMap((form) =>
+        form.fields.filter((field) => field.submitSemantics).map((field) => field.ref),
+      ),
+    );
     return model;
   }
 
@@ -466,7 +505,7 @@ export class BrowserToolContext {
       const page = await this.ensurePage();
       const probe = await this.readProbe(page);
       const resolved = this.resolveCurrentRef(args.ref, probe);
-      if (!('kind' in resolved)) return resolved;
+      if (!isRefEntry(resolved)) return resolved;
       const entry = resolved;
 
       // Submit-semantics controls are routed to the submit tool so its
@@ -553,7 +592,7 @@ export class BrowserToolContext {
       const page = await this.ensurePage();
       const probe = await this.readProbe(page);
       const resolved = this.resolveCurrentRef(args.ref, probe);
-      if (!('kind' in resolved)) return resolved;
+      if (!isRefEntry(resolved)) return resolved;
       const target = resolved;
 
       // Resolve the form + optional dispatch control.
@@ -658,7 +697,7 @@ export class BrowserToolContext {
           },
           signal,
         );
-        if (!('behavior' in decision)) return decision;
+        if (!isApprovalDecision(decision)) return decision;
         if (decision.behavior !== 'allow') {
           diagLog(`[browser-mcp] submit denied session=${this.deps.sessionId} form=${formName}`);
           return toolJson({
@@ -956,7 +995,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
   );
   // Auxiliary hint only — the security property is guaranteed by the
   // handler-level approval gate above, not by SDK meta (plan review fix).
-  const submitDef: BrowserToolDefinition = {
+  const submitDef = {
     ...submitBase,
     _meta: { 'anthropic/requiresUserInteraction': true },
   };
@@ -997,7 +1036,10 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     async (args) => ctx.handleRequestHandoff(args),
   );
 
-  return [openDef, snapshotDef, actDef, submitDef, extractDef, handoffDef];
+  // The cast reconciles handler-parameter variance: each tool() definition is
+  // an SdkMcpToolDefinition over its own zod shape, while BrowserToolDefinition
+  // erases the shape to `any` (matching createSdkMcpServer's signature).
+  return [openDef, snapshotDef, actDef, submitDef, extractDef, handoffDef] as BrowserToolDefinition[];
 }
 
 /**

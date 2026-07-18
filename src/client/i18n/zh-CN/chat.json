@@ -54,7 +54,24 @@
     "denialReason": "拒绝原因",
     "denialReason_safetyCheck": "此请求被安全检查标记。",
     "denialReason_asyncAgent": "此请求因来自异步代理而被拒绝。",
-    "denialReason_default": "此请求被拒绝：{{reason}}"
+    "denialReason_default": "此请求被拒绝：{{reason}}",
+    "browserSubmit": {
+      "destination": "目标地址",
+      "page": "页面",
+      "form": "表单",
+      "fields": "字段（{{count}}）",
+      "emptyFields": "此表单没有字段。",
+      "sensitiveValue": "敏感字段——值已隐藏",
+      "reconfirmation": "表单在你上次批准后发生了变化。请检查更新后的提交内容再决定是否允许。",
+      "differences": "自上次批准以来的变化",
+      "diff": {
+        "action_changed": "表单提交目标已变化",
+        "method_changed": "表单提交方式已变化",
+        "value_changed": "字段“{{field}}”的值已变化",
+        "field_added": "新增了字段“{{field}}”",
+        "field_removed": "移除了字段“{{field}}”"
+      }
+    }
   },
   "sessionNamePlaceholder": "会话名称",
   "create": "创建",

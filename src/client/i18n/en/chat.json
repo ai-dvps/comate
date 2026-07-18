@@ -54,7 +54,24 @@
     "denialReason": "Denial reason",
     "denialReason_safetyCheck": "This request was flagged by a safety check.",
     "denialReason_asyncAgent": "This request was denied because it originated from an async agent.",
-    "denialReason_default": "This request was denied: {{reason}}"
+    "denialReason_default": "This request was denied: {{reason}}",
+    "browserSubmit": {
+      "destination": "Destination",
+      "page": "Page",
+      "form": "Form",
+      "fields": "Fields ({{count}})",
+      "emptyFields": "No fields on this form.",
+      "sensitiveValue": "sensitive — value hidden",
+      "reconfirmation": "The form changed after your previous approval. Review the updated submission before allowing it.",
+      "differences": "Changes since the previous approval",
+      "diff": {
+        "action_changed": "The form destination changed",
+        "method_changed": "The form method changed",
+        "value_changed": "The value of \"{{field}}\" changed",
+        "field_added": "Field \"{{field}}\" was added",
+        "field_removed": "Field \"{{field}}\" was removed"
+      }
+    }
   },
   "sessionNamePlaceholder": "Session name",
   "create": "Create",
