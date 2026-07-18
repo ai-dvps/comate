@@ -7,7 +7,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import os from 'os';
-import type { GitStatusItem } from './git-changes.js';
+import type { GitStatusItem } from '../models/git-changes.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -157,6 +157,29 @@ describe('git-changes routes', { concurrency: false }, () => {
     assert.strictEqual(items[0].path, 'new.txt');
     assert.strictEqual(items[0].originalPath, 'old.txt');
     assert.strictEqual(items[0].indexStatus, 'R');
+  });
+
+  it('GET / returns non-ASCII filenames verbatim (no porcelain quoting)', async () => {
+    await initGitRepo(tempDir);
+    await execFileAsync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: tempDir });
+
+    // A CJK filename would be octal-escaped under git's default core.quotepath,
+    // which the previous newline parser passed through verbatim and made
+    // unreachable as a filesystem path. The -z parser must emit it as-is.
+    await writeFile(path.join(tempDir, '中文.txt'), 'content');
+    await writeFile(path.join(tempDir, 'café.md'), 'coffee');
+
+    const workspaceId = await createWorkspaceInStore(tempDir);
+    const handlers = await importRouteHandlers();
+    const req = { params: { id: workspaceId } };
+    const res = createMockRes();
+
+    await handlers['/'].get(req, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    const items = (res.jsonBody as { items: GitStatusItem[] }).items;
+    const paths = items.map((i) => i.path).sort();
+    assert.deepStrictEqual(paths, ['café.md', '中文.txt']);
   });
 
   it('GET / returns empty list for a clean repository', async () => {
@@ -444,7 +467,7 @@ describe('git-changes routes', { concurrency: false }, () => {
     assert.strictEqual((res.jsonBody as { error: string }).error, 'Workspace not found');
   });
 
-  it('GET /compare resolves originalPath for renamed files', async () => {
+  it('GET /compare honors client-sent originalPath for renamed files', async () => {
     await initGitRepo(tempDir);
     await writeFile(path.join(tempDir, 'old.txt'), 'content');
     await execFileAsync('git', ['add', 'old.txt'], { cwd: tempDir });
@@ -454,7 +477,9 @@ describe('git-changes routes', { concurrency: false }, () => {
 
     const workspaceId = await createWorkspaceInStore(tempDir);
     const handlers = await importRouteHandlers();
-    const req = { params: { id: workspaceId }, query: { path: 'new.txt' } };
+    // The client sends the rename source so the server does not need to run a
+    // second `git status` to discover it.
+    const req = { params: { id: workspaceId }, query: { path: 'new.txt', originalPath: 'old.txt' } };
     const res = createMockRes();
 
     await handlers['/compare'].get(req, res);

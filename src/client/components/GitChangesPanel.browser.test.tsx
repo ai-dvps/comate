@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import React, { useState } from 'react'
+import React from 'react'
 import { render, screen, cleanup } from '@testing-library/react'
 import { userEvent } from '@vitest/browser/context'
 import { I18nextProvider } from 'react-i18next'
@@ -60,18 +60,6 @@ vi.mock('../stores/workspace-store', () => ({
     selector ? selector({ activeWorkspaceId: 'ws1' }) : { activeWorkspaceId: 'ws1' },
 }))
 
-function TestHarness() {
-  const [collapsed, setCollapsed] = useState(true)
-  return (
-    <GitChangesPanel
-      width={320}
-      isCollapsed={collapsed}
-      onToggleCollapse={() => setCollapsed((c) => !c)}
-      onWidthChange={() => {}}
-    />
-  )
-}
-
 describe('GitChangesPanel browser', () => {
   beforeEach(() => {
     cleanup()
@@ -93,25 +81,8 @@ describe('GitChangesPanel browser', () => {
     ) as unknown as typeof window.fetch
   })
 
-  it('toggling the panel shows the file list', async () => {
-    renderWithI18n(<TestHarness />)
-
-    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('git-changes-toggle'))
-
-    expect(screen.getByRole('tree')).toBeInTheDocument()
-    expect(screen.getByText('main.ts')).toBeInTheDocument()
-    expect(screen.getByText('new.txt')).toBeInTheDocument()
-  })
-
   it('double-clicking a modified file calls right-panel openDiff with workspace id and file', async () => {
-    renderWithI18n(<GitChangesPanel
-      width={320}
-      isCollapsed={false}
-      onToggleCollapse={() => {}}
-      onWidthChange={() => {}}
-    />)
+    renderWithI18n(<GitChangesPanel />)
 
     const row = screen.getByText('main.ts').closest('[data-testid="git-file-row"]') as HTMLElement
     await userEvent.dblClick(row)
@@ -120,16 +91,11 @@ describe('GitChangesPanel browser', () => {
       path: 'src/main.ts',
       indexStatus: ' ',
       workingTreeStatus: 'M',
-    }))
+    }, false))
   })
 
   it('double-clicking an untracked file calls right-panel openDiff with workspace id and file', async () => {
-    renderWithI18n(<GitChangesPanel
-      width={320}
-      isCollapsed={false}
-      onToggleCollapse={() => {}}
-      onWidthChange={() => {}}
-    />)
+    renderWithI18n(<GitChangesPanel />)
 
     const row = screen.getByText('new.txt').closest('[data-testid="git-file-row"]') as HTMLElement
     await userEvent.dblClick(row)
@@ -138,6 +104,6 @@ describe('GitChangesPanel browser', () => {
       path: 'new.txt',
       indexStatus: '?',
       workingTreeStatus: '?',
-    }))
+    }, false))
   })
 })

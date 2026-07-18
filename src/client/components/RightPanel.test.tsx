@@ -29,13 +29,23 @@ vi.mock('./MarkdownPreview', () => ({
 vi.mock('./FileExplorer', () => ({
   default: function FileExplorerMock({
     onFileClick,
+    selectedPath,
+    onSelectPath,
   }: {
     onFileClick: (path: string, name: string) => void
+    selectedPath?: string | null
+    onSelectPath?: (path: string) => void
   }) {
     return (
-      <div data-testid="file-explorer">
+      <div data-testid="file-explorer" data-selected={selectedPath ?? ''}>
         <button data-testid="mock-open-file" onClick={() => onFileClick('src/App.tsx', 'App.tsx')}>
           Open file
+        </button>
+        <button
+          data-testid="mock-select-file"
+          onClick={() => onSelectPath?.('src/App.tsx')}
+        >
+          Select file
         </button>
       </div>
     )
@@ -146,6 +156,41 @@ describe('RightPanel', () => {
     expect(screen.queryByTestId('file-explorer')).not.toBeInTheDocument()
     expect(useRightPanelStore.getState().activeListTab).toBe('git-changes')
   })
+
+  it('single-clicking a file in the Files tree selects/highlights it (R9)', async () => {
+    const user = userEvent.setup()
+    renderWithI18n(
+      <RightPanel
+        width={640}
+        isCollapsed={false}
+        toggleCollapse={vi.fn()}
+        onWidthChange={vi.fn()}
+        workspaceId="ws1"
+      />,
+    )
+
+    // No selection initially.
+    expect(screen.getByTestId('file-explorer')).toHaveAttribute('data-selected', '')
+
+    await user.click(screen.getByTestId('mock-select-file'))
+
+    // RightPanel threaded onSelectPath -> selectedPath back into FileExplorer.
+    expect(screen.getByTestId('file-explorer')).toHaveAttribute('data-selected', 'src/App.tsx')
+  })
+
+  it('renders a resize handle for the list sidebar when expanded', () => {
+    renderWithI18n(
+      <RightPanel
+        width={640}
+        isCollapsed={false}
+        toggleCollapse={vi.fn()}
+        onWidthChange={vi.fn()}
+        workspaceId="ws1"
+      />,
+    )
+
+    expect(screen.getByTestId('right-panel-list-resize-handle')).toBeInTheDocument()
+  })
 })
 
 describe('RightPanelContent', () => {
@@ -170,6 +215,7 @@ describe('RightPanelContent', () => {
       path: 'src/App.tsx',
       name: 'App.tsx',
       statusCode: 'M',
+      staged: true,
       original: 'old',
       modified: 'new',
       isBinary: false,
@@ -209,6 +255,7 @@ describe('RightPanelContent', () => {
       path: 'b.tsx',
       name: 'b.tsx',
       statusCode: 'M',
+      staged: true,
       original: 'old',
       modified: 'new',
       isBinary: false,
@@ -247,6 +294,7 @@ describe('CodeMirrorDiffViewer', () => {
       path: 'src/App.tsx',
       name: 'App.tsx',
       statusCode: 'M',
+      staged: true,
       original: 'old',
       modified: 'new',
       isBinary: false,

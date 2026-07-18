@@ -19,6 +19,8 @@ export interface DiffTab {
   path: string
   name: string
   statusCode: string
+  /** Whether this diff compares HEAD vs index (staged) or index vs working tree. */
+  staged: boolean
   original: string
   modified: string
   isBinary: boolean
@@ -51,7 +53,7 @@ export interface RightPanelState {
   activeTabId: string | null
   setActiveListTab: (tab: 'files' | 'git-changes') => void
   openFile: (workspaceId: string, path: string, name: string) => Promise<void>
-  openDiff: (workspaceId: string, item: GitStatusItem) => Promise<void>
+  openDiff: (workspaceId: string, item: GitStatusItem, staged?: boolean) => Promise<void>
   closeTab: (id: string) => void
   selectTab: (id: string) => void
   clearTabs: () => void
@@ -79,8 +81,8 @@ function getFileTabId(path: string): string {
   return `file:${path}`
 }
 
-function getDiffTabId(path: string, statusCode: string): string {
-  return `diff:${path}:${statusCode}`
+function getDiffTabId(path: string, statusCode: string, staged: boolean): string {
+  return `diff:${path}:${statusCode}:${staged ? 's' : 'w'}`
 }
 
 function deriveStatusCode(item: GitStatusItem): string {
@@ -168,11 +170,13 @@ export const useRightPanelStore = create<RightPanelState>((set, get) => ({
   openDiff: async (
     workspaceId: string,
     item: GitStatusItem,
+    stagedOverride?: boolean,
   ): Promise<void> => {
     if (!workspaceId || !item.path) return
 
+    const staged = stagedOverride ?? deriveStaged(item)
     const statusCode = deriveStatusCode(item)
-    const id = getDiffTabId(item.path, statusCode)
+    const id = getDiffTabId(item.path, statusCode, staged)
     const existing = get().openTabs.find((tab) => tab.id === id)
     if (existing) {
       if (get().activeTabId !== id) {
@@ -186,7 +190,6 @@ export const useRightPanelStore = create<RightPanelState>((set, get) => ({
     abortControllers.set(getDiffTabKey(workspaceId, item.path), controller)
 
     try {
-      const staged = deriveStaged(item)
       const params = new URLSearchParams()
       params.set('path', item.path)
       params.set('staged', String(staged))
@@ -210,6 +213,7 @@ export const useRightPanelStore = create<RightPanelState>((set, get) => ({
         path: item.path,
         name: basename(item.path),
         statusCode,
+        staged,
         original: typeof data.original === 'string' ? data.original : '',
         modified: typeof data.modified === 'string' ? data.modified : '',
         isBinary: data.isBinary === true,
@@ -258,6 +262,14 @@ export const useRightPanelStore = create<RightPanelState>((set, get) => ({
   },
 
   clearTabs: () => {
+    // Abort in-flight openFile/openDiff FIRST. Their tabs are not in openTabs
+    // yet, so the empty-state guard below must not skip the abort -- otherwise
+    // a late-resolving fetch could re-add a stale tab after the reset. The
+    // openFile/openDiff catch blocks already swallow AbortError.
+    for (const controller of abortControllers.values()) {
+      controller.abort()
+    }
+    abortControllers.clear()
     if (get().openTabs.length === 0 && get().activeTabId === null) return
     set({ openTabs: [], activeTabId: null })
   },

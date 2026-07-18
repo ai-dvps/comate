@@ -9,7 +9,7 @@ import path from 'path';
 import os from 'os';
 import { GitChangesService } from './git-changes-service.js';
 import type { WebSocket } from 'ws';
-import type { GitStatusItem } from '../routes/git-changes.js';
+import type { GitStatusItem } from '../models/git-changes.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -179,6 +179,30 @@ describe('git-changes service', { concurrency: false }, () => {
     assert.strictEqual(statusCalls, 1);
     assert.strictEqual(socketA.messages.length, 1);
     assert.strictEqual(socketB.messages.length, 1);
+  });
+
+  it('does not broadcast an empty list when git status fails', async () => {
+    await initGitRepo(tempDir);
+    await writeFile(path.join(tempDir, 'file.txt'), 'initial');
+    await execFileAsync('git', ['add', 'file.txt'], { cwd: tempDir });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: tempDir });
+
+    const fakeStore = createFakeStore(tempDir);
+    service = new GitChangesService(fakeStore, async () => {
+      throw new Error('git failed: index lock contention');
+    });
+
+    const socket = createMockSocket();
+    await service.subscribe('ws-1', socket as unknown as WebSocket);
+    // Allow the in-flight refresh to settle.
+    await sleep(300);
+
+    const gitChangesEvents = socket.messages.filter(
+      (m) => (m as { eventType: string }).eventType === 'git_changes',
+    );
+    // A transient git failure must NOT broadcast an empty git_changes event,
+    // which would falsely read as a clean repo and wipe known changes.
+    assert.strictEqual(gitChangesEvents.length, 0);
   });
 
   it('emits watcher_unavailable for missing workspace', async () => {

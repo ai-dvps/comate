@@ -97,11 +97,11 @@ describe('right-panel-store', () => {
     expect(state.openTabs).toHaveLength(1)
     const tab = state.openTabs[0] as DiffTab
     expect(tab.type).toBe('diff')
-    expect(tab.id).toBe('diff:src/App.tsx:M')
+    expect(tab.id).toBe('diff:src/App.tsx:M:s')
     expect(tab.statusCode).toBe('M')
     expect(tab.original).toBe('old')
     expect(tab.modified).toBe('new')
-    expect(state.activeTabId).toBe('diff:src/App.tsx:M')
+    expect(state.activeTabId).toBe('diff:src/App.tsx:M:s')
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/workspaces/ws1/git-changes/compare?path=src%2FApp.tsx&staged=true',
       expect.any(Object),
@@ -135,7 +135,7 @@ describe('right-panel-store', () => {
       expect.any(Object),
     )
     const tab = useRightPanelStore.getState().openTabs[0]
-    expect(tab.id).toBe('diff:src/App.tsx:M')
+    expect(tab.id).toBe('diff:src/App.tsx:M:w')
   })
 
   it('openDiff marks untracked files correctly', async () => {
@@ -220,6 +220,25 @@ describe('right-panel-store', () => {
     const state = useRightPanelStore.getState()
     expect(state.openTabs).toHaveLength(0)
     expect(state.activeTabId).toBeNull()
+  })
+
+  it('clearTabs aborts in-flight openFile fetches so they cannot re-add stale tabs', async () => {
+    let abortSignal: AbortSignal | undefined
+    global.fetch = vi.fn((_url, init) => {
+      abortSignal = (init as { signal?: AbortSignal }).signal
+      // Never resolves: keeps the fetch in-flight until aborted.
+      return new Promise(() => {})
+    }) as unknown as typeof global.fetch
+
+    const { openFile, clearTabs } = useRightPanelStore.getState()
+    void openFile('ws1', 'a.tsx', 'a.tsx')
+    // Let the fetch kick off.
+    await Promise.resolve()
+
+    clearTabs()
+
+    expect(abortSignal?.aborted).toBe(true)
+    expect(useRightPanelStore.getState().openTabs).toHaveLength(0)
   })
 
   it('selectTab activates a tab', () => {

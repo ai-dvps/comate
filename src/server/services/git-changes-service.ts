@@ -10,8 +10,8 @@ import { store as workspaceStore, SqliteStore } from '../storage/sqlite-store.js
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import type { GitStatusItem } from '../routes/git-changes.js';
-import { parsePorcelainStatus } from '../routes/git-changes.js';
+import type { GitStatusItem } from '../models/git-changes.js';
+import { runGitStatus, isNotAGitRepoError } from './git-porcelain.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -81,17 +81,35 @@ function isIgnored(relPath: string, layers: IgnoreLayer[]): boolean {
   return false;
 }
 
-async function runGitStatus(folderPath: string): Promise<GitStatusItem[]> {
-  const { stdout } = await execFileAsync(
-    'git',
-    ['status', '--porcelain=v1', '--untracked-files=all'],
-    {
-      cwd: folderPath,
-      timeout: 10000,
-      encoding: 'utf-8',
-    },
-  );
-  return parsePorcelainStatus(stdout);
+/**
+ * Resolve the git directory and index paths for a workspace root. In a linked
+ * worktree (or submodule) `.git` is a *file* pointing at metadata elsewhere,
+ * so `<root>/.git/index` does not exist and watching it misses index-only
+ * (staged) changes. `git rev-parse` resolves the real locations; we fall back
+ * to the standard `<root>/.git` layout if git is unavailable.
+ */
+async function resolveGitPaths(root: string): Promise<{ gitDir: string; indexPath: string }> {
+  try {
+    const { stdout: indexOut } = await execFileAsync(
+      'git',
+      ['-C', root, 'rev-parse', '--git-path', 'index'],
+      { encoding: 'utf-8', timeout: 5000 },
+    );
+    const { stdout: gitDirOut } = await execFileAsync(
+      'git',
+      ['-C', root, 'rev-parse', '--git-dir'],
+      { encoding: 'utf-8', timeout: 5000 },
+    );
+    return {
+      indexPath: path.resolve(root, indexOut.trim()),
+      gitDir: path.resolve(root, gitDirOut.trim()),
+    };
+  } catch {
+    return {
+      indexPath: path.join(root, '.git/index'),
+      gitDir: path.join(root, '.git'),
+    };
+  }
 }
 
 interface WsEventEnvelope {
@@ -245,8 +263,7 @@ export class GitChangesService {
       return;
     }
 
-    const gitIndexPath = path.join(root, '.git/index');
-    const gitDirPath = path.join(root, '.git');
+    const { gitDir: gitDirPath, indexPath: gitIndexPath } = await resolveGitPaths(root);
 
     let layers: IgnoreLayer[] = [];
     try {
@@ -308,6 +325,9 @@ export class GitChangesService {
         workspaceId,
         reason: message,
       });
+      // Remove the broken watcher so the next subscribe recreates a fresh one
+      // instead of ensureWatcher short-circuiting on a dead map entry.
+      void this.closeWatcher(workspaceId);
     });
 
     this.watchers.set(workspaceId, watcher);
@@ -353,12 +373,21 @@ export class GitChangesService {
     const promise = (async () => {
       const workspace = await this.workspaceStore.get(workspaceId);
       if (!workspace) return;
-      const items = await this.runGitStatusFn(workspace.folderPath).catch((err) => {
+      let items: GitStatusItem[] | null = null;
+      try {
+        items = await this.runGitStatusFn(workspace.folderPath);
+      } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         diagWarn(`[git-changes] refresh failed for ${workspaceId}:`, message);
-        return [] as GitStatusItem[];
-      });
-      this.broadcast(workspaceId, { type: 'git_changes', workspaceId, items });
+        // A non-git folder is legitimately "no changes" -> broadcast empty.
+        // Any other failure must NOT broadcast an empty list: that would
+        // falsely report a clean repo and wipe the client's known changes.
+        // Skip the broadcast so subscribers keep their last known state.
+        if (isNotAGitRepoError(err)) items = [];
+      }
+      if (items !== null) {
+        this.broadcast(workspaceId, { type: 'git_changes', workspaceId, items });
+      }
     })();
 
     this.refreshPromises.set(workspaceId, promise);

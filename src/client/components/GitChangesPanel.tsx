@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -24,15 +23,7 @@ import { useGitChangesStore, useGitChanges, type GitStatusItem } from '../stores
 import { useRightPanelStore } from '../stores/right-panel-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
-import { RAIL_WIDTH } from '../hooks/use-sidebar-width'
 import { isUntrackedFile, getStatusBadgeClass } from '../lib/git-status-helpers'
-
-interface GitChangesPanelProps {
-  width: number
-  isCollapsed: boolean
-  onToggleCollapse: () => void
-  onWidthChange: (width: number) => void
-}
 
 interface TreeNode {
   name: string
@@ -42,14 +33,34 @@ interface TreeNode {
   children: TreeNode[]
 }
 
-const COLLAPSED_THRESHOLD_PX = 640
+interface FileSide {
+  staged: boolean
+  statusCode: string
+  /** True when the file has both staged and unstaged changes (render a label). */
+  both: boolean
+}
 
-function getStatusCode(file: GitStatusItem): string {
-  if (isUntrackedFile(file)) return '?'
-  if (file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '') {
-    return file.workingTreeStatus
+/**
+ * Expand a status entry into one or two viewable sides. A file with changes in
+ * both the index and the working tree (e.g. `MM`, `AM`) yields two entries so
+ * the user can review the staged diff AND the unstaged diff independently; the
+ * previous single-entry model made the unstaged half unreachable.
+ */
+function buildFileSides(file: GitStatusItem): FileSide[] {
+  if (isUntrackedFile(file)) {
+    return [{ staged: false, statusCode: '?', both: false }]
   }
-  return file.indexStatus
+  const hasStaged = file.indexStatus !== ' ' && file.indexStatus !== '?' && file.indexStatus !== ''
+  const hasUnstaged =
+    file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '?' && file.workingTreeStatus !== ''
+  const both = hasStaged && hasUnstaged
+  const sides: FileSide[] = []
+  if (hasStaged) sides.push({ staged: true, statusCode: file.indexStatus, both })
+  if (hasUnstaged) sides.push({ staged: false, statusCode: file.workingTreeStatus, both })
+  if (sides.length === 0) {
+    sides.push({ staged: false, statusCode: file.indexStatus || '?', both: false })
+  }
+  return sides
 }
 
 function insertIntoTree(nodes: TreeNode[], item: GitStatusItem, parts: string[], depth = 0): void {
@@ -102,16 +113,8 @@ function getVisibleNodePaths(nodes: TreeNode[], expanded: Set<string>): string[]
   return result
 }
 
-export default function GitChangesPanel({
-  width,
-  isCollapsed,
-  onToggleCollapse,
-  onWidthChange,
-}: GitChangesPanelProps) {
+export default function GitChangesPanel() {
   const { t } = useTranslation('common')
-  const panelRef = useRef<HTMLDivElement>(null)
-  const toggleButtonRef = useRef<HTMLButtonElement>(null)
-  const dragRef = useRef<{ move: (e: MouseEvent) => void; up: () => void } | null>(null)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const { setPanelVisible, setActiveWorkspaceId, refresh, setViewMode } =
     useGitChangesStore.getState()
@@ -125,12 +128,16 @@ export default function GitChangesPanel({
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set())
 
+  // Subscription lifecycle lives here. RightPanel keeps this component mounted
+  // (CSS-toggling visibility) for the whole time the right panel is expanded,
+  // so switching the inner Files/Git-Changes tab no longer tears down and
+  // recreates the watcher (and its .gitignore crawl) on every toggle.
   useEffect(() => {
-    setPanelVisible(!isCollapsed)
+    setPanelVisible(true)
     return () => {
       setPanelVisible(false)
     }
-  }, [isCollapsed, setPanelVisible])
+  }, [setPanelVisible])
 
   useEffect(() => {
     setActiveWorkspaceId(activeWorkspaceId)
@@ -150,65 +157,6 @@ export default function GitChangesPanel({
     })
   }, [statusItems])
 
-  useEffect(() => {
-    if (isCollapsed) {
-      toggleButtonRef.current?.focus()
-    } else {
-      panelRef.current?.focus()
-    }
-  }, [isCollapsed])
-
-  useEffect(() => {
-    function handleResize() {
-      if (window.innerWidth < COLLAPSED_THRESHOLD_PX && !isCollapsed) {
-        onToggleCollapse()
-      }
-    }
-    handleResize()
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [isCollapsed, onToggleCollapse])
-
-  const endDrag = useCallback(() => {
-    if (!dragRef.current) return
-    document.removeEventListener('mousemove', dragRef.current.move)
-    document.removeEventListener('mouseup', dragRef.current.up)
-    document.body.style.userSelect = ''
-    document.body.style.cursor = ''
-    dragRef.current = null
-  }, [])
-
-  const handleResizeMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      if (isCollapsed) return
-      const startX = e.clientX
-      const startWidth = width
-
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const delta = startX - moveEvent.clientX
-        onWidthChange(startWidth + delta)
-      }
-
-      const handleMouseUp = () => {
-        endDrag()
-      }
-
-      dragRef.current = { move: handleMouseMove, up: handleMouseUp }
-      document.body.style.userSelect = 'none'
-      document.body.style.cursor = 'col-resize'
-      document.addEventListener('mousemove', handleMouseMove)
-      document.addEventListener('mouseup', handleMouseUp)
-    },
-    [isCollapsed, width, onWidthChange, endDrag],
-  )
-
-  useEffect(() => {
-    return () => {
-      endDrag()
-    }
-  }, [endDrag])
-
   const trackedItems = useMemo(
     () => statusItems.filter((item) => !isUntrackedFile(item)),
     [statusItems],
@@ -226,11 +174,11 @@ export default function GitChangesPanel({
   }, [activeWorkspaceId, refresh])
 
   const handleOpenFile = useCallback(
-    (file: GitStatusItem) => {
+    (file: GitStatusItem, staged: boolean) => {
       if (!activeWorkspaceId) return
       useRightPanelStore
         .getState()
-        .openDiff(activeWorkspaceId, file)
+        .openDiff(activeWorkspaceId, file, staged)
         .catch((err) => {
           console.error('[GitChangesPanel] failed to open diff:', err)
         })
@@ -287,7 +235,8 @@ export default function GitChangesPanel({
         if (node.type === 'folder') {
           handleToggleExpand(current)
         } else if (node.file) {
-          handleOpenFile(node.file)
+          const firstSide = buildFileSides(node.file)[0]
+          if (firstSide) handleOpenFile(node.file, firstSide.staged)
         }
       }
     },
@@ -299,43 +248,10 @@ export default function GitChangesPanel({
     [untrackedTree, tree],
   )
 
-  if (isCollapsed) {
-    return (
-      <aside
-        ref={panelRef}
-        data-testid="git-changes-panel"
-        className="relative bg-surface border-l border-border flex flex-col h-full flex-shrink-0"
-        style={{ width: RAIL_WIDTH }}
-      >
-        <div className="flex flex-col items-center py-2 gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                ref={toggleButtonRef}
-                data-testid="git-changes-toggle"
-                onClick={onToggleCollapse}
-                className={cn(
-                  'p-2 rounded-md transition-colors text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-                )}
-                aria-label={t('gitChanges.toggleTooltip')}
-              >
-                <GitBranch className="w-5 h-5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="left">{t('gitChanges.toggleTooltip')}</TooltipContent>
-          </Tooltip>
-        </div>
-      </aside>
-    )
-  }
-
   return (
-    <aside
-      ref={panelRef}
-      tabIndex={-1}
+    <div
       data-testid="git-changes-panel"
-      className="relative bg-surface border-l border-border flex flex-col h-full flex-shrink-0 outline-none"
-      style={{ width }}
+      className="flex flex-col h-full outline-none"
     >
       <div className="flex items-center justify-end px-3 py-1 border-b border-border/50 flex-shrink-0 gap-2">
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -454,16 +370,21 @@ export default function GitChangesPanel({
                   />
                 ))
               ) : (
-                trackedItems.map((file) => (
-                  <FileRow
-                    key={file.path}
-                    file={file}
-                    path={file.path}
-                    isHighlighted={highlightedPath === file.path}
-                    onSelect={() => handleSelect(file.path)}
-                    onOpen={() => handleOpenFile(file)}
-                  />
-                ))
+                trackedItems.flatMap((file) =>
+                  buildFileSides(file).map((side) => (
+                    <FileRow
+                      key={`${file.path}:${side.staged ? 's' : 'w'}`}
+                      file={file}
+                      staged={side.staged}
+                      statusCode={side.statusCode}
+                      showSide={side.both}
+                      path={file.path}
+                      isHighlighted={highlightedPath === file.path}
+                      onSelect={() => handleSelect(file.path)}
+                      onOpen={() => handleOpenFile(file, side.staged)}
+                    />
+                  )),
+                )
               )}
             </div>
           )}
@@ -498,25 +419,19 @@ export default function GitChangesPanel({
                   <FileRow
                     key={file.path}
                     file={file}
+                    staged={false}
+                    statusCode="?"
                     path={file.path}
                     isHighlighted={highlightedPath === file.path}
                     onSelect={() => handleSelect(file.path)}
-                    onOpen={() => handleOpenFile(file)}
+                    onOpen={() => handleOpenFile(file, false)}
                   />
                 ))
               )}
             </div>
           )}
         </div>
-
-      <div
-        data-testid="git-changes-resize-handle"
-        role="separator"
-        aria-label={t('gitChanges.resize')}
-        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
-        onMouseDown={handleResizeMouseDown}
-      />
-    </aside>
+    </div>
   )
 }
 
@@ -533,6 +448,9 @@ function renderSkeleton() {
 
 interface FileRowProps {
   file: GitStatusItem
+  staged: boolean
+  statusCode: string
+  showSide?: boolean
   path: string
   name?: string
   level?: number
@@ -544,6 +462,9 @@ interface FileRowProps {
 
 function FileRow({
   file,
+  staged,
+  statusCode,
+  showSide,
   path,
   name,
   level,
@@ -553,7 +474,6 @@ function FileRow({
   onOpen,
 }: FileRowProps) {
   const { t } = useTranslation('common')
-  const statusCode = getStatusCode(file)
   const displayName = name ?? path
   const untracked = isUntrackedFile(file)
   return (
@@ -587,6 +507,11 @@ function FileRow({
       )}
       <span className="truncate font-mono min-w-0" title={path}>
         {displayName}
+        {showSide && (
+          <span className="ml-1 text-text-tertiary text-[10px] font-sans">
+            {staged ? t('gitChanges.staged') : t('gitChanges.workingTree')}
+          </span>
+        )}
       </span>
     </div>
   )
@@ -599,7 +524,7 @@ interface TreeNodeViewProps {
   highlightedPath: string | null
   onToggleExpand: (path: string) => void
   onSelect: (path: string) => void
-  onOpen: (file: GitStatusItem) => void
+  onOpen: (file: GitStatusItem, staged: boolean) => void
 }
 
 function TreeNodeView({
@@ -680,17 +605,27 @@ function TreeNodeView({
     )
   }
 
+  const file = node.file ?? { path: node.path, indexStatus: '?', workingTreeStatus: '?' }
+  const sides = buildFileSides(file)
   return (
-    <FileRow
-      file={node.file ?? { path: node.path, indexStatus: '?', workingTreeStatus: '?' }}
-      path={node.path}
-      name={node.name}
-      level={level}
-      showFileIcon
-      isHighlighted={isHighlighted}
-      onSelect={() => onSelect(node.path)}
-      onOpen={() => node.file && onOpen(node.file)}
-    />
+    <>
+      {sides.map((side) => (
+        <FileRow
+          key={`${node.path}:${side.staged ? 's' : 'w'}`}
+          file={file}
+          staged={side.staged}
+          statusCode={side.statusCode}
+          showSide={side.both}
+          path={node.path}
+          name={node.name}
+          level={level}
+          showFileIcon
+          isHighlighted={isHighlighted}
+          onSelect={() => onSelect(node.path)}
+          onOpen={() => onOpen(file, side.staged)}
+        />
+      ))}
+    </>
   )
 }
 

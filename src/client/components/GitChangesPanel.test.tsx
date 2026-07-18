@@ -62,13 +62,6 @@ vi.mock('../stores/workspace-store', () => ({
     selector ? selector({ activeWorkspaceId: 'ws1' }) : { activeWorkspaceId: 'ws1' },
 }))
 
-const DEFAULT_PROPS = {
-  width: 320,
-  isCollapsed: false,
-  onToggleCollapse: vi.fn(),
-  onWidthChange: vi.fn(),
-}
-
 describe('GitChangesPanel', () => {
   beforeEach(() => {
     cleanup()
@@ -82,14 +75,14 @@ describe('GitChangesPanel', () => {
 
   it('renders a loading skeleton while status is loading', () => {
     gitChangesMock.state.statusLoading = true
-    renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+    renderWithI18n(<GitChangesPanel />)
 
     expect(screen.getByRole('tree')).toBeInTheDocument()
     expect(document.querySelector('.animate-pulse')).toBeInTheDocument()
   })
 
   it('renders an empty state when there are no changes', () => {
-    renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+    renderWithI18n(<GitChangesPanel />)
 
     expect(screen.getByTestId('git-empty-state')).toBeInTheDocument()
   })
@@ -100,7 +93,7 @@ describe('GitChangesPanel', () => {
       { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: ' ' },
     ]
 
-    const { container } = renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+    const { container } = renderWithI18n(<GitChangesPanel />)
 
     const untrackedGroup = screen.getByTestId('git-untracked-group')
     const changedTree = screen.getByTestId('git-changed-tree')
@@ -117,7 +110,7 @@ describe('GitChangesPanel', () => {
       { path: 'src/util.ts', indexStatus: 'A', workingTreeStatus: ' ' },
     ]
 
-    renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+    renderWithI18n(<GitChangesPanel />)
 
     // Tree view: folder headers and file names only.
     expect(screen.getByText('src')).toBeInTheDocument()
@@ -141,7 +134,7 @@ describe('GitChangesPanel', () => {
       { path: 'newdir/a.txt', indexStatus: '?', workingTreeStatus: '?' },
     ]
 
-    renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+    renderWithI18n(<GitChangesPanel />)
 
     // Tree view: untracked files are grouped below changed files and shown as a tree.
     const untrackedGroup = screen.getByTestId('git-untracked-group')
@@ -163,7 +156,7 @@ describe('GitChangesPanel', () => {
       { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: ' ' },
     ]
 
-    renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+    renderWithI18n(<GitChangesPanel />)
 
     const row = screen.getByTestId('git-file-row')
     fireEvent.doubleClick(row)
@@ -173,33 +166,55 @@ describe('GitChangesPanel', () => {
         path: 'src/main.ts',
         indexStatus: 'M',
         workingTreeStatus: ' ',
-      }),
+      }, true),
     )
   })
 
-  it('calls onToggleCollapse when the collapsed rail icon is clicked', () => {
-    renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} isCollapsed={true} />)
+  it('shows staged and unstaged entries for a file with changes in both sides', async () => {
+    gitChangesMock.state.viewMode = 'flat'
+    gitChangesMock.state.statusItems = [
+      { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: 'M' },
+    ]
 
-    fireEvent.click(screen.getByTestId('git-changes-toggle'))
-    expect(DEFAULT_PROPS.onToggleCollapse).toHaveBeenCalledTimes(1)
+    renderWithI18n(<GitChangesPanel />)
+
+    const rows = screen.getAllByTestId('git-file-row')
+    // An MM file yields two entries so both the staged and unstaged diffs open.
+    expect(rows).toHaveLength(2)
+
+    fireEvent.doubleClick(rows[0])
+    fireEvent.doubleClick(rows[1])
+
+    await waitFor(() => {
+      expect(rightPanelMock.openDiff).toHaveBeenCalledWith(
+        'ws1',
+        { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: 'M' },
+        true,
+      )
+      expect(rightPanelMock.openDiff).toHaveBeenCalledWith(
+        'ws1',
+        { path: 'src/main.ts', indexStatus: 'M', workingTreeStatus: 'M' },
+        false,
+      )
+    })
   })
 
   it('shows a spinner while refreshing and surfaces an error on failure', () => {
     gitChangesMock.state.statusLoading = true
-    const { rerender } = renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+    const { rerender } = renderWithI18n(<GitChangesPanel />)
 
     expect(screen.getByTestId('git-refresh-button').querySelector('.animate-spin')).toBeInTheDocument()
 
     gitChangesMock.state.statusLoading = false
     gitChangesMock.state.statusError = 'network error'
-    rerender(<GitChangesPanel {...DEFAULT_PROPS} />)
+    rerender(<GitChangesPanel />)
 
     expect(screen.getByText(/network error/)).toBeInTheDocument()
   })
 
   it('shows the watcher unavailable warning', () => {
     gitChangesMock.state.isWatcherAvailable = false
-    renderWithI18n(<GitChangesPanel {...DEFAULT_PROPS} />)
+    renderWithI18n(<GitChangesPanel />)
 
     expect(screen.getByText('Auto-refresh unavailable')).toBeInTheDocument()
   })
