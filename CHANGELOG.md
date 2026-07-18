@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.0.25] - 2026-07-18
+
 ### Added
 
 - **Ctrl/Cmd+click to open URLs in chat messages** — holding Ctrl (Windows/Linux) or Cmd (macOS) and clicking an `http://` or `https://` URL in user messages, assistant markdown links, or tool error text now opens the link in the system default browser. Plain clicks keep the existing behavior (text selection, copy, and default link navigation), and URLs retain their current visual appearance.
