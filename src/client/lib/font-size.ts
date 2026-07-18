@@ -10,3 +10,12 @@ export function fontSizeClass(size: FontSizePreset): string {
   }
   return map[size]
 }
+
+export function fontSizeValue(size: FontSizePreset): string {
+  const map: Record<FontSizePreset, string> = {
+    small: '12px',
+    medium: '14px',
+    large: '16px',
+  }
+  return map[size]
+}

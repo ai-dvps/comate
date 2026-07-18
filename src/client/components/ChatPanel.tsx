@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PanelLeft, PanelLeftOpen } from 'lucide-react'
+import { PanelLeft, PanelLeftOpen, PanelRight, PanelRightOpen } from 'lucide-react'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useProviderStore } from '../stores/provider-store'
@@ -25,12 +25,16 @@ interface ChatPanelProps {
   workspaceId: string
   isSidebarCollapsed?: boolean
   onToggleSidebarCollapse?: () => void
+  isRightPanelCollapsed?: boolean
+  onToggleRightPanelCollapse?: () => void
 }
 
 export default function ChatPanel({
   workspaceId,
   isSidebarCollapsed = false,
   onToggleSidebarCollapse,
+  isRightPanelCollapsed = false,
+  onToggleRightPanelCollapse,
 }: ChatPanelProps) {
   const { t } = useTranslation(['chat', 'common'])
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
@@ -351,7 +355,7 @@ export default function ChatPanel({
   return (
     <div className="flex flex-col h-full bg-bg">
       {/* Chat Header */}
-      <div className="relative flex items-center justify-center py-3 border-b border-border/30 flex-shrink-0">
+      <div className="relative flex items-center justify-center py-1.5 border-b border-border/50 flex-shrink-0">
         {onToggleSidebarCollapse && (
           <button
             className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
@@ -369,13 +373,31 @@ export default function ChatPanel({
             )}
           </button>
         )}
-        <div className="flex items-center gap-2 min-w-0 max-w-full px-4">
+        <div className="flex items-center gap-2 min-w-0 max-w-full px-4 text-sm">
           <span className="font-medium text-text-primary truncate max-w-md">
             {activeSession?.name || t('noSession')}
           </span>
           <span className="text-text-tertiary">/</span>
           <span className="text-text-tertiary">{modelName}</span>
         </div>
+
+        {onToggleRightPanelCollapse && (
+          <button
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+            aria-label={
+              isRightPanelCollapsed
+                ? t('common:rightPanel.expand')
+                : t('common:rightPanel.collapse')
+            }
+            onClick={() => onToggleRightPanelCollapse()}
+          >
+            {isRightPanelCollapsed ? (
+              <PanelRightOpen className="w-4 h-4" />
+            ) : (
+              <PanelRight className="w-4 h-4" />
+            )}
+          </button>
+        )}
       </div>
 
       {/* Main content row: chat area + optional subagent panel */}

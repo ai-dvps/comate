@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useFiles } from '../stores/files-store'
 import { invoke } from '@tauri-apps/api/core'
-import { ChevronRight, Folder, FileCode, FileJson, FileText, File, Loader2, X } from 'lucide-react'
+import { ChevronRight, Folder, Loader2, X } from 'lucide-react'
+import { cn } from './ui/utils'
+import { getFileIcon } from '../lib/file-helpers'
 
 interface FileNode {
   name: string
@@ -11,31 +13,27 @@ interface FileNode {
   children?: FileNode[]
 }
 
-function getFileIcon(name: string) {
-  const ext = name.split('.').pop()?.toLowerCase()
-  if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx') {
-    return <FileCode className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
-  }
-  if (ext === 'json') {
-    return <FileJson className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-  }
-  if (ext === 'md' || ext === 'txt') {
-    return <FileText className="w-3.5 h-3.5 text-text-secondary flex-shrink-0" />
-  }
-  return <File className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
-}
-
 interface TreeNodeProps {
   node: FileNode
   path: string
   workspaceId: string
-  onFileClick: (path: string, name: string) => void
-  onFileDoubleClick?: (path: string, name: string) => void
+  selectedPath?: string
+  onSelectPath?: (path: string) => void
+  onFileOpen: (path: string, name: string) => void
   onContextMenu?: (e: React.MouseEvent, nodePath: string, nodeType: 'file' | 'folder') => void
   level: number
 }
 
-function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, onContextMenu, level }: TreeNodeProps) {
+function TreeNode({
+  node,
+  path,
+  workspaceId,
+  selectedPath,
+  onSelectPath,
+  onFileOpen,
+  onContextMenu,
+  level,
+}: TreeNodeProps) {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
@@ -95,8 +93,9 @@ function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, onC
                   node={child}
                   path={nodePath}
                   workspaceId={workspaceId}
-                  onFileClick={onFileClick}
-                  onFileDoubleClick={onFileDoubleClick}
+                  selectedPath={selectedPath}
+                  onSelectPath={onSelectPath}
+                  onFileOpen={onFileOpen}
                   onContextMenu={onContextMenu}
                   level={level + 1}
                 />
@@ -108,24 +107,30 @@ function TreeNode({ node, path, workspaceId, onFileClick, onFileDoubleClick, onC
     )
   }
 
+  const isSelected = selectedPath === nodePath
+
   return (
     <div
-      className="flex items-center gap-1.5 py-1 px-2 hover:bg-surface-hover rounded-lg cursor-pointer text-xs"
-      onClick={() => onFileClick(nodePath, node.name)}
-      onDoubleClick={() => onFileDoubleClick?.(nodePath, node.name)}
+      className={cn(
+        'flex items-center gap-1.5 py-1 px-2 rounded-lg cursor-pointer text-xs',
+        isSelected ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
+      )}
+      onClick={() => onSelectPath?.(nodePath)}
+      onDoubleClick={() => onFileOpen(nodePath, node.name)}
       onContextMenu={(e) => onContextMenu?.(e, nodePath, 'file')}
       style={{ paddingLeft: `${level * 12 + 8}px` }}
     >
       <span className="w-3 flex-shrink-0" />
       {getFileIcon(node.name)}
-      <span className="truncate text-text-secondary">{node.name}</span>
+      <span className="truncate">{node.name}</span>
     </div>
   )
 }
 
 interface FileExplorerProps {
+  selectedPath?: string
+  onSelectPath?: (path: string) => void
   onFileClick: (path: string, name: string) => void
-  onFileDoubleClick?: (path: string, name: string) => void
 }
 
 function getRevealLabel(): string {
@@ -138,7 +143,7 @@ function getRevealLabel(): string {
   return 'contextMenu.revealInFinder'
 }
 
-export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExplorerProps) {
+export default function FileExplorer({ selectedPath, onSelectPath, onFileClick }: FileExplorerProps) {
   const { t } = useTranslation('common')
   const { activeWorkspaceId, workspaces } = useWorkspaceStore()
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
@@ -307,15 +312,20 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
             )}
             {results.map((entry) => {
               const basename = entry.path.split('/').pop() || entry.path
+              const isSelected = selectedPath === entry.path
               return (
                 <div
                   key={entry.path}
-                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-surface-hover rounded-lg cursor-pointer text-xs"
-                  onClick={() => onFileClick(entry.path, basename)}
+                  className={cn(
+                    'flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer text-xs',
+                    isSelected ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
+                  )}
+                  onClick={() => onSelectPath?.(entry.path)}
+                  onDoubleClick={() => onFileClick(entry.path, basename)}
                   onContextMenu={(e) => handleContextMenu(e, entry.path, 'file')}
                 >
                   {getFileIcon(basename)}
-                  <span className="truncate text-text-secondary">{entry.path}</span>
+                  <span className="truncate">{entry.path}</span>
                 </div>
               )
             })}
@@ -337,8 +347,9 @@ export default function FileExplorer({ onFileClick, onFileDoubleClick }: FileExp
                 node={node}
                 path=""
                 workspaceId={activeWorkspaceId}
-                onFileClick={onFileClick}
-                onFileDoubleClick={onFileDoubleClick}
+                selectedPath={selectedPath}
+                onSelectPath={onSelectPath}
+                onFileOpen={onFileClick}
                 onContextMenu={handleContextMenu}
                 level={0}
               />

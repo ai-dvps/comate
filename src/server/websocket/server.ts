@@ -2,6 +2,7 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import type { Server } from 'http';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
+import { gitChangesService } from '../services/git-changes-service.js';
 import type {
   WsRequest,
   WsResponse,
@@ -14,6 +15,8 @@ import type {
   SendMessagePayload,
   LoadMessagesPayload,
   LoadMessagesAfterPayload,
+  SubscribeGitChangesPayload,
+  UnsubscribeGitChangesPayload,
 } from './types.js';
 import type { SseEvent } from '../types/message.js';
 
@@ -46,6 +49,7 @@ export class ComateWebSocketServer {
 
   private handleDisconnect(ctx: ClientContext): void {
     diagLog('[WebSocket] client disconnected');
+    void gitChangesService.unsubscribeSocket(ctx.socket);
     for (const [sessionId, workspaceId] of ctx.subscriptions) {
       this.unsubscribe(ctx, workspaceId, sessionId);
     }
@@ -87,6 +91,12 @@ export class ComateWebSocketServer {
           break;
         case 'loadMessagesAfter':
           await this.handleLoadMessagesAfter(ctx, req);
+          break;
+        case 'subscribeGitChanges':
+          await this.handleSubscribeGitChanges(ctx, req);
+          break;
+        case 'unsubscribeGitChanges':
+          await this.handleUnsubscribeGitChanges(ctx, req);
           break;
         default: {
           const _exhaustive: never = req.type;
@@ -148,6 +158,7 @@ export class ComateWebSocketServer {
   private async handleUnsubscribe(ctx: ClientContext, req: WsRequest): Promise<void> {
     const { workspaceId, sessionId } = req.payload as unknown as UnsubscribePayload;
     this.unsubscribe(ctx, workspaceId, sessionId);
+    await gitChangesService.unsubscribe(workspaceId, ctx.socket);
     this.sendOk(ctx.socket, req.id, { unsubscribed: true });
   }
 
@@ -225,6 +236,20 @@ export class ComateWebSocketServer {
       afterMessageId,
     );
     this.sendOk(ctx.socket, req.id, { messages, tasks, subagents, workflows });
+  }
+
+  private async handleSubscribeGitChanges(ctx: ClientContext, req: WsRequest): Promise<void> {
+    const { workspaceId } = req.payload as unknown as SubscribeGitChangesPayload;
+    await gitChangesService.subscribe(workspaceId, ctx.socket);
+    this.sendOk(ctx.socket, req.id, { subscribed: true });
+  }
+
+  private async handleUnsubscribeGitChanges(ctx: ClientContext, req: WsRequest): Promise<void> {
+    const { workspaceId } = req.payload as unknown as UnsubscribeGitChangesPayload;
+    // Await watcher teardown before acknowledging, so a follow-up subscribe
+    // for the same workspace cannot race the prior closeWatcher().
+    await gitChangesService.unsubscribe(workspaceId, ctx.socket);
+    this.sendOk(ctx.socket, req.id, { unsubscribed: true });
   }
 
   private sendOk(socket: WebSocket, id: string, payload: unknown): void {
