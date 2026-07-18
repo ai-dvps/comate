@@ -1,30 +1,27 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare, CheckSquare, Folder } from 'lucide-react'
+import { MessageSquare, CheckSquare } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { RAIL_WIDTH } from '../hooks/use-sidebar-width'
 import SessionList from './SessionList'
-import FileExplorer from './FileExplorer'
 import TodoList from './TodoList'
 
 interface SidebarProps {
   width: number
   onWidthChange: (width: number) => void
-  onFileClick: (path: string, name: string) => void
-  onFileDoubleClick?: (path: string, name: string) => void
   isCollapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
-type SidebarTab = 'sessions' | 'files' | 'todos'
+type SidebarTab = 'sessions' | 'todos'
 
 export default function Sidebar({
   width,
   onWidthChange,
-  onFileClick,
-  onFileDoubleClick,
   isCollapsed = false,
+  onToggleCollapse,
 }: SidebarProps) {
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<SidebarTab>('sessions')
@@ -81,19 +78,13 @@ export default function Sidebar({
       id: 'sessions',
       label: t('sidebar.sessions'),
       tooltip: t('sidebar.showSessions'),
-      icon: <MessageSquare className="w-5 h-5" />,
+      icon: <MessageSquare className="w-4 h-4" />,
     },
     {
       id: 'todos',
       label: t('sidebar.todos'),
       tooltip: t('sidebar.showTodos'),
-      icon: <CheckSquare className="w-5 h-5" />,
-    },
-    {
-      id: 'files',
-      label: t('sidebar.files'),
-      tooltip: t('sidebar.showFiles'),
-      icon: <Folder className="w-5 h-5" />,
+      icon: <CheckSquare className="w-4 h-4" />,
     },
   ]
 
@@ -107,19 +98,22 @@ export default function Sidebar({
       {isCollapsed ? (
         <>
           {/* Collapsed icon rail */}
-          <div className="flex flex-col items-center py-2 gap-1">
+          <div className="flex flex-col items-center py-1.5 gap-0.5">
             {tabs.map((tab) => (
               <Tooltip key={tab.id}>
                 <TooltipTrigger asChild>
                   <button
                     className={cn(
-                      'p-2 rounded-md transition-colors',
+                      'p-1.5 rounded-md transition-colors',
                       activeTab === tab.id
                         ? 'text-text-primary bg-accent/10'
                         : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
                     )}
                     aria-label={tab.tooltip}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => {
+                      setActiveTab(tab.id)
+                      onToggleCollapse?.()
+                    }}
                   >
                     {tab.icon}
                   </button>
@@ -133,15 +127,15 @@ export default function Sidebar({
       ) : (
         <>
           {/* Tab Switcher */}
-          <div className="flex border-b border-border/50">
+          <div className="flex flex-shrink-0">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 className={cn(
-                  'flex-1 py-3 font-medium text-center transition-all',
+                  'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
                   activeTab === tab.id
-                    ? 'text-text-primary border-b-2 border-accent'
-                    : 'text-text-secondary hover:text-text-primary',
+                    ? 'text-text-primary border-accent'
+                    : 'text-text-secondary hover:text-text-primary border-border/50',
                 )}
                 onClick={() => setActiveTab(tab.id)}
               >
@@ -174,12 +168,6 @@ export default function Sidebar({
                   {t('sidebar.noWorkspace')}
                 </p>
               </div>
-            )}
-            {activeTab === 'files' && (
-              <FileExplorer
-                onFileClick={onFileClick}
-                onFileDoubleClick={onFileDoubleClick}
-              />
             )}
           </div>
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useSidebarWidth } from './use-sidebar-width'
+import { useSidebarWidth, RAIL_WIDTH } from './use-sidebar-width'
 
 const storage = new Map<string, string>()
 
@@ -26,7 +26,7 @@ describe('useSidebarWidth', () => {
     storage.set('sidebar-width', '350')
     const { result } = renderHook(() => useSidebarWidth())
     expect(result.current.isCollapsed).toBe(true)
-    expect(result.current.width).toBe(48)
+    expect(result.current.width).toBe(RAIL_WIDTH)
   })
 
   it('toggles isCollapsed and persists the flag', () => {
@@ -57,7 +57,7 @@ describe('useSidebarWidth', () => {
       result.current.toggleCollapse()
     })
 
-    expect(result.current.width).toBe(48)
+    expect(result.current.width).toBe(RAIL_WIDTH)
     expect(storage.get('sidebar-previous-width')).toBe('400')
 
     act(() => {
@@ -110,13 +110,13 @@ describe('useSidebarWidth', () => {
       result.current.toggleCollapse()
     })
 
-    expect(result.current.width).toBe(48)
+    expect(result.current.width).toBe(RAIL_WIDTH)
 
     act(() => {
       result.current.setWidth(500)
     })
 
-    expect(result.current.width).toBe(48)
+    expect(result.current.width).toBe(RAIL_WIDTH)
     expect(storage.get('sidebar-previous-width')).toBe('500')
 
     act(() => {
