@@ -46,6 +46,11 @@ import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketpla
 import { addExtraKnownMarketplace } from './utils/claude-settings.js';
 import { ComateWebSocketServer } from './websocket/server.js';
 import { gitChangesService } from './services/git-changes-service.js';
+import {
+  createCorsOriginCallback,
+  hostHeaderGuard,
+  stateChangingRequestGuard,
+} from './services/security/request-origin-guard.js';
 
 function getDirname(): string {
   try {
@@ -85,7 +90,17 @@ function ensureComateBuiltInMarketplace(): void {
 
 ensureComateBuiltInMarketplace();
 
-app.use(cors());
+// Remote-surface hardening (plan U9): Host whitelist (anti-DNS-rebinding) →
+// CORS app-origin matrix → state-changing source check. Header-only checks,
+// so they run before body parsing and change no functional semantics.
+// getSelfPort lets the guard allow the sidecar's own origin (statically
+// served UI) once the listener is bound below.
+let boundPort: number | undefined;
+const getSelfPort = (): number | undefined => boundPort;
+
+app.use(hostHeaderGuard());
+app.use(cors({ origin: createCorsOriginCallback({ getSelfPort }) }));
+app.use(stateChangingRequestGuard({ getSelfPort }));
 app.use(express.json());
 
 // API routes
@@ -194,12 +209,13 @@ initializeResolvedShellEnv().catch((err) => {
 const server = app.listen(PORT, () => {
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : PORT;
+  boundPort = Number(actualPort);
   const serverUrl = `http://localhost:${actualPort}`;
   console.log(`Server running on ${serverUrl}`);
   diagLog(`Server started on ${serverUrl} (diag log file: ${path.join(getLogsDir(), 'sse-diag.log')})`);
 
   // Attach WebSocket server to the same HTTP listener.
-  new ComateWebSocketServer().attach(server);
+  new ComateWebSocketServer().attach(server, { getSelfPort });
 
   // Emit ready message for Tauri sidecar discovery when PORT=0
   if (process.env.COMATE_SIDECAR === '1') {
