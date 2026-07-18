@@ -5,72 +5,15 @@ import path from 'path';
 import { promisify } from 'util';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { diagWarn } from '../utils/diag-logger.js';
+import type { GitStatusItem } from '../models/git-changes.js';
+import { runGitStatus, isNotAGitRepoError } from '../services/git-porcelain.js';
 
 const execFileAsync = promisify(execFile);
 
 const router = Router({ mergeParams: true });
 
-export interface GitStatusItem {
-  path: string;
-  indexStatus: string;
-  workingTreeStatus: string;
-  originalPath?: string;
-}
-
 const MAX_DIFF_SIZE = 500 * 1024;
 const MAX_DIFF_LINES = 5000;
-
-function parsePorcelainLine(line: string): GitStatusItem {
-  if (line.length < 4) {
-    return { path: line, indexStatus: '?', workingTreeStatus: '?' };
-  }
-
-  const indexStatus = line[0] ?? '?';
-  const workingTreeStatus = line[1] ?? '?';
-  const rest = line.slice(3);
-
-  if (indexStatus === 'R' || workingTreeStatus === 'R') {
-    const arrowIndex = rest.indexOf(' -> ');
-    if (arrowIndex !== -1) {
-      return {
-        path: rest.slice(arrowIndex + 4),
-        indexStatus,
-        workingTreeStatus,
-        originalPath: rest.slice(0, arrowIndex),
-      };
-    }
-  }
-
-  return { path: rest, indexStatus, workingTreeStatus };
-}
-
-export function parsePorcelainStatus(stdout: string): GitStatusItem[] {
-  return stdout
-    .split('\n')
-    .filter((line) => line.length > 0)
-    .map(parsePorcelainLine);
-}
-
-async function runGitStatus(folderPath: string): Promise<GitStatusItem[]> {
-  try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['status', '--porcelain=v1', '--untracked-files=all'],
-      {
-        cwd: folderPath,
-        timeout: 10000,
-        encoding: 'utf-8',
-      },
-    );
-    return parsePorcelainStatus(stdout);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('not a git repository')) {
-      return [];
-    }
-    throw error;
-  }
-}
 
 async function resolveAndValidatePath(
   workspaceRoot: string,
@@ -159,18 +102,6 @@ function capContent(buffer: Buffer): { content: string; truncated: boolean } {
   return { content: text, truncated };
 }
 
-async function findStatusItem(
-  folderPath: string,
-  relativePath: string,
-): Promise<GitStatusItem | null> {
-  try {
-    const items = await runGitStatus(folderPath);
-    return items.find((item) => item.path === relativePath) ?? null;
-  } catch {
-    return null;
-  }
-}
-
 async function detectBinary(
   folderPath: string,
   relativePath: string,
@@ -211,7 +142,18 @@ router.get('/', async (req, res) => {
       return;
     }
 
-    const items = await runGitStatus(workspace.folderPath);
+    let items: GitStatusItem[];
+    try {
+      items = await runGitStatus(workspace.folderPath);
+    } catch (error) {
+      // A non-git folder is legitimately "no changes"; any other failure
+      // falls through to the 500 handler below.
+      if (isNotAGitRepoError(error)) {
+        items = [];
+      } else {
+        throw error;
+      }
+    }
     res.json({ items });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -244,8 +186,14 @@ router.get('/compare', async (req, res) => {
 
     const staged = req.query.staged === 'true' || req.query.staged === '1';
 
-    const statusItem = await findStatusItem(workspace.folderPath, relativePath);
-    const originalRelativePath = statusItem?.originalPath ?? relativePath;
+    // The client sends the rename source as `originalPath` when present, so
+    // honor it directly instead of spawning a second `git status` to look it
+    // up. Fall back to the requested path when the client has no rename.
+    const originalPathQuery =
+      typeof req.query.originalPath === 'string' && req.query.originalPath.length > 0
+        ? req.query.originalPath
+        : undefined;
+    const originalRelativePath = originalPathQuery ?? relativePath;
 
     const [originalResult, modifiedResult] = await Promise.all([
       execFileAsync('git', ['show', `HEAD:${originalRelativePath}`], {
@@ -307,6 +255,3 @@ router.get('/compare', async (req, res) => {
 });
 
 export default router;
-
-// Exposed for tests that need to validate porcelain parsing without git.
-export { parsePorcelainLine };

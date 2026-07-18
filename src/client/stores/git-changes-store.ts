@@ -74,12 +74,31 @@ function abortInFlightStatus(workspaceId: string): void {
 
 async function sendSubscribe(workspaceId: string): Promise<void> {
   if (wsUnsubscribers.has(workspaceId)) return
+  // Register a placeholder unsubscriber synchronously, BEFORE the await, so a
+  // panel-hide or workspace switch during the in-flight request can still
+  // cancel the pending subscription instead of leaking a server-side watcher.
+  const handle = { cancelled: false }
+  const placeholder = (): void => {
+    handle.cancelled = true
+    wsUnsubscribers.delete(workspaceId)
+    wsClient
+      .request('unsubscribeGitChanges', { workspaceId })
+      .catch(() => {})
+  }
+  wsUnsubscribers.set(workspaceId, placeholder)
   await wsClient
     .request('subscribeGitChanges', { workspaceId })
     .catch((err) => {
       console.error(`Failed to subscribe to git changes for ${workspaceId}:`, err)
     })
+  // Only install the real unsubscriber if our placeholder is still the active
+  // entry. If it was cancelled mid-flight, the placeholder already sent the
+  // unsubscribe; if something else replaced it (e.g. resubscribe), let that
+  // owner stay in charge.
+  if (handle.cancelled) return
+  if (wsUnsubscribers.get(workspaceId) !== placeholder) return
   wsUnsubscribers.set(workspaceId, () => {
+    wsUnsubscribers.delete(workspaceId)
     wsClient
       .request('unsubscribeGitChanges', { workspaceId })
       .catch(() => {})
@@ -150,8 +169,14 @@ async function refreshStatus(workspaceId: string): Promise<void> {
         : i18next.t('gitChanges.refreshError', 'Failed to refresh git changes')
     store._setStatusError(workspaceId, message)
   } finally {
-    store._setStatusLoading(workspaceId, false)
-    abortControllers.delete(workspaceId)
+    // Only clear loading state and the controller entry if this call is still
+    // the active one. A newer refresh may have replaced the controller while
+    // this (aborted) call was awaiting; clobbering its state would orphan the
+    // replacement.
+    if (abortControllers.get(workspaceId) === controller) {
+      store._setStatusLoading(workspaceId, false)
+      abortControllers.delete(workspaceId)
+    }
   }
 }
 

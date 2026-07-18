@@ -41,7 +41,14 @@ export default function RightPanel({
   const [listSidebarWidth, setListSidebarWidth] = useState(LIST_SIDEBAR_WIDTH)
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ move: (e: MouseEvent) => void; up: () => void } | null>(null)
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const hasOpenTabs = openTabs.length > 0
+
+  // Clear the Files-tree selection when the workspace changes so a highlight
+  // from a previous workspace does not linger.
+  useEffect(() => {
+    setSelectedFilePath(null)
+  }, [workspaceId])
 
   const handleFileOpen = useCallback(
     (path: string, name: string) => {
@@ -72,10 +79,6 @@ export default function RightPanel({
     },
     [isCollapsed, setActiveListTab, toggleCollapse],
   )
-
-  const handleListSidebarWidthChange = useCallback((nextWidth: number) => {
-    setListSidebarWidth(Math.max(MIN_LIST_SIDEBAR_WIDTH, Math.min(MAX_LIST_SIDEBAR_WIDTH, nextWidth)))
-  }, [])
 
   const endDrag = useCallback(() => {
     if (!dragRef.current) return
@@ -109,6 +112,36 @@ export default function RightPanel({
       document.addEventListener('mouseup', handleMouseUp)
     },
     [isCollapsed, width, onWidthChange, endDrag],
+  )
+
+  const handleListResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startWidth = listSidebarWidth
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        // The list sidebar sits on the right; dragging its left edge left
+        // widens it. Clamp to the configured min/max range.
+        const delta = startX - moveEvent.clientX
+        const next = Math.max(
+          MIN_LIST_SIDEBAR_WIDTH,
+          Math.min(MAX_LIST_SIDEBAR_WIDTH, startWidth + delta),
+        )
+        setListSidebarWidth(next)
+      }
+
+      const handleMouseUp = () => {
+        endDrag()
+      }
+
+      dragRef.current = { move: handleMouseMove, up: handleMouseUp }
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'col-resize'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+    },
+    [listSidebarWidth, endDrag],
   )
 
   useEffect(() => {
@@ -196,11 +229,18 @@ export default function RightPanel({
       <div
         data-testid="right-panel-list-sidebar"
         className={cn(
-          'flex flex-col h-full flex-shrink-0',
+          'relative flex flex-col h-full flex-shrink-0',
           hasOpenTabs && 'border-l border-border/50',
         )}
         style={{ width: listSidebarWidth }}
       >
+        <div
+          data-testid="right-panel-list-resize-handle"
+          role="separator"
+          aria-label={t('rightPanel.resize')}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
+          onMouseDown={handleListResizeMouseDown}
+        />
         <div
           className="flex flex-shrink-0"
           role="tablist"
@@ -238,16 +278,18 @@ export default function RightPanel({
 
         <div className="flex-1 min-h-0 overflow-hidden">
           {activeListTab === 'files' && (
-            <FileExplorer onFileClick={handleFileOpen} />
-          )}
-          {activeListTab === 'git-changes' && (
-            <GitChangesPanel
-              width={listSidebarWidth}
-              isCollapsed={false}
-              onToggleCollapse={() => {}}
-              onWidthChange={handleListSidebarWidthChange}
+            <FileExplorer
+              onFileClick={handleFileOpen}
+              selectedPath={selectedFilePath ?? undefined}
+              onSelectPath={setSelectedFilePath}
             />
           )}
+          {/* GitChangesPanel stays mounted (CSS-toggled) for the lifetime of
+              the expanded right panel, so toggling the Files/Git-Changes tab
+              no longer tears down and recreates the git watcher. */}
+          <div className={cn('h-full', activeListTab !== 'git-changes' && 'hidden')}>
+            <GitChangesPanel />
+          </div>
         </div>
       </div>
 

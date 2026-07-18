@@ -246,7 +246,9 @@ export class ComateWebSocketServer {
 
   private async handleUnsubscribeGitChanges(ctx: ClientContext, req: WsRequest): Promise<void> {
     const { workspaceId } = req.payload as unknown as UnsubscribeGitChangesPayload;
-    gitChangesService.unsubscribe(workspaceId, ctx.socket);
+    // Await watcher teardown before acknowledging, so a follow-up subscribe
+    // for the same workspace cannot race the prior closeWatcher().
+    await gitChangesService.unsubscribe(workspaceId, ctx.socket);
     this.sendOk(ctx.socket, req.id, { unsubscribed: true });
   }
 

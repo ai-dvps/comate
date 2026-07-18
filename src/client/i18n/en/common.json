@@ -125,6 +125,8 @@
     "statusDeleted": "Deleted",
     "statusRenamed": "Renamed",
     "statusUntracked": "Untracked",
+    "staged": "staged",
+    "workingTree": "working",
     "binaryPlaceholder": "Binary file changes cannot be shown",
     "truncatedPlaceholder": "Diff too large — showing first part",
     "deletedFileHeader": "File deleted",
