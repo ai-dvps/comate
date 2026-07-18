@@ -62,7 +62,7 @@
     "@codemirror/lang-yaml": "^6.1.1",
     "@webank/wecom": "workspace:*",
     "@wecom/aibot-node-sdk": "^1.0.7",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.0",
     "ai": "^6.0.208",
     "better-sqlite3": "^12.10.0",
     "chat": "^4.31.0",
