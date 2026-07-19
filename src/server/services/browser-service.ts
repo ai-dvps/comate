@@ -1,4 +1,5 @@
 import path from 'path';
+import { randomBytes } from 'crypto';
 import { rm } from 'fs/promises';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { getStorageDir } from '../storage/data-dir.js';
@@ -112,6 +113,15 @@ interface RegistryEntry {
   /** Set when teardown is in flight so an exit is not treated as a crash. */
   expectingExit: boolean;
   startedAt: number;
+  /**
+   * Per-session viewer credential (KTD-7), minted once per registry entry and
+   * handed to Steel as a DOMAIN path prefix at spawn — the pinned viewer HTML
+   * then bakes its cast WebSocket URL under `…/s/<token>/`, so the viewer
+   * proxy (U7) can authenticate HTTP and WS with the same path-carried token.
+   * Survives crash rebuilds (the entry persists across session_lost); dies
+   * with the entry on teardown.
+   */
+  viewerToken: string;
 }
 
 export interface BrowserServiceDeps {
@@ -124,15 +134,30 @@ export interface BrowserServiceDeps {
   createProcess: (options: SteelProcessOptions) => SteelProcessHandle;
   cleanupStale: (runDir: string) => Promise<StaleCleanupReport>;
   now: () => number;
+  /**
+   * U7 viewer proxy wiring: maps a session's viewer token to the DOMAIN value
+   * baked into its Steel child env (`127.0.0.1:<proxyPort>/s/<token>`). Steel
+   * builds the viewer's absolute cast wsUrl from DOMAIN, so the viewer only
+   * ever talks to the proxy, with the token carried in the path. Unset in
+   * tests without a proxy — Steel then points the viewer at its own port.
+   */
+  viewerDomain?: (token: string) => string | undefined;
 }
 
 function sanitizeSessionId(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+/** 192 bits of CSPRNG entropy, base64url — unguessable per-session viewer credential. */
+export function mintViewerToken(): string {
+  return randomBytes(24).toString('base64url');
+}
+
 export class BrowserService {
   private readonly deps: BrowserServiceDeps;
   private readonly registry = new Map<string, RegistryEntry>();
+  /** token → sessionId for O(1) proxy lookups (kept in step with registry). */
+  private readonly tokenIndex = new Map<string, string>();
   private readonly listeners = new Set<BrowserEventListener>();
   private readonly releasers = new Set<PendingCardReleaser>();
   /** Ports reserved by live, starting, or not-yet-reaped processes. */
@@ -210,6 +235,35 @@ export class BrowserService {
     return this.toInfo(entry);
   }
 
+  /** The session's viewer credential (KTD-7); undefined when the session is unknown. */
+  getViewerToken(sessionId: string): string | undefined {
+    return this.registry.get(sessionId)?.viewerToken;
+  }
+
+  /**
+   * Reverse lookup for the viewer proxy: resolves a token to its session.
+   * `info` is undefined when the token is valid but the Steel process is not
+   * live (starting, session_lost) — the proxy answers an explicit 503 there,
+   * vs a generic 403 for unknown tokens.
+   */
+  findSessionByViewerToken(
+    token: string,
+  ): { sessionId: string; info: BrowserSessionInfo | undefined } | undefined {
+    const sessionId = this.tokenIndex.get(token);
+    if (!sessionId) return undefined;
+    const entry = this.registry.get(sessionId);
+    if (!entry || entry.viewerToken !== token) return undefined;
+    return { sessionId, info: entry.handle ? this.toInfo(entry) : undefined };
+  }
+
+  /**
+   * Post-construction wiring for the U7 viewer proxy (the proxy's port only
+   * exists once it starts, which happens after this service is constructed).
+   */
+  setViewerDomainProvider(provider: ((token: string) => string | undefined) | undefined): void {
+    this.deps.viewerDomain = provider;
+  }
+
   getControlState(sessionId: string): BrowserControlState | undefined {
     return this.registry.get(sessionId)?.state;
   }
@@ -265,7 +319,9 @@ export class BrowserService {
       // session_lost — fall through to a respawn.
     }
 
-    const starting = this.spawnForSession(sessionId, workspaceId, existing);
+    // Mint (or reuse, on crash rebuild) the per-session viewer token (KTD-7).
+    const viewerToken = existing?.viewerToken ?? mintViewerToken();
+    const starting = this.spawnForSession(sessionId, workspaceId, existing, viewerToken);
     const entry: RegistryEntry = existing ?? {
       sessionId,
       workspaceId,
@@ -274,10 +330,12 @@ export class BrowserService {
       starting: null,
       expectingExit: false,
       startedAt: 0,
+      viewerToken,
     };
     entry.starting = starting;
     if (!existing) {
       this.registry.set(sessionId, entry);
+      this.tokenIndex.set(viewerToken, sessionId);
     }
     try {
       return await starting;
@@ -286,6 +344,7 @@ export class BrowserService {
       // pre-existing entry in session_lost so the next call can retry.
       if (!existing && this.registry.get(sessionId)?.starting === starting) {
         this.registry.delete(sessionId);
+        this.tokenIndex.delete(viewerToken);
       }
       throw err;
     } finally {
@@ -300,6 +359,7 @@ export class BrowserService {
     const entry = this.registry.get(sessionId);
     if (!entry) return;
     this.registry.delete(sessionId);
+    this.tokenIndex.delete(entry.viewerToken);
     entry.expectingExit = true;
     await this.stopEntry(entry, { wipeProfile: true });
     this.emit({
@@ -331,6 +391,7 @@ export class BrowserService {
   async shutdown(): Promise<void> {
     const entries = [...this.registry.values()];
     this.registry.clear();
+    this.tokenIndex.clear();
     for (const entry of entries) {
       entry.expectingExit = true;
     }
@@ -349,6 +410,7 @@ export class BrowserService {
     sessionId: string,
     workspaceId: string,
     entry: RegistryEntry | undefined,
+    viewerToken: string,
   ): Promise<BrowserSessionInfo> {
     // Chromium resolution may download (~100MB) and must not serialize other
     // spawns; the port allocation + spawn critical section below is the only
@@ -377,7 +439,7 @@ export class BrowserService {
     // Critical section: cap re-check + port reservation + child creation. The
     // reserved port stays in portsInUse until the process stops, so concurrent
     // spawns can never double-allocate (KTD-1 dynamic ports).
-    const handle = await this.enqueueSpawn(sessionId, workspaceId, chromiumPath);
+    const handle = await this.enqueueSpawn(sessionId, workspaceId, chromiumPath, viewerToken);
 
     try {
       await handle.start();
@@ -429,6 +491,7 @@ export class BrowserService {
     sessionId: string,
     workspaceId: string,
     chromiumPath: string,
+    viewerToken: string,
   ): Promise<SteelProcessHandle> {
     const task = this.spawnQueue.then(async () => {
       // Count OTHER sessions holding or building a process; this session's own
@@ -451,12 +514,16 @@ export class BrowserService {
       const port = await this.allocateFreePort();
       this.portsInUse.add(port);
       const safeId = sanitizeSessionId(sessionId);
+      // U7: point Steel's absolute viewer URLs (cast wsUrl) at the viewer
+      // proxy with the session token as path prefix (KTD-7).
+      const viewerDomain = this.deps.viewerDomain?.(viewerToken);
       return this.deps.createProcess({
         sessionId,
         port,
         userDataDir: path.join(this.profilesDir(), safeId),
         chromiumPath,
         pidfilePath: path.join(this.runDir(), `${safeId}.json`),
+        env: viewerDomain ? { DOMAIN: viewerDomain } : undefined,
       });
     });
     // Keep the queue alive across failures.
