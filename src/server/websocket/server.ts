@@ -4,6 +4,7 @@ import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
 import { gitChangesService } from '../services/git-changes-service.js';
 import { browserControlService } from '../services/browser-control.js';
+import { browserService } from '../services/browser-service.js';
 import { browserStateChannel } from './browser-state-channel.js';
 import {
   createWsUpgradeVerifier,
@@ -127,7 +128,7 @@ export class ComateWebSocketServer {
           this.handleBrowserTakeover(ctx, req);
           break;
         case 'browserHandback':
-          this.handleBrowserHandback(ctx, req);
+          await this.handleBrowserHandback(ctx, req);
           break;
         case 'browserActivityPing':
           this.handleBrowserActivityPing(ctx, req);
@@ -325,10 +326,27 @@ export class ComateWebSocketServer {
     this.sendOk(ctx.socket, req.id, { takenOver: true });
   }
 
-  private handleBrowserHandback(ctx: ClientContext, req: WsRequest): void {
-    const { sessionId } = req.payload as unknown as BrowserHandbackPayload;
+  private async handleBrowserHandback(ctx: ClientContext, req: WsRequest): Promise<void> {
+    const { sessionId, rememberSite } = req.payload as unknown as BrowserHandbackPayload;
     if (!sessionId) {
       throw new Error('browserHandback requires sessionId');
+    }
+    // "记住此站点" (U8): export the current site's login state BEFORE the
+    // handback flips control — the page still belongs to the user, so the
+    // export can never interleave with an agent action. A failed remember
+    // never blocks the handback (control return is the primary verb); the
+    // failure rides the response for the state bar to surface.
+    let siteAuth: { saved: boolean; key?: string; error?: string } | undefined;
+    if (rememberSite) {
+      try {
+        const result = await browserService.rememberCurrentSite(sessionId);
+        siteAuth = { saved: true, key: result.key };
+      } catch (err) {
+        siteAuth = {
+          saved: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
     const result = browserControlService.handback(sessionId);
     if (!result.ok) {
@@ -338,7 +356,7 @@ export class ComateWebSocketServer {
       });
       return;
     }
-    this.sendOk(ctx.socket, req.id, { handedBack: true });
+    this.sendOk(ctx.socket, req.id, { handedBack: true, ...(siteAuth !== undefined && { siteAuth }) });
   }
 
   private handleBrowserActivityPing(ctx: ClientContext, req: WsRequest): void {

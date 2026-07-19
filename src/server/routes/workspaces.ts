@@ -5,17 +5,33 @@ import { wecomUserResolver } from '../services/wecom-user-resolver.js';
 import { chatService } from '../services/chat-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { botService } from '../services/bot-service.js';
-import type { CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
+import { browserService } from '../services/browser-service.js';
+import { browserAuditService } from '../services/browser-audit.js';
+import {
+  mergeSiteAuthForUpdate,
+  stripSiteAuthValues,
+} from '../services/browser-site-auth.js';
+import type { CreateWorkspaceInput, UpdateWorkspaceInput, Workspace } from '../models/workspace.js';
 
 import { redactChannelSettings, mapBotError } from '../routes/bots.js';
 
 const router = Router();
 
+/**
+ * Value-only-in discipline (KTD-8): browserSiteAuth session contexts are
+ * live replayable tokens — responses carry keys + metadata only. Applies to
+ * every workspace-bearing response (list/get/update/create).
+ */
+function stripWorkspaceForResponse(workspace: Workspace): Workspace {
+  if (!workspace.settings?.browserSiteAuth) return workspace;
+  return { ...workspace, settings: stripSiteAuthValues(workspace.settings) };
+}
+
 // GET /api/workspaces
 router.get('/', async (_req, res) => {
   try {
     const workspaces = await store.list();
-    res.json({ workspaces });
+    res.json({ workspaces: workspaces.map(stripWorkspaceForResponse) });
   } catch (error) {
     console.error('Failed to list workspaces:', error);
     res.status(500).json({ error: 'Failed to list workspaces' });
@@ -33,7 +49,7 @@ router.post('/', async (req, res) => {
     }
 
     const workspace = await store.create(input);
-    res.status(201).json({ workspace });
+    res.status(201).json({ workspace: stripWorkspaceForResponse(workspace) });
   } catch (error) {
     console.error('Failed to create workspace:', error);
     res.status(500).json({ error: 'Failed to create workspace' });
@@ -48,7 +64,7 @@ router.get('/:id', async (req, res) => {
       res.status(404).json({ error: 'Workspace not found' });
       return;
     }
-    res.json({ workspace });
+    res.json({ workspace: stripWorkspaceForResponse(workspace) });
   } catch (error) {
     console.error('Failed to get workspace:', error);
     res.status(500).json({ error: 'Failed to get workspace' });
@@ -83,7 +99,7 @@ router.post('/:id/open', async (req, res) => {
       res.status(404).json({ error: 'Workspace not found' });
       return;
     }
-    res.json({ workspace });
+    res.json({ workspace: stripWorkspaceForResponse(workspace) });
   } catch (error) {
     console.error('Failed to record workspace last opened:', error);
     res.status(500).json({ error: 'Failed to record workspace last opened' });
@@ -94,6 +110,19 @@ router.post('/:id/open', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const input = req.body as UpdateWorkspaceInput;
+
+    // Field-level merge (KTD-8): a whole-bag settings save must neither
+    // clobber a concurrent remember-site write nor carry client-supplied
+    // browserSiteAuth values. When the client sends settings, the stored
+    // site-auth values are preserved (incoming key set prunes, if provided).
+    if (input.settings !== undefined) {
+      const existing = await store.get(req.params.id);
+      if (!existing) {
+        res.status(404).json({ error: 'Workspace not found' });
+        return;
+      }
+      input.settings = mergeSiteAuthForUpdate(existing.settings ?? {}, input.settings);
+    }
 
     const workspace = await store.update(req.params.id, input);
     if (!workspace) {
@@ -109,7 +138,7 @@ router.put('/:id', async (req, res) => {
       chatService.scheduleRebuildsForWorkspaceLegacyPolicy(req.params.id);
     }
 
-    res.json({ workspace });
+    res.json({ workspace: stripWorkspaceForResponse(workspace) });
   } catch (error) {
     console.error('Failed to update workspace:', error);
     res.status(500).json({ error: 'Failed to update workspace' });
@@ -161,6 +190,11 @@ router.delete('/:id', async (req, res) => {
     // answering inbound messages against a workspace whose settings row is gone.
     await chatService.closeRuntimesForWorkspace(req.params.id);
 
+    // Workspace-delete cascade (KTD-8): browser processes die with the
+    // workspace. The browserSiteAuth field dies with the settings row and
+    // browser_audit rows are deleted inside store.delete().
+    await browserService.teardownWorkspace(req.params.id);
+
     // Disconnect any Feishu bots bound to the deleted workspace.
     for (const bot of botService.listBotsForWorkspace(req.params.id)) {
       feishuBotService.disconnectBot(bot.id);
@@ -170,6 +204,35 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     console.error('Failed to delete workspace:', error);
     res.status(500).json({ error: 'Failed to delete workspace' });
+  }
+});
+
+// DELETE /api/workspaces/:id/browser-site-auth/:siteKey
+// Revoke one remembered site (settings page management list). The stored
+// session context is destroyed; future sessions stop being injected.
+router.delete('/:id/browser-site-auth/:siteKey', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const siteKey = req.params.siteKey;
+    const removed = store.deleteWorkspaceSiteAuthEntry(req.params.id, siteKey);
+    if (!removed) {
+      res.status(404).json({ error: 'Remembered site not found' });
+      return;
+    }
+    browserAuditService.logSiteAuth({
+      workspaceId: req.params.id,
+      siteKey,
+      action: 'revoke',
+      outcome: 'ok',
+    });
+    res.status(204).send();
+  } catch (error) {
+    console.error('Failed to revoke remembered site:', error);
+    res.status(500).json({ error: 'Failed to revoke remembered site' });
   }
 });
 

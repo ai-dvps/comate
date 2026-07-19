@@ -48,6 +48,12 @@ export interface SessionBrowserState {
   verbError: string | null
   /** Bump to force the iframe to reload (manual retry). */
   viewerNonce: number
+  /**
+   * "记住此站点" checkbox (U8): rides along with the next handback — the
+   * server then exports the current site's login state into the workspace's
+   * value-only-in store. Resets on every real state transition.
+   */
+  rememberSite: boolean
 }
 
 export interface BrowserPaneState {
@@ -68,6 +74,8 @@ export interface BrowserPaneState {
 
   takeover: (sessionId: string) => Promise<void>
   handback: (sessionId: string) => Promise<void>
+  /** Toggle the "记住此站点" checkbox (user_in_control only). */
+  setRememberSite: (sessionId: string, remember: boolean) => void
   recordActivity: (sessionId: string) => void
   /** session_lost manual retry: refetch the URL and reload when live again. */
   retryViewer: (sessionId: string) => Promise<void>
@@ -159,6 +167,7 @@ export function initialSessionBrowserState(): SessionBrowserState {
     pendingVerb: null,
     verbError: null,
     viewerNonce: 0,
+    rememberSite: false,
   }
 }
 
@@ -247,9 +256,23 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     if (current.pendingVerb) return
     patchSession(sessionId, { pendingVerb: verb, verbError: null })
     try {
-      await wsClient.request(verb === 'takeover' ? 'browserTakeover' : 'browserHandback', {
+      // "记住此站点" (U8): the checkbox state rides the handback verb; the
+      // response reports whether the login state was actually remembered.
+      const rememberSite = verb === 'handback' ? current.rememberSite : undefined
+      const response = (await wsClient.request(verb === 'takeover' ? 'browserTakeover' : 'browserHandback', {
         sessionId,
-      })
+        ...(rememberSite ? { rememberSite: true } : {}),
+      })) as { siteAuth?: { saved: boolean; key?: string; error?: string } } | undefined
+      if (verb === 'handback' && rememberSite) {
+        if (response?.siteAuth?.saved === false) {
+          patchSession(sessionId, {
+            rememberSite: false,
+            verbError: response.siteAuth.error ?? null,
+          })
+        } else {
+          patchSession(sessionId, { rememberSite: false })
+        }
+      }
       // Synchronous flips (F3 takeover, F3 handback) already arrived over the
       // channel — it emits before the verb response — so pendingVerb is only
       // still set when the flip is genuinely pending: the handoff grant /
@@ -315,6 +338,13 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     takeover: (sessionId: string) => runVerb(sessionId, 'takeover'),
     handback: (sessionId: string) => runVerb(sessionId, 'handback'),
 
+    setRememberSite: (sessionId: string, remember: boolean) => {
+      const session = getSessionState(get(), sessionId)
+      // The checkbox only exists against the live user-driven page.
+      if (session.controlState !== 'user_in_control') return
+      patchSession(sessionId, { rememberSite: remember })
+    },
+
     recordActivity: (sessionId: string) => {
       const session = getSessionState(get(), sessionId)
       if (!isLiveControlState(session.controlState)) return
@@ -373,6 +403,10 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
         pendingVerb: null,
         verbError: null,
         unavailable: null,
+        // The remember-site checkbox only makes sense against the live
+        // user_in_control page; a transition (handback, timeout, crash)
+        // always clears it.
+        rememberSite: false,
         ...(isLiveControlState(next) ? {} : { viewerUrl: null }),
       })
       // handoff → header badge + auto-expand (R1/R5).

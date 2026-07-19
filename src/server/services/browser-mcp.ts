@@ -41,6 +41,8 @@ import {
   clearSubmitSemanticsRefs,
   setSubmitSemanticsRefs,
 } from './browser-gate-state.js';
+import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
+import { buildStorageInitScript } from './browser-site-auth.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
 // tests) keep working; the canonical home is browser-tool-names.ts (U4) so
@@ -130,6 +132,8 @@ export interface BrowserMcpDeps {
   approvalRequester?: BrowserApprovalRequester;
   /** CDP dial-out (tests inject a fake page). */
   connectPage?: (baseUrl: string) => Promise<SteelCdpSession>;
+  /** Audit sink (U8); defaults to the process singleton. */
+  audit?: Pick<BrowserAuditService, 'logToolAction'>;
   /**
    * Shared page-connection registry keyed by chat sessionId. Runtime rebuilds
    * mint a fresh MCP server instance (and BrowserToolContext) for the same
@@ -351,6 +355,7 @@ export class BrowserToolContext {
   private readonly connectPage: (baseUrl: string) => Promise<SteelCdpSession>;
   private readonly pageRegistry: Map<string, Promise<SteelCdpSession>>;
   private readonly settleMs: number;
+  private readonly audit: Pick<BrowserAuditService, 'logToolAction'>;
 
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
@@ -358,6 +363,7 @@ export class BrowserToolContext {
     this.connectPage = deps.connectPage ?? connectSteelPage;
     this.pageRegistry = deps.pageRegistry ?? defaultPageRegistry;
     this.settleMs = deps.settleMs ?? 300;
+    this.audit = deps.audit ?? browserAuditService;
   }
 
   private async ensurePage(): Promise<SteelCdpSession> {
@@ -504,12 +510,55 @@ export class BrowserToolContext {
     }
     try {
       const page = await this.ensurePage();
+      // Remembered-site injection (U8, KTD-8): exactly once per Steel
+      // process, on the first open() whose site key has a stored context —
+      // BEFORE the first navigation so the initial request already carries
+      // the cookies. Adaptation note: the plan called for Steel's
+      // POST /v1/sessions sessionContext path, but the vendored build's
+      // isSimilarConfig (deviceConfig/timezone equality) can answer a full
+      // browser RELAUNCH mid-flow, killing this page session; the same
+      // effect is achieved over our own CDP channel (Network.setCookies +
+      // addScriptToEvaluateOnNewDocument), with zero Steel session mutation.
+      const injection = await this.svc.prepareSiteAuthInjection(
+        this.deps.sessionId,
+        parsed.toString(),
+      );
+      if (injection) {
+        await this.injectSiteContext(page, injection.context);
+      }
       await page.navigate(parsed.toString());
       const model = await this.distill(page);
       diagLog(`[browser-mcp] open session=${this.deps.sessionId} url=${model.url}`);
+      this.audit.logToolAction({
+        workspaceId: this.deps.workspaceId,
+        sessionId: this.deps.sessionId,
+        toolName: `${BROWSER_TOOL_PREFIX}open`,
+        url: model.url,
+        outcome: 'ok',
+      });
       return toolJson({ ok: true, model });
     } catch (err) {
       return this.toErrorResult(err, 'navigate');
+    }
+  }
+
+  /**
+   * Replay a remembered context into the fresh browser (U8): cookies via
+   * Network.setCookies (first request carries them), web storage via an
+   * init script keyed by page hostname — registered before navigation, so it
+   * lands before any page script can read the stores (Steel's own
+   * framenavigated injection races page scripts; this does not).
+   */
+  private async injectSiteContext(
+    page: SteelCdpSession,
+    context: { cookies: Array<Record<string, unknown>>; localStorage?: Record<string, Record<string, string>>; sessionStorage?: Record<string, Record<string, string>> },
+  ): Promise<void> {
+    if (context.cookies.length > 0) {
+      await page.setCookies(context.cookies);
+    }
+    const initScript = buildStorageInitScript(context);
+    if (initScript) {
+      await page.evaluateOnNewDocument(initScript);
     }
   }
 
@@ -525,6 +574,16 @@ export class BrowserToolContext {
         if (gate) return gate;
         const data = await page.captureScreenshot();
         content.push({ type: 'image', data, mimeType: 'image/jpeg' });
+        // Image exfil point toward the model — the FACT is audited; the
+        // image bytes never touch the audit table (KTD-9).
+        this.audit.logToolAction({
+          workspaceId: this.deps.workspaceId,
+          sessionId: this.deps.sessionId,
+          toolName: `${BROWSER_TOOL_PREFIX}snapshot`,
+          url: model.url,
+          outcome: 'ok',
+          detail: 'screenshot',
+        });
       }
       content.push({ type: 'text', text: JSON.stringify({ ok: true, model }) });
       return { content };
@@ -610,6 +669,22 @@ export class BrowserToolContext {
       const model = await this.distill(page);
       const delta = diffPageModels(prevModel, model);
       diagLog(`[browser-mcp] act session=${this.deps.sessionId} ref=${args.ref} action=${args.action}`);
+      // RISK-1: a click that cannot be proven harmless (not submit-semantics,
+      // so no confirmation gate) followed by a navigation is flagged as a
+      // POTENTIAL submit — the navigation is the observable proxy; a POST
+      // without navigation (fetch/XHR) remains unobservable and is the
+      // documented residual.
+      this.audit.logToolAction({
+        workspaceId: this.deps.workspaceId,
+        sessionId: this.deps.sessionId,
+        toolName: `${BROWSER_TOOL_PREFIX}act`,
+        url: model.url,
+        fieldNames: [entry.name],
+        outcome: 'ok',
+        potentialSubmit:
+          args.action === 'click' && !entry.submitSemantics && prevModel?.url !== model.url,
+        detail: `action=${args.action}`,
+      });
       return toolJson({ ok: true, ref: args.ref, action: args.action, delta, model });
     } catch (err) {
       return this.toErrorResult(err, 'dispatch');
@@ -737,6 +812,15 @@ export class BrowserToolContext {
         if (!isApprovalDecision(decision)) return decision;
         if (decision.behavior !== 'allow') {
           diagLog(`[browser-mcp] submit denied session=${this.deps.sessionId} form=${formName}`);
+          this.audit.logToolAction({
+            workspaceId: this.deps.workspaceId,
+            sessionId: this.deps.sessionId,
+            toolName: `${BROWSER_TOOL_PREFIX}submit`,
+            url: String(payload.actionOrigin ?? ''),
+            fieldNames: approvedSnapshot.fields.map((field) => field.name),
+            outcome: 'denied',
+            detail: `form=${formName}`,
+          });
           return toolJson({
             submitted: false,
             reason: 'user_denied',
@@ -811,6 +895,15 @@ export class BrowserToolContext {
       const model = await this.distill(page);
       const delta = diffPageModels(prevModel, model);
       diagLog(`[browser-mcp] submit session=${this.deps.sessionId} form=${formName} action=${approvedSnapshot.action}`);
+      this.audit.logToolAction({
+        workspaceId: this.deps.workspaceId,
+        sessionId: this.deps.sessionId,
+        toolName: `${BROWSER_TOOL_PREFIX}submit`,
+        url: approvedSnapshot.action,
+        fieldNames: approvedSnapshot.fields.map((field) => field.name),
+        outcome: 'ok',
+        detail: `form=${formName} method=${approvedSnapshot.method.toUpperCase()}`,
+      });
       return toolJson({
         submitted: true,
         form: formName,
@@ -907,6 +1000,14 @@ export class BrowserToolContext {
       }
 
       diagLog(`[browser-mcp] extract session=${this.deps.sessionId} fields=${extracted.length}`);
+      this.audit.logToolAction({
+        workspaceId: this.deps.workspaceId,
+        sessionId: this.deps.sessionId,
+        toolName: `${BROWSER_TOOL_PREFIX}extract`,
+        url: model.url,
+        fieldNames: extracted,
+        outcome: 'ok',
+      });
       return toolJson({
         ok: true,
         data,

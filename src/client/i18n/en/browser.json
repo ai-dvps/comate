@@ -32,7 +32,9 @@
     "popout": "Pop out",
     "closePopout": "Back to panel",
     "clickToDrive": "Click the view to control it",
-    "captureReleased": "Input capture released"
+    "captureReleased": "Input capture released",
+    "rememberSite": "Remember this site",
+    "rememberSiteHint": "Keep the login for this site in this workspace. New chat sessions will be signed in automatically. Manage remembered sites in Settings → Security."
   },
   "popout": {
     "title": "Browser — floating window"

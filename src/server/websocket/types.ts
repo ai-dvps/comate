@@ -123,6 +123,12 @@ export interface BrowserTakeoverPayload {
 /** Hand control back to the agent (继续). */
 export interface BrowserHandbackPayload {
   sessionId: string
+  /**
+   * "记住此站点" (U8): the state bar's checkbox rides along with the
+   * handback — the server exports the current site's login state into the
+   * workspace's value-only-in store before handing control back.
+   */
+  rememberSite?: boolean
 }
 
 /**

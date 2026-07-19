@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, copyFil
 import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput } from '../models/workspace.js';
+import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput, BrowserSiteAuthEntry } from '../models/workspace.js';
 import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type {
   Bot,
@@ -216,6 +216,31 @@ export class SqliteStore {
         created_at TEXT NOT NULL
       )
     `);
+    // browser_audit (U8, KTD-9): positive-shape action audit for the embedded
+    // browser. Field-level contract — tool names / categories / URL origins /
+    // field NAMES only; field values and images are never persisted (the
+    // bot-audit ">32 chars" redaction heuristic would mangle URLs, so this
+    // table's contract is structural: there is no values column at all).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS browser_audit (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        session_id TEXT,
+        category TEXT NOT NULL,
+        action TEXT NOT NULL,
+        origin TEXT,
+        site_key TEXT,
+        field_names TEXT NOT NULL DEFAULT '[]',
+        outcome TEXT NOT NULL,
+        potential_submit INTEGER NOT NULL DEFAULT 0,
+        detail TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_browser_audit_workspace_created
+        ON browser_audit (workspace_id, created_at DESC)
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -334,6 +359,25 @@ export class SqliteStore {
     this.migrateBotSettingsColumn();
     this.migrateBotMembersChannelColumns();
     this.migrateToUnifiedSchema();
+    this.migrateBrowserAuditSchema();
+  }
+
+  /**
+   * Schema version 6 (U8): the browser_audit table. The CREATE TABLE above is
+   * idempotent and covers both fresh and existing databases; this step only
+   * records the version bump so the schema lineage is inspectable. The prior
+   * migration's diagnostic snapshot is preserved (merged, not replaced).
+   */
+  private migrateBrowserAuditSchema(): void {
+    const version = this.getMigrationVersion();
+    if (version !== null && version >= 6) {
+      return;
+    }
+    const previous = this.getMigrationState().snapshot;
+    this.setMigrationState(6, new Date().toISOString(), {
+      ...previous,
+      browser_audit_schema: true,
+    });
   }
 
   getAnalyticsCache(): AnalyticsCache {
@@ -1367,6 +1411,73 @@ export class SqliteStore {
     return this.get(id);
   }
 
+  // -------------------------------------------------------------------------
+  // browserSiteAuth field-level mutators (U8, KTD-8). better-sqlite3 is
+  // synchronous, so each method's read-modify-write is a single critical
+  // section — a remember-site write can never interleave with another
+  // site-auth write, and the PUT route's field-level merge covers the
+  // whole-bag settings replace (settings page save) racing these writers.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Set (insert or replace) one remembered-site entry. Returns the updated
+   * workspace, or null when the workspace does not exist.
+   */
+  setWorkspaceSiteAuthEntry(
+    id: string,
+    key: string,
+    entry: BrowserSiteAuthEntry,
+  ): Workspace | null {
+    return this.mutateWorkspaceSiteAuth(id, (siteAuth) => {
+      siteAuth[key] = entry;
+      return siteAuth;
+    });
+  }
+
+  /**
+   * Delete one remembered-site entry. Returns false when the workspace or the
+   * key does not exist (so the revoke route can answer 404 honestly).
+   */
+  deleteWorkspaceSiteAuthEntry(id: string, key: string): boolean {
+    let existed = false;
+    this.mutateWorkspaceSiteAuth(id, (siteAuth) => {
+      if (key in siteAuth) {
+        existed = true;
+        delete siteAuth[key];
+      }
+      return siteAuth;
+    });
+    return existed;
+  }
+
+  /**
+   * Synchronous RMW of JUST the browserSiteAuth field: the stored settings
+   * bag is read, the field replaced by `mutate`'s return, and the row
+   * rewritten — all inside one synchronous critical section. Other settings
+   * fields pass through untouched (a concurrent whole-bag PUT is handled by
+   * the route-level merge, which preserves this field from storage).
+   */
+  private mutateWorkspaceSiteAuth(
+    id: string,
+    mutate: (siteAuth: Record<string, BrowserSiteAuthEntry>) => Record<string, BrowserSiteAuthEntry>,
+  ): Workspace | null {
+    const row = this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as
+      | RawWorkspaceRow
+      | undefined;
+    if (!row) return null;
+    const workspace = parseRow(row);
+    const settings = { ...workspace.settings };
+    const current = (settings.browserSiteAuth ?? {}) as Record<string, BrowserSiteAuthEntry>;
+    settings.browserSiteAuth = mutate({ ...current });
+    const updatedAt = new Date().toISOString();
+    this.db.prepare('UPDATE workspaces SET settings = ?, updatedAt = ? WHERE id = ?').run(
+      JSON.stringify(settings),
+      updatedAt,
+      id,
+    );
+    return { ...workspace, settings, updatedAt };
+  }
+
   async delete(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
     if (result.changes > 0) {
@@ -1379,6 +1490,7 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_media_cache WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
+      this.db.prepare('DELETE FROM browser_audit WHERE workspace_id = ?').run(id);
       this.getAnalyticsCache().clearByWorkspace(id);
     }
     return result.changes > 0;
@@ -2354,6 +2466,72 @@ export class SqliteStore {
     return rows.map(parseAuditLogRow);
   }
 
+  // -------------------------------------------------------------------------
+  // browser_audit (U8, KTD-9) — positive-shape action audit. There is no
+  // values/images column BY DESIGN: field values and screenshots never reach
+  // this table (structural contract, not redaction-after-the-fact).
+  // -------------------------------------------------------------------------
+
+  recordBrowserAudit(input: CreateBrowserAuditInput): BrowserAuditEntry {
+    const entry: BrowserAuditEntry = {
+      id: uuidv4(),
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId ?? null,
+      category: input.category,
+      action: input.action,
+      origin: input.origin ?? null,
+      siteKey: input.siteKey ?? null,
+      fieldNames: input.fieldNames ?? [],
+      outcome: input.outcome,
+      potentialSubmit: input.potentialSubmit ?? false,
+      detail: input.detail ?? null,
+      createdAt: new Date().toISOString(),
+    };
+    this.db.prepare(`
+      INSERT INTO browser_audit
+        (id, workspace_id, session_id, category, action, origin, site_key, field_names, outcome, potential_submit, detail, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.id,
+      entry.workspaceId,
+      entry.sessionId,
+      entry.category,
+      entry.action,
+      entry.origin,
+      entry.siteKey,
+      JSON.stringify(entry.fieldNames),
+      entry.outcome,
+      entry.potentialSubmit ? 1 : 0,
+      entry.detail,
+      entry.createdAt,
+    );
+    return entry;
+  }
+
+  listBrowserAudit(
+    workspaceId: string,
+    options: { sessionId?: string; limit?: number } = {},
+  ): BrowserAuditEntry[] {
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+    const rows = (
+      options.sessionId
+        ? this.db
+            .prepare(
+              'SELECT * FROM browser_audit WHERE workspace_id = ? AND session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?',
+            )
+            .all(workspaceId, options.sessionId, limit)
+        : this.db
+            .prepare('SELECT * FROM browser_audit WHERE workspace_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?')
+            .all(workspaceId, limit)
+    ) as RawBrowserAuditRow[];
+    return rows.map(parseBrowserAuditRow);
+  }
+
+  /** Workspace-delete cascade (KTD-8): audit rows die with the workspace. */
+  deleteBrowserAuditForWorkspace(workspaceId: string): number {
+    return this.db.prepare('DELETE FROM browser_audit WHERE workspace_id = ?').run(workspaceId).changes;
+  }
+
   getMigrationVersion(): number | null {
     const row = this.db
       .prepare('SELECT version FROM bot_migration_state WHERE id = 1')
@@ -2598,6 +2776,81 @@ function parseAuditLogRow(row: RawAuditLogRow): BotAuditLogEntry {
     actorId: row.actor_id,
     eventType: row.event_type,
     details: safeJsonParse(row.details_json, {}),
+    createdAt: row.created_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// browser_audit row types (U8). Positive shape only — the table has no
+// column capable of holding a field value or an image (KTD-9 contract).
+// ---------------------------------------------------------------------------
+
+export type BrowserAuditCategory = 'tool' | 'control' | 'navigation' | 'site_auth';
+
+export type BrowserAuditOutcome = 'ok' | 'denied' | 'error' | 'timeout';
+
+export interface CreateBrowserAuditInput {
+  workspaceId: string;
+  sessionId?: string | null;
+  category: BrowserAuditCategory;
+  /** Tool name (`mcp__comate-browser__act`), control verb, or event kind. */
+  action: string;
+  /** URL origin only (scheme + host + port) — never a full URL with query. */
+  origin?: string | null;
+  /** PSL site key when the action is site-scoped. */
+  siteKey?: string | null;
+  /** Field NAMES involved (e.g. submit form fields) — values never. */
+  fieldNames?: string[];
+  outcome: BrowserAuditOutcome;
+  /** RISK-1: a click that cannot be proven harmless was followed by navigation. */
+  potentialSubmit?: boolean;
+  /** Bounded, pre-sanitized context (no values, no images). */
+  detail?: string | null;
+}
+
+export interface BrowserAuditEntry {
+  id: string;
+  workspaceId: string;
+  sessionId: string | null;
+  category: BrowserAuditCategory;
+  action: string;
+  origin: string | null;
+  siteKey: string | null;
+  fieldNames: string[];
+  outcome: BrowserAuditOutcome;
+  potentialSubmit: boolean;
+  detail: string | null;
+  createdAt: string;
+}
+
+interface RawBrowserAuditRow {
+  id: string;
+  workspace_id: string;
+  session_id: string | null;
+  category: string;
+  action: string;
+  origin: string | null;
+  site_key: string | null;
+  field_names: string;
+  outcome: string;
+  potential_submit: number;
+  detail: string | null;
+  created_at: string;
+}
+
+function parseBrowserAuditRow(row: RawBrowserAuditRow): BrowserAuditEntry {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    category: row.category as BrowserAuditCategory,
+    action: row.action,
+    origin: row.origin,
+    siteKey: row.site_key,
+    fieldNames: safeJsonParse(row.field_names, []),
+    outcome: row.outcome as BrowserAuditOutcome,
+    potentialSubmit: row.potential_submit === 1,
+    detail: row.detail,
     createdAt: row.created_at,
   };
 }

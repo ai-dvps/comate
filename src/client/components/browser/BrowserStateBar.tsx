@@ -46,6 +46,7 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
   const session = useBrowserPaneStore((s) => s.sessions[sessionId] ?? EMPTY_SESSION)
   const takeover = useBrowserPaneStore((s) => s.takeover)
   const handback = useBrowserPaneStore((s) => s.handback)
+  const setRememberSite = useBrowserPaneStore((s) => s.setRememberSite)
   const retryViewer = useBrowserPaneStore((s) => s.retryViewer)
   const retryUnavailable = useBrowserPaneStore((s) => s.retryUnavailable)
 
@@ -78,6 +79,11 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
   const showTakeover = !busy && (state === 'agent_in_control' || state === 'handoff_pending')
   const showContinue = !busy && (state === 'user_in_control' || state === 'handoff_pending')
   const showRetry = !busy && state === 'session_lost'
+  // "记住此站点" (U8): only while the user is actually driving — the
+  // handoff_pending "continue" means DECLINE, so no export rides it. The
+  // F3 proactive takeover has no handoff card, which is exactly why the
+  // checkbox lives here on the state bar instead of on a card.
+  const showRememberSite = !busy && state === 'user_in_control'
 
   return (
     <div data-testid="browser-state-bar" className="flex-shrink-0">
@@ -174,6 +180,27 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
               <Play className="w-3 h-3" aria-hidden="true" />
               {t('action.continue')}
             </button>
+          )}
+
+          {showRememberSite && (
+            <label
+              data-testid="browser-remember-site"
+              title={t('action.rememberSiteHint')}
+              className={cn(
+                'flex items-center gap-1 px-1 py-1 rounded text-[11px] text-text-secondary',
+                'hover:text-text-primary cursor-pointer select-none',
+                FOCUS_CLASSES,
+              )}
+            >
+              <input
+                type="checkbox"
+                data-testid="browser-remember-site-checkbox"
+                checked={session.rememberSite}
+                onChange={(event) => setRememberSite(sessionId, event.target.checked)}
+                className="w-3 h-3 accent-accent cursor-pointer"
+              />
+              {t('action.rememberSite')}
+            </label>
           )}
 
           {showRetry && (

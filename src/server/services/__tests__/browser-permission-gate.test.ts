@@ -50,23 +50,6 @@ import {
  *  - U9-dependent drive-by fixture: cross-origin POST resolving an approval
  */
 
-function collectDiagLogs(): { logs: string[]; restore: () => void } {
-  const logs: string[] = [];
-  const originalLog = console.log;
-  const originalSidecar = process.env.COMATE_SIDECAR;
-  process.env.COMATE_SIDECAR = '';
-  console.log = (...args: unknown[]) => {
-    logs.push(args.map(String).join(' '));
-  };
-  return {
-    logs,
-    restore: () => {
-      console.log = originalLog;
-      process.env.COMATE_SIDECAR = originalSidecar;
-    },
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Pure gate-state: registrableDomain + navigation ledger + classification
 // ---------------------------------------------------------------------------
@@ -394,51 +377,52 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
   });
 
   it('auto mode navigation: first visit passes, first crossing asks once, later crossings pass with an audit marker', async () => {
-    const { logs, restore } = collectDiagLogs();
-    try {
-      openRuntime();
-      runtime!.setApprovalMode('auto');
+    // U8: the audit markers are now real browser_audit rows (the U4 diagLog
+    // placeholders are gone). The runtime's workspaceId is 'ws-1'.
+    workspaceStore.deleteBrowserAuditForWorkspace('ws-1');
+    openRuntime();
+    runtime!.setApprovalMode('auto');
 
-      // First navigation establishes the home domain — no card.
-      const first = await callTool(BROWSER_TOOL_NAMES.open, { url: 'https://home.example.com' }, 'r-nav-1');
-      assert.strictEqual(first?.behavior, 'allow');
-      assert.strictEqual(pendingApprovalEvents().length, 0);
+    // First navigation establishes the home domain — no card.
+    const first = await callTool(BROWSER_TOOL_NAMES.open, { url: 'https://home.example.com' }, 'r-nav-1');
+    assert.strictEqual(first?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0);
 
-      // Same-domain navigation passes silently.
-      const sameDomain = await callTool(BROWSER_TOOL_NAMES.open, { url: 'https://home.example.com/page2' }, 'r-nav-2');
-      assert.strictEqual(sameDomain?.behavior, 'allow');
-      assert.strictEqual(pendingApprovalEvents().length, 0);
+    // Same-domain navigation passes silently.
+    const sameDomain = await callTool(BROWSER_TOOL_NAMES.open, { url: 'https://home.example.com/page2' }, 'r-nav-2');
+    assert.strictEqual(sameDomain?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0);
 
-      // First cross-domain navigation → one confirmation with the navigation payload.
-      const crossPromise = callTool(BROWSER_TOOL_NAMES.open, { url: 'https://other.example.org/login' }, 'r-nav-3');
-      const pending = pendingApprovalEvents();
-      assert.strictEqual(pending.length, 1, 'first cross-domain navigation must ask');
-      const navInput = pending[0].input as { kind?: string; domain?: string; url?: string };
-      assert.strictEqual(navInput.kind, 'browser_navigation');
-      assert.strictEqual(navInput.domain, 'example.org');
-      runtime!.resolveApproval('r-nav-3', { behavior: 'allow' });
-      assert.strictEqual((await crossPromise)?.behavior, 'allow');
-      assert.ok(
-        logs.some((l) => l.includes('[browser-audit]') && l.includes('first-cross-confirmed')),
-        'confirmed crossing must leave an audit marker',
-      );
+    // First cross-domain navigation → one confirmation with the navigation payload.
+    const crossPromise = callTool(BROWSER_TOOL_NAMES.open, { url: 'https://other.example.org/login' }, 'r-nav-3');
+    const pending = pendingApprovalEvents();
+    assert.strictEqual(pending.length, 1, 'first cross-domain navigation must ask');
+    const navInput = pending[0].input as { kind?: string; domain?: string; url?: string };
+    assert.strictEqual(navInput.kind, 'browser_navigation');
+    assert.strictEqual(navInput.domain, 'example.org');
+    runtime!.resolveApproval('r-nav-3', { behavior: 'allow' });
+    assert.strictEqual((await crossPromise)?.behavior, 'allow');
+    const confirmedRow = workspaceStore
+      .listBrowserAudit('ws-1')
+      .find((row) => row.category === 'navigation' && row.action === 'first-cross-confirmed');
+    assert.ok(confirmedRow, 'confirmed crossing must leave an audit row');
+    assert.strictEqual(confirmedRow!.siteKey, 'example.org');
+    assert.strictEqual(confirmedRow!.outcome, 'ok');
 
-      // Revisiting the confirmed domain passes silently.
-      const revisit = await callTool(BROWSER_TOOL_NAMES.open, { url: 'https://other.example.org/more' }, 'r-nav-4');
-      assert.strictEqual(revisit?.behavior, 'allow');
-      assert.strictEqual(pendingApprovalEvents().length, 1, 'no second card for a visited domain');
+    // Revisiting the confirmed domain passes silently.
+    const revisit = await callTool(BROWSER_TOOL_NAMES.open, { url: 'https://other.example.org/more' }, 'r-nav-4');
+    assert.strictEqual(revisit?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 1, 'no second card for a visited domain');
 
-      // A further new domain passes without a card but leaves an audit marker.
-      const third = await callTool(BROWSER_TOOL_NAMES.open, { url: 'https://third.example.net' }, 'r-nav-5');
-      assert.strictEqual(third?.behavior, 'allow');
-      assert.strictEqual(pendingApprovalEvents().length, 1, 'later crossings do not ask again');
-      assert.ok(
-        logs.some((l) => l.includes('[browser-audit]') && l.includes('cross-domain-auto') && l.includes('example.net')),
-        'later crossings must leave an audit marker',
-      );
-    } finally {
-      restore();
-    }
+    // A further new domain passes without a card but leaves an audit marker.
+    const third = await callTool(BROWSER_TOOL_NAMES.open, { url: 'https://third.example.net' }, 'r-nav-5');
+    assert.strictEqual(third?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 1, 'later crossings do not ask again');
+    const laterRow = workspaceStore
+      .listBrowserAudit('ws-1')
+      .find((row) => row.category === 'navigation' && row.action === 'cross-domain-auto');
+    assert.ok(laterRow, 'later crossings must leave an audit row');
+    assert.strictEqual(laterRow!.siteKey, 'example.net');
   });
 
   it('denied first-cross confirmation does not mark the domain visited', async () => {

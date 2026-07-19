@@ -307,6 +307,56 @@ describe('browser-pane-store', () => {
     expect(wsClientMock.request).toHaveBeenCalledWith('browserHandback', { sessionId: 'sess-1' })
   })
 
+  // -- "记住此站点" remember-site (U8) -----------------------------------------
+
+  it('setRememberSite only applies while the user is driving', () => {
+    const store = useBrowserPaneStore.getState()
+    store._applyBrowserState('sess-1', { state: 'user_in_control', port: 4001 })
+    store.setRememberSite('sess-1', true)
+    expect(useBrowserPaneStore.getState().sessions['sess-1']?.rememberSite).toBe(true)
+
+    store._applyBrowserState('sess-2', { state: 'agent_in_control', port: 4002 })
+    store.setRememberSite('sess-2', true)
+    expect(useBrowserPaneStore.getState().sessions['sess-2']?.rememberSite).toBe(false)
+  })
+
+  it('handback with rememberSite carries the flag and resets the checkbox on save', async () => {
+    const store = useBrowserPaneStore.getState()
+    store._applyBrowserState('sess-1', { state: 'user_in_control', port: 4001 })
+    store.setRememberSite('sess-1', true)
+    wsClientMock.request.mockResolvedValueOnce({ handedBack: true, siteAuth: { saved: true, key: 'example.com' } })
+    await store.handback('sess-1')
+    expect(wsClientMock.request).toHaveBeenCalledWith('browserHandback', {
+      sessionId: 'sess-1',
+      rememberSite: true,
+    })
+    expect(useBrowserPaneStore.getState().sessions['sess-1']?.rememberSite).toBe(false)
+    expect(useBrowserPaneStore.getState().sessions['sess-1']?.verbError).toBeNull()
+  })
+
+  it('a failed remember still hands back and surfaces the error', async () => {
+    const store = useBrowserPaneStore.getState()
+    store._applyBrowserState('sess-1', { state: 'user_in_control', port: 4001 })
+    store.setRememberSite('sess-1', true)
+    wsClientMock.request.mockResolvedValueOnce({
+      handedBack: true,
+      siteAuth: { saved: false, error: 'Sites addressed by IP literal cannot be remembered.' },
+    })
+    await store.handback('sess-1')
+    const session = useBrowserPaneStore.getState().sessions['sess-1']
+    expect(session?.verbError).toBe('Sites addressed by IP literal cannot be remembered.')
+    expect(session?.rememberSite).toBe(false)
+  })
+
+  it('a state transition clears the checkbox without a handback', () => {
+    const store = useBrowserPaneStore.getState()
+    store._applyBrowserState('sess-1', { state: 'user_in_control', port: 4001 })
+    store.setRememberSite('sess-1', true)
+    // Handoff timeout flips the state without any handback verb.
+    store._applyBrowserState('sess-1', { state: 'agent_in_control' })
+    expect(useBrowserPaneStore.getState().sessions['sess-1']?.rememberSite).toBe(false)
+  })
+
   // -- browser_unavailable degraded path --------------------------------------
 
   it('browser_unavailable sets the degraded state; retry clears it when health recovers', async () => {

@@ -24,6 +24,7 @@ import {
   isBrowserSubmitClassified,
   redactSubmitGateInput,
 } from './browser-gate-state.js';
+import { browserAuditService } from './browser-audit.js';
 
 
 const RING_BUFFER_CAP = 500;
@@ -356,9 +357,9 @@ export class SessionRuntime {
       // Navigation surface: in auto mode the session's first cross-eTLD+1
       // navigation requires one confirmation (session-level memory in
       // browser-gate-state — no persistent domain ledger, KTD-4 ②); later
-      // crossings pass with an audit marker (diagLog placeholder — the
-      // browser_audit table lands with U8). Manual/readonly modes follow the
-      // generic approval flow below and record the visit on approval.
+      // crossings pass with an audit row in browser_audit (U8, KTD-9).
+      // Manual/readonly modes follow the generic approval flow below and
+      // record the visit on approval.
       if (toolName === BROWSER_TOOL_NAMES.open) {
         const url = typeof input.url === 'string' ? input.url : undefined;
         const nav = url
@@ -381,7 +382,13 @@ export class SessionRuntime {
           );
           if (result.behavior === 'allow') {
             commitSessionNavigation(this.sessionId, nav.domain, { confirmedCrossing: true });
-            diagLog(`[browser-audit] navigation session=${this.sessionId} domain=${nav.domain} kind=first-cross-confirmed`);
+            browserAuditService.logNavigation({
+              workspaceId: this.workspaceId,
+              sessionId: this.sessionId,
+              domain: nav.domain,
+              kind: 'first-cross-confirmed',
+              outcome: 'ok',
+            });
             return { behavior: 'allow', updatedInput: input };
           }
           return result;
@@ -389,7 +396,13 @@ export class SessionRuntime {
         if (nav.kind === 'allow' && this.approvalMode === 'auto') {
           commitSessionNavigation(this.sessionId, nav.domain);
           if (nav.auditCrossing) {
-            diagLog(`[browser-audit] navigation session=${this.sessionId} domain=${nav.domain} kind=cross-domain-auto`);
+            browserAuditService.logNavigation({
+              workspaceId: this.workspaceId,
+              sessionId: this.sessionId,
+              domain: nav.domain,
+              kind: 'cross-domain-auto',
+              outcome: 'ok',
+            });
           }
           diagLog(`[Runtime ${this.sessionId}] auto-approve tool=${toolName} requestId=${requestId}`);
           this.emitter.emitAutoApproval(requestId, toolName, 'auto');

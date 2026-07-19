@@ -142,7 +142,12 @@
     "boundBotNone": "没有机器人绑定到此工作区。",
     "sensitiveFileDenylistTitle": "敏感文件拒绝列表",
     "sensitiveFileDenylistHint": "普通机器人用户无法读取的文件的 Glob 模式。所有者/管理员不受此限制。",
-    "sensitiveFileDenylistPlaceholder": "*.env\n*.pem\nsecrets/*"
+    "sensitiveFileDenylistPlaceholder": "*.env\n*.pem\nsecrets/*",
+    "rememberedSitesTitle": "已记住的站点",
+    "rememberedSitesHint": "在本工作区保存了登录态的站点（浏览器面板中的\"记住此站点\"）。新的聊天会话将自动登录。此处仅显示站点名称——保存的登录数据不会离开本应用。",
+    "rememberedSitesEmpty": "还没有已记住的站点。在接管内嵌浏览器时，勾选\"记住此站点\"后再交还控制。",
+    "rememberedSitesLoadError": "无法加载已记住的站点。",
+    "rememberedSitesRevoke": "遗忘"
   },
   "bots": {
     "title": "机器人",
