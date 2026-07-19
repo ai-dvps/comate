@@ -267,7 +267,7 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFileClick }
   }
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Search input */}
       <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 relative">
         <input
