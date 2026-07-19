@@ -263,6 +263,12 @@ export class SteelProcess implements SteelProcessHandle {
       HOST: '127.0.0.1',
       PORT: String(this.port),
       CHROME_USER_DATA_DIR: this.userDataDir,
+      // Vendored Steel hardcodes --remote-debugging-port=9222, which collides
+      // across concurrent Steel processes (and stray local Chromes). Strip it
+      // and let Chrome pick a free port; puppeteer reads the real port from
+      // stderr. Spike-verified against vendored steel + Chrome 150.
+      FILTER_CHROME_ARGS: '--remote-debugging-port=9222',
+      CHROME_ARGS: '--remote-debugging-port=0',
       ...this.options.env,
     };
     if (this.options.chromiumPath) {
