@@ -162,7 +162,10 @@ export class BrowserViewerProxy {
       });
     };
     server.on('connection', track);
-    server.on('upgrade', (req, socket, head) => {
+    server.on('upgrade', (req, upgradeSocket, head) => {
+      // @types/node types the upgrade socket as Duplex; an http upgrade
+      // socket is always a net.Socket (the proxy pipes/destroys it as one).
+      const socket = upgradeSocket as Socket;
       track(socket);
       try {
         this.handleUpgrade(req, socket, head);

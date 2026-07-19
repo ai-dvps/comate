@@ -293,7 +293,7 @@ export interface TurnCompletion {
   durationMs: number
 }
 
-interface ChatState {
+export interface ChatState {
   sessions: Record<string, ChatSession[]>
   messages: Record<string, ChatMessage[]>
   promptHistory: Record<string, string[]>

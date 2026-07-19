@@ -1,0 +1,44 @@
+{
+  "pane": {
+    "title": "浏览器",
+    "expand": "打开浏览器面板",
+    "collapse": "收起浏览器面板",
+    "resize": "调整浏览器面板宽度",
+    "needsYou": "浏览器需要你接管",
+    "emptyTitle": "此会话还没有浏览器",
+    "emptyDetail": "让 Claude 处理网页任务时会自动打开浏览器。",
+    "popoutPlaceholder": "浏览器画面已在浮窗中打开。"
+  },
+  "state": {
+    "agentDriving": "Claude 正在驾驶",
+    "agentDrivingHint": "当前为只读观看",
+    "handoffPending": "Claude 请求你接管",
+    "handoffPendingHint": "接管后继续，或让 Claude 自己继续",
+    "userDriving": "你在驾驶",
+    "userDrivingHint": "你操作期间 Claude 已暂停",
+    "transitioning": "正在切换控制权…",
+    "sessionLost": "浏览器会话已丢失",
+    "sessionLostDetail": "浏览器进程崩溃了。Claude 的下一次浏览器操作会自动重建——也可以现在手动重试。",
+    "unavailable": "浏览器不可用",
+    "starting": "正在启动浏览器…",
+    "preparing": "正在准备浏览器运行时…",
+    "firstUseHint": "首次使用可能需要下载浏览器组件，耗时几分钟。"
+  },
+  "action": {
+    "takeover": "接管",
+    "continue": "继续",
+    "retry": "重试",
+    "cancel": "取消",
+    "popout": "弹出浮窗",
+    "closePopout": "回到面板",
+    "clickToDrive": "点击画面开始操控",
+    "captureReleased": "已释放键鼠捕获"
+  },
+  "popout": {
+    "title": "浏览器 — 浮窗"
+  },
+  "a11y": {
+    "stateAnnouncement": "浏览器控制状态：{{state}}",
+    "viewerFrame": "受控浏览器画面"
+  }
+}

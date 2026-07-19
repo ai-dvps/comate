@@ -16,6 +16,8 @@ import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
 import MessageSearchBar from './MessageSearchBar'
 import WorkflowFloatingPanel from './WorkflowFloatingPanel'
+import BrowserPane from './browser/BrowserPane'
+import BrowserPaneButton from './browser/BrowserPaneButton'
 
 import { isBotSession } from '../lib/session-filter'
 
@@ -381,23 +383,26 @@ export default function ChatPanel({
           <span className="text-text-tertiary">{modelName}</span>
         </div>
 
-        {onToggleRightPanelCollapse && (
-          <button
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-            aria-label={
-              isRightPanelCollapsed
-                ? t('common:rightPanel.expand')
-                : t('common:rightPanel.collapse')
-            }
-            onClick={() => onToggleRightPanelCollapse()}
-          >
-            {isRightPanelCollapsed ? (
-              <PanelRightOpen className="w-4 h-4" />
-            ) : (
-              <PanelRight className="w-4 h-4" />
-            )}
-          </button>
-        )}
+        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          <BrowserPaneButton workspaceId={workspaceId} />
+          {onToggleRightPanelCollapse && (
+            <button
+              className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+              aria-label={
+                isRightPanelCollapsed
+                  ? t('common:rightPanel.expand')
+                  : t('common:rightPanel.collapse')
+              }
+              onClick={() => onToggleRightPanelCollapse()}
+            >
+              {isRightPanelCollapsed ? (
+                <PanelRightOpen className="w-4 h-4" />
+              ) : (
+                <PanelRight className="w-4 h-4" />
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main content row: chat area + optional subagent panel */}
@@ -523,6 +528,11 @@ export default function ChatPanel({
             onPush={handlePushDrawer}
           />
         )}
+
+        {/* Embedded browser pane (U6) — independent of the RightPanel; stays
+            mounted (CSS-hidden while collapsed) so the viewer iframe keeps
+            its cast stream alive across collapse/expand. */}
+        <BrowserPane workspaceId={workspaceId} />
       </div>
     </div>
   )
