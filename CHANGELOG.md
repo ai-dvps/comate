@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Embedded controlled browser** — chat sessions can now drive a real browser through natural-language prompts. A browser button in the chat panel header opens a collapsible, resizable pane to the right of the chat area showing the live page (powered by a locally hosted Steel browser engine), where you watch Claude navigate, fill forms, and extract content. You can take over at any moment — type credentials, scan a QR code, or finish a complex flow yourself — then hand control back; Claude resumes with a diff of what changed (password fields always masked). Everything you type in the pane stays out of the model context and the chat record.
+- **Human handoff with timeout recovery** — when the agent hits a login wall, CAPTCHA, QR code, or ambiguous form, it explicitly hands the browser to you: the pane auto-expands, a pending card appears in chat, and a badge marks the header button. Unanswered handoffs expire after a server-fixed 10 minutes into a recoverable state instead of hanging the task, and the agent explains how to resume.
+- **Submit hard gate and navigation confirmation** — form submissions, payments, and publishing actions always require per-action confirmation (even in auto approval mode), showing the target URL and field list with sensitive values redacted; approvals are re-verified against the live form before dispatch (TOCTOU protection). In auto mode, the first cross-domain navigation per session asks once before proceeding. WeCom/Feishu bot sessions cannot use the browser.
+- **Remember this site** — after logging in via a takeover, you can opt to remember the site: its session state (cookies and web storage) is stored per workspace and re-injected on your next visit, so new sessions stay logged in. Stored credentials are write-only (never sent back to the client), can be revoked individually from workspace settings, and are never logged or included in model context.
+- **Browser action audit** — browser actions (navigate, click, submit, takeover, handback, site remember/revoke) are recorded in a per-workspace audit table storing only action names, categories, URL origins, and field names — never field values or screenshots.
+- **Sidecar remote-surface hardening** — the local API now restricts CORS to the app origins, verifies WebSocket upgrade origins, validates Origin/Sec-Fetch headers on state-changing routes, and enforces a Host-header whitelist, so web pages you visit cannot drive the app or its browser.
+
+### Changed
+
+- **Browser runtime distribution** — the Steel browser engine ships inside the app resources (no Docker required) and Chromium resolves from the system browser first, with a verified one-time download as fallback; the installer stays free of a bundled Chromium.
 
 ## [0.0.25] - 2026-07-18
 
