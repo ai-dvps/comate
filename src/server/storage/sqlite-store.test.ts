@@ -991,9 +991,10 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     }
   });
 
-  it('fresh database initializes to version 5 with new tables', () => {
+  it('fresh database initializes to the latest schema version with new tables', () => {
     const freshStore = new SqliteStore(':memory:');
-    assert.strictEqual(freshStore.getMigrationVersion(), 5);
+    // v6: browser_audit (U8).
+    assert.strictEqual(freshStore.getMigrationVersion(), 6);
 
     // Old tables should not exist
     const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
@@ -1014,6 +1015,7 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     assert.ok(tableNames.includes('bot_roles'));
     assert.ok(tableNames.includes('bot_users'));
     assert.ok(tableNames.includes('user_sessions'));
+    assert.ok(tableNames.includes('browser_audit'));
   });
 
   it('re-running migration on already-migrated database does nothing', () => {
@@ -1021,11 +1023,11 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     firstStore.createBot({ name: 'Pre-migration Bot' });
 
     const version = firstStore.getMigrationVersion();
-    assert.strictEqual(version, 5);
+    assert.strictEqual(version, 6);
 
-    // Re-opening should not throw and version should stay 5
+    // Re-opening should not throw and version should stay 6
     const secondStore = new SqliteStore(migrationDbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 5);
+    assert.strictEqual(secondStore.getMigrationVersion(), 6);
     assert.strictEqual(secondStore.listBots().length, 1);
   });
 });

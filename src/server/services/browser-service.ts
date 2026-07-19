@@ -4,6 +4,12 @@ import { rm } from 'fs/promises';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { getStorageDir } from '../storage/data-dir.js';
 import { resolveChromium } from '../utils/resolve-chromium.js';
+import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
+import type { BrowserSessionContext } from '../models/workspace.js';
+import { connectSteelPage } from './browser-cdp.js';
+import { siteKeyForUrl } from './browser-site-key.js';
+import { filterContextToScope, readSiteAuthEntry } from './browser-site-auth.js';
+import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
 import {
   allocateLoopbackPort,
   cleanupStaleSteelProcesses,
@@ -58,6 +64,37 @@ export class BrowserUnavailableError extends Error {
     super(message);
     this.name = 'BrowserUnavailableError';
   }
+}
+
+export type BrowserSiteAuthErrorCode =
+  | 'browser_no_session'
+  | 'browser_no_page'
+  | 'ip_literal'
+  | 'invalid_url'
+  | 'empty_context'
+  | 'export_failed';
+
+/** Typed remember-flow failure — the WS verb maps these to user-facing copy. */
+export class BrowserSiteAuthError extends Error {
+  constructor(
+    readonly code: BrowserSiteAuthErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'BrowserSiteAuthError';
+  }
+}
+
+export interface RememberSiteResult {
+  key: string;
+  origin: string;
+  cookieCount: number;
+  storageDomainCount: number;
+}
+
+export interface SiteAuthInjection {
+  key: string;
+  context: BrowserSessionContext;
 }
 
 export interface BrowserSessionInfo {
@@ -122,6 +159,12 @@ interface RegistryEntry {
    * with the entry on teardown.
    */
   viewerToken: string;
+  /**
+   * One-shot remembered-site injection eligibility (U8): set on every
+   * successful (re)spawn, consumed by the first open() — injection happens
+   * exactly once per Steel process, before the first navigation.
+   */
+  siteAuthEligible: boolean;
 }
 
 export interface BrowserServiceDeps {
@@ -142,7 +185,35 @@ export interface BrowserServiceDeps {
    * tests without a proxy — Steel then points the viewer at its own port.
    */
   viewerDomain?: (token: string) => string | undefined;
+  /**
+   * Workspace store for the remembered-site read/write paths (U8). Defaults
+   * to the process singleton; tests inject an isolated store.
+   */
+  store?: SqliteStore;
+  /**
+   * Reads the primary page's current URL (remember-site flow). Default: a
+   * short-lived CDP attach + `location.href`. Injectable for tests.
+   */
+  currentPageUrl?: (baseUrl: string) => Promise<string | null>;
+  /**
+   * Dumps the browser's session context (remember-site flow) — the vendored
+   * Steel `GET /v1/sessions/:id/context` contract: cookies are browser-wide,
+   * storage covers the currently-open http(s) pages only (U8 entry
+   * criterion: LevelDB disk extraction is stubbed in the vendored build).
+   * Injectable for tests.
+   */
+  exportContext?: (baseUrl: string) => Promise<unknown>;
+  /** Audit sink for site-auth events; defaults to the process singleton. */
+  audit?: Pick<BrowserAuditService, 'logSiteAuth'>;
 }
+
+/** Constructor-resolved deps: the U8 additions have defaults, so internally
+ * they are always present (the public interface keeps them optional). */
+type ResolvedBrowserServiceDeps = Omit<
+  BrowserServiceDeps,
+  'store' | 'currentPageUrl' | 'exportContext' | 'audit'
+> &
+  Required<Pick<BrowserServiceDeps, 'store' | 'currentPageUrl' | 'exportContext' | 'audit'>>;
 
 function sanitizeSessionId(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -153,8 +224,43 @@ export function mintViewerToken(): string {
   return randomBytes(24).toString('base64url');
 }
 
+/**
+ * Default currentPageUrl: a short-lived CDP attach to read the primary
+ * page's href (the page the viewer drives). Read-only and invisible to the
+ * user — safe during user_in_control.
+ */
+async function readPrimaryPageUrl(baseUrl: string): Promise<string | null> {
+  const page = await connectSteelPage(baseUrl, { commandTimeoutMs: 5_000 });
+  try {
+    const href = await page.evaluate<string>('(() => window.location.href)()');
+    return typeof href === 'string' && /^https?:\/\//.test(href) ? href : null;
+  } finally {
+    page.close();
+  }
+}
+
+/**
+ * Default exportContext: the vendored Steel `GET /v1/sessions/:id/context`
+ * (pinned SHA d6b15d5). U8 entry criterion, verified against the vendored
+ * build: cookies are complete (CDP Network.getAllCookies); localStorage /
+ * sessionStorage / IndexedDB cover only the currently-open http(s) pages —
+ * the LevelDB disk extraction silently degrades to empty because U2 stubs
+ * classic-level (the reader throws on construction and the failure is
+ * swallowed to `{}`). The sessionId path segment is ignored by the vendored
+ * handler; "current" is a documentation placeholder.
+ */
+async function exportSteelContext(baseUrl: string): Promise<unknown> {
+  const res = await fetch(`${baseUrl}/v1/sessions/current/context`, {
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Steel context export failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
 export class BrowserService {
-  private readonly deps: BrowserServiceDeps;
+  private readonly deps: ResolvedBrowserServiceDeps;
   private readonly registry = new Map<string, RegistryEntry>();
   /** token → sessionId for O(1) proxy lookups (kept in step with registry). */
   private readonly tokenIndex = new Map<string, string>();
@@ -176,6 +282,10 @@ export class BrowserService {
       createProcess: deps?.createProcess ?? ((options) => new SteelProcess(options)),
       cleanupStale: deps?.cleanupStale ?? cleanupStaleSteelProcesses,
       now: deps?.now ?? (() => Date.now()),
+      store: deps?.store ?? defaultStore,
+      currentPageUrl: deps?.currentPageUrl ?? readPrimaryPageUrl,
+      exportContext: deps?.exportContext ?? exportSteelContext,
+      audit: deps?.audit ?? browserAuditService,
     };
   }
 
@@ -268,6 +378,14 @@ export class BrowserService {
     return this.registry.get(sessionId)?.state;
   }
 
+  /**
+   * The workspace a browser session belongs to, even when the process is
+   * starting/lost (audit paths must keep working through crashes — U8).
+   */
+  getWorkspaceId(sessionId: string): string | undefined {
+    return this.registry.get(sessionId)?.workspaceId;
+  }
+
   listSessions(): BrowserSessionInfo[] {
     const infos: BrowserSessionInfo[] = [];
     for (const entry of this.registry.values()) {
@@ -331,6 +449,7 @@ export class BrowserService {
       expectingExit: false,
       startedAt: 0,
       viewerToken,
+      siteAuthEligible: false,
     };
     entry.starting = starting;
     if (!existing) {
@@ -375,6 +494,143 @@ export class BrowserService {
       (entry) => entry.workspaceId === workspaceId,
     );
     await Promise.all(targets.map((entry) => this.teardownSession(entry.sessionId)));
+  }
+
+  // -------------------------------------------------------------------------
+  // Remembered sites (U8, KTD-8): export on "记住此站点", inject on first open
+  // -------------------------------------------------------------------------
+
+  /**
+   * "记住此站点" export (checkbox → handback verb, BrowserStateBar). Reads
+   * the primary page's URL, derives the PSL site key, dumps the browser
+   * context from Steel, filters it to the key's scope (the vendored export
+   * returns cookies browser-wide — storing it unfiltered would replay OTHER
+   * sites' cookies on injection), and persists it under the workspace's
+   * browserSiteAuth. The value then exists ONLY server-side (GET responses
+   * strip it — see workspaces routes).
+   *
+   * R15 final scope: cookie-primary auth plus web storage for the open page
+   * (see exportSteelContext's entry-criterion note). Sites whose SSO lives
+   * exclusively in IndexedDB or in a closed tab's storage are NOT replayable
+   * — documented limitation, not a silent promise.
+   */
+  async rememberCurrentSite(sessionId: string): Promise<RememberSiteResult> {
+    const entry = this.registry.get(sessionId);
+    if (!entry || !entry.handle) {
+      throw new BrowserSiteAuthError(
+        'browser_no_session',
+        'This chat session has no live browser — nothing to remember.',
+      );
+    }
+    const url = await this.deps.currentPageUrl(entry.handle.baseUrl).catch((err) => {
+      throw new BrowserSiteAuthError(
+        'export_failed',
+        `Could not read the current page: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    if (!url) {
+      throw new BrowserSiteAuthError(
+        'browser_no_page',
+        'No web page is currently open in the browser — nothing to remember.',
+      );
+    }
+    const keyResult = siteKeyForUrl(url);
+    if (!keyResult.ok) {
+      throw new BrowserSiteAuthError(
+        keyResult.reason === 'ip-literal' ? 'ip_literal' : 'invalid_url',
+        keyResult.reason === 'ip-literal'
+          ? 'Sites addressed by IP literal cannot be remembered (the same address is a different site on another network).'
+          : 'The current page URL cannot be remembered.',
+      );
+    }
+    const raw = await this.deps.exportContext(entry.handle.baseUrl).catch((err) => {
+      throw new BrowserSiteAuthError(
+        'export_failed',
+        `Could not export the browser session: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    const scoped = filterContextToScope(
+      (raw ?? {}) as { cookies?: unknown; localStorage?: unknown; sessionStorage?: unknown },
+      keyResult.key,
+    );
+    const storageDomainCount =
+      Object.keys(scoped.localStorage ?? {}).length +
+      Object.keys(scoped.sessionStorage ?? {}).length;
+    if (scoped.cookies.length === 0 && storageDomainCount === 0) {
+      throw new BrowserSiteAuthError(
+        'empty_context',
+        `No login state for ${keyResult.key} was found in the browser — log in first, then remember the site.`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const workspace = await this.deps.store.get(entry.workspaceId);
+    const existing = workspace ? readSiteAuthEntry(workspace.settings ?? {}, keyResult.key) : undefined;
+    const updated = this.deps.store.setWorkspaceSiteAuthEntry(entry.workspaceId, keyResult.key, {
+      sessionContext: scoped,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+    if (!updated) {
+      throw new BrowserSiteAuthError(
+        'export_failed',
+        'The workspace no longer exists — the site could not be remembered.',
+      );
+    }
+    // Audit the FACT of the write with counts only — never the values.
+    this.deps.audit.logSiteAuth({
+      workspaceId: entry.workspaceId,
+      sessionId,
+      siteKey: keyResult.key,
+      action: 'remember',
+      outcome: 'ok',
+      detail: `cookies=${scoped.cookies.length} storageDomains=${storageDomainCount}`,
+    });
+    diagLog(
+      `[browser] remembered site ${keyResult.key} for session ${sessionId} ` +
+        `(cookies=${scoped.cookies.length} storageDomains=${storageDomainCount})`,
+    );
+    return { key: keyResult.key, origin: keyResult.origin, cookieCount: scoped.cookies.length, storageDomainCount };
+  }
+
+  /**
+   * Injection lookup for the tool layer's open(): consumes the session's
+   * one-shot eligibility (first open after every spawn/rebuild) and returns
+   * the remembered context when the URL's site key has one. Returns null
+   * when ineligible, unmatched, or nothing is stored. Bot sessions never
+   * reach this path — the browser MCP server is not registered for them
+   * (KTD-4 ③), so bot sessions never inject.
+   *
+   * Eligibility is consumed synchronously (before any await) so concurrent
+   * first-opens cannot double-inject.
+   */
+  async prepareSiteAuthInjection(sessionId: string, url: string): Promise<SiteAuthInjection | null> {
+    const entry = this.registry.get(sessionId);
+    if (!entry || !entry.siteAuthEligible) return null;
+    entry.siteAuthEligible = false;
+    if (!entry.handle) return null;
+    const keyResult = siteKeyForUrl(url);
+    if (!keyResult.ok) return null;
+    const workspace = await this.deps.store.get(entry.workspaceId);
+    const siteAuthEntry = workspace
+      ? readSiteAuthEntry(workspace.settings ?? {}, keyResult.key)
+      : undefined;
+    if (!siteAuthEntry) return null;
+    const now = new Date().toISOString();
+    this.deps.store.setWorkspaceSiteAuthEntry(entry.workspaceId, keyResult.key, {
+      ...siteAuthEntry,
+      lastUsedAt: now,
+    });
+    this.deps.audit.logSiteAuth({
+      workspaceId: entry.workspaceId,
+      sessionId,
+      siteKey: keyResult.key,
+      action: 'inject',
+      outcome: 'ok',
+      detail: `cookies=${siteAuthEntry.sessionContext.cookies.length}`,
+    });
+    diagLog(`[browser] injecting remembered site ${keyResult.key} for session ${sessionId}`);
+    return { key: keyResult.key, context: siteAuthEntry.sessionContext };
   }
 
   /**
@@ -472,6 +728,8 @@ export class BrowserService {
     current.handle = handle;
     current.state = 'agent_in_control';
     current.startedAt = this.deps.now();
+    // Fresh process — the first open() may inject a remembered site (U8).
+    current.siteAuthEligible = true;
     handle.onExit((info) => this.handleProcessExit(sessionId, handle, info));
     // A process that died between start() and here has already transitioned
     // the entry to session_lost via handleProcessExit — skip the ready event.

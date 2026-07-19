@@ -142,7 +142,12 @@
     "boundBotNone": "No bot is bound to this workspace.",
     "sensitiveFileDenylistTitle": "Sensitive File Denylist",
     "sensitiveFileDenylistHint": "Glob patterns for files that Normal bot users cannot read. Owner/Admin users are not constrained.",
-    "sensitiveFileDenylistPlaceholder": "*.env\n*.pem\nsecrets/*"
+    "sensitiveFileDenylistPlaceholder": "*.env\n*.pem\nsecrets/*",
+    "rememberedSitesTitle": "Remembered sites",
+    "rememberedSitesHint": "Sites whose login is kept in this workspace (\"Remember this site\" in the browser panel). New chat sessions sign in automatically. Only site names are shown here — the stored login data never leaves the app.",
+    "rememberedSitesEmpty": "No remembered sites yet. While driving the embedded browser, tick \"Remember this site\" before handing control back.",
+    "rememberedSitesLoadError": "Could not load the remembered sites.",
+    "rememberedSitesRevoke": "Forget"
   },
   "bots": {
     "title": "Bots",

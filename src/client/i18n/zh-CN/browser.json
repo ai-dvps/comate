@@ -32,7 +32,9 @@
     "popout": "弹出浮窗",
     "closePopout": "回到面板",
     "clickToDrive": "点击画面开始操控",
-    "captureReleased": "已释放键鼠捕获"
+    "captureReleased": "已释放键鼠捕获",
+    "rememberSite": "记住此站点",
+    "rememberSiteHint": "将此站点的登录态保存在本工作区。新的聊天会话将自动登录。可在 设置 → 安全 中管理已记住的站点。"
   },
   "popout": {
     "title": "浏览器 — 浮窗"

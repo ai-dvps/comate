@@ -4,6 +4,7 @@ import {
   browserService,
   type BrowserControlState,
 } from './browser-service.js';
+import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
 
 /**
  * browser-control — the mutual-exclusion control state machine and the
@@ -193,6 +194,8 @@ export interface BrowserControlDeps {
   /** Server-fixed (KTD-6). Injectable for tests; agent input never sets it. */
   handoffTimeoutMs?: number;
   timer?: BrowserControlTimer;
+  /** Audit sink for control-plane events (U8); defaults to the singleton. */
+  audit?: Pick<BrowserAuditService, 'logControl'>;
 }
 
 interface HandoffRecord {
@@ -214,7 +217,7 @@ const defaultTimer: BrowserControlTimer = {
 };
 
 export class BrowserControlService {
-  private deps: BrowserControlDeps & { now: () => number; handoffTimeoutMs: number; timer: BrowserControlTimer };
+  private deps: BrowserControlDeps & { now: () => number; handoffTimeoutMs: number; timer: BrowserControlTimer; audit: Pick<BrowserAuditService, 'logControl'> };
   private readonly records = new Map<string, HandoffRecord>();
 
   constructor(deps: BrowserControlDeps) {
@@ -223,6 +226,7 @@ export class BrowserControlService {
       now: deps.now ?? (() => Date.now()),
       handoffTimeoutMs: deps.handoffTimeoutMs ?? DEFAULT_HANDOFF_TIMEOUT_MS,
       timer: deps.timer ?? defaultTimer,
+      audit: deps.audit ?? browserAuditService,
     };
     // Crash path (KTD-5): a dying Steel process releases this session's
     // pending browser card through the U1 registry hook. Tolerates the
@@ -280,6 +284,7 @@ export class BrowserControlService {
       case 'proactive_takeover':
         this.deps.browserService.setControlState(sessionId, 'user_in_control', 'user_takeover');
         diagLog(`[browser-control] proactive takeover session=${sessionId}`);
+        this.logControl(sessionId, 'takeover', 'ok', 'proactive');
         return { ok: true };
       case 'grant_handoff': {
         // Resolving card #1 allow is the takeover grant; the handoff handler's
@@ -292,6 +297,7 @@ export class BrowserControlService {
           this.deps.browserService.setControlState(sessionId, 'user_in_control', 'handoff_granted');
         }
         diagLog(`[browser-control] handoff granted via takeover verb session=${sessionId}`);
+        this.logControl(sessionId, 'handoff_granted', 'ok');
         return { ok: true };
       }
       case 'reject_no_browser':
@@ -334,6 +340,7 @@ export class BrowserControlService {
           this.deps.browserService.setControlState(sessionId, 'agent_in_control', 'user_handback');
         }
         diagLog(`[browser-control] handback session=${sessionId}`);
+        this.logControl(sessionId, 'handback', 'ok', record ? undefined : 'proactive');
         return { ok: true };
       }
       case 'decline_handoff': {
@@ -349,6 +356,7 @@ export class BrowserControlService {
           );
         }
         diagLog(`[browser-control] handoff declined via handback verb session=${sessionId}`);
+        this.logControl(sessionId, 'handback', 'ok', 'declines-handoff');
         return { ok: true };
       }
       case 'none':
@@ -366,6 +374,23 @@ export class BrowserControlService {
     if (!record || record.timerHandle === null) return;
     this.clearTimer(record);
     this.armTimer(record);
+    this.logControl(sessionId, 'activity_ping', 'ok');
+  }
+
+  /**
+   * Control-plane audit (U8, KTD-9): workspaceId resolves through the
+   * browser registry (the audit row is dropped silently for unknown
+   * sessions — audit must never break a control flow).
+   */
+  private logControl(
+    sessionId: string,
+    verb: string,
+    outcome: 'ok' | 'denied' | 'error' | 'timeout',
+    detail?: string,
+  ): void {
+    const workspaceId = this.deps.browserService.getWorkspaceId(sessionId);
+    if (!workspaceId) return;
+    this.deps.audit.logControl({ workspaceId, sessionId, verb, outcome, ...(detail !== undefined && { detail }) });
   }
 
   // -------------------------------------------------------------------------
@@ -420,6 +445,7 @@ export class BrowserControlService {
     }
     this.armTimer(record);
     diagLog(`[browser-control] handoff begun session=${sessionId} phase=${record.phase}`);
+    this.logControl(sessionId, 'handoff_requested', 'ok', record.phase);
     return {
       sessionId: record.sessionId,
       reason: record.reason,
@@ -481,6 +507,9 @@ export class BrowserControlService {
     if (state !== 'handoff_pending' && state !== 'user_in_control') return;
     this.deps.browserService.setControlState(sessionId, 'agent_in_control', this.eventReasonFor(reason));
     diagLog(`[browser-control] handoff completed session=${sessionId} reason=${reason}`);
+    const outcome =
+      reason === 'handed_back' ? 'ok' : reason === 'timeout' ? 'timeout' : reason === 'declined' ? 'denied' : 'error';
+    this.logControl(sessionId, `handoff_${reason}`, outcome);
   }
 
   /**

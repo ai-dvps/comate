@@ -139,6 +139,14 @@ class FakePage implements SteelCdpSession {
     this.screenshots += 1;
     return 'aGVsbG8';
   }
+  cookieWrites: Array<Array<Record<string, unknown>>> = [];
+  initScripts: string[] = [];
+  async setCookies(cookies: Array<Record<string, unknown>>): Promise<void> {
+    this.cookieWrites.push(cookies);
+  }
+  async evaluateOnNewDocument(expression: string): Promise<void> {
+    this.initScripts.push(expression);
+  }
   onClose(listener: () => void): void {
     this.closeListeners.add(listener);
   }

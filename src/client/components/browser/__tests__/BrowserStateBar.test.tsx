@@ -201,4 +201,66 @@ describe('BrowserStateBar', () => {
     takeover.focus()
     expect(document.activeElement).toBe(takeover)
   })
+
+  // "记住此站点" checkbox (U8).
+
+  it('user_in_control: renders the remember-site checkbox next to Continue (F3-friendly)', () => {
+    setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    renderBar()
+
+    const checkbox = screen.getByTestId('browser-remember-site-checkbox')
+    expect(checkbox).toBeEnabled()
+    expect(checkbox).not.toBeChecked()
+    expect(screen.getByTestId('browser-handback-button')).toBeEnabled()
+  })
+
+  it('remember-site is hidden in agent_in_control, handoff_pending, and while busy', () => {
+    for (const patch of [
+      { controlState: 'agent_in_control' },
+      { controlState: 'handoff_pending' },
+      { controlState: 'user_in_control', pendingVerb: 'handback' },
+    ] as const) {
+      cleanup()
+      setSession(patch)
+      renderBar()
+      expect(screen.queryByTestId('browser-remember-site-checkbox')).not.toBeInTheDocument()
+    }
+  })
+
+  it('toggling the checkbox updates the store; handback carries rememberSite in the verb payload', async () => {
+    setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    renderBar()
+
+    fireEvent.click(screen.getByTestId('browser-remember-site-checkbox'))
+    expect(useBrowserPaneStore.getState().sessions['sess-1'].rememberSite).toBe(true)
+
+    fireEvent.click(screen.getByTestId('browser-handback-button'))
+    await vi.waitFor(() => {
+      expect(wsClientMock.request).toHaveBeenCalledWith('browserHandback', {
+        sessionId: 'sess-1',
+        rememberSite: true,
+      })
+    })
+  })
+
+  it('handback without the checkbox sends no rememberSite flag', async () => {
+    setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    renderBar()
+
+    fireEvent.click(screen.getByTestId('browser-handback-button'))
+    await vi.waitFor(() => {
+      expect(wsClientMock.request).toHaveBeenCalledWith('browserHandback', {
+        sessionId: 'sess-1',
+      })
+    })
+  })
+
+  it('a state transition clears the checkbox', () => {
+    setSession({ controlState: 'user_in_control', rememberSite: true, port: 4001 })
+    renderBar()
+    expect(screen.getByTestId('browser-remember-site-checkbox')).toBeChecked()
+
+    useBrowserPaneStore.getState()._applyBrowserState('sess-1', { state: 'agent_in_control' })
+    expect(useBrowserPaneStore.getState().sessions['sess-1'].rememberSite).toBe(false)
+  })
 })

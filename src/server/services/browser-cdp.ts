@@ -212,6 +212,19 @@ export interface SteelCdpSession {
   clickBackendNode(backendNodeId: number): Promise<void>;
   /** JPEG base64 (bare, no data-URL prefix) for MCP image blocks. */
   captureScreenshot(): Promise<string>;
+  /**
+   * Browser-profile cookie write (Network.setCookies) — the remembered-site
+   * injection path; MUST run before the first navigation so the initial
+   * request already carries the cookies (U8).
+   */
+  setCookies(cookies: Array<Record<string, unknown>>): Promise<void>;
+  /**
+   * Register a script to run before page scripts on every new document
+   * (Page.addScriptToEvaluateOnNewDocument) — remembered-site web-storage
+   * injection (U8). Tighter than Steel's own framenavigated race: the script
+   * lands before any page JavaScript can read localStorage.
+   */
+  evaluateOnNewDocument(expression: string): Promise<void>;
   onClose(listener: () => void): void;
   close(): void;
 }
@@ -341,6 +354,19 @@ class SteelCdpSessionImpl implements SteelCdpSession {
       this.sessionId,
     );
     return result.data;
+  }
+
+  async setCookies(cookies: Array<Record<string, unknown>>): Promise<void> {
+    await this.connection.send('Network.enable', {}, this.sessionId).catch(() => undefined);
+    await this.connection.send('Network.setCookies', { cookies }, this.sessionId);
+  }
+
+  async evaluateOnNewDocument(expression: string): Promise<void> {
+    await this.connection.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      { source: expression },
+      this.sessionId,
+    );
   }
 }
 

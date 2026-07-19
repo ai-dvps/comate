@@ -22,16 +22,21 @@
  *     confirmation per session, no persistent domain ledger). In auto mode
  *     the first navigation establishes the home domain; the first crossing
  *     to a NEW domain requires one confirmation; later crossings to further
- *     new domains pass with an audit marker (diagLog placeholder — the
- *     browser_audit table lands with U8).
+ *     new domains land as browser_audit rows (U8 — the diagLog placeholders
+ *     in session-runtime are gone).
  *
- * eTLD+1 is computed by a documented heuristic (last two labels, a small
- * well-known second-level-suffix set, port dimension for IP/localhost/
- * single-label hosts). U8 swaps in tldts (real PSL) — keep this heuristic
- * isolated to `registrableDomain` so the swap is one function.
+ * eTLD+1 comes from browser-site-key.ts (tldts / real PSL since U8 — the
+ * pre-U8 heuristic lived here; the re-export below keeps this module's
+ * import surface stable).
  */
 
 import { BROWSER_TOOL_NAMES } from './browser-tool-names.js';
+import { registrableDomain } from './browser-site-key.js';
+
+// The eTLD+1 rule lives in browser-site-key.ts (U8: tldts/PSL, single home —
+// this module previously carried a last-two-labels heuristic). Re-exported
+// here so existing gate consumers/tests keep their import site.
+export { registrableDomain };
 
 // ---------------------------------------------------------------------------
 // Submit-semantics ref registry
@@ -154,46 +159,13 @@ function ledgerEntry(sessionId: string): NavigationLedgerEntry {
 }
 
 /**
- * Well-known second-level public suffixes. Deliberately small: a miss only
- * over-groups (a.co.uk and b.co.uk share a domain), never under-groups, so
- * the confirmation fires at least as often as a real PSL would require.
+ * Well-known second-level public suffixes — REMOVED in U8: the real PSL
+ * (tldts, allowPrivateDomains) now lives in browser-site-key.ts and is
+ * re-exported above. The historical note stays: a miss only ever over-groups
+ * (a.co.uk and b.co.uk share a domain), never under-groups, so the
+ * confirmation fires at least as often as a real PSL would require — the
+ * tldts rule preserves that direction.
  */
-const KNOWN_SECOND_LEVEL_SUFFIXES = new Set([
-  'ac.uk', 'co.uk', 'gov.uk', 'org.uk',
-  'com.au', 'net.au', 'org.au',
-  'co.jp', 'ne.jp', 'or.jp',
-  'com.cn', 'net.cn', 'org.cn',
-  'com.br', 'com.mx', 'com.ar', 'com.co',
-  'co.nz', 'com.sg', 'com.tw', 'co.kr', 'com.hk', 'com.my', 'co.in', 'com.pl', 'com.tr',
-]);
-
-function isIpLiteral(hostname: string): boolean {
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return true;
-  return hostname.includes(':');
-}
-
-/**
- * eTLD+1 heuristic (U8 replaces with tldts/PSL). IP literals, localhost and
- * single-label hosts keep their port (KTD-8 key-rule alignment: those hosts
- * are port-scoped); multi-label hosts are port-insensitive.
- */
-export function registrableDomain(url: URL): string {
-  let hostname = url.hostname.toLowerCase();
-  if (hostname.endsWith('.')) hostname = hostname.slice(0, -1);
-  const port = url.port ? `:${url.port}` : '';
-  if (!hostname) return `(empty)${port}`;
-  if (isIpLiteral(hostname)) return `${hostname}${port}`;
-  const labels = hostname.split('.').filter(Boolean);
-  if (labels.length <= 2) {
-    // Single-label hosts (localhost, intranet names) are port-scoped.
-    return labels.length <= 1 ? `${hostname}${port}` : hostname;
-  }
-  const lastTwo = labels.slice(-2).join('.');
-  if (KNOWN_SECOND_LEVEL_SUFFIXES.has(lastTwo) && labels.length >= 3) {
-    return labels.slice(-3).join('.');
-  }
-  return lastTwo;
-}
 
 /**
  * Evaluate a navigation for the session. Pure — commit separately via
