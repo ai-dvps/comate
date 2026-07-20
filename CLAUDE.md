@@ -165,6 +165,7 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 3. Update `CHANGELOG.md` for user-facing changes (follow Keep a Changelog format).
 4. Follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages.
 5. For new features, consider creating a plan doc under `docs/plans/` if the change is non-trivial.
+6. Consult `docs/solutions/` — documented solutions to past problems (bugs, best practices, conventions), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`) — when implementing or debugging in documented areas; `CONCEPTS.md` at the repo root defines shared domain vocabulary.
 
 ## Common Pitfalls
 

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'fs';
@@ -12,6 +13,7 @@ import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
+  assertNoDanglingSymlinks,
   assertNoNativeArtifacts,
   assertSizeBudget,
   walkFiles,
@@ -54,6 +56,16 @@ import {
  *   src-tauri/resources/steel/node_modules/...
  *   src-tauri/resources/steel/package.json
  *   src-tauri/resources/steel/steel-manifest.json
+ *
+ * Pull behavior:
+ *  - The pinned checkout is cached under node_modules/.cache/comate-steel/,
+ *    keyed by commit SHA. Within the TTL (default 7 days; override with
+ *    STEEL_CACHE_TTL_MS) builds reuse the cached checkout instead of
+ *    re-fetching from GitHub. Set STEEL_NO_CACHE=1 to bypass the cache
+ *    entirely (no reads, no writes).
+ *  - If the HTTPS fetch fails, the clone is retried over SSH
+ *    (git@github.com:...). GitHub disabled the unauthenticated git://
+ *    transport in 2022, so SSH is the only working non-HTTPS protocol.
  */
 
 const __filename = fileURLToPath(import.meta.url);
@@ -61,9 +73,19 @@ const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
 
 const STEEL_REPO = 'https://github.com/steel-dev/steel-browser';
+const STEEL_REPO_SSH = 'git@github.com:steel-dev/steel-browser.git';
+// Fetch remotes in fallback order: HTTPS first, SSH on failure. (GitHub
+// disabled the unauthenticated git:// transport, so SSH is the fallback.)
+const STEEL_REMOTES = [STEEL_REPO, STEEL_REPO_SSH];
 // Pinned upstream commit (v0.5.3-beta). Bump deliberately; record why.
 const STEEL_COMMIT = 'd6b15d5ba658eb748ebb376d9ea837043cad814b';
 const STEEL_SIZE_BUDGET_BYTES = 80 * 1024 * 1024;
+
+// Pinned-checkout cache: keyed by commit SHA (content is immutable), with a
+// TTL so a corrupt/stale cache eventually self-heals. node_modules/.cache is
+// the conventional spot (webpack/babel/eslint) and is already gitignored.
+const STEEL_CACHE_TTL_DEFAULT_MS = 7 * 24 * 60 * 60 * 1000;
+const steelCacheRoot = join(rootDir, 'node_modules', '.cache', 'comate-steel');
 
 const STUBBED_PACKAGES = [
   'classic-level',
@@ -85,9 +107,17 @@ const REMOVED_PACKAGES = ['duckdb'];
 
 const destDir = join(rootDir, 'src-tauri', 'resources', 'steel');
 
-function run(cmd: string, opts?: { cwd?: string }) {
+// fs.cpSync's default resolves symlink targets against the SOURCE tree and
+// writes absolute links at the destination. For npm trees that rewrites
+// relative `.bin` links (e.g. archiver-utils/node_modules/.bin/glob) into
+// absolute paths inside the temp build dir — dangling once it is deleted,
+// which then fails `tauri build` ("resource path ... doesn't exist").
+// verbatimSymlinks keeps the original relative links valid after the move.
+const COPY_TREE_OPTS = { recursive: true, verbatimSymlinks: true } as const;
+
+function run(cmd: string, opts?: { cwd?: string; env?: NodeJS.ProcessEnv }) {
   console.log(`> ${cmd}`);
-  execSync(cmd, { stdio: 'inherit', cwd: opts?.cwd ?? rootDir });
+  execSync(cmd, { stdio: 'inherit', cwd: opts?.cwd ?? rootDir, env: opts?.env });
 }
 
 // ---------------------------------------------------------------------------
@@ -160,13 +190,107 @@ function writeStubPackage(nodeModulesDir: string, name: string, indexJs: string)
 // Build phases
 // ---------------------------------------------------------------------------
 
-function clonePinnedSteel(workDir: string): string {
-  const checkout = join(workDir, 'steel-browser');
+// ---------------------------------------------------------------------------
+// Pinned-checkout cache
+// ---------------------------------------------------------------------------
+
+function steelCachePaths(): { dir: string; meta: string } {
+  return {
+    dir: join(steelCacheRoot, `steel-browser-${STEEL_COMMIT}`),
+    meta: join(steelCacheRoot, `steel-browser-${STEEL_COMMIT}.json`),
+  };
+}
+
+function steelCacheTtlMs(): number {
+  const raw = process.env.STEEL_CACHE_TTL_MS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return STEEL_CACHE_TTL_DEFAULT_MS;
+}
+
+function steelCacheDisabled(): boolean {
+  return process.env.STEEL_NO_CACHE === '1';
+}
+
+/**
+ * Return the cached checkout dir when it is fresh enough and intact, else
+ * null. Intact means: meta matches the pinned commit within the TTL and the
+ * checkout's HEAD still resolves to the pinned SHA.
+ */
+function readSteelCache(): string | null {
+  if (steelCacheDisabled()) return null;
+  const { dir, meta } = steelCachePaths();
+  try {
+    const parsed = JSON.parse(readFileSync(meta, 'utf-8')) as {
+      commit?: string;
+      fetchedAt?: number;
+    };
+    if (parsed.commit !== STEEL_COMMIT || typeof parsed.fetchedAt !== 'number') {
+      return null;
+    }
+    const ttl = steelCacheTtlMs();
+    const ageMs = Date.now() - parsed.fetchedAt;
+    if (ageMs > ttl) {
+      console.log(
+        `steel cache expired (age ${(ageMs / 3_600_000).toFixed(1)}h ` +
+          `> ttl ${(ttl / 3_600_000).toFixed(1)}h); re-fetching`,
+      );
+      return null;
+    }
+    if (!existsSync(join(dir, '.git'))) return null;
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir })
+      .toString()
+      .trim();
+    if (head !== STEEL_COMMIT) return null;
+    return dir;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort cache write; never fails the build. */
+function writeSteelCache(checkout: string): void {
+  if (steelCacheDisabled()) return;
+  const { dir, meta } = steelCachePaths();
+  try {
+    mkdirSync(steelCacheRoot, { recursive: true });
+    // Stage beside the target then rename: same-filesystem rename is atomic,
+    // so an interrupted build never leaves a half-copied cache behind.
+    const tmp = `${dir}.tmp-${process.pid}`;
+    rmSync(tmp, { recursive: true, force: true });
+    cpSync(checkout, tmp, { recursive: true });
+    rmSync(dir, { recursive: true, force: true });
+    renameSync(tmp, dir);
+    writeFileSync(
+      meta,
+      JSON.stringify({ commit: STEEL_COMMIT, fetchedAt: Date.now() }, null, 2),
+    );
+    console.log(`cached steel checkout at ${dir}`);
+  } catch (err) {
+    console.warn(`warning: failed to write steel cache: ${String(err)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Clone (with protocol fallback)
+// ---------------------------------------------------------------------------
+
+function cloneFromRemote(remote: string, checkout: string): void {
+  rmSync(checkout, { recursive: true, force: true });
   mkdirSync(checkout, { recursive: true });
   // Fetch the pinned commit directly (GitHub allows fetching reachable SHAs).
+  // GIT_TERMINAL_PROMPT=0 + ssh BatchMode: fail fast instead of hanging on a
+  // credential/host-key prompt when a transport is unusable.
+  const env = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_SSH_COMMAND: 'ssh -o BatchMode=yes',
+  };
   run('git init -q', { cwd: checkout });
-  run(`git remote add origin ${STEEL_REPO}`, { cwd: checkout });
-  run(`git fetch -q --depth 1 origin ${STEEL_COMMIT}`, { cwd: checkout });
+  run(`git remote add origin ${remote}`, { cwd: checkout });
+  run(`git fetch -q --depth 1 origin ${STEEL_COMMIT}`, { cwd: checkout, env });
   run('git checkout -q FETCH_HEAD', { cwd: checkout });
   const actual = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkout })
     .toString()
@@ -176,7 +300,36 @@ function clonePinnedSteel(workDir: string): string {
       `build-steel-bundle: pinned checkout drifted: ${actual} !== ${STEEL_COMMIT}`,
     );
   }
-  return checkout;
+}
+
+function clonePinnedSteel(workDir: string): string {
+  const checkout = join(workDir, 'steel-browser');
+
+  const cached = readSteelCache();
+  if (cached) {
+    console.log(`using cached steel checkout ${STEEL_COMMIT} (${cached})`);
+    // Build on a copy so the cached tree stays pristine.
+    cpSync(cached, checkout, { recursive: true });
+    return checkout;
+  }
+
+  let lastError: unknown;
+  for (const remote of STEEL_REMOTES) {
+    try {
+      cloneFromRemote(remote, checkout);
+      writeSteelCache(checkout);
+      return checkout;
+    } catch (err) {
+      lastError = err;
+      console.warn(
+        `clone from ${remote} failed: ${String(err)}\n` +
+          'trying next remote (if any)',
+      );
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`build-steel-bundle: all remotes failed: ${String(lastError)}`);
 }
 
 function buildSteelApi(checkout: string): void {
@@ -244,7 +397,7 @@ function stageVendoredTree(checkout: string, workDir: string): string {
     const rel = lockPath.startsWith('api/node_modules/')
       ? join('build', lockPath.slice('api/'.length))
       : lockPath;
-    cpSync(join(checkout, lockPath), join(staging, rel), { recursive: true });
+    cpSync(join(checkout, lockPath), join(staging, rel), COPY_TREE_OPTS);
   }
 
   for (const [name, content] of Object.entries(STUBS)) {
@@ -311,14 +464,18 @@ async function build(): Promise<void> {
         `(budget ${(STEEL_SIZE_BUDGET_BYTES / (1024 * 1024)).toFixed(0)} MiB)`,
     );
 
+    console.log('\n--- Symlink audit ---');
+    assertNoDanglingSymlinks(staging);
+    console.log('clean (no dangling symlinks)');
+
     writeManifest(staging, bytes);
 
     console.log('\n--- Installing into src-tauri/resources/steel ---');
     const swapDir = `${destDir}.next`;
     rmSync(swapDir, { recursive: true, force: true });
-    cpSync(staging, swapDir, { recursive: true });
+    cpSync(staging, swapDir, COPY_TREE_OPTS);
     rmSync(destDir, { recursive: true, force: true });
-    cpSync(swapDir, destDir, { recursive: true });
+    cpSync(swapDir, destDir, COPY_TREE_OPTS);
     rmSync(swapDir, { recursive: true, force: true });
     console.log(`Vendored Steel ${STEEL_COMMIT} -> ${destDir}`);
 

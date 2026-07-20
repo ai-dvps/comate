@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Browser runtime distribution** — the Steel browser engine ships inside the app resources (no Docker required) and Chromium resolves from the system browser first, with a verified one-time download as fallback; the installer stays free of a bundled Chromium.
 
+### Fixed
+
+- **Release build failing on vendored Steel resources** — `npm run release` no longer aborts with `resource path 'resources/steel/node_modules/.../.bin/...' doesn't exist`. Steel vendoring now preserves npm `.bin` symlinks as relative links when copying (`verbatimSymlinks`; `fs.cpSync`'s default rewrote them to absolute paths inside the deleted temp build dir), and a new build gate fails the vendoring step with a clear message if any dangling symlink ever slips through.
+
 ## [0.0.25] - 2026-07-18
 
 ### Added
