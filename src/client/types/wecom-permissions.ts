@@ -2,9 +2,13 @@
  * Client-side mirror of the server-side ToolPermissionPolicy shape.
  *
  * Defined separately (not imported from src/server) so the client bundle does
- * not pull in server modules. Keep in sync with
- * src/server/services/tool-permission-policy.ts.
+ * not pull in server modules — with one deliberate exception:
+ * browser-tool-names is dependency-free by design, so the browser prefix
+ * shares its single source instead of being re-hardcoded here. Keep in sync
+ * with src/server/services/tool-permission-policy.ts.
  */
+
+import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
 
 export type ToolCategory =
   | 'fileRead'
@@ -43,7 +47,7 @@ export const CATEGORY_TOOLS: Record<ToolCategory, string[]> = {
   network: ['WebFetch', 'WebSearch'],
   subagents: ['Agent', 'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskUpdate', 'TaskList'],
   reply: ['__wecom_reply__'],
-  browser: ['mcp__comate-browser__*'],
+  browser: [`${BROWSER_TOOL_PREFIX}*`],
 };
 
 export const SAFE_PRESET: ToolPermissionPolicy = {

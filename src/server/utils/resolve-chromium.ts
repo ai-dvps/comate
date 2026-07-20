@@ -11,11 +11,12 @@ import {
   renameSync,
   rmSync,
 } from 'fs';
-import { execFile, spawnSync } from 'child_process';
+import { execFile } from 'child_process';
 import AdmZip from 'adm-zip';
 import { getStorageDir } from '../storage/data-dir.js';
 import { sidecarLog } from './sidecar-logger.js';
 import { normalizeWindowsPath } from './normalize-windows-path.js';
+import { findInPath } from './find-in-path.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -108,19 +109,6 @@ export interface ChromiumDeps {
   storageDir: string;
   /** Performs the download+verify+install, returning the executable path. */
   download: (storageDir: string, spec: CftPlatformSpec, version: string) => Promise<string>;
-}
-
-function defaultFindInPath(command: string): string | undefined {
-  const cmd = process.platform === 'win32' ? `where ${command}` : `command -v ${command}`;
-  const result = spawnSync(cmd, { encoding: 'utf-8', shell: true });
-  const lines = result.stdout?.trim().split('\n') || [];
-  for (const line of lines) {
-    const p = line.trim();
-    if (p && existsSync(p)) {
-      return p;
-    }
-  }
-  return undefined;
 }
 
 function systemCandidates(deps: ChromiumDeps): string[] {
@@ -302,7 +290,7 @@ function defaultDeps(): ChromiumDeps {
     env: process.env,
     homeDir: homedir(),
     fileExists: existsSync,
-    findInPath: defaultFindInPath,
+    findInPath,
     storageDir: getStorageDir(),
     download: downloadChromeForTesting,
   };

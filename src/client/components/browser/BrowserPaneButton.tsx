@@ -6,6 +6,7 @@ import {
 } from '../../stores/browser-pane-store'
 import { useChatStore } from '../../stores/chat-store'
 import { cn } from '../ui/utils'
+import { FOCUS_CLASSES } from './focus-classes'
 
 /**
  * BrowserPaneButton — the chat header's browser toggle (R1). Shows the
@@ -33,7 +34,7 @@ export default function BrowserPaneButton({ workspaceId }: BrowserPaneButtonProp
       onClick={togglePane}
       className={cn(
         'relative p-1.5 rounded-md transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+        FOCUS_CLASSES,
         isOpen
           ? 'text-text-primary bg-surface-hover'
           : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover',

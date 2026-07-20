@@ -5,6 +5,11 @@ import {
   type SqliteStore,
 } from '../storage/sqlite-store.js';
 import { diagWarn } from '../utils/diag-logger.js';
+import { originOf } from './browser-origin.js';
+
+// Re-exported so existing consumers of './browser-audit.js' keep working; the
+// canonical home is browser-origin.ts.
+export { originOf };
 
 /**
  * browser-audit — the write path for the `browser_audit` table (U8, KTD-9).
@@ -32,16 +37,6 @@ const DETAIL_MAX_CHARS = 256;
 const FIELD_NAME_MAX_CHARS = 128;
 const FIELD_NAMES_MAX_COUNT = 64;
 const ACTION_MAX_CHARS = 128;
-
-/** Derive the persistable origin from a full URL; null when unparseable. */
-export function originOf(url: string | undefined | null): string | null {
-  if (!url) return null;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
-}
 
 function clampString(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
@@ -82,7 +77,8 @@ export interface BrowserAuditControlInput {
   /**
    * Control-plane event: takeover | handback | handoff_requested |
    * handoff_granted | handoff_declined | handoff_handed_back |
-   * handoff_timeout | handoff_crash | handoff_runtime_closed | activity_ping.
+   * handoff_timeout | handoff_crash | handoff_runtime_closed.
+   * (activity_ping is deliberately not audited — content-free churn.)
    */
   verb: string;
   outcome: CreateBrowserAuditInput['outcome'];

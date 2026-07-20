@@ -1,28 +1,15 @@
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { existsSync } from 'fs';
-import { spawnSync } from 'child_process';
 import { sidecarLog } from './sidecar-logger.js';
 import { normalizeWindowsPath } from './normalize-windows-path.js';
+import { findInPath } from './find-in-path.js';
 
 function tryPath(label: string, filePath: string): string | undefined {
   filePath = normalizeWindowsPath(filePath);
   sidecarLog(`[resolveWecomCliPath] ${label}: ${filePath}, exists=${existsSync(filePath)}`);
   if (existsSync(filePath)) {
     return filePath;
-  }
-  return undefined;
-}
-
-function findInPath(command: string): string | undefined {
-  const cmd = process.platform === 'win32' ? `where ${command}` : `command -v ${command}`;
-  const result = spawnSync(cmd, { encoding: 'utf-8', shell: true });
-  const lines = result.stdout?.trim().split('\n') || [];
-  for (const line of lines) {
-    const p = line.trim();
-    if (p && existsSync(p)) {
-      return p;
-    }
   }
   return undefined;
 }

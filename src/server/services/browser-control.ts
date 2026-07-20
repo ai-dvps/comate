@@ -2,6 +2,7 @@ import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import {
   BrowserService,
   browserService,
+  sanitizeSessionId,
   type BrowserControlState,
 } from './browser-service.js';
 import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
@@ -119,6 +120,15 @@ export const BROWSER_CONTROL_TRANSITIONS: Record<
 };
 
 export type HandoffPhase = 'awaiting_takeover' | 'in_takeover';
+
+/**
+ * True when the transition table gates agent tool calls in this control state
+ * (handoff_pending | user_in_control). The table is the single source of the
+ * rule — the browser-mcp controlGate derives its verdict through this.
+ */
+export function gatesAgentToolCall(state: BrowserControlState): boolean {
+  return BROWSER_CONTROL_TRANSITIONS[state].agent_tool_call.effect === 'gate_tool_call';
+}
 
 export type HandoffEndReason =
   | 'handed_back'
@@ -260,11 +270,6 @@ export class BrowserControlService {
     };
   }
 
-  /** Test/introspection hook: the raw endedBy marker for a live record. */
-  getHandoffEndedBy(sessionId: string): HandoffEndReason | null | undefined {
-    return this.records.get(sessionId)?.endedBy;
-  }
-
   // -------------------------------------------------------------------------
   // Panel verbs (server semantics for the U6 state bar).
   // -------------------------------------------------------------------------
@@ -367,14 +372,15 @@ export class BrowserControlService {
 
   /**
    * Panel activity ping (KTD-6): content-free — only the timer is reset;
-   * keystrokes or page data never travel on this channel.
+   * keystrokes or page data never travel on this channel. Deliberately NOT
+   * audited: a ping carries zero information (~40 rows per 10-minute handoff
+   * would be pure churn in browser_audit).
    */
   recordActivity(sessionId: string): void {
     const record = this.records.get(sessionId);
     if (!record || record.timerHandle === null) return;
     this.clearTimer(record);
     this.armTimer(record);
-    this.logControl(sessionId, 'activity_ping', 'ok');
   }
 
   /**
@@ -464,7 +470,7 @@ export class BrowserControlService {
     if (!record) return null;
     if (record.endedBy) return null;
     record.cardCounter += 1;
-    record.cardRequestId = `browser-handoff-${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}-${record.cardCounter}`;
+    record.cardRequestId = `browser-handoff-${sanitizeSessionId(sessionId)}-${record.cardCounter}`;
     return record.cardRequestId;
   }
 

@@ -13,6 +13,12 @@ import {
   type BrowserServiceEvent,
 } from '../browser-service.js';
 import {
+  commitSessionNavigation,
+  getVisitedDomains,
+  isSubmitSemanticsRef,
+  setSubmitSemanticsRefs,
+} from '../browser-gate-state.js';
+import {
   SteelProcess,
   type SteelExitInfo,
   type SteelProcessHandle,
@@ -332,14 +338,36 @@ describe('browser-service', { concurrency: false }, () => {
     assert.strictEqual(closed.length, 2);
   });
 
-  it('teardown path: closeRuntimesForWorkspace tears the workspace browsers down', async () => {
+  it('teardown path: workspace delete tears the workspace browsers down', async () => {
     const { service, handles } = track(createHarness());
     await service.ensureSession({ sessionId: 's1', workspaceId: 'w1' });
     await service.ensureSession({ sessionId: 's2', workspaceId: 'w2' });
 
-    await service.handleRuntimesClosedForWorkspace('w1');
+    await service.teardownWorkspace('w1');
     assert.strictEqual(handles[0].stopped, true);
     assert.strictEqual(handles[1].stopped, false);
+  });
+
+  it('teardown clears the canUseTool-layer gate state for the session (F17)', async () => {
+    const { service } = track(createHarness());
+    await service.ensureSession({ sessionId: 'gate-s1', workspaceId: 'w1' });
+    setSubmitSemanticsRefs('gate-s1', ['e5-ab']);
+    commitSessionNavigation('gate-s1', 'example.com');
+    assert.strictEqual(isSubmitSemanticsRef('gate-s1', 'e5-ab'), true);
+    assert.deepStrictEqual(getVisitedDomains('gate-s1'), ['example.com']);
+
+    await service.teardownSession('gate-s1');
+    assert.strictEqual(isSubmitSemanticsRef('gate-s1', 'e5-ab'), false);
+    assert.deepStrictEqual(getVisitedDomains('gate-s1'), []);
+  });
+
+  it('workspace teardown clears gate state for every session it cascades to (F17)', async () => {
+    const { service } = track(createHarness());
+    await service.ensureSession({ sessionId: 'gate-w1', workspaceId: 'w1' });
+    setSubmitSemanticsRefs('gate-w1', ['e1-aa']);
+
+    await service.teardownWorkspace('w1');
+    assert.strictEqual(isSubmitSemanticsRef('gate-w1', 'e1-aa'), false);
   });
 
   it('shutdown() stops every process within the stop budget', async () => {

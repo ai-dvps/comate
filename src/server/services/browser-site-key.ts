@@ -68,13 +68,18 @@ export type SiteKeyResult =
       reason: 'invalid' | 'not-http' | 'ip-literal';
     };
 
+export type HttpUrlParseResult =
+  | { ok: true; url: URL }
+  | { ok: false; reason: 'invalid' }
+  | { ok: false; reason: 'not-http'; protocol: string };
+
 /**
- * Strict remember-site key. Returns the storage/injection key for an http(s)
- * URL, or a typed refusal: IP-literal hosts may not be remembered (KTD-8 —
- * the same address is a different site on another network, so replaying its
- * credentials is unsound).
+ * The shared "parse URL + require http(s)" preamble. The detailed variant
+ * keeps the invalid/not-http distinction (and the refused protocol, for
+ * error messages); `parseHttpUrl` is the collapsing form for callers that
+ * only need the URL.
  */
-export function siteKeyForUrl(rawUrl: string): SiteKeyResult {
+export function parseHttpUrlDetailed(rawUrl: string): HttpUrlParseResult {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -82,8 +87,28 @@ export function siteKeyForUrl(rawUrl: string): SiteKeyResult {
     return { ok: false, reason: 'invalid' };
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { ok: false, reason: 'not-http' };
+    return { ok: false, reason: 'not-http', protocol: parsed.protocol };
   }
+  return { ok: true, url: parsed };
+}
+
+export function parseHttpUrl(rawUrl: string): URL | null {
+  const result = parseHttpUrlDetailed(rawUrl);
+  return result.ok ? result.url : null;
+}
+
+/**
+ * Strict remember-site key. Returns the storage/injection key for an http(s)
+ * URL, or a typed refusal: IP-literal hosts may not be remembered (KTD-8 —
+ * the same address is a different site on another network, so replaying its
+ * credentials is unsound).
+ */
+export function siteKeyForUrl(rawUrl: string): SiteKeyResult {
+  const parsedResult = parseHttpUrlDetailed(rawUrl);
+  if (!parsedResult.ok) {
+    return { ok: false, reason: parsedResult.reason };
+  }
+  const parsed = parsedResult.url;
   const hostname = parsed.hostname.toLowerCase();
   if (isIpLiteralHost(hostname)) {
     return { ok: false, reason: 'ip-literal' };
@@ -105,10 +130,7 @@ export function cookieDomainInScope(cookieDomain: string, key: string): boolean 
   const keyHost = key.includes(':') && isSingleLabelHost(key.split(':')[0])
     ? key.split(':')[0]
     : key;
-  if (isIpLiteralHost(keyHost)) {
-    return normalized === keyHost;
-  }
-  if (isSingleLabelHost(keyHost)) {
+  if (isIpLiteralHost(keyHost) || isSingleLabelHost(keyHost)) {
     return normalized === keyHost;
   }
   return getDomain(normalized, TLDTS_OPTIONS) === keyHost || normalized === keyHost;

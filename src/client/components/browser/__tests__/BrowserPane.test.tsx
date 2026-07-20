@@ -61,14 +61,14 @@ function setSession(patch: Partial<SessionBrowserState>, sessionId = 'sess-1') {
 function setChatState(
   patch: {
     activeSessionId?: string | null
-    messages?: Record<string, { id: string; role: 'assistant'; parts: unknown[] }[]>
+    inFlightBrowserTools?: Record<string, ReadonlySet<string>>
   } = {},
 ) {
   const activeId = patch.activeSessionId === undefined ? 'sess-1' : patch.activeSessionId
   act(() => {
     useChatStore.setState({
       activeSessionIds: activeId ? { ws1: activeId } : {},
-      ...(patch.messages ? { messages: patch.messages as never } : {}),
+      inFlightBrowserTools: patch.inFlightBrowserTools ?? {},
     })
   })
 }
@@ -214,19 +214,8 @@ describe('BrowserPane', () => {
   it('shows the determinate progress state with a cancel action while the first tool call starts the browser', () => {
     setPane({ isOpen: true, hasOpened: true })
     setSession({ controlState: 'none' })
-    setChatState({
-      messages: {
-        'sess-1': [
-          {
-            id: 'm1',
-            role: 'assistant',
-            parts: [
-              { type: 'tool_use', toolUseId: 't1', toolName: 'mcp__comate-browser__open', input: { url: 'https://example.com' } },
-            ],
-          },
-        ],
-      },
-    })
+    // A browser tool call is in flight (chat-store's F14 in-flight id set).
+    setChatState({ inFlightBrowserTools: { 'sess-1': new Set(['t1']) } })
     renderPane()
 
     expect(screen.getByTestId('browser-start-progress')).toBeInTheDocument()
@@ -244,19 +233,7 @@ describe('BrowserPane', () => {
   it('advances the progress phase once the browser session exists but is not live yet', () => {
     setPane({ isOpen: true, hasOpened: true })
     setSession({ controlState: 'agent_in_control' }) // hydrated, no port yet
-    setChatState({
-      messages: {
-        'sess-1': [
-          {
-            id: 'm1',
-            role: 'assistant',
-            parts: [
-              { type: 'tool_use', toolUseId: 't1', toolName: 'mcp__comate-browser__open', input: {} },
-            ],
-          },
-        ],
-      },
-    })
+    setChatState({ inFlightBrowserTools: { 'sess-1': new Set(['t1']) } })
     renderPane()
     expect(screen.getByTestId('browser-start-phase')).toHaveTextContent('Starting the browser')
     expect(screen.getByTestId('browser-start-percent')).toHaveTextContent('70%')
@@ -266,19 +243,7 @@ describe('BrowserPane', () => {
     // Pane closed (collapsed): the whole pane is hidden — no progress UI is
     // presented; the chat's in-flight browser tool call is the copy carrier.
     setSession({ controlState: 'none' })
-    setChatState({
-      messages: {
-        'sess-1': [
-          {
-            id: 'm1',
-            role: 'assistant',
-            parts: [
-              { type: 'tool_use', toolUseId: 't1', toolName: 'mcp__comate-browser__open', input: {} },
-            ],
-          },
-        ],
-      },
-    })
+    setChatState({ inFlightBrowserTools: { 'sess-1': new Set(['t1']) } })
     renderPane()
     const pane = screen.getByTestId('browser-pane')
     expect(pane).not.toBeVisible()

@@ -112,11 +112,8 @@ export function readSiteAuthEntry(
 }
 
 // ---------------------------------------------------------------------------
-// Export scoping — a remembered context covers exactly its site key
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Injection helpers
+// Export scoping + injection helpers — a remembered context covers exactly
+// its site key
 // ---------------------------------------------------------------------------
 
 /**

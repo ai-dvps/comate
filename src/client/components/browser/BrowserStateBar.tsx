@@ -9,9 +9,10 @@ import {
 } from 'lucide-react'
 import { cn } from '../ui/utils'
 import {
-  initialSessionBrowserState,
+  EMPTY_SESSION_BROWSER_STATE,
   useBrowserPaneStore,
 } from '../../stores/browser-pane-store'
+import { FOCUS_CLASSES } from './focus-classes'
 
 /**
  * BrowserStateBar — the persistent control-state strip (R3). Renders the five
@@ -35,11 +36,8 @@ export interface BrowserStateBarProps {
   onPopout?: () => void
 }
 
-const FOCUS_CLASSES =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60'
-
 /** Stable default for sessions with no state yet (selector identity). */
-const EMPTY_SESSION = initialSessionBrowserState()
+const EMPTY_SESSION = EMPTY_SESSION_BROWSER_STATE
 
 export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBarProps) {
   const { t } = useTranslation('browser')
