@@ -2,7 +2,17 @@ import '../../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'fs';
 import { createServer } from 'net';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -10,6 +20,7 @@ import { fileURLToPath } from 'url';
 import {
   allocateLoopbackPort,
   cleanupStaleSteelProcesses,
+  reapStaleProfileLock,
   resolveSteelSpawnSpec,
   SteelProcess,
   SteelStartError,
@@ -304,6 +315,119 @@ describe('browser-steel-process', { concurrency: false }, () => {
           /* already gone */
         }
       }
+    }
+  });
+});
+
+describe('reapStaleProfileLock', { concurrency: false }, () => {
+  function writeLock(profileDir: string, pid: number): void {
+    // Chrome POSIX SingletonLock is a symlink "<hostname>-<pid>" whose target
+    // does not exist on disk (the target name encodes host+pid only).
+    symlinkSync(`reap-test-host-${pid}`, path.join(profileDir, 'SingletonLock'));
+    writeFileSync(path.join(profileDir, 'SingletonCookie'), '');
+    writeFileSync(path.join(profileDir, 'SingletonSocket'), '');
+  }
+
+  // lstat, not existsSync: SingletonLock is a dangling symlink, so existsSync
+  // (which follows) would report false even when the entry is present.
+  function entryExists(p: string): boolean {
+    try {
+      lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // A child that stays alive until we kill it, so isPidAlive() is true.
+  function liveChild(): { pid: number; kill: () => void } {
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 60000)'], {
+      stdio: 'ignore',
+    });
+    return { pid: child.pid as number, kill: () => child.kill('SIGKILL') };
+  }
+
+  it('reports no_lock and clears nothing when no SingletonLock exists', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'comate-reap-nolock-'));
+    try {
+      const result = await reapStaleProfileLock(dir);
+      assert.strictEqual(result.cleared, false);
+      assert.strictEqual(result.reason, 'no_lock');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('removes the lock files when the holder pid is dead', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'comate-reap-dead-'));
+    try {
+      const pid = await new Promise<number>((resolve) => {
+        const child = spawn(process.execPath, ['--version']);
+        child.on('exit', () => resolve(child.pid as number));
+      });
+      writeLock(dir, pid);
+      const result = await reapStaleProfileLock(dir);
+      assert.strictEqual(result.cleared, true);
+      assert.strictEqual(result.reason, 'dead_holder');
+      assert.strictEqual(result.holderPid, pid);
+      assert.strictEqual(entryExists(path.join(dir, 'SingletonLock')), false);
+      assert.strictEqual(entryExists(path.join(dir, 'SingletonCookie')), false);
+      assert.strictEqual(entryExists(path.join(dir, 'SingletonSocket')), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips a live holder whose command line is NOT bound to this profile', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'comate-reap-foreign-'));
+    const holder = liveChild();
+    try {
+      writeLock(dir, holder.pid);
+      let killed = 0;
+      const result = await reapStaleProfileLock(dir, {
+        resolveHolderCmdline: async () => '/usr/bin/some_other_process --unrelated',
+        killTree: async () => {
+          killed += 1;
+        },
+      });
+      assert.strictEqual(result.cleared, false);
+      assert.strictEqual(result.reason, 'live_non_chrome_skipped');
+      assert.strictEqual(result.holderPid, holder.pid);
+      assert.strictEqual(killed, 0, 'must not kill an unrelated live holder');
+      assert.strictEqual(
+        entryExists(path.join(dir, 'SingletonLock')),
+        true,
+        'lock left in place for an unrelated live holder',
+      );
+    } finally {
+      holder.kill();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('kills and clears a live holder that is the Chrome bound to this profile', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'comate-reap-orphan-'));
+    const holder = liveChild();
+    try {
+      writeLock(dir, holder.pid);
+      const killed: number[] = [];
+      const result = await reapStaleProfileLock(dir, {
+        resolveHolderCmdline: async () =>
+          `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${dir} about:blank`,
+        killTree: async (pid) => {
+          killed.push(pid);
+        },
+      });
+      assert.strictEqual(result.cleared, true);
+      assert.strictEqual(result.reason, 'orphan_chrome_killed');
+      assert.strictEqual(result.holderPid, holder.pid);
+      assert.deepStrictEqual(killed, [holder.pid], 'must kill the verified orphan Chrome');
+      assert.strictEqual(entryExists(path.join(dir, 'SingletonLock')), false);
+      assert.strictEqual(entryExists(path.join(dir, 'SingletonCookie')), false);
+      assert.strictEqual(entryExists(path.join(dir, 'SingletonSocket')), false);
+    } finally {
+      holder.kill();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

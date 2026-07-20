@@ -500,7 +500,12 @@ describe('viewer proxy HTTP auth', () => {
     const startedAt = Date.now();
     const res = await get(rig.proxy.port, `/s/${token}/v1/sessions/debug`);
     assert.equal(res.status, 503);
-    assert.deepEqual(JSON.parse(res.body), { error: 'Browser unavailable' });
+    assert.equal(res.headers['x-frame-options'], undefined, '503 must be frameable');
+    assert.ok(
+      String(res.headers['content-type']).includes('text/html'),
+      '503 should return an HTML error page',
+    );
+    assert.ok(res.body.includes('Browser unavailable'), '503 body explains the crash state');
     assert.ok(Date.now() - startedAt < 2_000, 'must not hang');
   });
 });
@@ -634,6 +639,11 @@ describe('viewer proxy warm-up gate', () => {
     const startedAt = Date.now();
     const res = await get(rig.proxy.port, `/s/${token}/v1/sessions/debug`);
     assert.equal(res.status, 503);
+    assert.equal(res.headers['x-frame-options'], undefined, '503 must be frameable');
+    assert.ok(
+      String(res.headers['content-type']).includes('text/html'),
+      '503 should return an HTML error page',
+    );
     assert.ok(Date.now() - startedAt < 3_000);
   });
 

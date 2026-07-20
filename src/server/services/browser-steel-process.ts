@@ -6,8 +6,10 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'fs';
+import { readlink, readFile } from 'fs/promises';
 import { spawn, execFile, type ChildProcess } from 'child_process';
 import { createServer } from 'net';
 import { promisify } from 'util';
@@ -275,6 +277,10 @@ export class SteelProcess implements SteelProcessHandle {
       env.CHROME_EXECUTABLE_PATH = this.options.chromiumPath;
     }
 
+    diagLog(
+      `[steel] spawning session ${this.sessionId} on port ${this.port} ` +
+        `(chromium=${this.options.chromiumPath ?? 'default'})`,
+    );
     const child = this.deps.spawnImpl(spec.command, spec.args, {
       env,
       // Own process group on POSIX so teardown can SIGKILL the whole tree
@@ -317,8 +323,14 @@ export class SteelProcess implements SteelProcessHandle {
       const res = await this.deps.fetchImpl(`${this.baseUrl}/v1/health`, {
         signal: AbortSignal.timeout(this.deps.probeTimeoutMs),
       });
+      if (res.status !== 200) {
+        diagWarn(`[steel] health probe for ${this.sessionId} returned ${res.status}`);
+      }
       return res.status === 200;
-    } catch {
+    } catch (err) {
+      diagWarn(
+        `[steel] health probe for ${this.sessionId} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return false;
     }
   }
@@ -357,6 +369,7 @@ export class SteelProcess implements SteelProcessHandle {
   }
 
   private async waitForHealthy(): Promise<void> {
+    diagLog(`[steel] waiting for health on ${this.baseUrl} (session ${this.sessionId})`);
     const deadline = this.deps.now() + this.deps.healthTimeoutMs;
     while (this.deps.now() < deadline) {
       if (this.exitInfo) {
@@ -367,6 +380,7 @@ export class SteelProcess implements SteelProcessHandle {
         );
       }
       if (await this.probeHealth()) {
+        diagLog(`[steel] session ${this.sessionId} health check passed`);
         return;
       }
       await sleep(this.deps.healthIntervalMs);
@@ -525,4 +539,139 @@ export async function cleanupStaleSteelProcesses(
     report.killed += 1;
   }
   return report;
+}
+
+// ── Stale profile-lock reaping ──────────────────────────────────────────────
+
+const SINGLETON_LOCK_FILES = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+
+export interface ReapProfileLockDeps {
+  /** SIGKILL a process tree rooted at pid (defaults to killProcessTree). */
+  killTree?: (pid: number) => Promise<void>;
+  /**
+   * Best-effort command line for a live pid, used to confirm a live lock holder
+   * is the orphaned Chrome bound to THIS profile (PID-reuse guard). Returns
+   * undefined when the pid is gone or unreadable.
+   */
+  resolveHolderCmdline?: (pid: number) => Promise<string | undefined>;
+}
+
+export type ReapProfileLockReason =
+  | 'no_lock'
+  | 'unreadable_lock'
+  | 'dead_holder'
+  | 'orphan_chrome_killed'
+  | 'live_non_chrome_skipped';
+
+export interface ReapProfileLockResult {
+  cleared: boolean;
+  reason: ReapProfileLockReason;
+  holderPid?: number;
+}
+
+/**
+ * Read the holder pid encoded in a Chrome POSIX SingletonLock symlink target
+ * ("<hostname>-<pid>"). Windows has no such symlink (Chrome locks via a named
+ * mutex + lockfile), so reaping is naturally a no-op there.
+ */
+function parseHolderPid(linkTarget: string): number | undefined {
+  const match = /-(\d+)$/.exec(linkTarget);
+  return match ? Number(match[1]) : undefined;
+}
+
+async function defaultResolveHolderCmdline(pid: number): Promise<string | undefined> {
+  if (process.platform === 'linux') {
+    try {
+      const data = await readFile(`/proc/${pid}/cmdline`, 'utf8');
+      return data.replace(/\0/g, ' ');
+    } catch {
+      return undefined;
+    }
+  }
+  // macOS / *BSD. Windows is unreachable here (no SingletonLock symlink).
+  try {
+    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command='], {
+      encoding: 'utf8',
+      timeout: 2_000,
+    });
+    return stdout.trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function removeSingletonFiles(profileDir: string): void {
+  // unlinkSync, not rmSync: Chrome's SingletonLock is a *dangling* symlink
+  // (target "<host>-<pid>" never exists). fs.rmSync stats the path (following
+  // the link), the stat fails on the missing target, and with `force: true`
+  // that ENOENT is swallowed — leaving the symlink entry in place and the
+  // next Chrome launch still blocked. unlinkSync operates on the directory
+  // entry directly and removes the symlink itself.
+  for (const name of SINGLETON_LOCK_FILES) {
+    try {
+      unlinkSync(path.join(profileDir, name));
+    } catch {
+      // Already gone (or never present for this Chrome write); best-effort.
+    }
+  }
+}
+
+/**
+ * Clear a stale Chrome profile lock left behind when a previous Steel process
+ * was torn down without reaping its Chrome child. Comate reuses one
+ * deterministic profile dir per chat session, so an orphaned Chrome keeps that
+ * dir's SingletonLock; the next Steel launch into it aborts
+ * ("Failed to create SingletonLock: File exists") — `cdpService.launch()` fails,
+ * `/v1/sessions/default/live-details` returns 500, and the viewer pane stays
+ * black (reproduced: identical 500 + "Browser or primary page not initialized"
+ * with a live lock holder).
+ *
+ * Safe by construction:
+ *  - holder PID is dead  → remove the three Singleton* files (Chrome crashed or
+ *    was hard-killed and never cleaned up);
+ *  - holder PID is alive → only act when its command line binds it to THIS
+ *    exact profile dir (i.e. it is the orphaned Chrome, launched with
+ *    `--user-data-dir=<profileDir>`). PID reuse yielding a process whose
+ *    command line contains this exact path is implausible, so the check is a
+ *    strong guard. A live holder that is NOT our Chrome is left untouched
+ *    (skip) rather than risk killing an unrelated process.
+ */
+export async function reapStaleProfileLock(
+  profileDir: string,
+  deps?: ReapProfileLockDeps,
+): Promise<ReapProfileLockResult> {
+  const lockPath = path.join(profileDir, 'SingletonLock');
+  let linkTarget: string;
+  try {
+    linkTarget = await readlink(lockPath);
+  } catch {
+    // ENOENT (no lock) or not a symlink / unsupported platform → nothing to do.
+    return {
+      cleared: false,
+      reason: existsSync(lockPath) ? 'unreadable_lock' : 'no_lock',
+    };
+  }
+  const holderPid = parseHolderPid(linkTarget);
+  if (holderPid === undefined) {
+    return { cleared: false, reason: 'unreadable_lock' };
+  }
+
+  // Holder no longer running → Chrome exited without removing its lock.
+  if (!isPidAlive(holderPid)) {
+    removeSingletonFiles(profileDir);
+    return { cleared: true, reason: 'dead_holder', holderPid };
+  }
+
+  // Holder alive: must be a Chrome bound to this profile before we touch it.
+  const resolveCmdline = deps?.resolveHolderCmdline ?? defaultResolveHolderCmdline;
+  const cmdline = await resolveCmdline(holderPid);
+  if (!cmdline || !cmdline.includes(profileDir)) {
+    // Unrelated live process (possible PID reuse) — leave the lock in place.
+    return { cleared: false, reason: 'live_non_chrome_skipped', holderPid };
+  }
+
+  const killTree = deps?.killTree ?? killProcessTree;
+  await killTree(holderPid);
+  removeSingletonFiles(profileDir);
+  return { cleared: true, reason: 'orphan_chrome_killed', holderPid };
 }
