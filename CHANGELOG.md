@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Browser panel rendering as a black rectangle** — the embedded browser viewer loads from the viewer proxy on `http://127.0.0.1:*`, but Tauri's CSP only allowed `http://localhost:*` in `frame-src`. The blocked iframe showed its black fallback background while the state bar text rendered normally. The CSP now permits `http://127.0.0.1:*` so the live page appears in the pane.
 - **Release build failing on vendored Steel resources** — `npm run release` no longer aborts with `resource path 'resources/steel/node_modules/.../.bin/...' doesn't exist`. Steel vendoring now preserves npm `.bin` symlinks as relative links when copying (`verbatimSymlinks`; `fs.cpSync`'s default rewrote them to absolute paths inside the deleted temp build dir), and a new build gate fails the vendoring step with a clear message if any dangling symlink ever slips through.
 
 ## [0.0.25] - 2026-07-18

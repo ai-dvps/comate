@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:* ws://localhost:* wss://localhost:* ipc://localhost http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src 'self' http://localhost:*"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:* ws://localhost:* wss://localhost:* ipc://localhost http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src 'self' http://localhost:* http://127.0.0.1:*"
     }
   },
   "bundle": {
