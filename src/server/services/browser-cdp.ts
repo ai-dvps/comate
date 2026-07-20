@@ -42,6 +42,16 @@ const LOAD_EVENT_TIMEOUT_MS = 10_000;
 
 export interface CdpConnectionOptions {
   commandTimeoutMs?: number;
+  /**
+   * Total budget (ms) to keep retrying the CDP connect+attach across the Steel
+   * cold-start window. Steel reports /v1/health=200 before Chrome's CDP
+   * endpoint accepts WebSocket upgrades (~1–2s gap on a cold start), so the
+   * first connect after a fresh spawn races Chrome readiness and fails with
+   * "socket hang up". Default 10s — well beyond the observed cold-start.
+   */
+  connectReadyTimeoutMs?: number;
+  /** Delay between cold-start connect retries. Default 300ms. */
+  connectRetryIntervalMs?: number;
 }
 
 /** Raw CDP transport: id-matched commands + method-keyed event listeners. */
@@ -370,6 +380,49 @@ class SteelCdpSessionImpl implements SteelCdpSession {
   }
 }
 
+const DEFAULT_CONNECT_READY_TIMEOUT_MS = 10_000;
+const DEFAULT_CONNECT_RETRY_INTERVAL_MS = 300;
+
+export interface RetryDuringColdStartOptions {
+  budgetMs: number;
+  intervalMs: number;
+  /** Injectable clock for tests. */
+  now?: () => number;
+  /** Injectable sleep for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Retry a CDP connect+attach across the Steel cold-start window. Steel's
+ * /v1/health returns 200 (cdpService.isRunning() is true) before Chrome's CDP
+ * endpoint accepts WebSocket upgrades — measured at ~1–2s after health on a
+ * cold start — so the first connectSteelPage after a fresh spawn races Chrome
+ * readiness and fails with "CDP websocket connect failed: socket hang up".
+ * Without this, browser-mcp's first navigate fails and the pane stays on
+ * about:blank. Bounded retry lets the first tool call wait for Chrome instead.
+ *
+ * `attempt` is the full connect+attach (both can fail transiently while Chrome
+ * boots: the WS handshake hangs up, and Target.getTargets finds no page yet).
+ */
+export async function retryDuringColdStart<T>(
+  attempt: () => Promise<T>,
+  opts: RetryDuringColdStartOptions,
+): Promise<T> {
+  const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const deadline = now() + opts.budgetMs;
+  for (;;) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (now() >= deadline) {
+        throw err;
+      }
+      await sleep(opts.intervalMs);
+    }
+  }
+}
+
 /**
  * Connect to a Steel process's CDP endpoint and attach to its page. Steel
  * exposes the browser-level CDP socket at the root WS path (self-hosted
@@ -380,11 +433,18 @@ export async function connectSteelPage(
   options: CdpConnectionOptions = {},
 ): Promise<SteelCdpSession> {
   const wsUrl = `${baseUrl.replace(/^http/i, 'ws')}/`;
-  const connection = await CdpConnection.connect(wsUrl, options);
-  try {
-    return await SteelCdpSessionImpl.attach(connection);
-  } catch (err) {
-    connection.close();
-    throw err;
-  }
+  const budgetMs = options.connectReadyTimeoutMs ?? DEFAULT_CONNECT_READY_TIMEOUT_MS;
+  const intervalMs = options.connectRetryIntervalMs ?? DEFAULT_CONNECT_RETRY_INTERVAL_MS;
+  return retryDuringColdStart(
+    async () => {
+      const connection = await CdpConnection.connect(wsUrl, options);
+      try {
+        return await SteelCdpSessionImpl.attach(connection);
+      } catch (err) {
+        connection.close();
+        throw err;
+      }
+    },
+    { budgetMs, intervalMs },
+  );
 }
