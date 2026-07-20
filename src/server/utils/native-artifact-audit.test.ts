@@ -1,7 +1,7 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import {
@@ -10,6 +10,8 @@ import {
   dirSizeBytes,
   assertSizeBudget,
   detectNativeKind,
+  findDanglingSymlinks,
+  assertNoDanglingSymlinks,
 } from './native-artifact-audit.js';
 
 /**
@@ -130,6 +132,71 @@ describe('native-artifact-audit', { concurrency: false }, () => {
     });
     try {
       assert.strictEqual(findNativeArtifacts(dir).length, 2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Symlink creation needs elevated privileges on Windows; the vendored
+  // Steel build only runs where npm can create .bin links anyway.
+  const symlinkIt = process.platform === 'win32' ? it.skip : it;
+
+  symlinkIt('accepts valid relative symlinks (npm .bin shape)', () => {
+    const dir = makeTree({
+      'node_modules/archiver-utils/node_modules/glob/dist/esm/bin.mjs':
+        '#!/usr/bin/env node\n',
+    });
+    try {
+      const binDir = join(dir, 'node_modules/archiver-utils/node_modules/.bin');
+      mkdirSync(binDir, { recursive: true });
+      symlinkSync('../glob/dist/esm/bin.mjs', join(binDir, 'glob'));
+      assert.deepStrictEqual(findDanglingSymlinks(dir), []);
+      assert.doesNotThrow(() => assertNoDanglingSymlinks(dir));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  symlinkIt('accepts symlinks to directories that exist', () => {
+    const dir = makeTree({ 'packages/real/index.js': 'export {};\n' });
+    try {
+      symlinkSync(join(dir, 'packages/real'), join(dir, 'link-to-real'));
+      assert.deepStrictEqual(findDanglingSymlinks(dir), []);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  symlinkIt('flags relative symlinks whose target is missing', () => {
+    const dir = makeTree({ 'node_modules/pkg/index.js': 'module.exports = {};' });
+    try {
+      const binDir = join(dir, 'node_modules/pkg/node_modules/.bin');
+      mkdirSync(binDir, { recursive: true });
+      symlinkSync('../missing-dep/bin.js', join(binDir, 'missing-dep'));
+      assert.deepStrictEqual(findDanglingSymlinks(dir), [
+        'node_modules/pkg/node_modules/.bin/missing-dep',
+      ]);
+      assert.throws(() => assertNoDanglingSymlinks(dir), /dangling symlinks found/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  symlinkIt('flags absolute symlinks into a deleted build dir (the release-breaking shape)', () => {
+    const dir = makeTree({ 'node_modules/fastify/index.js': 'module.exports = {};' });
+    try {
+      const binDir = join(dir, 'node_modules/fastify/node_modules/.bin');
+      mkdirSync(binDir, { recursive: true });
+      // Mirrors the bug: cpSync rewrote npm's relative .bin link to an
+      // absolute path inside a temp build dir that no longer exists.
+      symlinkSync(
+        join(tmpdir(), 'comate-steel-build-gone/steel-browser/node_modules/pino/bin.js'),
+        join(binDir, 'pino'),
+      );
+      const offenders = findDanglingSymlinks(dir);
+      assert.strictEqual(offenders.length, 1);
+      assert.ok(offenders[0].endsWith('.bin/pino'));
+      assert.throws(() => assertNoDanglingSymlinks(dir), /resource path/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

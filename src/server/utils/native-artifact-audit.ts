@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { readdirSync, readFileSync, statSync, existsSync } from 'fs';
 import { join, relative } from 'path';
 
 /**
@@ -69,6 +69,46 @@ export function assertNoNativeArtifacts(dir: string): void {
       `native artifacts found in vendored tree (build gate):\n  ` +
         offenders.join('\n  ') +
         '\nSteel must ship pure JS only — stub or remove the responsible dependency.',
+    );
+  }
+}
+
+/**
+ * Build gate for symlinks: the Tauri bundler walks the vendored tree and
+ * aborts with `resource path ... doesn't exist` on any symlink whose target
+ * is missing. The classic offender is an npm `.bin` link that fs.cpSync
+ * rewrote from relative to absolute-into-the-temp-build-dir (its default
+ * resolves link targets against the source tree; verbatimSymlinks: true
+ * preserves them). Symlinked directories are not recursed into, matching
+ * walkFiles.
+ */
+export function findDanglingSymlinks(dir: string): string[] {
+  const offenders: string[] = [];
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        // existsSync follows the link, so a dangling target reads as false.
+        if (!existsSync(full)) {
+          offenders.push(relative(dir, full));
+        }
+      } else if (entry.isDirectory()) {
+        walk(full);
+      }
+    }
+  };
+  walk(dir);
+  return offenders;
+}
+
+export function assertNoDanglingSymlinks(dir: string): void {
+  const offenders = findDanglingSymlinks(dir);
+  if (offenders.length > 0) {
+    throw new Error(
+      `dangling symlinks found in vendored tree (build gate):\n  ` +
+        offenders.join('\n  ') +
+        '\nThe Tauri bundler fails on these ("resource path ... doesn\'t exist"). ' +
+        'Copy node_modules trees with verbatimSymlinks: true so npm .bin links stay relative.',
     );
   }
 }
