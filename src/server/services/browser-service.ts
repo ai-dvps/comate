@@ -14,6 +14,7 @@ import { browserAuditService, type BrowserAuditService } from './browser-audit.j
 import {
   allocateLoopbackPort,
   cleanupStaleSteelProcesses,
+  reapStaleProfileLock,
   SteelProcess,
   type SteelExitInfo,
   type SteelProcessHandle,
@@ -691,8 +692,33 @@ export class BrowserService {
     // spawns can never double-allocate (KTD-1 dynamic ports).
     const handle = await this.enqueueSpawn(sessionId, workspaceId, chromiumPath, viewerToken);
 
+    // A previous Steel process for this session may have been torn down
+    // without reaping its Chrome child, leaving an orphan Chrome holding the
+    // deterministic profile dir's SingletonLock. Chrome then refuses to relaunch
+    // into the same dir ("Failed to create SingletonLock: File exists"),
+    // live-details returns 500, and the viewer pane stays black. Clear the lock
+    // (and any verified orphan) before the new Steel launches Chrome into it.
+    try {
+      const reaped = await reapStaleProfileLock(handle.userDataDir);
+      if (reaped.cleared) {
+        diagLog(
+          `[browser] cleared stale profile lock for session ${sessionId} ` +
+            `(${reaped.reason}, holderPid=${reaped.holderPid ?? 'n/a'})`,
+        );
+      }
+    } catch (err) {
+      diagWarn(
+        `[browser] stale profile lock reap failed for session ${sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     try {
       await handle.start();
+      diagLog(
+        `[browser] steel started for session ${sessionId} on port ${handle.port} ` +
+          `(pid=${handle.pid ?? 'unknown'})`,
+      );
     } catch (err) {
       this.portsInUse.delete(handle.port);
       if (!entry) {

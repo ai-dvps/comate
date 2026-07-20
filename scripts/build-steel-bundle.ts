@@ -332,6 +332,68 @@ function clonePinnedSteel(workDir: string): string {
     : new Error(`build-steel-bundle: all remotes failed: ${String(lastError)}`);
 }
 
+/**
+ * Comate patch for Steel's Chrome arg construction.
+ *
+ * Steel hardcodes --remote-debugging-port=9222 in dynamicArgs. Comate passes
+ * FILTER_CHROME_ARGS='--remote-debugging-port=9222' and
+ * CHROME_ARGS='--remote-debugging-port=0' to let Chrome pick a free port.
+ * Upstream Steel builds the arg list with `uniq([...dynamicArgs, ...env.CHROME_ARGS])`
+ * and then filters; `uniq()` keeps the first occurrence (9222) and drops the
+ * replacement (0), then the filter deletes 9222, leaving Chrome with NO remote
+ * debugging port. External CDP clients (browser-mcp, the viewer proxy) cannot
+ * connect, so /v1/sessions/default/live-details returns 500 and the pane stays
+ * black.
+ *
+ * This patch filters FILTER_CHROME_ARGS out BEFORE uniq(), so env.CHROME_ARGS
+ * replacements survive.
+ */
+function patchCdpServiceArgs(apiDir: string): void {
+  const cdpServicePath = join(apiDir, 'build', 'services', 'cdp', 'cdp.service.js');
+  if (!existsSync(cdpServicePath)) {
+    console.warn(`warning: ${cdpServicePath} not found; skipping CDP args patch`);
+    return;
+  }
+  const original = readFileSync(cdpServicePath, 'utf-8');
+  const needle =
+    "                const uniq = (xs) => Array.from(new Set(xs.filter(Boolean)));\n" +
+    "                const launchArgs = uniq([\n" +
+    "                    ...staticDefaultArgs,\n" +
+    "                    ...(isHeadless ? headlessArgs : headfulArgs),\n" +
+    "                    ...dynamicArgs,\n" +
+    "                    ...extensionArgs,\n" +
+    "                    ...(options.args || []),\n" +
+    "                    ...(env.CHROME_ARGS || []),\n" +
+    "                ]).filter((arg) => !env.FILTER_CHROME_ARGS.includes(arg));";
+  if (!original.includes(needle)) {
+    console.warn(
+      `warning: CDP args patch needle not found in ${cdpServicePath}; ` +
+        "Steel's launch-arg code may have drifted",
+    );
+    return;
+  }
+  const replacement =
+    "                const uniq = (xs) => Array.from(new Set(xs.filter(Boolean)));\n" +
+    "                // Comate patch: FILTER_CHROME_ARGS must drop Steel's hardcoded\n" +
+    "                // defaults (e.g. --remote-debugging-port=9222) BEFORE uniq() so\n" +
+    "                // that env.CHROME_ARGS can supply a replacement\n" +
+    "                // (--remote-debugging-port=0). The previous order ran uniq()\n" +
+    "                // first, which kept the hardcoded 9222 and then deleted it,\n" +
+    "                // leaving Chrome with no remote debugging port at all and\n" +
+    "                // breaking external CDP clients.\n" +
+    "                const filterChromeArg = (arg) => !(env.FILTER_CHROME_ARGS || []).includes(arg);\n" +
+    "                const launchArgs = uniq([\n" +
+    "                    ...staticDefaultArgs,\n" +
+    "                    ...(isHeadless ? headlessArgs : headfulArgs),\n" +
+    "                    ...dynamicArgs.filter(filterChromeArg),\n" +
+    "                    ...extensionArgs.filter(filterChromeArg),\n" +
+    "                    ...(options.args || []).filter(filterChromeArg),\n" +
+    "                    ...(env.CHROME_ARGS || []),\n" +
+    "                ]);";
+  writeFileSync(cdpServicePath, original.replace(needle, replacement));
+  console.log(`patched ${cdpServicePath}: FILTER_CHROME_ARGS now applied before uniq()`);
+}
+
 function buildSteelApi(checkout: string): void {
   // Install the api workspace incl. devDependencies (typescript for tsc),
   // honoring the upstream lockfile. Scripts disabled: they download jars and
@@ -345,6 +407,7 @@ function buildSteelApi(checkout: string): void {
     stdio: 'inherit',
     cwd: apiDir,
   });
+  patchCdpServiceArgs(apiDir);
   // Mirror the api package's copy:templates / copy:fingerprint scripts with
   // platform-independent fs calls.
   mkdirSync(join(apiDir, 'build', 'templates'), { recursive: true });

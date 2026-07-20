@@ -52,6 +52,38 @@ const DENY_HEADERS = {
   // Never any ACAO header: a cross-origin page cannot read even the error.
 } as const;
 
+/**
+ * 503 crash-state page: intentionally frameable. The viewer loads inside an
+ * iframe, and returning X-Frame-Options: DENY on this error would make the
+ * pane render as a black rectangle instead of surfacing the crash state.
+ * No token oracle here — the 503 is only reached after the token validated.
+ */
+const UNAVAILABLE_HTML = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser unavailable</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; }
+    body {
+      display: flex; align-items: center; justify-content: center;
+      background: #171717; color: #ffffff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .message { text-align: center; padding: 24px; }
+    .message h1 { font-size: 16px; font-weight: 500; margin: 0 0 8px; }
+    .message p { font-size: 13px; color: #8a8a8a; margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="message">
+    <h1>Browser unavailable</h1>
+    <p>The embedded browser session is not reachable. It may be starting, stopped, or has crashed.</p>
+  </div>
+</body>
+</html>`;
+
 const DEFAULT_WARM_TIMEOUT_MS = 15_000;
 const DEFAULT_WARM_INTERVAL_MS = 300;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 15_000;
@@ -80,6 +112,15 @@ export interface BrowserViewerProxyDeps {
 function deny(res: ServerResponse, status: number, message: string): void {
   res.writeHead(status, DENY_HEADERS);
   res.end(JSON.stringify({ error: message }));
+}
+
+/** Frameable 503 crash-state page for the viewer iframe (see UNAVAILABLE_HTML). */
+function unavailable(res: ServerResponse): void {
+  res.writeHead(503, {
+    'content-type': 'text/html; charset=utf-8',
+    'cache-control': 'no-store',
+  });
+  res.end(UNAVAILABLE_HTML);
 }
 
 /** Writes an HTTP error response onto a raw upgrade socket, then destroys it. */
@@ -251,13 +292,14 @@ export class BrowserViewerProxy {
       // Known token, dead/starting Steel — explicit, fast. Any warmed key for
       // this session is stale from here on; drop it so the set cannot grow
       // unboundedly across respawns.
+      diagWarn(`[browser-proxy] session ${target.sessionId} has no live Steel port; returning 503`);
       this.evictWarmedForSession(target.sessionId);
-      deny(res, 503, 'Browser unavailable');
+      unavailable(res);
       return;
     }
     const ready = await this.ensureWarmed(target);
     if (!ready) {
-      deny(res, 503, 'Browser unavailable');
+      unavailable(res);
       return;
     }
     this.forwardHttp(req, res, target);
@@ -285,7 +327,7 @@ export class BrowserViewerProxy {
     upstream.on('timeout', () => upstream.destroy(new Error('upstream timeout')));
     upstream.on('error', (err) => {
       diagWarn(`[browser-proxy] upstream error for session ${target.sessionId}:`, err.message);
-      if (!res.headersSent) deny(res, 503, 'Browser unavailable');
+      if (!res.headersSent) unavailable(res);
       res.end();
     });
     req.pipe(upstream);
@@ -304,6 +346,7 @@ export class BrowserViewerProxy {
     const fetchImpl = this.deps.fetchImpl ?? fetch;
     const deadline = Date.now() + (this.deps.warmTimeoutMs ?? DEFAULT_WARM_TIMEOUT_MS);
     const interval = this.deps.warmIntervalMs ?? DEFAULT_WARM_INTERVAL_MS;
+    diagLog(`[browser-proxy] warming session ${target.sessionId} on port ${target.port}`);
     const attempt = (async () => {
       while (Date.now() < deadline) {
         try {
@@ -312,7 +355,11 @@ export class BrowserViewerProxy {
             { signal: AbortSignal.timeout(1_500) },
           );
           const body = (await res.json()) as { pages?: unknown[] };
-          if (Array.isArray(body?.pages) && body.pages.length > 0) {
+          const pageCount = Array.isArray(body?.pages) ? body.pages.length : 0;
+          if (pageCount > 0) {
+            diagLog(
+              `[browser-proxy] session ${target.sessionId} warmed (${pageCount} page(s))`,
+            );
             this.warmed.add(key);
             while (this.warmed.size > MAX_WARMED_KEYS) {
               const oldest = this.warmed.keys().next().value;
@@ -321,8 +368,13 @@ export class BrowserViewerProxy {
             }
             return true;
           }
-        } catch {
-          // Steel not ready (or gone) — keep polling until the deadline.
+          diagLog(
+            `[browser-proxy] warm probe for ${target.sessionId}: ${pageCount} pages (status ${res.status})`,
+          );
+        } catch (err) {
+          diagWarn(
+            `[browser-proxy] warm probe for ${target.sessionId} failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
         await new Promise((r) => setTimeout(r, interval));
       }
