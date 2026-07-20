@@ -3,6 +3,7 @@ import net, { type Socket } from 'net';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { browserService } from '../services/browser-service.js';
 import { isWhitelistedHostHeader } from '../services/security/request-origin-guard.js';
+import { VIEWER_TOKEN_PATTERN } from '../services/browser-viewer-token.js';
 
 /**
  * Viewer proxy (plan U7, KTD-7) — the ONLY door to a session's Steel viewer.
@@ -41,7 +42,7 @@ import { isWhitelistedHostHeader } from '../services/security/request-origin-gua
  *    wsEndpoint readiness, and the viewer's tab-discovery cast never retries)
  */
 
-const VIEWER_PATH_PATTERN = /^\/s\/([A-Za-z0-9_-]{32})(\/|$)/;
+const VIEWER_PATH_PATTERN = new RegExp(`^/s/(${VIEWER_TOKEN_PATTERN})(/|$)`);
 const VIEWER_HTTP_PATH = 'v1/sessions/debug';
 const VIEWER_WS_PATH = 'v1/sessions/cast';
 
@@ -54,6 +55,8 @@ const DENY_HEADERS = {
 const DEFAULT_WARM_TIMEOUT_MS = 15_000;
 const DEFAULT_WARM_INTERVAL_MS = 300;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 15_000;
+/** FIFO bound for the warmed key set (keys outlive their sessions otherwise). */
+const MAX_WARMED_KEYS = 512;
 
 /** Narrow slice of browser-service the proxy routes through (test seam). */
 export interface ViewerSessionLookup {
@@ -245,7 +248,10 @@ export class BrowserViewerProxy {
       return;
     }
     if (target.port === undefined) {
-      // Known token, dead/starting Steel — explicit, fast.
+      // Known token, dead/starting Steel — explicit, fast. Any warmed key for
+      // this session is stale from here on; drop it so the set cannot grow
+      // unboundedly across respawns.
+      this.evictWarmedForSession(target.sessionId);
       deny(res, 503, 'Browser unavailable');
       return;
     }
@@ -308,6 +314,11 @@ export class BrowserViewerProxy {
           const body = (await res.json()) as { pages?: unknown[] };
           if (Array.isArray(body?.pages) && body.pages.length > 0) {
             this.warmed.add(key);
+            while (this.warmed.size > MAX_WARMED_KEYS) {
+              const oldest = this.warmed.keys().next().value;
+              if (oldest === undefined) break;
+              this.warmed.delete(oldest);
+            }
             return true;
           }
         } catch {
@@ -322,6 +333,16 @@ export class BrowserViewerProxy {
     return attempt.finally(() => {
       this.warming.delete(key);
     });
+  }
+
+  /** Drop all warmed keys for a session (its Steel process was observed dead). */
+  private evictWarmedForSession(sessionId: string): void {
+    const prefix = `${sessionId}:`;
+    for (const key of this.warmed) {
+      if (key.startsWith(prefix)) {
+        this.warmed.delete(key);
+      }
+    }
   }
 
   // ── WebSocket upgrade forwarding (cast stream) ────────────────────────────

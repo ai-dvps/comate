@@ -54,6 +54,30 @@ function sanitizeBotEnv(env: Record<string, string | undefined>): Record<string,
   return out;
 }
 
+/**
+ * Browser tools never run in bot sessions (U4, KTD-4 ③): the browser MCP
+ * server is not injected for bot sessions at all, so this explicit deny is
+ * the second line of defense (covers spoofed/legacy tool names) and must
+ * precede the 'unknown' fall-through in the canUseTool closures. It applies
+ * to admins too — the admin bypass is void for the browser category. The
+ * message is generic: naming the capability would let an attacker probe the
+ * policy surface. Returns null for non-browser tools.
+ */
+function denyBrowserToolInBotSession(
+  sessionId: string,
+  toolName: string,
+  toolUseID: string | undefined,
+): { behavior: 'deny'; message: string } | null {
+  if (!isBrowserToolName(toolName)) return null;
+  diagLog(
+    `[ChatService.botDeny] session=${sessionId} tool=${toolName} toolUseId=${toolUseID ?? 'none'} reason=browser-tool-bot-session`,
+  );
+  return {
+    behavior: 'deny',
+    message: "I can't do that in this workspace.",
+  };
+}
+
 export interface MessageStream {
   messages: AsyncGenerator<SDKMessage>;
   rawQuery: Query;
@@ -1557,21 +1581,10 @@ export class ChatService {
               decisionReasonType?: string;
             },
           ) => {
-            // Browser tools never run in bot sessions (U4, KTD-4 ③): the
-            // browser MCP server is not injected for bot sessions at all,
-            // this explicit deny is the second line (covers spoofed/legacy
-            // tool names) and must precede the 'unknown' fall-through below.
-            // Generic message — naming the capability would let an attacker
-            // probe the policy surface.
-            if (isBrowserToolName(toolName)) {
-              diagLog(
-                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=browser-tool-bot-session`,
-              );
-              return {
-                behavior: 'deny' as const,
-                message: "I can't do that in this workspace.",
-              };
-            }
+            // Browser tools never run in bot sessions — this deny must precede
+            // the 'unknown' fall-through below (see denyBrowserToolInBotSession).
+            const browserDeny = denyBrowserToolInBotSession(session.id, toolName, sdkOptions?.toolUseID);
+            if (browserDeny) return browserDeny;
 
             // Resolve role dynamically on every tool use so membership/role changes
             // take effect without restarting the runtime.
@@ -1789,19 +1802,10 @@ export class ChatService {
             decisionReasonType?: string;
           },
         ) => {
-          // Browser tools never run in bot sessions (U4, KTD-4 ③) — explicit
-          // deny before the policy evaluation and the 'unknown' fall-through;
-          // applies to admins too (the admin bypass is void for the browser
-          // category). Generic anti-probing message.
-          if (isBrowserToolName(toolName)) {
-            diagLog(
-              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=browser-tool-bot-session`,
-            );
-            return {
-              behavior: 'deny' as const,
-              message: "I can't do that in this workspace.",
-            };
-          }
+          // Browser tools never run in bot sessions — this deny must precede
+          // the policy evaluation and the 'unknown' fall-through below.
+          const browserDeny = denyBrowserToolInBotSession(session.id, toolName, sdkOptions?.toolUseID);
+          if (browserDeny) return browserDeny;
 
           const decision = evaluateToolPermission(policy, toolName, pathContext?.isAdminOrOwner ?? false);
           if (decision === 'deny') {

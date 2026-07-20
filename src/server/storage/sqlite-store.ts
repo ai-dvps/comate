@@ -1490,7 +1490,7 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_media_cache WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
-      this.db.prepare('DELETE FROM browser_audit WHERE workspace_id = ?').run(id);
+      this.deleteBrowserAuditForWorkspace(id);
       this.getAnalyticsCache().clearByWorkspace(id);
     }
     return result.changes > 0;
@@ -2530,6 +2530,28 @@ export class SqliteStore {
   /** Workspace-delete cascade (KTD-8): audit rows die with the workspace. */
   deleteBrowserAuditForWorkspace(workspaceId: string): number {
     return this.db.prepare('DELETE FROM browser_audit WHERE workspace_id = ?').run(workspaceId).changes;
+  }
+
+  /**
+   * Bound the audit table's growth (the table is append-only by design):
+   * age-based retention plus a global row cap, called from server-main's
+   * periodic cleanup timer. Returns the number of rows deleted.
+   */
+  pruneBrowserAudit(options: { retentionDays?: number; maxRows?: number } = {}): number {
+    const retentionDays = options.retentionDays ?? 30;
+    const maxRows = options.maxRows ?? 10_000;
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    let deleted = this.db.prepare('DELETE FROM browser_audit WHERE created_at < ?').run(cutoff).changes;
+    const excess =
+      (this.db.prepare('SELECT COUNT(*) AS n FROM browser_audit').get() as { n: number }).n - maxRows;
+    if (excess > 0) {
+      deleted += this.db
+        .prepare(
+          'DELETE FROM browser_audit WHERE rowid IN (SELECT rowid FROM browser_audit ORDER BY created_at ASC, rowid ASC LIMIT ?)',
+        )
+        .run(excess).changes;
+    }
+    return deleted;
   }
 
   getMigrationVersion(): number | null {

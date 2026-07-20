@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { WsEventMessage } from '@server/websocket/types'
-import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
+import { VIEWER_TOKEN_PATTERN } from '@server/services/browser-viewer-token'
 import { wsClient } from '../lib/websocket-client.js'
 import type { ChatState } from './chat-store'
 
@@ -146,36 +146,46 @@ function writePersistedWidth(width: number): void {
 
 /**
  * The exact shape browserViewerProxy.getViewerUrl constructs (U7): loopback
- * http, 32-char path token, the pinned debug view. Anything else — including
- * agent/user-supplied input — is rejected (returns null).
+ * http, path token (shape pinned by browser-viewer-token on both sides), the
+ * pinned debug view. Anything else — including agent/user-supplied input — is
+ * rejected (returns null).
  */
-const VIEWER_URL_PATTERN =
-  /^http:\/\/127\.0\.0\.1:\d{1,5}\/s\/[A-Za-z0-9_-]{32}\/v1\/sessions\/debug\?/
+const VIEWER_URL_PATTERN = new RegExp(
+  `^http://127\\.0\\.0\\.1:\\d{1,5}/s/${VIEWER_TOKEN_PATTERN}/v1/sessions/debug\\?`,
+)
 
 export function sanitizeViewerUrl(url: unknown): string | null {
   if (typeof url !== 'string' || !VIEWER_URL_PATTERN.test(url)) return null
   return url
 }
 
+/**
+ * The single empty-session object (F11b): selectors and components share ONE
+ * reference for unknown sessions, so `useBrowserPaneStore((s) => …?? EMPTY)`
+ * keeps selector identity stable across unrelated store updates. Never
+ * mutated — every writer spreads it first.
+ */
+export const EMPTY_SESSION_BROWSER_STATE: SessionBrowserState = {
+  controlState: 'none',
+  hydrated: false,
+  port: null,
+  viewerUrl: null,
+  unavailable: null,
+  pendingVerb: null,
+  verbError: null,
+  viewerNonce: 0,
+  rememberSite: false,
+}
+
 export function initialSessionBrowserState(): SessionBrowserState {
-  return {
-    controlState: 'none',
-    hydrated: false,
-    port: null,
-    viewerUrl: null,
-    unavailable: null,
-    pendingVerb: null,
-    verbError: null,
-    viewerNonce: 0,
-    rememberSite: false,
-  }
+  return { ...EMPTY_SESSION_BROWSER_STATE }
 }
 
 function getSessionState(
   state: BrowserPaneState,
   sessionId: string,
 ): SessionBrowserState {
-  return state.sessions[sessionId] ?? initialSessionBrowserState()
+  return state.sessions[sessionId] ?? EMPTY_SESSION_BROWSER_STATE
 }
 
 /** True while the control state describes a live (or starting) browser. */
@@ -245,8 +255,19 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
   const patchSession = (sessionId: string, patch: Partial<SessionBrowserState>): void => {
     set((state) => {
       const current = getSessionState(state, sessionId)
+      const merged = { ...current, ...patch }
+      // No-op guard (mirrors refreshViewerUrl): duplicate events — e.g. WS
+      // reconnect hydration replays — must not rebuild the session object.
+      let changed = false
+      for (const key of Object.keys(merged) as Array<keyof SessionBrowserState>) {
+        if (merged[key] !== current[key]) {
+          changed = true
+          break
+        }
+      }
+      if (!changed) return state
       return {
-        sessions: { ...state.sessions, [sessionId]: { ...current, ...patch } },
+        sessions: { ...state.sessions, [sessionId]: merged },
       }
     })
   }
@@ -495,7 +516,7 @@ export function selectSessionBrowser(
   state: BrowserPaneState,
   sessionId: string | null | undefined,
 ): SessionBrowserState {
-  if (!sessionId) return initialSessionBrowserState()
+  if (!sessionId) return EMPTY_SESSION_BROWSER_STATE
   return getSessionState(state, sessionId)
 }
 
@@ -512,26 +533,17 @@ export function selectHandoffPending(
  * (tool_use without its tool_result). Drives both the pane's determinate
  * progress state (open path) and the chat's in-flight progress copy carrier
  * (closed path — the tool call itself is rendered by the message list).
+ *
+ * Reads chat-store's incrementally maintained per-session id set (O(1)) —
+ * the set is updated where tool_use/tool_result parts land, instead of
+ * rescanning every message part on each chat-store update during streaming.
  */
 export function selectHasInFlightBrowserTool(
-  state: Pick<ChatState, 'messages'>,
+  state: Pick<ChatState, 'inFlightBrowserTools'>,
   sessionId: string | null | undefined,
 ): boolean {
   if (!sessionId) return false
-  const messages = state.messages[sessionId]
-  if (!messages) return false
-  const results = new Set<string>()
-  const browserUses: string[] = []
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (part.type === 'tool_result') {
-        results.add(part.toolUseId)
-      } else if (part.type === 'tool_use' && part.toolName.startsWith(BROWSER_TOOL_PREFIX)) {
-        browserUses.push(part.toolUseId)
-      }
-    }
-  }
-  return browserUses.some((id) => !results.has(id))
+  return (state.inFlightBrowserTools[sessionId]?.size ?? 0) > 0
 }
 
 export type BrowserStartPhase = 'preparing' | 'starting' | null

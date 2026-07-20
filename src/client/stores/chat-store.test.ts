@@ -10,6 +10,7 @@ import {
   getLastEventId,
   clearLastEventId,
   clearAllSessionSubscriptions,
+  deriveInFlightBrowserToolIds,
   type SseSetter,
 } from './chat-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
@@ -2164,3 +2165,123 @@ describe('setSessionFastMode', () => {
   })
 })
 
+
+describe('in-flight browser tool tracking (F14)', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      messages: {},
+      inFlightBrowserTools: {},
+      totalMessageCount: {},
+      streamStartedAt: {},
+      windowCap: 200,
+    })
+  })
+
+  it('adds on tool_use_start, removes on tool_result', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 't1',
+      toolName: 'mcp__comate-browser__open',
+    })
+    assert.deepStrictEqual(
+      [...(useChatStore.getState().inFlightBrowserTools['s1'] ?? [])],
+      ['t1'],
+    )
+
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', { toolUseId: 't1', output: 'ok' })
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1']?.size ?? 0, 0)
+  })
+
+  it('ignores non-browser tools entirely', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 't2',
+      toolName: 'Bash',
+    })
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1'], undefined)
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', { toolUseId: 't2', output: 'ok' })
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1'], undefined)
+  })
+
+  it('keeps a replayed tool_use_start idempotent and settles a replayed tool_result', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 't1',
+      toolName: 'mcp__comate-browser__act',
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 't1',
+      toolName: 'mcp__comate-browser__act',
+    })
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1']?.size, 1)
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', { toolUseId: 't1', output: 'ok' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', { toolUseId: 't1', output: 'ok' })
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1']?.size ?? 0, 0)
+  })
+
+  it('deriveInFlightBrowserToolIds pairs results regardless of array order (full-scan rule)', () => {
+    // A result BEFORE its use in array order still counts as paired — the
+    // wholesale-replacement recompute must match the old selector exactly.
+    const ids = deriveInFlightBrowserToolIds([
+      {
+        id: 'm1',
+        role: 'user',
+        timestamp: 1,
+        parts: [{ type: 'tool_result', toolUseId: 't1', output: '', isError: false }],
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        timestamp: 2,
+        parts: [
+          { type: 'tool_use', toolUseId: 't1', toolName: 'mcp__comate-browser__open', input: {}, state: 'complete' },
+          { type: 'tool_use', toolUseId: 't2', toolName: 'mcp__comate-browser__act', input: {}, state: 'complete' },
+        ],
+      },
+    ])
+    assert.deepStrictEqual([...ids], ['t2'])
+  })
+
+  it('recomputes when pruning drops an unpaired browser tool_use', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({ windowCap: 50 })
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 't1',
+      toolName: 'mcp__comate-browser__open',
+    })
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1']?.size, 1)
+    // Push the window past the cap so the unpaired use is pruned away.
+    for (let i = 0; i < 60; i += 1) {
+      handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: `mx-${i}` })
+    }
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1']?.size ?? 0, 0)
+  })
+
+  it('clearMessages drops the session entry', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: 'm1',
+      partIndex: 0,
+      toolUseId: 't1',
+      toolName: 'mcp__comate-browser__open',
+    })
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1']?.size, 1)
+    useChatStore.getState().clearMessages('s1')
+    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1'], undefined)
+  })
+})

@@ -5,12 +5,13 @@ import BrowserStateBar from './BrowserStateBar'
 import BrowserBody from './BrowserBody'
 import { useBrowserPaneStore } from '../../stores/browser-pane-store'
 import { cn } from '../ui/utils'
+import { FOCUS_CLASSES } from './focus-classes'
 
 /**
  * BrowserPopout — the in-app floating window (PiP-style overlay; never an OS
  * window). It mirrors the pane's state machine: the state bar here drives the
  * same store, and the viewer iframe lives in exactly one surface at a time —
- * opening the popout moves the画面 here (the pane shows a placeholder) and
+ * opening the popout moves the viewer here (the pane shows a placeholder) and
  * closing returns it ("关闭即回面板"). The popout follows the active session
  * (App renders it against the store's active pointers).
  *
@@ -106,7 +107,7 @@ export default function BrowserPopout() {
           aria-label={t('action.closePopout')}
           className={cn(
             'p-1 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+            FOCUS_CLASSES,
           )}
         >
           <X className="w-3.5 h-3.5" aria-hidden="true" />

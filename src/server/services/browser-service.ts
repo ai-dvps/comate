@@ -8,6 +8,7 @@ import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store
 import type { BrowserSessionContext } from '../models/workspace.js';
 import { connectSteelPage } from './browser-cdp.js';
 import { siteKeyForUrl } from './browser-site-key.js';
+import { clearBrowserGateSession } from './browser-gate-state.js';
 import { filterContextToScope, readSiteAuthEntry } from './browser-site-auth.js';
 import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
 import {
@@ -39,7 +40,6 @@ import {
  * overwrites it; its own listener APIs are chainable multi-listener):
  *  - session delete              -> teardownSession(sessionId)
  *  - workspace delete cascade    -> teardownWorkspace(workspaceId)
- *  - closeRuntimesForWorkspace   -> handleRuntimesClosedForWorkspace(workspaceId)
  *  - sidecar shutdown (2s budget)-> shutdown()
  * A sidecar force-kill is covered by pidfiles: the next boot's
  * cleanupStaleSteelProcesses reaps orphans (initialize(), lazy on first use).
@@ -215,7 +215,8 @@ type ResolvedBrowserServiceDeps = Omit<
 > &
   Required<Pick<BrowserServiceDeps, 'store' | 'currentPageUrl' | 'exportContext' | 'audit'>>;
 
-function sanitizeSessionId(sessionId: string): string {
+/** Filesystem/request-id-safe form of a chat sessionId (shared by browser-control). */
+export function sanitizeSessionId(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
@@ -479,6 +480,9 @@ export class BrowserService {
     if (!entry) return;
     this.registry.delete(sessionId);
     this.tokenIndex.delete(entry.viewerToken);
+    // The canUseTool-layer gate state (submit-semantics refs + navigation
+    // ledger) is session-scoped — it must die with the session.
+    clearBrowserGateSession(sessionId);
     entry.expectingExit = true;
     await this.stopEntry(entry, { wipeProfile: true });
     this.emit({
@@ -631,16 +635,6 @@ export class BrowserService {
     });
     diagLog(`[browser] injecting remembered site ${keyResult.key} for session ${sessionId}`);
     return { key: keyResult.key, context: siteAuthEntry.sessionContext };
-  }
-
-  /**
-   * Teardown path 3 (KTD-1): chatService.closeRuntimesForWorkspace ran. This
-   * is the only runtime-close the browser reacts to — an ordinary runtime
-   * close/rebuild must NOT tear the browser down (KTD-5 rebind semantics).
-   * Idempotent twin of teardownWorkspace so both hook sites may call it.
-   */
-  async handleRuntimesClosedForWorkspace(workspaceId: string): Promise<void> {
-    await this.teardownWorkspace(workspaceId);
   }
 
   /** Sidecar shutdown: SIGKILL every Steel tree within the 2s budget (KTD-1). */

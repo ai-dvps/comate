@@ -695,6 +695,41 @@ describe('browser-control handoff timeout (AE4)', () => {
     const result = await pending;
     assert.strictEqual(resultPayload(result).reason, 'timeout');
   });
+
+  it('an activity ping writes NO browser_audit row (F15 — content-free churn)', async () => {
+    const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-control-'));
+    const service = new BrowserService({
+      storageDir,
+      maxSessions: 4,
+      allocatePort: async () => 9876,
+      resolveChromiumPath: async () => '/fake/chromium',
+      createProcess: (options) => new FakeSteelHandle(options),
+      cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
+      now: () => Date.now(),
+    });
+    const logged: string[] = [];
+    const timer = new FakeTimer();
+    const control = new BrowserControlService({
+      browserService: service,
+      timer,
+      audit: {
+        logControl: (input) => {
+          logged.push(input.verb);
+          return null;
+        },
+      },
+    });
+    try {
+      await service.ensureSession({ sessionId: 'sess-1', workspaceId: 'ws-1' });
+      control.beginHandoff('sess-1', 'Log in');
+      logged.length = 0;
+      control.recordActivity('sess-1');
+      assert.deepStrictEqual(logged, [], 'activity_ping must not be audited');
+      assert.strictEqual(timer.handles.length, 2, 'the timer was still reset');
+    } finally {
+      rmSync(storageDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

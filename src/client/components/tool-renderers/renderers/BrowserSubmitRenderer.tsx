@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ShieldAlert } from 'lucide-react'
+import { BROWSER_TOOL_NAMES } from '@server/services/browser-tool-names'
 import { registerToolRenderer } from '../registry'
 import {
   parseBrowserSubmitInput,
@@ -121,4 +122,4 @@ export default function BrowserSubmitRenderer(input: unknown): ReactNode | null 
   return <BrowserSubmitManifest payload={payload} />
 }
 
-registerToolRenderer('mcp__comate-browser__submit', BrowserSubmitRenderer)
+registerToolRenderer(BROWSER_TOOL_NAMES.submit, BrowserSubmitRenderer)

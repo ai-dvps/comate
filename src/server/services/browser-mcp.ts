@@ -15,7 +15,9 @@ import {
   BrowserControlService,
   BrowserHandoffError,
   browserControlService,
+  gatesAgentToolCall,
   type BrowserHandoffCompletion,
+  type HandoffEndReason,
   type HandoffPhase,
 } from './browser-control.js';
 import { connectSteelPage, type SteelCdpSession } from './browser-cdp.js';
@@ -35,14 +37,17 @@ import {
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import {
   BROWSER_MCP_SERVER_KEY,
+  BROWSER_TOOL_NAMES,
   BROWSER_TOOL_PREFIX,
 } from './browser-tool-names.js';
+import { parseHttpUrlDetailed } from './browser-site-key.js';
 import {
   clearSubmitSemanticsRefs,
   setSubmitSemanticsRefs,
 } from './browser-gate-state.js';
 import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
 import { buildStorageInitScript } from './browser-site-auth.js';
+import { originOf } from './browser-origin.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
 // tests) keep working; the canonical home is browser-tool-names.ts (U4) so
@@ -329,7 +334,7 @@ const UNAVAILABLE_RESOLUTIONS: Record<string, string> = {
  * Recoverable handoff endings (R8/AE4): the agent gets an actionable
  * explanation it can relay to the chat; the task is never left blocked.
  */
-const HANDOFF_END_DETAILS: Record<string, string> = {
+const HANDOFF_END_DETAILS: Partial<Record<HandoffEndReason, string>> = {
   declined:
     'The user declined the takeover request. Continue without the manual step if possible, or ask the user how to proceed.',
   timeout:
@@ -407,7 +412,8 @@ export class BrowserToolContext {
 
   private controlGate(stage: ToolStage): CallToolResult | null {
     const state = this.svc.getControlState(this.deps.sessionId);
-    if (state === 'user_in_control' || state === 'handoff_pending') {
+    // The transition table (browser-control) owns the gating rule.
+    if (state && gatesAgentToolCall(state)) {
       return toolError(
         'browser_user_in_control',
         stage,
@@ -489,25 +495,24 @@ export class BrowserToolContext {
   // -- open -----------------------------------------------------------------
 
   async handleOpen(args: { url: string }): Promise<CallToolResult> {
-    let parsed: URL;
-    try {
-      parsed = new URL(args.url);
-    } catch {
-      return toolError(
-        'browser_url_invalid',
-        'navigate',
-        `Unparseable URL: ${args.url}`,
-        'Pass a full http(s) URL, e.g. https://example.com.',
-      );
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    const parsedResult = parseHttpUrlDetailed(args.url);
+    if (!parsedResult.ok) {
+      if (parsedResult.reason === 'invalid') {
+        return toolError(
+          'browser_url_invalid',
+          'navigate',
+          `Unparseable URL: ${args.url}`,
+          'Pass a full http(s) URL, e.g. https://example.com.',
+        );
+      }
       return toolError(
         'browser_url_scheme',
         'navigate',
-        `Refusing to navigate to a ${parsed.protocol}// URL.`,
+        `Refusing to navigate to a ${parsedResult.protocol}// URL.`,
         'Only http:// and https:// URLs are allowed.',
       );
     }
+    const parsed = parsedResult.url;
     try {
       const page = await this.ensurePage();
       // Remembered-site injection (U8, KTD-8): exactly once per Steel
@@ -532,7 +537,7 @@ export class BrowserToolContext {
       this.audit.logToolAction({
         workspaceId: this.deps.workspaceId,
         sessionId: this.deps.sessionId,
-        toolName: `${BROWSER_TOOL_PREFIX}open`,
+        toolName: BROWSER_TOOL_NAMES.open,
         url: model.url,
         outcome: 'ok',
       });
@@ -567,19 +572,26 @@ export class BrowserToolContext {
   async handleSnapshot(args: { screenshot?: boolean }): Promise<CallToolResult> {
     try {
       const page = await this.ensurePage();
-      const model = await this.distill(page);
-      const content: CallToolResult['content'] = [];
+      // The control gate runs before dispatching either CDP call.
       if (args.screenshot) {
         const gate = this.controlGate('control');
         if (gate) return gate;
-        const data = await page.captureScreenshot();
-        content.push({ type: 'image', data, mimeType: 'image/jpeg' });
+      }
+      // Distill and screenshot are independent CDP round-trips — run them
+      // concurrently instead of serializing the screenshot behind the model.
+      const [model, screenshot] = await Promise.all([
+        this.distill(page),
+        args.screenshot ? page.captureScreenshot() : Promise.resolve(undefined),
+      ]);
+      const content: CallToolResult['content'] = [];
+      if (screenshot !== undefined) {
+        content.push({ type: 'image', data: screenshot, mimeType: 'image/jpeg' });
         // Image exfil point toward the model — the FACT is audited; the
         // image bytes never touch the audit table (KTD-9).
         this.audit.logToolAction({
           workspaceId: this.deps.workspaceId,
           sessionId: this.deps.sessionId,
-          toolName: `${BROWSER_TOOL_PREFIX}snapshot`,
+          toolName: BROWSER_TOOL_NAMES.snapshot,
           url: model.url,
           outcome: 'ok',
           detail: 'screenshot',
@@ -677,7 +689,7 @@ export class BrowserToolContext {
       this.audit.logToolAction({
         workspaceId: this.deps.workspaceId,
         sessionId: this.deps.sessionId,
-        toolName: `${BROWSER_TOOL_PREFIX}act`,
+        toolName: BROWSER_TOOL_NAMES.act,
         url: model.url,
         fieldNames: [entry.name],
         outcome: 'ok',
@@ -800,7 +812,7 @@ export class BrowserToolContext {
         const origin = String(payload.actionOrigin ?? '');
         const decision = await this.requestApproval(
           {
-            toolName: `${BROWSER_TOOL_PREFIX}submit`,
+            toolName: BROWSER_TOOL_NAMES.submit,
             title: `Submit form "${formName}" to ${origin}`,
             description: reconfirm
               ? 'The form changed after the previous approval — confirm the updated submission.'
@@ -815,7 +827,7 @@ export class BrowserToolContext {
           this.audit.logToolAction({
             workspaceId: this.deps.workspaceId,
             sessionId: this.deps.sessionId,
-            toolName: `${BROWSER_TOOL_PREFIX}submit`,
+            toolName: BROWSER_TOOL_NAMES.submit,
             url: String(payload.actionOrigin ?? ''),
             fieldNames: approvedSnapshot.fields.map((field) => field.name),
             outcome: 'denied',
@@ -898,7 +910,7 @@ export class BrowserToolContext {
       this.audit.logToolAction({
         workspaceId: this.deps.workspaceId,
         sessionId: this.deps.sessionId,
-        toolName: `${BROWSER_TOOL_PREFIX}submit`,
+        toolName: BROWSER_TOOL_NAMES.submit,
         url: approvedSnapshot.action,
         fieldNames: approvedSnapshot.fields.map((field) => field.name),
         outcome: 'ok',
@@ -1003,7 +1015,7 @@ export class BrowserToolContext {
       this.audit.logToolAction({
         workspaceId: this.deps.workspaceId,
         sessionId: this.deps.sessionId,
-        toolName: `${BROWSER_TOOL_PREFIX}extract`,
+        toolName: BROWSER_TOOL_NAMES.extract,
         url: model.url,
         fieldNames: extracted,
         outcome: 'ok',
@@ -1079,7 +1091,7 @@ export class BrowserToolContext {
           const decision = await this.requestApproval(
             {
               requestId: cardId,
-              toolName: `${BROWSER_TOOL_PREFIX}requestHandoff`,
+              toolName: BROWSER_TOOL_NAMES.requestHandoff,
               title: 'Claude is asking you to take control of the browser',
               description: args.reason,
               payload: {
@@ -1110,7 +1122,7 @@ export class BrowserToolContext {
           const decision = await this.requestApproval(
             {
               requestId: cardId,
-              toolName: `${BROWSER_TOOL_PREFIX}requestHandoff`,
+              toolName: BROWSER_TOOL_NAMES.requestHandoff,
               title: 'You are in control of the browser',
               description:
                 'Claude is waiting while you drive. Click continue when you are done to hand control back with a summary of what changed.',
@@ -1138,13 +1150,7 @@ export class BrowserToolContext {
   }
 
   private pageOrigin(): string | undefined {
-    const url = this.lastModel?.url;
-    if (!url) return undefined;
-    try {
-      return new URL(url).origin;
-    } catch {
-      return undefined;
-    }
+    return originOf(this.lastModel?.url) ?? undefined;
   }
 
   /**

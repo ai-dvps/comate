@@ -33,6 +33,19 @@ async function defaultProbeChromium(executablePath: string): Promise<string> {
   return stdout.trim();
 }
 
+/** Resolution details echoed in both the 503 and the probe-failure payloads. */
+function resolutionDetails(
+  steel: SteelResolution | undefined,
+  chromium: ChromiumResolution | undefined,
+): Record<string, unknown> {
+  return {
+    steel: steel ? { source: steel.source, steelDir: steel.steelDir } : null,
+    chromium: chromium
+      ? { source: chromium.source, executablePath: chromium.executablePath }
+      : null,
+  };
+}
+
 export function createHealthBrowserRouter(overrides?: Partial<HealthBrowserDeps>): Router {
   const deps: HealthBrowserDeps = {
     resolveSteel: () => resolveSteelBundle(),
@@ -67,12 +80,7 @@ export function createHealthBrowserRouter(overrides?: Partial<HealthBrowserDeps>
         ok: false,
         error: problems.join(' '),
         message: 'Embedded browser runtime is not ready.',
-        details: {
-          steel: steel ? { source: steel.source, steelDir: steel.steelDir } : null,
-          chromium: chromium
-            ? { source: chromium.source, executablePath: chromium.executablePath }
-            : null,
-        },
+        details: resolutionDetails(steel, chromium),
       });
       return;
     }
@@ -98,10 +106,7 @@ export function createHealthBrowserRouter(overrides?: Partial<HealthBrowserDeps>
           'Reinstall the browser, point COMATE_CHROMIUM_PATH at a working ' +
           'executable, or remove it so the pinned download can be used.',
         message: 'Chromium resolved but failed to launch.',
-        details: {
-          steel: { source: steel.source, steelDir: steel.steelDir },
-          chromium: { source: chromium.source, executablePath: chromium.executablePath },
-        },
+        details: resolutionDetails(steel, chromium),
       });
     }
   });

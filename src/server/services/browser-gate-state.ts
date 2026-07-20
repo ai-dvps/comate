@@ -31,11 +31,9 @@
  */
 
 import { BROWSER_TOOL_NAMES } from './browser-tool-names.js';
-import { registrableDomain } from './browser-site-key.js';
+import { parseHttpUrl, registrableDomain } from './browser-site-key.js';
 
-// The eTLD+1 rule lives in browser-site-key.ts (U8: tldts/PSL, single home —
-// this module previously carried a last-two-labels heuristic). Re-exported
-// here so existing gate consumers/tests keep their import site.
+// Re-exported so existing gate consumers/tests keep their import site.
 export { registrableDomain };
 
 // ---------------------------------------------------------------------------
@@ -43,10 +41,21 @@ export { registrableDomain };
 // ---------------------------------------------------------------------------
 
 const submitSemanticsRefs = new Map<string, Set<string>>();
+/** Bounded FIFO (shared with the navigation ledger) so abandoned sessions
+ * cannot grow the registry without limit; browserService.teardownSession
+ * clears live sessions explicitly. */
+const SUBMIT_REFS_CAP = 512;
 
 /** Replace the session's submit-semantics ref set (called on every distill). */
 export function setSubmitSemanticsRefs(sessionId: string, refs: Iterable<string>): void {
+  // Refresh recency before the cap check so active sessions are never evicted.
+  submitSemanticsRefs.delete(sessionId);
   submitSemanticsRefs.set(sessionId, new Set(refs));
+  while (submitSemanticsRefs.size > SUBMIT_REFS_CAP) {
+    const oldest = submitSemanticsRefs.keys().next().value;
+    if (oldest === undefined) break;
+    submitSemanticsRefs.delete(oldest);
+  }
 }
 
 /** True when the ref is currently known to submit a form for this session. */
@@ -159,15 +168,6 @@ function ledgerEntry(sessionId: string): NavigationLedgerEntry {
 }
 
 /**
- * Well-known second-level public suffixes — REMOVED in U8: the real PSL
- * (tldts, allowPrivateDomains) now lives in browser-site-key.ts and is
- * re-exported above. The historical note stays: a miss only ever over-groups
- * (a.co.uk and b.co.uk share a domain), never under-groups, so the
- * confirmation fires at least as often as a real PSL would require — the
- * tldts rule preserves that direction.
- */
-
-/**
  * Evaluate a navigation for the session. Pure — commit separately via
  * `commitSessionNavigation` once the navigation is actually permitted.
  */
@@ -175,13 +175,8 @@ export function evaluateSessionNavigation(
   sessionId: string,
   rawUrl: string,
 ): SessionNavigationVerdict {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return { kind: 'invalid' };
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+  const parsed = parseHttpUrl(rawUrl);
+  if (!parsed) {
     return { kind: 'invalid' };
   }
   const domain = registrableDomain(parsed);

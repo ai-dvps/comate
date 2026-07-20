@@ -33,7 +33,6 @@ import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
 import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
-import { chatService } from './services/chat-service.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
 import { BotMigrationService } from './services/bot-migration-service.js';
 import { store as workspaceStore } from './storage/sqlite-store.js';
@@ -47,7 +46,7 @@ import { initializeResolvedShellEnv } from './utils/resolve-shell-env.js';
 import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketplace-path.js';
 import { addExtraKnownMarketplace } from './utils/claude-settings.js';
 import { ComateWebSocketServer } from './websocket/server.js';
-import { gitChangesService } from './services/git-changes-service.js';
+import { teardownServices } from './service-teardown.js';
 import {
   createCorsOriginCallback,
   hostHeaderGuard,
@@ -68,6 +67,18 @@ const __dirname = getDirname();
 const app = express();
 const PORT = process.env.PORT || 3000;
 let logCleanupTimer: NodeJS.Timeout | null = null;
+
+/** browser_audit retention (F18): never lets cleanup failures reach the timer. */
+function pruneBrowserAudit(): void {
+  try {
+    const deleted = workspaceStore.pruneBrowserAudit();
+    if (deleted > 0) {
+      diagLog(`[browser-audit] pruned ${deleted} expired audit rows`);
+    }
+  } catch (err) {
+    diagLog(`[browser-audit] prune failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 function ensureComateBuiltInMarketplace(): void {
   const marketplacePath = resolveBuiltInMarketplacePath();
@@ -296,10 +307,13 @@ const server = app.listen(PORT, () => {
     console.error('Failed to backfill WeCom session names:', err);
   });
 
-  // Initialize log cleanup — run once at startup, then periodically
+  // Initialize log cleanup — run once at startup, then periodically. The same
+  // timer bounds the append-only browser_audit table (age + row cap).
   runLogCleanup();
+  pruneBrowserAudit();
   logCleanupTimer = setInterval(() => {
     runLogCleanup();
+    pruneBrowserAudit();
   }, 6 * 60 * 60 * 1000); // 6 hours
   logCleanupTimer.unref();
 
@@ -324,13 +338,7 @@ async function shutdown(signal: string): Promise<void> {
     clearInterval(logCleanupTimer);
     logCleanupTimer = null;
   }
-  wecomBotService.disconnectAll();
-  feishuBotService.disconnect();
-  await wecomQueueWorker.shutdown();
-  await wecomUserResolver.shutdown();
-  await gitChangesService.dispose();
-  await browserViewerProxy.stop();
-  await chatService.closeAllRuntimes();
+  await teardownServices();
   server.close(() => {
     process.exit(0);
   });

@@ -3,13 +3,14 @@ import { Globe, XCircle } from 'lucide-react'
 import BrowserViewer from './BrowserViewer'
 import {
   BROWSER_START_PHASE_PERCENT,
-  initialSessionBrowserState,
+  EMPTY_SESSION_BROWSER_STATE,
   selectBrowserStartPhase,
   selectHasInFlightBrowserTool,
   useBrowserPaneStore,
 } from '../../stores/browser-pane-store'
 import { useChatStore } from '../../stores/chat-store'
 import { cn } from '../ui/utils'
+import { FOCUS_CLASSES } from './focus-classes'
 
 /**
  * BrowserBody — the pane/popout body derivation shared by both surfaces:
@@ -28,10 +29,7 @@ export interface BrowserBodyProps {
   viewerHere: boolean
 }
 
-const EMPTY_SESSION = initialSessionBrowserState()
-
-const FOCUS_CLASSES =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60'
+const EMPTY_SESSION = EMPTY_SESSION_BROWSER_STATE
 
 export default function BrowserBody({ workspaceId, sessionId, viewerHere }: BrowserBodyProps) {
   const { t } = useTranslation('browser')

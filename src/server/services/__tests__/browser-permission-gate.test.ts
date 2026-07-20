@@ -18,6 +18,7 @@ import {
   evaluateSessionNavigation,
   getVisitedDomains,
   isBrowserSubmitClassified,
+  isSubmitSemanticsRef,
   redactSubmitGateInput,
   registrableDomain,
   setSubmitSemanticsRefs,
@@ -166,6 +167,27 @@ describe('submit classification (canUseTool-layer rules)', () => {
     assert.ok(isBrowserSubmitClassified(SESSION, BROWSER_TOOL_NAMES.act, { ref: 'e5-ab', action: 'click' }));
     setSubmitSemanticsRefs(SESSION, []);
     assert.ok(!isBrowserSubmitClassified(SESSION, BROWSER_TOOL_NAMES.act, { ref: 'e5-ab', action: 'click' }));
+  });
+
+  it('the ref registry is FIFO-bounded and refreshing a session keeps it alive (F17)', () => {
+    const prefix = 'cap-test-';
+    try {
+      for (let i = 0; i < 512; i += 1) {
+        setSubmitSemanticsRefs(`${prefix}${i}`, ['e1-aa']);
+      }
+      assert.ok(isSubmitSemanticsRef(`${prefix}0`, 'e1-aa'), 'within the cap');
+      // One more evicts the oldest; re-setting the second-oldest refreshes it.
+      setSubmitSemanticsRefs(`${prefix}1`, ['e1-aa']);
+      setSubmitSemanticsRefs(`${prefix}overflow`, ['e1-aa']);
+      assert.ok(!isSubmitSemanticsRef(`${prefix}0`, 'e1-aa'), 'oldest evicted');
+      assert.ok(isSubmitSemanticsRef(`${prefix}1`, 'e1-aa'), 'refreshed session survives');
+      assert.ok(isSubmitSemanticsRef(`${prefix}overflow`, 'e1-aa'));
+    } finally {
+      for (let i = 0; i < 512; i += 1) {
+        clearBrowserGateSession(`${prefix}${i}`);
+      }
+      clearBrowserGateSession(`${prefix}overflow`);
+    }
   });
 
   it('redactSubmitGateInput strips field values but keeps field names', () => {

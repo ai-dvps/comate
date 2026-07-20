@@ -37,6 +37,7 @@ import {
   selectHandoffPending,
   selectHasInFlightBrowserTool,
   selectBrowserStartPhase,
+  selectSessionBrowser,
   initialSessionBrowserState,
   BROWSER_START_PHASE_PERCENT,
 } from '../../../stores/browser-pane-store'
@@ -466,43 +467,33 @@ describe('browser-pane-store', () => {
     expect(BROWSER_START_PHASE_PERCENT.preparing).toBeLessThan(BROWSER_START_PHASE_PERCENT.starting)
   })
 
-  it('selectHasInFlightBrowserTool spots an unresolved browser tool call', () => {
-    const state = {
-      messages: {
-        'sess-1': [
-          {
-            parts: [
-              { type: 'tool_use' as const, toolUseId: 't1', toolName: 'mcp__comate-browser__open' },
-            ],
-          },
-        ],
-      },
-    }
-    expect(selectHasInFlightBrowserTool(state as never, 'sess-1')).toBe(true)
+  it('selectHasInFlightBrowserTool reads the chat-store in-flight id set', () => {
+    // The set's add/remove semantics live in chat-store (see chat-store tests);
+    // this selector is the O(1) reader.
+    const withUse = { inFlightBrowserTools: { 'sess-1': new Set(['t1']) } }
+    expect(selectHasInFlightBrowserTool(withUse as never, 'sess-1')).toBe(true)
 
-    const resolved = {
-      messages: {
-        'sess-1': [
-          {
-            parts: [
-              { type: 'tool_use' as const, toolUseId: 't1', toolName: 'mcp__comate-browser__open' },
-              { type: 'tool_result' as const, toolUseId: 't1' },
-            ],
-          },
-        ],
-      },
-    }
+    const resolved = { inFlightBrowserTools: { 'sess-1': new Set<string>() } }
     expect(selectHasInFlightBrowserTool(resolved as never, 'sess-1')).toBe(false)
 
-    const nonBrowser = {
-      messages: {
-        'sess-1': [
-          { parts: [{ type: 'tool_use' as const, toolUseId: 't2', toolName: 'Bash' }] },
-        ],
-      },
-    }
-    expect(selectHasInFlightBrowserTool(nonBrowser as never, 'sess-1')).toBe(false)
-    expect(selectHasInFlightBrowserTool(state as never, null)).toBe(false)
+    const unknown = { inFlightBrowserTools: {} }
+    expect(selectHasInFlightBrowserTool(unknown as never, 'sess-1')).toBe(false)
+    expect(selectHasInFlightBrowserTool(withUse as never, null)).toBe(false)
+  })
+
+  it('selectSessionBrowser returns a stable empty reference for unknown sessions', () => {
+    const state = useBrowserPaneStore.getState()
+    expect(selectSessionBrowser(state, 'nope')).toBe(selectSessionBrowser(state, 'nope'))
+    expect(selectSessionBrowser(state, null)).toEqual(initialSessionBrowserState())
+  })
+
+  it('ignores a duplicate browser_state event without rebuilding the sessions object (F16)', () => {
+    const store = useBrowserPaneStore.getState()
+    store._applyBrowserState('sess-1', { state: 'session_lost' })
+    const before = useBrowserPaneStore.getState().sessions
+    // Identical replay (e.g. WS reconnect hydration): no state change at all.
+    store._applyBrowserState('sess-1', { state: 'session_lost' })
+    expect(useBrowserPaneStore.getState().sessions).toBe(before)
   })
 
   it('module-level wiring routes browser events into the store', () => {

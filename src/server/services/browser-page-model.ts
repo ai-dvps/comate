@@ -18,6 +18,8 @@
  * submit return a structured stale-ref error instead of acting on ghosts.
  */
 
+import { originOf } from './browser-origin.js';
+
 // ---------------------------------------------------------------------------
 // Sensitivity ruleset (KTD-8). These constants are interpolated verbatim into
 // the in-page extractor script so page-side and sidecar-side classification
@@ -548,6 +550,45 @@ function classifyPageType(extraction: RawPageExtraction, formCount: number): Pag
 }
 
 /**
+ * Mint a field ref and build its model field. Shared by the in-form and
+ * standalone-control paths; `placement` carries what differs between them
+ * (real form/field indices + extractor submit semantics, or the synthetic
+ * -1/-1 + false for standalone page controls).
+ */
+function mapRawField(
+  refTable: RefTable,
+  rawField: RawExtractedField,
+  placement: { formIndex: number; fieldIndex: number; submitSemantics: boolean },
+): PageModelField {
+  const entry = refTable.mint({
+    kind: 'field',
+    role: rawField.tag === 'button' ? 'button' : rawField.type,
+    name: rawField.label || rawField.name || '',
+    xpath: rawField.xpath,
+    formIndex: placement.formIndex,
+    fieldIndex: placement.fieldIndex,
+    submitSemantics: placement.submitSemantics,
+  });
+  const modelField: PageModelField = {
+    ref: entry.ref,
+    label: rawField.label,
+    tag: rawField.tag,
+    type: rawField.type,
+    required: rawField.required,
+    sensitive: rawField.sensitive,
+    submitSemantics: placement.submitSemantics,
+  };
+  if (rawField.name !== undefined) modelField.name = rawField.name;
+  if (rawField.autocomplete !== undefined) modelField.autocomplete = rawField.autocomplete;
+  // Sensitive values never reach the model — the extractor already hashed
+  // and dropped them, and we defensively re-check sidecar-side.
+  if (rawField.value !== undefined && !rawField.sensitive && !isSensitiveField(rawField)) {
+    modelField.value = rawField.value.slice(0, VALUE_CAP);
+  }
+  return modelField;
+}
+
+/**
  * Distill a live page into a PageModel and mint the new ref batch. Merging:
  * forms/fields come from the in-page extractor (labels, autocomplete,
  * required, sensitivity, XPath refs); actions come from the CDP
@@ -566,38 +607,13 @@ export async function distillPageModel(
   refTable.beginBatch({ docId: extraction.docId, domEpoch: extraction.domEpoch });
 
   const forms: PageModelForm[] = extraction.forms.map((rawForm) => {
-    const fields: PageModelField[] = rawForm.fields.map((rawField) => {
-      const entry = refTable.mint({
-        kind: 'field',
-        role: rawField.tag === 'button' ? 'button' : rawField.type,
-        name: rawField.label || rawField.name || '',
-        xpath: rawField.xpath,
+    const fields: PageModelField[] = rawForm.fields.map((rawField) =>
+      mapRawField(refTable, rawField, {
         formIndex: rawForm.formIndex,
         fieldIndex: rawField.fieldIndex,
         submitSemantics: rawField.submitSemantics,
-      });
-      const modelField: PageModelField = {
-        ref: entry.ref,
-        label: rawField.label,
-        tag: rawField.tag,
-        type: rawField.type,
-        required: rawField.required,
-        sensitive: rawField.sensitive,
-        submitSemantics: rawField.submitSemantics,
-      };
-      if (rawField.name !== undefined) modelField.name = rawField.name;
-      if (rawField.autocomplete !== undefined) modelField.autocomplete = rawField.autocomplete;
-      // Sensitive values never reach the model — the extractor already hashed
-      // and dropped them, and we defensively re-check sidecar-side.
-      if (
-        rawField.value !== undefined &&
-        !rawField.sensitive &&
-        !isSensitiveField(rawField)
-      ) {
-        modelField.value = rawField.value.slice(0, VALUE_CAP);
-      }
-      return modelField;
-    });
+      }),
+    );
     const formEntry = refTable.mint({
       kind: 'form',
       role: 'form',
@@ -618,32 +634,9 @@ export async function distillPageModel(
   // Standalone controls (outside any <form>) ride along as a synthetic form
   // entry so fill/select/check refs work for them too.
   if (extraction.standalone.length > 0) {
-    const fields: PageModelField[] = extraction.standalone.map((rawField) => {
-      const entry = refTable.mint({
-        kind: 'field',
-        role: rawField.type,
-        name: rawField.label || rawField.name || '',
-        xpath: rawField.xpath,
-        formIndex: -1,
-        fieldIndex: -1,
-        submitSemantics: false,
-      });
-      const modelField: PageModelField = {
-        ref: entry.ref,
-        label: rawField.label,
-        tag: rawField.tag,
-        type: rawField.type,
-        required: rawField.required,
-        sensitive: rawField.sensitive,
-        submitSemantics: false,
-      };
-      if (rawField.name !== undefined) modelField.name = rawField.name;
-      if (rawField.autocomplete !== undefined) modelField.autocomplete = rawField.autocomplete;
-      if (rawField.value !== undefined && !rawField.sensitive && !isSensitiveField(rawField)) {
-        modelField.value = rawField.value.slice(0, VALUE_CAP);
-      }
-      return modelField;
-    });
+    const fields: PageModelField[] = extraction.standalone.map((rawField) =>
+      mapRawField(refTable, rawField, { formIndex: -1, fieldIndex: -1, submitSemantics: false }),
+    );
     const entry = refTable.mint({
       kind: 'form',
       role: 'form',
@@ -825,12 +818,7 @@ export function sanitizeSubmitPayload(input: {
   formName?: string;
   snapshot: SubmitSnapshot;
 }): Record<string, unknown> {
-  let origin = '';
-  try {
-    origin = new URL(input.snapshot.action || input.url).origin;
-  } catch {
-    origin = '(unparseable)';
-  }
+  const origin = originOf(input.snapshot.action || input.url) ?? '(unparseable)';
   return {
     kind: 'browser_submit',
     pageUrl: input.url,
