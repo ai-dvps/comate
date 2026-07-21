@@ -94,16 +94,15 @@ function ProcessRegionGhost({ region, hasError, onOpen }: ProcessRegionGhostProp
   const displayAnnounced =
     announcedDuration === '0s' ? lessThanOneSecond : announcedDuration
 
+  // Only the trailing chevron is an actionable control; the rest of the row is
+  // selectable text so users can copy a tool name or command without opening
+  // the drawer. Keeping one focusable button preserves single-tab keyboard UX.
+  const ariaLabel = t('displayMode.ghostLabel', { count: stepCount, latest: label })
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={t('displayMode.ghostLabel', {
-        count: stepCount,
-        latest: label,
-      })}
+    <div
+      data-testid="process-region-ghost"
       data-error={hasError ? 'true' : undefined}
-      className="group/ghost my-0.5 inline-flex max-w-full items-center gap-1.5 rounded-md py-0.5 pl-0 pr-1.5 text-xs text-text-tertiary transition-colors motion-reduce:transition-none hover:text-text-primary"
+      className="group/ghost my-0.5 inline-flex max-w-full items-center gap-1.5 rounded-md py-0.5 pl-0 text-xs text-text-tertiary"
     >
       <span aria-hidden="true" className="text-text-tertiary/60">
         {t('displayMode.processWord')}
@@ -134,11 +133,18 @@ function ProcessRegionGhost({ region, hasError, onOpen }: ProcessRegionGhostProp
         {isStreaming && <Clock className="size-3 animate-pulse text-warning" aria-hidden="true" />}
       </span>
       {hasError && <AlertCircle className="size-3 text-destructive" aria-hidden="true" />}
-      <ChevronDown
-        className="size-3 shrink-0 opacity-60 transition-opacity group-hover/ghost:opacity-100"
-        aria-hidden="true"
-      />
-    </button>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={ariaLabel}
+        className="-mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-text-tertiary transition-colors motion-reduce:transition-none hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      >
+        <ChevronDown
+          className="size-3 opacity-60 transition-opacity group-hover/ghost:opacity-100"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
   )
 }
 

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Process region ghost opens only from its trailing chevron** — in result-focused mode the collapsed process-region row was an entire-width button, so any click opened the drawer and the step/tool/command text could not be selected. The row body is now plain selectable text and only the trailing chevron icon is the click target that expands the drawer (keyboard focus and the aria-label move to that single control).
 - **Browser runtime distribution** — the Steel browser engine ships inside the app resources (no Docker required) and Chromium resolves from the system browser first, with a verified one-time download as fallback; the installer stays free of a bundled Chromium.
 
 ### Fixed
