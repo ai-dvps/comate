@@ -13,7 +13,7 @@
 export const BROWSER_MCP_SERVER_KEY = 'comate-browser';
 export const BROWSER_TOOL_PREFIX = `mcp__${BROWSER_MCP_SERVER_KEY}__`;
 
-/** Fully qualified SDK tool names of the six first-class browser tools. */
+/** Fully qualified SDK tool names of the seven first-class browser tools. */
 export const BROWSER_TOOL_NAMES = {
   open: `${BROWSER_TOOL_PREFIX}open`,
   snapshot: `${BROWSER_TOOL_PREFIX}snapshot`,
@@ -21,6 +21,7 @@ export const BROWSER_TOOL_NAMES = {
   submit: `${BROWSER_TOOL_PREFIX}submit`,
   extract: `${BROWSER_TOOL_PREFIX}extract`,
   requestHandoff: `${BROWSER_TOOL_PREFIX}requestHandoff`,
+  close: `${BROWSER_TOOL_PREFIX}close`,
 } as const;
 
 /** True for any tool served by the embedded browser MCP server. */

@@ -54,6 +54,12 @@ export interface SessionBrowserState {
    * value-only-in store. Resets on every real state transition.
    */
   rememberSite: boolean
+  /**
+   * Idle-reclaim prompt (U3): true while the in-pane "close now / not now"
+   * banner should show. Set by a browser_idle_prompt event (pending: true),
+   * cleared by activity, snooze, close, or any state transition.
+   */
+  idlePrompt: boolean
 }
 
 export interface BrowserPaneState {
@@ -81,6 +87,12 @@ export interface BrowserPaneState {
   retryViewer: (sessionId: string) => Promise<void>
   /** browser_unavailable retry: re-probe health; clear the banner when well. */
   retryUnavailable: (sessionId: string) => Promise<void>
+  /** Explicit close (U1/U4): the state bar's "close browser" button. */
+  close: (sessionId: string) => Promise<void>
+  /** Idle banner "close now" (U3). */
+  confirmIdleClose: (sessionId: string) => Promise<void>
+  /** Idle banner "not now" (U3). */
+  snoozeIdle: (sessionId: string) => Promise<void>
 
   // Internal setters (driven by the WS listener; exported for tests).
   _applyBrowserState: (
@@ -89,6 +101,7 @@ export interface BrowserPaneState {
   ) => void
   _applyUnavailable: (sessionId: string, info: BrowserUnavailableInfo) => void
   _applyClosed: (sessionId: string) => void
+  _applyIdlePrompt: (sessionId: string, pending: boolean) => void
 }
 
 export const BROWSER_PANE_MIN_WIDTH = 320
@@ -175,6 +188,7 @@ export const EMPTY_SESSION_BROWSER_STATE: SessionBrowserState = {
   verbError: null,
   viewerNonce: 0,
   rememberSite: false,
+  idlePrompt: false,
 }
 
 export function initialSessionBrowserState(): SessionBrowserState {
@@ -359,6 +373,27 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     takeover: (sessionId: string) => runVerb(sessionId, 'takeover'),
     handback: (sessionId: string) => runVerb(sessionId, 'handback'),
 
+    close: async (sessionId: string) => {
+      // Terminal action: the browser_closed event (or the ok response) resets
+      // the UI. Swallow errors — a failed close leaves the pane as-is.
+      try {
+        await wsClient.request('browserClose', { sessionId })
+      } catch {
+        /* server-side browser_closed is the source of truth */
+      }
+    },
+    confirmIdleClose: async (sessionId: string) => {
+      try {
+        await wsClient.request('browserIdleConfirm', { sessionId })
+      } catch {
+        /* noop */
+      }
+    },
+    snoozeIdle: (sessionId: string) => {
+      patchSession(sessionId, { idlePrompt: false })
+      wsClient.request('browserIdleSnooze', { sessionId }).catch(() => {})
+    },
+
     setRememberSite: (sessionId: string, remember: boolean) => {
       const session = getSessionState(get(), sessionId)
       // The checkbox only exists against the live user-driven page.
@@ -428,6 +463,8 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
         // user_in_control page; a transition (handback, timeout, crash)
         // always clears it.
         rememberSite: false,
+        // A moving state machine supersedes a stale idle prompt.
+        idlePrompt: false,
         ...(isLiveControlState(next) ? {} : { viewerUrl: null }),
       })
       // handoff → header badge + auto-expand (R1/R5).
@@ -455,6 +492,9 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
         ...initialSessionBrowserState(),
         hydrated: true,
       })
+    },
+    _applyIdlePrompt: (sessionId, pending) => {
+      patchSession(sessionId, { idlePrompt: pending })
     },
   }
 })
@@ -494,6 +534,9 @@ function handleBrowserChannelEvent(msg: WsEventMessage): void {
     })
   } else if (msg.eventType === 'browser_closed') {
     store._applyClosed(sessionId)
+  } else if (msg.eventType === 'browser_idle_prompt') {
+    const data = msg.data as { pending?: boolean } | undefined
+    store._applyIdlePrompt(sessionId, data?.pending === true)
   }
 }
 

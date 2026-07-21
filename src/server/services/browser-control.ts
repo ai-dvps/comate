@@ -375,8 +375,13 @@ export class BrowserControlService {
    * keystrokes or page data never travel on this channel. Deliberately NOT
    * audited: a ping carries zero information (~40 rows per 10-minute handoff
    * would be pure churn in browser_audit).
+   *
+   * Also resets the idle-reclaim timer (U3) — a human actively driving the
+   * pane is not idle. Fires before the handoff-record gate so it resets even
+   * outside an active handoff.
    */
   recordActivity(sessionId: string): void {
+    this.deps.browserService.resetIdle(sessionId);
     const record = this.records.get(sessionId);
     if (!record || record.timerHandle === null) return;
     this.clearTimer(record);

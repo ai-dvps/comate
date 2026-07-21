@@ -263,6 +263,8 @@ function makeHarness(options: {
   withApprovalRequester?: boolean;
   maxSessions?: number;
   resolveChromium?: boolean;
+  currentPageUrl?: (baseUrl: string) => Promise<string | null>;
+  exportContext?: (baseUrl: string) => Promise<unknown>;
 }): Harness {
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-mcp-'));
   let port = 9300;
@@ -275,6 +277,14 @@ function makeHarness(options: {
     createProcess: (processOptions) => new FakeSteelHandle(processOptions),
     cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
     now: () => Date.now(),
+    // Fast auto-remember fakes so closeSession does not retry a dead CDP
+    // connect for the full cold-start budget (U1/U2 tests).
+    currentPageUrl: options.currentPageUrl ?? (async () => null),
+    exportContext: options.exportContext ?? (async () => ({})),
+    // No-op timer: this suite does not test idle behavior, so the spawn-armed
+    // idle timer never needs to fire (and must not leak real setTimeouts that
+    // flake cross-test on --test-force-exit).
+    timer: { set: () => 0, clear: () => undefined },
   });
 
   const approvals: BrowserApprovalRequest[] = [];
@@ -320,11 +330,11 @@ function resultPayload(result: CallToolResult): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 describe('browser-mcp tool surface (KTD-3)', () => {
-  it('registers the six first-class tools with the comate-browser server key', () => {
+  it('registers the seven first-class tools with the comate-browser server key', () => {
     const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'extract', 'open', 'requestHandoff', 'snapshot', 'submit'],
+      ['act', 'close', 'extract', 'open', 'requestHandoff', 'snapshot', 'submit'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -761,6 +771,70 @@ describe('browser-mcp requestHandoff', () => {
     );
     // The handoff was rolled back: the state machine is not stuck pending.
     assert.strictEqual(harness.ctx.browserService.getControlState('chat-session-1'), 'agent_in_control');
+    rmSync(harness.storageDir, { recursive: true, force: true });
+  });
+});
+
+describe('browser-mcp close (U2)', () => {
+  it('asks the user to confirm, then tears down on allow', async () => {
+    const harness = makeHarness({
+      page: new FakePage({ extraction: makeExtraction() }),
+      approvalDecisions: [{ behavior: 'allow' }],
+    });
+    await harness.call('open', { url: 'https://shop.example/checkout' });
+    assert.ok(harness.ctx.browserService.getSession('chat-session-1'), 'session live before close');
+
+    const result = await harness.call('close', { reason: 'checkout complete' });
+    const payload = resultPayload(result);
+
+    // Exactly one confirmation card, carrying the browser_close payload.
+    assert.strictEqual(harness.ctx.approvals.length, 1);
+    assert.strictEqual(harness.ctx.approvals[0].payload.kind, 'browser_close');
+    // Teardown ran: no live session afterward.
+    assert.strictEqual(payload.ok, true);
+    assert.strictEqual(payload.closed, true);
+    assert.strictEqual(harness.ctx.browserService.getSession('chat-session-1'), undefined);
+    rmSync(harness.storageDir, { recursive: true, force: true });
+  });
+
+  it('returns closed:false and leaves the browser live when the user denies', async () => {
+    const harness = makeHarness({
+      page: new FakePage({ extraction: makeExtraction() }),
+      approvalDecisions: [{ behavior: 'deny', message: 'not yet' }],
+    });
+    await harness.call('open', { url: 'https://shop.example/checkout' });
+
+    const result = await harness.call('close', { reason: 'done' });
+    const payload = resultPayload(result);
+    assert.strictEqual(payload.closed, false);
+    assert.ok(harness.ctx.browserService.getSession('chat-session-1'), 'session still live after deny');
+    rmSync(harness.storageDir, { recursive: true, force: true });
+  });
+
+  it('fails closed with browser_approval_unavailable when no approval channel is wired', async () => {
+    const harness = makeHarness({
+      page: new FakePage({ extraction: makeExtraction() }),
+      withApprovalRequester: false,
+    });
+    await harness.call('open', { url: 'https://shop.example/checkout' });
+
+    const result = await harness.call('close', { reason: 'done' });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(
+      (resultPayload(result).error as { code: string }).code,
+      'browser_approval_unavailable',
+    );
+    assert.ok(harness.ctx.browserService.getSession('chat-session-1'), 'session still live');
+    rmSync(harness.storageDir, { recursive: true, force: true });
+  });
+
+  it('is an ok-noop with no approval card when there is no live browser', async () => {
+    const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    const result = await harness.call('close', { reason: 'done' });
+    const payload = resultPayload(result);
+    assert.strictEqual(payload.ok, true);
+    assert.strictEqual(payload.closed, false);
+    assert.strictEqual(harness.ctx.approvals.length, 0);
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
 });

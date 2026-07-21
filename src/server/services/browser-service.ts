@@ -132,15 +132,57 @@ export interface BrowserUnavailableEvent {
   reason: string;
 }
 
+/**
+ * Idle-reclaim prompt (U3): emitted when the idle duration elapses
+ * (`pending: true`, the client shows the "close now / not now" banner) and
+ * again when the prompt is dismissed by activity or a snooze (`pending: false`).
+ */
+export interface BrowserIdlePromptEvent {
+  type: 'browser_idle_prompt';
+  sessionId: string;
+  workspaceId: string;
+  pending: boolean;
+  /** Present with `pending: true`: how long the browser sat idle. */
+  idleForMs?: number;
+}
+
 export type BrowserServiceEvent =
   | BrowserStateEvent
   | BrowserClosedEvent
-  | BrowserUnavailableEvent;
+  | BrowserUnavailableEvent
+  | BrowserIdlePromptEvent;
 
 export type BrowserEventListener = (event: BrowserServiceEvent) => void;
 export type PendingCardReleaser = (sessionId: string) => void;
 
 export const DEFAULT_MAX_BROWSER_SESSIONS = 4;
+
+/** Server-fixed idle duration before the close prompt fires (U3); default 15 min. */
+export const DEFAULT_IDLE_PROMPT_MS = 15 * 60 * 1000;
+/** Server-fixed grace after the prompt before auto-close (U3); default 30 min. */
+export const DEFAULT_IDLE_CLOSE_MS = 30 * 60 * 1000;
+
+/**
+ * Injectable timer for the idle-reclaim deadlines (U3), mirroring
+ * BrowserControlTimer. Default uses setTimeout; tests inject a deterministic
+ * fake so they never wait on real time.
+ */
+export interface BrowserServiceTimer {
+  set: (fn: () => void, ms: number) => unknown;
+  clear: (handle: unknown) => void;
+}
+
+/** Trigger source for an explicit close (U1) — recorded in the audit verb. */
+export type BrowserCloseSource = 'agent' | 'human' | 'idle' | 'timeout';
+
+/** Result of closeSession: whether teardown ran and what login was preserved. */
+export interface CloseSessionResult {
+  closed: boolean;
+  /** Present when a site was auto-remembered on close (login survives). */
+  rememberedSite?: { key: string; cookieCount: number };
+  /** Present when auto-remember was attempted but skipped (code/reason). */
+  rememberError?: string;
+}
 
 interface RegistryEntry {
   sessionId: string;
@@ -166,6 +208,20 @@ interface RegistryEntry {
    * exactly once per Steel process, before the first navigation.
    */
   siteAuthEligible: boolean;
+  /** Idle-reclaim (U3): timestamp of the last browser activity (agent tool call or human ping). */
+  lastActivityAt: number;
+  /** Idle-reclaim (U3): non-null while a close prompt is in flight. */
+  idlePromptedAt: number | null;
+  /** Idle-reclaim (U3): handle of the prompt-deadline timer. */
+  idlePromptTimerHandle: unknown | null;
+  /** Idle-reclaim (U3): handle of the secondary auto-close timer. */
+  idleCloseTimerHandle: unknown | null;
+  /**
+   * Idle-reclaim dedup (R10): true while an agent-close approval card is in
+   * flight, so the idle prompt and the close card never stack. Driven by
+   * browser-mcp via setCloseCardPending around its requestApproval round-trip.
+   */
+  closeCardPending: boolean;
 }
 
 export interface BrowserServiceDeps {
@@ -204,17 +260,31 @@ export interface BrowserServiceDeps {
    * Injectable for tests.
    */
   exportContext?: (baseUrl: string) => Promise<unknown>;
-  /** Audit sink for site-auth events; defaults to the process singleton. */
-  audit?: Pick<BrowserAuditService, 'logSiteAuth'>;
+  /**
+   * Audit sink for site-auth + control-plane (close) events; defaults to the
+   * process singleton. Widened for U1's source-tagged close auditing.
+   */
+  audit?: Pick<BrowserAuditService, 'logSiteAuth' | 'logControl'>;
+  /** Injectable timer for idle-reclaim deadlines (U3); defaults to setTimeout. */
+  timer?: BrowserServiceTimer;
+  /** Server-fixed idle duration before the close prompt (U3). */
+  idlePromptMs?: number;
+  /** Server-fixed grace after the prompt before auto-close (U3). */
+  idleCloseMs?: number;
 }
 
-/** Constructor-resolved deps: the U8 additions have defaults, so internally
+/** Constructor-resolved deps: the U8 + U3 additions have defaults, so internally
  * they are always present (the public interface keeps them optional). */
 type ResolvedBrowserServiceDeps = Omit<
   BrowserServiceDeps,
-  'store' | 'currentPageUrl' | 'exportContext' | 'audit'
+  'store' | 'currentPageUrl' | 'exportContext' | 'audit' | 'timer' | 'idlePromptMs' | 'idleCloseMs'
 > &
-  Required<Pick<BrowserServiceDeps, 'store' | 'currentPageUrl' | 'exportContext' | 'audit'>>;
+  Required<
+    Pick<
+      BrowserServiceDeps,
+      'store' | 'currentPageUrl' | 'exportContext' | 'audit' | 'timer' | 'idlePromptMs' | 'idleCloseMs'
+    >
+  >;
 
 /** Filesystem/request-id-safe form of a chat sessionId (shared by browser-control). */
 export function sanitizeSessionId(sessionId: string): string {
@@ -288,6 +358,12 @@ export class BrowserService {
       currentPageUrl: deps?.currentPageUrl ?? readPrimaryPageUrl,
       exportContext: deps?.exportContext ?? exportSteelContext,
       audit: deps?.audit ?? browserAuditService,
+      timer: deps?.timer ?? {
+        set: (fn, ms) => setTimeout(fn, ms),
+        clear: (handle) => clearTimeout(handle as NodeJS.Timeout),
+      },
+      idlePromptMs: deps?.idlePromptMs ?? DEFAULT_IDLE_PROMPT_MS,
+      idleCloseMs: deps?.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS,
     };
   }
 
@@ -407,7 +483,22 @@ export class BrowserService {
   setControlState(sessionId: string, state: BrowserControlState, reason?: string): void {
     const entry = this.registry.get(sessionId);
     if (!entry || entry.state === state) return;
+    const previous = entry.state;
     entry.state = state;
+    // Idle-reclaim (U3, R5): suppress while a handoff is pending — its timer
+    // owns the window. Clearing on entry also covers the race where the idle
+    // prompt already fired (close timer armed) and a handoff then starts, so
+    // the secondary auto-close can no longer tear down mid-handoff. Resume
+    // idle counting when the handoff resolves.
+    if (state === 'handoff_pending') {
+      this.clearIdleTimers(entry);
+      if (entry.idlePromptedAt !== null) {
+        entry.idlePromptedAt = null;
+        this.emit({ type: 'browser_idle_prompt', sessionId, workspaceId: entry.workspaceId, pending: false });
+      }
+    } else if (previous === 'handoff_pending' && entry.handle) {
+      this.armIdlePrompt(sessionId);
+    }
     this.emit({
       type: 'browser_state',
       sessionId,
@@ -452,6 +543,11 @@ export class BrowserService {
       startedAt: 0,
       viewerToken,
       siteAuthEligible: false,
+      lastActivityAt: 0,
+      idlePromptedAt: null,
+      idlePromptTimerHandle: null,
+      idleCloseTimerHandle: null,
+      closeCardPending: false,
     };
     entry.starting = starting;
     if (!existing) {
@@ -484,6 +580,8 @@ export class BrowserService {
     // The canUseTool-layer gate state (submit-semantics refs + navigation
     // ledger) is session-scoped — it must die with the session.
     clearBrowserGateSession(sessionId);
+    // Idle-reclaim timers (U3) must not fire after the entry is gone.
+    this.clearIdleTimers(entry);
     entry.expectingExit = true;
     await this.stopEntry(entry, { wipeProfile: true });
     this.emit({
@@ -499,6 +597,195 @@ export class BrowserService {
       (entry) => entry.workspaceId === workspaceId,
     );
     await Promise.all(targets.map((entry) => this.teardownSession(entry.sessionId)));
+  }
+
+  /**
+   * Explicit-close sink (U1): the single entry point for the three close
+   * paths — agent-confirmed (U2), human button (U4), and idle/timeout (U3).
+   * Auto-remembers the current site's login BEFORE teardown nulls the handle
+   * (KTD-5 — login survives the close and re-injects on the next open), then
+   * reuses teardownSession and audits the close with its trigger source.
+   * Session/workspace/shutdown teardown call teardownSession directly — only
+   * close *intent* preserves login.
+   *
+   * Ordering is load-bearing: rememberCurrentSite reads entry.handle.baseUrl
+   * to export context, and teardownSession -> stopEntry nulls the handle and
+   * deletes the registry entry, so auto-remember must complete first. Typed
+   * remember errors (no page open, no login state, IP-literal URL) are
+   * swallowed — a close without a rememberable login still tears down. A
+   * no-live-session close is an idempotent no-op.
+   */
+  async closeSession(
+    sessionId: string,
+    source: BrowserCloseSource,
+  ): Promise<CloseSessionResult> {
+    const entry = this.registry.get(sessionId);
+    if (!entry) {
+      return { closed: false };
+    }
+    const workspaceId = entry.workspaceId;
+    let remembered: { key: string; cookieCount: number } | undefined;
+    let rememberError: string | undefined;
+    try {
+      const result = await this.rememberCurrentSite(sessionId);
+      remembered = { key: result.key, cookieCount: result.cookieCount };
+    } catch (err) {
+      // Typed errors carry a closed-enum code (empty_context / browser_no_page
+      // / ip_literal / ...). Collapse anything else to a generic marker so an
+      // unexpected throw's .message can never reach the audit detail — the
+      // only residual value-leak surface. The full error still goes to diagLog
+      // (the server log file), never to the auditable table.
+      rememberError = err instanceof BrowserSiteAuthError ? err.code : 'unknown';
+      if (!(err instanceof BrowserSiteAuthError)) {
+        diagWarn(`[browser] auto-remember on close failed for session ${sessionId}:`, err);
+      }
+    }
+    await this.teardownSession(sessionId);
+    this.deps.audit.logControl({
+      workspaceId,
+      sessionId,
+      verb: `browser_closed_${source}`,
+      outcome: 'ok',
+      detail:
+        remembered !== undefined
+          ? `auto-remembered ${remembered.key} cookies=${remembered.cookieCount}`
+          : rememberError !== undefined
+            ? `no-remember:${rememberError}`
+            : undefined,
+    });
+    return {
+      closed: true,
+      ...(remembered !== undefined && { rememberedSite: remembered }),
+      ...(rememberError !== undefined && { rememberError }),
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Idle reclaim (U3): prompt after the idle duration, auto-close after a
+  // secondary deadline. Two server-fixed deadlines, an injectable timer, and
+  // suppression while a handoff is pending (the handoff timer owns that window).
+  // The prompt reaches the client as a browser_idle_prompt event riding the
+  // existing browser-state-channel fan-out — it fires with no agent tool call
+  // in flight, so it cannot reuse the approval-card round-trip (KTD-3).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Mark browser activity (agent tool call or human pane ping) and re-arm the
+   * idle prompt timer. Any in-flight prompt is dismissed (a banner showing
+   * while the session is active again is stale). Public so browser-control
+   * (human ping) and browser-mcp (agent tool calls) can both drive it.
+   */
+  resetIdle(sessionId: string): void {
+    const entry = this.registry.get(sessionId);
+    if (!entry) return;
+    this.clearIdleTimers(entry);
+    entry.lastActivityAt = this.deps.now();
+    if (entry.idlePromptedAt !== null) {
+      entry.idlePromptedAt = null;
+      this.emit({ type: 'browser_idle_prompt', sessionId, workspaceId: entry.workspaceId, pending: false });
+    }
+    // Suppress while a handoff is pending — the handoff timer owns that window.
+    if (entry.handle && entry.state !== 'handoff_pending') {
+      this.armIdlePrompt(sessionId);
+    }
+  }
+
+  /** Idle-duration elapsed: show the prompt (unless suppressed) and arm the close timer. */
+  private onIdlePromptFire(sessionId: string): void {
+    const entry = this.registry.get(sessionId);
+    if (!entry) return;
+    entry.idlePromptTimerHandle = null;
+    // Session lost (no live process) — nothing to prompt about.
+    if (!entry.handle) return;
+    // Suppressed during a handoff or while an agent-close card is pending
+    // (R10 dedup) — defer by another idle interval.
+    if (entry.state === 'handoff_pending' || entry.closeCardPending) {
+      this.armIdlePrompt(sessionId);
+      return;
+    }
+    const now = this.deps.now();
+    entry.idlePromptedAt = now;
+    this.emit({
+      type: 'browser_idle_prompt',
+      sessionId,
+      workspaceId: entry.workspaceId,
+      pending: true,
+      idleForMs: now - entry.lastActivityAt,
+    });
+    entry.idleCloseTimerHandle = this.deps.timer.set(
+      () => this.onIdleCloseFire(sessionId),
+      this.deps.idleCloseMs,
+    );
+  }
+
+  /** Secondary deadline elapsed with no response: auto-close (the unattended bound). */
+  private onIdleCloseFire(sessionId: string): void {
+    const entry = this.registry.get(sessionId);
+    if (!entry) return;
+    entry.idleCloseTimerHandle = null;
+    // The prompt was dismissed (activity/snooze) — do not close.
+    if (entry.idlePromptedAt === null) return;
+    // Defensive: a handoff or close card starting after the prompt should have
+    // cleared this timer — never auto-close mid-handoff or behind a close card.
+    if (entry.state === 'handoff_pending' || entry.closeCardPending) return;
+    void this.closeSession(sessionId, 'timeout');
+  }
+
+  /** Human clicked "close now" on the idle banner (U4 wires the WS verb). */
+  confirmIdleClose(sessionId: string): Promise<CloseSessionResult> {
+    return this.closeSession(sessionId, 'idle');
+  }
+
+  /** Human clicked "not now" on the idle banner — dismiss and re-arm for a fresh interval. */
+  snoozeIdle(sessionId: string): void {
+    // resetIdle dismisses any in-flight prompt, bumps activity, and re-arms.
+    this.resetIdle(sessionId);
+  }
+
+  /**
+   * Agent-close approval-card dedup (R10): browser-mcp marks the card in
+   * flight around its requestApproval round-trip. While pending, the idle
+   * prompt is suppressed (the two "close?" prompts must not stack) and any
+   * in-flight idle prompt is dismissed. Resolving the card without teardown
+   * (deny/timeout) resumes idle counting.
+   */
+  setCloseCardPending(sessionId: string, pending: boolean): void {
+    const entry = this.registry.get(sessionId);
+    if (!entry) return;
+    if (pending) {
+      this.clearIdleTimers(entry);
+      if (entry.idlePromptedAt !== null) {
+        entry.idlePromptedAt = null;
+        this.emit({ type: 'browser_idle_prompt', sessionId, workspaceId: entry.workspaceId, pending: false });
+      }
+      entry.closeCardPending = true;
+    } else {
+      entry.closeCardPending = false;
+      if (entry.handle) this.resetIdle(sessionId);
+    }
+  }
+
+  private armIdlePrompt(sessionId: string): void {
+    const entry = this.registry.get(sessionId);
+    if (!entry) return;
+    if (entry.idlePromptTimerHandle !== null) {
+      this.deps.timer.clear(entry.idlePromptTimerHandle);
+    }
+    entry.idlePromptTimerHandle = this.deps.timer.set(
+      () => this.onIdlePromptFire(sessionId),
+      this.deps.idlePromptMs,
+    );
+  }
+
+  private clearIdleTimers(entry: RegistryEntry): void {
+    if (entry.idlePromptTimerHandle !== null) {
+      this.deps.timer.clear(entry.idlePromptTimerHandle);
+      entry.idlePromptTimerHandle = null;
+    }
+    if (entry.idleCloseTimerHandle !== null) {
+      this.deps.timer.clear(entry.idleCloseTimerHandle);
+      entry.idleCloseTimerHandle = null;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -645,6 +932,7 @@ export class BrowserService {
     this.tokenIndex.clear();
     for (const entry of entries) {
       entry.expectingExit = true;
+      this.clearIdleTimers(entry);
     }
     await Promise.all(
       entries.map((entry) =>
@@ -750,6 +1038,9 @@ export class BrowserService {
     current.startedAt = this.deps.now();
     // Fresh process — the first open() may inject a remembered site (U8).
     current.siteAuthEligible = true;
+    // Arm the idle-reclaim prompt timer (U3): the clock starts now.
+    current.lastActivityAt = this.deps.now();
+    this.armIdlePrompt(sessionId);
     handle.onExit((info) => this.handleProcessExit(sessionId, handle, info));
     // A process that died between start() and here has already transitioned
     // the entry to session_lost via handleProcessExit — skip the ready event.
@@ -833,6 +1124,7 @@ export class BrowserService {
     }
     entry.handle = null;
     entry.state = 'session_lost';
+    this.clearIdleTimers(entry);
     this.portsInUse.delete(handle.port);
     const reason = `Steel process exited unexpectedly (code=${info.code}, signal=${info.signal})`;
     diagWarn(`[browser] session ${sessionId} lost: ${reason}`);

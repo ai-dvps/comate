@@ -263,4 +263,37 @@ describe('BrowserStateBar', () => {
     useBrowserPaneStore.getState()._applyBrowserState('sess-1', { state: 'agent_in_control' })
     expect(useBrowserPaneStore.getState().sessions['sess-1'].rememberSite).toBe(false)
   })
+
+  // Explicit close (U1/U4) + idle reclaim (U3).
+
+  it('agent_in_control: renders the close button and sends the browserClose verb', () => {
+    setSession({ controlState: 'agent_in_control', port: 4001 })
+    renderBar()
+    fireEvent.click(screen.getByTestId('browser-close-button'))
+    expect(wsClientMock.request).toHaveBeenCalledWith('browserClose', { sessionId: 'sess-1' })
+  })
+
+  it('close button is hidden when there is no live browser', () => {
+    for (const patch of [{ controlState: 'none' }, { controlState: 'session_lost' }] as const) {
+      cleanup()
+      setSession(patch)
+      renderBar()
+      expect(screen.queryByTestId('browser-close-button')).not.toBeInTheDocument()
+    }
+  })
+
+  it('idle banner: renders on idlePrompt, Close now sends browserIdleConfirm', () => {
+    setSession({ controlState: 'agent_in_control', port: 4001, idlePrompt: true })
+    renderBar()
+    fireEvent.click(screen.getByTestId('browser-idle-close'))
+    expect(wsClientMock.request).toHaveBeenCalledWith('browserIdleConfirm', { sessionId: 'sess-1' })
+  })
+
+  it('idle banner: Not now sends browserIdleSnooze and clears the prompt locally', () => {
+    setSession({ controlState: 'agent_in_control', port: 4001, idlePrompt: true })
+    renderBar()
+    fireEvent.click(screen.getByTestId('browser-idle-snooze'))
+    expect(wsClientMock.request).toHaveBeenCalledWith('browserIdleSnooze', { sessionId: 'sess-1' })
+    expect(useBrowserPaneStore.getState().sessions['sess-1'].idlePrompt).toBe(false)
+  })
 })
