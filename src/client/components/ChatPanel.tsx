@@ -91,6 +91,32 @@ export default function ChatPanel({
   const [isSearchBarOpen, setIsSearchBarOpen] = useState(false)
   const previousFocusRef = useRef<HTMLElement | null>(null)
 
+  // Responsive chat header: measure the space available to the title (the region
+  // between the left/right button clusters) and drop the model name when it gets
+  // tight, so the session title can take the full width and ellipsize via truncate.
+  // Observing the title region (not the whole header) automatically accounts for
+  // the widths of the button clusters on both sides. Mirrors the ResizeObserver +
+  // width-threshold pattern used in PromptInput.
+  const titleAreaRef = useRef<HTMLDivElement>(null)
+  const [showModelName, setShowModelName] = useState(true)
+  useEffect(() => {
+    const el = titleAreaRef.current
+    if (!el) return
+    // Keep the model name only while the title region can comfortably fit it
+    // alongside a readable session title; below this the title gets the full width.
+    const MODEL_NAME_MIN_WIDTH = 320
+    const measure = () => {
+      setShowModelName((prev) => {
+        const next = el.offsetWidth >= MODEL_NAME_MIN_WIDTH
+        return next === prev ? prev : next
+      })
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    measure()
+    return () => observer.disconnect()
+  }, [])
+
   const {
     query: searchQuery,
     setQuery: setSearchQuery,
@@ -356,11 +382,14 @@ export default function ChatPanel({
 
   return (
     <div className="flex flex-col h-full bg-bg">
-      {/* Chat Header */}
-      <div className="relative flex items-center justify-center py-1.5 border-b border-border/50 flex-shrink-0">
+      {/* Chat Header — 3-part flex so the left/right button clusters stay in flow
+          and the title can never slide under them. The center region's width is
+          observed (titleAreaRef) to drop the model name when space gets tight. */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/50 flex-shrink-0">
+        {/* Left cluster */}
         {onToggleSidebarCollapse && (
           <button
-            className="absolute left-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+            className="flex-shrink-0 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
             aria-label={
               isSidebarCollapsed
                 ? t('common:sidebar.expand')
@@ -375,15 +404,25 @@ export default function ChatPanel({
             )}
           </button>
         )}
-        <div className="flex items-center gap-2 min-w-0 max-w-full px-4 text-sm">
-          <span className="font-medium text-text-primary truncate max-w-md">
+        {/* Center title — flex-1 takes the space between the clusters */}
+        <div
+          ref={titleAreaRef}
+          className="flex-1 flex items-center justify-center gap-2 min-w-0 text-sm"
+        >
+          <span className="min-w-0 font-medium text-text-primary truncate max-w-md">
             {activeSession?.name || t('noSession')}
           </span>
-          <span className="text-text-tertiary">/</span>
-          <span className="text-text-tertiary">{modelName}</span>
+          {/* When the title area is tight the model name drops first so the title
+              can use the full width; it then ellipsizes via min-w-0 + truncate. */}
+          {showModelName && (
+            <>
+              <span className="text-text-tertiary" aria-hidden="true">/</span>
+              <span className="text-text-tertiary">{modelName}</span>
+            </>
+          )}
         </div>
-
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+        {/* Right cluster */}
+        <div className="flex-shrink-0 flex items-center gap-1">
           <BrowserPaneButton workspaceId={workspaceId} />
           {onToggleRightPanelCollapse && (
             <button

@@ -253,3 +253,26 @@ describe('ChatPanel', () => {
     expect(onToggle).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ChatPanel header responsive model name', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('shows the model name when the title area is wide enough', () => {
+    // providers are mocked to [], so the model name falls back to the default.
+    // The threshold is measured on the title region (space between the button
+    // clusters), so stubbing offsetWidth drives the show/hide branch directly.
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(600)
+    renderWithI18n(<ChatPanel workspaceId="ws1" />)
+
+    expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument()
+  })
+
+  it('hides the model name when the title area is narrow so the title can expand', () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(200)
+    renderWithI18n(<ChatPanel workspaceId="ws1" />)
+
+    expect(screen.queryByText('claude-sonnet-4-6')).not.toBeInTheDocument()
+  })
+})
