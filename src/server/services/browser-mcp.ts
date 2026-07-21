@@ -372,6 +372,11 @@ export class BrowserToolContext {
   }
 
   private async ensurePage(): Promise<SteelCdpSession> {
+    // Any page-touching tool call (open/snapshot/act/submit/extract) plus
+    // requestHandoff counts as browser activity — reset the idle-reclaim
+    // timer (U3). handleClose does not route through here, so closing does
+    // not reset the clock it is ending.
+    this.svc.resetIdle(this.deps.sessionId);
     const key = this.deps.sessionId;
     const existing = this.pageRegistry.get(key);
     if (existing) {
@@ -1154,6 +1159,66 @@ export class BrowserToolContext {
   }
 
   /**
+   * Agent-initiated close (U2): asks the human to confirm closing the
+   * browser, then tears it down via closeSession (auto-remember + teardown +
+   * audit). A single approval card — no two-phase takeover/handback and no
+   * controlGate: asking to close is always allowed, and the approval card is
+   * the human-consent gate (KTD-2). Resolution (allow / deny / timeout /
+   * channel-failure) mirrors requestHandoff. A no-live-browser close is an
+   * ok-noop rather than an error.
+   */
+  async handleClose(args: { reason?: string }, extra?: unknown): Promise<CallToolResult> {
+    const sessionId = this.deps.sessionId;
+    const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
+
+    if (!this.svc.getSession(sessionId)) {
+      return toolJson({ ok: true, closed: false, note: 'No live browser to close.' });
+    }
+
+    const reason = args.reason?.trim() || 'The browsing task is complete.';
+    const origin = this.pageOrigin();
+    // Mark the close card in flight so the idle prompt defers (R10 dedup —
+    // the two "close?" prompts must not stack). Cleared in finally: on allow
+    // closeSession tears down; on deny/timeout setCloseCardPending(false)
+    // resumes idle counting.
+    this.svc.setCloseCardPending(sessionId, true);
+    let decision: BrowserApprovalDecision | CallToolResult;
+    try {
+      decision = await this.requestApproval(
+        {
+          toolName: BROWSER_TOOL_NAMES.close,
+          title: 'Claude is asking to close the browser',
+          description: reason,
+          payload: {
+            kind: 'browser_close',
+            reason,
+            ...(origin !== undefined && { origin }),
+          },
+        },
+        signal,
+      );
+    } finally {
+      this.svc.setCloseCardPending(sessionId, false);
+    }
+    if (!isApprovalDecision(decision)) return decision;
+    if (decision.behavior !== 'allow') {
+      return toolJson({ ok: true, closed: false, note: 'User declined to close the browser.' });
+    }
+
+    const result = await this.svc.closeSession(sessionId, 'agent');
+    return toolJson({
+      ok: true,
+      closed: result.closed,
+      ...(result.rememberedSite !== undefined && { rememberedSite: result.rememberedSite }),
+      note:
+        result.rememberedSite !== undefined
+          ? `Browser closed; login for ${result.rememberedSite.key} preserved for the next open.`
+          : 'Browser closed.',
+    });
+  }
+
+
+  /**
    * Shape the handoff outcome (R7/R8/AE4): a handed-back (or takeover-phase)
    * completion carries the state diff — the distilled model omits sensitive
    * field values by construction (KTD-8 ruleset, AE1). All non-crash endings
@@ -1356,10 +1421,26 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     async (args, extra) => ctx.handleRequestHandoff(args, extra),
   );
 
+  const closeDef = tool(
+    'close',
+    'Close the embedded browser for this session, releasing its resources. The user must ' +
+      'confirm before it closes. Call this when the browsing task is done and the page is no ' +
+      'longer needed — do not leave a browser running idle. Any remembered login is preserved ' +
+      'and re-applied on the next open. The call blocks until the user confirms, declines, or ' +
+      'the request times out recoverably.',
+    {
+      reason: z
+        .string()
+        .optional()
+        .describe('Why the browser is being closed (shown in the confirmation card)'),
+    },
+    async (args, extra) => ctx.handleClose(args, extra),
+  );
+
   // The cast reconciles handler-parameter variance: each tool() definition is
   // an SdkMcpToolDefinition over its own zod shape, while BrowserToolDefinition
   // erases the shape to `any` (matching createSdkMcpServer's signature).
-  return [openDef, snapshotDef, actDef, submitDef, extractDef, handoffDef] as BrowserToolDefinition[];
+  return [openDef, snapshotDef, actDef, submitDef, extractDef, handoffDef, closeDef] as BrowserToolDefinition[];
 }
 
 /**

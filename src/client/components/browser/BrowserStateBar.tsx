@@ -6,6 +6,7 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  X,
 } from 'lucide-react'
 import { cn } from '../ui/utils'
 import {
@@ -47,6 +48,9 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
   const setRememberSite = useBrowserPaneStore((s) => s.setRememberSite)
   const retryViewer = useBrowserPaneStore((s) => s.retryViewer)
   const retryUnavailable = useBrowserPaneStore((s) => s.retryUnavailable)
+  const close = useBrowserPaneStore((s) => s.close)
+  const confirmIdleClose = useBrowserPaneStore((s) => s.confirmIdleClose)
+  const snoozeIdle = useBrowserPaneStore((s) => s.snoozeIdle)
 
   const busy = session.pendingVerb !== null
   const state = session.controlState
@@ -82,6 +86,10 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
   // F3 proactive takeover has no handoff card, which is exactly why the
   // checkbox lives here on the state bar instead of on a card.
   const showRememberSite = !busy && state === 'user_in_control'
+  // Explicit close (U1/U4): a live browser can be closed; distinct from the
+  // parent layout's "collapse pane" (a client-side hide that keeps the session).
+  const showClose =
+    !busy && (state === 'agent_in_control' || state === 'user_in_control' || state === 'handoff_pending')
 
   return (
     <div data-testid="browser-state-bar" className="flex-shrink-0">
@@ -109,6 +117,37 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
             )}
           >
             {t('action.retry')}
+          </button>
+        </div>
+      )}
+
+      {session.idlePrompt && (
+        <div
+          data-testid="browser-idle-banner"
+          className="px-3 py-1.5 text-xs bg-accent/10 text-text-secondary flex items-center gap-1.5"
+        >
+          <span className="truncate flex-1">{t('state.idlePrompt')}</span>
+          <button
+            type="button"
+            data-testid="browser-idle-close"
+            onClick={() => void confirmIdleClose(sessionId)}
+            className={cn(
+              'px-2 py-0.5 rounded text-[11px] font-medium bg-accent text-white hover:bg-accent/90 transition-colors',
+              FOCUS_CLASSES,
+            )}
+          >
+            {t('action.closeNow')}
+          </button>
+          <button
+            type="button"
+            data-testid="browser-idle-snooze"
+            onClick={() => snoozeIdle(sessionId)}
+            className={cn(
+              'px-2 py-0.5 rounded text-[11px] font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors',
+              FOCUS_CLASSES,
+            )}
+          >
+            {t('action.notNow')}
           </button>
         </div>
       )}
@@ -229,6 +268,22 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
               )}
             >
               <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          )}
+
+          {showClose && (
+            <button
+              type="button"
+              data-testid="browser-close-button"
+              onClick={() => void close(sessionId)}
+              aria-label={t('action.closeBrowser')}
+              title={t('action.closeBrowserHint')}
+              className={cn(
+                'p-1.5 rounded-md text-text-tertiary hover:text-destructive hover:bg-destructive/10 transition-colors',
+                FOCUS_CLASSES,
+              )}
+            >
+              <X className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           )}
         </div>

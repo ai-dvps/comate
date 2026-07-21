@@ -29,6 +29,8 @@ import type {
   BrowserTakeoverPayload,
   BrowserHandbackPayload,
   BrowserActivityPingPayload,
+  BrowserClosePayload,
+  BrowserIdleActionPayload,
 } from './types.js';
 import type { SseEvent } from '../types/message.js';
 
@@ -132,6 +134,15 @@ export class ComateWebSocketServer {
           break;
         case 'browserActivityPing':
           this.handleBrowserActivityPing(ctx, req);
+          break;
+        case 'browserClose':
+          await this.handleBrowserClose(ctx, req);
+          break;
+        case 'browserIdleConfirm':
+          await this.handleBrowserIdleConfirm(ctx, req);
+          break;
+        case 'browserIdleSnooze':
+          this.handleBrowserIdleSnooze(ctx, req);
           break;
         default: {
           const _exhaustive: never = req.type;
@@ -357,6 +368,33 @@ export class ComateWebSocketServer {
       return;
     }
     this.sendOk(ctx.socket, req.id, { handedBack: true, ...(siteAuth !== undefined && { siteAuth }) });
+  }
+
+  private async handleBrowserClose(ctx: ClientContext, req: WsRequest): Promise<void> {
+    const { sessionId } = req.payload as unknown as BrowserClosePayload;
+    if (!sessionId) {
+      throw new Error('browserClose requires sessionId');
+    }
+    const result = await browserService.closeSession(sessionId, 'human');
+    this.sendOk(ctx.socket, req.id, { closed: result.closed });
+  }
+
+  private async handleBrowserIdleConfirm(ctx: ClientContext, req: WsRequest): Promise<void> {
+    const { sessionId } = req.payload as unknown as BrowserIdleActionPayload;
+    if (!sessionId) {
+      throw new Error('browserIdleConfirm requires sessionId');
+    }
+    const result = await browserService.confirmIdleClose(sessionId);
+    this.sendOk(ctx.socket, req.id, { closed: result.closed });
+  }
+
+  private handleBrowserIdleSnooze(ctx: ClientContext, req: WsRequest): void {
+    const { sessionId } = req.payload as unknown as BrowserIdleActionPayload;
+    if (!sessionId) {
+      throw new Error('browserIdleSnooze requires sessionId');
+    }
+    browserService.snoozeIdle(sessionId);
+    this.sendOk(ctx.socket, req.id, { snoozed: true });
   }
 
   private handleBrowserActivityPing(ctx: ClientContext, req: WsRequest): void {

@@ -21,6 +21,9 @@ export type WsRequestType =
   | 'browserTakeover'
   | 'browserHandback'
   | 'browserActivityPing'
+  | 'browserClose'
+  | 'browserIdleConfirm'
+  | 'browserIdleSnooze'
 
 export interface WsRequest {
   id: string
@@ -136,5 +139,23 @@ export interface BrowserHandbackPayload {
  * Keystrokes and page data NEVER travel on this verb.
  */
 export interface BrowserActivityPingPayload {
+  sessionId: string
+}
+
+/**
+ * Explicit browser close (U1/U4): the state bar's "close browser" button.
+ * Distinct from collapse-pane (a client-side hide) — this tears the server-side
+ * Steel process down. Auto-remembers the current site's login first.
+ */
+export interface BrowserClosePayload {
+  sessionId: string
+}
+
+/**
+ * Idle-reclaim prompt responses (U3): the in-pane "close now" / "not now"
+ * banner. Confirm tears down with the idle source; snooze dismisses the prompt
+ * and re-arms the idle timer for a fresh interval.
+ */
+export interface BrowserIdleActionPayload {
   sessionId: string
 }

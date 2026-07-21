@@ -20,6 +20,7 @@
     "sessionLost": "Browser session lost",
     "sessionLostDetail": "The browser process crashed. Claude's next browser action rebuilds it automatically — or retry now.",
     "unavailable": "Browser unavailable",
+    "idlePrompt": "This browser has been idle. Close it to free its resources? Your login is preserved.",
     "starting": "Starting the browser…",
     "preparing": "Preparing the browser runtime…",
     "firstUseHint": "First use may download browser components and take a few minutes."
@@ -34,7 +35,11 @@
     "clickToDrive": "Click the view to control it",
     "captureReleased": "Input capture released",
     "rememberSite": "Remember this site",
-    "rememberSiteHint": "Keep the login for this site in this workspace. New chat sessions will be signed in automatically. Manage remembered sites in Settings → Security."
+    "rememberSiteHint": "Keep the login for this site in this workspace. New chat sessions will be signed in automatically. Manage remembered sites in Settings → Security.",
+    "closeNow": "Close now",
+    "notNow": "Not now",
+    "closeBrowser": "Close browser",
+    "closeBrowserHint": "Close the browser and free its resources. Your login is preserved for the next time you open one."
   },
   "popout": {
     "title": "Browser — floating window"

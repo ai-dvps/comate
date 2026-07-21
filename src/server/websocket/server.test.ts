@@ -309,6 +309,21 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     const ping = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'ping-1');
     assert.strictEqual(ping.ok, true);
 
+    // Explicit close + idle-reclaim verbs are safe with no live session (U1/U3/U4).
+    sendRequest(ws, 'close-1', 'browserClose', { sessionId: 'sess-x' });
+    const closeResp = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'close-1');
+    assert.strictEqual(closeResp.ok, true);
+    assert.strictEqual((closeResp.payload as { closed: boolean }).closed, false);
+
+    sendRequest(ws, 'idle-confirm-1', 'browserIdleConfirm', { sessionId: 'sess-x' });
+    const idleConfirm = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'idle-confirm-1');
+    assert.strictEqual(idleConfirm.ok, true);
+
+    sendRequest(ws, 'idle-snooze-1', 'browserIdleSnooze', { sessionId: 'sess-x' });
+    const idleSnooze = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'idle-snooze-1');
+    assert.strictEqual(idleSnooze.ok, true);
+    assert.strictEqual((idleSnooze.payload as { snoozed: boolean }).snoozed, true);
+
     // Disconnect drops the channel subscription.
     ws.close();
     await new Promise((resolve) => setTimeout(resolve, 100));

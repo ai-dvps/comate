@@ -77,7 +77,9 @@ export interface BrowserAuditControlInput {
   /**
    * Control-plane event: takeover | handback | handoff_requested |
    * handoff_granted | handoff_declined | handoff_handed_back |
-   * handoff_timeout | handoff_crash | handoff_runtime_closed.
+   * handoff_timeout | handoff_crash | handoff_runtime_closed |
+   * browser_closed_agent | browser_closed_human | browser_closed_idle |
+   * browser_closed_timeout | idle_prompt_shown (U1/U3 explicit-close paths).
    * (activity_ping is deliberately not audited — content-free churn.)
    */
   verb: string;

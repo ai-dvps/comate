@@ -20,6 +20,7 @@
     "sessionLost": "浏览器会话已丢失",
     "sessionLostDetail": "浏览器进程崩溃了。Claude 的下一次浏览器操作会自动重建——也可以现在手动重试。",
     "unavailable": "浏览器不可用",
+    "idlePrompt": "这个浏览器已闲置一段时间。关闭以释放资源？登录态会保留。",
     "starting": "正在启动浏览器…",
     "preparing": "正在准备浏览器运行时…",
     "firstUseHint": "首次使用可能需要下载浏览器组件，耗时几分钟。"
@@ -34,7 +35,11 @@
     "clickToDrive": "点击画面开始操控",
     "captureReleased": "已释放键鼠捕获",
     "rememberSite": "记住此站点",
-    "rememberSiteHint": "将此站点的登录态保存在本工作区。新的聊天会话将自动登录。可在 设置 → 安全 中管理已记住的站点。"
+    "rememberSiteHint": "将此站点的登录态保存在本工作区。新的聊天会话将自动登录。可在 设置 → 安全 中管理已记住的站点。",
+    "closeNow": "立即关闭",
+    "notNow": "暂不",
+    "closeBrowser": "关闭浏览器",
+    "closeBrowserHint": "关闭浏览器并释放资源。登录态会保留，下次打开时自动恢复。"
   },
   "popout": {
     "title": "浏览器 — 浮窗"
