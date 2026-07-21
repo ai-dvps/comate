@@ -219,6 +219,51 @@ describe('message-normalizer task-notification suppression', () => {
     const r = normalizeSessionMessage(assistant);
     assert.ok(r, 'assistant wrapper message must not be suppressed by the user-only check');
     assert.strictEqual(r?.role, 'assistant');
+
+    // The suppression is role-gated to user, so a system-role wrapper is left
+    // alone (handled by the system-message path, not this check).
+    const systemWrapper = {
+      type: 'system',
+      uuid: 'sys-gate',
+      session_id: 's1',
+      message: { content: [{ type: 'text', text: '<task-notification>\n</task-notification>' }] },
+    } as unknown as SessionMessage;
+    const rs = normalizeSessionMessage(systemWrapper);
+    assert.ok(rs, 'system wrapper message must not be suppressed by the user-only check');
+    assert.strictEqual(rs?.role, 'system');
+  });
+
+  it('does not suppress a user message whose wrapper text shares content with a non-text block', () => {
+    const msg = {
+      type: 'user',
+      uuid: 'u-mix',
+      session_id: 's1',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: '<task-notification>\n</task-notification>' },
+          { type: 'tool_result', tool_use_id: 'tu-x', content: 'ok' },
+        ],
+      },
+    } as unknown as SessionMessage;
+
+    const r = normalizeSessionMessage(msg);
+    assert.ok(r, 'mixed text + tool_result content must not be suppressed');
+    assert.strictEqual(r?.role, 'user');
+  });
+
+  it('still suppresses via text when origin.kind is not task-notification', () => {
+    const msg = {
+      type: 'user',
+      uuid: 'u-of',
+      session_id: 's1',
+      message: { role: 'user', content: [{ type: 'text', text: '<task-notification>\n</task-notification>' }] },
+      origin: { kind: 'something-else' },
+    } as unknown as SessionMessage;
+
+    // origin is present but not the task-notification kind -> falls through to
+    // the whole-wrapper text check, which still suppresses.
+    assert.strictEqual(normalizeSessionMessage(msg), null);
   });
 
   it('keeps the Tasks panel fed while dropping the user-role wrapper (covers AE4 / R5)', () => {
