@@ -23,6 +23,8 @@ import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import PreviewPane from './PreviewPane'
 import { getToolRenderer, StructuredFallback } from './tool-renderers'
+import { BrowserSubmitManifest } from './tool-renderers/renderers/BrowserSubmitRenderer'
+import { parseBrowserSubmitInput } from './tool-renderers/renderers/browser-submit-payload'
 
 export const CHAT_ABOUT_THIS_MESSAGE =
   'chatAboutThisMessage'
@@ -274,6 +276,12 @@ function ApprovalView({
   const renderer = getToolRenderer(item.toolName)
   const hasCustomRenderer = !!renderer
 
+  // Browser submit confirmation (U4, KTD-4 ②): the sanitized manifest
+  // (destination + field list; sensitive values absent by construction) is
+  // rendered upfront — it IS the approval decision surface, not a detail to
+  // hide behind "show more".
+  const browserSubmit = parseBrowserSubmitInput(item.input)
+
   // Reset Show more across pendingItem swaps
   useEffect(() => {
     setShowMore(false)
@@ -305,7 +313,11 @@ function ApprovalView({
         </div>
       )}
       <div className="mb-3 max-h-[60vh] overflow-y-auto">
-        {hasCustomRenderer && showMore ? (
+        {browserSubmit ? (
+          <div className="bg-bg rounded px-2 py-1.5">
+            <BrowserSubmitManifest payload={browserSubmit} />
+          </div>
+        ) : hasCustomRenderer && showMore ? (
           <div className="bg-bg rounded px-2 py-1.5">
             {renderer!(item.input) ?? <StructuredFallback data={item.input} />}
           </div>
@@ -314,7 +326,7 @@ function ApprovalView({
             <StructuredFallback data={item.input} maxDepth={showMore ? undefined : 2} />
           </div>
         )}
-        {(isTruncated || hasCustomRenderer) && (
+        {!browserSubmit && (isTruncated || hasCustomRenderer) && (
           <button
             onClick={() => setShowMore(!showMore)}
             className="text-xs text-accent hover:underline mt-1"

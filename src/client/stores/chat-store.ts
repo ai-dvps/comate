@@ -6,8 +6,10 @@ import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
+import { useToastStore } from './toast-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
+import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
 
 export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
 
@@ -292,9 +294,16 @@ export interface TurnCompletion {
   durationMs: number
 }
 
-interface ChatState {
+export interface ChatState {
   sessions: Record<string, ChatSession[]>
   messages: Record<string, ChatMessage[]>
+  /**
+   * In-flight browser tool_use ids per session (F14): ids with a tool_use
+   * part but no tool_result part. Maintained incrementally where those parts
+   * land (and recomputed on wholesale message replacement) so selectors read
+   * it in O(1) instead of rescanning every message part per store update.
+   */
+  inFlightBrowserTools: Record<string, ReadonlySet<string>>
   promptHistory: Record<string, string[]>
   activeSessionIds: Record<string, string>
   isStreaming: Record<string, boolean>
@@ -756,6 +765,60 @@ export type SseSetter = (
 
 type SseGetter = () => ChatState
 
+// ---------------------------------------------------------------------------
+// In-flight browser tool ids (F14) — incremental mirror of "browser tool_use
+// without its tool_result" over messages[sessionId]. Hot paths add/remove
+// single ids; wholesale message replacements recompute with the same
+// full-scan rule the selector used to apply (behavior-identical).
+// ---------------------------------------------------------------------------
+
+/** Full-scan derivation — the exact rule the old O(messages×parts) selector applied. */
+export function deriveInFlightBrowserToolIds(messages: ChatMessage[]): Set<string> {
+  const results = new Set<string>()
+  const browserUses: string[] = []
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === 'tool_result') {
+        results.add(part.toolUseId)
+      } else if (part.type === 'tool_use' && part.toolName.startsWith(BROWSER_TOOL_PREFIX)) {
+        browserUses.push(part.toolUseId)
+      }
+    }
+  }
+  return new Set(browserUses.filter((id) => !results.has(id)))
+}
+
+function removeInFlightBrowserTool(
+  state: ChatState,
+  sessionId: string,
+  toolUseId: string,
+): Partial<ChatState> {
+  const current = state.inFlightBrowserTools[sessionId]
+  if (!current?.has(toolUseId)) return {}
+  const next = new Set(current)
+  next.delete(toolUseId)
+  return { inFlightBrowserTools: { ...state.inFlightBrowserTools, [sessionId]: next } }
+}
+
+function recomputeInFlightBrowserTools(
+  state: ChatState,
+  sessionId: string,
+  messages: ChatMessage[],
+): Partial<ChatState> {
+  return {
+    inFlightBrowserTools: {
+      ...state.inFlightBrowserTools,
+      [sessionId]: deriveInFlightBrowserToolIds(messages),
+    },
+  }
+}
+
+function browserToolUseIdOf(part: MessagePart | undefined): string | undefined {
+  return part?.type === 'tool_use' && part.toolName.startsWith(BROWSER_TOOL_PREFIX)
+    ? part.toolUseId
+    : undefined
+}
+
 function updateAssistantPart(
   state: ChatState,
   sessionId: string,
@@ -771,10 +834,26 @@ function updateAssistantPart(
   while (parts.length < partIndex) {
     parts.push({ type: 'text', text: '' })
   }
-  parts[partIndex] = produce(parts[partIndex])
+  const before = parts[partIndex]
+  parts[partIndex] = produce(before)
+  const after = parts[partIndex]
   const updated: ChatMessage = { ...target, parts }
   const nextMsgs = [...msgs.slice(0, idx), updated, ...msgs.slice(idx + 1)]
-  return { messages: { ...state.messages, [sessionId]: nextMsgs } }
+  const updates: Partial<ChatState> = { messages: { ...state.messages, [sessionId]: nextMsgs } }
+  // F14: keep the in-flight browser id set in step with the swapped part
+  // (tool_use_start adds; a part replacing a browser tool_use removes).
+  const beforeId = browserToolUseIdOf(before)
+  const afterId = browserToolUseIdOf(after)
+  if (beforeId !== afterId) {
+    const current = state.inFlightBrowserTools[sessionId]
+    if ((afterId !== undefined && !current?.has(afterId)) || (beforeId !== undefined && current?.has(beforeId))) {
+      const next = new Set(current)
+      if (beforeId !== undefined) next.delete(beforeId)
+      if (afterId !== undefined) next.add(afterId)
+      updates.inFlightBrowserTools = { ...state.inFlightBrowserTools, [sessionId]: next }
+    }
+  }
+  return updates
 }
 
 function mutateToolUsePart(
@@ -1198,6 +1277,10 @@ export function handleSseEvent(
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
           ...applyActivityUpdate(state, workspaceId, sessionId),
+          // F14: a pruned prefix may have dropped an unpaired browser tool_use.
+          ...(pruned.length !== newMessages.length
+            ? recomputeInFlightBrowserTools(state, sessionId, pruned)
+            : {}),
         }
         // Preserve an earlier prompt-send timestamp when present; otherwise
         // capture the turn start here.
@@ -1372,7 +1455,7 @@ export function handleSseEvent(
             (existingPart.toolUseResult as Record<string, unknown>).status === 'async_launched'
           if (!isAsyncPlaceholder) {
             // Reconnect replay — tool_result already exists, skip
-            return {}
+            return removeInFlightBrowserTool(state, sessionId, toolUseId)
           }
           // Replace the async-placeholder result in-place with the final result.
           const replacedMessages: ChatMessage[] = existing.map((m, mi) => {
@@ -1391,11 +1474,16 @@ export function handleSseEvent(
               }),
             }
           })
+          const pruned = pruneWindow(replacedMessages, state.windowCap)
           return {
             messages: {
               ...state.messages,
-              [sessionId]: pruneWindow(replacedMessages, state.windowCap),
+              [sessionId]: pruned,
             },
+            // F14: a dropped prefix may have carried the matching tool_use.
+            ...(pruned.length !== replacedMessages.length
+              ? recomputeInFlightBrowserTools(state, sessionId, pruned)
+              : removeInFlightBrowserTool(state, sessionId, toolUseId)),
           }
         }
         const newMessages: ChatMessage[] = [
@@ -1422,6 +1510,9 @@ export function handleSseEvent(
             ...state.totalMessageCount,
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
+          ...(pruned.length !== newMessages.length
+            ? recomputeInFlightBrowserTools(state, sessionId, pruned)
+            : removeInFlightBrowserTool(state, sessionId, toolUseId)),
         }
         const pendingCreates = state.pendingTaskCreates[sessionId]
         if (pendingCreates && pendingCreates[toolUseId]) {
@@ -1784,6 +1875,20 @@ export function handleSseEvent(
       })
       return
     }
+    case 'approval_timeout': {
+      // The server timed a pending card out (timeoutDeny): the card itself is
+      // removed by the approval_resolved event that follows. Until now this
+      // event had no consumer and the card vanished silently — surface a
+      // toast so the user understands why (U5; the browser handoff timeout is
+      // the first server-fixed timeout to rely on it).
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      diagLog(`[Client] approval_timeout requestId=${requestId}`)
+      useToastStore.getState().addToast({
+        severity: 'warning',
+        message: i18next.t('common:approvalTimeout', 'Approval request timed out and was dismissed.'),
+      })
+      return
+    }
     case 'interrupted': {
       set((state) => {
         // The interrupted event clears the in-flight turn but, unlike
@@ -1909,19 +2014,24 @@ export function handleSseEvent(
           retractedIds.length > 0
             ? existing.filter((m) => !retractedIds.includes(m.id))
             : existing
+        const nextMessages: ChatMessage[] = [
+          ...filtered,
+          {
+            id: generateId(),
+            role: 'system',
+            parts: [{ type: 'text', text }],
+            timestamp: Date.now(),
+          },
+        ]
         return {
           messages: {
             ...state.messages,
-            [sessionId]: [
-              ...filtered,
-              {
-                id: generateId(),
-                role: 'system',
-                parts: [{ type: 'text', text }],
-                timestamp: Date.now(),
-              },
-            ],
+            [sessionId]: nextMessages,
           },
+          // F14: retracted messages may have carried browser tool parts.
+          ...(filtered.length !== existing.length
+            ? recomputeInFlightBrowserTools(state, sessionId, nextMessages)
+            : {}),
         }
       })
       return
@@ -2433,6 +2543,7 @@ function applyActivityUpdate(
 export const useChatStore = create<ChatState>((set, get) => ({
   sessions: {},
   messages: {},
+  inFlightBrowserTools: {},
   promptHistory: {},
   activeSessionIds: {},
   isStreaming: {},
@@ -2841,6 +2952,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...state.totalMessageCount,
             [sessionId]: mappedMessages.length,
           },
+          // F14: wholesale replacement — recompute with the full-scan rule.
+          ...recomputeInFlightBrowserTools(state, sessionId, pruned),
         }
       })
 
@@ -2925,6 +3038,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
         },
         ...applyActivityUpdate(state, workspaceId, sessionId),
+        // F14: a pruned prefix may have dropped an unpaired browser tool_use.
+        ...(pruned.length !== newMessages.length
+          ? recomputeInFlightBrowserTools(state, sessionId, pruned)
+          : {}),
       }
     })
 
@@ -3004,6 +3121,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const newMessages = { ...state.messages }
       delete newMessages[sessionId]
+      const newInFlightBrowserTools = { ...state.inFlightBrowserTools }
+      delete newInFlightBrowserTools[sessionId]
       const newSubagents = { ...state.subagents }
       delete newSubagents[sessionId]
       const newTasks = { ...state.tasks }
@@ -3026,6 +3145,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newWorkflows[sessionId]
       return {
         messages: newMessages,
+        inFlightBrowserTools: newInFlightBrowserTools,
         subagents: newSubagents,
         tasks: newTasks,
         pendingTaskCreates: newPendingTaskCreates,
@@ -3167,6 +3287,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...state.isLoadingOlderMessages,
             [sessionId]: false,
           },
+          // F14: prepended history may contain browser tool parts.
+          ...(newOlder.length > 0 ? recomputeInFlightBrowserTools(state, sessionId, merged) : {}),
         }
       })
     } catch (err) {
@@ -3211,6 +3333,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return {
           messages: { ...state.messages, [sessionId]: merged },
           isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
+          // F14: appended history may contain browser tool parts.
+          ...(uniqueNew.length > 0 ? recomputeInFlightBrowserTools(state, sessionId, merged) : {}),
         }
       })
     } catch (err) {

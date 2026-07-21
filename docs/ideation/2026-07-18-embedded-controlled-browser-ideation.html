@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ideation: 内嵌受控浏览器 — Comate 的 Prompt 驱动网页自动化</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --surface-soft: #f4f4f2;
+    --text: #1c1917;
+    --text-muted: #57534e;
+    --border: #e7e5e4;
+    --accent: #b45309;
+    --accent-soft: #fdf3e7;
+    --accent-text: #92400e;
+    --good: #15803d;
+    --good-soft: #effaf1;
+    --warn: #b91c1c;
+    --warn-soft: #fdf0f0;
+    --info: #1d4ed8;
+    --info-soft: #eff4fe;
+    --chip-bg: #f4f4f2;
+    --code-bg: #f5f5f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513;
+      --surface: #201e1c;
+      --surface-soft: #2a2725;
+      --text: #e7e5e4;
+      --text-muted: #a8a29e;
+      --border: #3a3735;
+      --accent: #d97706;
+      --accent-soft: #2e2318;
+      --accent-text: #f0b25c;
+      --good: #4ade80;
+      --good-soft: #17271c;
+      --warn: #f87171;
+      --warn-soft: #2e1a1a;
+      --info: #60a5fa;
+      --info-soft: #17202e;
+      --chip-bg: #2a2725;
+      --code-bg: #2a2725;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  .container { max-width: 880px; margin: 0 auto; padding: 48px 28px 80px; }
+  .prose { max-width: 72ch; }
+  code {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  strong { color: inherit; }
+  a { color: var(--info); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 6px;
+  }
+  h1 { font-size: 28px; line-height: 1.3; margin: 0 0 18px; font-weight: 700; }
+  h2 { font-size: 21px; margin: 48px 0 6px; font-weight: 700; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+  h2 .zh { color: var(--text-muted); font-weight: 500; font-size: 15px; margin-left: 8px; }
+  h3 { font-size: 17px; margin: 0 0 10px; font-weight: 650; }
+  .meta-strip {
+    display: flex; flex-wrap: wrap; gap: 8px 20px;
+    color: var(--text-muted); font-size: 13px;
+    padding: 14px 0 18px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
+  }
+  .meta-strip b { color: var(--text); font-weight: 600; }
+
+  .topnav {
+    display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0;
+  }
+  .topnav a {
+    font-size: 12.5px; padding: 4px 12px; border: 1px solid var(--border);
+    border-radius: 999px; color: var(--text-muted); background: var(--surface);
+  }
+  .topnav a:hover { color: var(--accent-text); border-color: var(--accent); text-decoration: none; }
+
+  .callout {
+    border-radius: 8px; padding: 14px 18px; margin: 16px 0;
+    background: var(--surface-soft); font-size: 14px;
+  }
+  .callout.accent { background: var(--accent-soft); }
+  .callout .label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-text); display: block; margin-bottom: 4px; }
+  .callout.warn { background: var(--warn-soft); }
+  .callout.warn .label { color: var(--warn); }
+  .callout.info { background: var(--info-soft); }
+  .callout.info .label { color: var(--info); }
+
+  .grounding h4 { font-size: 14px; margin: 22px 0 6px; color: var(--accent-text); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+  .grounding ul { margin: 6px 0; padding-left: 22px; }
+  .grounding li { margin: 4px 0; font-size: 14px; }
+
+  .axis-list { list-style: none; padding: 0; margin: 14px 0; }
+  .axis-list li {
+    padding: 10px 16px; border: 1px solid var(--border); border-radius: 8px;
+    margin: 8px 0; background: var(--surface); font-size: 14px;
+  }
+  .axis-list .axis-name { font-weight: 650; color: var(--accent-text); font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; }
+
+  .jump-list {
+    display: flex; flex-direction: column; gap: 4px; margin: 14px 0 26px;
+    padding: 14px 18px; background: var(--surface-soft); border-radius: 8px; font-size: 14px;
+  }
+  .jump-list a { color: var(--text); }
+  .jump-list a:hover { color: var(--accent-text); }
+  .jump-list .n { color: var(--accent); font-weight: 700; font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; margin-right: 8px; }
+
+  article.idea {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px;
+    margin: 22px 0;
+  }
+  .idea-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .idea-num {
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 13px; font-weight: 700; color: var(--accent);
+    border: 1.5px solid var(--accent); border-radius: 8px;
+    min-width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 1px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 14px; }
+  .chip {
+    font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+    background: var(--chip-bg); color: var(--text-muted);
+  }
+  .chip.axis { background: var(--accent-soft); color: var(--accent-text); }
+  .chip.conf { background: var(--good-soft); color: var(--good); }
+  .chip.cx { background: var(--info-soft); color: var(--info); }
+  .field { margin: 12px 0; font-size: 14px; }
+  .field .flabel {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-muted); display: block; margin-bottom: 3px;
+  }
+  .basis-tag {
+    font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px;
+    font-weight: 700; color: var(--accent-text);
+  }
+  .figure { margin: 16px 0 6px; }
+  .figure figcaption { font-size: 12.5px; color: var(--text-muted); margin-top: 8px; }
+  svg text { font-family: inherit; }
+
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 700; }
+  td.num { font-family: "SF Mono", ui-monospace, Menlo, monospace; color: var(--text-muted); white-space: nowrap; }
+
+  .composition-signal {
+    margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--border);
+    font-size: 12.5px; color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <p class="eyebrow">Ideation</p>
+  <h1>内嵌受控浏览器：Comate 的 Prompt 驱动网页自动化</h1>
+  <div class="meta-strip">
+    <span><b>Date</b> 2026-07-18</span>
+    <span><b>Topic</b> embedded-controlled-browser</span>
+    <span><b>Mode</b> repo-grounded</span>
+    <span><b>Candidates</b> 44 raw → 28 deduped → 6 survivors</span>
+  </div>
+  <div class="meta-strip">
+    <span><b>Focus</b> 「我想在 comate 中内嵌一个受控的浏览器，用户可通过 Prompt 在这个受控的浏览器里面打开一个网页，然后通过 Prompt 操作网页，比如填写表单，点击菜单，提交，提取和整理网页内容等」——经讨论修正为 Steel.dev 式架构：内嵌面板实时可见 agent 操作，人可在面板中直接介入（输密码、扫码、复杂操作）后交还 agent 继续。</span>
+  </div>
+
+  <nav class="topnav">
+    <a href="#grounding-context">Grounding Context</a>
+    <a href="#topic-axes">Topic Axes</a>
+    <a href="#ranked-ideas">Ranked Ideas</a>
+    <a href="#rejection-summary">Rejection Summary</a>
+  </nav>
+
+  <section id="grounding-context" class="grounding">
+    <h2>Grounding Context <span class="zh">/ 背景依据</span></h2>
+    <p class="prose">以下来自代码库扫描、团队既往学习（<code>docs/solutions/</code>）、外部研究（2025–2026 agentic browsing 领域）与五份按轴收集的代码证据档案。</p>
+
+    <h4>Codebase Context（Comate 现状）</h4>
+    <ul>
+      <li><strong>工具面</strong>：<code>chat-service.ts</code> 的 <code>buildSdkOptions()</code> 合并两类 MCP server（workspace 级 stdio <code>{name, command, args}</code> + 插件 <code>.mcp.json</code>）；全仓零 <code>createSdkMcpServer</code>。外挂 MCP 工具在 bot 策略里落入 <code>'unknown'</code> 直通 allow-all —— 文档化的 R10 审计缺口，设置页 i18n 已写明 <em>"This is a known audit gap"</em>。</li>
+      <li><strong>审批面</strong>：<code>canUseTool</code> 是唯一 choke point；GUI 有 auto/readonly/manual 三级模式（<code>session-runtime.ts:290-339</code>），<code>AskUserQuestion</code> 的硬门位于 auto 检查之前（"任何模式都必须问人"的先例）；<code>pending_approval</code> 支持断线重发；<code>ApprovalSurface</code> 的 Allow / Allow always / Deny + <code>suggestions</code> 持久化管线已存在；WeCom 模板批准卡复用同一通道。</li>
+      <li><strong>流式面</strong>：单 WS 多路复用，<code>WsEventMessage.eventType</code> 是开放字符串；git-changes 已示范第二条带外订阅通道；500 事件 ring buffer + <code>lastEventId</code> 续播。客户端 RightPanel 的 <code>ContentTab = FileTab | DiffTab</code> 封闭联合类型是设计好的扩展缝；全仓无动态图像负载渲染管线（无 <code>media_type</code> 处理）。</li>
+      <li><strong>打包含</strong>：esbuild → pkg sidecar 管线；Claude binary / ripgrep / better-sqlite3 经 externalBin + resources 分发；<code>resolve-sdk-binary</code> 四级策略梯被 ripgrep 显式复用为模板（"Mirrors resolveSdkBinary's strategy ladder"）；CSP 已放行 <code>http://localhost:*</code> 与 <code>ws://localhost:*</code>；签名自动更新管线使每 MB 捆绑成为逐平台 recurring 成本。</li>
+      <li><strong>数据面</strong>：workspace settings 是扁平可选字段袋（<code>browserPermissions</code> 零迁移落点）；<code>workspaces</code> 表已有 <code>skills/mcpServers/hooks</code> JSON 列；全仓 cookie/浏览器足迹为零（绿地）；无可重复工作流实体；<code>wecom-file-storage</code> 的工作区落盘校验与 <code>wecom-queue-worker</code> 持久队列是现成模板。</li>
+    </ul>
+
+    <h4>Past Learnings（docs/solutions/）</h4>
+    <ul>
+      <li>与打包的 minified SDK 内部对齐必须 byte-for-byte，并用硬编码测试向量做漂移警报（2026-07-13）。</li>
+      <li>团队的 recurring wound 是 <strong>silent-empty success</strong> —— 浏览器提取/动作必须"响亮失败"（存在性探针 + 显式错误事件）。</li>
+      <li>长生命周期流的纪律：15s 服务端心跳 + 客户端读超时 &gt;2x、keepalive 不进 ring buffer、稳定 eventId 重放锚点、身份守卫退订、重连重发 pending approvals。浏览器自动化正是"长连接上的长空闲段"，这些教训全部适用。</li>
+      <li>签名自动更新管线与 <code>tauri.conf.json</code> + CI 紧耦合；native binary 捆绑有先例，但浏览器运行时比现有全部资源大一个数量级。</li>
+    </ul>
+
+    <h4>External Context（研究价值：high）</h4>
+    <ul>
+      <li><strong>控制面三种架构</strong>：vision 循环（Anthropic Computer Use，截图进出、token 贵）；a11y/DOM 蒸馏（<a href="https://github.com/microsoft/playwright-mcp">Playwright MCP</a> ~22 工具、稳定元素 ref；browser-use 89.1% WebVoyager）；混合（<a href="https://github.com/browserbase/stagehand">Stagehand</a> 的 act/extract/observe + v3 动作缓存，重复工作流近零成本，"replay determinism"）。</li>
+      <li><strong>嵌入路径硬约束</strong>：Tauri 系统 webview 只有 Windows WebView2 暴露 CDP；macOS WKWebView / Linux WebKitGTK 均没有 → sidecar 内 headless Chromium + 画面流回 React 是与 Comate 架构匹配的路径；<a href="https://github.com/steel-dev/steel-browser">Steel.dev</a> 证明 localhost 浏览器服务 + 会话查看器是可行的产品形态。</li>
+      <li><strong>安全共识</strong>：提示注入共识未解 —— OpenAI 称 "unlikely to ever be fully solved"；Claude for Chrome 红队数据 23.6%→11.2%（<a href="https://simonwillison.net/2025/Aug/26/piloting-claude-for-chrome/">Simon Willison</a> 称缓解后仍是 "catastrophic failure rate"）。新兴防御栈 = 站点级权限 + 逐动作确认 + 登出模式 + 架构隔离 —— Claude Code 式权限系统是天然载体。</li>
+      <li><strong>生态空位</strong>：Comet / Dia / Atlas 都是独立浏览器、不可嵌入（<a href="https://www.theregister.com/special-features/2025/10/23/openai-defends-atlas-as-prompt-injection-attacks-surface/1287449">The Register</a>）；"local-first AI workspace 内嵌 agentic 浏览器"无人占据；Tauri 的 WKWebView CDP 缺口意味着多数 Tauri 应用做不了这件事。差异化轴 = 你授予多少自主权。</li>
+    </ul>
+  </section>
+
+  <section id="topic-axes">
+    <h2>Topic Axes <span class="zh">/ 主题面分解</span></h2>
+    <ul class="axis-list">
+      <li><span class="axis-name">browser-runtime-bundling</span> — 浏览器运行时放在哪、如何分发（sidecar 内嵌 / 本机 Chrome CDP / 懒下载），逐平台打包成本</li>
+      <li><span class="axis-name">agent-tool-surface</span> — Claude 如何驱动浏览器（一等工具 vs 外挂 MCP vs CLI；a11y ref vs 截图；schema 形状）</li>
+      <li><span class="axis-name">preview-observation-ux</span> — 用户如何看到浏览器在做什么（语义日志 / 像素流 / 面板 / 接管）</li>
+      <li><span class="axis-name">permissions-safety</span> — 浏览/点击/提交的审批门（站点级权限、逐次确认、bot 隔离、提示注入防御）</li>
+      <li><span class="axis-name">extraction-sessions-workflows</span> — 提取内容的组织落盘、登录态会话复用、可重复工作流</li>
+    </ul>
+  </section>
+
+  <section id="ranked-ideas">
+    <h2>Ranked Ideas <span class="zh">/ 排序创意（6 个生存者）</span></h2>
+
+    <div class="jump-list">
+      <a href="#idea-1"><span class="n">1</span>可视化浏览器面板：ghost-tab 架构 + 双向人机接管</a>
+      <a href="#idea-2"><span class="n">2</span>一等自研浏览器工具面（含零-token 页面蒸馏）</a>
+      <a href="#idea-3"><span class="n">3</span>站点级权限台账 + 不可逆动作硬门</a>
+      <a href="#idea-4"><span class="n">4</span>登录态托管：默认登出 + 接管式登录 + storageState 钥匙托管</a>
+      <a href="#idea-5"><span class="n">5</span>运行时零打包：解析注册表 + 本机 Chrome 优先 + 懒下载兜底</a>
+      <a href="#idea-6"><span class="n">6</span>录制-回放工作流：审批-执行-沉淀一条龙</a>
+    </div>
+
+    <article class="idea" id="idea-1">
+      <div class="idea-head">
+        <span class="idea-num">1</span>
+        <h3>可视化浏览器面板：ghost-tab 架构 + 双向人机接管</h3>
+      </div>
+      <div class="chips">
+        <span class="chip axis">preview-observation-ux</span>
+        <span class="chip conf">Confidence 85%</span>
+        <span class="chip cx">Complexity High</span>
+      </div>
+      <div class="field"><span class="flabel">Description</span>
+        Steel.dev 式的本地浏览器服务 + 内嵌实时面板，这是整个功能的产品中心。无头 Chromium 跑在 sidecar（运行时来源见 #5），RightPanel 新增 <code>BrowserTab</code>（<code>ContentTab = FileTab | DiffTab</code> 联合类型的扩展点）显示实时画面：CDP screencast 帧经 WS 第二订阅通道流入（git-changes 先例，帧刻意不进 500 事件 ring buffer），面板内键鼠经 CDP <code>Input.dispatch*</code> 回传浏览器。<strong>双向人机接力是一等交互</strong>：agent 撞墙（登录墙、CAPTCHA、二维码、歧义表单）时发出 <code>browser_handoff</code> 待决事件 —— 完全复用 <code>pending_approval</code> 的注册、SSE 发射、断线重发、POST 决议路由；用户在面板中直接操作（输用户名密码、扫码、完成一段复杂流程），然后点"继续"，agent 带着状态差分（URL 变化、DOM 增量、表单已填值 —— 密码类字段脱敏）接手后续流程。用户也可以随时主动接管 —— 面板背后是 agent | user | paused 的独占输入状态机，任何时刻只有一个控制者。聊天流里的语义动作日志（带 eventId、可续播、15s 心跳）作为互补叙事，截图按需拉取。凭据永不入模型上下文 —— 用户输密码时模型只看到"已登录"这一事实。
+      </div>
+      <div class="field"><span class="flabel">Basis</span>
+        <span class="basis-tag">direct:</span> 用户明确的产品设想 —— "Steel.dev 类似的，在 comate 中有一个内嵌的 panel，让用户可以看到 ai agent 在怎么样操作浏览器，需要人介入的时候，人可以直接在 panel 中操作，如输入用户名和密码，扫二维码等，或者用户在网页中进行一些复杂的操作之后，通知 agent 继续后续的流程"。技术锚点：<code>session-runtime.ts:807-809</code> pending approval 注册 + <code>:458-459</code> 断线重发；<code>chat.ts:209-244</code> 审批决议路由；<code>websocket/types.ts:41-48</code> 开放 <code>eventType</code> 字符串 + <code>git-changes-service.ts:115-128</code> 第二订阅通道；<code>tauri.conf.json:26</code> CSP 已放行 localhost。
+        <span class="basis-tag">external:</span> <a href="https://github.com/steel-dev/steel-browser">Steel.dev</a> 的 stateful sessions + 会话查看器形态；航空双人制操纵权交接（控制权威模糊是同构失效模式）；瘦客户端游戏串流（帧下行、输入上行、接管成熟模式）；Tauri WKWebView 无 CDP → 画面必须来自 sidecar 浏览器而非应用 webview。
+      </div>
+      <div class="field"><span class="flabel">Rationale</span>
+        不能看见、不能接管的"受控"只是营销词汇。面板把"agent 在干什么"从信任问题变成观察问题；双向接力把登录墙、二维码、复杂流程这些 agent 死区变成"人做三秒、agent 做三分钟"。WKWebView 的 CDP 缺口意味着多数 Tauri 应用做不出这个形态 —— 这是差异化本体，也顺带成为凭据不入上下文的登录通道（与 #4 互为因果）。
+      </div>
+      <div class="field"><span class="flabel">Downsides</span>
+        像素流是心跳/重连/带宽的三重债务（已被产品决策接受为核心成本 —— 可靠性纪律必须照搬团队 SSE 学习：15s 心跳、读超时 &gt;2x、keepalive 与帧不进 ring buffer）；帧率与延迟需要调优；DOM 状态差分与字段脱敏实现复杂；用户不在场时 handoff 会阻塞任务（需超时与降级策略）；面板键鼠回传承载了真实安全语义。
+      </div>
+      <figure class="figure">
+        <svg viewBox="0 0 720 215" width="100%" role="img" aria-label="ghost-tab 架构">
+          <defs>
+            <marker id="arrp" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#b45309"></path>
+            </marker>
+          </defs>
+          <rect x="20" y="24" width="150" height="46" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="95" y="43" font-size="12" text-anchor="middle" fill="#1c1917" font-weight="650">Claude agent</text>
+          <text x="95" y="59" font-size="10.5" text-anchor="middle" fill="#57534e">chat 会话（SDK）</text>
+          <line x1="170" y1="47" x2="238" y2="47" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrp)"></line>
+          <text x="204" y="38" font-size="10.5" text-anchor="middle" fill="#57534e">工具调用</text>
+          <rect x="246" y="24" width="180" height="46" rx="8" fill="#fdf3e7" stroke="#b45309" stroke-width="1.5"></rect>
+          <text x="336" y="43" font-size="12" text-anchor="middle" fill="#1c1917" font-weight="650">browser-service</text>
+          <text x="336" y="59" font-size="10.5" text-anchor="middle" fill="#57534e">sidecar 单例 · workspace 级</text>
+          <line x1="426" y1="47" x2="494" y2="47" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrp)"></line>
+          <text x="460" y="38" font-size="10.5" text-anchor="middle" fill="#57534e">CDP 驱动</text>
+          <rect x="502" y="24" width="170" height="46" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="587" y="43" font-size="12" text-anchor="middle" fill="#1c1917" font-weight="650">headless Chromium</text>
+          <text x="587" y="59" font-size="10.5" text-anchor="middle" fill="#57534e">懒下载 / 本机 Chrome（#5）</text>
+          <line x1="316" y1="70" x2="316" y2="112" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrp)"></line>
+          <text x="308" y="95" font-size="10.5" text-anchor="end" fill="#57534e">screencast 帧（WS）</text>
+          <line x1="356" y1="112" x2="356" y2="70" stroke="#b45309" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrp)"></line>
+          <text x="364" y="95" font-size="10.5" fill="#57534e">CDP 输入回传</text>
+          <rect x="246" y="120" width="180" height="46" rx="8" fill="#eff4fe" stroke="#1d4ed8" stroke-width="1.5"></rect>
+          <text x="336" y="139" font-size="12" text-anchor="middle" fill="#1c1917" font-weight="650">BrowserTab 面板</text>
+          <text x="336" y="155" font-size="10.5" text-anchor="middle" fill="#57534e">RightPanel 新增 tab</text>
+          <line x1="170" y1="143" x2="238" y2="143" stroke="#1d4ed8" stroke-width="1.5" marker-end="url(#arrp)"></line>
+          <text x="204" y="134" font-size="10.5" text-anchor="middle" fill="#57534e">看 / 操作</text>
+          <rect x="20" y="120" width="150" height="46" rx="8" fill="#effaf1" stroke="#15803d" stroke-width="1.5"></rect>
+          <text x="95" y="139" font-size="12" text-anchor="middle" fill="#1c1917" font-weight="650">用户</text>
+          <text x="95" y="155" font-size="10.5" text-anchor="middle" fill="#57534e">输密码 · 扫码 · 点继续</text>
+          <text x="360" y="200" font-size="11.5" text-anchor="middle" fill="#92400e">窗口里没有任何真实浏览器 —— "嵌入感"由 sidecar 浏览器的帧流营造（ghost-tab）</text>
+        </svg>
+        <figcaption>Steel.dev 式形态：浏览器活在 sidecar，面板是它的查看器与控制台 —— 帧下行、输入上行，agent 与人共用同一条 CDP 通路。</figcaption>
+      </figure>
+      <figure class="figure">
+        <svg viewBox="0 0 720 225" width="100%" role="img" aria-label="接管状态机">
+          <defs>
+            <marker id="arr3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#b45309"></path>
+            </marker>
+          </defs>
+          <rect x="50" y="60" width="150" height="50" rx="8" fill="#fdf3e7" stroke="#b45309" stroke-width="1.5"></rect>
+          <text x="125" y="81" font-size="12.5" text-anchor="middle" fill="#1c1917" font-weight="650">agent 驾驶</text>
+          <text x="125" y="98" font-size="11" text-anchor="middle" fill="#57534e">独占输入</text>
+          <rect x="285" y="60" width="150" height="50" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="360" y="81" font-size="12.5" text-anchor="middle" fill="#1c1917" font-weight="650">handoff 待决</text>
+          <text x="360" y="98" font-size="11" text-anchor="middle" fill="#57534e">paused（复用审批通道）</text>
+          <rect x="520" y="60" width="150" height="50" rx="8" fill="#eff4fe" stroke="#1d4ed8" stroke-width="1.5"></rect>
+          <text x="595" y="81" font-size="12.5" text-anchor="middle" fill="#1c1917" font-weight="650">user 接管</text>
+          <text x="595" y="98" font-size="11" text-anchor="middle" fill="#57534e">面板内直接操作</text>
+          <line x1="200" y1="85" x2="277" y2="85" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr3)"></line>
+          <text x="238" y="76" font-size="11" text-anchor="middle" fill="#57534e">撞墙</text>
+          <line x1="435" y1="85" x2="512" y2="85" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr3)"></line>
+          <text x="473" y="76" font-size="11" text-anchor="middle" fill="#57534e">用户点击接管</text>
+          <path d="M 595 110 C 595 175, 125 175, 125 118" fill="none" stroke="#b45309" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr3)"></path>
+          <text x="360" y="196" font-size="11.5" text-anchor="middle" fill="#92400e">用户点"继续" → 交还 + 状态差分（URL / DOM 增量 / 表单已填值，密码脱敏）</text>
+        </svg>
+        <figcaption>任何时刻只有一个控制者；用户完成登录、扫码或一段复杂操作后点"继续"，agent 带状态差分接手 —— 不会重复已完成的步骤或提交半填表单。</figcaption>
+      </figure>
+    </article>
+
+    <article class="idea" id="idea-2">
+      <div class="idea-head">
+        <span class="idea-num">2</span>
+        <h3>一等自研浏览器工具面（含零-token 页面蒸馏）</h3>
+      </div>
+      <div class="chips">
+        <span class="chip axis">agent-tool-surface</span>
+        <span class="chip conf">Confidence 85%</span>
+        <span class="chip cx">Complexity Medium</span>
+      </div>
+      <div class="field"><span class="flabel">Description</span>
+        在 sidecar 进程内托管 Playwright，以稳定工具名暴露一小组意图级工具（<code>BrowserOpen / BrowserSnapshot / BrowserAct / BrowserSubmit / BrowserExtract</code>），走 a11y 树 + 稳定元素 ref，模型循环里不放截图。同时内置服务端蒸馏器：每个页面压缩成"页面模型"（表单及命名字段、可点元素及 ref、正文抽取，合计数百 token），原始 DOM 在任何路径上都不进上下文 —— 蒸馏器既是 token 经济的根，也是提示注入的第一道防火墙（页面原文永远只是数据）。自有工具名是稳定契约：权限分类（新 <code>browser</code> 类别）、tool-renderer、审批 UI、工作流录制都能按名精确挂接，避开外挂 playwright-mcp 的 ~22 个 schema 吃上下文、以及外部 MCP 工具落入 R10 'unknown' 直通 allow-all 的缺口。传输层可以用 SDK 的 <code>createSdkMcpServer</code>（handler 跑在 sidecar 进程内，直调 browser-service，零 IPC）—— 拒绝的不是 MCP，而是第三方 MCP 的 schema 所有权。竞争路线需在评审中比较：CLI 插件（继承 Bash 门控，但有状态浏览器如何穿越单次 CLI 调用的问题未解）与脚本即动作格式（其精华活在 #6 中）。
+      </div>
+      <div class="field"><span class="flabel">Basis</span>
+        <span class="basis-tag">direct:</span> <code>chat-service.ts:1451-1453</code> — <em>"'unknown' = tool not in any category (MCP, Skill, future SDK built-in / without a category fit). Fall through to today's allow-all behavior per R10."</em>；<code>workspace.ts:41-45</code> 的 <code>McpServer</code> 仅 stdio 三字段；全仓 <code>createSdkMcpServer</code> 零命中（证据档案核实）；<code>tool-renderers/registry.ts:5-16</code> 按工具名的渲染注册表。
+        <span class="basis-tag">external:</span> Playwright MCP README 自警 tool schema 上下文消耗、勿叠两个浏览器 MCP；Computer Use 截图循环 token 成本高（vision 循环 10 字段表单 ≈ 3-5 万 token，蒸馏模型 + ref 动作 ≈ 2-3k，差一个数量级）。
+      </div>
+      <div class="field"><span class="flabel">Rationale</span>
+        工具面形状是所有后续子系统（权限、渲染、录制、审批）的地基选择：工具名归 Comate 所有，六类权限策略才能"看见"浏览器动作；选外挂 stdio MCP，这些全部落空。蒸馏器的失败设计必须"响亮"（存在性探针 + 显式错误事件），回应团队 silent-empty success 的 recurring wound。
+      </div>
+      <div class="field"><span class="flabel">Downsides</span>
+        进程内 Playwright 增加 sidecar 内存与复杂度；自研 schema 需随模型行为持续调优（外挂 MCP 生态迭代免费）；蒸馏器可能丢失页面细节，需定向 DOM 查询兜底；<code>createSdkMcpServer</code> 在打包版 SDK（0.3.207）的确切形状需按 byte-for-byte 学习验证。
+      </div>
+      <figure class="figure">
+        <svg viewBox="0 0 720 205" width="100%" role="img" aria-label="工具面路线对比">
+          <defs>
+            <marker id="arr1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#b45309"></path>
+            </marker>
+            <marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#b91c1c"></path>
+            </marker>
+          </defs>
+          <text x="20" y="24" font-size="12" fill="#b91c1c" font-weight="700">路线 A：外挂 MCP（playwright-mcp 等）</text>
+          <rect x="20" y="36" width="150" height="44" rx="8" fill="#fdf0f0" stroke="#b91c1c" stroke-width="1"></rect>
+          <text x="95" y="62" font-size="12" text-anchor="middle" fill="#1c1917">任意工具名</text>
+          <line x1="170" y1="58" x2="258" y2="58" stroke="#b91c1c" stroke-width="1.5" marker-end="url(#arr2)"></line>
+          <rect x="266" y="36" width="130" height="44" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="331" y="62" font-size="12" text-anchor="middle" fill="#1c1917">canUseTool</text>
+          <line x1="396" y1="58" x2="488" y2="58" stroke="#b91c1c" stroke-width="1.5" marker-end="url(#arr2)"></line>
+          <rect x="496" y="36" width="204" height="44" rx="8" fill="#fdf0f0" stroke="#b91c1c" stroke-width="1.5"></rect>
+          <text x="598" y="55" font-size="12" text-anchor="middle" fill="#b91c1c" font-weight="650">'unknown' → allow-all</text>
+          <text x="598" y="71" font-size="11" text-anchor="middle" fill="#b91c1c">无门控 · 无专属渲染</text>
+          <text x="20" y="118" font-size="12" fill="#b45309" font-weight="700">路线 B：一等自研工具（BrowserOpen/Snapshot/Act/Submit/Extract）</text>
+          <rect x="20" y="130" width="150" height="44" rx="8" fill="#fdf3e7" stroke="#b45309" stroke-width="1"></rect>
+          <text x="95" y="156" font-size="12" text-anchor="middle" fill="#1c1917">稳定工具名</text>
+          <line x1="170" y1="152" x2="258" y2="152" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr1)"></line>
+          <rect x="266" y="130" width="130" height="44" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="331" y="156" font-size="12" text-anchor="middle" fill="#1c1917">canUseTool</text>
+          <line x1="396" y1="152" x2="488" y2="152" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr1)"></line>
+          <rect x="496" y="130" width="204" height="44" rx="8" fill="#fdf3e7" stroke="#b45309" stroke-width="1.5"></rect>
+          <text x="598" y="149" font-size="12" text-anchor="middle" fill="#92400e" font-weight="650">browser 类别</text>
+          <text x="598" y="165" font-size="11" text-anchor="middle" fill="#92400e">权限 · 审批 · 渲染 · 录制可按名挂接</text>
+        </svg>
+        <figcaption>工具名的所有权决定权限引擎能否"看见"浏览器动作 —— 外挂 MCP 落入 R10 缺口，一等工具进入可门控的类别体系。</figcaption>
+      </figure>
+    </article>
+
+    <article class="idea" id="idea-3">
+      <div class="idea-head">
+        <span class="idea-num">3</span>
+        <h3>站点级权限台账 + 不可逆动作硬门</h3>
+      </div>
+      <div class="chips">
+        <span class="chip axis">permissions-safety</span>
+        <span class="chip conf">Confidence 85%</span>
+        <span class="chip cx">Complexity Medium</span>
+      </div>
+      <div class="field"><span class="flabel">Description</span>
+        类比银行收款人登记与分级授权：<code>WorkspaceSettings</code> 新增 <code>browserPermissions</code>（扁平字段袋零迁移），按 <strong>域名 × 动作类</strong> 判决。这把权限模型从"按工具名"升级为"按 URL + 动作语义" —— 是 Comate 第一个按参数判决的权限评估器。配套两层执行：CDP 请求拦截层的 origin 白名单硬边界（方案外导航物理失败，bot 会话可因此安全开启浏览器），以及审批疲劳的语义层答案 —— 计划预授权（动手前产出结构化行动计划，用户一次批准整份方案，browser-service 运行时强制方案包络）。提示注入的信任边界由 #2 的蒸馏器承载（内容永远是数据），敏感页面（密码框/支付/checkout）再叠加阶段级工具面收缩。
+      </div>
+      <div class="field"><span class="flabel">Basis</span>
+        <span class="basis-tag">direct:</span> <code>session-runtime.ts:306-314</code> — <code>AskUserQuestion</code> 特判位于 <code>:317</code> 的 auto 检查之前，即"无论何种模式都必须问人"的硬门先例；<code>:331-338</code> 的 <code>suggestions?: PermissionUpdate[]</code> 透传与 <code>ApprovalSurface.tsx:327-356</code> 的 "Allow always" 构成持久化授权端到端管线；<code>workspace.ts:18-25</code> settings 字段袋先例；<code>tool-permission-policy.ts:39-45</code> 的 network 类别与 <code>bot-path-policy.ts:20-29</code> 的 deny-glob（文件侧 deny → URL 侧 allow-origin 的同构迁移）。
+        <span class="basis-tag">external:</span> 银行收款人/限额模型（用户已理解二十年的心智模型）；Claude for Chrome 站点级权限 + 动作确认（红队 23.6%→11.2%）。
+      </div>
+      <div class="field"><span class="flabel">Rationale</span>
+        用户点名要"提交" —— 提交恰恰是不可逆动作，必须成为独立于工具名的动作类。台账随工作区沉淀、越用越安静；评估器一旦存在，未来任何按参数分级的工具都有模板。
+      </div>
+      <div class="field"><span class="flabel">Downsides</span>
+        参数级判决引擎是第一个先例，设计错误会波及所有未来工具；域名/页面分类启发式可能误判（子域、CDN、iframe 嵌套）；审批 UI 复杂度显著增加；台账与计划预授权、环境档位三套机制需要统一的优先级语义，否则用户困惑。
+      </div>
+      <div class="field"><span class="flabel">判决矩阵（讨论稿）</span>
+        <table>
+          <thead><tr><th>动作类</th><th>默认判决</th><th>审批形态</th></tr></thead>
+          <tbody>
+            <tr><td>navigate / snapshot / extract</td><td>放行（站点授权可持久化）</td><td>无</td></tr>
+            <tr><td>click / fill / select</td><td>每域首次询问</td><td>ApprovalSurface + "始终允许"（suggestions）</td></tr>
+            <tr><td>submit / 支付 / 发布</td><td>永远逐次确认（auto 模式也不例外）</td><td>提交清单：目标 URL + 全部字段值逐条枚举</td></tr>
+            <tr><td>方案外 / 白名单外导航</td><td>拒绝</td><td>通用防探测拒绝文案（bot 反探测先例）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="idea" id="idea-4">
+      <div class="idea-head">
+        <span class="idea-num">4</span>
+        <h3>登录态托管：默认登出 + 接管式登录 + storageState 钥匙托管</h3>
+      </div>
+      <div class="chips">
+        <span class="chip axis">extraction-sessions-workflows</span>
+        <span class="chip conf">Confidence 75%</span>
+        <span class="chip cx">Complexity Medium</span>
+      </div>
+      <div class="field"><span class="flabel">Description</span>
+        类比银行保险箱钥匙托管：登录一律走 #1 的接管通道 —— 用户在面板里直接输密码、扫码，模型只见"已登录"这一事实；Playwright <code>storageState</code> 按 (workspace, 域组) 加密存于 <code>COMATE_DATA_DIR</code> —— 绝不落 folderPath、绝不进日志、禁止跨工作区导出；每次 agent 使用留审计，"退出登录" = 文件销毁。bot 会话强制 ephemeral（一次性登出 profile，任务结束即焚）或按 <code>data/&lt;user&gt;</code> 用户目录隔离，延续 <code>sanitizeBotEnv</code> 的凭据剥离哲学。默认登出同时是注入缓解（未登录页面可破坏面小得多），并让读取类动作可进 GUI auto/readonly 的免审批集合 —— 自主权拨盘从"审批频率"挪到"环境隔离档位"。
+      </div>
+      <div class="field"><span class="flabel">Basis</span>
+        <span class="basis-tag">direct:</span> 证据档案核实 —— 全仓 <code>cookie</code> 零命中（纯绿地，无遗留约束）；<code>data-dir.ts:12-13</code> 的 <code>COMATE_DATA_DIR</code> 解析；<code>bot-path-policy.ts:47-48</code> 的 per-user 目录隔离惯例；<code>chat-service.ts:37-46</code> <code>sanitizeBotEnv</code> 按会话类别剥离凭据先例；CLAUDE.md "never log secrets"。
+        <span class="basis-tag">external:</span> 托管钥匙管理（登录态是 bearer credential，托管纪律是已知解）；Steel.dev 的 stateful /sessions 是核心卖点；Atlas logged-in/out toggle + Lockdown Mode；Dia local-first 加密存储。
+      </div>
+      <div class="field"><span class="flabel">Rationale</span>
+        "通过 prompt 操作网页"的真实价值大半在登录墙之后：没有托管，每个任务都重新登录（体验死亡）；有托管无纪律则是凭据泄露温床（安全死亡）—— 托管模型是两者唯一的同时解，也是与 Chrome/Atlas 差异化（本地、按工作区隔离、默认登出）的定位支点。
+      </div>
+      <div class="field"><span class="flabel">Downsides</span>
+        加密密钥管理未解决（系统 keychain？主密码？Tauri 侧安全存储？）；storageState 过期/被服务端吊销时的体验需要设计；这是 Comate 第一个"凭证相邻"资产类别，企业合规与审计要求会随之而来。
+      </div>
+    </article>
+
+    <article class="idea" id="idea-5">
+      <div class="idea-head">
+        <span class="idea-num">5</span>
+        <h3>运行时零打包：解析注册表 + 本机 Chrome 优先 + 懒下载兜底</h3>
+      </div>
+      <div class="chips">
+        <span class="chip axis">browser-runtime-bundling</span>
+        <span class="chip conf">Confidence 85%</span>
+        <span class="chip cx">Complexity Low</span>
+      </div>
+      <div class="field"><span class="flabel">Description</span>
+        不把 Chromium 打进安装包。把 <code>resolve-sdk-binary</code> 的四级策略梯泛化为"可选运行时注册表"：系统 Chrome/Edge（<code>--remote-debugging-port</code> 受控启动，Comate 专属隔离 profile）→ 工作区配置路径 → 首次使用时懒下载 headless Chromium 到 <code>COMATE_DATA_DIR</code>（下载进度走 WS 事件）；配 <code>/api/health/browser</code> 的 resolve-then-<code>--version</code> 探测，缺失时发显式错误事件而非静默失败。安装包零增量，签名自动更新管线不背每平台 ~150MB 的 recurring 成本；macOS universal 双架构问题随之消失。第二阶段可加双运行时信任拓扑：洁净室（每任务全新 storageState，bot/不可信默认）与出诊（CDP 连接用户 Chrome，继承登录态），策略层按会话信任姿态选择。"下载-即-能力"的基础设施未来可被任何重型可选运行时复用。
+      </div>
+      <div class="field"><span class="flabel">Basis</span>
+        <span class="basis-tag">direct:</span> <code>file-search.ts:44-49</code> — <em>"Mirrors resolveSdkBinary's strategy ladder so the same call works in dev, pkg-bundled sidecar, and Tauri production"</em>（梯子被显式写成可复用模板）；<code>index.ts:139-151</code> 的 resolve-then-<code>--version</code> 健康探测模式；<code>build-sidecar.ts:156</code> 的 macOS 双架构构建。
+        <span class="basis-tag">external:</span> Playwright 已是 devDependency，<code>playwright install chromium</code> 即懒下载先例；Steel.dev 证明 localhost 浏览器服务中间路径。
+        <span class="basis-tag">reasoned:</span> 学习文档指出签名自动更新管线与每 MB 捆绑成本紧耦合、逐平台递归计费；懒下载把 recurring 成本变为一次性首用成本，且"不用者不付费"。
+      </div>
+      <div class="field"><span class="flabel">Rationale</span>
+        打包 vs 解析 vs 下载是整个功能的第一个岔路口，选错方向，安装包从几十 MB 涨到数百 MB，三平台签名更新管线每次发版都为此付利息。这是成本结构决策，必须动工前拍板。
+      </div>
+      <div class="field"><span class="flabel">Downsides</span>
+        懒下载需要下载基础设施（进度、断点续传、校验、可能的镜像源）；本机 Chrome 版本漂移带来兼容性测试面；企业受管环境可能无 Chrome 或禁止调试端口；首次使用时的下载等待是 onboarding 摩擦点。
+      </div>
+      <figure class="figure">
+        <svg viewBox="0 0 720 130" width="100%" role="img" aria-label="运行时解析顺序">
+          <defs>
+            <marker id="arr5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#b45309"></path>
+            </marker>
+          </defs>
+          <rect x="15" y="35" width="155" height="52" rx="8" fill="#fdf3e7" stroke="#b45309" stroke-width="1.5"></rect>
+          <text x="92" y="57" font-size="12" text-anchor="middle" fill="#1c1917" font-weight="650">① 系统 Chrome/Edge</text>
+          <text x="92" y="74" font-size="11" text-anchor="middle" fill="#57534e">CDP 受控启动</text>
+          <line x1="170" y1="61" x2="196" y2="61" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr5)"></line>
+          <rect x="204" y="35" width="155" height="52" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="281" y="57" font-size="12" text-anchor="middle" fill="#1c1917" font-weight="650">② 工作区配置路径</text>
+          <text x="281" y="74" font-size="11" text-anchor="middle" fill="#57534e">显式指定二进制</text>
+          <line x1="359" y1="61" x2="385" y2="61" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr5)"></line>
+          <rect x="393" y="35" width="155" height="52" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="470" y="57" font-size="12" text-anchor="middle" fill="#1c1917" font-weight="650">③ 懒下载</text>
+          <text x="470" y="74" font-size="11" text-anchor="middle" fill="#57534e">COMATE_DATA_DIR</text>
+          <line x1="548" y1="61" x2="574" y2="61" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr5)"></line>
+          <rect x="582" y="35" width="125" height="52" rx="8" fill="#fdf0f0" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="5 3"></rect>
+          <text x="644" y="57" font-size="12" text-anchor="middle" fill="#b91c1c" font-weight="650">④ 显式报错</text>
+          <text x="644" y="74" font-size="11" text-anchor="middle" fill="#b91c1c">拒绝静默失败</text>
+          <text x="360" y="118" font-size="11.5" text-anchor="middle" fill="#57534e">每一级配 /api/health/browser 的 resolve-then-probe 探测 —— 与 Claude binary 同款</text>
+        </svg>
+        <figcaption>安装包零浏览器字节：按"本机 → 配置 → 下载"顺序解析，任何一级命中即用，全部失败则响亮报错。</figcaption>
+      </figure>
+    </article>
+
+    <article class="idea" id="idea-6">
+      <div class="idea-head">
+        <span class="idea-num">6</span>
+        <h3>录制-回放工作流：审批-执行-沉淀一条龙</h3>
+      </div>
+      <div class="chips">
+        <span class="chip axis">extraction-sessions-workflows</span>
+        <span class="chip conf">Confidence 65%</span>
+        <span class="chip cx">Complexity High</span>
+      </div>
+      <div class="field"><span class="flabel">Description</span>
+        三个独立候选咬合为一条流水线：agent 产出结构化计划 → 计划编译为可审查 Playwright 脚本（审批卡用既有 tool-renderer 渲染成代码块，"批准计划一次"）→ 执行成功的脚本一键冻结为参数化工作流（a11y ref 解析为自愈选择器包 + 提取 schema + NL 触发描述，落 <code>workspaces.skills</code> JSON 列先例或新表）。之后同类任务确定性回放、零模型 token，模型只在选择器漂移时介入自愈；可从聊天、定时、WeCom bot（proactive queue）三个面触发。"盯住这个信息源"的物化视图（browser_watches：schedule + hash diff + 队列推回会话）作为其定时特化。回放不把页面内容进上下文，注入暴露面同步缩小。站点领航员（按域名注入的站点知识文件，含稳定选择器）是后续可加的知识层，让回放更稳。
+      </div>
+      <div class="field"><span class="flabel">Basis</span>
+        <span class="basis-tag">direct:</span> <code>sqlite-store.ts:76-79</code> — <code>skills/mcpServers/hooks</code> JSON 列的 per-workspace 能力包先例；证据档案 §8 — <em>"No persisted entity for reusable workflows/pipelines"</em>（最近的是 <code>workspace_prompt_history</code>）；<code>wecom-queue-worker.ts:7-11</code> 持久队列 + <code>wecom-bot-service.ts:1148-1162</code> 按用户复用会话。
+        <span class="basis-tag">external:</span> Stagehand v3 action caching 让重复工作流近零成本（"replay determinism"）；RPA/UiPath 二十年教训 —— 语义自愈选择器是脆选择器问题的解；Dia 的用户自定义 NL Skills。
+      </div>
+      <div class="field"><span class="flabel">Rationale</span>
+        没有回放，浏览器功能的经济模型是"每次都全价" —— token 贵、慢、还会随机失败。录制-回放把"agent 一次性成功"转化为"资产性自动化"：第一次付全额模型成本，之后每次近零。这是从聊天功能跃迁为自动化产品的分水岭，也是唯一随使用次数增值的资产，直接构成留存理由。
+      </div>
+      <div class="field"><span class="flabel">Downsides</span>
+        体量最大：录制器 + 回放引擎 + 自愈 + 新实体 + 三触发面；自愈选择器仍会漂移失败（需要失败通知与人工修复路径）；错误回放的破坏力（自动提交错表单）要求回放同样过提交硬门（#3）；"v1 就建护城河"还是"先验证单步体验"是真实的排序争议。
+      </div>
+      <figure class="figure">
+        <svg viewBox="0 0 720 190" width="100%" role="img" aria-label="审批执行沉淀流水线">
+          <defs>
+            <marker id="arr6" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#b45309"></path>
+            </marker>
+          </defs>
+          <rect x="10" y="30" width="106" height="46" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="63" y="49" font-size="11.5" text-anchor="middle" fill="#1c1917" font-weight="650">结构化计划</text>
+          <text x="63" y="65" font-size="10.5" text-anchor="middle" fill="#57534e">站点·动作·提交点</text>
+          <line x1="116" y1="53" x2="128" y2="53" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr6)"></line>
+          <rect x="134" y="30" width="106" height="46" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="187" y="49" font-size="11.5" text-anchor="middle" fill="#1c1917" font-weight="650">可审查脚本</text>
+          <text x="187" y="65" font-size="10.5" text-anchor="middle" fill="#57534e">Playwright 代码块</text>
+          <line x1="240" y1="53" x2="252" y2="53" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr6)"></line>
+          <rect x="258" y="30" width="106" height="46" rx="8" fill="#fdf3e7" stroke="#b45309" stroke-width="1.5"></rect>
+          <text x="311" y="49" font-size="11.5" text-anchor="middle" fill="#1c1917" font-weight="650">一次批准</text>
+          <text x="311" y="65" font-size="10.5" text-anchor="middle" fill="#57534e">ApprovalSurface</text>
+          <line x1="364" y1="53" x2="376" y2="53" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr6)"></line>
+          <rect x="382" y="30" width="106" height="46" rx="8" fill="#ffffff" stroke="#e7e5e4" stroke-width="1.5"></rect>
+          <text x="435" y="49" font-size="11.5" text-anchor="middle" fill="#1c1917" font-weight="650">确定性执行</text>
+          <text x="435" y="65" font-size="10.5" text-anchor="middle" fill="#57534e">browser-service</text>
+          <line x1="488" y1="53" x2="500" y2="53" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr6)"></line>
+          <rect x="506" y="30" width="96" height="46" rx="8" fill="#fdf3e7" stroke="#b45309" stroke-width="1.5"></rect>
+          <text x="554" y="49" font-size="11.5" text-anchor="middle" fill="#1c1917" font-weight="650">冻结为工作流</text>
+          <text x="554" y="65" font-size="10.5" text-anchor="middle" fill="#57534e">workspace 资产</text>
+          <line x1="602" y1="53" x2="614" y2="53" stroke="#b45309" stroke-width="1.5" marker-end="url(#arr6)"></line>
+          <rect x="618" y="30" width="92" height="46" rx="8" fill="#effaf1" stroke="#15803d" stroke-width="1.5"></rect>
+          <text x="664" y="49" font-size="11.5" text-anchor="middle" fill="#1c1917" font-weight="650">回放</text>
+          <text x="664" y="65" font-size="10.5" text-anchor="middle" fill="#15803d">零 token</text>
+          <path d="M 664 76 C 664 130, 435 130, 435 84" fill="none" stroke="#b45309" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr6)"></path>
+          <text x="550" y="152" font-size="11.5" text-anchor="middle" fill="#92400e">选择器漂移 → 模型自愈后重放</text>
+        </svg>
+        <figcaption>批准的对象、执行的单元、沉淀的资产是同一个 artifact —— "批准一次 → 永久受益"。</figcaption>
+      </figure>
+    </article>
+  </section>
+
+  <section id="rejection-summary">
+    <h2>Rejection Summary <span class="zh">/ 淘汰记录（22 个候选/条目）</span></h2>
+    <p class="prose">质量机制是"显式淘汰并记录理由"，而非乐观排名。多数淘汰是<strong>折叠</strong>（并入更强的生存者）而非否决。验证者（fresh-context 对抗核验，~30 处引用抽查）判 27 个候选 sound、1 个 weak（#15 独立形态），两处引用瑕疵已修正。讨论修正（用户明确 Steel.dev 式面板设想）后，原生存者 #2（接管协议）与 #7（观察流分级）合并为新的 #1，像素面板从"可选层"提升为核心 UX。</p>
+    <table>
+      <thead><tr><th>#</th><th>Idea</th><th>Reason Rejected</th></tr></thead>
+      <tbody>
+        <tr><td class="num">2</td><td>双运行时信任拓扑（洁净室 vs 出诊）</td><td>并入生存者 5 作为第二阶段 —— 依赖零打包解析先行</td></tr>
+        <tr><td class="num">3</td><td>浏览器是 workspace 级服务，会话只是租客</td><td>合理的语义约束，但非独立方向 —— 吸收进生存者 1/4/5 的设计讨论</td></tr>
+        <tr><td class="num">5</td><td>浏览器即 CLI 插件（注入 PATH + skills）</td><td>工具面竞争路线 —— 有状态浏览器如何穿越单次 CLI 调用（常驻进程）问题未解；折叠进生存者 2 的路线比较</td></tr>
+        <tr><td class="num">6</td><td>代码即动作格式（意图编译为脚本，审批即代码审查）</td><td>动作格式竞争路线 —— 其精华（可审查脚本）活在生存者 6 的流水线中</td></tr>
+        <tr><td class="num">7</td><td>零 token 页面蒸馏（独立候选）</td><td>与生存者 2 的 payload schema 部分重复 —— 并入作为其设计约束</td></tr>
+        <tr><td class="num">8</td><td>站点领航员（域名触发的自维护站点知识文件）</td><td>有价值但自我维护循环 hand-wavy（陈旧 pilot 会主动误导）；排序在工具面与工作流决策之后，记入生存者 6 的未来方向</td></tr>
+        <tr><td class="num">9→1</td><td>观察流分级（原生存者 #7）</td><td>与原 #2 接管协议合并为生存者 1 —— 面板与接管是同一交互的两面；用户产品决策将像素面板提升为核心 UX，语义日志降为互补叙事</td></tr>
+        <tr><td class="num">11</td><td>幽灵标签页（像素流为先的观察面）</td><td>并入生存者 1 —— 原判"可选层"，被用户 Steel.dev 式面板设想提升为核心架构</td></tr>
+        <tr><td class="num">12</td><td>反向控制（用户驾驶，Claude 副驾）</td><td>并入生存者 1 —— "用户复杂操作后通知 agent 继续"正是双向接管的反向形态</td></tr>
+        <tr><td class="num">14</td><td>计划预授权（批准方案而非逐次放行）</td><td>审批粒度选项 —— 并入生存者 3；与生存者 6 的"计划即脚本"天然合体</td></tr>
+        <tr><td class="num">15</td><td>网页内容信任反转（独立形态）</td><td>验证判 weak —— canUseTool 看得到工具调用、看不到"因网页内容而起"的因果来源，机制按原述不可实现；可执行部分（蒸馏器包裹 + 高危动作过闸）并入生存者 2/3</td></tr>
+        <tr><td class="num">16</td><td>无菌驾驶舱（敏感阶段上下文隔离）</td><td>页面分类启发式可规避，不足以独立 —— 作为防御纵深保留在生存者 3 的讨论</td></tr>
+        <tr><td class="num">17</td><td>按 mcp__&lt;server&gt;__* 前缀关掉 R10 审计缺口</td><td>正确的机制级还债，但非独立产品方向 —— 随生存者 2 的一等工具决策落地（或成为外挂 MCP 时的前置条件）</td></tr>
+        <tr><td class="num">18</td><td>环境安全替代逐步审批（一次性登出 profile 免审批）</td><td>默认登出点并入生存者 4；审批粒度其余部分并入生存者 3</td></tr>
+        <tr><td class="num">19</td><td>origin 白名单网络硬边界</td><td>并入生存者 3 作为执行层（与台账、计划预授权同一决策）</td></tr>
+        <tr><td class="num">23</td><td>物化视图 browser_watches（定时刷新 + diff 推送）</td><td>验证者：本质是 工作流+schedule+diff —— 并入生存者 6 作为定时特化</td></tr>
+        <tr><td class="num">24</td><td>异步浏览任务（工件即交付，用户从不观看）</td><td>并入生存者 1 —— 作为面板不可用时的观察降级选项保留在讨论中</td></tr>
+        <tr><td class="num">26</td><td>登录飞轮（synthesis：接管登录 → 托管 → 免登）</td><td>组件全部存活（生存者 1/4）—— 叙事由生存者 4 承载，不重复计票</td></tr>
+        <tr><td class="num">27</td><td>站点知识复利（synthesis：pilot → 回放更稳）</td><td>最弱 synthesis（验证者）—— 反哺循环 aspirational；并入生存者 6 讨论</td></tr>
+        <tr><td class="num">28</td><td>蒸馏器即信任边界（synthesis）</td><td>并入生存者 2 —— 蒸馏器的双重角色（token + 防火墙）已写入其描述</td></tr>
+        <tr><td class="num">—</td><td>axis coverage</td><td>5 个轴均有生存者，无 deliberate gap；Phase 2 轴覆盖检查无需恢复 dispatch</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer class="composition-signal">Composed 2026-07-18 by ce-ideate from user prompt 「我想在comate中内嵌一个受控的浏览器，用户可通过Prompt在这个受控的浏览器里面打开一个网页，然后通过Prompt操作网页，比如填写表单，点击菜单，提交，提取和整理网页内容等」(repo: comate)；updated same day after discussion — 用户明确 Steel.dev 式内嵌面板 + 双向接管设想，原 #2/#7 合并为新 #1。</footer>
+
+</div>
+</body>
+</html>

@@ -3,6 +3,8 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { chatService, ChatError } from '../services/chat-service.js';
 import { store } from '../storage/sqlite-store.js';
 import { botService } from '../services/bot-service.js';
+import { browserService } from '../services/browser-service.js';
+import { clearBrowserGateSession } from '../services/browser-gate-state.js';
 import { diagLog } from '../utils/diag-logger.js';
 import type { BotUser } from '../models/bot-user.js';
 import { loadWorkflowState, listWorkflowRunIds } from '../services/workflow-loader.js';
@@ -113,6 +115,12 @@ router.delete('/sessions/:sessionId', async (req, res) => {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
+    // Browser teardown path 1 (KTD-1): the per-session Steel process and the
+    // U4 gate state die with the chat session (the on-disk Chrome profile is
+    // wiped here — remembered login survives only via the workspace's
+    // value-only-in browserSiteAuth store, U8).
+    clearBrowserGateSession(sessionId);
+    await browserService.teardownSession(sessionId);
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to delete session:', error);

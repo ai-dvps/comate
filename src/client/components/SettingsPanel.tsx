@@ -1524,7 +1524,11 @@ function WorkspaceTabShell({
                 />
               )}
               {activeSection === 'security' && (
-                <SecuritySection state={workspaceState} onUpdate={onUpdateWorkspace} />
+                <SecuritySection
+                  workspaceId={selectedWorkspaceId!}
+                  state={workspaceState}
+                  onUpdate={onUpdateWorkspace}
+                />
               )}
               {activeSection === 'danger' && <DangerSection onDelete={onDelete} />}
             </>
@@ -1632,9 +1636,11 @@ function BotSection({
 }
 
 function SecuritySection({
+  workspaceId,
   state,
   onUpdate,
 }: {
+  workspaceId: string
   state: WorkspaceFormState
   onUpdate: (updates: Partial<WorkspaceFormState>) => void
 }) {
@@ -1644,6 +1650,111 @@ function SecuritySection({
         value={state.sensitiveFileDenylist}
         onChange={(next) => onUpdate({ sensitiveFileDenylist: next })}
       />
+      <RememberedSitesCard workspaceId={workspaceId} />
+    </div>
+  )
+}
+
+/**
+ * RememberedSitesCard — the "记住此站点" management list (U8, KTD-8). The
+ * GET response carries ONLY site keys + metadata (the server strips the
+ * replayable session contexts — value-only-in), so this list can never
+ * display or round-trip a credential. Revoke destroys the stored context
+ * server-side; future chat sessions stop being injected.
+ * Exported (named) for the jsdom tests.
+ */
+export function RememberedSitesCard({ workspaceId }: { workspaceId: string }) {
+  const { t } = useTranslation('settings')
+  const [sites, setSites] = useState<Array<{ key: string; updatedAt?: string; lastUsedAt?: string }> | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [revoking, setRevoking] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`)
+      if (!res.ok) throw new Error(`status ${res.status}`)
+      const data = (await res.json()) as { workspace?: Workspace }
+      const siteAuth = (data.workspace?.settings?.browserSiteAuth ?? {}) as Record<
+        string,
+        { updatedAt?: string; lastUsedAt?: string }
+      >
+      setSites(
+        Object.entries(siteAuth)
+          .map(([key, meta]) => ({ key, updatedAt: meta?.updatedAt, lastUsedAt: meta?.lastUsedAt }))
+          .sort((a, b) => a.key.localeCompare(b.key)),
+      )
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setSites([])
+    }
+  }, [workspaceId])
+
+  useEffect(() => {
+    setSites(null)
+    void load()
+  }, [load])
+
+  const revoke = async (siteKey: string) => {
+    setRevoking(siteKey)
+    try {
+      const res = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/browser-site-auth/${encodeURIComponent(siteKey)}`,
+        { method: 'DELETE' },
+      )
+      if (!res.ok) throw new Error(`status ${res.status}`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRevoking(null)
+    }
+  }
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+        {t('workspace.rememberedSitesTitle')}
+      </label>
+      <p className="text-[10px] text-text-tertiary mb-2">{t('workspace.rememberedSitesHint')}</p>
+      {sites === null ? (
+        <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          {t('common.loading', 'Loading...')}
+        </div>
+      ) : sites.length === 0 ? (
+        <p className="text-[11px] text-text-tertiary" data-testid="remembered-sites-empty">
+          {error
+            ? t('workspace.rememberedSitesLoadError')
+            : t('workspace.rememberedSitesEmpty')}
+        </p>
+      ) : (
+        <ul className="divide-y divide-border/50 border border-border rounded-lg" data-testid="remembered-sites-list">
+          {sites.map((site) => (
+            <li key={site.key} className="flex items-center gap-2 px-3 py-2">
+              <span className="text-sm text-text-primary font-mono text-[12px] truncate flex-1">
+                {site.key}
+              </span>
+              <span className="text-[10px] text-text-tertiary flex-shrink-0">
+                {site.updatedAt ? new Date(site.updatedAt).toLocaleDateString() : ''}
+              </span>
+              <button
+                type="button"
+                data-testid={`remembered-site-revoke-${site.key}`}
+                disabled={revoking === site.key}
+                onClick={() => void revoke(site.key)}
+                className="text-[11px] text-destructive hover:text-destructive/80 disabled:opacity-50 flex-shrink-0"
+              >
+                {revoking === site.key ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  t('workspace.rememberedSitesRevoke')
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

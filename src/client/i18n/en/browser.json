@@ -1,0 +1,51 @@
+{
+  "pane": {
+    "title": "Browser",
+    "expand": "Open browser panel",
+    "collapse": "Close browser panel",
+    "resize": "Resize browser panel",
+    "needsYou": "Browser needs you",
+    "emptyTitle": "No browser in this session",
+    "emptyDetail": "This session has no browser yet. One opens automatically when Claude works on a web task.",
+    "popoutPlaceholder": "The browser view is open in the floating window."
+  },
+  "state": {
+    "agentDriving": "Claude is driving",
+    "agentDrivingHint": "You are watching in read-only mode",
+    "handoffPending": "Claude is asking you to take over",
+    "handoffPendingHint": "Take over to continue, or let Claude keep going",
+    "userDriving": "You are driving",
+    "userDrivingHint": "Claude is paused while you drive",
+    "transitioning": "Switching control…",
+    "sessionLost": "Browser session lost",
+    "sessionLostDetail": "The browser process crashed. Claude's next browser action rebuilds it automatically — or retry now.",
+    "unavailable": "Browser unavailable",
+    "idlePrompt": "This browser has been idle. Close it to free its resources? Your login is preserved.",
+    "starting": "Starting the browser…",
+    "preparing": "Preparing the browser runtime…",
+    "firstUseHint": "First use may download browser components and take a few minutes."
+  },
+  "action": {
+    "takeover": "Take over",
+    "continue": "Continue",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "popout": "Pop out",
+    "closePopout": "Back to panel",
+    "clickToDrive": "Click the view to control it",
+    "captureReleased": "Input capture released",
+    "rememberSite": "Remember this site",
+    "rememberSiteHint": "Keep the login for this site in this workspace. New chat sessions will be signed in automatically. Manage remembered sites in Settings → Security.",
+    "closeNow": "Close now",
+    "notNow": "Not now",
+    "closeBrowser": "Close browser",
+    "closeBrowserHint": "Close the browser and free its resources. Your login is preserved for the next time you open one."
+  },
+  "popout": {
+    "title": "Browser — floating window"
+  },
+  "a11y": {
+    "stateAnnouncement": "Browser control state: {{state}}",
+    "viewerFrame": "Controlled browser view"
+  }
+}
