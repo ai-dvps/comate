@@ -20,6 +20,7 @@ vi.mock('../../../lib/websocket-client.js', () => ({
 import BrowserPaneButton from '../BrowserPaneButton'
 import {
   useBrowserPaneStore,
+  selectSessionOpen,
   initialSessionBrowserState,
 } from '../../../stores/browser-pane-store'
 import { useChatStore } from '../../../stores/chat-store'
@@ -38,7 +39,7 @@ describe('BrowserPaneButton', () => {
     localStorage.clear()
     vi.clearAllMocks()
     useBrowserPaneStore.setState({
-      isOpen: false,
+      openBySession: {},
       width: 480,
       hasOpened: false,
       popoutOpen: false,
@@ -56,9 +57,11 @@ describe('BrowserPaneButton', () => {
     const button = screen.getByTestId('browser-pane-button')
     expect(button).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(button)
-    expect(useBrowserPaneStore.getState().isOpen).toBe(true)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
     expect(button).toHaveAttribute('aria-pressed', 'true')
-    expect(localStorage.getItem('browser-pane-open')).toBe('true')
+    expect(localStorage.getItem('browser-pane-open-by-session')).toBe(
+      JSON.stringify({ 'sess-1': true }),
+    )
   })
 
   it('shows the handoff badge while the session awaits takeover (R5)', () => {

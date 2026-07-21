@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Globe } from 'lucide-react'
 import {
   selectHandoffPending,
+  selectSessionOpen,
   useBrowserPaneStore,
 } from '../../stores/browser-pane-store'
 import { useChatStore } from '../../stores/chat-store'
@@ -21,7 +22,7 @@ export interface BrowserPaneButtonProps {
 export default function BrowserPaneButton({ workspaceId }: BrowserPaneButtonProps) {
   const { t } = useTranslation('browser')
   const sessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
-  const isOpen = useBrowserPaneStore((s) => s.isOpen)
+  const isOpen = useBrowserPaneStore((s) => selectSessionOpen(s, sessionId))
   const togglePane = useBrowserPaneStore((s) => s.togglePane)
   const handoffPending = useBrowserPaneStore((s) => selectHandoffPending(s, sessionId))
 
@@ -31,7 +32,9 @@ export default function BrowserPaneButton({ workspaceId }: BrowserPaneButtonProp
       data-testid="browser-pane-button"
       aria-label={isOpen ? t('pane.collapse') : t('pane.expand')}
       aria-pressed={isOpen}
-      onClick={togglePane}
+      onClick={() => {
+        if (sessionId) togglePane(sessionId)
+      }}
       className={cn(
         'relative p-1.5 rounded-md transition-colors',
         FOCUS_CLASSES,

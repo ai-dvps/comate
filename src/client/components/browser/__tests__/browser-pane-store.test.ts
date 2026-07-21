@@ -38,6 +38,7 @@ import {
   selectHasInFlightBrowserTool,
   selectBrowserStartPhase,
   selectSessionBrowser,
+  selectSessionOpen,
   initialSessionBrowserState,
   BROWSER_START_PHASE_PERCENT,
 } from '../../../stores/browser-pane-store'
@@ -57,7 +58,7 @@ function mockViewerUrlFetch(url: string | null) {
 
 function resetPaneStore() {
   useBrowserPaneStore.setState({
-    isOpen: false,
+    openBySession: {},
     width: 480,
     hasOpened: false,
     popoutOpen: false,
@@ -93,15 +94,20 @@ describe('browser-pane-store', () => {
 
   // -- persistence ----------------------------------------------------------
 
-  it('persists open state and width to localStorage', () => {
+  it('persists per-session open state and width to localStorage', () => {
     const store = useBrowserPaneStore.getState()
-    store.setPaneOpen(true)
-    expect(localStorage.getItem('browser-pane-open')).toBe('true')
+    store.setPaneOpen('sess-1', true)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
+    expect(localStorage.getItem('browser-pane-open-by-session')).toBe(
+      JSON.stringify({ 'sess-1': true }),
+    )
     store.setWidth(555)
     expect(localStorage.getItem('browser-pane-width')).toBe('555')
     expect(useBrowserPaneStore.getState().width).toBe(555)
-    store.setPaneOpen(false)
-    expect(localStorage.getItem('browser-pane-open')).toBe('false')
+    store.setPaneOpen('sess-1', false)
+    expect(localStorage.getItem('browser-pane-open-by-session')).toBe(
+      JSON.stringify({ 'sess-1': false }),
+    )
   })
 
   it('clamps width to the minimum', () => {
@@ -111,10 +117,40 @@ describe('browser-pane-store', () => {
 
   it('marks hasOpened on first open so the iframe may mount', () => {
     expect(useBrowserPaneStore.getState().hasOpened).toBe(false)
-    useBrowserPaneStore.getState().setPaneOpen(true)
+    useBrowserPaneStore.getState().setPaneOpen('sess-1', true)
     expect(useBrowserPaneStore.getState().hasOpened).toBe(true)
-    useBrowserPaneStore.getState().setPaneOpen(false)
+    useBrowserPaneStore.getState().setPaneOpen('sess-1', false)
     expect(useBrowserPaneStore.getState().hasOpened).toBe(true)
+  })
+
+  // -- 展开/收起 is independent per session -----------------------------------
+
+  it('keeps the pane open state independent per session', () => {
+    const store = useBrowserPaneStore.getState()
+    store.setActiveSession('ws1', 'sess-A')
+    // Open the pane for session A.
+    store.setPaneOpen('sess-A', true)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-A')).toBe(true)
+
+    // Switch to session B: B starts collapsed, A's open state is retained.
+    store.setActiveSession('ws1', 'sess-B')
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-B')).toBe(false)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-A')).toBe(true)
+
+    // Toggling B open never disturbs A.
+    store.togglePane('sess-B')
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-B')).toBe(true)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-A')).toBe(true)
+
+    // Switching back to A keeps its own (open) state — not B's.
+    store.setActiveSession('ws1', 'sess-A')
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-A')).toBe(true)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-B')).toBe(true)
+
+    // Collapsing A leaves B untouched.
+    store.togglePane('sess-A')
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-A')).toBe(false)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-B')).toBe(true)
   })
 
   // -- handoff: badge + auto-expand -----------------------------------------
@@ -128,19 +164,21 @@ describe('browser-pane-store', () => {
         sessionId: 'sess-1',
       }),
     )
-    expect(useBrowserPaneStore.getState().isOpen).toBe(false)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
 
     wsClientMock.emitEvent(browserStateEvent('sess-1', 'handoff_pending', 4001))
 
-    expect(useBrowserPaneStore.getState().isOpen).toBe(true)
-    expect(localStorage.getItem('browser-pane-open')).toBe('true')
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
+    expect(localStorage.getItem('browser-pane-open-by-session')).toBe(
+      JSON.stringify({ 'sess-1': true }),
+    )
     expect(selectHandoffPending(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
   })
 
   it('does not auto-expand for a handoff on a background session', () => {
     useBrowserPaneStore.getState().setActiveSession('ws1', 'sess-1')
     wsClientMock.emitEvent(browserStateEvent('sess-other', 'handoff_pending', 4002))
-    expect(useBrowserPaneStore.getState().isOpen).toBe(false)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
     expect(selectHandoffPending(useBrowserPaneStore.getState(), 'sess-other')).toBe(true)
   })
 

@@ -47,7 +47,7 @@ describe('BrowserStateBar', () => {
     cleanup()
     vi.clearAllMocks()
     useBrowserPaneStore.setState({
-      isOpen: true,
+      openBySession: { 'sess-1': true },
       width: 480,
       hasOpened: true,
       popoutOpen: false,
