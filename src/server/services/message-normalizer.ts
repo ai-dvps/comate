@@ -181,6 +181,15 @@ export function normalizeSessionMessage(
   const role = roleFromType(sessionMessage.type);
   if (!role) return null;
 
+  // Synthetic `<task-notification>` user messages are model context the CLI
+  // injects when a background task settles, not real user content. Drop them
+  // so the XML never renders as a chat bubble; task state reaches the Tasks
+  // panel through the structured task_* system messages on a separate path.
+  // See plan 2026-07-21-001-fix-hide-task-notification-xml-plan.md.
+  if (role === 'user' && isTaskNotificationSessionMessage(sessionMessage)) {
+    return null;
+  }
+
   const raw = sessionMessage.message as RawMessage | null | undefined;
   const toolUseResult = (sessionMessage as Record<string, unknown>).toolUseResult;
   const rawMessage = sessionMessage.message as Record<string, unknown> | undefined;
@@ -208,6 +217,69 @@ function roleFromType(type: SessionMessage['type']): MessageRole | null {
   if (type === 'assistant') return 'assistant';
   if (type === 'system') return 'system';
   return null;
+}
+
+/**
+ * Reduce a user message's content to a single string when it is purely text.
+ * Returns '' for any non-text content (a tool_result-bearing user message, an
+ * image block, a non-text part) so a wrapper-shape test cannot match mixed
+ * content.
+ */
+function reduceUserMessageText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
+  const texts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') {
+      return '';
+    }
+    const b = block as { type?: unknown; text?: unknown };
+    if (b.type === 'text' && typeof b.text === 'string') {
+      texts.push(b.text);
+    } else {
+      return '';
+    }
+  }
+  return texts.join('');
+}
+
+const TASK_NOTIFICATION_OPEN = '<task-notification';
+const TASK_NOTIFICATION_CLOSE = '</task-notification>';
+
+/**
+ * True when the body is wholly a `<task-notification>…</task-notification>`
+ * wrapper — not a tag embedded in larger prose. Surrounding whitespace trims.
+ */
+function isTaskNotificationWrapper(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+  return trimmed.startsWith(TASK_NOTIFICATION_OPEN) && trimmed.endsWith(TASK_NOTIFICATION_CLOSE);
+}
+
+/**
+ * Identify the synthetic user-role `<task-notification>` message the CLI
+ * injects when a background task settles. The primary signal on the historical
+ * path is the wrapper text — the persisted `SessionMessage` shape does not
+ * expose `origin` (it is a live-envelope `SDKUserMessage` field). The
+ * `origin.kind === 'task-notification'` provenance is a secondary confirmation
+ * when that field survives into the persisted record.
+ */
+function isTaskNotificationSessionMessage(sessionMessage: SessionMessage): boolean {
+  const origin = (sessionMessage as Record<string, unknown>).origin;
+  if (origin && typeof origin === 'object') {
+    const kind = (origin as { kind?: unknown }).kind;
+    if (kind === 'task-notification') {
+      return true;
+    }
+  }
+  const raw = sessionMessage.message as { content?: unknown } | null | undefined;
+  return isTaskNotificationWrapper(reduceUserMessageText(raw?.content));
 }
 
 function normalizeSdkStatus(status: string): TaskItem['status'] {
