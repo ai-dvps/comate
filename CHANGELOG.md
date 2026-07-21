@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Responsive chat panel header** — the header kept its `title / model` layout at every width, with the side buttons floating over the centered title, so on a narrow panel the session name slid under the buttons and competed with the model label. The header is now a three-part flex row so the side button clusters sit in flow and the title region is exactly the space between them (it can no longer overlap the buttons); that region's width — not the whole header — decides when the separator and model name drop out, handing the full width to the title, which then ellipsizes via `truncate`.
 - **Process region ghost opens only from its trailing chevron** — in result-focused mode the collapsed process-region row was an entire-width button, so any click opened the drawer and the step/tool/command text could not be selected. The row body is now plain selectable text and only the trailing chevron icon is the click target that expands the drawer (keyboard focus and the aria-label move to that single control).
 - **Browser runtime distribution** — the Steel browser engine ships inside the app resources (no Docker required) and Chromium resolves from the system browser first, with a verified one-time download as fallback; the installer stays free of a bundled Chromium.
 
