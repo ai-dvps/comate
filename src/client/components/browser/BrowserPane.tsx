@@ -2,7 +2,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import BrowserStateBar from './BrowserStateBar'
 import BrowserBody from './BrowserBody'
-import { useBrowserPaneStore } from '../../stores/browser-pane-store'
+import { selectSessionOpen, useBrowserPaneStore } from '../../stores/browser-pane-store'
 import { useChatStore } from '../../stores/chat-store'
 import { cn } from '../ui/utils'
 
@@ -26,7 +26,7 @@ export interface BrowserPaneProps {
 export default function BrowserPane({ workspaceId }: BrowserPaneProps) {
   const { t } = useTranslation('browser')
   const sessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
-  const isOpen = useBrowserPaneStore((s) => s.isOpen)
+  const isOpen = useBrowserPaneStore((s) => selectSessionOpen(s, sessionId))
   const width = useBrowserPaneStore((s) => s.width)
   const hasOpened = useBrowserPaneStore((s) => s.hasOpened)
   const popoutOpen = useBrowserPaneStore((s) => s.popoutOpen)

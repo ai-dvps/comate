@@ -31,6 +31,7 @@ vi.mock('../../../lib/websocket-client.js', () => ({
 import BrowserPane from '../BrowserPane'
 import {
   useBrowserPaneStore,
+  selectSessionOpen,
   initialSessionBrowserState,
   type SessionBrowserState,
 } from '../../../stores/browser-pane-store'
@@ -85,7 +86,7 @@ describe('BrowserPane', () => {
     localStorage.clear()
     vi.clearAllMocks()
     useBrowserPaneStore.setState({
-      isOpen: false,
+      openBySession: {},
       width: 480,
       hasOpened: false,
       popoutOpen: false,
@@ -107,17 +108,19 @@ describe('BrowserPane', () => {
     const pane = screen.getByTestId('browser-pane')
     expect(pane).not.toBeVisible()
 
-    act(() => useBrowserPaneStore.getState().setPaneOpen(true))
+    act(() => useBrowserPaneStore.getState().setPaneOpen('sess-1', true))
     expect(pane).toBeVisible()
     expect(pane.style.width).toBe('480px')
 
-    act(() => useBrowserPaneStore.getState().setPaneOpen(false))
+    act(() => useBrowserPaneStore.getState().setPaneOpen('sess-1', false))
     expect(pane).not.toBeVisible()
-    expect(localStorage.getItem('browser-pane-open')).toBe('false')
+    expect(localStorage.getItem('browser-pane-open-by-session')).toBe(
+      JSON.stringify({ 'sess-1': false }),
+    )
   })
 
   it('drag-resizing updates and persists the width', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'none' })
     renderPane()
 
@@ -133,7 +136,7 @@ describe('BrowserPane', () => {
   // -- keep-alive iframe -------------------------------------------------------
 
   it('keeps the iframe mounted while collapsed and does not reload on reopen', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
     const { container } = renderPane()
 
@@ -142,13 +145,13 @@ describe('BrowserPane', () => {
     expect(iframeBefore?.getAttribute('src')).toBe(VIEWER_URL)
 
     // Collapse: the pane hides, the iframe node survives untouched.
-    act(() => useBrowserPaneStore.getState().setPaneOpen(false))
+    act(() => useBrowserPaneStore.getState().setPaneOpen('sess-1', false))
     expect(screen.getByTestId('browser-pane')).not.toBeVisible()
     const iframeCollapsed = container.querySelector('iframe')
     expect(iframeCollapsed).toBe(iframeBefore)
 
     // Reopen: same element, same src — no reload.
-    act(() => useBrowserPaneStore.getState().setPaneOpen(true))
+    act(() => useBrowserPaneStore.getState().setPaneOpen('sess-1', true))
     const iframeAfter = container.querySelector('iframe')
     expect(iframeAfter).toBe(iframeBefore)
     expect(iframeAfter?.getAttribute('src')).toBe(VIEWER_URL)
@@ -178,14 +181,14 @@ describe('BrowserPane', () => {
       })
     })
 
-    expect(useBrowserPaneStore.getState().isOpen).toBe(true)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
     expect(screen.getByTestId('browser-pane')).toBeVisible()
   })
 
   // -- session switching (AE3) ---------------------------------------------------
 
   it('switches the view when the active chat session changes', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     const otherUrl = VIEWER_URL.replace('43210', '54321')
     setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
     setSession({ controlState: 'user_in_control', port: 4002, viewerUrl: otherUrl }, 'sess-2')
@@ -200,7 +203,7 @@ describe('BrowserPane', () => {
   // -- empty state ----------------------------------------------------------------
 
   it('shows the explanatory empty state (no primary CTA) when the session has no browser', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'none' })
     renderPane()
 
@@ -212,7 +215,7 @@ describe('BrowserPane', () => {
   // -- F5 progress, open + closed paths --------------------------------------------
 
   it('shows the determinate progress state with a cancel action while the first tool call starts the browser', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'none' })
     // A browser tool call is in flight (chat-store's F14 in-flight id set).
     setChatState({ inFlightBrowserTools: { 'sess-1': new Set(['t1']) } })
@@ -231,7 +234,7 @@ describe('BrowserPane', () => {
   })
 
   it('advances the progress phase once the browser session exists but is not live yet', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'agent_in_control' }) // hydrated, no port yet
     setChatState({ inFlightBrowserTools: { 'sess-1': new Set(['t1']) } })
     renderPane()
@@ -253,7 +256,7 @@ describe('BrowserPane', () => {
   // -- session_lost body -------------------------------------------------------------
 
   it('shows the crash body with the auto-rebuild note in session_lost', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'session_lost' })
     renderPane()
     const lost = screen.getByTestId('browser-session-lost')
@@ -264,7 +267,7 @@ describe('BrowserPane', () => {
   // -- read-only shield + capture (R4 / a11y) -----------------------------------------
 
   it('agent driving: a read-only shield blocks the viewer', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
     renderPane()
     expect(screen.getByTestId('browser-readonly-shield')).toBeInTheDocument()
@@ -272,7 +275,7 @@ describe('BrowserPane', () => {
   })
 
   it('user driving: click captures input; Esc and window blur release it', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
     renderPane()
 
@@ -293,7 +296,7 @@ describe('BrowserPane', () => {
   })
 
   it('sends content-free activity pings on pane interaction while the user drives', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
     renderPane()
     fireEvent.pointerDown(screen.getByTestId('browser-pane'))
@@ -303,7 +306,7 @@ describe('BrowserPane', () => {
   // -- injection fixture at the component level -----------------------------------------
 
   it('never renders an iframe for a forged viewer URL (injection fixture)', async () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     // Forge the REST response — the store's shape guard must reject it.
     global.fetch = vi.fn(() =>
       Promise.resolve({
@@ -331,7 +334,7 @@ describe('BrowserPane', () => {
   // -- popout handoff ---------------------------------------------------------------
 
   it('opens the popout from the state bar and swaps the pane body for a placeholder', () => {
-    setPane({ isOpen: true, hasOpened: true })
+    setPane({ openBySession: { 'sess-1': true }, hasOpened: true })
     setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
     const { container } = renderPane()
     expect(container.querySelector('iframe')).toBeInTheDocument()

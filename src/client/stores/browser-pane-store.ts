@@ -63,7 +63,12 @@ export interface SessionBrowserState {
 }
 
 export interface BrowserPaneState {
-  isOpen: boolean
+  /**
+   * Per-session expand/collapse state (展开/收起 is independent per session):
+   * keyed by sessionId, defaulting to collapsed (false) for unknown sessions.
+   * Width/hasOpened/popoutOpen stay global — only the open flag is per-session.
+   */
+  openBySession: Record<string, boolean>
   width: number
   /** Keep-alive gate: the iframe only mounts after the first open. */
   hasOpened: boolean
@@ -72,8 +77,8 @@ export interface BrowserPaneState {
   activeSessionId: string | null
   sessions: Record<string, SessionBrowserState>
 
-  togglePane: () => void
-  setPaneOpen: (open: boolean) => void
+  togglePane: (sessionId: string) => void
+  setPaneOpen: (sessionId: string, open: boolean) => void
   setWidth: (width: number) => void
   setPopoutOpen: (open: boolean) => void
   setActiveSession: (workspaceId: string | null, sessionId: string | null) => void
@@ -107,7 +112,7 @@ export interface BrowserPaneState {
 export const BROWSER_PANE_MIN_WIDTH = 320
 export const BROWSER_PANE_DEFAULT_WIDTH = 480
 
-const OPEN_STORAGE_KEY = 'browser-pane-open'
+const OPEN_BY_SESSION_STORAGE_KEY = 'browser-pane-open-by-session'
 const WIDTH_STORAGE_KEY = 'browser-pane-width'
 
 function maxWidth(): number {
@@ -120,17 +125,26 @@ function clampWidth(value: number): number {
   return Math.min(maxWidth(), Math.max(BROWSER_PANE_MIN_WIDTH, Math.round(value)))
 }
 
-function readPersistedOpen(): boolean {
+function readPersistedOpenBySession(): Record<string, boolean> {
   try {
-    return localStorage.getItem(OPEN_STORAGE_KEY) === 'true'
+    const stored = localStorage.getItem(OPEN_BY_SESSION_STORAGE_KEY)
+    if (!stored) return {}
+    const parsed = JSON.parse(stored) as unknown
+    if (!parsed || typeof parsed !== 'object') return {}
+    const result: Record<string, boolean> = {}
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'boolean') result[key] = value
+    }
+    return result
   } catch {
-    return false
+    // localStorage unavailable or corrupt
+    return {}
   }
 }
 
-function writePersistedOpen(open: boolean): void {
+function writePersistedOpenBySession(openBySession: Record<string, boolean>): void {
   try {
-    localStorage.setItem(OPEN_STORAGE_KEY, String(open))
+    localStorage.setItem(OPEN_BY_SESSION_STORAGE_KEY, JSON.stringify(openBySession))
   } catch {
     // localStorage unavailable
   }
@@ -263,7 +277,7 @@ async function refreshViewerUrl(sessionId: string): Promise<void> {
 const ACTIVITY_PING_INTERVAL_MS = 15_000
 const lastActivityPingAt = new Map<string, number>()
 
-const persistedOpenAtBoot = readPersistedOpen()
+const persistedOpenBySessionAtBoot = readPersistedOpenBySession()
 
 export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
   const patchSession = (sessionId: string, patch: Partial<SessionBrowserState>): void => {
@@ -330,22 +344,25 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
   }
 
   return {
-    isOpen: persistedOpenAtBoot,
+    openBySession: persistedOpenBySessionAtBoot,
     width: readPersistedWidth(),
-    hasOpened: persistedOpenAtBoot,
+    hasOpened: Object.values(persistedOpenBySessionAtBoot).some((v) => v),
     popoutOpen: false,
     activeWorkspaceId: null,
     activeSessionId: null,
     sessions: {},
 
-    togglePane: () => {
-      get().setPaneOpen(!get().isOpen)
+    togglePane: (sessionId: string) => {
+      get().setPaneOpen(sessionId, !selectSessionOpen(get(), sessionId))
     },
 
-    setPaneOpen: (open: boolean) => {
-      if (get().isOpen === open) return
-      set(open ? { isOpen: true, hasOpened: true } : { isOpen: false })
-      writePersistedOpen(open)
+    setPaneOpen: (sessionId: string, open: boolean) => {
+      if (selectSessionOpen(get(), sessionId) === open) return
+      set((state) => ({
+        openBySession: { ...state.openBySession, [sessionId]: open },
+        ...(open ? { hasOpened: true } : {}),
+      }))
+      writePersistedOpenBySession(get().openBySession)
     },
 
     setWidth: (width: number) => {
@@ -469,7 +486,7 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
       })
       // handoff → header badge + auto-expand (R1/R5).
       if (next === 'handoff_pending' && sessionId === get().activeSessionId) {
-        get().setPaneOpen(true)
+        get().setPaneOpen(sessionId, true)
       }
       // Fetch the server-constructed viewer URL once the browser is (or may
       // be) live; the REST route answers null while it is still starting.
@@ -561,6 +578,15 @@ export function selectSessionBrowser(
 ): SessionBrowserState {
   if (!sessionId) return EMPTY_SESSION_BROWSER_STATE
   return getSessionState(state, sessionId)
+}
+
+/** Selector: whether the pane is open for the given session (default collapsed). */
+export function selectSessionOpen(
+  state: BrowserPaneState,
+  sessionId: string | null | undefined,
+): boolean {
+  if (!sessionId) return false
+  return state.openBySession[sessionId] ?? false
 }
 
 /** Header badge: the session's handoff is waiting on the user (R5). */
