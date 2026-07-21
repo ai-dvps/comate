@@ -21,8 +21,8 @@ import { Button } from './ui/button'
 import CompactingIndicator from './CompactingIndicator'
 import ChatMessageRenderer, { CompactBoundary } from './ChatMessageRenderer'
 import { adaptChatMessage, buildResultMap } from './chat-message-adapter'
-import { mergeAssistantTurns } from './message-grouping'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
+import { createResultFocusProjector, type ResultFocusRegion } from '../lib/result-focus-view'
 
 const EMPTY_ARRAY: [] = []
 const EMPTY_RESULT_MAP = new Map<
@@ -82,6 +82,8 @@ export default function VirtualizedMessageList({
   const autoApprovedTools = useChatStore((s) => s.autoApprovedTools[sessionId])
   const stableSearchMatches = searchMatches.length === 0 ? EMPTY_ARRAY : searchMatches
   const stableCurrentMatch = currentMatch ?? null
+  const projectorRef = useRef<ReturnType<typeof createResultFocusProjector>>()
+  if (!projectorRef.current) projectorRef.current = createResultFocusProjector()
   const fetchOlderMessages = useChatStore((s) => s.fetchOlderMessages)
   const parentRef = useRef<HTMLDivElement>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -93,10 +95,13 @@ export default function VirtualizedMessageList({
     () => messages.filter((m) => !isToolResultOnly(m)),
     [messages],
   )
-  const viewItems = useMemo(
-    () => pairCliMeta(displayMode === 'result' ? mergeAssistantTurns(visibleMessages) : visibleMessages),
-    [visibleMessages, displayMode],
-  )
+  const resultView = displayMode === 'result' ? projectorRef.current.project(messages) : null
+  const viewItems = useMemo(() => pairCliMeta(
+    resultView ? resultView.turns.map((turn) => turn.message) : visibleMessages,
+  ), [resultView, visibleMessages])
+  const resultRegions = resultView
+    ? new Map(resultView.turns.map((turn) => [turn.key, turn.regions]))
+    : undefined
 
   const virtualizer = useVirtualizer({
     count: viewItems.length,
@@ -114,6 +119,7 @@ export default function VirtualizedMessageList({
   const virtualItems = virtualizer.getVirtualItems()
   const prevViewItemsRef = useRef(viewItems)
   const anchorKeyRef = useRef<string | null>(null)
+  const prependAnchorRef = useRef<{ key: string; top: number } | null>(null)
 
   // Auto-scroll the current search match into view.
   useEffect(() => {
@@ -181,7 +187,16 @@ export default function VirtualizedMessageList({
           )
           if (newIndex >= 0) {
             requestAnimationFrame(() => {
-              virtualizer.scrollToIndex(newIndex, { align: 'start' })
+              const anchor = prependAnchorRef.current
+              const selector = `[data-item-key="${CSS.escape(anchor?.key ?? String(anchorKeyRef.current))}"]`
+              const row = parentRef.current?.querySelector(selector)
+              if (anchor && row instanceof HTMLElement && parentRef.current) {
+                const nextTop = row.getBoundingClientRect().top - parentRef.current.getBoundingClientRect().top
+                parentRef.current.scrollTop += nextTop - anchor.top
+                prependAnchorRef.current = null
+              } else {
+                virtualizer.scrollToIndex(newIndex, { align: 'start' })
+              }
             })
           }
         }
@@ -276,18 +291,28 @@ export default function VirtualizedMessageList({
       const hasOlder = totalMessageCount > currentWindowSize
       if (!hasOlder) return
 
-      const offset = Math.max(0, totalMessageCount - currentWindowSize - FETCH_SIZE)
-      const limit = FETCH_SIZE
+      const firstItem = virtualizer.getVirtualItems()[0]
+      if (firstItem) {
+        const key = String(firstItem.key)
+        const row = el.querySelector(`[data-item-key="${CSS.escape(key)}"]`)
+        if (row instanceof HTMLElement) {
+          prependAnchorRef.current = {
+            key,
+            top: row.getBoundingClientRect().top - el.getBoundingClientRect().top,
+          }
+          anchorKeyRef.current = key
+        }
+      }
 
       isFetchingRef.current = true
-      fetchOlderMessages(workspaceId, sessionId, offset, limit).finally(() => {
+      fetchOlderMessages(workspaceId, sessionId, FETCH_SIZE).finally(() => {
         isFetchingRef.current = false
       })
     }
 
     el.addEventListener('scroll', handleScroll, { passive: true })
     return () => el.removeEventListener('scroll', handleScroll)
-  }, [isVisible, messages.length, totalMessageCount, isLoadingOlder, fetchOlderMessages, workspaceId, sessionId])
+  }, [isVisible, messages.length, totalMessageCount, isLoadingOlder, fetchOlderMessages, workspaceId, sessionId, virtualizer])
 
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -350,6 +375,7 @@ export default function VirtualizedMessageList({
             return (
               <div
                 key={virtualItem.key}
+                data-item-key={String(virtualItem.key)}
                 data-index={virtualItem.index}
                 ref={virtualizer.measureElement}
                 style={{
@@ -373,6 +399,7 @@ export default function VirtualizedMessageList({
                   stableCurrentMatch,
                   displayMode,
                   onOpenProcessRegion,
+                  resultRegions,
                 )}
               </div>
             )
@@ -413,6 +440,7 @@ function renderViewItem(
   currentMatch?: MessageSearchMatch | null,
   displayMode: DisplayMode = 'linear',
   onOpenProcessRegion?: (messageId: string, regionIndex: number) => void,
+  resultRegions?: Map<string, ResultFocusRegion[]>,
 ): React.ReactNode {
   if (item.kind === 'meta') {
     if (item.event.kind === 'slash-command') {
@@ -472,6 +500,7 @@ function renderViewItem(
       currentMatch={currentMatch}
       displayMode={displayMode}
       onOpenProcessRegion={onOpenProcessRegion}
+      resultRegions={resultRegions?.get(adapted.id.split('|')[0])}
     />
   )
 }

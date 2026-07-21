@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertCircle, ChevronDown, Clock } from 'lucide-react'
 
@@ -45,7 +45,7 @@ const PATH_DISPLAY_MAX = 40
  * a user can see what the agent is doing without opening the drawer (U4). It
  * expands into a side drawer on activation. Stays collapsed by design.
  */
-export default function ProcessRegionGhost({ region, hasError, onOpen }: ProcessRegionGhostProps) {
+function ProcessRegionGhost({ region, hasError, onOpen }: ProcessRegionGhostProps) {
   const { t } = useTranslation('chat')
   const latest = region.latest
   const isStreaming = (latest as { isStreaming?: boolean }).isStreaming === true
@@ -141,3 +141,5 @@ export default function ProcessRegionGhost({ region, hasError, onOpen }: Process
     </button>
   )
 }
+
+export default memo(ProcessRegionGhost)

@@ -6,9 +6,14 @@ import type { MessageSearchMatch, SearchHighlightRange } from '../hooks/useMessa
 /*  Normalized renderable types                                         */
 /* ------------------------------------------------------------------ */
 
+interface SourcePartAnchor {
+  sourceMessageId?: string
+  sourcePartIndex?: number
+}
+
 export type RenderablePart =
-  | { type: 'text'; text: string; timestamp?: number }
-  | { type: 'thinking'; text: string; isStreaming: boolean; timestamp?: number }
+  | ({ type: 'text'; text: string; timestamp?: number } & SourcePartAnchor)
+  | ({ type: 'thinking'; text: string; isStreaming: boolean; timestamp?: number } & SourcePartAnchor)
   | {
       type: 'tool_use'
       toolUseId: string
@@ -21,7 +26,7 @@ export type RenderablePart =
         displayName?: string
         iconUrl?: string
       }
-    }
+    } & SourcePartAnchor
   | {
       type: 'tool_result'
       toolUseId: string
@@ -29,7 +34,7 @@ export type RenderablePart =
       isError: boolean
       timestamp?: number
       toolUseResult?: unknown
-    }
+    } & SourcePartAnchor
 
 export interface RenderableMessage {
   id: string
@@ -44,12 +49,12 @@ export interface RenderableMessage {
 /* ------------------------------------------------------------------ */
 
 const adaptCache = new WeakMap<
-  ChatMessage & { sourceTimestamps?: number[] },
+  ChatMessage & { sourceTimestamps?: number[]; sourcePartAnchors?: SourcePartAnchor[] },
   RenderableMessage
 >()
 
 export function adaptChatMessage(
-  msg: ChatMessage & { sourceTimestamps?: number[] },
+  msg: ChatMessage & { sourceTimestamps?: number[]; sourcePartAnchors?: SourcePartAnchor[] },
 ): RenderableMessage {
   const cached = adaptCache.get(msg)
   if (cached) return cached
@@ -66,15 +71,20 @@ export function adaptChatMessage(
           sourceTimestamps != null && index < sourceTimestamps.length
             ? sourceTimestamps[index]
             : msg.timestamp
+        const sourceAnchor = msg.sourcePartAnchors?.[index] ?? {
+          sourceMessageId: msg.id,
+          sourcePartIndex: index,
+        }
         switch (part.type) {
           case 'text':
-            return { type: 'text', text: part.text, timestamp }
+            return { type: 'text', text: part.text, timestamp, ...sourceAnchor }
           case 'thinking':
             return {
               type: 'thinking',
               text: part.text,
               isStreaming: part.state === 'streaming',
               timestamp,
+              ...sourceAnchor,
             }
           case 'tool_use':
             return {
@@ -86,6 +96,7 @@ export function adaptChatMessage(
               isStreaming: part.state === 'streaming',
               meta: part.meta,
               timestamp,
+              ...sourceAnchor,
             }
           case 'tool_result':
             return {
@@ -94,6 +105,7 @@ export function adaptChatMessage(
               output: part.output,
               isError: part.isError,
               timestamp,
+              ...sourceAnchor,
               ...(part.toolUseResult !== undefined && { toolUseResult: part.toolUseResult }),
             }
           default:

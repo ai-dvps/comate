@@ -27,6 +27,7 @@ const toolWith = (
 function makeRegion(parts: RenderablePart[]): ProcessRegion {
   return {
     type: 'process',
+    key: 'test:0',
     parts,
     latest: parts[parts.length - 1],
     partIndices: parts.map((_, i) => i),
