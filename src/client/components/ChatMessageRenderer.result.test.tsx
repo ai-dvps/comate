@@ -96,7 +96,7 @@ describe('ChatMessageRenderer result-focused mode', () => {
     const ghosts = screen.getAllByRole('button', { name: GHOST_NAME })
     expect(ghosts).toHaveLength(1)
     expect(ghosts[0].getAttribute('aria-label')).toMatch(/Bash ▸ npm test/)
-    expect(ghosts[0].textContent).toContain('npm test')
+    expect(screen.getByTestId('process-region-ghost').textContent).toContain('npm test')
   })
 
   it('renders process region duration in result mode (U4)', () => {
@@ -114,7 +114,7 @@ describe('ChatMessageRenderer result-focused mode', () => {
         displayMode="result"
       />,
     )
-    const ghost = screen.getByRole('button', { name: GHOST_NAME })
+    const ghost = screen.getByTestId('process-region-ghost')
     expect(ghost.textContent).toMatch(/2 steps/)
     expect(ghost.textContent).toMatch(/1s/)
     expect(ghost.textContent).toMatch(/Bash/)
@@ -151,7 +151,7 @@ describe('ChatMessageRenderer result-focused mode', () => {
         displayMode="result"
       />,
     )
-    expect(screen.getByRole('button', { name: GHOST_NAME })).toHaveAttribute('data-error', 'true')
+    expect(screen.getByTestId('process-region-ghost')).toHaveAttribute('data-error', 'true')
   })
 
   it('linear mode renders tool cards expanded by default (R5)', () => {

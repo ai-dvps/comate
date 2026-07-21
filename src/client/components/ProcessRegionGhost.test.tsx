@@ -141,8 +141,8 @@ describe('ProcessRegionGhost', () => {
       tool('Edit', 2000),
     ])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    const button = screen.getByRole('button')
-    const textContent = button.textContent ?? ''
+    const ghost = screen.getByTestId('process-region-ghost')
+    const textContent = ghost.textContent ?? ''
     const stepsIndex = textContent.indexOf('2 steps')
     const durationIndex = textContent.indexOf('1s')
     const labelIndex = textContent.indexOf('Edit')
@@ -201,10 +201,10 @@ describe('ProcessRegionGhost', () => {
   it('shows the latest tool key parameter next to its name (R1)', () => {
     const region = makeRegion([toolWith('Bash', { command: 'npm test' })])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    const button = screen.getByRole('button')
-    expect(button.textContent).toContain('Bash')
-    expect(button.textContent).toContain('npm test')
-    expect(button.textContent).toContain('▸')
+    const ghost = screen.getByTestId('process-region-ghost')
+    expect(ghost.textContent).toContain('Bash')
+    expect(ghost.textContent).toContain('npm test')
+    expect(ghost.textContent).toContain('▸')
   })
 
   it('includes the key parameter in the aria-label (R6)', () => {
@@ -216,35 +216,35 @@ describe('ProcessRegionGhost', () => {
   it('shows the tool name only when there is no key parameter (R2)', () => {
     const region = makeRegion([toolWith('Task', { foo: 'bar' })])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    const button = screen.getByRole('button')
-    expect(button.textContent).toContain('Task')
-    expect(button.textContent).not.toContain('▸')
-    expect(button.textContent).not.toContain('bar')
+    const ghost = screen.getByTestId('process-region-ghost')
+    expect(ghost.textContent).toContain('Task')
+    expect(ghost.textContent).not.toContain('▸')
+    expect(ghost.textContent).not.toContain('bar')
   })
 
   it('shows the tool name only while the latest tool is streaming (KTD4)', () => {
     const region = makeRegion([toolWith('Bash', { command: 'npm test' }, undefined, true)])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    const button = screen.getByRole('button')
-    expect(button.textContent).toContain('Bash')
-    expect(button.textContent).not.toContain('npm test')
-    expect(button.textContent).not.toContain('▸')
+    const ghost = screen.getByTestId('process-region-ghost')
+    expect(ghost.textContent).toContain('Bash')
+    expect(ghost.textContent).not.toContain('npm test')
+    expect(ghost.textContent).not.toContain('▸')
   })
 
   it('left-truncates a long file path so the filename survives (AE2)', () => {
     const deep = `src/${'a/'.repeat(30)}BashRenderer.tsx`
     const region = makeRegion([toolWith('Edit', { file_path: deep })])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    const button = screen.getByRole('button')
-    expect(button.textContent).toContain('BashRenderer.tsx')
-    expect(button.textContent).not.toContain(deep)
+    const ghost = screen.getByTestId('process-region-ghost')
+    expect(ghost.textContent).toContain('BashRenderer.tsx')
+    expect(ghost.textContent).not.toContain(deep)
   })
 
   it('does not JS-pre-slice keep-head values; a long command renders in full (AE3)', () => {
     const longCmd = `git commit -m ${'x'.repeat(80)}`
     const region = makeRegion([toolWith('Bash', { command: longCmd })])
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
-    expect(screen.getByRole('button').textContent).toContain(longCmd)
+    expect(screen.getByTestId('process-region-ghost').textContent).toContain(longCmd)
   })
 
   it('carries the full pre-truncation path in the aria-label (R6)', () => {
@@ -253,5 +253,19 @@ describe('ProcessRegionGhost', () => {
     renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={() => {}} />)
     const aria = screen.getByRole('button').getAttribute('aria-label') ?? ''
     expect(aria).toContain(deep)
+  })
+
+  it('opens only from the trailing chevron, not the row body', () => {
+    const region = makeRegion([toolWith('Bash', { command: 'npm test' })])
+    const onOpen = vi.fn()
+    renderWithI18n(<ProcessRegionGhost region={region} hasError={false} onOpen={onOpen} />)
+
+    // The row body (steps/duration/label text) is not actionable.
+    fireEvent.click(screen.getByText('npm test'))
+    expect(onOpen).not.toHaveBeenCalled()
+
+    // Only the trailing chevron button activates the drawer.
+    fireEvent.click(screen.getByRole('button'))
+    expect(onOpen).toHaveBeenCalledTimes(1)
   })
 })
