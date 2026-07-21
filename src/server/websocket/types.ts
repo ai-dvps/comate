@@ -91,6 +91,12 @@ export interface LoadMessagesPayload {
   limit?: number
 }
 
+export interface MessageRange {
+  total: number
+  start: number
+  end: number
+}
+
 export interface LoadMessagesAfterPayload {
   workspaceId: string
   sessionId: string

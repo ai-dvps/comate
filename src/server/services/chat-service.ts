@@ -135,6 +135,7 @@ export class ChatService {
   private pendingRebuilds = new Map<string, RuntimeContext>();
   private rebuildPollers = new Map<string, NodeJS.Timeout>();
   private onRuntimeClose?: (sessionId: string) => void;
+  private historyTimestampBases = new Map<string, number>();
   /**
    * Chained PRE-close listeners (KTD-5): the single-slot onRuntimeClose stays
    * with the WS server; services that must react to a runtime close (the
@@ -674,7 +675,7 @@ export class ChatService {
     workspaceId: string,
     offset?: number,
     limit?: number,
-  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[] }> {
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[]; total: number; start: number; end: number }> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -683,9 +684,6 @@ export class ChatService {
     const options: import('@anthropic-ai/claude-agent-sdk').GetSessionMessagesOptions = {
       dir: normalizeWindowsPath(workspace.folderPath),
     };
-    if (offset !== undefined) options.offset = offset;
-    if (limit !== undefined) options.limit = limit;
-
     const sdkMessages = await this.sdkClient.getSessionMessages(sessionId, options);
 
     // If we successfully loaded messages from SDK, the session is real — sync it
@@ -702,20 +700,27 @@ export class ChatService {
     }
 
     const normalized: ChatMessage[] = [];
+    const timestampBase = this.historyTimestampBases.get(sessionId) ??
+      Date.now() - sdkMessages.length * 1000;
+    this.historyTimestampBases.set(sessionId, timestampBase);
     sdkMessages.forEach((msg: SessionMessage, index: number) => {
       const chatMessage = normalizeSessionMessage(msg);
       if (chatMessage) {
         // Approximate ordering by index — SDK does not surface a per-message
         // timestamp on the historical read path. U7 verifies ordering matches
         // the JSONL transcript order.
-        chatMessage.timestamp = Date.now() - (sdkMessages.length - index) * 1000;
+        chatMessage.timestamp = timestampBase + index * 1000;
         normalized.push(chatMessage);
       }
     });
+    const total = normalized.length;
+    const start = Math.max(0, Math.min(offset ?? (limit === undefined ? 0 : total - limit), total));
+    const end = Math.max(start, Math.min(limit === undefined ? total : start + limit, total));
+    const page = normalized.slice(start, end);
     const tasks = scanSdkMessagesForTasks(sdkMessages);
     const subagents = await this.loadSubagentsForSession(sessionId, workspaceId, sdkMessages);
     const workflows = await this.loadWorkflowsForSession(sessionId, workspaceId);
-    return { messages: normalized, tasks, subagents, workflows };
+    return { messages: page, tasks, subagents, workflows, total, start, end };
   }
 
   async loadMessagesAfter(
@@ -745,10 +750,13 @@ export class ChatService {
     const sliced = sdkMessages.slice(sliceStart);
 
     const normalized: ChatMessage[] = [];
+    const timestampBase = this.historyTimestampBases.get(sessionId) ??
+      Date.now() - sdkMessages.length * 1000;
+    this.historyTimestampBases.set(sessionId, timestampBase);
     sliced.forEach((msg: SessionMessage, index: number) => {
       const chatMessage = normalizeSessionMessage(msg);
       if (chatMessage) {
-        chatMessage.timestamp = Date.now() - (sliced.length - index) * 1000;
+        chatMessage.timestamp = timestampBase + (sliceStart + index) * 1000;
         normalized.push(chatMessage);
       }
     });

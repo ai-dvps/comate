@@ -12,6 +12,14 @@ function renderWithI18n(ui: React.ReactElement) {
 }
 
 const renderCounter = new Map<string, number>()
+const virtualShellCounter = { renders: 0 }
+
+vi.mock('./VirtualizedMessageList', () => ({
+  default: function MockVirtualizedMessageList() {
+    virtualShellCounter.renders += 1
+    return <div data-testid="result-virtual-shell" />
+  },
+}))
 
 vi.mock('./ChatMessageRenderer', () => {
   const MockedChatMessageRenderer = React.memo(function MockedChatMessageRenderer({
@@ -36,6 +44,9 @@ const chatStoreMock = vi.hoisted(() => {
     autoApprovedTools: {} as Record<string, Record<string, 'auto' | 'readonly'>>,
     isCompacting: {} as Record<string, boolean>,
     compactingStartTime: {} as Record<string, number>,
+    totalMessageCount: {} as Record<string, number>,
+    isLoadingOlderMessages: {} as Record<string, boolean>,
+    fetchOlderMessages: vi.fn(() => Promise.resolve()),
   }
   function notify() {
     listeners.forEach((l) => l())
@@ -87,23 +98,26 @@ describe('MessageList result mode render stability', () => {
     chatStoreMock.getState().autoApprovedTools = {}
     chatStoreMock.getState().isCompacting = {}
     chatStoreMock.getState().compactingStartTime = {}
+    chatStoreMock.getState().totalMessageCount = {}
+    chatStoreMock.getState().isLoadingOlderMessages = {}
     renderCounter.clear()
+    virtualShellCounter.renders = 0
   })
 
-  it('only re-renders the affected merged turn when a new assistant message arrives in result mode', async () => {
+  it('keeps one virtual shell when a result-mode session crosses the legacy threshold', async () => {
     const sessionId = 's1'
     const workspaceId = 'ws1'
 
-    const initialMessages: ChatMessage[] = [
-      { id: 'user-1', role: 'user', parts: [textPart('Hello')], timestamp: 1 },
-      { id: 'assistant-1', role: 'assistant', parts: [textPart('Hi')], timestamp: 2 },
-      { id: 'user-2', role: 'user', parts: [textPart('How are you?')], timestamp: 3 },
-      { id: 'assistant-2', role: 'assistant', parts: [textPart('I am fine')], timestamp: 4 },
-    ]
+    const initialMessages: ChatMessage[] = Array.from({ length: 49 }, (_, index) => ({
+      id: `message-${index}`,
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      parts: [textPart(String(index))],
+      timestamp: index,
+    }))
 
     chatStoreMock.setMessages(sessionId, initialMessages)
 
-    renderWithI18n(
+    const rendered = renderWithI18n(
       <MessageList
         sessionId={sessionId}
         workspaceId={workspaceId}
@@ -112,13 +126,12 @@ describe('MessageList result mode render stability', () => {
       />,
     )
 
-    // Capture initial render counts.
-    const initialCounts = new Map(renderCounter)
+    const shell = rendered.getByTestId('result-virtual-shell')
 
-    // Add a new consecutive assistant message; in result mode it merges with assistant-2.
     const nextMessages: ChatMessage[] = [
       ...initialMessages,
-      { id: 'assistant-3', role: 'assistant', parts: [textPart('Thanks for asking')], timestamp: 5 },
+      { id: 'message-49', role: 'assistant', parts: [textPart('49')], timestamp: 49 },
+      { id: 'message-50', role: 'user', parts: [textPart('50')], timestamp: 50 },
     ]
 
     chatStoreMock.setMessages(sessionId, nextMessages)
@@ -126,20 +139,7 @@ describe('MessageList result mode render stability', () => {
     // Wait for React to re-render after store notification.
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    const finalCounts = new Map(renderCounter)
-
-    // In result mode the merged turn should re-render because its content changed.
-    // The mock sees the adapted id, which becomes "assistant-2|assistant-3" after merge.
-    const mergedRenderCount =
-      (finalCounts.get('assistant-2|assistant-3') ?? 0) +
-      (finalCounts.get('assistant-2') ?? 0)
-    expect(mergedRenderCount).toBeGreaterThan(
-      initialCounts.get('assistant-2') ?? 0,
-    )
-
-    // Messages that did not change should not re-render.
-    expect(finalCounts.get('user-1')).toBe(initialCounts.get('user-1'))
-    expect(finalCounts.get('assistant-1')).toBe(initialCounts.get('assistant-1'))
-    expect(finalCounts.get('user-2')).toBe(initialCounts.get('user-2'))
+    expect(rendered.getByTestId('result-virtual-shell')).toBe(shell)
+    expect(virtualShellCounter.renders).toBeGreaterThan(1)
   })
 })

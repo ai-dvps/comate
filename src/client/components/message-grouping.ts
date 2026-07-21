@@ -14,6 +14,7 @@ import type { ChatMessage, MessagePart } from '../types/message'
 /** A visible text part. `isFinal` marks the turn's final result. */
 export interface TextRegion {
   type: 'text'
+  key: string
   part: Extract<RenderablePart, { type: 'text' }>
   /** Original index of this part in the message — preserves search ranges. */
   partIndex: number
@@ -23,6 +24,7 @@ export interface TextRegion {
 /** A run of consecutive thinking + tool-use parts, collapsed into one ghost. */
 export interface ProcessRegion {
   type: 'process'
+  key: string
   parts: RenderablePart[]
   /** Original indices of these parts in the message. */
   partIndices: number[]
@@ -38,7 +40,10 @@ export type MessageRegion = TextRegion | ProcessRegion
  * Client-only extension that preserves the original message timestamp for each
  * part after consecutive assistant turns are merged. Never sent to the server.
  */
-export type TimestampedChatMessage = ChatMessage & { sourceTimestamps?: number[] }
+export type TimestampedChatMessage = ChatMessage & {
+  sourceTimestamps?: number[]
+  sourcePartAnchors?: Array<{ sourceMessageId: string; sourcePartIndex: number }>
+}
 
 /**
  * Cache of already-built merged turns, keyed by the turn's first source message
@@ -95,9 +100,14 @@ export function mergeAssistantTurns(messages: ChatMessage[]): TimestampedChatMes
       } else {
         const parts: MessagePart[] = []
         const sourceTimestamps: number[] = []
+        const sourcePartAnchors: Array<{ sourceMessageId: string; sourcePartIndex: number }> = []
         for (const m of buffer) {
           parts.push(...m.parts)
           sourceTimestamps.push(...m.parts.map(() => m.timestamp))
+          sourcePartAnchors.push(...m.parts.map((_, sourcePartIndex) => ({
+            sourceMessageId: m.id,
+            sourcePartIndex,
+          })))
         }
         const result: TimestampedChatMessage = {
           id,
@@ -105,6 +115,7 @@ export function mergeAssistantTurns(messages: ChatMessage[]): TimestampedChatMes
           parts,
           timestamp: buffer[0].timestamp,
           sourceTimestamps,
+          sourcePartAnchors,
           isStreaming: buffer.some((m) => m.isStreaming),
         }
         mergedTurnCache.set(buffer[0], { refs: buffer.slice(), result })
@@ -139,8 +150,10 @@ export function groupMessageParts(parts: RenderablePart[]): MessageRegion[] {
 
   const flushProcess = (): void => {
     if (current.length > 0) {
+      const first = current[0]
       regions.push({
         type: 'process',
+        key: `${first.sourceMessageId ?? 'part'}:${first.sourcePartIndex ?? currentIndices[0]}`,
         parts: current,
         latest: current[current.length - 1],
         partIndices: currentIndices,
@@ -163,7 +176,13 @@ export function groupMessageParts(parts: RenderablePart[]): MessageRegion[] {
       currentTimestamps.push(part.timestamp)
     } else {
       flushProcess()
-      regions.push({ type: 'text', part, partIndex: index, isFinal: false })
+      regions.push({
+        type: 'text',
+        key: `${part.sourceMessageId ?? 'part'}:${part.sourcePartIndex ?? index}`,
+        part,
+        partIndex: index,
+        isFinal: false,
+      })
     }
   })
   flushProcess()

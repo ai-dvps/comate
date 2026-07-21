@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useCallback, useMemo, useRef } from 'react'
 import { AlertCircle } from 'lucide-react'
 
 import { summarizeToolInput } from '../lib/summarize-tool-input'
@@ -40,6 +40,7 @@ export type { RenderableMessage, RenderablePart } from './chat-message-adapter'
 import { groupMessageParts } from './message-grouping'
 import ProcessRegionGhost from './ProcessRegionGhost'
 import type { DisplayMode } from '../hooks/use-app-settings'
+import type { ResultFocusRegion } from '../lib/result-focus-view'
 
 /* ------------------------------------------------------------------ */
 /*  Component props                                                     */
@@ -60,7 +61,86 @@ export interface ChatMessageRendererProps {
   onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
   /** When false, tool cards inside this renderer start collapsed. Defaults to true. */
   defaultToolExpanded?: boolean
+  resultRegions?: ResultFocusRegion[]
 }
+
+interface ResultProcessRegionProps {
+  region: Extract<ResultFocusRegion, { type: 'process' }>
+  regionIndex: number
+  messageIdRef: React.MutableRefObject<string>
+  onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
+}
+
+const ResultProcessRegion = memo(function ResultProcessRegion({
+  region,
+  regionIndex,
+  messageIdRef,
+  onOpenProcessRegion,
+}: ResultProcessRegionProps) {
+  const onOpen = useCallback(() => {
+    onOpenProcessRegion?.(messageIdRef.current, regionIndex)
+  }, [messageIdRef, onOpenProcessRegion, regionIndex])
+  return <ProcessRegionGhost region={region} hasError={region.hasError === true} onOpen={onOpen} />
+})
+
+interface ResultTextRegionProps {
+  region: Extract<ResultFocusRegion, { type: 'text' }>
+  messageId: string
+  searchMatches?: MessageSearchMatch[]
+  currentMatch?: MessageSearchMatch | null
+}
+
+function ResultTextRegion({
+  region,
+  messageId,
+  searchMatches,
+  currentMatch,
+}: ResultTextRegionProps) {
+  const ranges = getPartSearchRanges(searchMatches, currentMatch, messageId, region.partIndex)
+  const isCurrentInPart = ranges.some((range) => range.isActive)
+  const hasMatchInPart = ranges.length > 0
+  const report = detectStructuredReport(region.part.text)
+  if (report) {
+    return (
+      <StructuredReport
+        {...report}
+        raw={region.part.text}
+        forceExpanded={isCurrentInPart}
+        hasSearchMatch={hasMatchInPart}
+        isCurrentSearchMatch={isCurrentInPart}
+      />
+    )
+  }
+  return (
+    <CompactableText
+      hasSearchMatch={hasMatchInPart}
+      isCurrentSearchMatch={isCurrentInPart}
+    >
+      {region.part.text}
+    </CompactableText>
+  )
+}
+
+function textRegionHasSearch(
+  props: ResultTextRegionProps,
+): boolean {
+  return props.searchMatches?.some(
+    (match) => match.messageId === props.messageId && match.partIndex === props.region.partIndex,
+  ) === true || (
+    props.currentMatch?.messageId === props.messageId &&
+    props.currentMatch.partIndex === props.region.partIndex
+  )
+}
+
+const MemoizedResultTextRegion = memo(ResultTextRegion, (previous, next) => {
+  if (previous.region !== next.region) return false
+  const hadSearch = textRegionHasSearch(previous)
+  const hasSearch = textRegionHasSearch(next)
+  if (!hadSearch && !hasSearch) return true
+  return previous.messageId === next.messageId &&
+    previous.searchMatches === next.searchMatches &&
+    previous.currentMatch === next.currentMatch
+})
 
 /* ------------------------------------------------------------------ */
 /*  Timestamp helper                                                  */
@@ -129,12 +209,28 @@ function ChatMessageRenderer({
   displayMode = 'linear',
   onOpenProcessRegion,
   defaultToolExpanded = true,
+  resultRegions,
 }: ChatMessageRendererProps) {
+  const messageIdRef = useRef(message.id)
+  messageIdRef.current = message.id
   const hasAnyMatch = searchMatches.some((m) => m.messageId === message.id)
   const isResultMode = displayMode === 'result' && message.role === 'assistant'
   const regions = useMemo(
-    () => (isResultMode ? groupMessageParts(message.parts) : []),
-    [isResultMode, message.parts],
+    () => {
+      if (!isResultMode) return []
+      if (resultRegions) return resultRegions
+      return groupMessageParts(message.parts).map((region): ResultFocusRegion =>
+        region.type === 'process'
+          ? {
+              ...region,
+              hasError: region.parts.some(
+                (part) => part.type === 'tool_use' && resultMap.get(part.toolUseId)?.isError === true,
+              ),
+            }
+          : region,
+      )
+    },
+    [isResultMode, message.parts, resultMap, resultRegions],
   )
 
   if (message.role === 'system') {
@@ -242,15 +338,20 @@ function ChatMessageRenderer({
           {isResultMode
             ? regions.map((region, regionIndex) =>
                 region.type === 'text' ? (
-                  renderAssistantText(region.part, region.partIndex)
-                ) : (
-                  <ProcessRegionGhost
-                    key={`ghost-${message.id}-${regionIndex}`}
+                  <MemoizedResultTextRegion
+                    key={region.key}
                     region={region}
-                    hasError={region.parts.some(
-                      (p) => p.type === 'tool_use' && resultMap.get(p.toolUseId)?.isError,
-                    )}
-                    onOpen={() => onOpenProcessRegion?.(message.id, regionIndex)}
+                    messageId={message.id}
+                    searchMatches={searchMatches}
+                    currentMatch={currentMatch}
+                  />
+                ) : (
+                  <ResultProcessRegion
+                    key={region.key}
+                    regionIndex={regionIndex}
+                    region={region}
+                    messageIdRef={messageIdRef}
+                    onOpenProcessRegion={onOpenProcessRegion}
                   />
                 ),
               )
@@ -434,6 +535,7 @@ function areEqual(
   if (prevProps.onOpenProcessRegion !== nextProps.onOpenProcessRegion) return false
   if (prevProps.autoApprovedTools !== nextProps.autoApprovedTools) return false
   if (prevProps.defaultToolExpanded !== nextProps.defaultToolExpanded) return false
+  if (prevProps.resultRegions !== nextProps.resultRegions) return false
 
   if (
     searchPropsAffectMessage(

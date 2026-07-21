@@ -25,7 +25,6 @@ import SlashCommandMessage from './ai-elements/slash-command-message'
 import VirtualizedMessageList from './VirtualizedMessageList'
 import ChatMessageRenderer, { CompactBoundary } from './ChatMessageRenderer'
 import { adaptChatMessage, buildResultMap } from './chat-message-adapter'
-import { mergeAssistantTurns } from './message-grouping'
 import CompactingIndicator from './CompactingIndicator'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 
@@ -70,10 +69,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOp
     () => messages.filter((m) => !isToolResultOnly(m)),
     [messages],
   )
-  const viewItems = useMemo(
-    () => pairCliMeta(displayMode === 'result' ? mergeAssistantTurns(visibleMessages) : visibleMessages),
-    [visibleMessages, displayMode],
-  )
+  const viewItems = useMemo(() => pairCliMeta(visibleMessages), [visibleMessages])
 
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -102,7 +98,7 @@ export default function MessageList({ sessionId, workspaceId, onOpenDrawer, onOp
     }
   }, [isVisible, currentMatch])
 
-  if (messages.length > VIRTUALIZATION_THRESHOLD) {
+  if (displayMode === 'result' || messages.length > VIRTUALIZATION_THRESHOLD) {
     return (
       <VirtualizedMessageList
         sessionId={sessionId}
