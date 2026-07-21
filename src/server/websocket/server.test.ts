@@ -5,6 +5,7 @@ import http from 'http';
 import { WebSocket } from 'ws';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
+import { browserStateChannel } from './browser-state-channel.js';
 import { ComateWebSocketServer } from './server.js';
 import type { WsResponse, WsErrorResponse, WsEventMessage } from './types.js';
 
@@ -250,5 +251,82 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     const response = await waitForMessage<WsErrorResponse>(ws, (msg) => 'id' in msg && (msg as WsResponse).id === 'bad-1');
     assert.strictEqual(response.ok, false);
     assert.match((response as WsErrorResponse).error.message, /Unknown request type/);
+  });
+
+  it('browser_state channel: passive hydration, no runtime creation, disconnect cleanup', async () => {
+    ws = await connect();
+    const runtimesBefore = chatService.getActiveSessionCount();
+
+    // Collect every message up front: the hydration push and the subscribe
+    // ack race each other, so sequential waitForMessage calls would lose one.
+    const received: Array<WsResponse | WsErrorResponse | WsEventMessage> = [];
+    ws.on('message', (raw) => {
+      try {
+        received.push(JSON.parse(raw as string) as WsResponse);
+      } catch {
+        // ignore
+      }
+    });
+    const waitFor = <T>(predicate: (msg: T) => boolean): Promise<T> =>
+      new Promise((resolve, reject) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+          const match = received.find((msg) => predicate(msg as T));
+          if (match) {
+            clearInterval(timer);
+            resolve(match as T);
+          } else if (Date.now() - started > 3000) {
+            clearInterval(timer);
+            reject(new Error('Timed out waiting for collected message'));
+          }
+        }, 25);
+      });
+
+    sendRequest(ws, 'sub-1', 'subscribeBrowserState', { workspaceId: 'ws-1', sessionId: 'sess-x' });
+    const ack = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'sub-1');
+    assert.strictEqual(ack.ok, true);
+
+    // Hydration: the current state is pushed immediately — 'none' here since
+    // the session has no browser.
+    const hydration = await waitFor<WsEventMessage>((msg) => (msg as WsEventMessage).eventType === 'browser_state');
+    assert.strictEqual((hydration as WsEventMessage).sessionId, 'sess-x');
+    assert.strictEqual(
+      ((hydration as WsEventMessage).data as { state: string }).state,
+      'none',
+    );
+    // Passive: subscribing created no runtime.
+    assert.strictEqual(chatService.getActiveSessionCount(), runtimesBefore);
+    assert.strictEqual(browserStateChannel.subscriberCount('sess-x'), 1);
+
+    // Takeover with no browser session maps to a domain error, not a crash.
+    sendRequest(ws, 'take-1', 'browserTakeover', { sessionId: 'sess-x' });
+    const takeover = await waitFor<WsErrorResponse>((msg) => 'id' in msg && msg.id === 'take-1');
+    assert.strictEqual(takeover.ok, false);
+    assert.strictEqual(takeover.error.code, 'browser_no_session');
+
+    // Activity ping is always safe (no-op without a handoff).
+    sendRequest(ws, 'ping-1', 'browserActivityPing', { sessionId: 'sess-x' });
+    const ping = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'ping-1');
+    assert.strictEqual(ping.ok, true);
+
+    // Explicit close + idle-reclaim verbs are safe with no live session (U1/U3/U4).
+    sendRequest(ws, 'close-1', 'browserClose', { sessionId: 'sess-x' });
+    const closeResp = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'close-1');
+    assert.strictEqual(closeResp.ok, true);
+    assert.strictEqual((closeResp.payload as { closed: boolean }).closed, false);
+
+    sendRequest(ws, 'idle-confirm-1', 'browserIdleConfirm', { sessionId: 'sess-x' });
+    const idleConfirm = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'idle-confirm-1');
+    assert.strictEqual(idleConfirm.ok, true);
+
+    sendRequest(ws, 'idle-snooze-1', 'browserIdleSnooze', { sessionId: 'sess-x' });
+    const idleSnooze = await waitFor<WsResponse>((msg) => 'id' in msg && msg.id === 'idle-snooze-1');
+    assert.strictEqual(idleSnooze.ok, true);
+    assert.strictEqual((idleSnooze.payload as { snoozed: boolean }).snoozed, true);
+
+    // Disconnect drops the channel subscription.
+    ws.close();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.strictEqual(browserStateChannel.subscriberCount('sess-x'), 0);
   });
 });

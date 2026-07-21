@@ -13,6 +13,7 @@ import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
 import RightPanel from './components/RightPanel'
+import BrowserPopout from './components/browser/BrowserPopout'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
@@ -20,6 +21,7 @@ import { useWorkspaceStore } from './stores/workspace-store'
 import { useProviderStore } from './stores/provider-store'
 import { useChatStore } from './stores/chat-store'
 import { useRightPanelStore } from './stores/right-panel-store'
+import { useBrowserPaneStore } from './stores/browser-pane-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
 import { fontSizeClass } from './lib/font-size'
@@ -158,6 +160,15 @@ function App() {
     if (!activeWorkspaceId || !activeWorkspaceSessionId) return
     setActiveSession(activeWorkspaceId, activeWorkspaceSessionId)
   }, [activeWorkspaceId, activeWorkspaceSessionId, setActiveSession])
+
+  // The browser pane (U6) follows the active chat session: its browser_state
+  // subscription tracks this pointer; background sessions' browsers keep
+  // running server-side untouched (AE3).
+  useEffect(() => {
+    useBrowserPaneStore
+      .getState()
+      .setActiveSession(activeWorkspaceId ?? null, activeWorkspaceSessionId ?? null)
+  }, [activeWorkspaceId, activeWorkspaceSessionId])
 
   const {
     width: rightPanelWidth,
@@ -352,6 +363,8 @@ function App() {
       )}
 
       <UpdateRestartDialog onForceShowWindow={handleForceShowWindow} />
+
+      <BrowserPopout />
 
       <ToastContainer />
     </div>

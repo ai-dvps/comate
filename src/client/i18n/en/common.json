@@ -89,6 +89,7 @@
   "failedToFetchCommands": "Failed to fetch commands",
   "failedToSearchFiles": "Failed to search files",
   "approvalError": "Approval error",
+  "approvalTimeout": "Approval request timed out and was dismissed.",
   "interruptError": "Interrupt error",
   "interrupted": "Interrupted by user",
   "requestFailed": "Request failed",

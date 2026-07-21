@@ -991,9 +991,10 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     }
   });
 
-  it('fresh database initializes to version 5 with new tables', () => {
+  it('fresh database initializes to the latest schema version with new tables', () => {
     const freshStore = new SqliteStore(':memory:');
-    assert.strictEqual(freshStore.getMigrationVersion(), 5);
+    // v6: browser_audit (U8).
+    assert.strictEqual(freshStore.getMigrationVersion(), 6);
 
     // Old tables should not exist
     const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
@@ -1014,6 +1015,7 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     assert.ok(tableNames.includes('bot_roles'));
     assert.ok(tableNames.includes('bot_users'));
     assert.ok(tableNames.includes('user_sessions'));
+    assert.ok(tableNames.includes('browser_audit'));
   });
 
   it('re-running migration on already-migrated database does nothing', () => {
@@ -1021,11 +1023,60 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     firstStore.createBot({ name: 'Pre-migration Bot' });
 
     const version = firstStore.getMigrationVersion();
-    assert.strictEqual(version, 5);
+    assert.strictEqual(version, 6);
 
-    // Re-opening should not throw and version should stay 5
+    // Re-opening should not throw and version should stay 6
     const secondStore = new SqliteStore(migrationDbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 5);
+    assert.strictEqual(secondStore.getMigrationVersion(), 6);
     assert.strictEqual(secondStore.listBots().length, 1);
+  });
+});
+
+describe('SqliteStore browser_audit pruning (F18)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  function recordRows(workspaceId: string, count: number): string[] {
+    const ids: string[] = [];
+    for (let i = 0; i < count; i += 1) {
+      ids.push(
+        store.recordBrowserAudit({
+          workspaceId,
+          sessionId: 's1',
+          category: 'tool',
+          action: 'mcp__comate-browser__open',
+          outcome: 'ok',
+        }).id,
+      );
+    }
+    return ids;
+  }
+
+  it('prunes rows beyond the retention age', () => {
+    recordRows('ws-1', 3);
+    // Negative retention pushes the cutoff into the future so every row is
+    // "expired" — a deterministic stand-in for backdated rows (recordBrowserAudit
+    // always stamps now()).
+    const deleted = store.pruneBrowserAudit({ retentionDays: -1 });
+    assert.strictEqual(deleted, 3);
+    assert.deepStrictEqual(store.listBrowserAudit('ws-1'), []);
+  });
+
+  it('keeps the newest rows when over the row cap', () => {
+    const ids = recordRows('ws-1', 5);
+    const deleted = store.pruneBrowserAudit({ maxRows: 2 });
+    assert.strictEqual(deleted, 3);
+    const remaining = store.listBrowserAudit('ws-1').map((entry) => entry.id);
+    assert.deepStrictEqual(remaining.sort(), [ids[3], ids[4]].sort());
+  });
+
+  it('is a no-op within bounds', () => {
+    recordRows('ws-1', 2);
+    assert.strictEqual(store.pruneBrowserAudit(), 0);
+    assert.strictEqual(store.listBrowserAudit('ws-1').length, 2);
   });
 });

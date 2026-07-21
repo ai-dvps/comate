@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
@@ -30,6 +31,14 @@ import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOw
 import type { BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 import type { Provider } from '../models/provider.js';
+import {
+  BROWSER_MCP_SERVER_KEY,
+  BROWSER_STREAM_CLOSE_TIMEOUT_MS,
+  createBrowserMcpServer,
+  type BrowserApprovalRequester,
+} from './browser-mcp.js';
+import { isBrowserToolName } from './browser-tool-names.js';
+import { browserControlService } from './browser-control.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -43,6 +52,30 @@ function sanitizeBotEnv(env: Record<string, string | undefined>): Record<string,
     out[key] = value;
   }
   return out;
+}
+
+/**
+ * Browser tools never run in bot sessions (U4, KTD-4 ③): the browser MCP
+ * server is not injected for bot sessions at all, so this explicit deny is
+ * the second line of defense (covers spoofed/legacy tool names) and must
+ * precede the 'unknown' fall-through in the canUseTool closures. It applies
+ * to admins too — the admin bypass is void for the browser category. The
+ * message is generic: naming the capability would let an attacker probe the
+ * policy surface. Returns null for non-browser tools.
+ */
+function denyBrowserToolInBotSession(
+  sessionId: string,
+  toolName: string,
+  toolUseID: string | undefined,
+): { behavior: 'deny'; message: string } | null {
+  if (!isBrowserToolName(toolName)) return null;
+  diagLog(
+    `[ChatService.botDeny] session=${sessionId} tool=${toolName} toolUseId=${toolUseID ?? 'none'} reason=browser-tool-bot-session`,
+  );
+  return {
+    behavior: 'deny',
+    message: "I can't do that in this workspace.",
+  };
 }
 
 export interface MessageStream {
@@ -102,14 +135,96 @@ export class ChatService {
   private pendingRebuilds = new Map<string, RuntimeContext>();
   private rebuildPollers = new Map<string, NodeJS.Timeout>();
   private onRuntimeClose?: (sessionId: string) => void;
+  /**
+   * Chained PRE-close listeners (KTD-5): the single-slot onRuntimeClose stays
+   * with the WS server; services that must react to a runtime close (the
+   * browser handoff controller) subscribe here instead of overwriting it.
+   * Fired BEFORE runtime.close() so a listener can mark its own state before
+   * close() resolves the session's pending cards with its generic deny.
+   */
+  private readonly runtimeClosingListeners = new Set<(sessionId: string) => void>();
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
   constructor(sdkClient?: SdkClient) {
     this.sdkClient = sdkClient ?? new SdkClient();
+    // Wire the browser handoff controller's runtime channel (U5, KTD-6): the
+    // controller resolves/timeouts the session's live browser card through
+    // whatever runtime currently owns the session (lazy lookup — the runtime
+    // may be rebuilt while the browser lives on, KTD-5; a missing runtime
+    // no-ops, which the crash path relies on).
+    browserControlService.configureRuntimeChannel({
+      resolveApprovalCard: (sessionId, requestId, result, message) => {
+        const runtime = this.getRuntimeIfExists(sessionId);
+        if (!runtime) return;
+        runtime.resolveApproval(
+          requestId,
+          result === 'allow'
+            ? { behavior: 'allow' }
+            : { behavior: 'deny', message: message ?? 'The browser handoff was ended.' },
+        );
+      },
+      timeoutApprovalCard: (sessionId, requestId) => {
+        this.getRuntimeIfExists(sessionId)?.timeoutDenyApproval(requestId);
+      },
+    });
+    this.addOnRuntimeClosing((sessionId) => {
+      browserControlService.handleRuntimeClosing(sessionId);
+    });
   }
+
+  /**
+   * Handler-level approval channel for the browser MCP tools (U3, KTD-4 ②).
+   * The submit tool calls this from INSIDE its handler — a workspace's
+   * `.claude/settings.json` `permissions.allow` can short-circuit the SDK's
+   * canUseTool evaluation, so the confirmation round-trip must not depend on
+   * the interception layer. Lazy runtime lookup is deliberate: the runtime
+   * may be rebuilt while the browser session lives on (KTD-5), and the lookup
+   * rebinds to whatever runtime currently owns the session. Fails closed when
+   * no runtime is live (the tool handler only runs during a runtime turn, so
+   * this is a defensive path).
+   */
+  private readonly browserApprovalRequester: BrowserApprovalRequester = async (
+    sessionId,
+    request,
+  ) => {
+    const runtime = this.getRuntimeIfExists(sessionId);
+    if (!runtime) {
+      return {
+        behavior: 'deny' as const,
+        message: 'No live runtime is available for the browser approval round-trip.',
+      };
+    }
+    const requestId = request.requestId ?? `browser-${randomUUID()}`;
+    const result = await runtime.requestToolApproval(
+      requestId,
+      request.toolName,
+      requestId,
+      request.payload,
+      {
+        title: request.title,
+        ...(request.description !== undefined && { description: request.description }),
+        ...(request.signal !== undefined && { signal: request.signal }),
+      },
+    );
+    return result.behavior === 'allow'
+      ? { behavior: 'allow' as const }
+      : { behavior: 'deny' as const, message: result.message };
+  };
 
   setOnRuntimeClose(callback: (sessionId: string) => void): void {
     this.onRuntimeClose = callback;
+  }
+
+  /**
+   * Chained pre-close listener subscription (KTD-5): complements the WS
+   * server's single-slot onRuntimeClose — listeners run BEFORE runtime.close()
+   * in closeRuntime. Returns an unsubscribe function.
+   */
+  addOnRuntimeClosing(listener: (sessionId: string) => void): () => void {
+    this.runtimeClosingListeners.add(listener);
+    return () => {
+      this.runtimeClosingListeners.delete(listener);
+    };
   }
 
   getActiveSessionCount(): number {
@@ -803,6 +918,16 @@ export class ChatService {
     this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
+    // Pre-close chained listeners (KTD-5): run BEFORE close() resolves the
+    // session's pending cards, so listeners can classify their own pendings
+    // (the browser handoff controller marks its cards runtime_closed here).
+    for (const listener of this.runtimeClosingListeners) {
+      try {
+        listener(sessionId);
+      } catch (err) {
+        diagLog(`[ChatService] runtime-closing listener threw for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     await runtime.close();
     this.onRuntimeClose?.(sessionId);
   }
@@ -1329,6 +1454,21 @@ export class ChatService {
       sidecarLog(`[ChatService.buildSdkOptions] Plugin MCP merge failed: ${message}`);
     }
 
+    // Embedded browser MCP server (U3, KTD-3): GUI sessions only — bot
+    // sessions never get the browser tool surface (KTD-4 ③: the injection
+    // condition itself is the first line of bot defense). The instance is
+    // keyed by sessionId; the browser process outlives it via browserService.
+    if (!isBotSession) {
+      mcpServers[BROWSER_MCP_SERVER_KEY] = createBrowserMcpServer({
+        sessionId: session.id,
+        workspaceId: workspace.id,
+        approvalRequester: this.browserApprovalRequester,
+      });
+      // Submit/handoff handler approval round-trips can wait on a human far
+      // past the 60s SDK default — per-session env, never process-global.
+      env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT = BROWSER_STREAM_CLOSE_TIMEOUT_MS;
+    }
+
     const claudePath = resolveSdkBinary();
     const normalizedCwd = normalizeWindowsPath(workspace.folderPath);
     sidecarLog(`[ChatService.buildSdkOptions] pathToClaudeCodeExecutable=${claudePath}`);
@@ -1441,13 +1581,18 @@ export class ChatService {
               decisionReasonType?: string;
             },
           ) => {
+            // Browser tools never run in bot sessions — this deny must precede
+            // the 'unknown' fall-through below (see denyBrowserToolInBotSession).
+            const browserDeny = denyBrowserToolInBotSession(session.id, toolName, sdkOptions?.toolUseID);
+            if (browserDeny) return browserDeny;
+
             // Resolve role dynamically on every tool use so membership/role changes
             // take effect without restarting the runtime.
             const role = channel && channelUserId
               ? botService.getMemberRole(bot.id, channel, channelUserId)
               : null;
             const rolePolicy = botService.getRolePolicy(bot.id);
-            const decision = evaluateBotToolPermission(rolePolicy?.normalToolPolicy ?? { posture: 'safe', categoryDefaults: { fileRead: 'allow', fileWrite: 'deny', shell: 'deny', network: 'deny', subagents: 'deny', reply: 'allow' } }, role, toolName);
+            const decision = evaluateBotToolPermission(rolePolicy?.normalToolPolicy ?? SAFE_PRESET, role, toolName);
             // 'unknown' = tool not in any category (MCP, Skill, future SDK built-in
             // without a category fit). Fall through to today's allow-all behavior
             // per R10. The brainstorm explicitly defers MCP and Skills gating.
@@ -1532,7 +1677,7 @@ export class ChatService {
             }
 
             if (toolName === 'Skill') {
-              const r = evaluateBotSkill(rolePolicy ?? { normalToolPolicy: { posture: 'safe', categoryDefaults: { fileRead: 'allow', fileWrite: 'deny', shell: 'deny', network: 'deny', subagents: 'deny', reply: 'allow' } }, skillAllowlist: [], bashWhitelist: [] }, role, toolName, input);
+              const r = evaluateBotSkill(rolePolicy ?? { normalToolPolicy: SAFE_PRESET, skillAllowlist: [], bashWhitelist: [] }, role, toolName, input);
               if (!r.allowed) {
                 diagLog(
                   `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'skill-denied'}`,
@@ -1657,6 +1802,11 @@ export class ChatService {
             decisionReasonType?: string;
           },
         ) => {
+          // Browser tools never run in bot sessions — this deny must precede
+          // the policy evaluation and the 'unknown' fall-through below.
+          const browserDeny = denyBrowserToolInBotSession(session.id, toolName, sdkOptions?.toolUseID);
+          if (browserDeny) return browserDeny;
+
           const decision = evaluateToolPermission(policy, toolName, pathContext?.isAdminOrOwner ?? false);
           if (decision === 'deny') {
             const reason = getToolPermissionDenialReason(policy, toolName);

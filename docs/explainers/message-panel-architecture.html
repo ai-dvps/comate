@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message Panel 架构讲解 — Comate</title>
+<style>
+  :root {
+    --ink: #1e293b;
+    --ink-soft: #475569;
+    --ink-faint: #64748b;
+    --line: #e2e8f0;
+    --bg: #f1f5f9;
+    --card: #ffffff;
+    --hist: #2563eb;
+    --live: #059669;
+    --store: #7c3aed;
+    --render: #d97706;
+    --amber-bg: #fffbeb;
+    --amber-line: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.65;
+  }
+  article {
+    max-width: 1180px;
+    margin: 32px auto;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 40px 48px 32px;
+  }
+  .prose p, .prose li { max-width: 70ch; }
+  p { margin: 10px 0; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 40px 0 10px; padding-top: 26px; border-top: 1px solid var(--line); }
+  h2 .num {
+    display: inline-block;
+    min-width: 26px;
+    color: var(--store);
+    font-variant-numeric: tabular-nums;
+  }
+  h3 { font-size: 15px; margin: 22px 0 6px; }
+  code {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.88em;
+    background: #f1f5f9;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .ref { color: var(--ink-faint); font-size: 0.86em; }
+  .meta {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--store);
+    border-radius: 8px;
+    background: #fafafa;
+    padding: 14px 18px;
+    margin: 18px 0 8px;
+    font-size: 13.5px;
+  }
+  .meta .row { display: flex; gap: 12px; margin: 3px 0; }
+  .meta .k { flex: 0 0 108px; color: var(--ink-faint); font-weight: 600; }
+  .meta .v { color: var(--ink); }
+  .lead { font-size: 16px; }
+  .keybox {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--store);
+    background: #f5f3ff;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 16px 0;
+  }
+  .callout {
+    border: 1px solid var(--amber-line);
+    border-left-width: 4px;
+    background: var(--amber-bg);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 16px 0;
+  }
+  .note {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--ink-faint);
+    background: #f8fafc;
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin: 14px 0;
+    color: var(--ink-soft);
+    font-size: 14px;
+  }
+  figure { margin: 20px 0; }
+  figcaption { font-size: 13px; color: var(--ink-faint); margin-top: 6px; }
+  svg { display: block; width: 100%; height: auto; }
+  pre.code {
+    background: #f8fafc;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    margin: 12px 0;
+  }
+  pre.code .k { color: #7c3aed; }
+  pre.code .s { color: #047857; }
+  pre.code .c { color: #94a3b8; font-style: italic; }
+  pre.code .f { color: #1d4ed8; }
+  pre.code .t { color: #0e7490; }
+  pre.code .n { color: #b45309; }
+  ol.flow { list-style: none; counter-reset: step; padding: 0; margin: 14px 0; }
+  ol.flow > li {
+    counter-increment: step;
+    position: relative;
+    padding: 10px 14px 10px 52px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin: 8px 0;
+    background: #fcfcfd;
+  }
+  ol.flow > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 14px; top: 12px;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--live);
+    color: #fff;
+    font-size: 13px; font-weight: 700;
+    text-align: center; line-height: 24px;
+  }
+  ol.flow b { color: var(--ink); }
+  table.fm { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 12px 0; }
+  table.fm th, table.fm td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+  table.fm th { background: #f8fafc; font-weight: 600; }
+  table.fm td.loc { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; white-space: nowrap; color: #1d4ed8; }
+  ul.tight li { margin: 6px 0; }
+  footer.stamp {
+    margin-top: 40px; padding-top: 14px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-faint); font-size: 13px;
+  }
+  /* svg text classes */
+  .lane { font: 700 13.5px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .bt { font: 700 12.5px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .bs { font: 11.5px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #334155; }
+  .br { font: 10px ui-monospace, Menlo, Consolas, monospace; fill: #64748b; }
+  .snote { font: italic 11.5px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #64748b; }
+  .tl { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; fill: #111827; }
+  .tn { font: 12.5px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #475569; }
+  .st1 { font: 700 13px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #5b21b6; }
+  .st2 { font: 13.5px ui-monospace, Menlo, Consolas, monospace; fill: #5b21b6; }
+</style>
+</head>
+<body>
+<article>
+
+<header>
+  <h1>Message Panel 架构讲解：组件结构与「历史 / 实时」双通道渲染</h1>
+  <div class="meta">
+    <div class="row"><span class="k">Title</span><span class="v">Comate 消息面板（message panel）的设计：组件结构，历史消息与 live streaming 的渲染机制</span></div>
+    <div class="row"><span class="k">Date</span><span class="v">2026-07-17</span></div>
+    <div class="row"><span class="k">Input shape</span><span class="v">concept（仓库内子系统讲解）</span></div>
+    <div class="row"><span class="k">Subject</span><span class="v">src/client 的 ChatPanel / MessageList / chat-store 与 src/server 的 chat-service / sse-emitter / session-runtime</span></div>
+    <div class="row"><span class="k">Evidence</span><span class="v">全部来自仓库源码（分支 feat/open-url-modifier-click），引用均带 file:line；关键行为核对过 git 历史与 SDK 类型定义</span></div>
+  </div>
+</header>
+
+<section class="prose">
+  <h2><span class="num">0</span>一句话总览</h2>
+  <p class="lead"><b>历史消息和实时消息是两条完全不同的数据通道，但它们汇入同一个 Zustand 数组 <code>messages[sessionId]</code>，从那里开始共享同一条渲染管线。</b>理解这个 panel，就是理解「两条注入通道 + 一条渲染管线」。</p>
+  <p>实时通道没有独立的「流式缓冲区」：正在生成的消息就躺在 <code>messages[sessionId]</code> 里，用消息上的 <code>isStreaming</code> 和 part 上的 <code>state: 'streaming'</code> 做标记。「流式结束」不是一次数据迁移，只是把标记翻掉（<span class="ref">chat-store.ts:1630-1642</span>）。这就是为什么历史与实时可以用同一套组件渲染——它们在 store 里本来就长一个样。</p>
+</section>
+
+<figure>
+  <svg viewBox="0 0 1080 540" role="img" aria-label="双通道汇聚图">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"></path>
+      </marker>
+    </defs>
+
+    <!-- history lane -->
+    <text x="24" y="32" class="lane" fill="#1e40af">历史通道 · 拉（WS request / response）</text>
+    <g>
+      <rect x="24" y="48" width="160" height="70" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.6"></rect>
+      <text x="104" y="76" text-anchor="middle" class="bt" fill="#1e40af">loadMessages</text>
+      <text x="104" y="94" text-anchor="middle" class="bs">WS 请求</text>
+      <text x="104" y="110" text-anchor="middle" class="br">chat-store.ts:2784</text>
+    </g>
+    <line x1="184" y1="83" x2="218" y2="83" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></line>
+    <g>
+      <rect x="224" y="48" width="160" height="70" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.6"></rect>
+      <text x="304" y="76" text-anchor="middle" class="bt" fill="#1e40af">SDK JSONL 转录</text>
+      <text x="304" y="94" text-anchor="middle" class="bs">getSessionMessages</text>
+      <text x="304" y="110" text-anchor="middle" class="br">chat-service.ts:557</text>
+    </g>
+    <line x1="384" y1="83" x2="418" y2="83" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></line>
+    <g>
+      <rect x="424" y="48" width="160" height="70" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.6"></rect>
+      <text x="504" y="76" text-anchor="middle" class="bt" fill="#1e40af">normalize + sanitize</text>
+      <text x="504" y="94" text-anchor="middle" class="bs">统一成 ChatMessage</text>
+      <text x="504" y="110" text-anchor="middle" class="br">normalizer.ts:178 · store.ts:422</text>
+    </g>
+
+    <line x1="24" y1="272" x2="644" y2="272" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="5 5"></line>
+
+    <!-- live lane -->
+    <text x="24" y="300" class="lane" fill="#047857">实时通道 · 推（WS event stream）</text>
+    <g>
+      <rect x="24" y="316" width="140" height="70" rx="8" fill="#fff" stroke="#059669" stroke-width="1.6"></rect>
+      <text x="94" y="342" text-anchor="middle" class="bt" fill="#047857">SDK streaming</text>
+      <text x="94" y="360" text-anchor="middle" class="bs">query</text>
+      <text x="94" y="378" text-anchor="middle" class="br">session-runtime.ts:227</text>
+    </g>
+    <line x1="164" y1="351" x2="178" y2="351" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></line>
+    <g>
+      <rect x="184" y="316" width="140" height="70" rx="8" fill="#fff" stroke="#059669" stroke-width="1.6"></rect>
+      <text x="254" y="342" text-anchor="middle" class="bt" fill="#047857">SseEmitter</text>
+      <text x="254" y="360" text-anchor="middle" class="bs">事件翻译（双模式）</text>
+      <text x="254" y="378" text-anchor="middle" class="br">sse-emitter.ts:524·685</text>
+    </g>
+    <line x1="324" y1="351" x2="338" y2="351" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></line>
+    <g>
+      <rect x="344" y="316" width="140" height="70" rx="8" fill="#fff" stroke="#059669" stroke-width="1.6"></rect>
+      <text x="414" y="342" text-anchor="middle" class="bt" fill="#047857">ring buffer 500</text>
+      <text x="414" y="360" text-anchor="middle" class="bs">WS 广播</text>
+      <text x="414" y="378" text-anchor="middle" class="br">session-runtime.ts:187</text>
+    </g>
+    <line x1="484" y1="351" x2="498" y2="351" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></line>
+    <g>
+      <rect x="504" y="316" width="140" height="70" rx="8" fill="#fff" stroke="#059669" stroke-width="1.6"></rect>
+      <text x="574" y="342" text-anchor="middle" class="bt" fill="#047857">handleSseEvent</text>
+      <text x="574" y="360" text-anchor="middle" class="bs">~40 个 case 累积</text>
+      <text x="574" y="378" text-anchor="middle" class="br">chat-store.ts:1144</text>
+    </g>
+
+    <!-- store -->
+    <g>
+      <rect x="700" y="200" width="170" height="100" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"></rect>
+      <text x="785" y="228" text-anchor="middle" class="st1">Zustand store</text>
+      <text x="785" y="250" text-anchor="middle" class="st2">messages[sessionId]</text>
+      <text x="785" y="270" text-anchor="middle" class="bs">唯一消息数组</text>
+      <text x="785" y="288" text-anchor="middle" class="br">chat-store.ts:296</text>
+    </g>
+
+    <!-- converge arrows -->
+    <path d="M 584 100 L 648 100 Q 660 100 660 112 L 660 213 Q 660 225 672 225 L 700 225" fill="none" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></path>
+    <path d="M 644 351 L 672 351 Q 684 351 684 339 L 684 287 Q 684 275 696 275 L 700 275" fill="none" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></path>
+    <path d="M 870 232 L 888 232 Q 898 232 898 222 L 898 114 Q 898 104 908 104 L 910 104" fill="none" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></path>
+
+    <!-- render column -->
+    <g>
+      <rect x="910" y="60" width="150" height="88" rx="8" fill="#fff" stroke="#d97706" stroke-width="1.6"></rect>
+      <text x="985" y="84" text-anchor="middle" class="bt" fill="#b45309">viewItems 管道</text>
+      <text x="985" y="102" text-anchor="middle" class="bs">filter · merge</text>
+      <text x="985" y="118" text-anchor="middle" class="bs">pairCliMeta</text>
+      <text x="985" y="138" text-anchor="middle" class="br">MessageList.tsx:68</text>
+    </g>
+    <line x1="985" y1="148" x2="985" y2="224" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></line>
+    <g>
+      <rect x="910" y="230" width="150" height="88" rx="8" fill="#fff" stroke="#d97706" stroke-width="1.6"></rect>
+      <text x="985" y="254" text-anchor="middle" class="bt" fill="#b45309">renderViewItem</text>
+      <text x="985" y="272" text-anchor="middle" class="bs">按 kind dispatch</text>
+      <text x="985" y="288" text-anchor="middle" class="bs">meta / boundary / msg</text>
+      <text x="985" y="308" text-anchor="middle" class="br">MessageList.tsx:161</text>
+    </g>
+    <line x1="985" y1="318" x2="985" y2="394" stroke="#64748b" stroke-width="1.4" marker-end="url(#arr)"></line>
+    <g>
+      <rect x="910" y="400" width="150" height="88" rx="8" fill="#fff" stroke="#d97706" stroke-width="1.6"></rect>
+      <text x="985" y="424" text-anchor="middle" class="bt" fill="#b45309">ChatMessage</text>
+      <text x="985" y="442" text-anchor="middle" class="bt" fill="#b45309">Renderer</text>
+      <text x="985" y="460" text-anchor="middle" class="bs">part 级渲染（memo）</text>
+      <text x="985" y="478" text-anchor="middle" class="br">ChatMessageRenderer.tsx</text>
+    </g>
+
+    <text x="24" y="428" class="snote">注意：2026-06-01 起（commit 727a41d）实时通道运行在「整回合」模式 —— token 级增量被关闭，</text>
+    <text x="24" y="446" class="snote">整回合帧复用同一套事件词汇，客户端零改动。详见第 4 节。</text>
+  </svg>
+  <figcaption>图 1 · 两条注入通道汇入同一个 store 数组，再共享一条渲染管线。颜色：蓝 = 历史（拉），绿 = 实时（推），紫 = store，橙 = 渲染。</figcaption>
+</figure>
+
+<section class="prose">
+  <h2><span class="num">1</span>组件结构：一切围绕「切换不卸载」</h2>
+  <p><b>要点：</b><code>ChatPanel</code> 是面板骨架，<code>MessageList</code> 是消息渲染核心；两层都用了「保持挂载、只切可见性」的策略，用内存换切换时的零重建。</p>
+  <ul class="tight">
+    <li><b>workspace 级：</b><code>App.tsx:357-372</code> 为每个打开的 workspace 挂一个 <code>ChatPanel</code>，非活动的用 <code>invisible + inert</code> 隐藏而不卸载——React 状态、store 订阅、滚动位置全部保留。</li>
+    <li><b>session 级：</b><code>ChatPanel.tsx:407-425</code> 为 <code>domCache</code>（LRU，上限 5 个 session，<span class="ref">chat-store.ts:375</span>）里的每个 session 各挂一个 <code>MessageList</code>，非活动的 <code>hidden</code>。切 session 不重挂列表，滚动位置不丢。</li>
+    <li><b>面板区域：</b>Header（会话名 / 模型名）→ 可选搜索条（⌘F）→ 消息列表 → 右上角悬浮层（<code>WorkflowFloatingPanel</code> + <code>TaskPanel</code>）→ 输入区（<code>ApprovalSurface</code> 与 <code>PromptInput</code> <b>互斥</b>：审批队列非空时输入框被审批界面替换，<span class="ref">ChatPanel.tsx:441-459</span>）→ <code>StatusBar</code>；右侧可挂 <code>DetailDrawer</code> 抽屉。</li>
+    <li><b>列表分叉：</b>消息数 ≤ 50 走普通列表（<code>use-stick-to-bottom</code> 吸底），&gt; 50 切 <code>VirtualizedMessageList</code>（<span class="ref">MessageList.tsx:38, 105-118</span>）。两者的 <code>renderViewItem</code> 分派逻辑是同一份写法。</li>
+  </ul>
+</section>
+
+<figure>
+  <svg viewBox="0 0 1080 484" role="img" aria-label="组件树">
+    <text x="24" y="34" class="tl">App.tsx</text>
+    <text x="650" y="34" class="tn">每个 workspace 一个 ChatPanel，切换只改 visibility（App.tsx:357）</text>
+    <text x="24" y="60" class="tl">└─ ChatPanel</text>
+    <text x="650" y="60" class="tn">面板骨架（ChatPanel.tsx:351-506）</text>
+    <text x="24" y="86" class="tl">   ├─ Header</text>
+    <text x="650" y="86" class="tn">会话名 / 模型名</text>
+    <text x="24" y="112" class="tl">   ├─ MessageSearchBar</text>
+    <text x="650" y="112" class="tn">⌘F 消息内搜索，高亮 + 跳转</text>
+    <text x="24" y="138" class="tl">   ├─ MessageList × domCache</text>
+    <text x="650" y="138" class="tn">LRU ≤ 5：切 session 不卸载（chat-store.ts:375）</text>
+    <text x="24" y="164" class="tl">   │  ├─ (&lt;=50) plain list</text>
+    <text x="650" y="164" class="tn">use-stick-to-bottom 吸底（conversation.tsx:20）</text>
+    <text x="24" y="190" class="tl">   │  └─ (&gt;50) VirtualizedMessageList</text>
+    <text x="650" y="190" class="tn">@tanstack/react-virtual 动态测高（:101-112）</text>
+    <text x="24" y="216" class="tl">   │     ├─ SlashCommandMessage / MutedSystemNote</text>
+    <text x="650" y="216" class="tn">CLI meta：斜杠命令 / stdout / reminder（cli-meta.ts）</text>
+    <text x="24" y="242" class="tl">   │     ├─ CompactBoundary</text>
+    <text x="650" y="242" class="tn">上下文压缩分界线</text>
+    <text x="24" y="268" class="tl">   │     └─ ChatMessageRenderer (memo)</text>
+    <text x="650" y="268" class="tn">自定义比较器，只重渲变化的消息（:425-468）</text>
+    <text x="24" y="294" class="tl">   │        ├─ text</text>
+    <text x="650" y="294" class="tn">assistant → Streamdown；user → LinkifiedText</text>
+    <text x="24" y="320" class="tl">   │        ├─ thinking</text>
+    <text x="650" y="320" class="tn">Reasoning 折叠面板</text>
+    <text x="24" y="346" class="tl">   │        └─ tool_use</text>
+    <text x="650" y="346" class="tn">Tool 卡片 → 注册表 ~30 个渲染器 → JSON 兜底</text>
+    <text x="24" y="372" class="tl">   ├─ WorkflowFloatingPanel + TaskPanel</text>
+    <text x="650" y="372" class="tn">右上角悬浮层（ChatPanel.tsx:430）</text>
+    <text x="24" y="398" class="tl">   ├─ ApprovalSurface / PromptInput</text>
+    <text x="650" y="398" class="tn">互斥：有审批时替换输入框（ChatPanel.tsx:441）</text>
+    <text x="24" y="424" class="tl">   ├─ StatusBar</text>
+    <text x="650" y="424" class="tn">context 用量 / 后台任务状态</text>
+    <text x="24" y="450" class="tl">   └─ DetailDrawer</text>
+    <text x="650" y="450" class="tn">复用 ChatMessageRenderer（subagent / process region）</text>
+  </svg>
+  <figcaption>图 2 · 组件树。注意 SessionListItem 不在其中——它属于侧栏会话列表（SessionList.tsx:318），不是消息渲染树的一部分。</figcaption>
+</figure>
+
+<section class="prose">
+  <h2><span class="num">2</span>渲染管线：三次分派，每层只关心一种分类</h2>
+  <p><b>要点：</b>从 store 数组到屏幕，消息经过三层分派。每一层只解决一个问题：第一层把「原始消息数组」整理成「视图项」，第二层按视图项种类选组件，第三层按 part 类型选渲染器。</p>
+
+  <h3>第一层 · viewItems 前处理（MessageList.tsx:68-76）</h3>
+  <pre class="code"><span class="k">const</span> resultMap = <span class="f">useMemo</span>(() =&gt; <span class="f">buildResultMap</span>(messages), [messages])          <span class="c">// toolUseId → tool_result 索引</span>
+<span class="k">const</span> visibleMessages = <span class="f">useMemo</span>(
+  () =&gt; messages.<span class="f">filter</span>((m) =&gt; !<span class="f">isToolResultOnly</span>(m)), [messages])              <span class="c">// 纯 tool_result 的 user 消息不进视图</span>
+<span class="k">const</span> viewItems = <span class="f">useMemo</span>(
+  () =&gt; <span class="f">pairCliMeta</span>(displayMode === <span class="s">'result'</span> ? <span class="f">mergeAssistantTurns</span>(visibleMessages) : visibleMessages),
+  [visibleMessages, displayMode])</pre>
+  <ul class="tight">
+    <li><code>buildResultMap</code>（<span class="ref">chat-message-adapter.ts:159-174</span>）：把散落的 <code>tool_result</code> 消息按 <code>toolUseId</code> 索引起来，供工具卡片回查——<b>tool_result 从不作为自己的一条消息渲染</b>，它「回到」发起它的工具卡片里（<span class="ref">ChatMessageRenderer.tsx:332-368</span>）。这是 Anthropic 转录结构（result 是独立 user 消息）与聊天 UI（结果贴着调用）之间的桥。</li>
+    <li>result 显示模式下 <code>mergeAssistantTurns</code>（<span class="ref">message-grouping.ts:81-126</span>）把连续 assistant 消息合并成一个逻辑回合；<code>groupMessageParts</code> 再把回合切成文本区和「过程区」（thinking + tool_use 的连续段），过程区折叠成一行 <code>ProcessRegionGhost</code>，点击开抽屉。</li>
+    <li><code>pairCliMeta</code>（<span class="ref">cli-meta.ts:100+</span>）用正则识别 user 消息里的 CLI 外壳（<code>&lt;command-message&gt;</code>、<code>&lt;local-command-stdout&gt;</code>、<code>&lt;system-reminder&gt;</code>），改判为 meta 视图项。</li>
+  </ul>
+
+  <h3>第二层 · renderViewItem（MessageList.tsx:161-233）</h3>
+  <ul class="tight">
+    <li><code>meta</code> → <code>SlashCommandMessage</code> 或 <code>MutedSystemNote</code>（灰色系统小注，不是聊天气泡）。</li>
+    <li><code>isCompactBoundary</code> 的 system 消息 → <code>CompactBoundary</code> 分界线。</li>
+    <li>其余 → <code>adaptChatMessage</code>（带 WeakMap 缓存）→ <code>ChatMessageRenderer</code>。</li>
+  </ul>
+  <div class="note">注意：<code>VirtualizedMessageList.tsx:405-477</code> 有一份与 <code>MessageList.tsx:161-233</code> 几乎逐行相同的 renderViewItem——两层分派逻辑靠「复制粘贴」保持同步，是这个文件里最明显的重复。</div>
+
+  <h3>第三层 · part 级渲染（ChatMessageRenderer.tsx）</h3>
+  <ul class="tight">
+    <li><code>text</code>：user → <code>LinkifiedText</code>（纯文本 + 链接化）；assistant → 先试 <code>detectStructuredReport</code>，否则 <code>CompactableText</code> → <code>Response</code> → <b>Streamdown</b>（流式 markdown，<span class="ref">response.tsx:16-28</span>）。</li>
+    <li><code>thinking</code> → <code>Reasoning</code> 折叠面板。</li>
+    <li><code>tool_use</code>（<span class="ref">:289-373</span>）：<code>Agent</code> → <code>SubagentBriefStatus</code>；<code>Workflow</code> → <code>WorkflowToolCard</code>；<code>TaskCreate/TaskUpdate</code> → <b>不渲染</b>（它们的数据喂给 TaskPanel）；其余 → 通用 <code>Tool</code> 卡片。</li>
+    <li>通用 Tool 卡片的输入区查<b>工具渲染注册表</b>（<span class="ref">tool-renderers/registry.ts:5-17</span>，Map 结构，index.ts 副作用注册约 30 个：Bash/Edit/Read/AskUserQuestion/ExitPlanMode/TodoWrite…），命中用专用渲染器，未命中 <code>CodeBlock</code> 展示格式化 JSON 兜底（<span class="ref">tool.tsx:211-238</span>）。</li>
+  </ul>
+</section>
+
+<section class="prose">
+  <h2><span class="num">3</span>历史消息：WS「拉」取，数据源是 SDK 的 JSONL 转录</h2>
+  <p><b>要点：</b>历史消息不是 REST 拉的，也不是从应用 SQLite 读的——它走 WebSocket 请求/响应，真正的数据源是 <b>Claude Agent SDK 写在磁盘上的 JSONL 会话转录</b>。SQLite（sqlite-store.ts）只存 workspace/session 元数据，不存消息正文。</p>
+  <ol class="flow">
+    <li><b>触发</b> — <span class="ref">ChatPanel.tsx:158-162</span>：活动 session 没有缓存消息时调用 <code>loadMessages</code>；若正在流式或有缓存则跳过，避免覆盖进行中的状态（<span class="ref">chat-store.ts:2786-2810</span>）。</li>
+    <li><b>请求</b> — <code>wsClient.request('loadMessages', { workspaceId, sessionId })</code>（<span class="ref">chat-store.ts:2784-2803</span>），WS 请求/响应模式（带关联 id 的 Promise）。</li>
+    <li><b>服务端</b> — <code>handleLoadMessages</code>（<span class="ref">websocket/server.ts:209-218</span>）→ <code>chatService.loadMessages</code>（<span class="ref">chat-service.ts:557-604</span>）→ <code>sdkClient.getSessionMessages</code>（<span class="ref">sdk-client.ts:81-86</span>，对 SDK 函数的薄封装，按 sessionId + workspace 目录读 JSONL 转录）。</li>
+    <li><b>归一化</b> — <code>normalizeSessionMessage</code>（<span class="ref">message-normalizer.ts:178-204</span>）把 Anthropic content blocks（text / tool_use / tool_result / thinking）映射为 <code>MessagePart[]</code>，所有 part 直接置 <code>state: 'complete'</code>；压缩边界转成带 <code>isCompactBoundary</code> 标记的合成 system 消息。</li>
+    <li><b>入列</b> — 客户端 <code>sanitizeMessages</code>（<span class="ref">chat-store.ts:422-450</span>）校验整形后写入 <code>messages[sessionId]</code>，窗口裁剪到 200 条；subagents / tasks / workflows 一并水合。</li>
+  </ol>
+  <pre class="code"><span class="k">const</span> sdkMessages = <span class="k">await</span> <span class="k">this</span>.sdkClient.<span class="f">getSessionMessages</span>(sessionId, options);
+<span class="c">// ...</span>
+sdkMessages.<span class="f">forEach</span>((msg: <span class="t">SessionMessage</span>, index: <span class="t">number</span>) =&gt; {
+  <span class="k">const</span> chatMessage = <span class="f">normalizeSessionMessage</span>(msg);   <span class="c">// ① SDK SessionMessage → 应用 ChatMessage</span>
+  <span class="k">if</span> (chatMessage) {
+    <span class="c">// ② SDK 不提供逐条时间戳 —— 按索引合成递减时间，只保证相对顺序</span>
+    chatMessage.timestamp = <span class="t">Date</span>.<span class="f">now</span>() - (sdkMessages.length - index) * <span class="n">1000</span>;
+    normalized.<span class="f">push</span>(chatMessage);
+  }
+});</pre>
+  <p><b>渲染：与实时完全相同。</b>历史落入同一个 <code>messages[sessionId]</code>，走第 2 节的同一管线；tool_use ↔ tool_result 配对由 <code>buildResultMap</code> 在渲染期重建。唯一的历史专属痕迹就是合成时间戳和「所有 part 都是 complete」。</p>
+  <h3>更早历史的分页</h3>
+  <p>虚拟列表滚动到距顶 &lt; 500px 时（<span class="ref">VirtualizedMessageList.tsx:266-290</span>，<code>SCROLL_TOP_TRIGGER_THRESHOLD</code>），按 <code>totalMessageCount</code> 算出 offset 调 <code>fetchOlderMessages</code>（<span class="ref">chat-store.ts:3139-3181</span>）——同一个 <code>loadMessages</code> 请求带 <code>{offset, limit}</code>（每页 50），结果<b>前插</b>并按消息 id 去重；滚动位置以「首个可见项的 key」为锚在插入后还原（<span class="ref">:161-200</span>），用户无感知。</p>
+  <div class="note">边界情况：① 历史时间戳全部是合成的（SDK 不暴露），不要把消息时间当精确事实用；② bot 会话（WeCom/Feishu）另有 <code>loadMessagesAfter</code> 增量变体（<span class="ref">chat-service.ts:606-644</span> → <span class="ref">chat-store.ts:3183</span>），只拉某条之后的新消息；③ 流式进行中不会触发 loadMessages。</div>
+</section>
+
+<section class="prose">
+  <h2><span class="num">4</span>实时消息：WS「推」送，与 2026-06-01 的「整回合」转折</h2>
+  <p><b>要点：</b>实时通道是为 <b>token 级流式</b> 设计的事件管道——但当前被刻意运行在<b>整回合（whole-turn）模式</b>。两种模式共用同一套事件词汇和同一个客户端累积器，所以切换时客户端一行代码都没改。这是整个 panel 里最值得学的设计。</p>
+
+  <ol class="flow">
+    <li><b>SDK 流启动</b> — <code>SessionRuntime.start()</code> 以 <code>PushableIterator</code> 为输入创建 streaming query（<span class="ref">session-runtime.ts:227-233</span>）；<code>runMessageLoop</code> 把每条 SDKMessage 喂给 <code>emitter.handle()</code>（<span class="ref">:235-243</span>）。</li>
+    <li><b>事件翻译（双模式）</b> — <code>stream_event</code> → <code>handleStreamEvent</code>（<span class="ref">sse-emitter.ts:524+</span>，把 Anthropic 的 content_block_start/delta 翻成 text_delta / tool_input_delta / thinking_delta；<b>当前休眠</b>）；整回合 <code>assistant</code> 帧 → <code>handleAssistant</code>（<span class="ref">:685-716</span>）→ <code>emitDedupRecovery</code> 逐块补发（<span class="ref">:718-777</span>；<b>当前主路径</b>）。</li>
+    <li><b>落环 + 广播</b> — emitter 的 <code>onEvent</code> 把事件压入 500 条环形缓冲（<span class="ref">RING_BUFFER_CAP，session-runtime.ts:22</span>），并扇出到所有 bot / web 事件 handler（<span class="ref">:187-212</span>）。</li>
+    <li><b>WS 推送</b> — 每个订阅 socket 把事件包成 <code>{type:'event', eventType:'sse', sessionId, eventId, data}</code> 推给客户端（<span class="ref">websocket/server.ts:129-139</span>）。订阅时带上 <code>lastEventId</code> 即从环形缓冲<b>回放</b>丢失事件（<span class="ref">session-runtime.ts:484-516</span>）——断线重连不掉字；<code>subscription_ack</code> 携带 serverNonce，发送动作被它 gate。</li>
+    <li><b>客户端累积</b> — <code>wsClient</code> 单例分发，store 的 <code>handleSseEvent</code>（约 40 个 case，<span class="ref">chat-store.ts:1144+</span>）把事件不可变地累积进 <code>messages[sessionId]</code>：<code>assistant_start</code> 建空消息（<code>isStreaming: true</code>）→ <code>text_delta</code> 拼接 → <code>tool_use_start/done</code> 管理工具 part → <code>tool_result</code> 作为独立 user 消息入列（镜像转录结构）→ <code>assistant_done</code> 翻标记。</li>
+    <li><b>渲染</b> — 没有独立的「流式组件」：Zustand 更新触发同一棵组件树重渲染，memo 比较器保证只有变化的消息真正重绘；Streamdown 负责把（可能未闭合的）markdown 安全渲染出来。</li>
+  </ol>
+
+  <h3>客户端累积器：不可变更新 + 引用隔离</h3>
+  <pre class="code"><span class="k">function</span> <span class="f">updateAssistantPart</span>(
+  state: <span class="t">ChatState</span>, sessionId: <span class="t">string</span>, messageId: <span class="t">string</span>,
+  partIndex: <span class="t">number</span>,
+  produce: (existing: <span class="t">MessagePart</span> | <span class="t">undefined</span>) =&gt; <span class="t">MessagePart</span>,
+): <span class="t">Partial</span>&lt;<span class="t">ChatState</span>&gt; {
+  <span class="k">const</span> msgs = state.messages[sessionId] || []
+  <span class="k">const</span> idx = msgs.<span class="f">findIndex</span>((m) =&gt; m.id === messageId)
+  <span class="k">if</span> (idx &lt; <span class="n">0</span>) <span class="k">return</span> {}
+  <span class="k">const</span> parts = [...msgs[idx].parts]
+  <span class="k">while</span> (parts.length &lt; partIndex) {           <span class="c">// ① partIndex 之前的缺位补空 text part</span>
+    parts.<span class="f">push</span>({ type: <span class="s">'text'</span>, text: <span class="s">''</span> })
+  }
+  parts[partIndex] = <span class="f">produce</span>(parts[partIndex])  <span class="c">// ② text_delta 的 produce = 字符串拼接</span>
+  <span class="k">const</span> nextMsgs = [...msgs.<span class="f">slice</span>(<span class="n">0</span>, idx), { ...msgs[idx], parts }, ...msgs.<span class="f">slice</span>(idx + <span class="n">1</span>)]
+  <span class="k">return</span> { messages: { ...state.messages, [sessionId]: nextMsgs } }  <span class="c">// ③ 只有这一条消息换了引用</span>
+}</pre>
+  <p>③ 是流式性能的关键配合点：每次更新只有目标消息产生新引用，<code>ChatMessageRenderer</code> 的自定义 memo 比较器（<span class="ref">:425-468</span>）让其余几百条消息直接跳过重渲染。</p>
+
+  <div class="callout">
+    <p><b>关键转折 —— commit 727a41d（2026-06-01）：<code>includePartialMessages: false</code></b></p>
+    <p>SDK 的 <code>includePartialMessages</code> 控制是否发出 <code>stream_event</code>（即 SDKPartialAssistantMessage，sdk.d.ts:4027）。它曾长期为 true；2026-06-01 被改成 false（两处：<span class="ref">sdk-client.ts:60</span>、<span class="ref">chat-service.ts:1350</span>），commit 信息原文：消除每个 content_block_delta 带来的高频 setState 与 React 重渲染——大文件写入、长回复时的 CPU 尖峰随之消失；代价是「打字机」动画变成整块出现（chunk-at-once），功能行为不变。</p>
+    <p><b>为什么客户端零改动？</b>整回合 <code>assistant</code> 帧到达时，<code>handleAssistant</code> 对每个没经流式见过的块调用 <code>emitDedupRecovery</code>，<b>补发同一套事件</b>：</p>
+  </div>
+  <pre class="code">content.<span class="f">forEach</span>((block, index) =&gt; {
+  <span class="k">if</span> (<span class="k">this</span>.seenStreamPartIndexes.<span class="f">has</span>(index)) {      <span class="c">// ① 增量模式已流过的块：只补 done 事件</span>
+    <span class="k">this</span>.<span class="f">closeStreamedBlock</span>(block, index, metaArray?.[index]);
+    <span class="k">return</span>;
+  }
+  <span class="k">this</span>.<span class="f">emitDedupRecovery</span>(block, <span class="k">this</span>.nextPartIndex++, metaArray?.[index]); <span class="c">// ② 整回合帧：逐块补发</span>
+});
+<span class="c">// emitDedupRecovery 中 text 块的补发（sse-emitter.ts:726-731）：</span>
+<span class="k">this</span>.<span class="f">send</span>({
+  type: <span class="s">'text_delta'</span>,                               <span class="c">// ③ 同一个 text_delta 事件</span>
+  messageId: <span class="k">this</span>.currentMessageId,
+  partIndex: index,
+  text,                                             <span class="c">// ④ 区别只在：一次性携带完整文本</span>
+});</pre>
+  <p>客户端的 <code>text_delta</code> case 只是「往 parts[partIndex] 上拼字符串」——拼一个 token 和拼一整段文本没有任何区别。工具调用同理：增量模式下 <code>tool_use_start → 若干 tool_input_delta → tool_use_done</code> 跨数百毫秒到达；整回合模式下 start 和 done 背靠背到达，<code>inputJsonStream</code> 累积器直接闲置。事件词汇不变，两种模式对客户端透明。</p>
+  <p>还有个细节：<code>assistant_done</code> 不在 <code>handleAssistant</code> 里发——SDK 会把一个 Anthropic API 消息拆成多个同 id 的整回合帧（thinking 帧、text 帧…），逐帧 finalize 会提前封口；正确时机是 <code>message_stop</code>（stream_event，当前休眠）或 <code>result</code> 兜底（<span class="ref">sse-emitter.ts:709-715 的注释</span>）。所以当前模式下 <code>assistant_done</code> 实际由 <code>result</code> 帧触发。</p>
+
+  <h3>「流式结束」= 就地翻标记，不重新拉取</h3>
+  <pre class="code"><span class="k">case</span> <span class="s">'assistant_done'</span>: {
+  <span class="f">set</span>((state) =&gt; ({
+    messages: {
+      ...state.messages,
+      [sessionId]: (state.messages[sessionId] || []).<span class="f">map</span>((m) =&gt;
+        m.id === messageId ? { ...m, isStreaming: <span class="k">false</span> } : m),   <span class="c">// 只翻一个布尔值</span>
+    },
+  }))
+  <span class="k">return</span>
+}</pre>
+  <p>从此这条消息与 loadMessages 拉回来的历史<b>不可区分</b>——这正是「sanitizeMessages 与 normalizer 产出同一形状」的意义。磁盘上的 SDK JSONL 转录仍是下次加载时的唯一事实源。</p>
+
+  <div class="note">休眠代码清单（设计给 token 模式、当前不会触发）：<code>StreamingToolInputPreview</code>（部分 JSON 实时预览）、<code>Reasoning</code> 的 streaming shimmer、Tool 卡片的 <code>input-streaming</code> 徽标、<code>tool_input_delta</code> 累积。把 <code>includePartialMessages</code> 翻回 true，整条 token 级链路原样复活。</div>
+
+  <h3>发送路径（反向）</h3>
+  <p><code>sendMessage</code>（<span class="ref">chat-store.ts:2878-2963</span>）：乐观追加 user 消息并把 session 置为 streaming → 有审批挂起则进 <code>draftQueue</code> → 还没拿到 serverNonce 则进 <code>pendingSend</code>（由 <code>subscription_ack</code> 排空）→ 否则 <code>wsClient.request('sendMessage')</code>；服务端 <code>pushMessage</code> 把 SDKUserMessage 推进 query 的输入迭代器（<span class="ref">chat-service.ts:1036-1055 → session-runtime.ts:751-760</span>）。</p>
+</section>
+
+<section class="prose">
+  <h2><span class="num">5</span>性能工程：让长会话不卡的五件事</h2>
+  <ul class="tight">
+    <li><b>虚拟化</b>：&gt; 50 条切 <code>@tanstack/react-virtual</code>，动态测高、overscan 5、稳定 key（<span class="ref">VirtualizedMessageList.tsx:101-112</span>）。</li>
+    <li><b>适配缓存</b>：<code>adaptChatMessage</code> 与 <code>mergeAssistantTurns</code> 都用 WeakMap 缓存（<span class="ref">chat-message-adapter.ts:46-107</span>、<span class="ref">message-grouping.ts:59-67</span>）——引用没变的老消息零成本跳过重算。</li>
+    <li><b>memo 比较器</b>：<code>ChatMessageRenderer</code> 只在「消息引用 / 自身搜索匹配 / 自身 tool result」变化时重渲（<span class="ref">ChatMessageRenderer.tsx:425-468</span>）。这曾是 token 级流式不卡的原因，也正是 727a41d 关闭它能省 CPU 的对价。</li>
+    <li><b>窗口上限</b>：<code>DEFAULT_WINDOW_CAP = 200</code>（<span class="ref">chat-store.ts:374</span>），<code>pruneWindow</code> 裁最老的消息但<b>绝不拆散 tool_use / tool_result 对</b>（<span class="ref">:717-750</span>）——拆了工具卡片就查不到结果了。</li>
+    <li><b>吸底两套</b>：普通列表用 <code>use-stick-to-bottom</code>；虚拟列表手动维护 <code>isAtBottom</code>（阈值 50px），新消息滚到末项，并用 <code>useLayoutEffect</code> 观测 scrollHeight 增长保持钉底（<span class="ref">:232-254</span>）——因为 result 模式下增长发生在最后一项<i>内部</i>，条目数不变，纯按条数监听会漏。</li>
+  </ul>
+</section>
+
+<section class="prose">
+  <h2><span class="num">6</span>要点回顾</h2>
+  <ul class="tight">
+    <li><b>一个数组</b>：历史与实时共用 <code>messages[sessionId]</code> 和同一条渲染管线；「流式」只是消息上的 <code>isStreaming</code> 与 part 上的 <code>state</code> 标记，完成 = 翻标记，不重新拉取。</li>
+    <li><b>拉推皆 WS</b>：历史走 WS request/response（<code>loadMessages</code>），实时走 WS 推送；SSE-over-HTTP 已是死代码，<code>SseEmitter</code> / <code>eventType:'sse'</code> 的命名是历史遗留。</li>
+    <li><b>消息正文在 SDK JSONL 转录里，不在 SQLite</b>；SQLite 只存元数据；历史时间戳是合成的。</li>
+    <li><b>tool_result 是独立 user 消息</b>（对齐 Anthropic 转录结构），渲染期由 <code>buildResultMap</code> 重新配对回工具卡片；纯 result 消息被 <code>isToolResultOnly</code> 滤出视图。</li>
+    <li><b>整回合模式</b>：2026-06-01 起 <code>includePartialMessages: false</code> 关闭 token 级增量（CPU 优化）；整回合帧经 <code>emitDedupRecovery</code> 复用同一套事件词汇，客户端透明；翻回 true 即恢复打字机。</li>
+    <li><b>三层分派</b>：viewItems 前处理 → renderViewItem 按 kind → part 级按 type；每层只管一种分类，新消息类型从对应层切入。</li>
+  </ul>
+
+  <h3>文件速查</h3>
+  <table class="fm">
+    <tr><th>主题</th><th>位置</th><th>作用</th></tr>
+    <tr><td>面板骨架</td><td class="loc">src/client/components/ChatPanel.tsx:351-506</td><td>布局、domCache 多挂载、审批/输入互斥</td></tr>
+    <tr><td>消息列表</td><td class="loc">src/client/components/MessageList.tsx:38,68-76,161-233</td><td>50 条阈值、viewItems 前处理、renderViewItem</td></tr>
+    <tr><td>虚拟列表</td><td class="loc">src/client/components/VirtualizedMessageList.tsx:101-112,266-290</td><td>react-virtual、滚动近顶分页触发</td></tr>
+    <tr><td>消息渲染器</td><td class="loc">src/client/components/ChatMessageRenderer.tsx:196-373,425-468</td><td>part 级分派、memo 比较器</td></tr>
+    <tr><td>配对/适配</td><td class="loc">src/client/lib/chat-message-adapter.ts:46-107,159-174</td><td>adaptChatMessage 缓存、buildResultMap</td></tr>
+    <tr><td>工具渲染注册表</td><td class="loc">src/client/components/tool-renderers/registry.ts:5-17</td><td>~30 个专用工具渲染器</td></tr>
+    <tr><td>客户端 store</td><td class="loc">src/client/stores/chat-store.ts:295-331,1144,2784,3139</td><td>ChatState、handleSseEvent、loadMessages、fetchOlderMessages</td></tr>
+    <tr><td>消息形状</td><td class="loc">src/client/types/message.ts:17-52,171-328</td><td>MessagePart / ChatMessage / SseEvent 词汇表</td></tr>
+    <tr><td>服务端历史</td><td class="loc">src/server/services/chat-service.ts:557-604</td><td>读 SDK JSONL 转录 + 合成时间戳</td></tr>
+    <tr><td>归一化</td><td class="loc">src/server/services/message-normalizer.ts:178-204</td><td>SDK SessionMessage → ChatMessage</td></tr>
+    <tr><td>事件翻译</td><td class="loc">src/server/services/sse-emitter.ts:524-639,685-777</td><td>增量模式（休眠）/ 整回合模式（现役）</td></tr>
+    <tr><td>运行时</td><td class="loc">src/server/services/session-runtime.ts:187-212,484-516</td><td>环形缓冲 + 广播、订阅回放</td></tr>
+    <tr><td>WS 服务</td><td class="loc">src/server/websocket/server.ts:105-146,203-228</td><td>subscribe / sendMessage / loadMessages 路由</td></tr>
+    <tr><td>整回合开关</td><td class="loc">src/server/services/sdk-client.ts:60 · chat-service.ts:1350</td><td>includePartialMessages: false（commit 727a41d）</td></tr>
+  </table>
+</section>
+
+<footer class="stamp">Composed 2026-07-17 by ce-explain · 证据采集自仓库源码与 git 历史，讲解为个人学习用途。</footer>
+
+</article>
+</body>
+</html>

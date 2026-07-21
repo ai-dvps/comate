@@ -314,7 +314,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const store = triggerMigration(seedDb, dbPath);
     const db = openRawDb(store);
 
-    assert.strictEqual(store.getMigrationVersion(), 5);
+    assert.strictEqual(store.getMigrationVersion(), 6);
 
     const tables = tableNames(db);
     assert.ok(tables.includes('bot_channels'));
@@ -429,7 +429,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const firstStore = triggerMigration(seedDb, dbPath);
 
     const secondStore = new SqliteStore(dbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 5);
+    assert.strictEqual(secondStore.getMigrationVersion(), 6);
 
     const db = openRawDb(secondStore);
     assert.strictEqual(tableNames(db).includes('bot_members'), false);
@@ -507,7 +507,7 @@ describe('unified schema migration', { concurrency: false }, () => {
 
     // Must not throw (previously: UNIQUE constraint failed: user_sessions.user_id).
     const store = new SqliteStore(dbPath);
-    assert.strictEqual(store.getMigrationVersion(), 5);
+    assert.strictEqual(store.getMigrationVersion(), 6);
     const db = openRawDb(store);
 
     // No row was lost to the multi-active collisions: wecom-u1 has 2 sessions,
