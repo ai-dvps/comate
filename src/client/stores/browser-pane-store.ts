@@ -406,9 +406,13 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
         /* noop */
       }
     },
-    snoozeIdle: (sessionId: string) => {
+    snoozeIdle: async (sessionId: string) => {
       patchSession(sessionId, { idlePrompt: false })
-      wsClient.request('browserIdleSnooze', { sessionId }).catch(() => {})
+      try {
+        await wsClient.request('browserIdleSnooze', { sessionId })
+      } catch {
+        /* noop */
+      }
     },
 
     setRememberSite: (sessionId: string, remember: boolean) => {
