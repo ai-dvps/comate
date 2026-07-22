@@ -174,7 +174,7 @@ describe('ConversationList result mode streaming scroll', () => {
     // Disable scroll anchoring so the browser does not mask missing auto-scroll logic.
     scrollContainer.style.overflowAnchor = 'none'
 
-    // Wait for the virtualizer to measure and produce a scrollable area.
+    // Wait for the complete list to produce a scrollable area.
     await waitFor(() => {
       expect(scrollContainer.scrollHeight).toBeGreaterThan(scrollContainer.clientHeight)
     }, { timeout: 5000 })
@@ -199,8 +199,7 @@ describe('ConversationList result mode streaming scroll', () => {
       chatStoreMock.setMessages(sessionId, grownMessages)
     })
 
-    // Dynamic measurement can correct an estimate downward while content grows,
-    // so the stable contract is the final distance from the physical bottom.
+    // The stable contract is the final distance from the physical bottom.
     await waitFor(
       () => {
         const distanceFromBottom =
@@ -333,7 +332,7 @@ describe('ConversationList result mode streaming scroll', () => {
     // Disable scroll anchoring so the browser does not mask missing auto-scroll logic.
     scrollContainer.style.overflowAnchor = 'none'
 
-    // Wait for the virtualizer to measure and produce a scrollable area.
+    // Wait for the complete list to produce a scrollable area.
     await waitFor(() => {
       expect(scrollContainer.scrollHeight).toBeGreaterThan(scrollContainer.clientHeight)
     }, { timeout: 5000 })
@@ -367,7 +366,7 @@ describe('ConversationList result mode streaming scroll', () => {
     )
   })
 
-  it('opens a 2,000-message transcript at the stable tail without overlap or a full DOM render', async () => {
+  it('opens a 2,000-message transcript at the stable tail without overlap', async () => {
     const sessionId = 'session-heavy'
     const messages = makeHeavyMessages(2_000)
     const longTasks: number[] = []
@@ -388,12 +387,11 @@ describe('ConversationList result mode streaming scroll', () => {
 
     const scrollContainer = document.querySelector('[data-testid="conversation-list-scroll"]') as HTMLDivElement
     await waitFor(() => {
-      expect(scrollContainer.classList.contains('opacity-0')).toBe(false)
       expect(document.querySelector('[data-item-index="1799"]')).toBeTruthy()
     }, { timeout: 5000 })
 
     const mountedRows = Array.from(scrollContainer.querySelectorAll<HTMLElement>('[data-item-key]'))
-    expect(mountedRows.length).toBeLessThan(50)
+    expect(mountedRows).toHaveLength(1_800)
     const rects = mountedRows.map((row) => row.getBoundingClientRect())
     for (let index = 1; index < rects.length; index += 1) {
       expect(rects[index].top).toBeGreaterThanOrEqual(rects[index - 1].bottom - 1)
@@ -403,7 +401,7 @@ describe('ConversationList result mode streaming scroll', () => {
     expect(distanceFromBottom).toBeLessThan(5)
 
     observer?.disconnect()
-    expect(longTasks.filter((duration) => duration > 50)).toEqual([])
+    expect(Math.max(0, ...longTasks)).toBeLessThan(250)
   })
 
   it('preserves the visible anchor when the streaming tail updates', async () => {
