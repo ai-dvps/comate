@@ -34,6 +34,11 @@ export interface ConversationProjector {
   project(messages: ChatMessage[]): ConversationProjection
 }
 
+function isToolResultOnly(message: ChatMessage): boolean {
+  return message.role === 'user' && message.parts.length > 0 &&
+    message.parts.every((part) => part.type === 'tool_result')
+}
+
 function countPrependedRows(previous: ConversationRow[], next: ConversationRow[]): number {
   const firstKey = previous[0]?.key
   if (!firstKey) return 0
@@ -83,7 +88,7 @@ export function createConversationProjector(mode: ConversationDisplayMode): Conv
               sourceMessageIds: turn.message.id.split('|'),
             }
           })
-        : uniqueMessages.map((message) => {
+        : uniqueMessages.filter((message) => !isToolResultOnly(message)).map((message) => {
             const previous = previousByKey.get(message.id)
             if (previous?.kind === 'linear' && previous.message === message) return previous
             return {

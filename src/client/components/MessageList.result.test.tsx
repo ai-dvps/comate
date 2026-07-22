@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { render, cleanup } from '@testing-library/react'
+import { act, render, cleanup } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 
 import MessageList from './MessageList'
@@ -11,16 +11,19 @@ function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
 }
 
+vi.mock('react-virtuoso', async () => {
+  const ReactModule = await import('react')
+  const Virtuoso = ReactModule.forwardRef(function MockVirtuoso(
+    props: { data?: unknown[]; itemContent?: (index: number, item: unknown) => React.ReactNode },
+    ref: React.ForwardedRef<unknown>,
+  ) {
+    ReactModule.useImperativeHandle(ref, () => ({ scrollToIndex: vi.fn(), autoscrollToBottom: vi.fn() }))
+    return <div data-testid="conversation-list-scroll">{(props.data ?? []).map((item, index) => props.itemContent?.(index, item))}</div>
+  })
+  return { Virtuoso }
+})
+
 const renderCounter = new Map<string, number>()
-const virtualShellCounter = { renders: 0 }
-
-vi.mock('./VirtualizedMessageList', () => ({
-  default: function MockVirtualizedMessageList() {
-    virtualShellCounter.renders += 1
-    return <div data-testid="result-virtual-shell" />
-  },
-}))
-
 vi.mock('./ChatMessageRenderer', () => {
   const MockedChatMessageRenderer = React.memo(function MockedChatMessageRenderer({
     message,
@@ -101,7 +104,6 @@ describe('MessageList result mode render stability', () => {
     chatStoreMock.getState().totalMessageCount = {}
     chatStoreMock.getState().isLoadingOlderMessages = {}
     renderCounter.clear()
-    virtualShellCounter.renders = 0
   })
 
   it('keeps one virtual shell when a result-mode session crosses the legacy threshold', async () => {
@@ -126,7 +128,7 @@ describe('MessageList result mode render stability', () => {
       />,
     )
 
-    const shell = rendered.getByTestId('result-virtual-shell')
+    const shell = rendered.getByTestId('conversation-list-scroll')
 
     const nextMessages: ChatMessage[] = [
       ...initialMessages,
@@ -134,12 +136,46 @@ describe('MessageList result mode render stability', () => {
       { id: 'message-50', role: 'user', parts: [textPart('50')], timestamp: 50 },
     ]
 
-    chatStoreMock.setMessages(sessionId, nextMessages)
+    await act(async () => {
+      chatStoreMock.setMessages(sessionId, nextMessages)
+    })
 
-    // Wait for React to re-render after store notification.
+    expect(rendered.getByTestId('conversation-list-scroll')).toBe(shell)
+  })
+
+  it('does not render stable rows when one result region changes', async () => {
+    const prompt: ChatMessage = { id: 'u1', role: 'user', parts: [textPart('first')], timestamp: 1 }
+    const stable: ChatMessage = { id: 'a1', role: 'assistant', parts: [textPart('stable')], timestamp: 2 }
+    const separator: ChatMessage = { id: 'u2', role: 'user', parts: [textPart('second')], timestamp: 3 }
+    const active: ChatMessage = {
+      id: 'a2',
+      role: 'assistant',
+      parts: [{ type: 'tool_use', toolUseId: 'tool-1', toolName: 'Bash', input: {}, state: 'complete' }],
+      timestamp: 4,
+    }
+    chatStoreMock.setMessages('s1', [prompt, stable, separator, active])
+
+    renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={() => {}} />)
     await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(renderCounter.get('a1')).toBe(1)
+    expect(renderCounter.get('a2')).toBe(1)
 
-    expect(rendered.getByTestId('result-virtual-shell')).toBe(shell)
-    expect(virtualShellCounter.renders).toBeGreaterThan(1)
+    await act(async () => {
+      chatStoreMock.setMessages('s1', [
+        prompt,
+        stable,
+        separator,
+        active,
+        {
+          id: 'r1',
+          role: 'user',
+          parts: [{ type: 'tool_result', toolUseId: 'tool-1', output: 'done', isError: false }],
+          timestamp: 5,
+        },
+      ])
+    })
+
+    expect(renderCounter.get('a1')).toBe(1)
+    expect(renderCounter.get('a2')).toBe(2)
   })
 })

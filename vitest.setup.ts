@@ -6,11 +6,13 @@ class ResizeObserverMock {
   disconnect() {}
 }
 
-Object.defineProperty(globalThis, 'ResizeObserver', {
-  writable: true,
-  configurable: true,
-  value: ResizeObserverMock,
-})
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    writable: true,
+    configurable: true,
+    value: ResizeObserverMock,
+  })
+}
 
 Object.defineProperty(globalThis, 'matchMedia', {
   writable: true,

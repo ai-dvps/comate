@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { MutableRefObject } from 'react'
 
 const UPWARD_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
@@ -25,6 +25,7 @@ export function useConversationFollow(): ConversationFollowController {
   const isFollowingRef = useRef(true)
   const lastScrollTopRef = useRef<number | null>(null)
   const lastTouchYRef = useRef<number | null>(null)
+  const upwardIntentPendingRef = useRef(false)
   const nextProgrammaticTokenRef = useRef(0)
   const programmaticTokenRef = useRef<number | null>(null)
 
@@ -34,7 +35,10 @@ export function useConversationFollow(): ConversationFollowController {
     setIsFollowing(next)
   }, [])
 
-  const exitFollow = useCallback(() => setFollowing(false), [setFollowing])
+  const exitFollow = useCallback(() => {
+    upwardIntentPendingRef.current = true
+    setFollowing(false)
+  }, [setFollowing])
 
   const onWheel = useCallback((deltaY: number) => {
     if (deltaY < 0) exitFollow()
@@ -58,6 +62,10 @@ export function useConversationFollow(): ConversationFollowController {
     const previous = lastScrollTopRef.current
     lastScrollTopRef.current = scrollTop
     if (programmaticTokenRef.current !== null) return
+    if (upwardIntentPendingRef.current) {
+      if (!isAtPhysicalBottom) upwardIntentPendingRef.current = false
+      return
+    }
     if (previous !== null && scrollTop < previous) {
       exitFollow()
       return
@@ -79,11 +87,17 @@ export function useConversationFollow(): ConversationFollowController {
 
   const onSearchJump = useCallback(() => setFollowing(false), [setFollowing])
   const onSearchClose = useCallback(() => {}, [])
-  const followToBottom = useCallback(() => setFollowing(true), [setFollowing])
-  const resetForDisplayMode = useCallback(() => setFollowing(true), [setFollowing])
+  const followToBottom = useCallback(() => {
+    upwardIntentPendingRef.current = false
+    setFollowing(true)
+  }, [setFollowing])
+  const resetForDisplayMode = useCallback(() => {
+    upwardIntentPendingRef.current = false
+    setFollowing(true)
+  }, [setFollowing])
   const onVisibilityRecovery = useCallback(() => isFollowingRef.current, [])
 
-  return {
+  return useMemo(() => ({
     isFollowing,
     isFollowingRef,
     onWheel,
@@ -98,5 +112,19 @@ export function useConversationFollow(): ConversationFollowController {
     onVisibilityRecovery,
     beginProgrammaticScroll,
     endProgrammaticScroll,
-  }
+  }), [
+    beginProgrammaticScroll,
+    endProgrammaticScroll,
+    followToBottom,
+    isFollowing,
+    onKeyDown,
+    onScrollPosition,
+    onSearchClose,
+    onSearchJump,
+    onTouchMove,
+    onTouchStart,
+    onVisibilityRecovery,
+    onWheel,
+    resetForDisplayMode,
+  ])
 }

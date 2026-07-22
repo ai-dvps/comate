@@ -37,6 +37,18 @@ describe('useConversationFollow', () => {
     expect(result.current.isFollowing).toBe(true)
   })
 
+  it('does not restore follow from a stale bottom callback after upward input', () => {
+    const { result } = renderHook(() => useConversationFollow())
+
+    act(() => result.current.onWheel(-20))
+    act(() => result.current.onScrollPosition(1_000, true))
+    expect(result.current.isFollowing).toBe(false)
+
+    act(() => result.current.onScrollPosition(980, false))
+    act(() => result.current.onScrollPosition(1_000, true))
+    expect(result.current.isFollowing).toBe(true)
+  })
+
   it('does not restore follow when search closes', () => {
     const { result } = renderHook(() => useConversationFollow())
 
