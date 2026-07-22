@@ -108,6 +108,7 @@
     "emptyRegion": "此区域没有步骤。"
   },
   "loadingSessions": "正在加载会话...",
+  "loadingEarlierMessages": "正在加载更早的消息...",
   "noSessions": "还没有会话。",
   "createSessionPrompt": "创建一个以开始聊天。",
   "startConversation": "开始新对话...",
