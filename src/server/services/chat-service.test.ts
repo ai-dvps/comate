@@ -3,6 +3,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
   ChatService,
+  alignHistoryPageStart,
   __setIdleGracePeriodForTesting,
   __restoreIdleGracePeriod,
   __setRebuildPollIntervalForTesting,
@@ -86,6 +87,28 @@ function collectDiagLogs(): { logs: string[]; restore: () => void } {
     },
   };
 }
+
+describe('alignHistoryPageStart', () => {
+  const historyMessage = (
+    id: string,
+    role: 'user' | 'assistant',
+    parts: Array<{ type: 'text'; text: string } | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }>,
+  ) => ({ id, role, parts, timestamp: 1 });
+
+  it('moves a page start backward across an assistant and tool-result chain', () => {
+    const messages = [
+      historyMessage('u1', 'user', [{ type: 'text', text: 'run' }]),
+      historyMessage('a1', 'assistant', [{ type: 'text', text: 'working' }]),
+      historyMessage('r1', 'user', [{ type: 'tool_result', toolUseId: 't1', output: 'ok', isError: false }]),
+      historyMessage('a2', 'assistant', [{ type: 'text', text: 'done' }]),
+      historyMessage('u2', 'user', [{ type: 'text', text: 'next' }]),
+    ];
+
+    assert.strictEqual(alignHistoryPageStart(messages, 3), 1);
+    assert.strictEqual(alignHistoryPageStart(messages, 2), 1);
+    assert.strictEqual(alignHistoryPageStart(messages, 4), 4);
+  });
+});
 
 describe('chat-service idle-close', { concurrency: false }, () => {
   let service: ChatService;
