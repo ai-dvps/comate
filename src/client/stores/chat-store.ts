@@ -3305,6 +3305,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     sessionId: string,
     limit: number,
   ) => {
+    const startedAt = performance.now()
     try {
       set((state) => ({
         isLoadingOlderMessages: {
@@ -3314,6 +3315,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
       const priorRange = get().messageRanges[sessionId]
       const offset = Math.max(0, (priorRange?.start ?? 0) - limit)
+      console.info('[chat-pagination] request', {
+        sessionId,
+        workspaceId,
+        priorRange,
+        offset,
+        limit,
+      })
       const data = (await wsClient.request('loadMessages', { workspaceId, sessionId, offset, limit })) as {
         messages?: unknown
         tasks?: TaskItem[]
@@ -3329,6 +3337,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const existingIds = new Set(current.map((m) => m.id))
         const newOlder = olderMessages.filter((m) => !existingIds.has(m.id))
         const merged = [...newOlder, ...current]
+        console.info('[chat-pagination] response', {
+          sessionId,
+          requestedOffset: offset,
+          requestedLimit: limit,
+          responseRange: { start: data.start, end: data.end, total: data.total },
+          receivedCount: olderMessages.length,
+          prependedCount: newOlder.length,
+          mergedCount: merged.length,
+          durationMs: Math.round(performance.now() - startedAt),
+        })
         return {
           messages: { ...state.messages, [sessionId]: merged },
           isLoadingOlderMessages: {
@@ -3348,7 +3366,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       })
     } catch (err) {
-      console.error('Failed to fetch older messages:', err)
+      console.error('[chat-pagination] failed', {
+        sessionId,
+        workspaceId,
+        durationMs: Math.round(performance.now() - startedAt),
+        error: err,
+      })
       set((state) => ({
         isLoadingOlderMessages: {
           ...state.isLoadingOlderMessages,

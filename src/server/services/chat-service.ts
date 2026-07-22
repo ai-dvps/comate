@@ -741,8 +741,14 @@ export class ChatService {
     });
     const total = normalized.length;
     const requestedStart = Math.max(0, Math.min(offset ?? (limit === undefined ? 0 : total - limit), total));
+    const requestedEnd = Math.max(
+      requestedStart,
+      Math.min(limit === undefined ? total : requestedStart + limit, total),
+    );
     const start = alignHistoryPageStart(normalized, requestedStart);
-    const end = Math.max(start, Math.min(limit === undefined ? total : start + limit, total));
+    // Alignment may expand a page backward to keep a tool-use chain intact.
+    // Keep the requested end fixed so the expansion cannot create a gap.
+    const end = Math.max(start, requestedEnd);
     const page = normalized.slice(start, end);
     const tasks = scanSdkMessagesForTasks(sdkMessages);
     const subagents = await this.loadSubagentsForSession(sessionId, workspaceId, sdkMessages);

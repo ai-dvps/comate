@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Bot } from 'lucide-react'
+import { ArrowDown, Bot, LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Virtuoso, type ListRange, type VirtuosoHandle } from 'react-virtuoso'
 
@@ -49,8 +49,7 @@ export default function ConversationList({
   autoApprovedTools,
 }: ConversationListProps) {
   const { t } = useTranslation('chat')
-  const totalMessageCount = useChatStore((state) => state.totalMessageCount[sessionId] || 0)
-  const messageCount = useChatStore((state) => state.messages[sessionId]?.length || 0)
+  const hasOlderMessages = useChatStore((state) => (state.messageRanges?.[sessionId]?.start ?? 0) > 0)
   const isLoadingOlder = useChatStore((state) => state.isLoadingOlderMessages[sessionId] || false)
   const isCompacting = useChatStore((state) => state.isCompacting[sessionId] || false)
   const fetchOlderMessages = useChatStore((state) => state.fetchOlderMessages)
@@ -152,21 +151,18 @@ export default function ConversationList({
   }, [rows.length])
 
   const handleStartReached = useCallback(() => {
-    if (fetchingRef.current || isLoadingOlder || totalMessageCount <= messageCount) return
+    if (fetchingRef.current || isLoadingOlder || !hasOlderMessages) return
     fetchingRef.current = true
     void fetchOlderMessages(workspaceId, sessionId, FETCH_SIZE).finally(() => {
       fetchingRef.current = false
     })
-  }, [fetchOlderMessages, isLoadingOlder, messageCount, sessionId, totalMessageCount, workspaceId])
+  }, [fetchOlderMessages, hasOlderMessages, isLoadingOlder, sessionId, workspaceId])
 
   const scrollToBottom = useCallback(() => {
     follow.followToBottom()
     virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end' })
   }, [follow])
 
-  const Header = useCallback(() => isLoadingOlder ? (
-    <div className="p-3 text-center"><span className="text-xs text-text-tertiary">{t('loading')}</span></div>
-  ) : null, [isLoadingOlder, t])
   const Footer = useCallback(() => isCompacting ? <CompactingIndicator sessionId={sessionId} /> : null, [isCompacting, sessionId])
   const Empty = useCallback(() => (
     <ConversationEmptyState
@@ -176,10 +172,9 @@ export default function ConversationList({
     />
   ), [t])
   const components = useMemo(() => ({
-    Header,
     Footer,
     EmptyPlaceholder: Empty,
-  }), [Empty, Footer, Header])
+  }), [Empty, Footer])
 
   return (
     <div className="relative flex-1 overflow-hidden" role="log">
@@ -219,6 +214,18 @@ export default function ConversationList({
           </div>
         )}
       />
+      {isLoadingOlder ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center"
+          data-testid="history-pagination-loading"
+          role="status"
+        >
+          <div className="flex items-center gap-2 rounded-md border border-border bg-bg/95 px-3 py-2 text-xs text-text-secondary shadow-sm">
+            <LoaderCircle className="size-3.5 animate-spin" />
+            <span>{t('loadingEarlierMessages')}</span>
+          </div>
+        </div>
+      ) : null}
       {!initialReady && <div className="absolute inset-0 bg-bg" aria-busy="true" />}
       {!follow.isFollowing && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-bg to-transparent" />}
       {!follow.isFollowing && (

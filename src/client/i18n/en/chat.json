@@ -109,6 +109,7 @@
     "emptyRegion": "No steps in this region."
   },
   "loadingSessions": "Loading sessions...",
+  "loadingEarlierMessages": "Loading earlier messages...",
   "noSessions": "No sessions yet.",
   "createSessionPrompt": "Create one to start chatting.",
   "startConversation": "Start a new conversation...",

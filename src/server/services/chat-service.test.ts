@@ -110,6 +110,43 @@ describe('alignHistoryPageStart', () => {
   });
 });
 
+describe('chat-service history pagination', { concurrency: false }, () => {
+  const originalGet = workspaceStore.get.bind(workspaceStore);
+
+  afterEach(() => {
+    workspaceStore.get = originalGet;
+  });
+
+  it('keeps the requested page end when aligning the start backward', async () => {
+    const sdkMessages = [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'run' } },
+      { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] } },
+      { type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok', is_error: false }] } },
+      { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+      { type: 'user', uuid: 'u2', message: { role: 'user', content: 'next' } },
+      { type: 'assistant', uuid: 'a3', message: { role: 'assistant', content: [{ type: 'text', text: 'latest' }] } },
+    ] as SessionMessage[];
+
+    class PaginationSdkClient extends SdkClient {
+      override async getSessionMessages(): Promise<SessionMessage[]> {
+        return sdkMessages;
+      }
+      override async listSubagents(): Promise<string[]> {
+        return [];
+      }
+    }
+
+    workspaceStore.get = async () => createMockWorkspace('ws-1');
+    const service = new ChatService(new PaginationSdkClient());
+
+    const page = await service.loadMessages('s1', 'ws-1', undefined, 3);
+
+    assert.strictEqual(page.start, 1);
+    assert.strictEqual(page.end, 6);
+    assert.deepStrictEqual(page.messages.map((message) => message.id), ['a1', 'r1', 'a2', 'u2', 'a3']);
+  });
+});
+
 describe('chat-service idle-close', { concurrency: false }, () => {
   let service: ChatService;
   const originalOpen = SessionRuntime.open;
