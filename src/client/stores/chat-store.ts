@@ -24,6 +24,7 @@ interface WorkflowPollEntry {
 }
 
 const workflowPollTimers = new Map<string, WorkflowPollEntry>()
+const historyLoadRequests = new Map<string, symbol>()
 
 function closeWorkspaceSessionSubscriptions(workspaceId: string): void {
   for (const [sessionId, sub] of sessionSubscriptions) {
@@ -106,23 +107,7 @@ function evictCachedSession(
   workspaceId: string,
   sessionId: string,
 ): void {
-  set((state) => {
-    const current = state.messages[sessionId] || []
-    const tail = pruneWindow(current, state.windowCap)
-    const total = state.messageRanges[sessionId]?.total ?? state.totalMessageCount[sessionId] ?? current.length
-    return {
-      messages: { ...state.messages, [sessionId]: tail },
-      messageRanges: {
-        ...state.messageRanges,
-        [sessionId]: {
-          total,
-          start: Math.max(0, total - tail.length),
-          end: total,
-        },
-      },
-      ...recomputeInFlightBrowserTools(state, sessionId, tail),
-    }
-  })
+  useChatStore.getState().clearMessages(sessionId)
   closeBackgroundSessionSubscription(set, workspaceId, sessionId)
 }
 
@@ -337,6 +322,7 @@ export interface ChatState {
   streamStartedAt: Record<string, number>
   isLoadingSessions: Record<string, boolean>
   isLoadingMessages: Record<string, boolean>
+  historyLoadState: Record<string, 'loading' | 'loaded'>
   approvalQueue: Record<string, PendingItem[]>
   serverNonce: Record<string, string>
   draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
@@ -351,10 +337,7 @@ export interface ChatState {
   tasks: Record<string, TaskItem[]>
   pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
   autoApprovedTools: Record<string, Record<string, 'auto' | 'readonly'>>
-  windowCap: number
   totalMessageCount: Record<string, number>
-  messageRanges: Record<string, { total: number; start: number; end: number }>
-  isLoadingOlderMessages: Record<string, boolean>
   lastTurnUsage: Record<string, TurnUsage>
   sessionUsage: Record<string, SessionUsage>
   contextUsage: Record<string, ContextUsage>
@@ -389,13 +372,7 @@ export interface ChatState {
   ) => Promise<void>
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
   cleanupWorkspace: (workspaceId: string) => void
-  fetchOlderMessages: (
-    workspaceId: string,
-    sessionId: string,
-    limit: number,
-  ) => Promise<void>
   refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
-  setWindowCap: (cap: number) => void
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
@@ -405,7 +382,6 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-const DEFAULT_WINDOW_CAP = 200
 const DOM_CACHE_LIMIT = 5
 
 function sanitizeMessagePart(part: unknown): MessagePart | null {
@@ -742,47 +718,6 @@ function startWorkflowPolling(
   workflowPollTimers.set(key, entry)
   void runWorkflowPollLoop(workspaceId, sessionId, runId, set, entry.generation)
 }
-
-/**
- * Prune the oldest messages to keep the window at or below the cap.
- * Never splits a tool_use / tool_result pair: if a pair straddles the
- * prune boundary, pruning stops before the pair so both halves are kept.
- */
-function pruneWindow(messages: ChatMessage[], cap: number): ChatMessage[] {
-  if (messages.length <= cap) return messages
-
-  // Map toolUseId -> message index for tool_use and tool_result
-  const toolUsePositions = new Map<string, number>()
-  const toolResultPositions = new Map<string, number>()
-  for (let i = 0; i < messages.length; i++) {
-    for (const p of messages[i].parts) {
-      if (p?.type === 'tool_use') toolUsePositions.set(p.toolUseId, i)
-      if (p?.type === 'tool_result') toolResultPositions.set(p.toolUseId, i)
-    }
-  }
-
-  // Find intervals [usePos, resultPos] for complete pairs
-  const pairIntervals: [number, number][] = []
-  for (const [id, usePos] of toolUsePositions) {
-    const resultPos = toolResultPositions.get(id)
-    if (resultPos !== undefined) {
-      pairIntervals.push([usePos, resultPos])
-    }
-  }
-
-  const excess = messages.length - cap
-  let pruneCount = excess
-
-  // Move pruneCount backward to avoid splitting any pair
-  for (const [usePos, resultPos] of pairIntervals) {
-    if (usePos < pruneCount && pruneCount <= resultPos) {
-      pruneCount = usePos
-    }
-  }
-
-  return messages.slice(pruneCount)
-}
-
 
 export type SseSetter = (
   updater: (state: ChatState) => ChatState | Partial<ChatState>,
@@ -1294,18 +1229,13 @@ export function handleSseEvent(
             isStreaming: true,
           },
         ]
-        const pruned = pruneWindow(newMessages, state.windowCap)
         const updates: Partial<ChatState> = {
-          messages: { ...state.messages, [sessionId]: pruned },
+          messages: { ...state.messages, [sessionId]: newMessages },
           totalMessageCount: {
             ...state.totalMessageCount,
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
           ...applyActivityUpdate(state, workspaceId, sessionId),
-          // F14: a pruned prefix may have dropped an unpaired browser tool_use.
-          ...(pruned.length !== newMessages.length
-            ? recomputeInFlightBrowserTools(state, sessionId, pruned)
-            : {}),
         }
         // Preserve an earlier prompt-send timestamp when present; otherwise
         // capture the turn start here.
@@ -1499,16 +1429,12 @@ export function handleSseEvent(
               }),
             }
           })
-          const pruned = pruneWindow(replacedMessages, state.windowCap)
           return {
             messages: {
               ...state.messages,
-              [sessionId]: pruned,
+              [sessionId]: replacedMessages,
             },
-            // F14: a dropped prefix may have carried the matching tool_use.
-            ...(pruned.length !== replacedMessages.length
-              ? recomputeInFlightBrowserTools(state, sessionId, pruned)
-              : removeInFlightBrowserTool(state, sessionId, toolUseId)),
+            ...removeInFlightBrowserTool(state, sessionId, toolUseId),
           }
         }
         const newMessages: ChatMessage[] = [
@@ -1528,16 +1454,13 @@ export function handleSseEvent(
             timestamp: Date.now(),
           },
         ]
-        const pruned = pruneWindow(newMessages, state.windowCap)
         const updates: Partial<ChatState> = {
-          messages: { ...state.messages, [sessionId]: pruned },
+          messages: { ...state.messages, [sessionId]: newMessages },
           totalMessageCount: {
             ...state.totalMessageCount,
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
-          ...(pruned.length !== newMessages.length
-            ? recomputeInFlightBrowserTools(state, sessionId, pruned)
-            : removeInFlightBrowserTool(state, sessionId, toolUseId)),
+          ...removeInFlightBrowserTool(state, sessionId, toolUseId),
         }
         const pendingCreates = state.pendingTaskCreates[sessionId]
         if (pendingCreates && pendingCreates[toolUseId]) {
@@ -2577,6 +2500,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamStartedAt: {},
   isLoadingSessions: {},
   isLoadingMessages: {},
+  historyLoadState: {},
   approvalQueue: {},
   serverNonce: {},
   draftQueue: {},
@@ -2591,10 +2515,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   tasks: {},
   pendingTaskCreates: {},
   autoApprovedTools: {},
-  windowCap: DEFAULT_WINDOW_CAP,
   totalMessageCount: {},
-  messageRanges: {},
-  isLoadingOlderMessages: {},
   lastTurnUsage: {},
   sessionUsage: {},
   contextUsage: {},
@@ -2919,28 +2840,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadMessages: async (workspaceId: string, sessionId: string) => {
-    // Skip fetch if messages are already cached for this session
-    const existing = get().messages[sessionId] || []
-    if (existing.length > 0) {
+    const loadState = get().historyLoadState[sessionId]
+    if (loadState === 'loaded') {
       set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } }))
       return
     }
+    if (loadState === 'loading') return
 
+    const requestToken = Symbol(sessionId)
+    historyLoadRequests.set(sessionId, requestToken)
+    const startedAt = performance.now()
     try {
-      set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true } }))
+      set((state) => ({
+        isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true },
+        historyLoadState: { ...state.historyLoadState, [sessionId]: 'loading' },
+      }))
       const data = (await wsClient.request('loadMessages', {
         workspaceId,
         sessionId,
-        limit: get().windowCap,
       })) as {
         messages?: unknown
         tasks?: TaskItem[]
         subagents?: unknown
         workflows?: unknown
         total?: number
-        start?: number
-        end?: number
       }
+      if (historyLoadRequests.get(sessionId) !== requestToken) return
+
       const mappedMessages = sanitizeMessages(data.messages)
       const serverTasks = data.tasks ?? []
       const serverSubagents = sanitizeSubagents(data.subagents)
@@ -2951,7 +2877,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const loadedIds = new Set(mappedMessages.map((message) => message.id))
         const liveTail = existing.filter((message) => !loadedIds.has(message.id))
         const combined = [...mappedMessages, ...liveTail]
-        const pruned = pruneWindow(combined, state.windowCap)
         const scannedTasks = scanMessagesForTasks(mappedMessages)
         const taskMap = new Map<string, TaskItem>()
         for (const task of serverTasks) {
@@ -2976,8 +2901,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         return {
-          messages: { ...state.messages, [sessionId]: pruned },
+          messages: { ...state.messages, [sessionId]: combined },
           isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
+          historyLoadState: { ...state.historyLoadState, [sessionId]: 'loaded' },
           tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
           subagents: { ...state.subagents, [sessionId]: Array.from(mergedSubagents.values()) },
           totalMessageCount: {
@@ -2988,17 +2914,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
               combined.length,
             ),
           },
-          messageRanges: {
-            ...state.messageRanges,
-            [sessionId]: {
-              total: data.total ?? mappedMessages.length,
-              start: data.start ?? 0,
-              end: data.end ?? mappedMessages.length,
-            },
-          },
           // F14: wholesale replacement — recompute with the full-scan rule.
-          ...recomputeInFlightBrowserTools(state, sessionId, pruned),
+          ...recomputeInFlightBrowserTools(state, sessionId, combined),
         }
+      })
+
+      console.info('[chat-history] complete load', {
+        sessionId,
+        workspaceId,
+        receivedCount: mappedMessages.length,
+        durationMs: Math.round(performance.now() - startedAt),
       })
 
       // Hydrate workflow state from history and start polling for any that are
@@ -3011,8 +2936,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
     } catch (err) {
-      console.error('Failed to load messages:', err)
-      set((state) => ({ isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } }))
+      if (historyLoadRequests.get(sessionId) !== requestToken) return
+      console.error('[chat-history] complete load failed', {
+        sessionId,
+        workspaceId,
+        durationMs: Math.round(performance.now() - startedAt),
+        error: err,
+      })
+      set((state) => {
+        const historyLoadState = { ...state.historyLoadState }
+        delete historyLoadState[sessionId]
+        return {
+          isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
+          historyLoadState,
+        }
+      })
+    } finally {
+      if (historyLoadRequests.get(sessionId) === requestToken) {
+        historyLoadRequests.delete(sessionId)
+      }
     }
   },
 
@@ -3065,13 +3007,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           timestamp: Date.now(),
         },
       ]
-      const pruned = pruneWindow(newMessages, state.windowCap)
       const workspaceSessions = state.sessions[workspaceId] || []
       const nextSessions = workspaceSessions.map((s) =>
         s.id === sessionId ? { ...s, isDraft: false } : s,
       )
       return {
-        messages: { ...state.messages, [sessionId]: pruned },
+        messages: { ...state.messages, [sessionId]: newMessages },
         drafts: nextDrafts,
         sessions: { ...state.sessions, [workspaceId]: nextSessions },
         isStreaming: { ...state.isStreaming, [sessionId]: true },
@@ -3082,10 +3023,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
         },
         ...applyActivityUpdate(state, workspaceId, sessionId),
-        // F14: a pruned prefix may have dropped an unpaired browser tool_use.
-        ...(pruned.length !== newMessages.length
-          ? recomputeInFlightBrowserTools(state, sessionId, pruned)
-          : {}),
       }
     })
 
@@ -3161,6 +3098,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearMessages: (sessionId: string) => {
+    historyLoadRequests.delete(sessionId)
     stopAllWorkflowPollingForSession(sessionId)
     set((state) => {
       const newMessages = { ...state.messages }
@@ -3187,6 +3125,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newIsRestartingRuntime[sessionId]
       const newWorkflows = { ...state.workflows }
       delete newWorkflows[sessionId]
+      const newHistoryLoadState = { ...state.historyLoadState }
+      delete newHistoryLoadState[sessionId]
+      const newIsLoadingMessages = { ...state.isLoadingMessages }
+      delete newIsLoadingMessages[sessionId]
+      const newTotalMessageCount = { ...state.totalMessageCount }
+      delete newTotalMessageCount[sessionId]
       return {
         messages: newMessages,
         inFlightBrowserTools: newInFlightBrowserTools,
@@ -3200,6 +3144,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         autoApprovedTools: newAutoApprovedTools,
         isRestartingRuntime: newIsRestartingRuntime,
         workflows: newWorkflows,
+        historyLoadState: newHistoryLoadState,
+        isLoadingMessages: newIsLoadingMessages,
+        totalMessageCount: newTotalMessageCount,
       }
     })
   },
@@ -3300,87 +3247,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  fetchOlderMessages: async (
-    workspaceId: string,
-    sessionId: string,
-    limit: number,
-  ) => {
-    const startedAt = performance.now()
-    try {
-      set((state) => ({
-        isLoadingOlderMessages: {
-          ...state.isLoadingOlderMessages,
-          [sessionId]: true,
-        },
-      }))
-      const priorRange = get().messageRanges[sessionId]
-      const offset = Math.max(0, (priorRange?.start ?? 0) - limit)
-      console.info('[chat-pagination] request', {
-        sessionId,
-        workspaceId,
-        priorRange,
-        offset,
-        limit,
-      })
-      const data = (await wsClient.request('loadMessages', { workspaceId, sessionId, offset, limit })) as {
-        messages?: unknown
-        tasks?: TaskItem[]
-        total?: number
-        start?: number
-        end?: number
-      }
-      const olderMessages = sanitizeMessages(data.messages)
-
-      set((state) => {
-        const current = state.messages[sessionId] || []
-        // Prepend older messages, avoiding duplicates by message id
-        const existingIds = new Set(current.map((m) => m.id))
-        const newOlder = olderMessages.filter((m) => !existingIds.has(m.id))
-        const merged = [...newOlder, ...current]
-        console.info('[chat-pagination] response', {
-          sessionId,
-          requestedOffset: offset,
-          requestedLimit: limit,
-          responseRange: { start: data.start, end: data.end, total: data.total },
-          receivedCount: olderMessages.length,
-          prependedCount: newOlder.length,
-          mergedCount: merged.length,
-          durationMs: Math.round(performance.now() - startedAt),
-        })
-        return {
-          messages: { ...state.messages, [sessionId]: merged },
-          isLoadingOlderMessages: {
-            ...state.isLoadingOlderMessages,
-            [sessionId]: false,
-          },
-          messageRanges: {
-            ...state.messageRanges,
-            [sessionId]: {
-              total: data.total ?? priorRange?.total ?? state.totalMessageCount[sessionId] ?? merged.length,
-              start: Math.min(data.start ?? offset, priorRange?.start ?? Number.POSITIVE_INFINITY),
-              end: Math.max(data.end ?? (offset + olderMessages.length), priorRange?.end ?? 0),
-            },
-          },
-          // F14: prepended history may contain browser tool parts.
-          ...(newOlder.length > 0 ? recomputeInFlightBrowserTools(state, sessionId, merged) : {}),
-        }
-      })
-    } catch (err) {
-      console.error('[chat-pagination] failed', {
-        sessionId,
-        workspaceId,
-        durationMs: Math.round(performance.now() - startedAt),
-        error: err,
-      })
-      set((state) => ({
-        isLoadingOlderMessages: {
-          ...state.isLoadingOlderMessages,
-          [sessionId]: false,
-        },
-      }))
-    }
-  },
-
   refreshBotMessages: async (workspaceId: string, sessionId: string) => {
     const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
     if (!session || !isBotSession(session.source)) {
@@ -3422,11 +3288,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
       }))
     }
-  },
-
-  setWindowCap: (cap: number) => {
-    const clamped = Math.max(50, Math.min(1000, cap))
-    set({ windowCap: clamped })
   },
 
   setSessionApprovalMode: async (workspaceId: string, sessionId: string, mode: ApprovalMode) => {

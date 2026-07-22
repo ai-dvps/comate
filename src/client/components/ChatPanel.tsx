@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PanelLeft, PanelLeftOpen, PanelRight, PanelRightOpen } from 'lucide-react'
+import { LoaderCircle, PanelLeft, PanelLeftOpen, PanelRight, PanelRightOpen } from 'lucide-react'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useProviderStore } from '../stores/provider-store'
@@ -43,6 +43,7 @@ export default function ChatPanel({
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
   const isLoadingMessages = useChatStore((s) => s.isLoadingMessages[activeSessionId || ''])
+  const historyLoadState = useChatStore((s) => s.historyLoadState[activeSessionId || ''])
   const approvalQueue = useChatStore((s) => s.approvalQueue[activeSessionId || ''] ?? EMPTY_ARRAY)
   const cachedMessages = useChatStore((s) => s.messages[activeSessionId || ''] ?? EMPTY_ARRAY)
   const domCache = useChatStore((s) => s.domCache[workspaceId] ?? EMPTY_ARRAY)
@@ -90,6 +91,7 @@ export default function ChatPanel({
   const [botUser, setBotUser] = useState<{ userId: string; lastSeenAt: string | null } | null>(null)
   const [isSearchBarOpen, setIsSearchBarOpen] = useState(false)
   const previousFocusRef = useRef<HTMLElement | null>(null)
+  const historyLoadAttemptRef = useRef<string | null>(null)
 
   // Responsive chat header: measure the space available to the title (the region
   // between the left/right button clusters) and drop the model name when it gets
@@ -188,10 +190,19 @@ export default function ChatPanel({
   }, [activeSessionId])
 
   useEffect(() => {
-    if (activeSessionId && activeSession && !activeSession.isDraft && cachedMessages.length === 0) {
+    if (!activeSessionId || !activeSession || activeSession.isDraft) {
+      historyLoadAttemptRef.current = activeSessionId ?? null
+      return
+    }
+    if (historyLoadState) {
+      historyLoadAttemptRef.current = activeSessionId
+      return
+    }
+    if (historyLoadAttemptRef.current !== activeSessionId) {
+      historyLoadAttemptRef.current = activeSessionId
       loadMessages(workspaceId, activeSessionId)
     }
-  }, [workspaceId, activeSessionId, activeSession, loadMessages, cachedMessages.length])
+  }, [workspaceId, activeSessionId, activeSession, historyLoadState, loadMessages])
 
   useEffect(() => {
     return () => {
@@ -461,12 +472,11 @@ export default function ChatPanel({
             />
           )}
 
-          {isLoadingMessages && cachedMessages.length === 0 ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="flex gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+          {activeSession && !activeSession.isDraft && historyLoadState !== 'loaded' ? (
+            <div className="flex h-full items-center justify-center" role="status" aria-live="polite">
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <LoaderCircle className="size-4 animate-spin" />
+                <span>{t('chat:loadingConversationHistory')}</span>
               </div>
             </div>
           ) : activeSessionId ? (

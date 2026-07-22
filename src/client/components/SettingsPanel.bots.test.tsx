@@ -46,11 +46,6 @@ const workspaceState = {
   isLoading: false,
 };
 
-const chatState = {
-  windowCap: 100,
-  setWindowCap: vi.fn(),
-};
-
 const updaterState = {
   status: 'idle' as const,
   update: null,
@@ -101,14 +96,6 @@ vi.mock('../stores/workspace-store', async () => {
   return {
     useWorkspaceStore: vi.fn((selector?: (state: typeof workspaceState) => unknown) =>
       selector ? selector(workspaceState) : workspaceState,
-    ),
-  };
-});
-
-vi.mock('../stores/chat-store', async () => {
-  return {
-    useChatStore: vi.fn((selector?: (state: typeof chatState) => unknown) =>
-      selector ? selector(chatState) : chatState,
     ),
   };
 });

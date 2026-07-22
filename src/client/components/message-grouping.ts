@@ -57,7 +57,7 @@ export type TimestampedChatMessage = ChatMessage & {
  * streaming, not the whole list.
  *
  * `WeakMap` (not `Map`) so entries are reclaimed once their source messages are
- * pruned from the live window / dropped on session switch — no unbounded
+ * released from the session cache / dropped on session switch — no unbounded
  * retention in this long-lived desktop process. The `refs` array inside each
  * entry is what we compare to detect a streaming change to a later message.
  */

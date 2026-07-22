@@ -18,6 +18,126 @@ import { useToastStore } from './toast-store'
 import type { SubagentState, TaskItem, WorkflowState, WorkflowStatus } from '../types/message'
 import type { WsEventMessage } from '@server/websocket/types'
 
+beforeEach(() => {
+  useChatStore.setState({ historyLoadState: {} })
+})
+
+describe('complete history loading', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      messages: {},
+      tasks: {},
+      subagents: {},
+      workflows: {},
+      isLoadingMessages: {},
+      totalMessageCount: {},
+      historyLoadState: {},
+    })
+  })
+
+  it('merges a live message that arrives while complete history is loading', async () => {
+    let resolveRequest: ((value: unknown) => void) | undefined
+    const response = new Promise((resolve) => {
+      resolveRequest = resolve
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockReturnValue(response as never)
+
+    try {
+      const loading = useChatStore.getState().loadMessages('ws-1', 's1')
+      useChatStore.setState({
+        messages: {
+          s1: [{ id: 'live-1', role: 'assistant', parts: [{ type: 'text', text: 'live' }], timestamp: 3 }],
+        },
+      })
+      resolveRequest?.({
+        messages: [
+          { id: 'history-1', role: 'user', parts: [{ type: 'text', text: 'old' }], timestamp: 1 },
+          { id: 'history-2', role: 'assistant', parts: [{ type: 'text', text: 'reply' }], timestamp: 2 },
+        ],
+        tasks: [],
+        subagents: [],
+        workflows: [],
+      })
+      await loading
+
+      assert.deepStrictEqual(
+        useChatStore.getState().messages.s1.map((message) => message.id),
+        ['history-1', 'history-2', 'live-1'],
+      )
+      assert.strictEqual(useChatStore.getState().historyLoadState.s1, 'loaded')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('coalesces concurrent complete-history requests', async () => {
+    let resolveRequest: ((value: unknown) => void) | undefined
+    const response = new Promise((resolve) => {
+      resolveRequest = resolve
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockReturnValue(response as never)
+
+    try {
+      const first = useChatStore.getState().loadMessages('ws-1', 's1')
+      const second = useChatStore.getState().loadMessages('ws-1', 's1')
+      assert.strictEqual(requestSpy.mock.calls.length, 1)
+      assert.deepStrictEqual(requestSpy.mock.calls[0][1], {
+        workspaceId: 'ws-1',
+        sessionId: 's1',
+      })
+
+      resolveRequest?.({ messages: [], tasks: [], subagents: [], workflows: [] })
+      await Promise.all([first, second])
+      assert.strictEqual(useChatStore.getState().historyLoadState.s1, 'loaded')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('clears readiness after failure so a later load can retry', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request')
+      .mockRejectedValueOnce(new Error('load failed'))
+      .mockResolvedValueOnce({ messages: [], tasks: [], subagents: [], workflows: [] })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      assert.strictEqual(useChatStore.getState().historyLoadState.s1, undefined)
+      assert.strictEqual(useChatStore.getState().isLoadingMessages.s1, false)
+
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      assert.strictEqual(requestSpy.mock.calls.length, 2)
+      assert.strictEqual(useChatStore.getState().historyLoadState.s1, 'loaded')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('ignores a complete-history response after the session cache is cleared', async () => {
+    let resolveRequest: ((value: unknown) => void) | undefined
+    const response = new Promise((resolve) => {
+      resolveRequest = resolve
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockReturnValue(response as never)
+
+    try {
+      const loading = useChatStore.getState().loadMessages('ws-1', 's1')
+      useChatStore.getState().clearMessages('s1')
+      resolveRequest?.({
+        messages: [{ id: 'stale-1', role: 'user', parts: [{ type: 'text', text: 'stale' }], timestamp: 1 }],
+        tasks: [],
+        subagents: [],
+        workflows: [],
+      })
+      await loading
+
+      assert.strictEqual(useChatStore.getState().messages.s1, undefined)
+      assert.strictEqual(useChatStore.getState().historyLoadState.s1, undefined)
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+})
+
 describe('normalizeSdkStatus', () => {
   it('preserves valid TaskItem statuses', () => {
     const valid: TaskItem['status'][] = [
@@ -1068,6 +1188,13 @@ describe('background session streaming', () => {
     const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
 
     try {
+      useChatStore.setState({
+        messages: {
+          s1: [{ id: 'history-1', role: 'user', parts: [{ type: 'text', text: 'old' }], timestamp: 1 }],
+        },
+        historyLoadState: { s1: 'loaded' },
+        totalMessageCount: { s1: 1 },
+      })
       for (const id of ['s1', 's2', 's3', 's4', 's5']) {
         useChatStore.getState().setActiveSession('ws-1', id)
         await new Promise((r) => setTimeout(r, 0))
@@ -1084,6 +1211,9 @@ describe('background session streaming', () => {
       assert.strictEqual(state.domCache['ws-1']?.includes('s1'), false)
       assert.strictEqual(state.backgroundSessions['ws-1']?.includes('s1'), false)
       assert.ok(state.backgroundSessions['ws-1']?.includes('s6'))
+      assert.strictEqual(state.messages.s1, undefined)
+      assert.strictEqual(state.historyLoadState.s1, undefined)
+      assert.strictEqual(state.totalMessageCount.s1, undefined)
 
       const unsubscribeForS1 = requestSpy.mock.calls.find(
         (call) => call[0] === 'unsubscribe' && (call[1] as Record<string, unknown>).sessionId === 's1',
@@ -2173,7 +2303,6 @@ describe('in-flight browser tool tracking (F14)', () => {
       inFlightBrowserTools: {},
       totalMessageCount: {},
       streamStartedAt: {},
-      windowCap: 200,
     })
   })
 
@@ -2253,9 +2382,8 @@ describe('in-flight browser tool tracking (F14)', () => {
     assert.deepStrictEqual([...ids], ['t2'])
   })
 
-  it('recomputes when pruning drops an unpaired browser tool_use', () => {
+  it('retains an unpaired browser tool_use as complete history grows', () => {
     const set = useChatStore.setState as unknown as SseSetter
-    useChatStore.setState({ windowCap: 50 })
     handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: 'm1' })
     handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
       messageId: 'm1',
@@ -2264,11 +2392,13 @@ describe('in-flight browser tool tracking (F14)', () => {
       toolName: 'mcp__comate-browser__open',
     })
     assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1']?.size, 1)
-    // Push the window past the cap so the unpaired use is pruned away.
     for (let i = 0; i < 60; i += 1) {
       handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: `mx-${i}` })
     }
-    assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1']?.size ?? 0, 0)
+    assert.deepStrictEqual(
+      [...(useChatStore.getState().inFlightBrowserTools['s1'] ?? [])],
+      ['t1'],
+    )
   })
 
   it('clearMessages drops the session entry', () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 
 import MessageList from './MessageList'
@@ -19,7 +19,6 @@ vi.mock('react-virtuoso', async () => {
       data?: unknown[]
       itemContent?: (index: number, item: unknown) => React.ReactNode
       components?: { Header?: React.ComponentType; Footer?: React.ComponentType; EmptyPlaceholder?: React.ComponentType }
-      startReached?: (index: number) => void
     },
     ref: React.ForwardedRef<unknown>,
   ) {
@@ -33,7 +32,6 @@ vi.mock('react-virtuoso', async () => {
     const Empty = props.components?.EmptyPlaceholder
     return (
       <div data-testid="conversation-list-scroll">
-        <button type="button" data-testid="trigger-start-reached" onClick={() => props.startReached?.(0)} />
         {Header && <Header />}
         {data.length === 0 && Empty ? <Empty /> : data.map((item, index) => props.itemContent?.(index, item))}
         {Footer && <Footer />}
@@ -75,8 +73,6 @@ const mockStore = {
   isLoadingSessions: {},
   domCache: {} as Record<string, string[]>,
   totalMessageCount: {},
-  messageRanges: {} as Record<string, { total: number; start: number; end: number }>,
-  isLoadingOlderMessages: {},
   isCompacting: {},
   isLoadingMessages: {},
   approvalQueue: {},
@@ -94,7 +90,6 @@ const mockStore = {
   resolveApproval: vi.fn(),
   interruptSession: vi.fn(),
   cleanupWorkspace: vi.fn(),
-  fetchOlderMessages: vi.fn(),
 }
 
 vi.mock('../stores/chat-store', () => ({
@@ -118,9 +113,6 @@ describe('MessageList search integration', () => {
     mockStore.messages = {}
     mockStore.domCache = {}
     mockStore.autoApprovedTools = {}
-    mockStore.messageRanges = {}
-    mockStore.fetchOlderMessages.mockReset()
-    mockStore.fetchOlderMessages.mockResolvedValue(undefined)
     cleanup()
   })
 
@@ -143,17 +135,6 @@ describe('MessageList search integration', () => {
 
     const active = document.querySelector('[data-search-active="true"]')
     expect(active).toHaveTextContent('world')
-  })
-
-  it('loads older messages from the range even when local count equals total', () => {
-    mockStore.messages.s1 = Array.from({ length: 100 }, (_, index) => makeMessage(`loaded-${index}`, `msg-${index}`))
-    mockStore.totalMessageCount = { s1: 100 }
-    mockStore.messageRanges.s1 = { total: 100, start: 50, end: 100 }
-
-    renderWithI18n(<MessageList sessionId="s1" workspaceId="ws1" onOpenDrawer={noop} />)
-    fireEvent.click(screen.getByTestId('trigger-start-reached'))
-
-    expect(mockStore.fetchOlderMessages).toHaveBeenCalledWith('ws1', 's1', 50)
   })
 
   it('renders slash-command meta message with timestamp', () => {

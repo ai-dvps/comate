@@ -87,14 +87,6 @@ export interface SendMessagePayload {
 export interface LoadMessagesPayload {
   workspaceId: string
   sessionId: string
-  offset?: number
-  limit?: number
-}
-
-export interface MessageRange {
-  total: number
-  start: number
-  end: number
 }
 
 export interface LoadMessagesAfterPayload {

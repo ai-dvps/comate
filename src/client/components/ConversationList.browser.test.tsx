@@ -18,11 +18,8 @@ const chatStoreMock = vi.hoisted(() => {
   const state = {
     messages: {} as Record<string, ChatMessage[]>,
     totalMessageCount: {} as Record<string, number>,
-    messageRanges: {} as Record<string, { total: number; start: number; end: number }>,
-    isLoadingOlderMessages: {} as Record<string, boolean>,
     isCompacting: {} as Record<string, boolean>,
     autoApprovedTools: {} as Record<string, Record<string, 'auto' | 'readonly'>>,
-    fetchOlderMessages: vi.fn(),
   }
 
   function notify() {
@@ -53,14 +50,6 @@ const chatStoreMock = vi.hoisted(() => {
     },
     setTotalMessageCount: (sessionId: string, count: number) => {
       state.totalMessageCount[sessionId] = count
-      notify()
-    },
-    setMessageRange: (sessionId: string, range: { total: number; start: number; end: number }) => {
-      state.messageRanges[sessionId] = range
-      notify()
-    },
-    setLoadingOlder: (sessionId: string, loading: boolean) => {
-      state.isLoadingOlderMessages[sessionId] = loading
       notify()
     },
     useChatStore,
@@ -153,37 +142,9 @@ describe('ConversationList result mode streaming scroll', () => {
     cleanup()
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().totalMessageCount = {}
-    chatStoreMock.getState().messageRanges = {}
-    chatStoreMock.getState().isLoadingOlderMessages = {}
     chatStoreMock.getState().isCompacting = {}
     chatStoreMock.getState().autoApprovedTools = {}
     appSettingsMock.displayMode = 'result'
-    chatStoreMock.getState().fetchOlderMessages.mockReset()
-  })
-
-  it('shows pagination loading outside the virtualized message content', async () => {
-    const sessionId = 'session-pagination'
-    const messages = makeMessages(100)
-    chatStoreMock.setMessages(sessionId, messages)
-    chatStoreMock.setTotalMessageCount(sessionId, 100)
-    chatStoreMock.setMessageRange(sessionId, { total: 100, start: 50, end: 100 })
-
-    renderWithI18n(
-      <div style={{ height: '400px', width: '600px', display: 'flex', flexDirection: 'column' }}>
-        <MessageList sessionId={sessionId} workspaceId="ws-1" onOpenDrawer={() => {}} />
-      </div>,
-    )
-
-    const scrollContainer = document.querySelector('[data-testid="conversation-list-scroll"]') as HTMLDivElement
-    await waitFor(() => expect(scrollContainer.scrollHeight).toBeGreaterThan(scrollContainer.clientHeight))
-    const itemList = document.querySelector('[data-testid="virtuoso-item-list"]')
-
-    await act(async () => chatStoreMock.setLoadingOlder(sessionId, true))
-    await waitFor(() => {
-      expect(document.querySelector('[data-testid="history-pagination-loading"]')?.textContent)
-        .toContain('Loading earlier messages')
-    })
-    expect(itemList?.contains(document.querySelector('[data-testid="history-pagination-loading"]'))).toBe(false)
   })
 
   it('keeps the panel scrolled to bottom when streaming grows the last merged turn', async () => {
@@ -428,7 +389,7 @@ describe('ConversationList result mode streaming scroll', () => {
     const scrollContainer = document.querySelector('[data-testid="conversation-list-scroll"]') as HTMLDivElement
     await waitFor(() => {
       expect(scrollContainer.classList.contains('opacity-0')).toBe(false)
-      expect(document.querySelector('[data-item-index="1001799"]')).toBeTruthy()
+      expect(document.querySelector('[data-item-index="1799"]')).toBeTruthy()
     }, { timeout: 5000 })
 
     const mountedRows = Array.from(scrollContainer.querySelectorAll<HTMLElement>('[data-item-key]'))
@@ -445,8 +406,8 @@ describe('ConversationList result mode streaming scroll', () => {
     expect(longTasks.filter((duration) => duration > 50)).toEqual([])
   })
 
-  it('preserves the visible anchor when history prepends during a tail update', async () => {
-    const sessionId = 'session-prepend'
+  it('preserves the visible anchor when the streaming tail updates', async () => {
+    const sessionId = 'session-tail-update'
     const initialMessages = makeMessages(80)
     chatStoreMock.setMessages(sessionId, initialMessages)
     chatStoreMock.setTotalMessageCount(sessionId, 100)
@@ -473,18 +434,13 @@ describe('ConversationList result mode streaming scroll', () => {
     expect(anchor).toBeTruthy()
     const anchorKey = anchor.dataset.itemKey
     const anchorTop = anchor.getBoundingClientRect().top
-    const older = makeMessages(20).map((message, index) => ({
-      ...message,
-      id: `older-${index}`,
-      timestamp: index - 20,
-    }))
     const updatedTail = {
       ...initialMessages.at(-1)!,
       parts: [textPart('Concurrent streaming tail update')],
     }
 
     await act(async () => {
-      chatStoreMock.setMessages(sessionId, [...older, ...initialMessages.slice(0, -1), updatedTail])
+      chatStoreMock.setMessages(sessionId, [...initialMessages.slice(0, -1), updatedTail])
     })
 
     await waitFor(() => {

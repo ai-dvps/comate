@@ -14,6 +14,7 @@ const mockChatStore = {
   activeSessionIds: {},
   isStreaming: {},
   isLoadingMessages: {},
+  historyLoadState: {} as Record<string, 'loading' | 'loaded'>,
   approvalQueue: {},
   messages: {},
   domCache: {},
@@ -103,10 +104,12 @@ vi.mock('./ChatEmptyState', () => ({
 
 describe('ChatPanel', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     mockChatStore.sessions = {}
     mockChatStore.activeSessionIds = {}
     mockChatStore.isStreaming = {}
     mockChatStore.isLoadingMessages = {}
+    mockChatStore.historyLoadState = {}
     mockChatStore.approvalQueue = {}
     mockChatStore.messages = {}
     mockChatStore.domCache = {}
@@ -179,12 +182,81 @@ describe('ChatPanel', () => {
         },
       ],
     }
+    mockChatStore.historyLoadState = { s1: 'loaded' }
 
     renderWithI18n(<ChatPanel workspaceId="ws1" />)
 
     expect(screen.queryByTestId('approval-surface')).not.toBeInTheDocument()
     expect(screen.queryByTestId('prompt-input')).not.toBeInTheDocument()
     expect(screen.getByText('Waiting for the bot user to respond in chat...')).toBeInTheDocument()
+  })
+
+  it('loads complete history even when live-only messages already exist', () => {
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.messages = { s1: [{ id: 'live-1', role: 'assistant', parts: [], timestamp: 1 }] }
+    mockChatStore.sessions = {
+      ws1: [{
+        id: 's1',
+        workspaceId: 'ws1',
+        name: 'Existing session',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        isDraft: false,
+      }],
+    }
+
+    renderWithI18n(<ChatPanel workspaceId="ws1" />)
+
+    expect(mockChatStore.loadMessages).toHaveBeenCalledWith('ws1', 's1')
+    expect(screen.getByRole('status')).toHaveTextContent('Loading conversation history')
+    expect(screen.queryByTestId('message-list')).not.toBeInTheDocument()
+  })
+
+  it('renders the message list after complete history is loaded', () => {
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.messages = { s1: [] }
+    mockChatStore.historyLoadState = { s1: 'loaded' }
+    mockChatStore.sessions = {
+      ws1: [{
+        id: 's1',
+        workspaceId: 'ws1',
+        name: 'Existing session',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        isDraft: false,
+      }],
+    }
+
+    renderWithI18n(<ChatPanel workspaceId="ws1" />)
+
+    expect(screen.getByTestId('message-list')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('does not loop the automatic history request after a load failure', () => {
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.messages = { s1: [] }
+    mockChatStore.sessions = {
+      ws1: [{
+        id: 's1',
+        workspaceId: 'ws1',
+        name: 'Existing session',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        isDraft: false,
+      }],
+    }
+
+    const rendered = renderWithI18n(<ChatPanel workspaceId="ws1" />)
+    mockChatStore.historyLoadState = { s1: 'loading' }
+    rendered.rerender(<I18nextProvider i18n={i18n}><ChatPanel workspaceId="ws1" /></I18nextProvider>)
+    mockChatStore.historyLoadState = {}
+    rendered.rerender(<I18nextProvider i18n={i18n}><ChatPanel workspaceId="ws1" /></I18nextProvider>)
+
+    expect(mockChatStore.loadMessages).toHaveBeenCalledTimes(1)
   })
 
   it('does not render the floating wrapper when no workflows or tasks are active', () => {

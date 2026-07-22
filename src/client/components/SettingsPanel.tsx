@@ -14,7 +14,6 @@ import {
   Bot,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import { useChatStore } from '../stores/chat-store'
 import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { useUpdaterStore } from '../stores/updater-store'
@@ -73,8 +72,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const isStoreLoading = useWorkspaceStore((s) => s.isLoading)
 
   const { reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays, autoCheckUpdates, setAutoCheckUpdates, notificationSoundsEnabled, setNotificationSoundsEnabled, notificationSoundsVolume, setNotificationSoundsVolume, lastUpdateCheckAt, setLastUpdateCheckAt } = useAppSettings()
-  const windowCap = useChatStore((s) => s.windowCap)
-  const setWindowCap = useChatStore((s) => s.setWindowCap)
   const updateStatus = useUpdaterStore((s) => s.status)
   const updateError = useUpdaterStore((s) => s.error)
   const updateInfo = useUpdaterStore((s) => s.update)
@@ -94,7 +91,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [appAutoCheckUpdates, setAppAutoCheckUpdates] = useState(autoCheckUpdates)
   const [appNotificationSounds, setAppNotificationSounds] = useState(notificationSoundsEnabled)
   const [appNotificationSoundsVolume, setAppNotificationSoundsVolume] = useState(notificationSoundsVolume)
-  const [windowCapInput, setWindowCapInput] = useState(String(windowCap))
   const [archiveThresholdDaysInput, setArchiveThresholdDaysInput] = useState(String(archiveThresholdDays))
 
   const [workspaceDirty, setWorkspaceDirty] = useState(false)
@@ -109,7 +105,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     appAutoCheckUpdates: autoCheckUpdates,
     appNotificationSounds: notificationSoundsEnabled,
     appNotificationSoundsVolume: notificationSoundsVolume,
-    appWindowCap: windowCap,
     appArchiveThresholdDays: archiveThresholdDays,
     workspaceState: {} as Record<string, WorkspaceFormState>,
   })
@@ -132,7 +127,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appAutoCheckUpdates: autoCheckUpdates,
       appNotificationSounds: notificationSoundsEnabled,
       appNotificationSoundsVolume: notificationSoundsVolume,
-      appWindowCap: windowCap,
       appArchiveThresholdDays: archiveThresholdDays,
       workspaceState: JSON.parse(JSON.stringify(initial)),
     }
@@ -141,17 +135,12 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppAutoCheckUpdates(autoCheckUpdates)
     setAppNotificationSounds(notificationSoundsEnabled)
     setAppNotificationSoundsVolume(notificationSoundsVolume)
-    setWindowCapInput(String(windowCap))
     setArchiveThresholdDaysInput(String(archiveThresholdDays))
 
     if (workspaces.length > 0) {
       setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, windowCap, archiveThresholdDays])
-
-  useEffect(() => {
-    setWindowCapInput(String(windowCap))
-  }, [windowCap])
+  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, archiveThresholdDays])
 
   useEffect(() => {
     setArchiveThresholdDaysInput(String(archiveThresholdDays))
@@ -194,7 +183,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appAutoCheckUpdates !== snapshotRef.current.appAutoCheckUpdates ||
       appNotificationSounds !== snapshotRef.current.appNotificationSounds ||
       appNotificationSoundsVolume !== snapshotRef.current.appNotificationSoundsVolume ||
-      windowCap !== snapshotRef.current.appWindowCap ||
       archiveThresholdDays !== snapshotRef.current.appArchiveThresholdDays
     )
   }, [
@@ -203,7 +191,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     appAutoCheckUpdates,
     appNotificationSounds,
     appNotificationSoundsVolume,
-    windowCap,
     archiveThresholdDays,
   ])
 
@@ -257,11 +244,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setNotificationSoundsEnabled(appNotificationSounds)
     setNotificationSoundsVolume(appNotificationSoundsVolume)
 
-    const parsedCap = parseInt(windowCapInput, 10)
-    if (!isNaN(parsedCap) && parsedCap !== windowCap) {
-      setWindowCap(parsedCap)
-    }
-
     const parsedArchiveThreshold = parseInt(archiveThresholdDaysInput, 10)
     const nextArchiveThresholdDays =
       !isNaN(parsedArchiveThreshold) && parsedArchiveThreshold > 0
@@ -278,7 +260,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       appAutoCheckUpdates,
       appNotificationSounds,
       appNotificationSoundsVolume,
-      appWindowCap: windowCap,
       appArchiveThresholdDays: nextArchiveThresholdDays,
     }
   }, [
@@ -287,8 +268,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     appAutoCheckUpdates,
     appNotificationSounds,
     appNotificationSoundsVolume,
-    windowCapInput,
-    windowCap,
     archiveThresholdDaysInput,
     archiveThresholdDays,
     setReopenLastWorkspace,
@@ -296,7 +275,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAutoCheckUpdates,
     setNotificationSoundsEnabled,
     setNotificationSoundsVolume,
-    setWindowCap,
     setArchiveThresholdDays,
   ])
 
@@ -307,11 +285,9 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     setAppAutoCheckUpdates(snapshot.appAutoCheckUpdates)
     setAppNotificationSounds(snapshot.appNotificationSounds)
     setAppNotificationSoundsVolume(snapshot.appNotificationSoundsVolume)
-    setWindowCap(snapshot.appWindowCap)
     setArchiveThresholdDays(snapshot.appArchiveThresholdDays)
-    setWindowCapInput(String(snapshot.appWindowCap))
     setArchiveThresholdDaysInput(String(snapshot.appArchiveThresholdDays))
-  }, [setWindowCap, setArchiveThresholdDays, setWindowCapInput, setArchiveThresholdDaysInput])
+  }, [setArchiveThresholdDays, setArchiveThresholdDaysInput])
 
   const saveWorkspace = useCallback(async () => {
     if (!selectedWorkspaceId || !workspaceState[selectedWorkspaceId]) return
@@ -516,14 +492,6 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
                 updateInfo={updateInfo}
                 downloadProgress={downloadProgress}
                 onRecordUpdateCheck={() => setLastUpdateCheckAt(new Date().toISOString())}
-                windowCap={windowCapInput}
-                onWindowCapChange={setWindowCapInput}
-                onWindowCapCommit={(val) => {
-                  const parsed = parseInt(val, 10)
-                  if (!isNaN(parsed)) {
-                    setWindowCap(parsed)
-                  }
-                }}
                 archiveThresholdDays={archiveThresholdDaysInput}
                 onArchiveThresholdDaysChange={setArchiveThresholdDaysInput}
                 onArchiveThresholdDaysCommit={(val) => {
@@ -652,9 +620,6 @@ export function GeneralTab({
   updateInfo,
   downloadProgress,
   onRecordUpdateCheck,
-  windowCap,
-  onWindowCapChange,
-  onWindowCapCommit,
   archiveThresholdDays,
   onArchiveThresholdDaysChange,
   onArchiveThresholdDaysCommit,
@@ -680,9 +645,6 @@ export function GeneralTab({
   updateInfo: import('../stores/updater-store').UpdateInfo | null
   downloadProgress: number
   onRecordUpdateCheck: () => void
-  windowCap: string
-  onWindowCapChange: (v: string) => void
-  onWindowCapCommit: (v: string) => void
   archiveThresholdDays: string
   onArchiveThresholdDaysChange: (v: string) => void
   onArchiveThresholdDaysCommit: (v: string) => void
@@ -734,29 +696,6 @@ export function GeneralTab({
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-xl space-y-5">
           <PathConfigSection />
-
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              {t('general.messageWindowCap')}
-            </label>
-            <input
-              type="number"
-              min={50}
-              max={1000}
-              value={windowCap}
-              onChange={(e) => onWindowCapChange(e.target.value)}
-              onBlur={() => onWindowCapCommit(windowCap)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  onWindowCapCommit(windowCap)
-                }
-              }}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-            <p className="text-[10px] text-text-tertiary mt-1">
-              {t('general.messageWindowCapHint')}
-            </p>
-          </div>
 
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">
@@ -1905,6 +1844,5 @@ function BoundBotCard({ workspaceId, onManageBots }: { workspaceId: string; onMa
     </div>
   )
 }
-
 
 

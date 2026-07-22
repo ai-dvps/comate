@@ -48,8 +48,6 @@ const chatStoreMock = vi.hoisted(() => {
     isCompacting: {} as Record<string, boolean>,
     compactingStartTime: {} as Record<string, number>,
     totalMessageCount: {} as Record<string, number>,
-    isLoadingOlderMessages: {} as Record<string, boolean>,
-    fetchOlderMessages: vi.fn(() => Promise.resolve()),
   }
   function notify() {
     listeners.forEach((l) => l())
@@ -102,7 +100,6 @@ describe('MessageList result mode render stability', () => {
     chatStoreMock.getState().isCompacting = {}
     chatStoreMock.getState().compactingStartTime = {}
     chatStoreMock.getState().totalMessageCount = {}
-    chatStoreMock.getState().isLoadingOlderMessages = {}
     renderCounter.clear()
   })
 
