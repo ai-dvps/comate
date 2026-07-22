@@ -39,31 +39,6 @@ import {
 } from './browser-mcp.js';
 import { isBrowserToolName } from './browser-tool-names.js';
 
-function isToolResultOnlyMessage(message: ChatMessage): boolean {
-  return message.role === 'user' && message.parts.length > 0 &&
-    message.parts.every((part) => part.type === 'tool_result');
-}
-
-export function alignHistoryPageStart(messages: ChatMessage[], requestedStart: number): number {
-  let start = Math.max(0, Math.min(requestedStart, messages.length));
-  while (start > 0 && start < messages.length) {
-    const current = messages[start];
-    const previous = messages[start - 1];
-    if (isToolResultOnlyMessage(current)) {
-      start -= 1;
-      continue;
-    }
-    if (
-      current.role === 'assistant' &&
-      (previous.role === 'assistant' || isToolResultOnlyMessage(previous))
-    ) {
-      start -= 1;
-      continue;
-    }
-    break;
-  }
-  return start;
-}
 import { browserControlService } from './browser-control.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
@@ -699,9 +674,8 @@ export class ChatService {
   async loadMessages(
     sessionId: string,
     workspaceId: string,
-    offset?: number,
-    limit?: number,
-  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[]; total: number; start: number; end: number }> {
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[]; total: number }> {
+    const startedAt = Date.now();
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
@@ -710,7 +684,9 @@ export class ChatService {
     const options: import('@anthropic-ai/claude-agent-sdk').GetSessionMessagesOptions = {
       dir: normalizeWindowsPath(workspace.folderPath),
     };
+    const sdkLoadStartedAt = Date.now();
     const sdkMessages = await this.sdkClient.getSessionMessages(sessionId, options);
+    const sdkLoadMs = Date.now() - sdkLoadStartedAt;
 
     // If we successfully loaded messages from SDK, the session is real — sync it
     if (sdkMessages.length > 0) {
@@ -725,6 +701,7 @@ export class ChatService {
       }
     }
 
+    const normalizeStartedAt = Date.now();
     const normalized: ChatMessage[] = [];
     const timestampBase = this.historyTimestampBases.get(sessionId) ??
       Date.now() - sdkMessages.length * 1000;
@@ -739,21 +716,23 @@ export class ChatService {
         normalized.push(chatMessage);
       }
     });
+    const normalizeMs = Date.now() - normalizeStartedAt;
     const total = normalized.length;
-    const requestedStart = Math.max(0, Math.min(offset ?? (limit === undefined ? 0 : total - limit), total));
-    const requestedEnd = Math.max(
-      requestedStart,
-      Math.min(limit === undefined ? total : requestedStart + limit, total),
-    );
-    const start = alignHistoryPageStart(normalized, requestedStart);
-    // Alignment may expand a page backward to keep a tool-use chain intact.
-    // Keep the requested end fixed so the expansion cannot create a gap.
-    const end = Math.max(start, requestedEnd);
-    const page = normalized.slice(start, end);
+    const derivedStateStartedAt = Date.now();
     const tasks = scanSdkMessagesForTasks(sdkMessages);
     const subagents = await this.loadSubagentsForSession(sessionId, workspaceId, sdkMessages);
     const workflows = await this.loadWorkflowsForSession(sessionId, workspaceId);
-    return { messages: page, tasks, subagents, workflows, total, start, end };
+    diagLog('[chat-history] complete load', {
+      sessionId,
+      workspaceId,
+      sdkMessageCount: sdkMessages.length,
+      normalizedMessageCount: total,
+      sdkLoadMs,
+      normalizeMs,
+      derivedStateMs: Date.now() - derivedStateStartedAt,
+      totalMs: Date.now() - startedAt,
+    });
+    return { messages: normalized, tasks, subagents, workflows, total };
   }
 
   async loadMessagesAfter(

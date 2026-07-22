@@ -9,8 +9,6 @@
     "bots": "机器人"
   },
   "general": {
-    "messageWindowCap": "消息窗口上限",
-    "messageWindowCapHint": "每个会话保留在内存中的最大消息数（50–1000）。较早的消息会被裁剪，但可以通过向上滚动重新获取。",
     "archiveThresholdDays": "归档阈值（天）",
     "archiveThresholdDaysHint": "超过此天数未活动的会话将自动归档。默认值为 14 天。更改将在下次加载会话列表时生效。",
     "reopenLastWorkspace": "启动时重新打开上次工作区",

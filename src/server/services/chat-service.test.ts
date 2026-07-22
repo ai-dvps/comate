@@ -3,7 +3,6 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
   ChatService,
-  alignHistoryPageStart,
   __setIdleGracePeriodForTesting,
   __restoreIdleGracePeriod,
   __setRebuildPollIntervalForTesting,
@@ -88,36 +87,14 @@ function collectDiagLogs(): { logs: string[]; restore: () => void } {
   };
 }
 
-describe('alignHistoryPageStart', () => {
-  const historyMessage = (
-    id: string,
-    role: 'user' | 'assistant',
-    parts: Array<{ type: 'text'; text: string } | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }>,
-  ) => ({ id, role, parts, timestamp: 1 });
-
-  it('moves a page start backward across an assistant and tool-result chain', () => {
-    const messages = [
-      historyMessage('u1', 'user', [{ type: 'text', text: 'run' }]),
-      historyMessage('a1', 'assistant', [{ type: 'text', text: 'working' }]),
-      historyMessage('r1', 'user', [{ type: 'tool_result', toolUseId: 't1', output: 'ok', isError: false }]),
-      historyMessage('a2', 'assistant', [{ type: 'text', text: 'done' }]),
-      historyMessage('u2', 'user', [{ type: 'text', text: 'next' }]),
-    ];
-
-    assert.strictEqual(alignHistoryPageStart(messages, 3), 1);
-    assert.strictEqual(alignHistoryPageStart(messages, 2), 1);
-    assert.strictEqual(alignHistoryPageStart(messages, 4), 4);
-  });
-});
-
-describe('chat-service history pagination', { concurrency: false }, () => {
+describe('chat-service complete history loading', { concurrency: false }, () => {
   const originalGet = workspaceStore.get.bind(workspaceStore);
 
   afterEach(() => {
     workspaceStore.get = originalGet;
   });
 
-  it('keeps the requested page end when aligning the start backward', async () => {
+  it('returns the complete normalized transcript without range slicing', async () => {
     const sdkMessages = [
       { type: 'user', uuid: 'u1', message: { role: 'user', content: 'run' } },
       { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] } },
@@ -139,11 +116,12 @@ describe('chat-service history pagination', { concurrency: false }, () => {
     workspaceStore.get = async () => createMockWorkspace('ws-1');
     const service = new ChatService(new PaginationSdkClient());
 
-    const page = await service.loadMessages('s1', 'ws-1', undefined, 3);
+    const result = await service.loadMessages('s1', 'ws-1');
 
-    assert.strictEqual(page.start, 1);
-    assert.strictEqual(page.end, 6);
-    assert.deepStrictEqual(page.messages.map((message) => message.id), ['a1', 'r1', 'a2', 'u2', 'a3']);
+    assert.strictEqual(result.total, 6);
+    assert.strictEqual('start' in result, false);
+    assert.strictEqual('end' in result, false);
+    assert.deepStrictEqual(result.messages.map((message) => message.id), ['u1', 'a1', 'r1', 'a2', 'u2', 'a3']);
   });
 });
 

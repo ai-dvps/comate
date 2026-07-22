@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Bot, LoaderCircle } from 'lucide-react'
+import { ArrowDown, Bot } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Virtuoso, type ListRange, type VirtuosoHandle } from 'react-virtuoso'
 
@@ -14,12 +14,8 @@ import { Button } from './ui/button'
 import CompactingIndicator from './CompactingIndicator'
 import ConversationRow, { type ConversationRenderRow } from './ConversationRow'
 
-const FETCH_SIZE = 50
-const FIRST_ITEM_INDEX = 1_000_000
-
 interface ConversationListProps {
   sessionId: string
-  workspaceId: string
   rows: ConversationRenderRow[]
   projection: ConversationProjection
   displayMode: DisplayMode
@@ -35,7 +31,6 @@ interface ConversationListProps {
 
 export default function ConversationList({
   sessionId,
-  workspaceId,
   rows,
   projection,
   displayMode,
@@ -49,22 +44,11 @@ export default function ConversationList({
   autoApprovedTools,
 }: ConversationListProps) {
   const { t } = useTranslation('chat')
-  const hasOlderMessages = useChatStore((state) => (state.messageRanges?.[sessionId]?.start ?? 0) > 0)
-  const isLoadingOlder = useChatStore((state) => state.isLoadingOlderMessages[sessionId] || false)
   const isCompacting = useChatStore((state) => state.isCompacting[sessionId] || false)
-  const fetchOlderMessages = useChatStore((state) => state.fetchOlderMessages)
   const follow = useConversationFollow()
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const scrollerRef = useRef<HTMLElement | null>(null)
-  const firstItemIndexRef = useRef(FIRST_ITEM_INDEX)
-  const previousPrependRef = useRef(0)
-  const fetchingRef = useRef(false)
   const [initialReady, setInitialReady] = useState(rows.length === 0)
-
-  if (projection.prependedRowCount !== previousPrependRef.current) {
-    firstItemIndexRef.current -= projection.prependedRowCount
-    previousPrependRef.current = projection.prependedRowCount
-  }
 
   const setScroller = useCallback((element: HTMLElement | Window | null) => {
     scrollerRef.current = element instanceof HTMLElement ? element : null
@@ -145,18 +129,10 @@ export default function ConversationList({
   }, [follow.isFollowingRef, projection.tailRevision])
 
   const handleRangeChanged = useCallback((range: ListRange) => {
-    if (rows.length === 0 || range.endIndex >= firstItemIndexRef.current + rows.length - 1) {
+    if (rows.length === 0 || range.endIndex >= rows.length - 1) {
       setInitialReady(true)
     }
   }, [rows.length])
-
-  const handleStartReached = useCallback(() => {
-    if (fetchingRef.current || isLoadingOlder || !hasOlderMessages) return
-    fetchingRef.current = true
-    void fetchOlderMessages(workspaceId, sessionId, FETCH_SIZE).finally(() => {
-      fetchingRef.current = false
-    })
-  }, [fetchOlderMessages, hasOlderMessages, isLoadingOlder, sessionId, workspaceId])
 
   const scrollToBottom = useCallback(() => {
     follow.followToBottom()
@@ -183,11 +159,9 @@ export default function ConversationList({
         ref={virtuosoRef}
         data={rows}
         defaultItemHeight={120}
-        firstItemIndex={firstItemIndexRef.current}
         initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         computeItemKey={(_index, row) => row.key}
         scrollerRef={setScroller}
-        startReached={handleStartReached}
         rangeChanged={handleRangeChanged}
         atBottomThreshold={1}
         atBottomStateChange={(atBottom) => {
@@ -214,18 +188,6 @@ export default function ConversationList({
           </div>
         )}
       />
-      {isLoadingOlder ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center"
-          data-testid="history-pagination-loading"
-          role="status"
-        >
-          <div className="flex items-center gap-2 rounded-md border border-border bg-bg/95 px-3 py-2 text-xs text-text-secondary shadow-sm">
-            <LoaderCircle className="size-3.5 animate-spin" />
-            <span>{t('loadingEarlierMessages')}</span>
-          </div>
-        </div>
-      ) : null}
       {!initialReady && <div className="absolute inset-0 bg-bg" aria-busy="true" />}
       {!follow.isFollowing && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-bg to-transparent" />}
       {!follow.isFollowing && (

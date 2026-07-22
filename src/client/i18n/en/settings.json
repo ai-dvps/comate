@@ -9,8 +9,6 @@
     "bots": "Bots"
   },
   "general": {
-    "messageWindowCap": "Message Window Cap",
-    "messageWindowCapHint": "Max messages kept in memory per session (50–1000). Older messages are pruned but can be re-fetched by scrolling up.",
     "archiveThresholdDays": "Archive Threshold (days)",
     "archiveThresholdDaysHint": "Sessions inactive for longer than this are automatically archived. The default is 14 days. Changes apply on the next session list load.",
     "reopenLastWorkspace": "Reopen last workspace on launch",

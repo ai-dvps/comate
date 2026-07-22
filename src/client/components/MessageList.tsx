@@ -48,7 +48,6 @@ function sameResultMap(
 
 export default function MessageList({
   sessionId,
-  workspaceId,
   onOpenDrawer,
   onOpenWorkflow,
   onOpenProcessRegion,
@@ -110,7 +109,6 @@ export default function MessageList({
   return (
     <ConversationList
       sessionId={sessionId}
-      workspaceId={workspaceId}
       rows={rows}
       projection={projection}
       displayMode={displayMode}
