@@ -1,6 +1,6 @@
 {
   "name": "comate",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "description": "Your friendly AI workspace companion",
   "type": "module",
   "workspaces": [
