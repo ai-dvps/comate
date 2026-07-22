@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Nothing yet.
+
+### Changed
+
+- Nothing yet.
+
+### Fixed
+
+- Nothing yet.
+
+## [0.0.26] - 2026-07-23
+
+### Added
+
 - **Embedded controlled browser** — chat sessions can now drive a real browser through natural-language prompts. A browser button in the chat panel header opens a collapsible, resizable pane to the right of the chat area showing the live page (powered by a locally hosted Steel browser engine), where you watch Claude navigate, fill forms, and extract content. You can take over at any moment — type credentials, scan a QR code, or finish a complex flow yourself — then hand control back; Claude resumes with a diff of what changed (password fields always masked). Everything you type in the pane stays out of the model context and the chat record.
 - **Human handoff with timeout recovery** — when the agent hits a login wall, CAPTCHA, QR code, or ambiguous form, it explicitly hands the browser to you: the pane auto-expands, a pending card appears in chat, and a badge marks the header button. Unanswered handoffs expire after a server-fixed 10 minutes into a recoverable state instead of hanging the task, and the agent explains how to resume.
 - **Submit hard gate and navigation confirmation** — form submissions, payments, and publishing actions always require per-action confirmation (even in auto approval mode), showing the target URL and field list with sensitive values redacted; approvals are re-verified against the live form before dispatch (TOCTOU protection). In auto mode, the first cross-domain navigation per session asks once before proceeding. WeCom/Feishu bot sessions cannot use the browser.
