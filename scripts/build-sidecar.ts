@@ -11,6 +11,7 @@ import {
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { buildSteelBundle } from './build-steel-bundle.js';
+import { buildChromiumBundle } from './build-chromium-bundle.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -269,6 +270,10 @@ async function build() {
   // 10. Vendor the Steel browser bundle into src-tauri/resources/steel/
   console.log('\n--- Vendoring Steel browser bundle ---');
   await buildSteelBundle();
+
+  // 11. Vendor the pinned Chrome for Testing zip into src-tauri/resources/chromium/
+  console.log('\n--- Vendoring Chrome for Testing bundle ---');
+  await buildChromiumBundle();
 
   console.log('\n=== Sidecar build complete ===');
 }

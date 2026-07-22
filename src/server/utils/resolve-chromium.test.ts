@@ -15,16 +15,17 @@ import {
 } from './resolve-chromium.js';
 
 /**
- * Chromium ladder contract (U2/R16): system Chrome/Edge > COMATE_CHROMIUM_PATH
- * > pinned lazy download. Download integrity: SHA-256 verified, temp-dir
+ * Chromium ladder contract: COMATE_CHROMIUM_PATH > opt-in system Chrome
+ * (COMATE_USE_SYSTEM_CHROME) > bundled Chrome for Testing (default) > pinned
+ * lazy download. Bundled/download integrity: SHA-256 verified, temp-dir
  * extraction + atomic rename, mismatch fails closed with no half state (KTD-2).
  */
 
 function makeDeps(overrides: Partial<ChromiumDeps>): {
   deps: ChromiumDeps;
-  calls: { downloads: number };
+  calls: { downloads: number; bundledExtracts: number };
 } {
-  const calls = { downloads: 0 };
+  const calls = { downloads: 0, bundledExtracts: 0 };
   const deps: ChromiumDeps = {
     platform: 'darwin',
     arch: 'arm64',
@@ -33,6 +34,11 @@ function makeDeps(overrides: Partial<ChromiumDeps>): {
     fileExists: () => false,
     findInPath: () => undefined,
     storageDir: mkdtempSync(join(tmpdir(), 'comate-chromium-deps-')),
+    bundledCftZip: () => undefined,
+    extractBundledCft: async () => {
+      calls.bundledExtracts += 1;
+      return '/fake/bundled-extracted-chrome';
+    },
     download: async () => {
       calls.downloads += 1;
       return '/fake/downloaded/chrome';
@@ -51,21 +57,48 @@ const CFT_EXE_REL = join(
 );
 
 describe('resolve-chromium ladder', { concurrency: false }, () => {
-  it('returns system Chrome when a well-known install path exists', () => {
+  it('uses opt-in system Chrome when COMATE_USE_SYSTEM_CHROME is set', () => {
     const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
     const { deps, calls } = makeDeps({
       fileExists: (p) => p === chromePath,
-      env: { COMATE_CHROMIUM_PATH: '/configured/chrome' },
+      env: { COMATE_USE_SYSTEM_CHROME: '1', COMATE_CHROMIUM_PATH: '/configured/chrome' },
     });
     return resolveChromium({ allowDownload: true, deps }).then((hit) => {
       assert.ok(hit);
       assert.strictEqual(hit.source, 'system');
       assert.strictEqual(hit.executablePath, chromePath);
       assert.strictEqual(calls.downloads, 0);
+      assert.strictEqual(calls.bundledExtracts, 0);
     });
   });
 
-  it('uses COMATE_CHROMIUM_PATH when no system browser exists', async () => {
+  it('ignores system Chrome unless COMATE_USE_SYSTEM_CHROME is set', async () => {
+    const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const { deps, calls } = makeDeps({
+      fileExists: (p) => p === chromePath,
+    });
+    const hit = await resolveChromium({ allowDownload: false, deps });
+    // System Chrome is no longer the default — without the opt-in flag the
+    // ladder falls through (no bundled zip here) instead of driving the user's
+    // installed Chrome.
+    assert.strictEqual(hit, undefined);
+    assert.strictEqual(calls.downloads, 0);
+  });
+
+  it('prefers COMATE_CHROMIUM_PATH over the bundled CfT', async () => {
+    const { deps, calls } = makeDeps({
+      env: { COMATE_CHROMIUM_PATH: '/configured/chrome' },
+      fileExists: (p) => p === '/configured/chrome' || p === '/fake/bundled.zip',
+      bundledCftZip: () => '/fake/bundled.zip',
+    });
+    const hit = await resolveChromium({ allowDownload: true, deps });
+    assert.ok(hit);
+    assert.strictEqual(hit.source, 'config');
+    assert.strictEqual(calls.bundledExtracts, 0);
+    assert.strictEqual(calls.downloads, 0);
+  });
+
+  it('uses COMATE_CHROMIUM_PATH when no system browser is opted in', async () => {
     const { deps, calls } = makeDeps({
       fileExists: (p) => p === '/configured/chrome',
       env: { COMATE_CHROMIUM_PATH: '/configured/chrome' },
@@ -77,15 +110,60 @@ describe('resolve-chromium ladder', { concurrency: false }, () => {
     assert.strictEqual(calls.downloads, 0);
   });
 
-  it('falls through a stale COMATE_CHROMIUM_PATH to the download rung', async () => {
+  it('extracts the bundled CfT by default and never downloads', async () => {
     const { deps, calls } = makeDeps({
-      fileExists: () => false,
+      bundledCftZip: () => '/fake/bundled.zip',
+      fileExists: (p) => p === '/fake/bundled.zip',
+    });
+    const hit = await resolveChromium({ allowDownload: true, deps });
+    assert.ok(hit);
+    assert.strictEqual(hit.source, 'bundled');
+    assert.strictEqual(hit.version, CHROME_FOR_TESTING_VERSION);
+    assert.strictEqual(calls.bundledExtracts, 1);
+    assert.strictEqual(calls.downloads, 0);
+  });
+
+  it('defers bundled CfT extraction when allowDownload is false', async () => {
+    const { deps, calls } = makeDeps({
+      bundledCftZip: () => '/fake/bundled.zip',
+      fileExists: (p) => p === '/fake/bundled.zip',
+    });
+    const hit = await resolveChromium({ allowDownload: false, deps });
+    assert.strictEqual(hit, undefined);
+    assert.strictEqual(calls.bundledExtracts, 0);
+  });
+
+  it('reuses an already-extracted bundled CfT without re-extracting', async () => {
+    const storageDir = mkdtempSync(join(tmpdir(), 'comate-chromium-test-'));
+    const exe = join(
+      storageDir,
+      'chromium',
+      `cft-${CHROME_FOR_TESTING_VERSION}-mac-arm64`,
+      CFT_EXE_REL,
+    );
+    mkdirSync(dirname(exe), { recursive: true });
+    writeFileSync(exe, 'fake');
+    const { deps, calls } = makeDeps({
+      storageDir,
+      fileExists: (p) => p === exe || p === '/fake/bundled.zip',
+      bundledCftZip: () => '/fake/bundled.zip',
+    });
+    const hit = await resolveChromium({ allowDownload: false, deps });
+    assert.ok(hit);
+    assert.strictEqual(hit.source, 'bundled');
+    assert.strictEqual(calls.bundledExtracts, 0);
+    assert.strictEqual(calls.downloads, 0);
+  });
+
+  it('falls back to the lazy download when no bundle is present', async () => {
+    const { deps, calls } = makeDeps({
       env: { COMATE_CHROMIUM_PATH: '/configured/missing-chrome' },
     });
     const hit = await resolveChromium({ allowDownload: true, deps });
     assert.ok(hit);
     assert.strictEqual(hit.source, 'download');
     assert.strictEqual(calls.downloads, 1);
+    assert.strictEqual(calls.bundledExtracts, 0);
   });
 
   it('reuses an existing pinned download without re-downloading', async () => {
@@ -106,7 +184,7 @@ describe('resolve-chromium ladder', { concurrency: false }, () => {
     assert.strictEqual(calls.downloads, 0);
   });
 
-  it('does not download when allowDownload is false', async () => {
+  it('does not download when allowDownload is false and nothing is cached', async () => {
     const { deps, calls } = makeDeps({});
     const hit = await resolveChromium({ allowDownload: false, deps });
     assert.strictEqual(hit, undefined);
@@ -119,10 +197,11 @@ describe('resolve-chromium ladder', { concurrency: false }, () => {
     assert.strictEqual(hit, undefined);
   });
 
-  it('finds Linux browsers via PATH lookup', async () => {
+  it('finds Linux browsers via PATH lookup when opted in', async () => {
     const { deps } = makeDeps({
       platform: 'linux',
       arch: 'x64',
+      env: { COMATE_USE_SYSTEM_CHROME: '1' },
       findInPath: (cmd) => (cmd === 'google-chrome' ? '/usr/bin/google-chrome' : undefined),
     });
     const hit = await resolveChromium({ allowDownload: false, deps });

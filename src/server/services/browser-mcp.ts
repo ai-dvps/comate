@@ -325,7 +325,7 @@ const UNAVAILABLE_RESOLUTIONS: Record<string, string> = {
   browser_limit_reached:
     'The concurrent browser limit is reached. Close another chat session\'s browser and retry.',
   browser_chromium_missing:
-    'No Chromium executable is available. Install Chrome/Edge, set COMATE_CHROMIUM_PATH, or allow the pinned download, then retry.',
+    'No Chromium executable is available. The bundled Chrome for Testing is missing — reinstall the app, set COMATE_CHROMIUM_PATH, or set COMATE_USE_SYSTEM_CHROME=1 to use your installed Chrome, then retry.',
   browser_start_failed:
     'The embedded browser process failed to start. Retry the call; check /api/health/browser if it persists.',
 };
