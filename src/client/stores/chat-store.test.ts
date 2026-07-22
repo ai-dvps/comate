@@ -575,6 +575,25 @@ describe('bot session guards', () => {
     }
   })
 
+  it('marks complete history ready when a draft sends its first message', () => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [{ ...makeSession('gui'), isDraft: true }] },
+      serverNonce: { s1: 'nonce-1' },
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      useChatStore.getState().sendMessage('ws-1', 's1', 'first prompt')
+
+      const state = useChatStore.getState()
+      assert.strictEqual(state.sessions['ws-1'][0].isDraft, false)
+      assert.strictEqual(state.historyLoadState.s1, 'loaded')
+      assert.strictEqual(state.messages.s1?.length, 1)
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
   it('refreshBotMessages loads latest messages via WebSocket for a Feishu bot session', async () => {
     useChatStore.setState({
       sessions: { 'ws-1': [makeSession('feishu')] },
