@@ -3011,10 +3011,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const nextSessions = workspaceSessions.map((s) =>
         s.id === sessionId ? { ...s, isDraft: false } : s,
       )
+      const historyLoadState = session?.isDraft
+        ? { ...state.historyLoadState, [sessionId]: 'loaded' as const }
+        : state.historyLoadState
       return {
         messages: { ...state.messages, [sessionId]: newMessages },
         drafts: nextDrafts,
         sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        historyLoadState,
         isStreaming: { ...state.isStreaming, [sessionId]: true },
         streamStartedAt: { ...state.streamStartedAt, [sessionId]: Date.now() },
         unreadCompletions: nextUnread,
