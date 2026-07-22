@@ -970,8 +970,10 @@ export class BrowserService {
         sessionId,
         workspaceId,
         'browser_chromium_missing',
-        'No Chromium executable available (install Chrome/Edge, set COMATE_CHROMIUM_PATH, ' +
-          'or allow the pinned download).',
+        'No Chromium executable available. The embedded browser uses a bundled, ' +
+          'isolated Chrome for Testing by default; if it is missing, reinstall ' +
+          'the app, set COMATE_CHROMIUM_PATH, or set COMATE_USE_SYSTEM_CHROME=1 ' +
+          'to drive your installed Chrome.',
       );
     }
 

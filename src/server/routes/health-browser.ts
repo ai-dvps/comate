@@ -71,9 +71,10 @@ export function createHealthBrowserRouter(overrides?: Partial<HealthBrowserDeps>
       }
       if (!chromium) {
         problems.push(
-          'No Chromium executable found. Install Google Chrome or Microsoft ' +
-            'Edge, set COMATE_CHROMIUM_PATH, or let Comate download the pinned ' +
-            'Chrome for Testing build on first browser use.',
+          'No Chromium executable found. The bundled Chrome for Testing is ' +
+            'missing — reinstall the app, set COMATE_CHROMIUM_PATH to a ' +
+            'Chrome/Chromium executable, or set COMATE_USE_SYSTEM_CHROME=1 to ' +
+            'drive your installed Chrome on first browser use.',
         );
       }
       res.status(503).json({
