@@ -38,6 +38,32 @@ import {
   type BrowserApprovalRequester,
 } from './browser-mcp.js';
 import { isBrowserToolName } from './browser-tool-names.js';
+
+function isToolResultOnlyMessage(message: ChatMessage): boolean {
+  return message.role === 'user' && message.parts.length > 0 &&
+    message.parts.every((part) => part.type === 'tool_result');
+}
+
+export function alignHistoryPageStart(messages: ChatMessage[], requestedStart: number): number {
+  let start = Math.max(0, Math.min(requestedStart, messages.length));
+  while (start > 0 && start < messages.length) {
+    const current = messages[start];
+    const previous = messages[start - 1];
+    if (isToolResultOnlyMessage(current)) {
+      start -= 1;
+      continue;
+    }
+    if (
+      current.role === 'assistant' &&
+      (previous.role === 'assistant' || isToolResultOnlyMessage(previous))
+    ) {
+      start -= 1;
+      continue;
+    }
+    break;
+  }
+  return start;
+}
 import { browserControlService } from './browser-control.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
@@ -714,7 +740,8 @@ export class ChatService {
       }
     });
     const total = normalized.length;
-    const start = Math.max(0, Math.min(offset ?? (limit === undefined ? 0 : total - limit), total));
+    const requestedStart = Math.max(0, Math.min(offset ?? (limit === undefined ? 0 : total - limit), total));
+    const start = alignHistoryPageStart(normalized, requestedStart);
     const end = Math.max(start, Math.min(limit === undefined ? total : start + limit, total));
     const page = normalized.slice(start, end);
     const tasks = scanSdkMessagesForTasks(sdkMessages);
