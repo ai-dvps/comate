@@ -11,18 +11,6 @@ function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
 }
 
-vi.mock('react-virtuoso', async () => {
-  const ReactModule = await import('react')
-  const Virtuoso = ReactModule.forwardRef(function MockVirtuoso(
-    props: { data?: unknown[]; itemContent?: (index: number, item: unknown) => React.ReactNode },
-    ref: React.ForwardedRef<unknown>,
-  ) {
-    ReactModule.useImperativeHandle(ref, () => ({ scrollToIndex: vi.fn(), autoscrollToBottom: vi.fn() }))
-    return <div data-testid="conversation-list-scroll">{(props.data ?? []).map((item, index) => props.itemContent?.(index, item))}</div>
-  })
-  return { Virtuoso }
-})
-
 const renderCounter = new Map<string, number>()
 vi.mock('./ChatMessageRenderer', () => {
   const MockedChatMessageRenderer = React.memo(function MockedChatMessageRenderer({
