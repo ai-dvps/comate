@@ -1,5 +1,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import path from 'path';
+import { stat } from 'fs/promises';
 import type { GitStatusItem } from '../models/git-changes.js';
 
 const execFileAsync = promisify(execFile);
@@ -59,10 +61,56 @@ export function parsePorcelainStatus(stdout: string): GitStatusItem[] {
 }
 
 /**
+ * True when `dir` is itself a git repository (has a `.git`). The only untracked
+ * directory entries git emits as a single "dir/" (instead of recursing) are
+ * nested repositories.
+ */
+async function isNestedRepo(dir: string): Promise<boolean> {
+  try {
+    await stat(path.join(dir, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the git repo at `dir` has any uncommitted changes (staged,
+ * unstaged, or untracked). On any git failure returns true so the entry is kept
+ * rather than hidden on uncertain input.
+ */
+async function hasUncommittedChanges(dir: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', dir, 'status', '--porcelain'], {
+      timeout: 10000,
+      encoding: 'utf-8',
+    });
+    return stdout.length > 0;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Keep an untracked directory entry only when it is a nested repo with
+ * uncommitted changes. A clean nested repo is noise in the parent's change
+ * list, so it is dropped. Non-directory entries are always kept.
+ */
+async function shouldKeepUntrackedDir(root: string, item: GitStatusItem): Promise<boolean> {
+  if (!item.path.endsWith('/')) return true;
+  const dirAbs = path.join(root, item.path);
+  if (!(await isNestedRepo(dirAbs))) return true;
+  return hasUncommittedChanges(dirAbs);
+}
+
+/**
  * Run `git status` in NUL-delimited (`-z`) form so non-ASCII and special
  * characters in paths are emitted verbatim. Throws on any git error
  * (including "not a git repository"); callers decide tolerance via
  * {@link isNotAGitRepoError}.
+ *
+ * Untracked directory entries that are clean nested repositories are filtered
+ * out — they carry no actionable change for the parent workspace.
  */
 export async function runGitStatus(folderPath: string): Promise<GitStatusItem[]> {
   const { stdout } = await execFileAsync(
@@ -70,5 +118,9 @@ export async function runGitStatus(folderPath: string): Promise<GitStatusItem[]>
     ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
     { cwd: folderPath, timeout: 10000, encoding: 'utf-8' },
   );
-  return parsePorcelainStatus(stdout);
+  const items = parsePorcelainStatus(stdout);
+  const keep = await Promise.all(
+    items.map((item) => shouldKeepUntrackedDir(folderPath, item)),
+  );
+  return items.filter((_, i) => keep[i]);
 }
