@@ -10,6 +10,11 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import type { ChatMessage, SubagentState, TaskItem, SseEvent, WorkflowState } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
+import {
+  getBackendAvailability,
+  resolveDefaultBackend,
+  type BackendId,
+} from './agent-backends.js';
 import { SessionRuntime } from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
 import { resolveTranscriptDir } from './analytics-transcript-path.js';
@@ -780,6 +785,26 @@ export class ChatService {
 
   // Session runtime management
 
+  /**
+   * Resolve the agent backend for a session (KTD-5/KTD-9). A locked session
+   * reuses its stored backend; a draft resolves now and persists the result —
+   * first runtime creation is the lock. Bot sessions always lock to claude
+   * regardless of the app default (R14).
+   */
+  private async resolveSessionBackend(
+    session: ChatSession,
+    isBotSession?: boolean,
+  ): Promise<BackendId> {
+    if (session.backend) {
+      return session.backend as BackendId;
+    }
+    const resolved: BackendId = isBotSession
+      ? 'claude'
+      : (await resolveDefaultBackend()).backend;
+    workspaceStore.updateSessionBackend(session.id, resolved);
+    return resolved;
+  }
+
   async getOrCreateRuntime(
     sessionId: string,
     workspaceId: string,
@@ -876,6 +901,18 @@ export class ChatService {
       }
 
       const optionsStart = Date.now();
+      const backend = await this.resolveSessionBackend(session, isBotSession);
+      if (backend !== 'claude') {
+        // Non-claude drivers land with U4. Until then a session locked to a
+        // non-claude backend cannot start a runtime — fail loudly here rather
+        // than silently starting it on claude.
+        const availability = await getBackendAvailability(backend);
+        throw new ChatError(
+          `Agent backend '${backend}' is not available${availability.reason ? `: ${availability.reason}` : ' (no session driver registered)'}`,
+          'BACKEND_UNAVAILABLE',
+          409,
+        );
+      }
       const provider = session.providerId
         ? workspaceStore.getProvider(session.providerId)
         : workspaceStore.getDefaultProvider();

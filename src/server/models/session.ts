@@ -8,6 +8,12 @@ export interface ChatSession {
   isWip?: boolean;
   isArchived?: boolean;
   source?: 'gui' | 'wecom' | 'feishu';
+  /**
+   * Agent backend this session is locked to (KTD-5/KTD-9). Unset on drafts;
+   * written once at first runtime creation and never changed afterwards —
+   * transcripts are not portable across runtimes.
+   */
+  backend?: string;
   approvalMode?: ApprovalMode;
   providerId?: string;
   fastMode?: boolean;
