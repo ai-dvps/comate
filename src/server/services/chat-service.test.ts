@@ -9,6 +9,7 @@ import {
   __restoreRebuildPollInterval,
   __setSessionVerifyTimeoutForTesting,
   __restoreSessionVerifyTimeout,
+  __setOpencodeFetchForTesting,
 } from './chat-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { SessionRuntime } from './session-runtime.js';
@@ -3124,6 +3125,104 @@ describe('chat-service session backend update guard (R4)', { concurrency: false 
         assert.strictEqual((err as { statusCode?: number }).statusCode, 400);
         return true;
       },
+    );
+  });
+});
+
+describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+
+  beforeEach(async () => {
+    workspaceStore.resetData();
+    resetBackendRegistryForTests();
+    await clearDefaultBackend();
+    registerBackendRuntime('claude', {
+      resolveBinaryPath: () => '/fake/claude',
+      healthCheck: async () => true,
+    });
+    service = new ChatService();
+  });
+
+  afterEach(async () => {
+    SessionRuntime.open = originalOpen;
+    __setOpencodeFetchForTesting(undefined);
+    await service.closeAllRuntimes();
+    resetBackendRegistryForTests();
+    await clearDefaultBackend();
+  });
+
+  async function createFixture(source: 'gui' | 'wecom', backend?: string) {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-reviewfix-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: `Provider ${crypto.randomUUID()}`,
+      baseUrl: 'http://test',
+      authToken: 't',
+      model: 'm',
+      isDefault: false,
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, source);
+    if (backend) workspaceStore.updateSessionBackend(session.id, backend);
+    return { workspace, provider, session };
+  }
+
+  it('getSession SDK-sync preserves local backend identity (P1)', async () => {
+    const { workspace, session } = await createFixture('gui');
+    workspaceStore.updateSessionBackend(session.id, 'claude');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_remote_1');
+    class SyncSdkClient extends SdkClient {
+      override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+        return {
+          sessionId: session.id,
+          summary: 'synced',
+          lastModified: Date.now(),
+          fileSize: 100,
+        } as unknown as SDKSessionInfo;
+      }
+    }
+    const synced = await new ChatService(new SyncSdkClient()).getSession(session.id, workspace.id);
+    assert.strictEqual(synced?.backend, 'claude');
+    assert.strictEqual(synced?.backendSessionId, 'ses_remote_1');
+  });
+
+  it('failed first runtime attempt leaves the draft backend unset (P2)', async () => {
+    const { workspace, session } = await createFixture('gui');
+    SessionRuntime.open = () => {
+      throw new Error('simulated start failure');
+    };
+    await assert.rejects(() => service.getOrCreateRuntime(session.id, workspace.id));
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, undefined);
+  });
+
+  it('opencode history loads via the backend-aware REST path (P1)', async () => {
+    const { workspace, session } = await createFixture('gui', 'opencode');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_remote_2');
+    __setOpencodeFetchForTesting((async (_instance: unknown, path: string) => {
+      if (path.endsWith('/children')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      assert.match(path, /\/session\/ses_remote_2\/message/);
+      return new Response(
+        JSON.stringify([
+          {
+            info: { id: 'm1', role: 'assistant' },
+            parts: [{ id: 'p1', type: 'text', messageID: 'm1', text: 'hello from opencode' }],
+          },
+        ]),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as never);
+    const result = await service.loadMessages(session.id, workspace.id);
+    const texts = result.messages.flatMap((m) =>
+      m.parts.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text),
+    );
+    assert.ok(
+      texts.some((t) => t.includes('hello from opencode')),
+      `expected opencode history, got ${texts.join(' | ').slice(0, 120)}`,
     );
   });
 });

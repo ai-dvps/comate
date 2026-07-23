@@ -25,7 +25,9 @@ router.get('/', async (req, res) => {
       const session = workspaceStore.getLocalSession(sessionId);
       if (session?.backend === 'opencode') {
         const commands = await chatService.getSessionBackendCommands(sessionId);
-        res.json({ commands });
+        // Same envelope as the claude path so clients never read undefined
+        // for fields the other backend always sends (review P2).
+        res.json({ commands, partial: false });
         return;
       }
     }

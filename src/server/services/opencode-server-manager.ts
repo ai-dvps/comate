@@ -221,6 +221,10 @@ export function opencodeFetch(
     ? `${instance.baseUrl}${path}`
     : `${instance.baseUrl}${path}${separator}directory=${encodeURIComponent(instance.directory)}`;
   return fetch(url, {
+    // REST calls (prompt, permission replies, session ops) carry no server
+    // guarantee — fail closed on a wedged serve instead of pinning the turn
+    // (cross-model review P2). Callers may override per request.
+    signal: rest.signal ?? AbortSignal.timeout(30_000),
     ...rest,
     headers: {
       ...(rest.body !== undefined ? { 'content-type': 'application/json' } : {}),

@@ -131,15 +131,6 @@ export function listBackendCapabilities(
   return resolved;
 }
 
-/** Test hook for U4/U6/U7: declare or update a capability at runtime. */
-export function declareCapability(
-  backend: BackendId,
-  capability: CapabilityId,
-  entry: CapabilityEntry,
-): void {
-  CAPABILITY_TABLE[backend][capability] = entry;
-}
-
 // ---------------------------------------------------------------------------
 // Runtime availability
 // ---------------------------------------------------------------------------

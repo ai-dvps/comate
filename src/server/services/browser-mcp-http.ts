@@ -12,7 +12,7 @@
  * lifecycle trivial — tool handlers hold all state in BrowserService.
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, json, type Request, type Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -41,6 +41,12 @@ export function createBrowserMcpHttpRouter(depsFor: (sessionId: string) => Promi
     }
     next();
   });
+
+  // The production mount order puts this router ahead of the global
+  // express.json() (it must precede the CORS/origin guards), so the JSON
+  // body parser is router-local — transport.handleRequest never sees an
+  // undefined req.body (cross-model review P1).
+  router.use(json());
 
   router.post('/:sessionId', async (req: Request, res: Response) => {
     const sessionId = req.params.sessionId;
