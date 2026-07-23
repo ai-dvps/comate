@@ -126,6 +126,7 @@
     "statusDeleted": "已删除",
     "statusRenamed": "已重命名",
     "statusUntracked": "未跟踪",
+    "nestedRepository": "独立仓库",
     "staged": "已暂存",
     "workingTree": "未暂存",
     "binaryPlaceholder": "无法显示二进制文件变更",

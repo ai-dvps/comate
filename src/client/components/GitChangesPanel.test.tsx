@@ -218,4 +218,40 @@ describe('GitChangesPanel', () => {
 
     expect(screen.getByText('Auto-refresh unavailable')).toBeInTheDocument()
   })
+
+  it('renders an untracked directory entry (nested repo) as a labeled repository leaf', () => {
+    // git emits an untracked directory it won't recurse into (e.g. a nested git
+    // repo sitting untracked in the workspace) as a single "path/" entry with a
+    // trailing slash. It must render as a clearly-labeled, non-expandable leaf --
+    // not an empty-name file row, and not a misleading empty folder.
+    gitChangesMock.state.statusItems = [
+      { path: 'schema-forge-build-plugin/', indexStatus: '?', workingTreeStatus: '?' },
+    ]
+
+    renderWithI18n(<GitChangesPanel />)
+
+    const row = screen.getByTestId('git-repo-row')
+    // The directory name is visible...
+    expect(row).toHaveTextContent('schema-forge-build-plugin/')
+    // ...labeled as a repository...
+    expect(row).toHaveTextContent('repository')
+    // ...and it is not rendered as a diffable file row.
+    expect(screen.queryAllByTestId('git-file-row')).toHaveLength(0)
+  })
+
+  it('renders an untracked directory entry as a non-openable repository leaf in flat view', () => {
+    gitChangesMock.state.viewMode = 'flat'
+    gitChangesMock.state.statusItems = [
+      { path: 'schema-forge-build-plugin/', indexStatus: '?', workingTreeStatus: '?' },
+    ]
+
+    renderWithI18n(<GitChangesPanel />)
+
+    const row = screen.getByTestId('git-repo-row')
+    fireEvent.doubleClick(row)
+
+    // A directory entry can't be diffed as a single file (reading it throws
+    // EISDIR on the server), so opening it must not fire openDiff.
+    expect(rightPanelMock.openDiff).not.toHaveBeenCalled()
+  })
 })

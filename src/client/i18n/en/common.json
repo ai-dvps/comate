@@ -126,6 +126,7 @@
     "statusDeleted": "Deleted",
     "statusRenamed": "Renamed",
     "statusUntracked": "Untracked",
+    "nestedRepository": "repository",
     "staged": "staged",
     "workingTree": "working",
     "binaryPlaceholder": "Binary file changes cannot be shown",
