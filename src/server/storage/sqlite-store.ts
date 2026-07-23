@@ -274,6 +274,11 @@ export class SqliteStore {
       // rows read as undefined and resolve to claude (grandfathered).
       this.db.exec('ALTER TABLE sessions ADD COLUMN backend TEXT');
     }
+    if (!sessionColumns.some(col => col.name === 'backend_session_id')) {
+      // The backend-side session identifier (e.g. opencode ses_*), so a
+      // resumed runtime reattaches to the same remote session (U4).
+      this.db.exec('ALTER TABLE sessions ADD COLUMN backend_session_id TEXT');
+    }
     if (!sessionColumns.some(col => col.name === 'bot_id')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN bot_id TEXT');
     }
@@ -1603,6 +1608,13 @@ export class SqliteStore {
       .run(backend, now, id);
   }
 
+  updateSessionBackendSessionId(id: string, backendSessionId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE sessions SET backend_session_id = ?, updated_at = ? WHERE id = ?')
+      .run(backendSessionId, now, id);
+  }
+
   createLocalSession(
     workspaceId: string,
     name: string,
@@ -2650,6 +2662,7 @@ interface RawSessionRow {
   approval_mode: string | null;
   provider_id: string | null;
   backend: string | null;
+  backend_session_id: string | null;
   bot_id: string | null;
   fast_mode: number;
   created_at: string;
@@ -2673,6 +2686,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
     providerId: row.provider_id ?? undefined,
     backend: row.backend ?? undefined,
+    backendSessionId: row.backend_session_id ?? undefined,
     fastMode: row.fast_mode === 1,
     botId: row.bot_id ?? undefined,
     createdAt: row.created_at,

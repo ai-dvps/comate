@@ -15,6 +15,7 @@ import {
   resolveDefaultBackend,
   type BackendId,
 } from './agent-backends.js';
+import { OpencodeBackendDriver } from './opencode-adapter.js';
 import { SessionRuntime } from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
 import { resolveTranscriptDir } from './analytics-transcript-path.js';
@@ -45,19 +46,13 @@ import {
 import { isBrowserToolName } from './browser-tool-names.js';
 
 import { browserControlService } from './browser-control.js';
+import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
 
 function sanitizeBotEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (key.startsWith('WECOM_')) continue;
-    if (/^(AWS_|GOOGLE_|AZURE_|OPENAI_)/i.test(key)) continue;
-    if (/^CLAUDE_(API_KEY|AUTH)/i.test(key)) continue;
-    out[key] = value;
-  }
-  return out;
+  return sanitizeSubprocessEnv(env);
 }
 
 /**
@@ -856,11 +851,25 @@ export class ChatService {
       }
       diagLog(`[ChatService] runtime ${sessionId} session loaded elapsed=${Date.now() - startedAt}ms isDraft=${!!session.isDraft}`);
 
+      const backend = await this.resolveSessionBackend(session, isBotSession);
+      if (backend === 'opencode') {
+        const availability = await getBackendAvailability(backend);
+        if (availability.status !== 'available') {
+          throw new ChatError(
+            `Agent backend 'opencode' is not available${availability.reason ? `: ${availability.reason}` : ''}`,
+            'BACKEND_UNAVAILABLE',
+            409,
+          );
+        }
+      } else if (backend !== 'claude') {
+        throw new ChatError(`Unknown agent backend '${backend}'`, 'BACKEND_UNAVAILABLE', 409);
+      }
+
       // Verify non-draft sessions actually exist in SDK before resuming.
       // If the SDK has lost track of the session, fall back to sessionId mode
       // so the conversation can be recreated rather than failing with
       // "No conversation found with session ID".
-      if (!session.isDraft) {
+      if (!session.isDraft && backend === 'claude') {
         try {
           const verifyStart = Date.now();
           diagLog(`[ChatService] runtime ${sessionId} verifying session in SDK`);
@@ -901,18 +910,6 @@ export class ChatService {
       }
 
       const optionsStart = Date.now();
-      const backend = await this.resolveSessionBackend(session, isBotSession);
-      if (backend !== 'claude') {
-        // Non-claude drivers land with U4. Until then a session locked to a
-        // non-claude backend cannot start a runtime — fail loudly here rather
-        // than silently starting it on claude.
-        const availability = await getBackendAvailability(backend);
-        throw new ChatError(
-          `Agent backend '${backend}' is not available${availability.reason ? `: ${availability.reason}` : ' (no session driver registered)'}`,
-          'BACKEND_UNAVAILABLE',
-          409,
-        );
-      }
       const provider = session.providerId
         ? workspaceStore.getProvider(session.providerId)
         : workspaceStore.getDefaultProvider();
@@ -929,8 +926,24 @@ export class ChatService {
       diagLog(`[ChatService] runtime ${sessionId} buildSdkOptions elapsed=${Date.now() - optionsStart}ms pathToClaudeCodeExecutable=${options.pathToClaudeCodeExecutable || 'undefined'}`);
 
       const testStart = Date.now();
-      await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
-      diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
+      if (backend === 'claude') {
+        await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
+        diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
+      }
+
+      const driver =
+        backend === 'opencode'
+          ? new OpencodeBackendDriver({
+              workspaceId,
+              directory: normalizeWindowsPath(workspace.folderPath),
+              comateSessionId: sessionId,
+              backendSessionId: session.backendSessionId,
+              provider,
+              env: (options.env ?? process.env) as NodeJS.ProcessEnv,
+              onBackendSessionId: (backendSessionId) =>
+                workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
+            })
+          : undefined;
 
       diagLog(`[ChatService] runtime ${sessionId} calling SessionRuntime.open`);
       const openStart = Date.now();
@@ -945,6 +958,7 @@ export class ChatService {
         () => {},
         () => this.scheduleIdleClose(sessionId),
         provider,
+        driver,
       );
       diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - openStart}ms`);
       this.runtimes.set(sessionId, runtime);

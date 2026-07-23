@@ -14,6 +14,8 @@ export interface ChatSession {
    * transcripts are not portable across runtimes.
    */
   backend?: string;
+  /** Backend-side session identifier (opencode ses_*), set at runtime creation for resume. */
+  backendSessionId?: string;
   approvalMode?: ApprovalMode;
   providerId?: string;
   fastMode?: boolean;
