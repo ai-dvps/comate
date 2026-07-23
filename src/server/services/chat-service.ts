@@ -15,7 +15,7 @@ import {
   resolveDefaultBackend,
   type BackendId,
 } from './agent-backends.js';
-import { OpencodeBackendDriver } from './opencode-adapter.js';
+import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
 import { SessionRuntime } from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
 import { opencodeServerManager, opencodeFetch } from './opencode-server-manager.js';
@@ -566,7 +566,6 @@ export class ChatService {
         ? workspaceStore.getProvider(localSession.providerId)
         : workspaceStore.getDefaultProvider();
       if (!provider) return [];
-      const { buildServeConfig } = await import('./opencode-adapter.js').then((m) => m.__testables);
       instance = await opencodeServerManager.ensureServer(comateSessionId, workspace.folderPath, {
         config: {
           ...buildServeConfig(provider, provider.model ?? ''),
@@ -586,27 +585,30 @@ export class ChatService {
     ).json()) as OpencodeRestMessage[];
     const pairings = pairTaskToolCallsWithChildren(parentMessages, children.length);
 
+    // Fetch child transcripts concurrently; a single failure never blocks the rest.
     const subagents: SubagentState[] = [];
-    for (const [index, child] of children.entries()) {
-      try {
-        const childMessages = (await (
-          await opencodeFetch(instance, `/session/${child.id}/message`)
-        ).json()) as OpencodeRestMessage[];
-        const subMessages = opencodeMessagesToSessionMessages(childMessages);
-        const pairing = pairings[index];
-        const reconstructed = reconstructSubagentState(
-          pairing?.parentToolUseId ?? child.id,
-          subMessages,
-          pairing?.description ?? child.title ?? `Agent ${child.id.slice(-6)}`,
-          {},
-        );
-        if (reconstructed) {
-          subagents.push(reconstructed);
+    await Promise.all(
+      children.map(async (child, index) => {
+        try {
+          const childMessages = (await (
+            await opencodeFetch(instance, `/session/${child.id}/message`)
+          ).json()) as OpencodeRestMessage[];
+          const subMessages = opencodeMessagesToSessionMessages(childMessages);
+          const pairing = pairings[index];
+          const reconstructed = reconstructSubagentState(
+            pairing?.parentToolUseId ?? child.id,
+            subMessages,
+            pairing?.description ?? child.title ?? `Agent ${child.id.slice(-6)}`,
+            {},
+          );
+          if (reconstructed) {
+            subagents.push(reconstructed);
+          }
+        } catch (err) {
+          console.error(`Failed to load opencode subagent ${child.id}:`, err);
         }
-      } catch (err) {
-        console.error(`Failed to load opencode subagent ${child.id}:`, err);
-      }
-    }
+      }),
+    );
     return subagents;
   }
 
@@ -1068,7 +1070,6 @@ export class ChatService {
       const driver =
         backend === 'opencode'
           ? new OpencodeBackendDriver({
-              workspaceId,
               directory: normalizeWindowsPath(workspace.folderPath),
               comateSessionId: sessionId,
               backendSessionId: session.backendSessionId,

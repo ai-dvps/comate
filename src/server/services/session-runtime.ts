@@ -53,7 +53,6 @@ export class SessionRuntime {
   private workspaceId: string;
   private serverNonce: string;
   private options: Options;
-  private sdkClient: SdkClient;
   private driver: BackendDriver;
   private input: PushableIterator<SDKUserMessage>;
   private query!: Query;
@@ -191,7 +190,6 @@ export class SessionRuntime {
     this.serverNonce = serverNonce;
     this.input = input;
     this.options = options;
-    this.sdkClient = sdkClient;
     // Backend seam (KTD-1): no driver means the built-in claude transport.
     this.driver = driver ?? new ClaudeBackendDriver(sdkClient);
     this.onSubscribed = onSubscribed;

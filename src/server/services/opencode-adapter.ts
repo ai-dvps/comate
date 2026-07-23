@@ -40,11 +40,12 @@ import {
   type OpencodeEventEnvelope,
   type OpencodeMapperState,
 } from './opencode-event-mapper.js';
+import { SseParser } from './opencode-client.js';
+import { PushableIterator } from './pushable-iterator.js';
 import { diagLog } from '../utils/diag-logger.js';
 import type { PermissionSuggestion } from '../types/message.js';
 
 export interface OpencodeAdapterDeps {
-  workspaceId: string;
   /** Workspace folder — the serve process's cwd and session directory scope. */
   directory: string;
   comateSessionId: string;
@@ -71,7 +72,7 @@ function toAnthropicBaseUrl(baseUrl: string): string {
   return /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
 }
 
-function buildServeConfig(provider: Provider, modelID: string): Record<string, unknown> {
+export function buildServeConfig(provider: Provider, modelID: string): Record<string, unknown> {
   return {
     permission: { edit: 'ask', bash: 'ask', webfetch: 'ask', question: 'allow' },
     provider: {
@@ -256,23 +257,10 @@ export class OpencodeBackendDriver implements BackendDriver {
   }
 
   /** Route permission/question events to the core; everything else to the mapper queue. */
-  private eventQueue: Array<SDKMessage | null> = [];
-  private eventWaiters: Array<() => void> = [];
+  private readonly eventStream = new PushableIterator<SDKMessage | null>();
 
   private pushEvent(event: SDKMessage | null): void {
-    this.eventQueue.push(event);
-    for (const waiter of this.eventWaiters.splice(0)) waiter();
-  }
-
-  private async nextEvent(): Promise<SDKMessage | null> {
-    for (;;) {
-      const event = this.eventQueue.shift();
-      if (event !== undefined) return event;
-      if (this.closed) return null;
-      await new Promise<void>((resolve) => {
-        this.eventWaiters.push(resolve);
-      });
-    }
+    this.eventStream.push(event);
   }
 
   private startEventSubscription(options: Options): void {
@@ -289,28 +277,10 @@ export class OpencodeBackendDriver implements BackendDriver {
         throw new Error(`opencode GET /event → ${res.status}`);
       }
       const decoder = new TextDecoder();
-      let buffer = '';
+      const parser = new SseParser();
       for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
-        buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, '\n');
-        let boundary = buffer.indexOf('\n\n');
-        while (boundary !== -1) {
-          const block = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          const data = block
-            .split('\n')
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trimStart())
-            .join('\n');
-          if (data) {
-            let event: OpencodeEventEnvelope | undefined;
-            try {
-              event = JSON.parse(data) as OpencodeEventEnvelope;
-            } catch {
-              diagLog(`[OpencodeBackendDriver] dropping unparseable SSE frame: ${data.slice(0, 120)}`);
-            }
-            if (event) this.routeEvent(event, options, sessionId);
-          }
-          boundary = buffer.indexOf('\n\n');
+        for (const event of parser.feed(decoder.decode(chunk, { stream: true }))) {
+          this.routeEvent(event as OpencodeEventEnvelope, options, sessionId);
         }
       }
     })()
@@ -472,8 +442,7 @@ export class OpencodeBackendDriver implements BackendDriver {
   }
 
   private async *streamEvents(): AsyncGenerator<SDKMessage> {
-    for (;;) {
-      const event = await this.nextEvent();
+    for await (const event of this.eventStream) {
       if (event === null) return;
       yield event;
     }
