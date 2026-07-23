@@ -15,7 +15,6 @@ import {
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
   BROWSER_TOOL_PREFIX,
   buildBrowserToolDefinitions,
-  createBrowserMcpServer,
   type BrowserApprovalRequest,
   type BrowserApprovalDecision,
   type BrowserMcpDeps,
@@ -352,11 +351,12 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
 
-  it('createBrowserMcpServer returns an sdk-type config with a live instance', () => {
-    const server = createBrowserMcpServer({ sessionId: 's', workspaceId: 'w' });
-    assert.strictEqual(server.type, 'sdk');
-    assert.strictEqual(server.name, BROWSER_MCP_SERVER_KEY);
-    assert.ok(server.instance, 'sdk MCP server instance must be present');
+  it('buildBrowserToolDefinitions yields the full tool surface without the claude SDK', () => {
+    const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
+    assert.deepEqual(
+      defs.map((d) => d.name),
+      ['open', 'snapshot', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
+    );
     assert.strictEqual(BROWSER_TOOL_PREFIX, 'mcp__comate-browser__');
   });
 });
@@ -1010,19 +1010,25 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
     return captured;
   }
 
-  it('GUI sessions get the sdk browser server alongside stdio servers plus the stream timeout', async () => {
+  it('GUI sessions get the HTTP browser server alongside stdio servers plus the stream timeout', async () => {
     const options = await captureOptions(false);
     const servers = options.mcpServers as Record<string, { type?: string; name?: string }>;
     assert.ok(servers, 'mcpServers present');
     assert.strictEqual(servers['stdio-server']?.type, 'stdio', 'existing stdio server preserved');
-    const browser = servers[BROWSER_MCP_SERVER_KEY];
+    const browser = servers[BROWSER_MCP_SERVER_KEY] as unknown as {
+      type: string;
+      url: string;
+      headers?: Record<string, string>;
+    };
     assert.ok(browser, 'browser server injected');
-    assert.strictEqual(browser.type, 'sdk');
-    assert.strictEqual(browser.name, BROWSER_MCP_SERVER_KEY);
+    // U6 (KTD-6): served by the sidecar over HTTP for both backends, with a
+    // per-session URL and a Bearer token.
+    assert.strictEqual(browser.type, 'http');
     assert.ok(
-      (browser as { instance?: unknown }).instance,
-      'sdk server carries a live instance',
+      /\/mcp\/browser\/[^/]+$/.test(browser.url),
+      `per-session MCP URL, got ${browser.url}`,
     );
+    assert.strictEqual(browser.headers?.Authorization?.startsWith('Bearer '), true);
     assert.strictEqual(
       (options.env as Record<string, string>).CLAUDE_CODE_STREAM_CLOSE_TIMEOUT,
       BROWSER_STREAM_CLOSE_TIMEOUT_MS,

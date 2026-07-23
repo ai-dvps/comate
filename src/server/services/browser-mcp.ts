@@ -1,9 +1,32 @@
-import {
-  createSdkMcpServer,
-  tool,
-  type McpSdkServerConfigWithInstance,
-  type SdkMcpToolDefinition,
-} from '@anthropic-ai/claude-agent-sdk';
+import type { CallToolResult as CallToolResultType } from '@modelcontextprotocol/sdk/types.js';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type { ZodRawShape } from 'zod';
+
+/**
+ * Backend-agnostic browser tool definition (U6): identical in shape to the
+ * claude SDK's SdkMcpToolDefinition so existing definitions port unchanged,
+ * but constructible without the claude SDK — the HTTP MCP host (U6) serves
+ * them via @modelcontextprotocol/sdk to BOTH backends.
+ */
+export interface BrowserToolDefinitionShape {
+  name: string;
+  description: string;
+  inputSchema: ZodRawShape;
+  annotations?: ToolAnnotations;
+  handler: (args: never, extra: unknown) => Promise<CallToolResultType>;
+}
+
+function defineBrowserTool(
+  name: string,
+  description: string,
+  inputSchema: ZodRawShape,
+  handler: BrowserToolDefinitionShape['handler'],
+  options?: { annotations?: ToolAnnotations },
+): BrowserToolDefinitionShape {
+  return { name, description, inputSchema, annotations: options?.annotations, handler };
+}
+
+const tool = defineBrowserTool;
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
@@ -1315,8 +1338,7 @@ export class BrowserToolContext {
 // Tool definitions + server factory
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type BrowserToolDefinition = SdkMcpToolDefinition<any>;
+export type BrowserToolDefinition = BrowserToolDefinitionShape;
 
 export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDefinition[] {
   const ctx = new BrowserToolContext(deps);
@@ -1437,20 +1459,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     async (args, extra) => ctx.handleClose(args, extra),
   );
 
-  // The cast reconciles handler-parameter variance: each tool() definition is
-  // an SdkMcpToolDefinition over its own zod shape, while BrowserToolDefinition
-  // erases the shape to `any` (matching createSdkMcpServer's signature).
+  // The cast reconciles handler-parameter variance: each tool definition is
+  // generic over its own zod shape, while BrowserToolDefinition erases it.
   return [openDef, snapshotDef, actDef, submitDef, extractDef, handoffDef, closeDef] as BrowserToolDefinition[];
-}
-
-/**
- * Create the per-chat-session browser MCP server. The instance is keyed by
- * sessionId; the underlying browser outlives it via browserService (KTD-5).
- */
-export function createBrowserMcpServer(deps: BrowserMcpDeps): McpSdkServerConfigWithInstance {
-  return createSdkMcpServer({
-    name: BROWSER_MCP_SERVER_KEY,
-    version: BROWSER_MCP_SERVER_VERSION,
-    tools: buildBrowserToolDefinitions(deps),
-  });
 }

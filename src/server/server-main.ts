@@ -11,6 +11,9 @@ import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
 import backendRoutes from './routes/backends.js';
+import { createBrowserMcpHttpRouter } from './services/browser-mcp-http.js';
+import { chatService } from './services/chat-service.js';
+import { setBoundPort } from './utils/self-port.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
 import gitStatusRoutes from './routes/git-status.js';
 import gitChangesRoutes from './routes/git-changes.js';
@@ -113,6 +116,10 @@ let boundPort: number | undefined;
 const getSelfPort = (): number | undefined => boundPort;
 
 app.use(hostHeaderGuard());
+// U6: HTTP-hosted browser MCP for both agent backends (Bearer token auth,
+// loopback; no browser Origin — mount ahead of the CORS/origin guards).
+app.use('/mcp/browser', createBrowserMcpHttpRouter((sessionId) => chatService.resolveBrowserMcpDeps(sessionId)));
+
 app.use(cors({ origin: createCorsOriginCallback({ getSelfPort }) }));
 app.use(stateChangingRequestGuard({ getSelfPort }));
 app.use(express.json());
@@ -226,6 +233,7 @@ const server = app.listen(PORT, () => {
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : PORT;
   boundPort = Number(actualPort);
+  setBoundPort(boundPort);
   const serverUrl = `http://localhost:${actualPort}`;
   console.log(`Server running on ${serverUrl}`);
   diagLog(`Server started on ${serverUrl} (diag log file: ${path.join(getLogsDir(), 'sse-diag.log')})`);

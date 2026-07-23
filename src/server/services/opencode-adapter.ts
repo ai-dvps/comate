@@ -25,6 +25,9 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { Provider } from '../models/provider.js';
 import type { BackendDriver } from './backend-driver.js';
+import { BROWSER_MCP_SERVER_KEY } from './browser-mcp.js';
+import { getBrowserMcpToken } from './browser-mcp-http.js';
+import { getSidecarBaseUrl } from '../utils/self-port.js';
 import {
   opencodeFetch,
   opencodeServerManager,
@@ -87,6 +90,19 @@ function buildServeConfig(provider: Provider, modelID: string): Record<string, u
   };
 }
 
+/** Per-session serve additions that depend on the Comate session id (the
+ * browser MCP binds to the session's embedded browser via its URL, KTD-6). */
+function buildSessionMcpConfig(comateSessionId: string): Record<string, unknown> {
+  return {
+    [BROWSER_MCP_SERVER_KEY]: {
+      type: 'remote',
+      url: `${getSidecarBaseUrl()}/mcp/browser/${comateSessionId}`,
+      headers: { Authorization: `Bearer ${getBrowserMcpToken()}` },
+      oauth: false,
+    },
+  };
+}
+
 function extractPromptText(message: SDKUserMessage): string {
   const content = (message as { message?: { content?: unknown } }).message?.content;
   if (typeof content === 'string') return content;
@@ -142,6 +158,8 @@ export class OpencodeBackendDriver implements BackendDriver {
       close: () => {
         this.closed = true;
         this.abort.abort();
+        // Per-session serve lifecycle maps 1:1 onto the runtime (KTD-6).
+        void opencodeServerManager.stopServer(this.deps.comateSessionId);
       },
       getContextUsage: async () => {
         const usage = this.mapperState.lastUsage;
@@ -198,10 +216,13 @@ export class OpencodeBackendDriver implements BackendDriver {
 
   private async init(options: Options): Promise<void> {
     this.instance = await opencodeServerManager.ensureServer(
-      this.deps.workspaceId,
+      this.deps.comateSessionId,
       this.deps.directory,
       {
-        config: buildServeConfig(this.deps.provider, this.modelID),
+        config: {
+          ...buildServeConfig(this.deps.provider, this.modelID),
+          mcp: buildSessionMcpConfig(this.deps.comateSessionId),
+        },
         env: this.deps.env,
       },
     );

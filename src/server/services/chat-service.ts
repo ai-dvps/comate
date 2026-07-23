@@ -40,13 +40,14 @@ import type { Provider } from '../models/provider.js';
 import {
   BROWSER_MCP_SERVER_KEY,
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
-  createBrowserMcpServer,
   type BrowserApprovalRequester,
 } from './browser-mcp.js';
 import { isBrowserToolName } from './browser-tool-names.js';
 
 import { browserControlService } from './browser-control.js';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
+import { getSidecarBaseUrl } from '../utils/self-port.js';
+import { getBrowserMcpToken } from './browser-mcp-http.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -212,6 +213,23 @@ export class ChatService {
       ? { behavior: 'allow' as const }
       : { behavior: 'deny' as const, message: result.message };
   };
+
+  /**
+   * Per-session deps for the HTTP-hosted browser MCP (U6): resolves the
+   * session's workspace and shares this service's approval requester so
+   * browser approval cards keep flowing through the unified flow regardless
+   * of which backend drives the session.
+   */
+  async resolveBrowserMcpDeps(sessionId: string): Promise<{
+    workspaceId: string;
+    approvalRequester: BrowserApprovalRequester;
+  }> {
+    const workspace = await this.findWorkspaceForSession(sessionId);
+    return {
+      workspaceId: workspace?.id ?? '',
+      approvalRequester: this.browserApprovalRequester,
+    };
+  }
 
   setOnRuntimeClose(callback: (sessionId: string) => void): void {
     this.onRuntimeClose = callback;
@@ -1547,11 +1565,14 @@ export class ChatService {
     // condition itself is the first line of bot defense). The instance is
     // keyed by sessionId; the browser process outlives it via browserService.
     if (!isBotSession) {
-      mcpServers[BROWSER_MCP_SERVER_KEY] = createBrowserMcpServer({
-        sessionId: session.id,
-        workspaceId: workspace.id,
-        approvalRequester: this.browserApprovalRequester,
-      });
+      // U6 (KTD-6): the browser MCP surface is served by the sidecar over
+      // HTTP so both backends consume it; the per-session URL binds tools to
+      // this session's embedded browser.
+      mcpServers[BROWSER_MCP_SERVER_KEY] = {
+        type: 'http',
+        url: `${getSidecarBaseUrl()}/mcp/browser/${session.id}`,
+        headers: { Authorization: `Bearer ${getBrowserMcpToken()}` },
+      } as import('@anthropic-ai/claude-agent-sdk').McpServerConfig;
       // Submit/handoff handler approval round-trips can wait on a human far
       // past the 60s SDK default — per-session env, never process-global.
       env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT = BROWSER_STREAM_CLOSE_TIMEOUT_MS;
