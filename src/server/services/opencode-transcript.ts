@@ -93,6 +93,7 @@ export function pairTaskToolCallsWithChildren(
   parentMessages: OpencodeRestMessage[],
   childCount: number,
 ): Array<{ parentToolUseId: string; description?: string }> {
+  if (!Array.isArray(parentMessages)) return [];
   const taskParts: Array<{ callID: string; description?: string }> = [];
   for (const msg of parentMessages) {
     for (const part of msg.parts) {

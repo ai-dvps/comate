@@ -82,3 +82,40 @@ describe('browser-mcp-http (U6)', { concurrency: false }, () => {
     assert.equal(res.status, 405);
   });
 });
+
+describe('production mount order (review P1)', { concurrency: false }, () => {
+  it('answers initialize without a global body parser (router-local json)', async () => {
+    const app = express();
+    // Mirror server-main order: router mounted BEFORE any global express.json().
+    app.use(
+      '/mcp/browser',
+      createBrowserMcpHttpRouter(async () => ({
+        workspaceId: 'ws',
+        approvalRequester: async () => ({ behavior: 'allow' as const }),
+      })),
+    );
+    app.use(express.json());
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const res = await fetch(`http://127.0.0.1:${port}/mcp/browser/s1`, {
+        method: 'POST',
+        headers: MCP_HEADERS(getBrowserMcpToken()),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '0' } },
+        }),
+      });
+      assert.equal(res.status, 200);
+      const text = await res.text();
+      const dataLine = text.split('\n').find((l) => l.startsWith('data:'));
+      assert.ok(dataLine, 'SSE data line present');
+      assert.equal(JSON.parse(dataLine!.slice(5).trim()).result.serverInfo.name, 'comate-browser');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
