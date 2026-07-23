@@ -169,25 +169,84 @@ async function build() {
     buildSidecarTriple(otherTriple, bundlePath);
   }
 
-  // 5. Copy Claude Code CLI binary to src-tauri/resources/
-  console.log('\n--- Copying Claude Code binary ---');
+  // 5. Copy agent backend binaries to src-tauri/resources/ (variant-gated).
+  // COMATE_BUNDLE_BACKENDS selects which runtimes ship: the default
+  // 'claude,opencode' produces the dual-backend flavor; 'opencode' produces
+  // the claude-free enterprise flavor (R12) — no claude binary is copied and
+  // the assertion below fails the build if one slipped in anyway.
+  const bundleBackends = new Set(
+    (process.env.COMATE_BUNDLE_BACKENDS ?? 'claude,opencode')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+  console.log(`\n--- Copying agent backend binaries (backends: ${[...bundleBackends].join(', ')}) ---`);
   const platform = process.platform;
   const arch = process.arch;
-  const sdkBinaryName = platform === 'win32'
-    ? 'claude.exe'
-    : 'claude';
-  const sdkBinarySource = join(
-    rootDir,
-    'node_modules',
-    `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`,
-    sdkBinaryName,
-  );
-  if (existsSync(sdkBinarySource)) {
-    const sdkBinaryDest = join(resourcesDir, sdkBinaryName);
-    copyFileSync(sdkBinarySource, sdkBinaryDest);
-    console.log(`Copied to ${sdkBinaryDest}`);
-  } else {
-    console.warn(`Warning: SDK binary not found at ${sdkBinarySource}`);
+
+  // Remove stale backend binaries from earlier builds of a different flavor
+  // (resources/ is build output; a claude binary from a previous dual-backend
+  // build must not survive into a claude-free flavor).
+  for (const [backend, binaryName] of [
+    ['claude', platform === 'win32' ? 'claude.exe' : 'claude'],
+    ['opencode', platform === 'win32' ? 'opencode.exe' : 'opencode'],
+  ] as const) {
+    if (!bundleBackends.has(backend)) {
+      const stalePath = join(resourcesDir, binaryName);
+      if (existsSync(stalePath)) {
+        rmSync(stalePath);
+        console.log(`Removed stale ${backend} binary from resources (${stalePath})`);
+      }
+    }
+  }
+
+  if (bundleBackends.has('claude')) {
+    const sdkBinaryName = platform === 'win32' ? 'claude.exe' : 'claude';
+    const sdkBinarySource = join(
+      rootDir,
+      'node_modules',
+      `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`,
+      sdkBinaryName,
+    );
+    if (existsSync(sdkBinarySource)) {
+      const sdkBinaryDest = join(resourcesDir, sdkBinaryName);
+      copyFileSync(sdkBinarySource, sdkBinaryDest);
+      console.log(`Copied claude binary to ${sdkBinaryDest}`);
+    } else {
+      throw new Error(`claude binary not found at ${sdkBinarySource} (required by COMATE_BUNDLE_BACKENDS)`);
+    }
+  }
+
+  if (bundleBackends.has('opencode')) {
+    const opencodeBinaryName = platform === 'win32' ? 'opencode.exe' : 'opencode';
+    const opencodeBinarySource = join(
+      rootDir,
+      'node_modules',
+      `opencode-${platform}-${arch}`,
+      'bin',
+      opencodeBinaryName,
+    );
+    if (existsSync(opencodeBinarySource)) {
+      const opencodeBinaryDest = join(resourcesDir, opencodeBinaryName);
+      copyFileSync(opencodeBinarySource, opencodeBinaryDest);
+      console.log(`Copied opencode binary to ${opencodeBinaryDest}`);
+    } else {
+      throw new Error(`opencode binary not found at ${opencodeBinarySource} (required by COMATE_BUNDLE_BACKENDS)`);
+    }
+  }
+
+  // Variant assertion: resources must contain exactly the selected backends.
+  const claudeBinaryPath = join(resourcesDir, platform === 'win32' ? 'claude.exe' : 'claude');
+  const opencodeBinaryPath = join(resourcesDir, platform === 'win32' ? 'opencode.exe' : 'opencode');
+  if (bundleBackends.has('claude') !== existsSync(claudeBinaryPath)) {
+    throw new Error(
+      `backend variant mismatch: claude ${bundleBackends.has('claude') ? 'missing from' : 'present in'} resources (${claudeBinaryPath})`,
+    );
+  }
+  if (bundleBackends.has('opencode') !== existsSync(opencodeBinaryPath)) {
+    throw new Error(
+      `backend variant mismatch: opencode ${bundleBackends.has('opencode') ? 'missing from' : 'present in'} resources (${opencodeBinaryPath})`,
+    );
   }
 
   // 6. Copy wecom CLI to src-tauri/resources/
