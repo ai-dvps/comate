@@ -1,6 +1,7 @@
 /**
- * OpencodeServerManager — one `opencode serve` subprocess per workspace
- * (KTD: per-workspace process model). Each serve gets:
+ * OpencodeServerManager — one `opencode serve` subprocess per Comate session
+ * (per-session serve: per-session browser binding and per-session serve
+ * config require per-session processes, KTD-6). Each serve gets:
  * - a random per-process password (OPENCODE_SERVER_PASSWORD); every request
  *   carries HTTP Basic auth, so no other local process can drive sessions or
  *   answer permission requests (fail-closed, P1)
@@ -85,32 +86,35 @@ const findFreePort = (): Promise<number> =>
   });
 
 export class OpencodeServerManager {
+  // One serve per Comate session (KTD-6): per-session browser binding and
+  // per-session serve config require per-session processes; lifecycle maps
+  // 1:1 onto the session runtime, so no idle management is needed.
   private instances = new Map<string, OpencodeServerInstance>();
   private starting = new Map<string, Promise<OpencodeServerInstance>>();
 
   async ensureServer(
-    workspaceId: string,
+    sessionKey: string,
     directory: string,
     options: OpencodeServerConfig,
   ): Promise<OpencodeServerInstance> {
-    const existing = this.instances.get(workspaceId);
+    const existing = this.instances.get(sessionKey);
     if (existing && existing.proc.exitCode === null) return existing;
-    const pending = this.starting.get(workspaceId);
+    const pending = this.starting.get(sessionKey);
     if (pending) return pending;
-    const start = this.spawnServer(workspaceId, directory, options)
+    const start = this.spawnServer(sessionKey, directory, options)
       .then((instance) => {
-        this.instances.set(workspaceId, instance);
+        this.instances.set(sessionKey, instance);
         return instance;
       })
       .finally(() => {
-        this.starting.delete(workspaceId);
+        this.starting.delete(sessionKey);
       });
-    this.starting.set(workspaceId, start);
+    this.starting.set(sessionKey, start);
     return start;
   }
 
   private async spawnServer(
-    workspaceId: string,
+    sessionKey: string,
     directory: string,
     options: OpencodeServerConfig,
   ): Promise<OpencodeServerInstance> {
@@ -133,7 +137,7 @@ export class OpencodeServerManager {
       ['serve', '--hostname=127.0.0.1', `--port=${port}`],
       { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'] },
     );
-    diagLog(`[OpencodeServerManager] spawning serve for workspace ${workspaceId} on 127.0.0.1:${port} (pid=${proc.pid})`);
+    diagLog(`[OpencodeServerManager] spawning serve for session ${sessionKey} on 127.0.0.1:${port} (pid=${proc.pid})`);
 
     const baseUrl = await new Promise<string>((resolve, reject) => {
       let buffer = '';
@@ -165,14 +169,14 @@ export class OpencodeServerManager {
       });
       proc.on('exit', (code) => {
         clearTimeout(timer);
-        this.instances.delete(workspaceId);
+        this.instances.delete(sessionKey);
         reject(new Error(`opencode serve exited early (code=${code}). stderr tail: ${stderrTail.slice(-300)}`));
       });
     });
 
     const username = 'opencode';
     return {
-      workspaceId,
+      workspaceId: sessionKey,
       directory,
       proc,
       baseUrl,
@@ -182,12 +186,12 @@ export class OpencodeServerManager {
     };
   }
 
-  async stopServer(workspaceId: string): Promise<void> {
-    const instance = this.instances.get(workspaceId);
+  async stopServer(sessionKey: string): Promise<void> {
+    const instance = this.instances.get(sessionKey);
     if (!instance) return;
-    this.instances.delete(workspaceId);
+    this.instances.delete(sessionKey);
     instance.proc.kill();
-    diagLog(`[OpencodeServerManager] stopped serve for workspace ${workspaceId}`);
+    diagLog(`[OpencodeServerManager] stopped serve for session ${sessionKey}`);
   }
 
   async stopAll(): Promise<void> {
