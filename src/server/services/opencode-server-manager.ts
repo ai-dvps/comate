@@ -25,7 +25,7 @@ import {
 import { diagLog } from '../utils/diag-logger.js';
 
 export interface OpencodeServerInstance {
-  workspaceId: string;
+  sessionKey: string;
   directory: string;
   proc: ChildProcess;
   baseUrl: string;
@@ -176,7 +176,7 @@ export class OpencodeServerManager {
 
     const username = 'opencode';
     return {
-      workspaceId: sessionKey,
+      sessionKey,
       directory,
       proc,
       baseUrl,
