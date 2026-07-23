@@ -11,6 +11,7 @@ import {
   File,
   FilePenLine,
   Folder,
+  FolderGit2,
   FolderOpen,
   GitBranch,
   List,
@@ -30,6 +31,8 @@ interface TreeNode {
   path: string
   type: 'folder' | 'file'
   file?: GitStatusItem
+  /** Untracked directory entry (e.g. a nested repository git reports as "dir/"). Non-expandable leaf. */
+  isUntrackedDir?: boolean
   children: TreeNode[]
 }
 
@@ -63,10 +66,28 @@ function buildFileSides(file: GitStatusItem): FileSide[] {
   return sides
 }
 
-function insertIntoTree(nodes: TreeNode[], item: GitStatusItem, parts: string[], depth = 0): void {
+function insertIntoTree(
+  nodes: TreeNode[],
+  item: GitStatusItem,
+  parts: string[],
+  depth = 0,
+  isDirEntry = false,
+): void {
   const name = parts[depth]
   if (depth === parts.length - 1) {
-    nodes.push({ name, path: item.path, type: 'file', file: item, children: [] })
+    // git reports an untracked directory it won't recurse into (e.g. a nested
+    // repository) as a single "path/" entry. Splitting that on '/' used to
+    // leave a trailing empty segment that became an empty-name "file" node --
+    // a label-less row that crashed the diff viewer when opened. Mark it so the
+    // tree renders a named, non-expandable "repository" leaf instead.
+    nodes.push({
+      name,
+      path: item.path,
+      type: 'file',
+      file: item,
+      isUntrackedDir: isDirEntry,
+      children: [],
+    })
     return
   }
   let folder = nodes.find((n) => n.type === 'folder' && n.name === name)
@@ -79,7 +100,7 @@ function insertIntoTree(nodes: TreeNode[], item: GitStatusItem, parts: string[],
     }
     nodes.push(folder)
   }
-  insertIntoTree(folder.children, item, parts, depth + 1)
+  insertIntoTree(folder.children, item, parts, depth + 1, isDirEntry)
 }
 
 function sortTree(nodes: TreeNode[]): void {
@@ -95,8 +116,13 @@ function sortTree(nodes: TreeNode[]): void {
 function buildTree(items: GitStatusItem[]): TreeNode[] {
   const nodes: TreeNode[] = []
   for (const item of items) {
-    const parts = item.path.split('/')
-    insertIntoTree(nodes, item, parts)
+    // Strip a trailing '/' (an untracked directory entry, e.g. a nested repo)
+    // before splitting so the path resolves to real segments instead of a
+    // trailing empty string; pass the flag through so the leaf renders as a
+    // labeled repository entry rather than a diffable file.
+    const isDirEntry = item.path.endsWith('/')
+    const parts = (isDirEntry ? item.path.slice(0, -1) : item.path).split('/')
+    insertIntoTree(nodes, item, parts, 0, isDirEntry)
   }
   sortTree(nodes)
   return nodes
@@ -148,6 +174,9 @@ export default function GitChangesPanel() {
     setExpandedPaths(() => {
       const next = new Set<string>()
       for (const item of statusItems) {
+        // Untracked directory entries ("dir/") are non-expandable leaves; don't
+        // seed expanded state for them.
+        if (item.path.endsWith('/')) continue
         const parts = item.path.split('/')
         if (parts.length > 1) {
           next.add(parts[0] as string)
@@ -176,6 +205,10 @@ export default function GitChangesPanel() {
   const handleOpenFile = useCallback(
     (file: GitStatusItem, staged: boolean) => {
       if (!activeWorkspaceId) return
+      // An untracked directory entry (a nested repo git reports as "path/")
+      // can't be diffed as a single file: reading the path throws EISDIR on the
+      // server. Skip it rather than firing a request that 500s silently.
+      if (file.path.endsWith('/')) return
       useRightPanelStore
         .getState()
         .openDiff(activeWorkspaceId, file, staged)
@@ -232,6 +265,8 @@ export default function GitChangesPanel() {
         const node = findNode(nodes, current)
         if (!node) return
         e.preventDefault()
+        // Untracked directory entries are non-expandable, non-openable leaves.
+        if (node.isUntrackedDir) return
         if (node.type === 'folder') {
           handleToggleExpand(current)
         } else if (node.file) {
@@ -415,18 +450,27 @@ export default function GitChangesPanel() {
                   />
                 ))
               ) : (
-                untrackedItems.map((file) => (
-                  <FileRow
-                    key={file.path}
-                    file={file}
-                    staged={false}
-                    statusCode="?"
-                    path={file.path}
-                    isHighlighted={highlightedPath === file.path}
-                    onSelect={() => handleSelect(file.path)}
-                    onOpen={() => handleOpenFile(file, false)}
-                  />
-                ))
+                untrackedItems.map((file) =>
+                  file.path.endsWith('/') ? (
+                    <UntrackedRepoRow
+                      key={file.path}
+                      path={file.path}
+                      isHighlighted={highlightedPath === file.path}
+                      onSelect={() => handleSelect(file.path)}
+                    />
+                  ) : (
+                    <FileRow
+                      key={file.path}
+                      file={file}
+                      staged={false}
+                      statusCode="?"
+                      path={file.path}
+                      isHighlighted={highlightedPath === file.path}
+                      onSelect={() => handleSelect(file.path)}
+                      onOpen={() => handleOpenFile(file, false)}
+                    />
+                  ),
+                )
               )}
             </div>
           )}
@@ -540,6 +584,20 @@ function TreeNodeView({
   const isExpanded = expandedPaths.has(node.path)
   const isHighlighted = highlightedPath === node.path
 
+  // Untracked directory entry (e.g. a nested repository git reports as "dir/"):
+  // a non-expandable, non-openable leaf clearly labeled as a separate repository
+  // so it isn't mistaken for an empty folder or a diffable file.
+  if (node.isUntrackedDir) {
+    return (
+      <UntrackedRepoRow
+        path={node.path}
+        level={level}
+        isHighlighted={isHighlighted}
+        onSelect={() => onSelect(node.path)}
+      />
+    )
+  }
+
   if (node.type === 'folder') {
     return (
       <div role="treeitem" aria-expanded={isExpanded}>
@@ -626,6 +684,46 @@ function TreeNodeView({
         />
       ))}
     </>
+  )
+}
+
+interface UntrackedRepoRowProps {
+  path: string
+  level?: number
+  isHighlighted: boolean
+  onSelect: () => void
+}
+
+/**
+ * A leaf row for an untracked directory git reports as a single "dir/" entry
+ * (typically a nested git repository it won't recurse into). Rendered as a
+ * clearly-labeled, non-expandable, non-openable entry so it is neither an empty
+ * folder nor a diffable file.
+ */
+function UntrackedRepoRow({ path, level, isHighlighted, onSelect }: UntrackedRepoRowProps) {
+  const { t } = useTranslation('common')
+  const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+  const name = trimmed.slice(trimmed.lastIndexOf('/') + 1)
+  return (
+    <div
+      data-testid="git-repo-row"
+      role="treeitem"
+      aria-selected={isHighlighted}
+      className={cn(
+        'flex items-center gap-2 py-1 px-3 text-xs cursor-pointer select-none',
+        isHighlighted ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
+      )}
+      style={level !== undefined ? { paddingLeft: `${12 + level * 12}px` } : undefined}
+      onClick={onSelect}
+      title={t('gitChanges.nestedRepository')}
+    >
+      <span className="w-3.5 flex-shrink-0" aria-hidden="true" />
+      <FolderGit2 className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" aria-hidden="true" />
+      <span className="truncate font-mono min-w-0">{name}/</span>
+      <span className="ml-1 text-text-tertiary text-[10px] font-sans flex-shrink-0 normal-case">
+        {t('gitChanges.nestedRepository')}
+      </span>
+    </div>
   )
 }
 
