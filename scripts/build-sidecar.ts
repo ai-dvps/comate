@@ -5,6 +5,7 @@ import {
   copyFileSync,
   cpSync,
   rmSync,
+  statSync,
   readFileSync,
   writeFileSync,
 } from 'fs';
@@ -210,6 +211,9 @@ async function build() {
     );
     if (existsSync(sdkBinarySource)) {
       const sdkBinaryDest = join(resourcesDir, sdkBinaryName);
+      if (existsSync(sdkBinaryDest) && statSync(sdkBinaryDest).isDirectory()) {
+        rmSync(sdkBinaryDest, { recursive: true });
+      }
       copyFileSync(sdkBinarySource, sdkBinaryDest);
       console.log(`Copied claude binary to ${sdkBinaryDest}`);
     } else {
@@ -228,6 +232,9 @@ async function build() {
     );
     if (existsSync(opencodeBinarySource)) {
       const opencodeBinaryDest = join(resourcesDir, opencodeBinaryName);
+      if (existsSync(opencodeBinaryDest) && statSync(opencodeBinaryDest).isDirectory()) {
+        rmSync(opencodeBinaryDest, { recursive: true });
+      }
       copyFileSync(opencodeBinarySource, opencodeBinaryDest);
       console.log(`Copied opencode binary to ${opencodeBinaryDest}`);
     } else {
@@ -238,12 +245,19 @@ async function build() {
   // Variant assertion: resources must contain exactly the selected backends.
   const claudeBinaryPath = join(resourcesDir, platform === 'win32' ? 'claude.exe' : 'claude');
   const opencodeBinaryPath = join(resourcesDir, platform === 'win32' ? 'opencode.exe' : 'opencode');
-  if (bundleBackends.has('claude') !== existsSync(claudeBinaryPath)) {
+  const isFile = (p: string): boolean => {
+    try {
+      return statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (bundleBackends.has('claude') !== isFile(claudeBinaryPath)) {
     throw new Error(
       `backend variant mismatch: claude ${bundleBackends.has('claude') ? 'missing from' : 'present in'} resources (${claudeBinaryPath})`,
     );
   }
-  if (bundleBackends.has('opencode') !== existsSync(opencodeBinaryPath)) {
+  if (bundleBackends.has('opencode') !== isFile(opencodeBinaryPath)) {
     throw new Error(
       `backend variant mismatch: opencode ${bundleBackends.has('opencode') ? 'missing from' : 'present in'} resources (${opencodeBinaryPath})`,
     );
