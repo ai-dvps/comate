@@ -1,0 +1,76 @@
+name: Build (Windows)
+
+# Windows-only build for fast iteration. Tauri swallows WiX light.exe's
+# stderr, so this runs the bundle with --verbose to surface the real error.
+# It does NOT create a GitHub release — the tag-pushed Build workflow does.
+#
+# Trigger manually from the Actions tab ("Run workflow"), choosing a branch
+# or tag (default: main).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or tag to build (e.g. main, v0.0.26)'
+        required: true
+        default: 'main'
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Tauri app (verbose — surfaces WiX light.exe errors)
+        id: tauri
+        continue-on-error: true
+        run: npm run tauri build -- --verbose
+
+      # If the bundle failed, dump diagnostics so one run is enough to diagnose.
+      - name: Diagnostics (resource path lengths, large files, symlinks)
+        if: steps.tauri.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "=== 25 longest resource paths (char count) ==="
+          find src-tauri/resources -type f 2>/dev/null | awk '{print length, $0}' | sort -rn | head -25
+          echo ""
+          echo "=== files larger than 20 MiB ==="
+          find src-tauri/resources -type f -size +20M 2>/dev/null -exec ls -lh {} \; 2>/dev/null || true
+          echo ""
+          echo "=== symlinks/junctions in resources (these can break WiX harvest) ==="
+          find src-tauri/resources -type l 2>/dev/null | head -50
+          echo ""
+          echo "=== generated WiX intermediates ==="
+          ls -la src-tauri/target/release/wix/x64/ 2>/dev/null || true
+          echo ""
+          echo "=== re-run light.exe manually to capture its stderr ==="
+          WIX="$LOCALAPPDATA/tauri/WixTools314"
+          if [ -x "$WIX/light.exe" ] && [ -f src-tauri/target/release/wix/x64/main.wixobj ]; then
+            "$WIX/light.exe" \
+              src-tauri/target/release/wix/x64/main.wixobj \
+              -ext WixUIExtension -ext WixUtilExtension \
+              -cultures:en-US \
+              -out src-tauri/target/release/bundle/msi/Comate-debug.msi \
+              -b src-tauri/target/release/wix/ \
+              2>&1 | tail -60 || true
+          else
+            echo "light.exe or main.wixobj not found"
+          fi
+
+      - name: Fail if build failed
+        if: steps.tauri.outcome == 'failure'
+        run: exit 1
