@@ -17,9 +17,9 @@ import type { Workspace, McpServer } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import type { SseEvent } from '../types/message.js';
-import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, PermissionUpdate, Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, Query } from '@anthropic-ai/claude-agent-sdk';
 import type { BotPersona, BotRole } from '../models/bot.js';
-import type { QuestionPayload, TaskSignal } from '../types/message.js';
+import type { QuestionPayload, TaskSignal, PermissionSuggestion } from '../types/message.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -830,7 +830,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
         pendingApprovals.delete(requestId);
         pending.resolve(result);
       },
-      requestToolApproval: (requestId: string, _toolName: string, _toolUseId: string, _input: Record<string, unknown>, options: { signal?: AbortSignal; timeout?: number; suggestions?: PermissionUpdate[] } = {}) => {
+      requestToolApproval: (requestId: string, _toolName: string, _toolUseId: string, _input: Record<string, unknown>, options: { signal?: AbortSignal; timeout?: number; suggestions?: PermissionSuggestion[] } = {}) => {
         return new Promise<PermissionResult>((resolve) => {
           pendingApprovals.set(requestId, { resolve });
           if (options.timeout) {
@@ -1383,7 +1383,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    const suggestions: PermissionUpdate[] = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'allow' }], behavior: 'allow' }];
+    const suggestions: PermissionSuggestion[] = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'allow' }], behavior: 'allow', destination: 'session' }];
     const promise = canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-ask-2', signal: new AbortController().signal, suggestions });
 
     const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;

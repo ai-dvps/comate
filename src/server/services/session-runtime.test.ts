@@ -443,7 +443,7 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
       input: Record<string, unknown>,
       options: {
         signal: AbortSignal;
-        suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+        suggestions?: import('../types/message.js').PermissionSuggestion[];
         title?: string;
         description?: string;
         toolUseID: string;
@@ -1206,7 +1206,7 @@ describe('session-runtime cancelPendingApprovals', { concurrency: false }, () =>
       input: Record<string, unknown>,
       options: {
         signal: AbortSignal;
-        suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+        suggestions?: import('../types/message.js').PermissionSuggestion[];
         title?: string;
         description?: string;
         toolUseID: string;
