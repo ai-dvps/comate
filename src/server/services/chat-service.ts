@@ -18,6 +18,13 @@ import {
 import { OpencodeBackendDriver } from './opencode-adapter.js';
 import { SessionRuntime } from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
+import { opencodeServerManager, opencodeFetch } from './opencode-server-manager.js';
+import {
+  opencodeMessagesToSessionMessages,
+  pairTaskToolCallsWithChildren,
+  type OpencodeRestMessage,
+} from './opencode-transcript.js';
+import type { SlashCommandDto } from '../types/initialization.js';
 import { resolveTranscriptDir } from './analytics-transcript-path.js';
 import { listWorkflowAgentIds, listWorkflowRunIds, loadWorkflowState } from './workflow-loader.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
@@ -541,6 +548,90 @@ export class ChatService {
     return workflows;
   }
 
+  /**
+   * opencode subagent loading (U7): children of the backend session on the
+   * session's serve, translated from opencode REST history into claude-shaped
+   * SessionMessage and reconstructed through the same panel path. Spawns a
+   * serve for historical viewing when none is live.
+   */
+  private async loadOpencodeSubagents(
+    comateSessionId: string,
+    backendSessionId: string,
+    workspace: Workspace,
+  ): Promise<SubagentState[]> {
+    let instance = opencodeServerManager.getInstance(comateSessionId);
+    if (!instance) {
+      const localSession = workspaceStore.getLocalSession(comateSessionId);
+      const provider = localSession?.providerId
+        ? workspaceStore.getProvider(localSession.providerId)
+        : workspaceStore.getDefaultProvider();
+      if (!provider) return [];
+      const { buildServeConfig } = await import('./opencode-adapter.js').then((m) => m.__testables);
+      instance = await opencodeServerManager.ensureServer(comateSessionId, workspace.folderPath, {
+        config: {
+          ...buildServeConfig(provider, provider.model ?? ''),
+          mcp: {},
+        },
+        env: process.env,
+      });
+    }
+
+    const children = (await (
+      await opencodeFetch(instance, `/session/${backendSessionId}/children`)
+    ).json()) as Array<{ id: string; title?: string }>;
+    if (children.length === 0) return [];
+
+    const parentMessages = (await (
+      await opencodeFetch(instance, `/session/${backendSessionId}/message`)
+    ).json()) as OpencodeRestMessage[];
+    const pairings = pairTaskToolCallsWithChildren(parentMessages, children.length);
+
+    const subagents: SubagentState[] = [];
+    for (const [index, child] of children.entries()) {
+      try {
+        const childMessages = (await (
+          await opencodeFetch(instance, `/session/${child.id}/message`)
+        ).json()) as OpencodeRestMessage[];
+        const subMessages = opencodeMessagesToSessionMessages(childMessages);
+        const pairing = pairings[index];
+        const reconstructed = reconstructSubagentState(
+          pairing?.parentToolUseId ?? child.id,
+          subMessages,
+          pairing?.description ?? child.title ?? `Agent ${child.id.slice(-6)}`,
+          {},
+        );
+        if (reconstructed) {
+          subagents.push(reconstructed);
+        }
+      } catch (err) {
+        console.error(`Failed to load opencode subagent ${child.id}:`, err);
+      }
+    }
+    return subagents;
+  }
+
+  /**
+   * Slash commands advertised by an opencode session's serve (U7). Empty
+   * when no serve is live for the session (rather than claude-flavored
+   * builtins, which differ between runtimes).
+   */
+  async getSessionBackendCommands(sessionId: string): Promise<SlashCommandDto[]> {
+    const instance = opencodeServerManager.getInstance(sessionId);
+    if (!instance) return [];
+    const res = await opencodeFetch(instance, '/command');
+    if (!res.ok) return [];
+    const commands = (await res.json()) as Array<{
+      name: string;
+      description?: string;
+      template?: string;
+    }>;
+    return commands.map((command) => ({
+      name: command.name,
+      description: command.description ?? '',
+      argumentHint: command.template?.includes('$ARGUMENTS') ? 'arguments' : undefined,
+    }));
+  }
+
   async loadSubagentsForSession(
     sessionId: string,
     workspaceId: string,
@@ -552,6 +643,14 @@ export class ChatService {
     }
 
     const dir = normalizeWindowsPath(workspace.folderPath);
+
+    // Backend-aware loading (U7): opencode subagents are child sessions on
+    // the session's serve, translated into the same SubagentState shape.
+    const localSession = workspaceStore.getLocalSession(sessionId);
+    if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
+      return this.loadOpencodeSubagents(sessionId, localSession.backendSessionId, workspace);
+    }
+
     let agentIds: string[] = [];
     try {
       agentIds = await this.sdkClient.listSubagents(sessionId, { dir });

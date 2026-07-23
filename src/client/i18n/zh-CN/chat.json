@@ -264,6 +264,7 @@
     "available": "可用",
     "unavailable": "不可用",
     "isDefault": "默认",
-    "tab": "后端"
+    "tab": "后端",
+    "hooksNotWired": "hooks 脚本目前在两个后端均不会执行"
   }
 }

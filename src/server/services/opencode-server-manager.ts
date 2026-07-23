@@ -194,6 +194,12 @@ export class OpencodeServerManager {
     diagLog(`[OpencodeServerManager] stopped serve for session ${sessionKey}`);
   }
 
+  /** Current live instance for a session key, if any (no spawn side-effects). */
+  getInstance(sessionKey: string): OpencodeServerInstance | undefined {
+    const instance = this.instances.get(sessionKey);
+    return instance && instance.proc.exitCode === null ? instance : undefined;
+  }
+
   async stopAll(): Promise<void> {
     for (const workspaceId of [...this.instances.keys()]) {
       await this.stopServer(workspaceId);
