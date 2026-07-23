@@ -406,6 +406,13 @@ function buildSteelApi(checkout: string): void {
   execFileSync(join(checkout, 'node_modules', '.bin', 'tsc'), [], {
     stdio: 'inherit',
     cwd: apiDir,
+    // npm's .bin shims are extensionless symlinks on POSIX but .cmd/.ps1
+    // batch shims on Windows. Spawning the extensionless path directly throws
+    // ENOENT on Windows, and spawning the .cmd directly throws EINVAL on
+    // modern Node (CVE-2024-27980), so route through the shell there: cmd.exe
+    // resolves `tsc` via PATHEXT to `tsc.cmd`. args is empty, so there is no
+    // shell-quoting surface.
+    shell: process.platform === 'win32',
   });
   patchCdpServiceArgs(apiDir);
   // Mirror the api package's copy:templates / copy:fingerprint scripts with
