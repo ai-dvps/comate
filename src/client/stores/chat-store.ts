@@ -225,6 +225,8 @@ export interface ChatSession {
   source?: 'gui' | 'wecom' | 'feishu'
   approvalMode?: ApprovalMode
   providerId?: string
+  /** Agent backend the session is locked to; unset on drafts (pre-selectable). */
+  backend?: string
   fastMode?: boolean
   createdAt: string
   updatedAt: string
@@ -375,6 +377,7 @@ export interface ChatState {
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
+  setSessionBackend: (workspaceId: string, sessionId: string, backend: string) => Promise<void>
 }
 
 function generateId(): string {
@@ -3372,6 +3375,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
           sessions: { ...state.sessions, [workspaceId]: nextSessions },
         }
       })
+    }
+  },
+
+  setSessionBackend: async (workspaceId: string, sessionId: string, backend: string) => {
+    const previous = (get().sessions[workspaceId] || []).find((s) => s.id === sessionId)?.backend
+    set((state) => {
+      const workspaceSessions = state.sessions[workspaceId] || []
+      return {
+        sessions: {
+          ...state.sessions,
+          [workspaceId]: workspaceSessions.map((s) =>
+            s.id === sessionId ? { ...s, backend } : s,
+          ),
+        },
+      }
+    })
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend }),
+      })
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+    } catch (err) {
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        return {
+          sessions: {
+            ...state.sessions,
+            [workspaceId]: workspaceSessions.map((s) =>
+              s.id === sessionId ? { ...s, backend: previous } : s,
+            ),
+          },
+        }
+      })
+      throw err
     }
   },
 

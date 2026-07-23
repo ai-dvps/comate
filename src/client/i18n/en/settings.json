@@ -6,7 +6,8 @@
     "workspace": "Workspace",
     "providers": "Providers",
     "wecom": "WeCom Bot",
-    "bots": "Bots"
+    "bots": "Bots",
+    "backend": "Backend"
   },
   "general": {
     "archiveThresholdDays": "Archive Threshold (days)",

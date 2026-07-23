@@ -134,3 +134,17 @@ describe('default backend', () => {
     assert.equal(resolved.backend, 'claude');
   });
 });
+
+describe('listBackendCapabilities', () => {
+  it('fully resolves defaults per backend', async () => {
+    const { listBackendCapabilities, CAPABILITY_IDS } = await import('./agent-backends.js');
+    const claudeTable = listBackendCapabilities('claude');
+    for (const id of CAPABILITY_IDS) {
+      assert.equal(claudeTable[id].state, 'full');
+    }
+    const opencodeTable = listBackendCapabilities('opencode');
+    assert.equal(opencodeTable.analytics.state, 'unavailable');
+    assert.equal(opencodeTable.analytics.reasonKey, 'backend.analyticsNotCounted');
+    assert.equal(opencodeTable.hooks.state, 'unavailable');
+  });
+});

@@ -64,7 +64,7 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
   opencode: {
     analytics: {
       state: 'unavailable',
-      reasonKey: 'backend.opencode.analyticsNotCounted',
+      reasonKey: 'backend.analyticsNotCounted',
     },
   },
 };
@@ -74,6 +74,32 @@ export function getCapability(backend: BackendId, capability: CapabilityId): Cap
   if (declared) return declared;
   if (backend === 'claude') return FULL;
   return { state: 'unavailable', reasonKey: 'backend.capabilityUndeclared' };
+}
+
+export const CAPABILITY_IDS: readonly CapabilityId[] = [
+  'streaming',
+  'toolRendering',
+  'approvals',
+  'askUserQuestion',
+  'subagents',
+  'browser',
+  'hooks',
+  'slashCommands',
+  'todos',
+  'sessionManagement',
+  'modelSwitching',
+  'analytics',
+];
+
+/** Fully-resolved capability table for one backend (defaults applied). */
+export function listBackendCapabilities(
+  backend: BackendId,
+): Record<CapabilityId, CapabilityEntry> {
+  const resolved = {} as Record<CapabilityId, CapabilityEntry>;
+  for (const id of CAPABILITY_IDS) {
+    resolved[id] = getCapability(backend, id);
+  }
+  return resolved;
 }
 
 /** Test hook for U4/U6/U7: declare or update a capability at runtime. */

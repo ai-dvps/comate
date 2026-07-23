@@ -3067,3 +3067,63 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     );
   });
 });
+
+describe('chat-service session backend update guard (R4)', { concurrency: false }, () => {
+  let service: ChatService;
+
+  beforeEach(async () => {
+    workspaceStore.resetData();
+    service = new ChatService();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+  });
+
+  async function createSession() {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-backend-guard-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: `Provider ${crypto.randomUUID()}`,
+      baseUrl: 'http://test',
+      authToken: 't',
+      model: 'm',
+      isDefault: false,
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
+    return { workspace, session };
+  }
+
+  it('pre-selects the backend on an unlocked session', async () => {
+    const { workspace, session } = await createSession();
+    const updated = await service.updateSession(session.id, { backend: 'opencode' }, workspace.id);
+    assert.ok(updated);
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'opencode');
+  });
+
+  it('rejects changing a locked backend with 409', async () => {
+    const { workspace, session } = await createSession();
+    workspaceStore.updateSessionBackend(session.id, 'claude');
+    await assert.rejects(
+      () => service.updateSession(session.id, { backend: 'opencode' }, workspace.id),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /locked/i);
+        assert.strictEqual((err as { statusCode?: number }).statusCode, 409);
+        return true;
+      },
+    );
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
+  });
+
+  it('rejects an unknown backend value with 400', async () => {
+    const { workspace, session } = await createSession();
+    await assert.rejects(
+      () => service.updateSession(session.id, { backend: 'kimi' }, workspace.id),
+      (err: unknown) => {
+        assert.strictEqual((err as { statusCode?: number }).statusCode, 400);
+        return true;
+      },
+    );
+  });
+});

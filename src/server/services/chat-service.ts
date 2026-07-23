@@ -380,6 +380,23 @@ export class ChatService {
     const localSession = workspaceStore.getLocalSession(id);
     const previousProviderId = localSession?.providerId;
 
+    // Backend changes are allowed only as a draft pre-selection: once the
+    // session carries a backend it is locked (R4), and re-selecting is a
+    // conflict, not a silent no-op.
+    if (input.backend !== undefined) {
+      if (input.backend !== 'claude' && input.backend !== 'opencode') {
+        throw new ChatError(`Unknown agent backend '${input.backend}'`, 'INVALID_BACKEND', 400);
+      }
+      if (localSession?.backend && localSession.backend !== input.backend) {
+        throw new ChatError(
+          `Session backend is locked to '${localSession.backend}' and cannot be changed`,
+          'BACKEND_LOCKED',
+          409,
+        );
+      }
+      workspaceStore.updateSessionBackend(id, input.backend);
+    }
+
     if (localSession && localSession.isDraft) {
       const draftInput: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
       if (input.name !== undefined) draftInput.name = input.name;
