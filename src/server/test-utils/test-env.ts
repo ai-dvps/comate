@@ -27,6 +27,13 @@ process.env.COMATE_TEST_MODE = '1';
 // projects tree instead of the test fixture.
 delete process.env.CLAUDE_CONFIG_DIR;
 
+// Neutralize CLAUDE_CODE_STREAM_CLOSE_TIMEOUT. Comate injects this variable
+// per GUI session (never process-global in production), so tests spawned from
+// inside a Comate-hosted session inherit it from the ambient environment and
+// buildClaudeEnv spreads it into every session's env — including bot sessions
+// that must not receive it (see __tests__/browser-mcp.test.ts).
+delete process.env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT;
+
 // Preventive load-order check. data-dir.ts records the moment getStorageDir()
 // first runs. If that already happened before we reached this line, some module
 // imported ahead of us already constructed the store against an unguarded path.
