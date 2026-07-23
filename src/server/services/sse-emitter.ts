@@ -2,7 +2,7 @@ import type { Response } from 'express';
 import type { SDKMessage, SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sdk';
 
 import type { SseEvent, QuestionPayload, WorkflowStatus, TaskSignal } from '../types/message.js';
-import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionSuggestion } from '../types/message.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 
 /**
@@ -352,7 +352,7 @@ export class SseEmitter {
     input: unknown,
     title?: string,
     description?: string,
-    suggestions?: PermissionUpdate[],
+    suggestions?: PermissionSuggestion[],
     expiresAt?: number,
     denialReason?: string,
   ): void {

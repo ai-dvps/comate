@@ -1594,7 +1594,7 @@ export class ChatService {
             input: Record<string, unknown>,
             sdkOptions: {
               signal: AbortSignal;
-              suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+              suggestions?: import('../types/message.js').PermissionSuggestion[];
               title?: string;
               description?: string;
               toolUseID: string;

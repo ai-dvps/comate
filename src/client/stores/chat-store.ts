@@ -1,8 +1,7 @@
 import { create } from 'zustand'
 import i18next from 'i18next'
 
-import type { ChatMessage, MessagePart, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem, WorkflowState } from '../types/message'
-import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
+import type { ChatMessage, MessagePart, PermissionSuggestion, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem, WorkflowState } from '../types/message'
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
@@ -244,7 +243,7 @@ interface PendingApproval {
   inputSummary: string
   title?: string
   description?: string
-  suggestions?: PermissionUpdate[]
+  suggestions?: PermissionSuggestion[]
   expiresAt?: number
   denialReason?: 'safetyCheck' | 'asyncAgent' | string
 }
@@ -368,7 +367,7 @@ export interface ChatState {
     workspaceId: string,
     sessionId: string,
     requestId: string,
-    result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionUpdate[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
+    result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionSuggestion[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
   ) => Promise<void>
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
   cleanupWorkspace: (workspaceId: string) => void
@@ -3175,7 +3174,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     requestId: string,
     result: {
       behavior: 'allow' | 'deny'
-      updatedPermissions?: PermissionUpdate[]
+      updatedPermissions?: PermissionSuggestion[]
       answers?: Record<string, string>
       questions?: QuestionPayload[]
       message?: string

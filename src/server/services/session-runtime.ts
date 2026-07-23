@@ -4,12 +4,11 @@ import type {
   SDKMessage,
   SDKUserMessage,
   PermissionResult,
-  PermissionUpdate,
   Query,
   SDKRateLimitInfo,
   SDKControlGetContextUsageResponse,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { SseEvent, QuestionPayload, TaskSignal } from '../types/message.js';
+import type { SseEvent, QuestionPayload, TaskSignal, PermissionSuggestion } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import { PushableIterator } from './pushable-iterator.js';
@@ -68,7 +67,7 @@ export class SessionRuntime {
       toolUseId?: string;
       title?: string;
       description?: string;
-      suggestions?: PermissionUpdate[];
+      suggestions?: PermissionSuggestion[];
       questions?: QuestionPayload[];
       expiresAt?: number;
       timer?: NodeJS.Timeout;
@@ -304,7 +303,7 @@ export class SessionRuntime {
       input: Record<string, unknown>,
       options: {
         signal: AbortSignal;
-        suggestions?: PermissionUpdate[];
+        suggestions?: PermissionSuggestion[];
         title?: string;
         description?: string;
         toolUseID: string;
@@ -457,7 +456,7 @@ export class SessionRuntime {
       input: Record<string, unknown>,
       options: {
         signal: AbortSignal;
-        suggestions?: PermissionUpdate[];
+        suggestions?: PermissionSuggestion[];
         title?: string;
         description?: string;
         toolUseID: string;
@@ -470,7 +469,7 @@ export class SessionRuntime {
     input: Record<string, unknown>,
     options: {
       signal: AbortSignal;
-      suggestions?: PermissionUpdate[];
+      suggestions?: PermissionSuggestion[];
       title?: string;
       description?: string;
       toolUseID: string;
@@ -910,7 +909,7 @@ export class SessionRuntime {
   getPendingCardState(
     requestId: string,
   ):
-    | { type: 'approval'; toolName?: string; toolUseId?: string; suggestions?: PermissionUpdate[] }
+    | { type: 'approval'; toolName?: string; toolUseId?: string; suggestions?: PermissionSuggestion[] }
     | { type: 'question'; questions: QuestionPayload[] }
     | undefined {
     const pending = this.pendingApprovals.get(requestId);
@@ -939,7 +938,7 @@ export class SessionRuntime {
     options: {
       title?: string;
       description?: string;
-      suggestions?: PermissionUpdate[];
+      suggestions?: PermissionSuggestion[];
       timeout?: number;
       signal?: AbortSignal;
       decisionReasonType?: string;
@@ -1002,7 +1001,7 @@ export class SessionRuntime {
       toolUseId?: string;
       title?: string;
       description?: string;
-      suggestions?: PermissionUpdate[];
+      suggestions?: PermissionSuggestion[];
       questions?: QuestionPayload[];
       expiresAt?: number;
       timer?: NodeJS.Timeout;
