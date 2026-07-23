@@ -2452,3 +2452,44 @@ describe('session-runtime stopAll (clear-all)', { concurrency: false }, () => {
     assert.strictEqual(processingEvents(events).length, 0, 'baseline idle emits nothing');
   });
 });
+
+describe('session-runtime backend driver seam (KTD-1)', { concurrency: false }, () => {
+  it('starts the query through the injected driver, not the sdkClient', () => {
+    let driverCalls = 0;
+    let sdkCalls = 0;
+    const messages = (async function* () {})();
+    const driver = {
+      backendId: 'claude' as const,
+      createStreamingQuery: () => {
+        driverCalls += 1;
+        return {
+          query: { interrupt: () => Promise.resolve(), close: () => {} },
+          messages,
+        };
+      },
+    };
+    const sdkClient = {
+      createStreamingQuery: () => {
+        sdkCalls += 1;
+        throw new Error('sdkClient must not be called when a driver is injected');
+      },
+    } as unknown as SdkClient;
+
+    const runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdkClient,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      driver as never,
+    );
+    assert.strictEqual(driverCalls, 1);
+    assert.strictEqual(sdkCalls, 0);
+    void runtime;
+  });
+});

@@ -269,6 +269,11 @@ export class SqliteStore {
     if (!sessionColumns.some(col => col.name === 'provider_id')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
     }
+    if (!sessionColumns.some(col => col.name === 'backend')) {
+      // KTD-9: sessions lock to an agent backend at first runtime; legacy
+      // rows read as undefined and resolve to claude (grandfathered).
+      this.db.exec('ALTER TABLE sessions ADD COLUMN backend TEXT');
+    }
     if (!sessionColumns.some(col => col.name === 'bot_id')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN bot_id TEXT');
     }
@@ -1591,6 +1596,13 @@ export class SqliteStore {
     return row ? parseSessionRow(row) : null;
   }
 
+  updateSessionBackend(id: string, backend: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE sessions SET backend = ?, updated_at = ? WHERE id = ?')
+      .run(backend, now, id);
+  }
+
   createLocalSession(
     workspaceId: string,
     name: string,
@@ -2637,6 +2649,7 @@ interface RawSessionRow {
   source: string | null;
   approval_mode: string | null;
   provider_id: string | null;
+  backend: string | null;
   bot_id: string | null;
   fast_mode: number;
   created_at: string;
@@ -2659,6 +2672,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     source: (row.source as 'gui' | 'wecom' | 'feishu') ?? undefined,
     approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
     providerId: row.provider_id ?? undefined,
+    backend: row.backend ?? undefined,
     fastMode: row.fast_mode === 1,
     botId: row.bot_id ?? undefined,
     createdAt: row.created_at,
