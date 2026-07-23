@@ -35,6 +35,14 @@ export interface CapabilityEntry {
   state: CapabilityState;
   /** i18n key for the disable+reason UI; required when state !== 'full'. */
   reasonKey?: string;
+  /**
+   * Evidence level behind the declaration (doc-review): `verified` means an
+   * executable conformance path has exercised it (unit/integration/E2E);
+   * `declared` means it is built but not yet exercised end-to-end. The
+   * acceptance checklist (U8) is generated with this distinction so the table
+   * cannot self-certify parity.
+   */
+  evidence?: 'verified' | 'declared';
 }
 
 export type CapabilityId =
@@ -65,14 +73,28 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
     // editable in settings but executed on NEITHER backend (scriptPath has no
     // consumer). Declared unavailable on both until hook execution lands as
     // its own work item (conflict-channel decision, U7).
-    hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired' },
+    hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired', evidence: 'verified' },
   },
   opencode: {
+    // Delivered and exercised (U4–U7): live E2E scripts and unit/integration
+    // tests are the conformance path — see
+    // docs/acceptance/agent-backend-parity-checklist.md for per-capability proof.
+    streaming: { state: 'full', evidence: 'verified' },
+    toolRendering: { state: 'full', evidence: 'verified' },
+    approvals: { state: 'full', evidence: 'verified' },
+    askUserQuestion: { state: 'full', evidence: 'verified' },
+    todos: { state: 'full', evidence: 'verified' },
+    sessionManagement: { state: 'full', evidence: 'verified' },
+    modelSwitching: { state: 'full', evidence: 'verified' },
+    browser: { state: 'full', evidence: 'verified' },
+    slashCommands: { state: 'full', evidence: 'verified' },
+    subagents: { state: 'full', evidence: 'verified' },
     analytics: {
       state: 'unavailable',
       reasonKey: 'backend.analyticsNotCounted',
+      evidence: 'verified',
     },
-    hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired' },
+    hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired', evidence: 'verified' },
   },
 };
 
