@@ -136,6 +136,46 @@ describe('git-changes routes', { concurrency: false }, () => {
     }
   });
 
+  it('GET / hides clean nested repositories but shows dirty ones', async () => {
+    await initGitRepo(tempDir);
+    await writeFile(path.join(tempDir, 'tracked.txt'), 'x');
+    await execFileAsync('git', ['add', 'tracked.txt'], { cwd: tempDir });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: tempDir });
+
+    // A clean nested repository (fully committed, no changes).
+    const cleanRepo = path.join(tempDir, 'clean-repo');
+    await mkdir(cleanRepo);
+    await initGitRepo(cleanRepo);
+    await writeFile(path.join(cleanRepo, 'a.txt'), 'a');
+    await execFileAsync('git', ['add', 'a.txt'], { cwd: cleanRepo });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: cleanRepo });
+
+    // A dirty nested repository (has an untracked file).
+    const dirtyRepo = path.join(tempDir, 'dirty-repo');
+    await mkdir(dirtyRepo);
+    await initGitRepo(dirtyRepo);
+    await writeFile(path.join(dirtyRepo, 'b.txt'), 'b');
+    await execFileAsync('git', ['add', 'b.txt'], { cwd: dirtyRepo });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: dirtyRepo });
+    await writeFile(path.join(dirtyRepo, 'untracked.txt'), 'u');
+
+    // A regular untracked file in the parent.
+    await writeFile(path.join(tempDir, 'loose.txt'), 'loose');
+
+    const workspaceId = await createWorkspaceInStore(tempDir);
+    const handlers = await importRouteHandlers();
+    const req = { params: { id: workspaceId } };
+    const res = createMockRes();
+
+    await handlers['/'].get(req, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    const paths = (res.jsonBody as { items: GitStatusItem[] }).items.map((i) => i.path);
+    assert.ok(!paths.includes('clean-repo/'), 'clean nested repo should be hidden');
+    assert.ok(paths.includes('dirty-repo/'), 'dirty nested repo should be shown');
+    assert.ok(paths.includes('loose.txt'), 'regular untracked file should be shown');
+  });
+
   it('GET / returns originalPath for renamed files', async () => {
     await initGitRepo(tempDir);
     await writeFile(path.join(tempDir, 'old.txt'), 'content');
