@@ -92,7 +92,9 @@
     "ws": "^8.21.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3",
-    "zustand": "^4.5.2"
+    "zustand": "^4.5.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opencode-ai/sdk": "1.18.4"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
@@ -144,5 +146,14 @@
     "shell-quote": "^1.8.4",
     "tar": "^7.5.16",
     "uuid": "^11.1.1"
+  },
+  "optionalDependencies": {
+    "opencode-darwin-arm64": "1.18.4",
+    "opencode-darwin-x64": "1.18.4",
+    "opencode-linux-x64": "1.18.4",
+    "opencode-linux-arm64": "1.18.4",
+    "opencode-linux-x64-musl": "1.18.4",
+    "opencode-linux-arm64-musl": "1.18.4",
+    "opencode-windows-x64": "1.18.4"
   }
 }

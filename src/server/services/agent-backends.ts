@@ -18,6 +18,7 @@
 
 import { spawn } from 'node:child_process';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
+import { resolveOpencodeBinary } from '../utils/resolve-opencode-binary.js';
 import { getAppSetting, setAppSetting } from '../storage/app-settings-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 
@@ -173,14 +174,19 @@ export async function getBackendAvailability(backend: BackendId): Promise<Backen
   return availability;
 }
 
-// claude is the built-in backend: its resolver ships with the registry.
-registerBackendRuntime('claude', { resolveBinaryPath: () => resolveSdkBinary() });
+// Built-in backends: their resolvers ship with the registry (claude via the
+// SDK's platform optional dep, opencode via the pinned opencode-* packages).
+function registerDefaultBackendRuntimes(): void {
+  registerBackendRuntime('claude', { resolveBinaryPath: () => resolveSdkBinary() });
+  registerBackendRuntime('opencode', { resolveBinaryPath: () => resolveOpencodeBinary() });
+}
 
-/** Restore the registry to its default state (claude resolver only). */
+registerDefaultBackendRuntimes();
+
+/** Clear all resolvers and cached availability. Tests re-register per case. */
 export function resetBackendRegistryForTests(): void {
   runtimeResolvers.clear();
   availabilityCache.clear();
-  registerBackendRuntime('claude', { resolveBinaryPath: () => resolveSdkBinary() });
 }
 
 // ---------------------------------------------------------------------------
