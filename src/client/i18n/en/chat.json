@@ -267,6 +267,7 @@
     "available": "Available",
     "unavailable": "Unavailable",
     "isDefault": "Default",
-    "tab": "Backend"
+    "tab": "Backend",
+    "hooksNotWired": "Hook scripts are not executed yet on either backend"
   }
 }

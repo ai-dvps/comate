@@ -140,8 +140,11 @@ describe('listBackendCapabilities', () => {
     const { listBackendCapabilities, CAPABILITY_IDS } = await import('./agent-backends.js');
     const claudeTable = listBackendCapabilities('claude');
     for (const id of CAPABILITY_IDS) {
+      if (id === 'hooks') continue; // hooks declared unavailable on BOTH backends (U7)
       assert.equal(claudeTable[id].state, 'full');
     }
+    assert.equal(claudeTable.hooks.state, 'unavailable');
+    assert.equal(claudeTable.hooks.reasonKey, 'backend.hooksNotWired');
     const opencodeTable = listBackendCapabilities('opencode');
     assert.equal(opencodeTable.analytics.state, 'unavailable');
     assert.equal(opencodeTable.analytics.reasonKey, 'backend.analyticsNotCounted');

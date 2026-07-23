@@ -60,12 +60,19 @@ const FULL: CapabilityEntry = { state: 'full' };
  * (KTD-10 — opencode sessions are not counted in usage analytics).
  */
 const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, CapabilityEntry>>> = {
-  claude: {},
+  claude: {
+    // Workspace hooks are a data-model-only feature today — stored and
+    // editable in settings but executed on NEITHER backend (scriptPath has no
+    // consumer). Declared unavailable on both until hook execution lands as
+    // its own work item (conflict-channel decision, U7).
+    hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired' },
+  },
   opencode: {
     analytics: {
       state: 'unavailable',
       reasonKey: 'backend.analyticsNotCounted',
     },
+    hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired' },
   },
 };
 

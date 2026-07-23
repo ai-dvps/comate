@@ -241,7 +241,18 @@ export class OpencodeBackendDriver implements BackendDriver {
       diagLog(`[OpencodeBackendDriver] reattaching remote session ${this.backendSessionId} for ${this.deps.comateSessionId}`);
     }
 
+    void this.refreshCommands();
     this.startEventSubscription(options);
+  }
+
+  private knownCommands = new Set<string>();
+
+  private async refreshCommands(): Promise<void> {
+    try {
+      this.knownCommands = new Set((await this.listBackendCommands()).map((c) => c.name));
+    } catch {
+      // Command discovery is best-effort; slash execution falls back to prompts.
+    }
   }
 
   /** Route permission/question events to the core; everything else to the mapper queue. */
@@ -486,6 +497,16 @@ export class OpencodeBackendDriver implements BackendDriver {
 
   private async sendPrompt(text: string, options: Options): Promise<void> {
     if (!this.instance || !this.backendSessionId) return;
+
+    // Slash commands execute via opencode's command endpoint (server-side
+    // template expansion) when the command is known (U7).
+    const slash = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+    if (slash && this.knownCommands.has(slash[1])) {
+      const executed = await this.executeBackendCommand(slash[1], slash[2] ?? '');
+      if (executed) return;
+      diagLog(`[OpencodeBackendDriver] /command ${slash[1]} failed; falling back to prompt`);
+    }
+
     const system =
       typeof options.systemPrompt === 'string' ? options.systemPrompt : undefined;
     await opencodeFetch(this.instance, `/session/${this.backendSessionId}/prompt_async`, {
@@ -516,5 +537,28 @@ export class OpencodeBackendDriver implements BackendDriver {
       await opencodeFetch(this.instance, `/session/${this.backendSessionId}/children`)
     ).json()) as Array<{ id: string }>;
     return children.map((c) => c.id);
+  }
+
+  /** Slash-command surface (U7): commands advertised by this session's serve. */
+  async listBackendCommands(): Promise<Array<{ name: string; description?: string; template?: string }>> {
+    if (!this.instance) return [];
+    const res = await opencodeFetch(this.instance, '/command');
+    if (!res.ok) return [];
+    const commands = (await res.json()) as Array<{
+      name: string;
+      description?: string;
+      template?: string;
+    }>;
+    return commands;
+  }
+
+  /** Execute a slash command via opencode's command endpoint (template expansion). */
+  async executeBackendCommand(name: string, args: string): Promise<boolean> {
+    if (!this.instance || !this.backendSessionId) return false;
+    const res = await opencodeFetch(this.instance, `/session/${this.backendSessionId}/command`, {
+      method: 'POST',
+      body: JSON.stringify({ command: name, arguments: args }),
+    });
+    return res.ok;
   }
 }
