@@ -10,6 +10,7 @@ const execAsync = promisify(exec);
 import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
+import backendRoutes from './routes/backends.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
 import gitStatusRoutes from './routes/git-status.js';
 import gitChangesRoutes from './routes/git-changes.js';
@@ -118,6 +119,7 @@ app.use(express.json());
 
 // API routes
 app.use('/api/workspaces', workspaceRoutes);
+app.use('/api/backends', backendRoutes);
 app.use('/api/workspaces/:id/files', fileRoutes);
 app.use('/api/workspaces/:id/commands', workspaceCommandsRoutes);
 app.use('/api/workspaces/:id/git-ref', gitStatusRoutes);

@@ -49,4 +49,6 @@ export interface UpdateSessionInput {
   approvalMode?: ApprovalMode;
   providerId?: string;
   fastMode?: boolean;
+  /** Pre-select the backend on a draft; rejected once the session is locked (R4). */
+  backend?: string;
 }
