@@ -113,6 +113,42 @@ export function assertNoDanglingSymlinks(dir: string): void {
   }
 }
 
+/**
+ * Build gate for non-ASCII paths. The Windows MSI bundler (WiX light.exe)
+ * defaults to database code page 1252 (Latin-1) and aborts with LGHT0311 on any
+ * harvested path whose name contains a character outside that code page (e.g.
+ * CJK, emoji — @fastify/send ships a `test/fixtures/snow ☃` fixture). Tauri
+ * swallows light.exe's stderr, so without this gate the failure surfaces only
+ * as a cryptic remote "failed to run light.exe". Checking the full relative
+ * path (not just the basename) also catches non-ASCII directory names, since
+ * they appear in every descendant's path.
+ */
+const NON_ASCII = /[^\x20-\x7E]/;
+
+/** Lists offending relative paths, empty when clean. */
+export function findNonAsciiPaths(dir: string): string[] {
+  const offenders: string[] = [];
+  for (const file of walkFiles(dir)) {
+    if (NON_ASCII.test(relative(dir, file))) {
+      offenders.push(relative(dir, file));
+    }
+  }
+  return offenders;
+}
+
+export function assertNoNonAsciiPaths(dir: string): void {
+  const offenders = findNonAsciiPaths(dir);
+  if (offenders.length > 0) {
+    throw new Error(
+      `non-ASCII paths found in vendored tree (build gate):\n  ` +
+        offenders.join('\n  ') +
+        '\nThe Windows MSI bundler (WiX light.exe) uses code page 1252 and aborts with ' +
+        'LGHT0311 on such characters; Tauri swallows the error. ' +
+        'Strip the offending test/non-runtime directory during vendoring (pruneNonRuntimeDirs).',
+    );
+  }
+}
+
 export function dirSizeBytes(dir: string): number {
   let total = 0;
   for (const file of walkFiles(dir)) {

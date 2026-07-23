@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -15,6 +16,7 @@ import { fileURLToPath } from 'url';
 import {
   assertNoDanglingSymlinks,
   assertNoNativeArtifacts,
+  assertNoNonAsciiPaths,
   assertSizeBudget,
   walkFiles,
 } from '../src/server/utils/native-artifact-audit.js';
@@ -479,6 +481,49 @@ function stageVendoredTree(checkout: string, workDir: string): string {
   return staging;
 }
 
+// Directory names that are never required at runtime. Vendoring copies whole
+// package directories, so these ride along as dead weight — and some carry
+// non-ASCII fixture names that break the Windows MSI bundler (see below).
+const NON_RUNTIME_DIR_NAMES = new Set([
+  'test',
+  'tests',
+  '__tests__',
+  '__mocks__',
+  'docs',
+  'doc',
+  'example',
+  'examples',
+  'coverage',
+  '.nyc_output',
+  'website',
+]);
+const NON_ASCII_NAME = /[^\x20-\x7E]/;
+
+/**
+ * Strip directories never needed at runtime: package test/docs/example trees
+ * are dead weight (and bloat the 80 MiB budget), and some contain non-ASCII
+ * fixture names — e.g. `@fastify/send` ships `test/fixtures/snow ☃`, whose ☃
+ * (U+2603) is outside WiX's default code page 1252 and aborts light.exe with
+ * LGHT0311. Any directory whose own name is non-ASCII is dropped for the same
+ * reason. Walked bottom-up so a pruned parent doesn't disturb sibling traversal.
+ */
+function pruneNonRuntimeDirs(staging: string): void {
+  let removed = 0;
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const full = join(current, entry.name);
+      walk(full); // descend first; children may be independently prunable
+      if (NON_RUNTIME_DIR_NAMES.has(entry.name) || NON_ASCII_NAME.test(entry.name)) {
+        rmSync(full, { recursive: true, force: true });
+        removed += 1;
+      }
+    }
+  };
+  walk(staging);
+  console.log(`pruned ${removed} non-runtime/non-ASCII directories`);
+}
+
 /** Type declarations and sourcemaps are dead weight in a runtime artifact. */
 function stripTypeDeclarationsAndMaps(staging: string): void {
   let removed = 0;
@@ -521,6 +566,7 @@ async function build(): Promise<void> {
     const checkout = clonePinnedSteel(workDir);
     buildSteelApi(checkout);
     const staging = stageVendoredTree(checkout, workDir);
+    pruneNonRuntimeDirs(staging);
     stripTypeDeclarationsAndMaps(staging);
 
     console.log('\n--- Native artifact audit ---');
@@ -537,6 +583,10 @@ async function build(): Promise<void> {
     console.log('\n--- Symlink audit ---');
     assertNoDanglingSymlinks(staging);
     console.log('clean (no dangling symlinks)');
+
+    console.log('\n--- Non-ASCII path audit ---');
+    assertNoNonAsciiPaths(staging);
+    console.log('clean (no non-ASCII paths)');
 
     writeManifest(staging, bytes);
 

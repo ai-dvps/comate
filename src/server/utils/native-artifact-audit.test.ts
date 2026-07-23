@@ -12,6 +12,8 @@ import {
   detectNativeKind,
   findDanglingSymlinks,
   assertNoDanglingSymlinks,
+  findNonAsciiPaths,
+  assertNoNonAsciiPaths,
 } from './native-artifact-audit.js';
 
 /**
@@ -197,6 +199,45 @@ describe('native-artifact-audit', { concurrency: false }, () => {
       assert.strictEqual(offenders.length, 1);
       assert.ok(offenders[0].endsWith('.bin/pino'));
       assert.throws(() => assertNoDanglingSymlinks(dir), /resource path/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('passes an ASCII-only tree for the non-ASCII path gate', () => {
+    const dir = makeTree({
+      'node_modules/fastify/index.js': 'module.exports = {};',
+      'build/index.js': 'export {};\n',
+    });
+    try {
+      assert.deepStrictEqual(findNonAsciiPaths(dir), []);
+      assert.doesNotThrow(() => assertNoNonAsciiPaths(dir));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('flags a non-ASCII directory name via its descendant path (the @fastify/send snowman fixture)', () => {
+    // WiX light.exe uses code page 1252 and aborts (LGHT0311) on the ☃ here.
+    const dir = makeTree({
+      'node_modules/@fastify/send/test/fixtures/snow ☃/index.html': '<html></html>',
+    });
+    try {
+      const offenders = findNonAsciiPaths(dir);
+      assert.strictEqual(offenders.length, 1);
+      assert.ok(offenders[0].includes('snow ☃'));
+      assert.throws(() => assertNoNonAsciiPaths(dir), /non-ASCII paths found/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('flags a non-ASCII file name directly', () => {
+    const dir = makeTree({ 'node_modules/pkg/café.js': 'export {};\n' });
+    try {
+      const offenders = findNonAsciiPaths(dir);
+      assert.strictEqual(offenders.length, 1);
+      assert.ok(offenders[0].endsWith('café.js'));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
