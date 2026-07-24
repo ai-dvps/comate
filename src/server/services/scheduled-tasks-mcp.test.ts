@@ -130,4 +130,37 @@ describe('list/pause/resume/run-now tools', () => {
     assert.equal(runDraft.isError, true);
     assert.match(textOf(runDraft), /尚未确认/);
   });
+
+  it('pause/resume/run-now against another workspace\'s task fail with error text; the task is untouched', async () => {
+    const other = await store.create({ name: 'WS2', folderPath: '/tmp/ws-mcp-other' });
+    // The task belongs to `workspaceId`; the tools below are scoped to `other.id`.
+    const task = await scheduledTasksService.createTask(workspaceId, {
+      workspaceId,
+      name: 'victim',
+      instruction: 'x',
+      scheduleType: 'recurring',
+      cronExpr: '0 9 * * *',
+    });
+    const otherTools = buildScheduledTaskToolDefinitions({ workspaceId: other.id, source: undefined });
+    const invoke = async (name: string, args: Record<string, unknown>) => {
+      const tool = otherTools.find((t) => t.name === name);
+      assert.ok(tool, `tool ${name} should exist`);
+      return (tool.handler as (a: never) => Promise<{ content: { type: string; text: string }[]; isError?: boolean }>)(args as never);
+    };
+
+    const paused = await invoke('pause_scheduled_task', { taskId: task.id });
+    assert.equal(paused.isError, true);
+    assert.match(textOf(paused), /not found/);
+
+    const resumed = await invoke('resume_scheduled_task', { taskId: task.id });
+    assert.equal(resumed.isError, true);
+    assert.match(textOf(resumed), /not found/);
+
+    const ran = await invoke('run_scheduled_task_now', { taskId: task.id });
+    assert.equal(ran.isError, true);
+    assert.match(textOf(ran), /not found/);
+
+    // Untouched: still active in its own workspace
+    assert.equal(store.getScheduledTask(task.id)!.status, 'active');
+  });
 });
