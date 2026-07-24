@@ -12,6 +12,9 @@ import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
+import ScheduledTasksPanel from './components/ScheduledTasksPanel'
+import { initNotificationClickHandler } from './lib/notifications'
+import { openSessionDirect } from './lib/session-jump'
 import RightPanel from './components/RightPanel'
 import BrowserPopout from './components/browser/BrowserPopout'
 import HeaderToolbar from './components/HeaderToolbar'
@@ -53,6 +56,7 @@ function App() {
   )
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const [showSettings, setShowSettings] = useState(false)
+  const [showScheduledTasks, setShowScheduledTasks] = useState(false)
   const [showAnalytics, setShowAnalytics] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false)
@@ -102,6 +106,11 @@ function App() {
       setProviderCheck({ ok: false, checking: false, error: t('provider.noProviderConfigured') })
     }
   }, [fetchProviders, detectProviders, t])
+
+  // Scheduled-task desktop notification clicks jump to the run session (KTD-4).
+  useEffect(() => {
+    initNotificationClickHandler(openSessionDirect);
+  }, []);
 
   useEffect(() => {
     fetchWorkspaces()
@@ -247,6 +256,7 @@ function App() {
             onCreateWorkspace={() => setShowCreateModal(true)}
             onOpenSettings={() => setShowSettings(true)}
             onOpenAnalytics={() => setShowAnalytics(true)}
+            onOpenScheduledTasks={() => setShowScheduledTasks(true)}
           />
         </div>
       </header>
@@ -354,6 +364,10 @@ function App() {
         <AnalyticsPanel
           onClose={() => setShowAnalytics(false)}
         />
+      )}
+
+      {showScheduledTasks && (
+        <ScheduledTasksPanel onClose={() => setShowScheduledTasks(false)} />
       )}
 
       {showCreateModal && (

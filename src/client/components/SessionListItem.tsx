@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import { MessageSquare, Pencil } from 'lucide-react'
+import { Clock, MessageSquare, Pencil } from 'lucide-react'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import { deriveSessionState } from '../lib/session-status'
 import type { ChatSession } from '../stores/chat-store'
@@ -169,6 +169,15 @@ export default function SessionListItem({
                   !isActive && 'grayscale opacity-40',
                 )}
                 title={t('wecomBotSession')}
+              />
+            )}
+            {session.source === 'scheduled' && (
+              <Clock
+                className={cn(
+                  'w-3 h-3 flex-shrink-0',
+                  isActive ? 'text-accent' : 'text-text-tertiary/60',
+                )}
+                aria-label={t('scheduledRun', { ns: 'scheduledTasks' })}
               />
             )}
             {session.source === 'feishu' && (

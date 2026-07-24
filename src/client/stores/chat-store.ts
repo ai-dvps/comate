@@ -6,6 +6,8 @@ import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
 import { useToastStore } from './toast-store'
+import { useScheduledTaskStore } from './scheduled-task-store'
+import type { SchedulerRunEventPayload } from '../lib/scheduled-task-events'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
 import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
@@ -222,7 +224,7 @@ export interface ChatSession {
   isDraft?: boolean
   isWip?: boolean
   isArchived?: boolean
-  source?: 'gui' | 'wecom' | 'feishu'
+  source?: 'gui' | 'wecom' | 'feishu' | 'scheduled'
   approvalMode?: ApprovalMode
   providerId?: string
   /** Agent backend the session is locked to; unset on drafts (pre-selectable). */
@@ -1156,6 +1158,12 @@ export function handleWsEvent(set: SseSetter, get: SseGetter, msg: WsEventMessag
     if (!(state.backgroundSessions[workspaceId] || []).includes(sessionId)) {
       set((state) => addBackgroundSession(state, workspaceId, sessionId))
     }
+  } else if (msg.eventType === 'scheduled_task_event') {
+    // Server relay of scheduler lifecycle events (run started/finished, draft
+    // created) — drive the task store's unread badge, list refresh, and
+    // desktop notification.
+    useScheduledTaskStore.getState().handleSchedulerEvent(msg.data as SchedulerRunEventPayload)
+    return
   } else if (msg.eventType === 'runtime_closed' && msg.sessionId) {
     // The server closed this session's runtime (e.g. idle timeout). Tear down
     // the stale local subscription and clear the server nonce so the next
