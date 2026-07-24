@@ -43,6 +43,11 @@ import {
 import { SseParser } from './opencode-client.js';
 import { PushableIterator } from './pushable-iterator.js';
 import { diagLog } from '../utils/diag-logger.js';
+import {
+  decideModelFallback,
+  expandModelAliases,
+  isModelNotFoundError,
+} from './opencode-model-fallback.js';
 import type { PermissionSuggestion } from '../types/message.js';
 
 export interface OpencodeAdapterDeps {
@@ -83,9 +88,7 @@ export function buildServeConfig(provider: Provider, modelID: string): Record<st
           baseURL: toAnthropicBaseUrl(provider.baseUrl),
           apiKey: provider.authToken,
         },
-        models: {
-          [modelID]: { name: modelID },
-        },
+        models: expandModelAliases(modelID),
       },
     },
   };
@@ -326,10 +329,50 @@ export class OpencodeBackendDriver implements BackendDriver {
       return;
     }
 
+    // Transparent claude-code alias compatibility: a model-not-found error
+    // on a `[...]`-suffixed model id is retried once with the base id, so a
+    // provider configured for claude works on opencode without user changes.
+    if (event.type === 'session.error' && this.handleModelFallback(properties, options)) {
+      return;
+    }
+
     for (const message of mapOpencodeEvent(event, this.mapperState)) {
       this.pushEvent(message);
     }
   }
+
+  /** Returns true when the error was swallowed for a transparent retry. */
+  private handleModelFallback(
+    properties: Record<string, unknown>,
+    options: Options,
+  ): boolean {
+    const error = (properties.error ?? {}) as { data?: { message?: string }; message?: string };
+    const message = error.data?.message ?? error.message ?? '';
+    if (!isModelNotFoundError(message)) return false;
+
+    const decision = decideModelFallback(message, this.modelID, this.wireModelResolved);
+    if (decision.action !== 'retry' || !decision.wireModelID) return false;
+
+    diagLog(
+      `[OpencodeBackendDriver] model '${this.modelID}' rejected as not found; ` +
+        `retrying transparently with base id '${decision.wireModelID}'`,
+    );
+    this.modelID = decision.wireModelID;
+    this.wireModelResolved = true;
+    // Suppress the errored turn's idle as well as the error itself: emitting
+    // a success result now would tell waiters the turn completed while the
+    // retry is still in flight (they can then close/abort and kill the retry).
+    this.mapperState.erroredTurn = true;
+    if (this.lastPromptText) {
+      void this.sendPrompt(this.lastPromptText, options).catch((err) => {
+        diagLog(`[OpencodeBackendDriver] fallback prompt failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+    return true;
+  }
+
+  private wireModelResolved = false;
+  private lastPromptText?: string;
 
   private async bridgePermission(
     properties: Record<string, unknown>,
@@ -466,6 +509,7 @@ export class OpencodeBackendDriver implements BackendDriver {
 
   private async sendPrompt(text: string, options: Options): Promise<void> {
     if (!this.instance || !this.backendSessionId) return;
+    this.lastPromptText = text;
 
     // Slash commands execute via opencode's command endpoint (server-side
     // template expansion) when the command is known (U7).

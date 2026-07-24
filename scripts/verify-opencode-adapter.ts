@@ -25,6 +25,7 @@ const { setDefaultBackend, getBackendAvailability } = await import('../src/serve
 const { opencodeServerManager } = await import('../src/server/services/opencode-server-manager.js');
 
 const WORKSPACE_DIR = '/tmp/oc-adapter-workspace';
+const [, modelID] = (process.env.SPIKE_MODEL ?? 'kimi-comate/kimi-for-coding').split('/');
 const TARGET_FILE = path.join(WORKSPACE_DIR, 'adapter-proof.txt');
 const TIMEOUT_MS = 150_000;
 
@@ -44,10 +45,10 @@ const main = async (): Promise<void> => {
 
   const workspace = await workspaceStore.create({ name: 'Adapter Verify', folderPath: WORKSPACE_DIR });
   const provider = workspaceStore.createProvider({
-    name: 'Kimi Verify',
-    baseUrl: 'https://api.kimi.com/coding/',
+    name: process.env.SPIKE_PROVIDER_NAME ?? 'Kimi Verify',
+    baseUrl: process.env.SPIKE_PROVIDER_BASE_URL ?? 'https://api.kimi.com/coding/',
     authToken: process.env.SPIKE_PROVIDER_API_KEY ?? '',
-    model: 'kimi-for-coding',
+    model: modelID,
     isDefault: true,
   });
   const session = workspaceStore.createLocalSession(workspace.id, 'Adapter Session', undefined, provider.id, 'gui');
