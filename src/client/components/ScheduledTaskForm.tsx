@@ -7,6 +7,7 @@ import type { Workspace } from '../stores/workspace-store'
 import { presetToCron } from '@server/services/cron-schedule.js'
 import { detectPreset, type CronPresetName as Preset } from '../lib/cron-presets'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import { DateTimeField, TimeField } from './ui/date-time-field'
 
 function toLocalInputValue(iso: string | null): string {
   if (!iso) return ''
@@ -94,7 +95,6 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
 
   const inputCls =
     'w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary shadow-sm transition-colors focus:outline-none focus:border-accent'
-  const timeInputCls = `${inputCls} [color-scheme:light] dark:[color-scheme:dark]`
   const labelCls = 'block text-[11px] text-text-secondary mb-1'
 
   return (
@@ -153,13 +153,7 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
         {scheduleType === 'once' && (
           <div className="flex-1">
             <label className={labelCls}>{t('form.scheduleTime')}</label>
-            <input
-              type="datetime-local"
-              className={timeInputCls}
-              value={scheduleTime}
-              min={toLocalInputValue(new Date().toISOString())}
-              onChange={(e) => setScheduleTime(e.target.value)}
-            />
+            <DateTimeField value={scheduleTime} onChange={setScheduleTime} min={new Date()} />
           </div>
         )}
       </div>
@@ -184,7 +178,7 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
           {preset !== 'custom' && (
             <div className="flex-1">
               <label className={labelCls}>{t('form.time')}</label>
-              <input type="time" className={timeInputCls} value={time} onChange={(e) => setTime(e.target.value)} />
+              <TimeField value={time} onChange={setTime} />
             </div>
           )}
           {preset === 'weekly' && (
