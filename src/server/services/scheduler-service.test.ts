@@ -12,6 +12,8 @@ import {
   MISS_REASON_APP_NOT_RUNNING,
   FAIL_REASON_PROCESS_RESTART,
   FAIL_REASON_WORKSPACE_DRIFT,
+  FAIL_REASON_WATCHDOG,
+  FAIL_REASON_INCOMPLETE,
   type SchedulerRunEvent,
 } from './scheduler-service.js';
 import type { ScheduledTask } from '../models/scheduled-task.js';
@@ -22,10 +24,16 @@ let current: Date;
 let pushed: { sessionId: string; message: string; handler?: (id: number, e: SseEvent) => void }[];
 let createdSessions: { workspaceId: string; name: string; source?: string; approvalMode?: string }[];
 let failNextPush: Error | null;
+let failNextCreate: Error | null;
 let autoComplete: boolean;
 
 const fakeChat = {
   async createSession(input: { workspaceId: string; name: string; source?: string; approvalMode?: string }) {
+    if (failNextCreate) {
+      const err = failNextCreate;
+      failNextCreate = null;
+      throw err;
+    }
     createdSessions.push(input);
     return { id: `sess-${createdSessions.length}`, workspaceId: input.workspaceId, name: input.name } as never;
   },
@@ -43,13 +51,13 @@ const fakeChat = {
     }
     pushed.push({ sessionId, message, handler });
     if (autoComplete && handler) {
-      handler(0, { type: 'result', subtype: 'success', isError: false, result: 'done' });
+      handler(0, { type: 'result', subtype: 'success', isError: false, result: 'done\nGOAL_STATUS: COMPLETE' });
     }
   },
 };
 
 function service(): SchedulerService {
-  return new SchedulerService({ now: () => current, chat: fakeChat, store });
+  return new SchedulerService({ now: () => current, chat: fakeChat, store, resolveBackend: async () => 'claude' });
 }
 
 async function makeWorkspace(folderPath = '/tmp/ws-a'): Promise<string> {
@@ -78,6 +86,7 @@ beforeEach(() => {
   pushed = [];
   createdSessions = [];
   failNextPush = null;
+  failNextCreate = null;
   autoComplete = true;
   schedulerEvents.removeAllListeners();
 });
@@ -130,7 +139,8 @@ describe('tick firing (KTD-1 window semantics)', () => {
   it('overlap: latest run still running → skipped record with reason, no new session (AE3)', async () => {
     const wsId = await makeWorkspace();
     const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
-    store.createTaskRun({ taskId: task.id, status: 'running', fireAt: '2026-07-24T08:00:00.000Z', startedAt: '2026-07-24T08:00:00.000Z', instructionSnapshot: 'prev' });
+    // Fresh startedAt: a genuinely live run — older rows are the watchdog's job.
+    store.createTaskRun({ taskId: task.id, status: 'running', fireAt: '2026-07-24T08:00:00.000Z', startedAt: '2026-07-24T08:59:40.000Z', instructionSnapshot: 'prev' });
     await service().tickForTest();
     assert.equal(createdSessions.length, 0);
     const runs = store.listTaskRuns(task.id);
@@ -159,6 +169,66 @@ describe('tick firing (KTD-1 window semantics)', () => {
     const runs = store.listTaskRuns(task.id);
     assert.equal(runs[0].status, 'failed');
     assert.match(runs[0].reason!, /SDK exploded/);
+  });
+
+  it('out-of-window overdue occurrence is marked missed and the cursor advanced (R11 系统睡眠)', async () => {
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:55:00.000Z'); // 5 min ago, outside the 30s window
+    const events: SchedulerRunEvent[] = [];
+    schedulerEvents.on('run-finished', (e) => events.push(e));
+    await service().tickForTest();
+    assert.equal(createdSessions.length, 0);
+    const runs = store.listTaskRuns(task.id);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].status, 'missed');
+    assert.equal(runs[0].reason, MISS_REASON_APP_NOT_RUNNING);
+    const after = store.getScheduledTask(task.id)!;
+    assert.ok(after.nextFireAt && new Date(after.nextFireAt) > current);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].status, 'missed');
+  });
+
+  it('drift: default backend differs from confirmed snapshot → failed run, no session (KTD-5)', async () => {
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    store.updateScheduledTask(task.id, {
+      confirmedSnapshot: { folderPath: '/tmp/ws-a', backend: 'claude', approvalMode: 'auto' },
+    });
+    const svc = new SchedulerService({ now: () => current, chat: fakeChat, store, resolveBackend: async () => 'opencode' });
+    await svc.tickForTest();
+    assert.equal(createdSessions.length, 0);
+    const runs = store.listTaskRuns(task.id);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].status, 'failed');
+    assert.equal(runs[0].reason, FAIL_REASON_WORKSPACE_DRIFT);
+  });
+
+  it('createSession failure records a failed run, settles the schedule, and nothing escapes tick', async () => {
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    failNextCreate = new Error('session store full');
+    const events: SchedulerRunEvent[] = [];
+    schedulerEvents.on('run-finished', (e) => events.push(e));
+    await service().tickForTest();
+    const runs = store.listTaskRuns(task.id);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].status, 'failed');
+    assert.match(runs[0].reason!, /session store full/);
+    assert.equal(runs[0].sessionId, null);
+    const after = store.getScheduledTask(task.id)!;
+    assert.ok(after.nextFireAt && new Date(after.nextFireAt) > current);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].status, 'failed');
+  });
+
+  it('createSession failure on a one-shot task disables it', async () => {
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId, { scheduleType: 'once', cronExpr: null, scheduleTime: '2026-07-24T08:59:50' }), '2026-07-24T08:59:50.000Z');
+    failNextCreate = new Error('boom');
+    await service().tickForTest();
+    const after = store.getScheduledTask(task.id)!;
+    assert.equal(after.status, 'disabled');
+    assert.equal(store.listTaskRuns(task.id)[0].status, 'failed');
   });
 });
 
@@ -195,6 +265,26 @@ describe('startup reconciliation', () => {
     assert.equal(run.status, 'failed');
     assert.equal(run.reason, FAIL_REASON_PROCESS_RESTART);
   });
+
+  it('records the MOST RECENT missed occurrence for a long-overdue recurring task (KTD-9)', async () => {
+    const wsId = await makeWorkspace();
+    current = new Date('2026-07-24T09:30:00.000Z');
+    // Hourly task, stale cursor 5h back: occurrences at 5,6,7,8,9 — one collapsed
+    // missed run must point at the last one, not the stale cursor.
+    const task = activate(makeTask(wsId, { cronExpr: '0 * * * *' }), '2026-07-24T04:00:00.000Z');
+    await service().reconcile();
+    const runs = store.listTaskRuns(task.id);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].status, 'missed');
+    const fireAt = new Date(runs[0].fireAt).getTime();
+    assert.ok(fireAt > new Date('2026-07-24T04:00:00.000Z').getTime(), 'must not record the stale cursor');
+    assert.ok(
+      fireAt >= current.getTime() - 60 * 60 * 1000 && fireAt <= current.getTime(),
+      `fireAt ${runs[0].fireAt} should be the most recent hour mark`,
+    );
+    const after = store.getScheduledTask(task.id)!;
+    assert.ok(after.nextFireAt && new Date(after.nextFireAt) > current);
+  });
 });
 
 describe('runNow', () => {
@@ -221,6 +311,22 @@ describe('runNow', () => {
   it('rejects unknown task', async () => {
     await assert.rejects(() => service().runNow('nope'), (e: SchedulerError) => e.code === 'NOT_FOUND');
   });
+
+  it('two concurrent runNow calls produce exactly one session and one run', async () => {
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-25T09:00:00.000Z');
+    const svc = service();
+    const results = await Promise.allSettled([svc.runNow(task.id), svc.runNow(task.id)]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.equal((rejected[0] as PromiseRejectedResult).reason.code, 'CONFLICT');
+    assert.equal(createdSessions.length, 1);
+    const runs = store.listTaskRuns(task.id);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].status, 'succeeded');
+  });
 });
 
 describe('events and wrapper seam', () => {
@@ -245,5 +351,110 @@ describe('events and wrapper seam', () => {
     assert.match(wrapped, /GOAL_STATUS: COMPLETE/);
     assert.match(wrapped, /GOAL_STATUS: BLOCKED/);
     assert.match(wrapped, /20 轮/);
+  });
+});
+
+describe('run watchdog', () => {
+  it('fails a running run whose stream died (startedAt older than the cap) and emits run-finished', async () => {
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-25T09:00:00.000Z'); // future — tick will not fire
+    store.createTaskRun({
+      taskId: task.id,
+      sessionId: 'sess-stale',
+      status: 'running',
+      fireAt: '2026-07-24T08:00:00.000Z',
+      startedAt: '2026-07-24T08:00:00.000Z', // 60 min before current — stalled stream
+      instructionSnapshot: 'x',
+    });
+    const events: SchedulerRunEvent[] = [];
+    schedulerEvents.on('run-finished', (e) => events.push(e));
+    await service().tickForTest();
+    const run = store.listTaskRuns(task.id)[0];
+    assert.equal(run.status, 'failed');
+    assert.equal(run.reason, FAIL_REASON_WATCHDOG);
+    assert.ok(run.endedAt);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].status, 'failed');
+    assert.equal(events[0].reason, FAIL_REASON_WATCHDOG);
+    assert.equal(events[0].sessionId, 'sess-stale');
+  });
+
+  it('leaves fresh running runs untouched', async () => {
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-25T09:00:00.000Z');
+    store.createTaskRun({
+      taskId: task.id,
+      status: 'running',
+      fireAt: '2026-07-24T08:59:40.000Z',
+      startedAt: '2026-07-24T08:59:40.000Z', // 20s old — legitimately in flight
+      instructionSnapshot: 'x',
+    });
+    const events: SchedulerRunEvent[] = [];
+    schedulerEvents.on('run-finished', (e) => events.push(e));
+    await service().tickForTest();
+    assert.equal(store.listTaskRuns(task.id)[0].status, 'running');
+    assert.equal(events.length, 0);
+  });
+});
+
+describe('finishRun goal-marker classification (KTD-3)', () => {
+  it('BLOCKED marker in the result → failed with the marker line', async () => {
+    autoComplete = false;
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    await service().tickForTest();
+    pushed[0].handler!(0, { type: 'result', subtype: 'success', isError: false, result: '部分完成\nGOAL_STATUS: BLOCKED 缺少依赖' });
+    const run = store.listTaskRuns(task.id)[0];
+    assert.equal(run.status, 'failed');
+    assert.match(run.reason!, /GOAL_STATUS: BLOCKED 缺少依赖/);
+  });
+
+  it('no completion marker in the result → failed with 未达成完成标准', async () => {
+    autoComplete = false;
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    await service().tickForTest();
+    pushed[0].handler!(0, { type: 'result', subtype: 'success', isError: false, result: 'done some work but truncated' });
+    const run = store.listTaskRuns(task.id)[0];
+    assert.equal(run.status, 'failed');
+    assert.equal(run.reason, FAIL_REASON_INCOMPLETE);
+  });
+
+  it('COMPLETE marker in the result → succeeded', async () => {
+    autoComplete = false;
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    await service().tickForTest();
+    pushed[0].handler!(0, { type: 'result', subtype: 'success', isError: false, result: 'all done\nGOAL_STATUS: COMPLETE' });
+    const run = store.listTaskRuns(task.id)[0];
+    assert.equal(run.status, 'succeeded');
+    assert.equal(run.reason, null);
+  });
+
+  it('isError still wins over a COMPLETE marker', async () => {
+    autoComplete = false;
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    await service().tickForTest();
+    pushed[0].handler!(0, { type: 'result', subtype: 'error', isError: true, result: ' blew up\nGOAL_STATUS: COMPLETE' });
+    assert.equal(store.listTaskRuns(task.id)[0].status, 'failed');
+  });
+
+  it('a second result event in the reused session does not re-finalize the run', async () => {
+    autoComplete = false;
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    const events: SchedulerRunEvent[] = [];
+    schedulerEvents.on('run-finished', (e) => events.push(e));
+    await service().tickForTest();
+    const handler = pushed[0].handler!;
+    handler(0, { type: 'result', subtype: 'success', isError: false, result: 'ok\nGOAL_STATUS: COMPLETE' });
+    // User follow-up in the same session: its result must not rewrite the run.
+    handler(0, { type: 'result', subtype: 'success', isError: false, result: 'GOAL_STATUS: BLOCKED later turn' });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].status, 'succeeded');
+    const run = store.listTaskRuns(task.id)[0];
+    assert.equal(run.status, 'succeeded');
+    assert.equal(run.reason, null);
   });
 });

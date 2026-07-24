@@ -2,7 +2,8 @@ import { EventEmitter } from 'node:events';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { nextCronFire } from './cron-schedule.js';
-import { buildGoalPrompt } from './goal-wrapper.js';
+import { buildGoalPrompt, GOAL_BLOCKED_PREFIX, GOAL_COMPLETE_MARKER } from './goal-wrapper.js';
+import { resolveDefaultBackend } from './agent-backends.js';
 import { diagLog } from '../utils/diag-logger.js';
 import type { ScheduledTask, TaskRun, UpdateScheduledTaskInput } from '../models/scheduled-task.js';
 import type { ChatSession } from '../models/session.js';
@@ -15,6 +16,14 @@ export const SKIP_REASON_PREVIOUS_RUNNING = '上一班次仍在执行';
 export const MISS_REASON_APP_NOT_RUNNING = '触发时应用未在运行';
 export const FAIL_REASON_PROCESS_RESTART = '进程重启';
 export const FAIL_REASON_WORKSPACE_DRIFT = '工作区已变更，需重新确认';
+export const FAIL_REASON_WATCHDOG = '执行超时（看门狗）';
+export const FAIL_REASON_INCOMPLETE = '未达成完成标准';
+/**
+ * Watchdog bound for wedged 'running' rows: a stalled provider stream never
+ * emits a result event and no evaluator can bound it. The 20-turn cap makes
+ * long legitimate runs possible, so the bound is generous.
+ */
+export const RUN_WATCHDOG_MS = 30 * 60 * 1000;
 
 export type SchedulerErrorCode = 'NOT_FOUND' | 'CONFLICT' | 'INVALID';
 
@@ -67,6 +76,8 @@ interface SchedulerDeps {
   now?: () => Date;
   chat?: ChatLike;
   store?: SqliteStore;
+  /** Drift-check seam (KTD-5): current default backend; tests inject a fake. */
+  resolveBackend?: () => Promise<string>;
 }
 
 /**
@@ -80,11 +91,16 @@ export class SchedulerService {
   private readonly nowFn: () => Date;
   private chatOverride: ChatLike | undefined;
   private readonly store: SqliteStore;
+  private readonly resolveBackendFn: () => Promise<string>;
+  /** Synchronous run reservation (R12): closes the check-then-act gap between
+   * the overlap check and the running-row insert inside fireTask. */
+  private readonly inFlight = new Set<string>();
 
   constructor(deps: SchedulerDeps = {}) {
     this.nowFn = deps.now ?? (() => new Date());
     this.chatOverride = deps.chat;
     this.store = deps.store ?? defaultStore;
+    this.resolveBackendFn = deps.resolveBackend ?? (async () => (await resolveDefaultBackend()).backend);
   }
 
   /**
@@ -130,6 +146,54 @@ export class SchedulerService {
   }
 
   /**
+   * Shared missed-occurrence settlement (KTD-1, KTD-9): write ONE collapsed
+   * 'missed' run for the most recent occurrence at or before now, notify, and
+   * advance the cursor (one-shot tasks whose single occurrence is gone are
+   * disabled). Used by startup reconcile and by the tick overdue branch.
+   */
+  private markMissedAndAdvance(task: ScheduledTask): void {
+    const missed = this.store.createTaskRun({
+      taskId: task.id,
+      status: 'missed',
+      fireAt: this.mostRecentOccurrence(task),
+      reason: MISS_REASON_APP_NOT_RUNNING,
+      instructionSnapshot: task.instruction,
+    });
+    schedulerEvents.emit('run-finished', {
+      taskId: task.id,
+      taskName: task.name,
+      workspaceId: task.workspaceId,
+      runId: missed.id,
+      sessionId: null,
+      status: 'missed',
+      reason: MISS_REASON_APP_NOT_RUNNING,
+    } satisfies SchedulerRunEvent);
+    const next = this.recomputeNextFire(task);
+    const update: UpdateScheduledTaskInput = { nextFireAt: next };
+    if (task.scheduleType === 'once' && !next) update.status = 'disabled';
+    this.store.updateScheduledTask(task.id, update);
+  }
+
+  /**
+   * Most recent occurrence at or before now (KTD-9): for recurring tasks walk
+   * the cron forward from the stale cursor to the last occurrence <= now; a
+   * one-shot task's stored time IS the occurrence.
+   */
+  private mostRecentOccurrence(task: ScheduledTask): string {
+    if (task.scheduleType === 'once' || !task.cronExpr || !task.nextFireAt) {
+      return task.nextFireAt ?? this.nowFn().toISOString();
+    }
+    const now = this.nowFn();
+    let occurrence = new Date(task.nextFireAt);
+    for (;;) {
+      const next = nextCronFire(task.cronExpr, occurrence);
+      if (!next || next > now) break;
+      occurrence = next;
+    }
+    return occurrence.toISOString();
+  }
+
+  /**
    * Startup reconciliation (KTD-1):
    * (a) overdue tasks get ONE collapsed 'missed' run and a recomputed fire time;
    * (b) runs left 'running' by a previous process are marked failed;
@@ -149,22 +213,8 @@ export class SchedulerService {
     for (const task of this.store.listScheduledTasks({})) {
       if (task.status !== 'active') continue;
       if (task.nextFireAt && new Date(task.nextFireAt) <= this.nowFn()) {
-        const missed = this.store.createTaskRun({
-          taskId: task.id,
-          status: 'missed',
-          fireAt: task.nextFireAt,
-          reason: MISS_REASON_APP_NOT_RUNNING,
-          instructionSnapshot: task.instruction,
-        });
-        schedulerEvents.emit('run-finished', {
-          taskId: task.id,
-          taskName: task.name,
-          workspaceId: task.workspaceId,
-          runId: missed.id,
-          sessionId: null,
-          status: 'missed',
-          reason: MISS_REASON_APP_NOT_RUNNING,
-        } satisfies SchedulerRunEvent);
+        this.markMissedAndAdvance(task);
+        continue;
       }
       const next = this.recomputeNextFire(task);
       const update: UpdateScheduledTaskInput = { nextFireAt: next };
@@ -179,11 +229,17 @@ export class SchedulerService {
     try {
       const now = this.nowFn();
       const windowStart = now.getTime() - TICK_MS;
+      this.failStaleRuns(now);
       for (const task of this.store.listScheduledTasks({})) {
         if (task.status !== 'active' || !task.nextFireAt) continue;
         const fireAt = new Date(task.nextFireAt).getTime();
         if (fireAt > windowStart && fireAt <= now.getTime()) {
           await this.fireTask(task, task.nextFireAt);
+        } else if (fireAt <= windowStart) {
+          // Out-of-window past (system sleep / event-loop stall, R11): the
+          // occurrence is gone — settle it as missed and advance the cursor so
+          // the task is not stranded until the next process restart (KTD-1).
+          this.markMissedAndAdvance(task);
         }
       }
     } catch (err) {
@@ -194,13 +250,42 @@ export class SchedulerService {
     }
   }
 
+  /**
+   * Watchdog: a provider stream that dies without a result event would wedge
+   * its run 'running' forever — every later occurrence would skip on the
+   * overlap guard with no user signal. chatService.setOnRuntimeClose is
+   * single-slot and owned by the WS runtime_closed relay, so there is no cheap
+   * early-fail hook; this bounded watchdog is the settlement path.
+   */
+  private failStaleRuns(now: Date): void {
+    const cutoff = new Date(now.getTime() - RUN_WATCHDOG_MS).toISOString();
+    for (const run of this.store.listStaleRunningTaskRuns(cutoff)) {
+      this.store.updateTaskRun(run.id, {
+        status: 'failed',
+        endedAt: now.toISOString(),
+        reason: FAIL_REASON_WATCHDOG,
+      });
+      const task = this.store.getScheduledTask(run.taskId);
+      schedulerEvents.emit('run-finished', {
+        taskId: run.taskId,
+        taskName: task?.name ?? run.taskId,
+        workspaceId: task?.workspaceId ?? '',
+        runId: run.id,
+        sessionId: run.sessionId,
+        status: 'failed',
+        reason: FAIL_REASON_WATCHDOG,
+      } satisfies SchedulerRunEvent);
+      diagLog(`[SchedulerService] watchdog failed stale run ${run.id}`);
+    }
+  }
+
   /** Manual trigger used by the REST route (U5). Rejects drafts/disabled and overlap. */
   async runNow(taskId: string): Promise<TaskRun> {
     const task = this.store.getScheduledTask(taskId);
     if (!task || task.deletedAt) throw new SchedulerError('NOT_FOUND', `Scheduled task ${taskId} not found`);
     if (task.status === 'draft') throw new SchedulerError('CONFLICT', '任务尚未确认，不能执行');
     if (task.status === 'disabled') throw new SchedulerError('CONFLICT', '一次性任务已执行完成');
-    if (this.latestRun(task.id)?.status === 'running') {
+    if (this.inFlight.has(task.id) || this.latestRun(task.id)?.status === 'running') {
       throw new SchedulerError('CONFLICT', SKIP_REASON_PREVIOUS_RUNNING);
     }
     return this.fireTask(task, this.nowFn().toISOString());
@@ -213,9 +298,12 @@ export class SchedulerService {
   private async fireTask(task: ScheduledTask, fireAt: string): Promise<TaskRun> {
     const nowIso = this.nowFn().toISOString();
 
-    // Overlap guard (R12): scheduler ticks record a skipped run; manual
-    // run-now is rejected earlier in runNow (409 semantics).
-    if (this.latestRun(task.id)?.status === 'running') {
+    // Overlap guard (R12): the in-flight claim is taken synchronously before
+    // any await, so two concurrent triggers cannot both pass the DB latest-run
+    // check (check-then-act); the DB check stays as cross-restart defense.
+    // Scheduler ticks record a skipped run; manual run-now is rejected earlier
+    // in runNow (409 semantics).
+    if (this.inFlight.has(task.id) || this.latestRun(task.id)?.status === 'running') {
       return this.store.createTaskRun({
         taskId: task.id,
         status: 'skipped',
@@ -224,78 +312,132 @@ export class SchedulerService {
         instructionSnapshot: task.instruction,
       });
     }
-
-    // Drift check (KTD-5): the workspace must still match the confirm-time
-    // snapshot; drift rejects this run without creating a session.
-    const workspace = await this.store.get(task.workspaceId);
-    const snapshot = task.confirmedSnapshot;
-    if (!workspace || (snapshot && workspace.folderPath !== snapshot.folderPath)) {
-      const run = this.store.createTaskRun({
-        taskId: task.id,
-        status: 'failed',
-        fireAt,
-        endedAt: nowIso,
-        reason: FAIL_REASON_WORKSPACE_DRIFT,
-        instructionSnapshot: task.instruction,
-      });
-      schedulerEvents.emit('run-finished', {
-        taskId: task.id,
-        taskName: task.name,
-        workspaceId: task.workspaceId,
-        runId: run.id,
-        sessionId: null,
-        status: 'failed',
-        reason: FAIL_REASON_WORKSPACE_DRIFT,
-      } satisfies SchedulerRunEvent);
-      return run;
-    }
-
-    const wrapped = wrapInstructionForRun(task);
-    const session = await this.chat().createSession({
-      workspaceId: task.workspaceId,
-      name: `${task.name} · ${fireAt.slice(0, 16).replace('T', ' ')}`,
-      source: 'scheduled',
-      approvalMode: 'auto',
-    });
-    const run = this.store.createTaskRun({
-      taskId: task.id,
-      sessionId: session.id,
-      status: 'running',
-      fireAt,
-      startedAt: nowIso,
-      instructionSnapshot: wrapped,
-    });
-    schedulerEvents.emit('run-started', {
-      taskId: task.id,
-      taskName: task.name,
-      workspaceId: task.workspaceId,
-      runId: run.id,
-      sessionId: session.id,
-      status: 'running',
-    } satisfies SchedulerRunEvent);
-
-    // Advance the schedule BEFORE dispatching so a crash mid-dispatch leaves a
-    // consistent missed-run picture on next startup (KTD-1).
-    if (task.scheduleType === 'once') {
-      this.store.updateScheduledTask(task.id, { status: 'disabled', nextFireAt: null });
-    } else {
-      this.store.updateScheduledTask(task.id, { nextFireAt: this.recomputeNextFire(task) });
-    }
-
-    const onEvent = (_id: number, event: SseEvent): void => {
-      if (event.type === 'result') {
-        this.finishRun(run.id, task, session.id, event);
+    this.inFlight.add(task.id);
+    try {
+      // Drift check (KTD-5): the workspace folderPath AND the default backend
+      // must still match the confirm-time snapshot; a backend switch changes
+      // unattended execution semantics (the claude Stop-hook evaluator only
+      // exists on that backend) without re-confirmation, so drift rejects this
+      // run without creating a session.
+      const workspace = await this.store.get(task.workspaceId);
+      const snapshot = task.confirmedSnapshot;
+      const backendDrift =
+        snapshot && workspace && workspace.folderPath === snapshot.folderPath
+          ? (await this.resolveBackendFn()) !== snapshot.backend
+          : false;
+      if (!workspace || (snapshot && workspace.folderPath !== snapshot.folderPath) || backendDrift) {
+        const run = this.store.createTaskRun({
+          taskId: task.id,
+          status: 'failed',
+          fireAt,
+          endedAt: nowIso,
+          reason: FAIL_REASON_WORKSPACE_DRIFT,
+          instructionSnapshot: task.instruction,
+        });
+        schedulerEvents.emit('run-finished', {
+          taskId: task.id,
+          taskName: task.name,
+          workspaceId: task.workspaceId,
+          runId: run.id,
+          sessionId: null,
+          status: 'failed',
+          reason: FAIL_REASON_WORKSPACE_DRIFT,
+        } satisfies SchedulerRunEvent);
+        return run;
       }
-    };
-    // isBotSession=false: the run is a normal session — approvalMode 'auto'
-    // seeds from the session (chat-service only seeds non-bot runtimes), the
-    // backend follows the app default (R10 degradation), and the event
-    // handler still receives the result stream (KTD-9).
-    this.chat().pushMessage(session.id, task.workspaceId, wrapped, false, onEvent).catch((err) => {
-      const reason = err instanceof Error ? err.message : String(err);
-      this.finishRun(run.id, task, session.id, null, reason);
-    });
-    return run;
+
+      const wrapped = wrapInstructionForRun(task);
+      // Advance the schedule BEFORE dispatching so a crash mid-dispatch leaves
+      // a consistent missed-run picture on next startup (KTD-1). The same
+      // settlement applies to dispatch failures so the cursor never strands.
+      const advanceSchedule = (): void => {
+        if (task.scheduleType === 'once') {
+          this.store.updateScheduledTask(task.id, { status: 'disabled', nextFireAt: null });
+        } else {
+          this.store.updateScheduledTask(task.id, { nextFireAt: this.recomputeNextFire(task) });
+        }
+      };
+      try {
+        const session = await this.chat().createSession({
+          workspaceId: task.workspaceId,
+          name: `${task.name} · ${fireAt.slice(0, 16).replace('T', ' ')}`,
+          source: 'scheduled',
+          approvalMode: 'auto',
+        });
+        const run = this.store.createTaskRun({
+          taskId: task.id,
+          sessionId: session.id,
+          status: 'running',
+          fireAt,
+          startedAt: nowIso,
+          instructionSnapshot: wrapped,
+        });
+        schedulerEvents.emit('run-started', {
+          taskId: task.id,
+          taskName: task.name,
+          workspaceId: task.workspaceId,
+          runId: run.id,
+          sessionId: session.id,
+          status: 'running',
+        } satisfies SchedulerRunEvent);
+        advanceSchedule();
+
+        // The run session stays usable after the run (KTD-4), and its runtime
+        // keeps this handler — finalize exactly once so a later result event
+        // from a user follow-up cannot rewrite the settled run or re-notify.
+        let finished = false;
+        const finishOnce = (
+          resultEvent: Extract<SseEvent, { type: 'result' }> | null,
+          errorReason?: string,
+        ): void => {
+          if (finished) return;
+          finished = true;
+          this.finishRun(run.id, task, session.id, resultEvent, errorReason);
+        };
+        const onEvent = (_id: number, event: SseEvent): void => {
+          if (event.type === 'result') {
+            finishOnce(event);
+          }
+        };
+        // isBotSession=false: the run is a normal session — approvalMode 'auto'
+        // seeds from the session (chat-service only seeds non-bot runtimes), the
+        // backend follows the app default (R10 degradation), and the event
+        // handler still receives the result stream (KTD-9).
+        this.chat().pushMessage(session.id, task.workspaceId, wrapped, false, onEvent).catch((err) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          finishOnce(null, reason);
+        });
+        return run;
+      } catch (err) {
+        // Dispatch failure (createSession/createTaskRun threw): record a failed
+        // run and settle the schedule exactly like a completed run (once →
+        // disabled; recurring → recompute) so the cursor never strands on a
+        // transient error.
+        const reason = err instanceof Error ? err.message : String(err);
+        const run = this.store.createTaskRun({
+          taskId: task.id,
+          status: 'failed',
+          fireAt,
+          endedAt: this.nowFn().toISOString(),
+          reason,
+          instructionSnapshot: wrapped,
+        });
+        schedulerEvents.emit('run-finished', {
+          taskId: task.id,
+          taskName: task.name,
+          workspaceId: task.workspaceId,
+          runId: run.id,
+          sessionId: null,
+          status: 'failed',
+          reason,
+        } satisfies SchedulerRunEvent);
+        advanceSchedule();
+        diagLog(`[SchedulerService] dispatch failed for task ${task.id}: ${reason}`);
+        return run;
+      }
+    } finally {
+      this.inFlight.delete(task.id);
+    }
   }
 
   private finishRun(
@@ -305,8 +447,28 @@ export class SchedulerService {
     resultEvent: Extract<SseEvent, { type: 'result' }> | null,
     errorReason?: string,
   ): void {
-    const failed = errorReason !== undefined || (resultEvent?.isError ?? false);
-    const reason = errorReason ?? (failed ? (resultEvent?.result ?? '执行失败') : null);
+    const resultText = resultEvent?.result ?? null;
+    let failed = errorReason !== undefined || (resultEvent?.isError ?? false);
+    let reason = errorReason ?? (failed ? (resultText ?? '执行失败') : null);
+    if (!failed && resultEvent) {
+      // Goal-protocol classification (KTD-3): the wrapped instruction carries
+      // the marker contract on every backend — the degraded opencode path
+      // receives the same wrapped text — so the rule applies uniformly. A
+      // normal-exit session whose final text reports BLOCKED, or lacks the
+      // COMPLETE marker (e.g. force-stopped at the turn cap), is not a success.
+      const text = typeof resultText === 'string' ? resultText : '';
+      const blocked = text
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => line.startsWith(GOAL_BLOCKED_PREFIX));
+      if (blocked) {
+        failed = true;
+        reason = blocked;
+      } else if (!text.includes(GOAL_COMPLETE_MARKER)) {
+        failed = true;
+        reason = FAIL_REASON_INCOMPLETE;
+      }
+    }
     this.store.updateTaskRun(runId, {
       status: failed ? 'failed' : 'succeeded',
       endedAt: this.nowFn().toISOString(),
@@ -319,7 +481,7 @@ export class SchedulerService {
       runId,
       sessionId,
       status: failed ? 'failed' : 'succeeded',
-      resultText: resultEvent?.result ?? null,
+      resultText,
       reason,
     } satisfies SchedulerRunEvent);
     diagLog(`[SchedulerService] run ${runId} finished: ${failed ? 'failed' : 'succeeded'}`);
