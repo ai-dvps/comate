@@ -25,3 +25,11 @@ A distribution/install form of the app that ships without the Claude Code runtim
 
 ### 会话后端锁定 (session backend lock)
 A session is bound to the backend selected at its first message and cannot switch afterward, because transcripts are not portable across runtimes. When the locked backend is unavailable in the current install, the session opens read-only with a notice.
+
+## Scheduled tasks (定时任务)
+
+### 定时任务 (scheduled task)
+绑定单个工作区的可调度执行单元：名称 + 自包含指令 + 调度规则（一次性或周期）+ 通知配置。仅在应用运行期间到点触发；触发时以免审批（auto）模式启动一个全新会话，首条消息为系统包装的 /goal（指令 + 完成标准 + 轮次上限）。聊天中创建必须经用户在 UI 确认才生效，远程入口（如 WeCom）创建的一律需确认。
+
+### 执行会话 (run session)
+定时任务单次触发所产生的全新独立会话；同一任务的各次执行互不共享上下文。任务详情中执行历史列表的每条记录对应一个执行会话，状态取值为：已成功 / 已失败 / 已错过（触发时应用未运行，不补跑）/ 已跳过（上一班次仍在执行）。
