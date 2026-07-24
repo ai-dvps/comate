@@ -168,6 +168,11 @@ export class SessionRuntime {
     return this.approvalMode;
   }
 
+  /** The backend this runtime drives (the driver's identity). */
+  getBackendId(): import('./backend-driver.js').BackendDriver['backendId'] {
+    return this.driver.backendId;
+  }
+
   private provider?: Provider;
   private kimiLoopDetector?: KimiLoopDetector;
 

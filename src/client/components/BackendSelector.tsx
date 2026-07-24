@@ -43,12 +43,15 @@ export default function BackendSelector({ workspaceId, sessionId, disabled = fal
   }, [fetchBackends, backends.length])
 
   const lockedBackend = session?.backend
-  const effectiveBackend = (lockedBackend ?? defaultBackend ?? 'claude') as BackendId
+  // The lock materializes at the first message (R4): a draft is always
+  // re-selectable, even when a backend is already pre-selected.
+  const isLocked = !!session?.backend && !session?.isDraft
+  const effectiveBackend = (lockedBackend ?? session?.backend ?? defaultBackend ?? 'claude') as BackendId
   const availability = backendAvailability(backends, effectiveBackend)
   const label = t(BACKEND_LABEL_KEYS[effectiveBackend] ?? effectiveBackend)
 
   // Locked: non-interactive badge with availability signal (R4).
-  if (lockedBackend) {
+  if (isLocked) {
     const unavailable = availability?.status === 'unavailable'
     return (
       <span

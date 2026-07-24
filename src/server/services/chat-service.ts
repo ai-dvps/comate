@@ -416,14 +416,15 @@ export class ChatService {
     const localSession = workspaceStore.getLocalSession(id);
     const previousProviderId = localSession?.providerId;
 
-    // Backend changes are allowed only as a draft pre-selection: once the
-    // session carries a backend it is locked (R4), and re-selecting is a
-    // conflict, not a silent no-op.
+    // Backend changes are free while the session is a draft (R4: the lock
+    // lands at the first message). Once the conversation has started, a
+    // different backend is a conflict, not a silent no-op. A change with a
+    // live runtime closes it so the next use rebuilds on the new backend.
     if (input.backend !== undefined) {
       if (input.backend !== 'claude' && input.backend !== 'opencode') {
         throw new ChatError(`Unknown agent backend '${input.backend}'`, 'INVALID_BACKEND', 400);
       }
-      if (localSession?.backend && localSession.backend !== input.backend) {
+      if (!localSession?.isDraft && localSession?.backend && localSession.backend !== input.backend) {
         throw new ChatError(
           `Session backend is locked to '${localSession.backend}' and cannot be changed`,
           'BACKEND_LOCKED',
@@ -431,6 +432,13 @@ export class ChatService {
         );
       }
       workspaceStore.updateSessionBackend(id, input.backend);
+      if (localSession?.backend !== input.backend) {
+        const existing = this.getRuntimeIfExists(id);
+        if (existing) {
+          diagLog(`[ChatService] session ${id} backend changed to '${input.backend}' — closing runtime for rebuild`);
+          await this.closeRuntime(id);
+        }
+      }
     }
 
     if (localSession && localSession.isDraft) {
@@ -991,14 +999,6 @@ export class ChatService {
     return isBotSession ? 'claude' : (await resolveDefaultBackend()).backend;
   }
 
-  /** Persist a draft's backend after its runtime started (see resolveSessionBackend). */
-  private persistSessionBackendIfUnset(session: ChatSession, backend: BackendId): void {
-    if (!session.backend) {
-      workspaceStore.updateSessionBackend(session.id, backend);
-      session.backend = backend;
-    }
-  }
-
   async getOrCreateRuntime(
     sessionId: string,
     workspaceId: string,
@@ -1159,8 +1159,6 @@ export class ChatService {
         driver,
       );
       diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - openStart}ms`);
-      // The draft lock lands only after the runtime actually started (review P2).
-      this.persistSessionBackendIfUnset(session, backend);
       this.runtimes.set(sessionId, runtime);
       this.runtimeContexts.set(sessionId, runtimeContext);
       this.scheduleIdleClose(sessionId);
@@ -1445,6 +1443,14 @@ export class ChatService {
     // of only updating the local SQLite row.
     const localSession = workspaceStore.getLocalSession(sessionId);
     if (localSession?.isDraft) {
+      // The backend lock lands HERE — at the first message (R4), not at
+      // runtime creation: a draft may be re-selected any time before this
+      // point (a runtime created by merely viewing the session never locks).
+      if (!localSession.backend) {
+        const backend = runtime.getBackendId();
+        workspaceStore.updateSessionBackend(sessionId, backend);
+        diagLog(`[ChatService] session ${sessionId} backend locked to '${backend}' at first message`);
+      }
       workspaceStore.clearDraftFlag(sessionId);
     }
 

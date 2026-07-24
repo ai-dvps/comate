@@ -189,6 +189,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
       removeBotEventHandler: () => {},
       setApprovalMode: () => {},
       getApprovalMode: () => 'manual' as const,
+      getBackendId: () => 'claude' as const,
     };
     return mock as unknown as SessionRuntime;
   }
@@ -677,6 +678,7 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       removeBotEventHandler: () => {},
       setApprovalMode: () => {},
       getApprovalMode: () => 'manual' as const,
+      getBackendId: () => 'claude' as const,
       pushMessageCalls,
       botHandlers,
     };
@@ -871,6 +873,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       removeBotEventHandler: () => {},
       setApprovalMode: () => {},
       getApprovalMode: () => 'manual' as const,
+      getBackendId: () => 'claude' as const,
     };
     return mock as unknown as SessionRuntime;
   }
@@ -3004,6 +3007,7 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
         removeBotEventHandler: () => {},
         setApprovalMode: () => {},
         getApprovalMode: () => 'manual' as const,
+        getBackendId: () => 'claude' as const,
       } as unknown as SessionRuntime;
     };
   });
@@ -3035,11 +3039,23 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     return { workspace, provider, session };
   }
 
-  it('persists the resolved backend on first runtime creation (draft session)', async () => {
+  it('does NOT persist the backend at runtime creation — locks at first message (R4)', async () => {
     const { workspace, session } = await createFixture('gui');
     await service.getOrCreateRuntime(session.id, workspace.id);
     assert.ok(captured, 'runtime opened');
-    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
+    assert.strictEqual(
+      workspaceStore.getLocalSession(session.id)?.backend,
+      undefined,
+      'viewing a draft (runtime created) must not lock the backend',
+    );
+
+    await service.pushMessage(session.id, workspace.id, 'first real message');
+    assert.strictEqual(
+      workspaceStore.getLocalSession(session.id)?.backend,
+      'claude',
+      'first message locks the backend to the runtime backend',
+    );
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.isDraft, false);
   });
 
   it('bot sessions always lock to claude regardless of the stored default', async () => {
@@ -3047,6 +3063,7 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     const { workspace, session } = await createFixture('wecom');
     await service.getOrCreateRuntime(session.id, workspace.id, true);
     assert.ok(captured, 'runtime opened');
+    await service.pushMessage(session.id, workspace.id, 'bot message', true);
     assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
   });
 
@@ -3102,9 +3119,10 @@ describe('chat-service session backend update guard (R4)', { concurrency: false 
     assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'opencode');
   });
 
-  it('rejects changing a locked backend with 409', async () => {
+  it('rejects changing a locked backend with 409 once the conversation started', async () => {
     const { workspace, session } = await createSession();
     workspaceStore.updateSessionBackend(session.id, 'claude');
+    workspaceStore.clearDraftFlag(session.id);
     await assert.rejects(
       () => service.updateSession(session.id, { backend: 'opencode' }, workspace.id),
       (err: unknown) => {
@@ -3115,6 +3133,19 @@ describe('chat-service session backend update guard (R4)', { concurrency: false 
       },
     );
     assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
+  });
+
+  it('allows re-selection while the session is still a draft, closing the live runtime', async () => {
+    const { workspace, session } = await createSession();
+    workspaceStore.updateSessionBackend(session.id, 'claude');
+    const runtime = await service.getOrCreateRuntime(session.id, workspace.id);
+    assert.ok(runtime);
+    await service.updateSession(session.id, { backend: 'opencode' }, workspace.id);
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'opencode');
+    assert.ok(
+      !service.getRuntimeIfExists(session.id),
+      'live runtime must be closed so the next use rebuilds on the new backend',
+    );
   });
 
   it('rejects an unknown backend value with 400', async () => {
