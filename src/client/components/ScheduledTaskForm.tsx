@@ -6,6 +6,7 @@ import { useScheduledTaskStore } from '../stores/scheduled-task-store'
 import type { Workspace } from '../stores/workspace-store'
 import { presetToCron } from '@server/services/cron-schedule.js'
 import { detectPreset, type CronPresetName as Preset } from '../lib/cron-presets'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 function toLocalInputValue(iso: string | null): string {
   if (!iso) return ''
@@ -91,7 +92,9 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
     }
   }
 
-  const inputCls = 'w-full px-2 py-1.5 rounded-md border border-border bg-bg text-xs text-text-primary focus:outline-none focus:border-accent'
+  const inputCls =
+    'w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary shadow-sm transition-colors focus:outline-none focus:border-accent'
+  const timeInputCls = `${inputCls} [color-scheme:light] dark:[color-scheme:dark]`
   const labelCls = 'block text-[11px] text-text-secondary mb-1'
 
   return (
@@ -104,13 +107,18 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
       {!task && (
         <div>
           <label className={labelCls}>{t('panel.workspace')}</label>
-          <select className={inputCls} value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
-            {workspaces.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-              </option>
-            ))}
-          </select>
+          <Select value={workspaceId} onValueChange={setWorkspaceId}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {workspaces.map((w) => (
+                <SelectItem key={w.id} value={w.id}>
+                  {w.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )}
 
@@ -132,17 +140,22 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
       <div className="flex gap-3">
         <div className="flex-1">
           <label className={labelCls}>{t('form.scheduleType')}</label>
-          <select className={inputCls} value={scheduleType} onChange={(e) => setScheduleType(e.target.value as 'once' | 'recurring')}>
-            <option value="once">{t('form.once')}</option>
-            <option value="recurring">{t('form.recurring')}</option>
-          </select>
+          <Select value={scheduleType} onValueChange={(v) => setScheduleType(v as 'once' | 'recurring')}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="once">{t('form.once')}</SelectItem>
+              <SelectItem value="recurring">{t('form.recurring')}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         {scheduleType === 'once' && (
           <div className="flex-1">
             <label className={labelCls}>{t('form.scheduleTime')}</label>
             <input
               type="datetime-local"
-              className={inputCls}
+              className={timeInputCls}
               value={scheduleTime}
               min={toLocalInputValue(new Date().toISOString())}
               onChange={(e) => setScheduleTime(e.target.value)}
@@ -155,30 +168,40 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
         <div className="flex gap-3">
           <div className="flex-1">
             <label className={labelCls}>{t('form.preset')}</label>
-            <select className={inputCls} value={preset} onChange={(e) => setPreset(e.target.value as Preset)}>
-              <option value="hourly">{t('form.hourly')}</option>
-              <option value="daily">{t('form.daily')}</option>
-              <option value="weekdays">{t('form.weekdays')}</option>
-              <option value="weekly">{t('form.weekly')}</option>
-              <option value="custom">{t('form.customCron')}</option>
-            </select>
+            <Select value={preset} onValueChange={(v) => setPreset(v as Preset)}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hourly">{t('form.hourly')}</SelectItem>
+                <SelectItem value="daily">{t('form.daily')}</SelectItem>
+                <SelectItem value="weekdays">{t('form.weekdays')}</SelectItem>
+                <SelectItem value="weekly">{t('form.weekly')}</SelectItem>
+                <SelectItem value="custom">{t('form.customCron')}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           {preset !== 'custom' && (
             <div className="flex-1">
               <label className={labelCls}>{t('form.time')}</label>
-              <input type="time" className={inputCls} value={time} onChange={(e) => setTime(e.target.value)} />
+              <input type="time" className={timeInputCls} value={time} onChange={(e) => setTime(e.target.value)} />
             </div>
           )}
           {preset === 'weekly' && (
             <div className="flex-1">
               <label className={labelCls}>{t('form.dayOfWeek')}</label>
-              <select className={inputCls} value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
-                {[1, 2, 3, 4, 5, 6, 0].map((d) => (
-                  <option key={d} value={d}>
-                    {t(`weekday.${d}`)}
-                  </option>
-                ))}
-              </select>
+              <Select value={String(dayOfWeek)} onValueChange={(v) => setDayOfWeek(Number(v))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[1, 2, 3, 4, 5, 6, 0].map((d) => (
+                    <SelectItem key={d} value={String(d)}>
+                      {t(`weekday.${d}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
           {preset === 'custom' && (
