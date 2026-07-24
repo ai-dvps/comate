@@ -75,13 +75,23 @@ export class SchedulerService {
   private timer: NodeJS.Timeout | null = null;
   private ticking = false;
   private readonly nowFn: () => Date;
-  private readonly chat: ChatLike;
+  private chatOverride: ChatLike | undefined;
   private readonly store: SqliteStore;
 
   constructor(deps: SchedulerDeps = {}) {
     this.nowFn = deps.now ?? (() => new Date());
-    this.chat = deps.chat ?? (chatService as unknown as ChatLike);
+    this.chatOverride = deps.chat;
     this.store = deps.store ?? defaultStore;
+  }
+
+  /**
+   * Lazy chatService access: scheduler-service ↔ chat-service form an import
+   * cycle (via the MCP/tool chain), so the binding must not be touched during
+   * module initialization — only at fire time.
+   */
+  private chat(): ChatLike {
+    if (!this.chatOverride) this.chatOverride = chatService as unknown as ChatLike;
+    return this.chatOverride;
   }
 
   initialize(): void {
@@ -235,7 +245,7 @@ export class SchedulerService {
     }
 
     const wrapped = wrapInstructionForRun(task);
-    const session = await this.chat.createSession({
+    const session = await this.chat().createSession({
       workspaceId: task.workspaceId,
       name: `${task.name} · ${fireAt.slice(0, 16).replace('T', ' ')}`,
       source: 'scheduled',
@@ -275,7 +285,7 @@ export class SchedulerService {
     // seeds from the session (chat-service only seeds non-bot runtimes), the
     // backend follows the app default (R10 degradation), and the event
     // handler still receives the result stream (KTD-9).
-    this.chat.pushMessage(session.id, task.workspaceId, wrapped, false, onEvent).catch((err) => {
+    this.chat().pushMessage(session.id, task.workspaceId, wrapped, false, onEvent).catch((err) => {
       const reason = err instanceof Error ? err.message : String(err);
       this.finishRun(run.id, task, session.id, null, reason);
     });

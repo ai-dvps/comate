@@ -12,6 +12,7 @@ import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
 import backendRoutes from './routes/backends.js';
 import { createBrowserMcpHttpRouter } from './services/browser-mcp-http.js';
+import { createScheduledTasksMcpHttpRouter, resolveScheduledTasksMcpDeps } from './services/scheduled-tasks-mcp.js';
 import { chatService } from './services/chat-service.js';
 import { setBoundPort } from './utils/self-port.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
@@ -122,6 +123,9 @@ app.use(hostHeaderGuard());
 // U6: HTTP-hosted browser MCP for both agent backends (Bearer token auth,
 // loopback; no browser Origin — mount ahead of the CORS/origin guards).
 app.use('/mcp/browser', createBrowserMcpHttpRouter((sessionId) => chatService.resolveBrowserMcpDeps(sessionId)));
+// U7: HTTP-hosted scheduled-task MCP (Bearer token auth, loopback; same
+// pre-guard mount rationale as the browser MCP).
+app.use('/mcp/scheduled-tasks', createScheduledTasksMcpHttpRouter((sessionId) => resolveScheduledTasksMcpDeps(sessionId)));
 
 app.use(cors({ origin: createCorsOriginCallback({ getSelfPort }) }));
 app.use(stateChangingRequestGuard({ getSelfPort }));

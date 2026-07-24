@@ -120,6 +120,17 @@ export class ScheduledTasksService {
 
   updateTask(taskId: string, input: UpdateScheduledTaskInput): ScheduledTask {
     const task = this.getTask(taskId);
+    if (input.status && input.status !== task.status) {
+      // Status transitions are limited to active ↔ paused. Drafts must go
+      // through confirmTask (KTD-5: the confirm-time snapshot); disabled is
+      // terminal and set only by the scheduler.
+      const allowed =
+        (task.status === 'active' && input.status === 'paused') ||
+        (task.status === 'paused' && input.status === 'active');
+      if (!allowed) {
+        throw new TaskValidationError('非法的任务状态变更：草稿需在待确认区确认后生效，已停用任务不可再变更');
+      }
+    }
     if (input.scheduleType || input.scheduleTime !== undefined || input.cronExpr !== undefined) {
       validateInput({
         workspaceId: task.workspaceId,
