@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import { store } from '../storage/sqlite-store.js';
-import { scheduledTasksService } from '../services/scheduled-tasks-service.js';
-import { TaskValidationError } from '../services/scheduled-tasks-service.js';
+import { scheduledTasksService, TaskValidationError } from '../services/scheduled-tasks-service.js';
 import { SchedulerError } from '../services/scheduler-service.js';
 
 const router = Router({ mergeParams: true });
@@ -20,8 +19,7 @@ function handleError(res: Response, error: unknown, fallback: string): void {
   res.status(500).json({ error: fallback });
 }
 
-async function requireWorkspace(req: { params: unknown }): Promise<string | null> {
-  const workspaceId = (req.params as { id?: string }).id;
+async function requireWorkspace(workspaceId: string | undefined): Promise<string | null> {
   if (!workspaceId) return null;
   const ws = await store.get(workspaceId);
   return ws ? workspaceId : null;
@@ -33,7 +31,7 @@ router.get('/', async (req, res) => {
   try {
     const workspaceId = (req.params as { id?: string }).id;
     if (workspaceId) {
-      const valid = await requireWorkspace(req);
+      const valid = await requireWorkspace(workspaceId);
       if (!valid) {
         res.status(404).json({ error: 'Workspace not found' });
         return;
@@ -49,7 +47,7 @@ router.get('/', async (req, res) => {
 // POST /api/workspaces/:id/scheduled-tasks — local UI creation (active immediately)
 router.post('/', async (req, res) => {
   try {
-    const workspaceId = await requireWorkspace(req);
+    const workspaceId = await requireWorkspace((req.params as { id?: string }).id);
     if (!workspaceId) {
       res.status(404).json({ error: 'Workspace not found' });
       return;

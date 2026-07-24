@@ -16,6 +16,7 @@ import { cn } from './ui/utils'
 import { useScheduledTaskStore, type ScheduledTaskWithLatestRun } from '../stores/scheduled-task-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { openSessionDirect } from '../lib/session-jump'
+import { describeCron } from '../lib/cron-presets'
 import type { TaskRun } from '@server/models/scheduled-task.js'
 import { ScheduledTaskForm } from './ScheduledTaskForm'
 
@@ -40,16 +41,12 @@ function formatDuration(run: TaskRun): string {
 
 function describeSchedule(task: ScheduledTaskWithLatestRun, t: (k: string) => string): string {
   if (task.scheduleType === 'once') return `${t('form.once')} · ${formatTime(task.scheduleTime)}`
-  const expr = task.cronExpr ?? ''
-  const hourly = expr.match(/^(\d{1,2}) \* \* \* \*$/)
-  if (hourly) return `${t('form.hourly')} :${hourly[1].padStart(2, '0')}`
-  const daily = expr.match(/^(\d{1,2}) (\d{1,2}) \* \* \*$/)
-  if (daily) return `${t('form.daily')} ${daily[2].padStart(2, '0')}:${daily[1].padStart(2, '0')}`
-  const weekdays = expr.match(/^(\d{1,2}) (\d{1,2}) \* \* 1-5$/)
-  if (weekdays) return `${t('form.weekdays')} ${weekdays[2].padStart(2, '0')}:${weekdays[1].padStart(2, '0')}`
-  const weekly = expr.match(/^(\d{1,2}) (\d{1,2}) \* \* (\d)$/)
-  if (weekly) return `${t('form.weekly')} D${weekly[3]} ${weekly[2].padStart(2, '0')}:${weekly[1].padStart(2, '0')}`
-  return expr
+  return describeCron(task.cronExpr ?? '', {
+    hourly: t('form.hourly'),
+    daily: t('form.daily'),
+    weekdays: t('form.weekdays'),
+    weekly: t('form.weekly'),
+  })
 }
 
 const RUN_STATUS_STYLES: Record<string, string> = {
@@ -67,6 +64,12 @@ function StatusChip({ status }: { status: string }) {
       {t(`status.${status}`)}
     </span>
   )
+}
+
+function panelTitle(view: PanelView, t: (k: string) => string): string {
+  if (view.kind === 'detail') return view.task.name
+  if (view.kind === 'form') return view.task ? t('form.editTitle') : t('form.createTitle')
+  return t('panel.title')
 }
 
 export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProps) {
@@ -128,9 +131,7 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
               </button>
             )}
             <Clock className="w-4 h-4 text-accent" />
-            <h2 className="text-sm font-medium text-text-primary">
-              {view.kind === 'detail' ? view.task.name : view.kind === 'form' ? (view.task ? t('form.editTitle') : t('form.createTitle')) : t('panel.title')}
-            </h2>
+            <h2 className="text-sm font-medium text-text-primary">{panelTitle(view, t)}</h2>
           </div>
           <div className="flex items-center gap-1">
             {view.kind === 'list' && (

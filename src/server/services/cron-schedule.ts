@@ -135,11 +135,13 @@ export function nextCronFire(expr: string, after: Date): Date | null {
   start.setSeconds(0, 0);
   let candidate = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0, 0);
   const deadline = after.getTime() + MAX_SCAN_DAYS * 24 * 60 * 60_000;
+  const hours = sortedIn(p.hour);
+  const minutes = sortedIn(p.minute);
 
   while (candidate.getTime() <= deadline) {
     if (matchesDay(p, candidate)) {
-      for (const hour of sortedIn(p.hour)) {
-        for (const minute of sortedIn(p.minute)) {
+      for (const hour of hours) {
+        for (const minute of minutes) {
           const t = new Date(
             candidate.getFullYear(),
             candidate.getMonth(),

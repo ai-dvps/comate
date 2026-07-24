@@ -139,11 +139,11 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   clearUnread: () => set({ unreadCount: 0 }),
 
   handleSchedulerEvent: (payload) => {
+    if (payload.kind === 'run-finished' || payload.kind === 'draft-created') {
+      set((state) => ({ unreadCount: state.unreadCount + 1 }));
+    }
     if (payload.kind === 'run-finished') {
-      set((state) => ({ unreadCount: state.unreadCount + 1 }));
       void notifyRunFinished(payload);
-    } else if (payload.kind === 'draft-created') {
-      set((state) => ({ unreadCount: state.unreadCount + 1 }));
     }
     void get().fetchTasks();
   },

@@ -52,7 +52,8 @@
     "wecomRecipient": "企业微信接收人（用户 id，默认工作区管理员）",
     "save": "保存",
     "cancel": "取消",
-    "invalidCron": "cron 表达式无效"
+    "invalidCron": "cron 表达式无效",
+    "timeRequired": "请选择执行时间"
   },
   "status": {
     "draft": "草稿",

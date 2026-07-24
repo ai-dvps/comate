@@ -9,6 +9,8 @@ import type { ChatSession } from '../models/session.js';
 import type { SseEvent } from '../types/message.js';
 
 const TICK_MS = 30_000;
+/** Data lifecycle (KTD-11): run records older than this are physically pruned at startup reconciliation. */
+export const RUN_RETENTION_DAYS = 90;
 export const SKIP_REASON_PREVIOUS_RUNNING = '上一班次仍在执行';
 export const MISS_REASON_APP_NOT_RUNNING = '触发时应用未在运行';
 export const FAIL_REASON_PROCESS_RESTART = '进程重启';
@@ -136,6 +138,9 @@ export class SchedulerService {
    */
   async reconcile(): Promise<void> {
     const nowIso = this.nowFn().toISOString();
+    const cutoff = new Date(this.nowFn().getTime() - RUN_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const pruned = this.store.pruneTaskRunsOlderThan(cutoff);
+    if (pruned > 0) diagLog(`[SchedulerService] pruned ${pruned} task runs older than ${RUN_RETENTION_DAYS}d`);
     for (const run of this.store.latestRunsPerTask()) {
       if (run.status === 'running') {
         this.store.updateTaskRun(run.id, { status: 'failed', endedAt: nowIso, reason: FAIL_REASON_PROCESS_RESTART });
@@ -202,7 +207,7 @@ export class SchedulerService {
   }
 
   private latestRun(taskId: string): TaskRun | null {
-    return this.store.listTaskRuns(taskId)[0] ?? null;
+    return this.store.getLatestTaskRun(taskId);
   }
 
   private async fireTask(task: ScheduledTask, fireAt: string): Promise<TaskRun> {

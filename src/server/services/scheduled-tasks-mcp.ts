@@ -1,13 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { Router, json, type Request, type Response } from 'express';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { Router } from 'express';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { store } from '../storage/sqlite-store.js';
 import { scheduledTasksService } from './scheduled-tasks-service.js';
 import { SchedulerError } from './scheduler-service.js';
-import { diagLog } from '../utils/diag-logger.js';
+import { createStatelessMcpHttpRouter } from './mcp-http-router.js';
 
 export const SCHEDULED_TASKS_MCP_KEY = 'comate-scheduled-tasks';
 
@@ -101,7 +99,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
       } catch (err) {
         return textResult(`创建草稿失败：${err instanceof Error ? err.message : String(err)}`, true);
       }
-    }) as never,
+    }),
   };
 
   if (deps.source === 'wecom' || deps.source === 'feishu') {
@@ -120,7 +118,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
             `- [${t.status}] ${t.name}（${describeSchedule(t)}）下次触发: ${t.nextFireAt ?? '—'}；最近执行: ${t.latestRun?.status ?? '无'}（id: ${t.id}）`,
         );
       return textResult(tasks.length > 0 ? tasks.join('\n') : '当前工作区没有定时任务。');
-    }) as never,
+    }),
   };
 
   const pauseTool: ToolDef = {
@@ -134,7 +132,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
       } catch (err) {
         return textResult(`暂停失败：${err instanceof Error ? err.message : String(err)}`, true);
       }
-    }) as never,
+    }),
   };
 
   const resumeTool: ToolDef = {
@@ -148,7 +146,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
       } catch (err) {
         return textResult(`恢复失败：${err instanceof Error ? err.message : String(err)}`, true);
       }
-    }) as never,
+    }),
   };
 
   const runNowTool: ToolDef = {
@@ -163,7 +161,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
         if (err instanceof SchedulerError) return textResult(`无法执行：${err.message}`, true);
         return textResult(`无法执行：${err instanceof Error ? err.message : String(err)}`, true);
       }
-    }) as never,
+    }),
   };
 
   return [draftTool, listTool, pauseTool, resumeTool, runNowTool];
@@ -172,53 +170,25 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
 /**
  * Stateless HTTP MCP endpoint, mounted before the global guards like the
  * browser MCP (its requests carry a bearer token, not browser origins).
+ * Transport plumbing is shared in mcp-http-router.ts.
  */
 export function createScheduledTasksMcpHttpRouter(
   depsFor: (sessionId: string) => Promise<ScheduledTasksMcpDeps | null>,
 ): Router {
-  const router = Router();
-
-  router.use((req: Request, res: Response, next) => {
-    const auth = req.headers.authorization;
-    if (auth !== `Bearer ${token}`) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    next();
-  });
-
-  router.use(json());
-
-  router.post('/:sessionId', async (req: Request, res: Response) => {
-    const sessionId = req.params.sessionId;
-    const deps = await depsFor(sessionId);
-    if (!deps) {
-      res.status(404).json({ error: 'Session not found or not eligible for scheduled-task tools' });
-      return;
-    }
-    const server = new McpServer({ name: SCHEDULED_TASKS_MCP_KEY, version: '0.1.0' });
-    for (const def of buildScheduledTaskToolDefinitions(deps)) {
-      server.registerTool(
-        def.name,
-        { description: def.description, inputSchema: def.inputSchema },
-        def.handler as never,
-      );
-    }
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    res.on('close', () => {
-      void transport.close();
-      void server.close();
-    });
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
-    } catch (err) {
-      diagLog(`[scheduled-tasks-mcp] request failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'MCP request failed' });
+  return createStatelessMcpHttpRouter<ScheduledTasksMcpDeps>({
+    name: SCHEDULED_TASKS_MCP_KEY,
+    version: '0.1.0',
+    token,
+    logTag: 'scheduled-tasks-mcp',
+    depsFor,
+    registerTools: (server, _sessionId, deps) => {
+      for (const def of buildScheduledTaskToolDefinitions(deps)) {
+        server.registerTool(
+          def.name,
+          { description: def.description, inputSchema: def.inputSchema },
+          def.handler as never,
+        );
       }
-    }
+    },
   });
-
-  return router;
 }

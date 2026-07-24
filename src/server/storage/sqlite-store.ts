@@ -2350,6 +2350,20 @@ export class SqliteStore {
     return rows.map(parseTaskRunRow);
   }
 
+  /** Newest run for one task, index-served; avoids a full history scan for overlap checks. */
+  getLatestTaskRun(taskId: string): TaskRun | null {
+    const row = this.db
+      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
+      .get(taskId) as RawTaskRunRow | undefined;
+    return row ? parseTaskRunRow(row) : null;
+  }
+
+  /** Data lifecycle (KTD-11): physically remove runs older than the retention cutoff. */
+  pruneTaskRunsOlderThan(cutoffIso: string): number {
+    const result = this.db.prepare('DELETE FROM task_runs WHERE created_at < ?').run(cutoffIso);
+    return result.changes;
+  }
+
   latestRunsPerTask(): TaskRun[] {
     // rowid order matches insertion order, so MAX(rowid) per task is the
     // newest run even when several runs share a created_at timestamp.
