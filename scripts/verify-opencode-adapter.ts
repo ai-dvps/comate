@@ -75,6 +75,10 @@ const main = async (): Promise<void> => {
 
   runtime.addWebEventHandler((id, event) => {
     events.push({ id, ...event });
+    if (event.type === 'error_note') {
+      console.log(`  error_note: ${String((event as { text?: unknown }).text).slice(0, 160)}`);
+      checks.sawErrorNote = true;
+    }
     if (event.type === 'pending_approval') {
       const requestId = String((event as { requestId?: unknown }).requestId);
       pendingApprovals.push(requestId);

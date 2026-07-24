@@ -36,6 +36,13 @@ export interface OpencodeMapperState {
   seenTodos: Set<string>;
   currentMessageId?: string;
   currentModel?: string;
+  /**
+   * Set when a session.error arrives; idles are suppressed (no false
+   * success) until new activity marks a fresh turn. Prevents an error turn
+   * from ending in a fake-success state that masks the failure (silent-error
+   * fix — provider errors like 1211 model-not-found ended invisibly before).
+   */
+  erroredTurn: boolean;
   lastUsage?: {
     input?: number;
     output?: number;
@@ -54,6 +61,7 @@ export function createOpencodeMapperState(): OpencodeMapperState {
     partTypeById: new Map(),
     lastTextByPartId: new Map(),
     seenTodos: new Set(),
+    erroredTurn: false,
   };
 }
 
@@ -274,6 +282,26 @@ export function mapOpencodeEvent(
 ): SDKMessage[] {
   const properties = event.properties ?? {};
 
+  // Errored-turn reset only on activity that genuinely starts a NEW turn:
+  // a part on a not-yet-started message, or a user-role message update. The
+  // failed turn's own in-flight message flushing its final state must NOT
+  // re-enable a success result (that would re-mask the error).
+  if (event.type === 'message.part.updated' || event.type === 'message.part.delta') {
+    const partMessageId = String(
+      (properties.part as { messageID?: string } | undefined)?.messageID ??
+      properties.messageID ??
+      '',
+    );
+    if (partMessageId && !state.startedMessages.has(partMessageId)) {
+      state.erroredTurn = false;
+    }
+  } else if (event.type === 'message.updated') {
+    const info = (properties.info ?? properties) as { role?: string };
+    if (info.role === 'user') {
+      state.erroredTurn = false;
+    }
+  }
+
   switch (event.type) {
     case 'message.updated': {
       const info = (properties.info ?? properties) as OpencodeMessageInfo;
@@ -342,7 +370,8 @@ export function mapOpencodeEvent(
     case 'todo.updated':
       return mapTodoUpdated(properties, state);
 
-    case 'session.idle':
+    case 'session.idle': {
+      if (state.erroredTurn) return [];
       return [
         {
           type: 'result',
@@ -357,10 +386,12 @@ export function mapOpencodeEvent(
           modelUsage: {},
         } as unknown as SDKMessage,
       ];
+    }
 
     case 'session.error': {
       const error = (properties.error ?? {}) as { data?: { message?: string }; message?: string };
       const message = error.data?.message ?? error.message ?? 'unknown error';
+      state.erroredTurn = true;
       return [
         {
           type: 'result',

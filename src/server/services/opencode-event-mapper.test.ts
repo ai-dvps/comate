@@ -204,3 +204,60 @@ describe('todos and lifecycle', () => {
     assert.deepEqual(mapOpencodeEvent({ type: 'permission.asked', properties: {} }, state), []);
   });
 });
+
+describe('error turn handling (silent-error fix)', () => {
+  it('suppresses success results for idles that follow a session.error in the same turn', () => {
+    const state = createOpencodeMapperState();
+    const errorOut = mapOpencodeEvent(
+      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'model missing' } } } },
+      state,
+    ) as Array<{ subtype: string; is_error: boolean }>;
+    assert.equal(errorOut.length, 1);
+    assert.equal(errorOut[0].subtype, 'error_during_execution');
+
+    const idle1 = mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state);
+    const idle2 = mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state);
+    assert.deepEqual(idle1, [], 'idle after error must not emit success');
+    assert.deepEqual(idle2, [], 'repeated idles after error must stay suppressed');
+  });
+
+  it('emits success again once new activity starts a fresh turn after an error', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent(
+      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'boom' } } } },
+      state,
+    );
+    mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state);
+
+    // New activity (a fresh assistant message) marks a new turn
+    mapOpencodeEvent(
+      { type: 'message.part.updated', properties: { part: { id: 'p1', type: 'text', messageID: 'm2', text: 'hi' } } },
+      state,
+    );
+    const idleOut = mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state) as Array<{
+      subtype: string;
+    }>;
+    assert.equal(idleOut.length, 1);
+    assert.equal(idleOut[0].subtype, 'success');
+  });
+
+  it('keeps idles suppressed when the failed turn’s in-flight message still updates (same messageID)', () => {
+    const state = createOpencodeMapperState();
+    // In-flight turn m1 starts, then the model errors mid-stream
+    mapOpencodeEvent(
+      { type: 'message.part.updated', properties: { part: { id: 'p1', type: 'text', messageID: 'm1', text: 'partial' } } },
+      state,
+    );
+    mapOpencodeEvent(
+      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'boom' } } } },
+      state,
+    );
+    // The failed turn's own message still updates (final state flush)
+    mapOpencodeEvent(
+      { type: 'message.part.updated', properties: { part: { id: 'p1', type: 'text', messageID: 'm1', text: 'partial flush' } } },
+      state,
+    );
+    const idle = mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state);
+    assert.deepEqual(idle, [], 'in-flight message updates must not clear the errored-turn flag');
+  });
+});
