@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import i18next from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 
@@ -140,38 +141,115 @@ function Calendar({ value, onSelect, minDate }: CalendarProps) {
   )
 }
 
-function TimeColumns({ hour, minute, onChange }: { hour: number; minute: number; onChange: (h: number, m: number) => void }) {
+function TimeColumns({
+  hour,
+  minute,
+  onChange,
+  nowLabel = i18next.t('scheduledTasks:picker.now', 'Now'),
+}: {
+  hour: number
+  minute: number
+  onChange: (h: number, m: number) => void
+  nowLabel?: string
+}) {
+  const [text, setText] = useState(`${pad(hour)}:${pad(minute)}`)
+  const [textError, setTextError] = useState(false)
+  const hourRef = useRef<HTMLButtonElement>(null)
+  const minuteRef = useRef<HTMLButtonElement>(null)
+
+  // Selected values scroll into view when the popover opens (eleken anti-pattern:
+  // "scrolling endlessly" — the list should start centered on the current value).
+  useEffect(() => {
+    hourRef.current?.scrollIntoView({ block: 'center' })
+    minuteRef.current?.scrollIntoView({ block: 'center' })
+  }, [])
+
+  useEffect(() => {
+    setText(`${pad(hour)}:${pad(minute)}`)
+    setTextError(false)
+  }, [hour, minute])
+
+  const commitText = () => {
+    const m = text.trim().match(/^(\d{1,2}):(\d{1,2})$/)
+    const h = m ? Number(m[1]) : NaN
+    const min = m ? Number(m[2]) : NaN
+    if (m && h >= 0 && h <= 23 && min >= 0 && min <= 59) {
+      onChange(h, min)
+      setTextError(false)
+    } else {
+      setTextError(true)
+    }
+  }
+
+  // 5-minute steps (common-intervals pattern); the current minute is always
+  // present even when not a multiple of 5 so the selection never disappears.
+  const minuteOptions = useMemo(() => {
+    const set = new Set<number>(Array.from({ length: 12 }, (_, i) => i * 5))
+    set.add(minute)
+    return [...set].sort((a, b) => a - b)
+  }, [minute])
+
   return (
-    <div className="flex gap-1 border-t border-border pt-2" data-testid="dtf-time">
-      <div className="max-h-32 w-14 overflow-y-auto rounded-md border border-border">
-        {Array.from({ length: 24 }, (_, h) => (
-          <button
-            key={h}
-            type="button"
-            onClick={() => onChange(h, minute)}
-            className={cn(
-              'flex w-full items-center justify-center py-1 text-xs',
-              h === hour ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-hover',
-            )}
-          >
-            {pad(h)}
-          </button>
-        ))}
+    <div data-testid="dtf-time">
+      <div className="mb-1.5 flex items-center gap-1.5 border-t border-border pt-2">
+        <input
+          data-testid="dtf-time-input"
+          className={cn(
+            'w-16 rounded-md border bg-bg px-1.5 py-1 text-center text-xs text-text-primary focus:outline-none focus:border-accent',
+            textError ? 'border-red-500' : 'border-border',
+          )}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commitText}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitText()
+          }}
+          placeholder="HH:mm"
+        />
+        <button
+          type="button"
+          className="rounded-md px-2 py-1 text-xs text-accent hover:bg-accent/10"
+          onClick={() => {
+            const now = new Date()
+            onChange(now.getHours(), now.getMinutes())
+          }}
+        >
+          {nowLabel}
+        </button>
       </div>
-      <div className="max-h-32 w-14 overflow-y-auto rounded-md border border-border">
-        {Array.from({ length: 60 }, (_, m) => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => onChange(hour, m)}
-            className={cn(
-              'flex w-full items-center justify-center py-1 text-xs',
-              m === minute ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-hover',
-            )}
-          >
-            {pad(m)}
-          </button>
-        ))}
+      <div className="flex gap-1">
+        <div className="max-h-32 w-14 overflow-y-auto rounded-md border border-border" data-testid="dtf-hour-col">
+          {Array.from({ length: 24 }, (_, h) => (
+            <button
+              key={h}
+              type="button"
+              ref={h === hour ? hourRef : undefined}
+              onClick={() => onChange(h, minute)}
+              className={cn(
+                'flex w-full items-center justify-center py-1 text-xs',
+                h === hour ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-hover',
+              )}
+            >
+              {pad(h)}
+            </button>
+          ))}
+        </div>
+        <div className="max-h-32 w-14 overflow-y-auto rounded-md border border-border" data-testid="dtf-minute-col">
+          {minuteOptions.map((m) => (
+            <button
+              key={m}
+              type="button"
+              ref={m === minute ? minuteRef : undefined}
+              onClick={() => onChange(hour, m)}
+              className={cn(
+                'flex w-full items-center justify-center py-1 text-xs',
+                m === minute ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-hover',
+              )}
+            >
+              {pad(m)}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )

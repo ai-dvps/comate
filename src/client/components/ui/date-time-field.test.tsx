@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest'
 import { render, cleanup, fireEvent, screen, within } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 
@@ -8,6 +8,10 @@ import { DateTimeField, TimeField } from './date-time-field'
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
 }
+
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn()
+})
 
 afterEach(cleanup)
 
@@ -50,9 +54,41 @@ describe('DateTimeField', () => {
     const onChange = vi.fn()
     renderWithI18n(<DateTimeField value="2026-07-25T14:30" onChange={onChange} />)
     fireEvent.click(screen.getByText('2026-07-25 14:30'))
-    const timeCols = screen.getByTestId('dtf-time')
-    fireEvent.click(within(timeCols.children[0] as HTMLElement).getByText('08'))
+    fireEvent.click(within(screen.getByTestId('dtf-hour-col')).getByText('08'))
     expect(onChange).toHaveBeenCalledWith('2026-07-25T08:30')
+  })
+})
+
+describe('TimeColumns direct input', () => {
+  it('commits a valid HH:mm typed into the input on Enter', () => {
+    const onChange = vi.fn()
+    renderWithI18n(<TimeField value="09:05" onChange={onChange} />)
+    fireEvent.click(screen.getByText('09:05'))
+    const input = screen.getByTestId('dtf-time-input')
+    fireEvent.change(input, { target: { value: '18:45' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('18:45')
+  })
+
+  it('rejects invalid input without committing', () => {
+    const onChange = vi.fn()
+    renderWithI18n(<TimeField value="09:05" onChange={onChange} />)
+    fireEvent.click(screen.getByText('09:05'))
+    const input = screen.getByTestId('dtf-time-input')
+    fireEvent.change(input, { target: { value: '25:99' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('minute column uses 5-minute steps and keeps the current minute selectable', () => {
+    renderWithI18n(<TimeField value="09:07" onChange={() => {}} />)
+    fireEvent.click(screen.getByText('09:07'))
+    const minuteCol = screen.getByTestId('dtf-minute-col') as HTMLElement
+    // 5-step list (00, 05, 10, ...) plus the injected current value 07
+    expect(within(minuteCol).getByText('00')).toBeTruthy()
+    expect(within(minuteCol).getByText('05')).toBeTruthy()
+    expect(within(minuteCol).getByText('07')).toBeTruthy()
+    expect(within(minuteCol).queryByText('03')).toBeNull()
   })
 })
 
@@ -61,8 +97,7 @@ describe('TimeField', () => {
     const onChange = vi.fn()
     renderWithI18n(<TimeField value="09:05" onChange={onChange} />)
     fireEvent.click(screen.getByText('09:05'))
-    const timeCols = screen.getByTestId('dtf-time')
-    fireEvent.click(within(timeCols.children[0] as HTMLElement).getByText('18'))
+    fireEvent.click(within(screen.getByTestId('dtf-hour-col')).getByText('18'))
     expect(onChange).toHaveBeenCalledWith('18:05')
   })
 })

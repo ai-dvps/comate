@@ -81,5 +81,8 @@
   },
   "session": {
     "scheduledRun": "Scheduled run"
+  },
+  "picker": {
+    "now": "Now"
   }
 }
