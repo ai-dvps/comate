@@ -1,5 +1,5 @@
 import { store, type SqliteStore } from '../storage/sqlite-store.js';
-import { schedulerService, SchedulerError } from './scheduler-service.js';
+import { schedulerService, SchedulerError, schedulerEvents } from './scheduler-service.js';
 import { nextCronFire, parseCron, CronParseError } from './cron-schedule.js';
 import { resolveDefaultBackend } from './agent-backends.js';
 import type {
@@ -77,7 +77,13 @@ export class ScheduledTasksService {
   /** Chat/MCP creation (R5/R6): lands as a draft awaiting UI confirmation. */
   createDraft(workspaceId: string, input: CreateScheduledTaskInput): ScheduledTask {
     validateInput(input);
-    return this.store.createScheduledTask({ ...input, workspaceId });
+    const draft = this.store.createScheduledTask({ ...input, workspaceId });
+    schedulerEvents.emit('draft-created', {
+      taskId: draft.id,
+      taskName: draft.name,
+      workspaceId,
+    });
+    return draft;
   }
 
   /**

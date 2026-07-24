@@ -7,13 +7,19 @@
   ],
   "permissions": [
     "core:default",
+    "notification:default",
     "core:window:allow-start-dragging",
     "dialog:default",
     "updater:default",
     "process:default",
     {
       "identifier": "shell:allow-spawn",
-      "allow": [{ "name": "binaries/sidecar-node", "sidecar": true }]
+      "allow": [
+        {
+          "name": "binaries/sidecar-node",
+          "sidecar": true
+        }
+      ]
     }
   ]
 }

@@ -38,6 +38,7 @@ import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
 import { schedulerService } from './services/scheduler-service.js';
+import { runNotifier } from './services/run-notifier.js';
 import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
 import { BotMigrationService } from './services/bot-migration-service.js';
@@ -318,6 +319,9 @@ const server = app.listen(PORT, () => {
 
   // Initialize the scheduled-task scheduler (tick + startup reconciliation)
   schedulerService.initialize();
+
+  // Fan out run results (WeCom summary push; WS relay lives in the ws server)
+  runNotifier.initialize();
 
   // Backfill existing WeCom session names
   wecomSessionRenamer.backfillExistingSessions().catch((err) => {

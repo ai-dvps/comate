@@ -2,6 +2,7 @@ import { wecomBotService } from './services/wecom-bot-service.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
 import { schedulerService } from './services/scheduler-service.js';
+import { runNotifier } from './services/run-notifier.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { gitChangesService } from './services/git-changes-service.js';
 import { chatService } from './services/chat-service.js';
@@ -23,6 +24,7 @@ export async function teardownServices(): Promise<void> {
   feishuBotService.disconnect();
   await wecomQueueWorker.shutdown();
   await schedulerService.shutdown();
+  await runNotifier.shutdown();
   await wecomUserResolver.shutdown();
   await gitChangesService.dispose();
   await browserViewerProxy.stop();
