@@ -8,8 +8,11 @@ import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from './utils'
 import { Popover, PopoverContent, PopoverTrigger } from './popover'
 
+// h-[38px] pins the trigger to SelectTrigger's content height (text-sm line
+// 20px + py-2 16px + border 2px) so the picker always measures identically to
+// the ui/select.tsx selectors in the same row, regardless of theme tweaks.
 const triggerCls =
-  'flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary shadow-sm transition-colors focus:outline-none focus:border-accent data-[placeholder]:text-text-tertiary'
+  'flex h-[38px] w-full items-center justify-between gap-2 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary shadow-sm transition-colors focus:outline-none focus:border-accent data-[placeholder]:text-text-tertiary'
 const panelCls = 'z-50 rounded-lg border border-border bg-surface p-2 text-text-primary shadow-lg'
 const dayCellBase =
   'flex h-7 w-7 items-center justify-center rounded-md text-xs transition-colors focus:outline-none'
