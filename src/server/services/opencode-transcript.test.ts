@@ -106,3 +106,34 @@ describe('pairTaskToolCallsWithChildren', () => {
     ]);
   });
 });
+
+describe('errored turn history (silent-error fix)', () => {
+  it('emits a visible error entry after a failed assistant message', () => {
+    const out = opencodeMessagesToSessionMessages([
+      {
+        info: {
+          id: 'm1',
+          role: 'assistant',
+          error: { name: 'APIError', data: { message: '[1211][模型不存在]' } },
+        },
+        parts: [],
+      },
+    ]) as Array<{ type: string; message: { content: Array<{ type: string; text?: string }> } }>;
+    const errorEntry = out.find((m) => m.type === 'assistant');
+    assert.ok(errorEntry, 'an error entry must be present for a failed turn');
+    const text = errorEntry.message.content[0].text ?? '';
+    assert.match(text, /APIError/);
+    assert.match(text, /模型不存在/);
+  });
+
+  it('emits no error entry for clean messages', () => {
+    const out = opencodeMessagesToSessionMessages([
+      {
+        info: { id: 'm2', role: 'assistant' },
+        parts: [{ id: 'p1', type: 'text', messageID: 'm2', text: 'ok' }],
+      },
+    ]) as Array<{ message: { content: Array<{ type: string; text?: string }> } }>;
+    const allText = out.flatMap((m) => m.message.content.map((b) => b.text ?? '')).join(' ');
+    assert.ok(!allText.includes('后端错误'));
+  });
+});

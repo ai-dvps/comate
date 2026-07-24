@@ -29,8 +29,21 @@ export interface OpencodeRestMessage {
     id: string;
     role: string;
     time?: { created?: number; completed?: number };
+    /** Present on failed assistant turns: the provider/agent error that ended
+     * the turn (e.g. APIError 1211 model-not-found). opencode stores it on the
+     * message, so a failed turn can be made visible in history. */
+    error?: { name?: string; data?: { message?: string }; message?: string };
   };
   parts: OpencodeRestPart[];
+}
+
+/** Visible history marker for a failed turn. The live path surfaces the same
+ * failure as an error_note event; system-typed transcript messages are
+ * dropped by the normalizer, so history needs an assistant text message. */
+function formatBackendError(error: OpencodeRestMessage['info']['error']): string {
+  const name = error?.name ?? 'Error';
+  const message = error?.data?.message ?? error?.message ?? 'unknown error';
+  return `**后端错误** (${name})\n\n${message}`;
 }
 
 export function opencodeMessagesToSessionMessages(
@@ -82,6 +95,19 @@ export function opencodeMessagesToSessionMessages(
         parent_tool_use_id: null,
         session_id: '',
         message: { role: 'user', content: toolResults },
+      } as unknown as SessionMessage);
+    }
+
+    if (msg.info.error) {
+      out.push({
+        uuid: `${msg.info.id}-error`,
+        type: 'assistant',
+        parent_tool_use_id: null,
+        session_id: '',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: formatBackendError(msg.info.error) }],
+        },
       } as unknown as SessionMessage);
     }
   }
