@@ -81,5 +81,8 @@
   },
   "session": {
     "scheduledRun": "定时执行"
+  },
+  "picker": {
+    "now": "现在"
   }
 }
