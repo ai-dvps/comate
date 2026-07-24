@@ -93,9 +93,10 @@ export class ScheduledTasksService {
    * workspace identity + capability scope snapshot (KTD-5) and computes the
    * first fire time.
    */
-  async confirmTask(taskId: string): Promise<ScheduledTask> {
-    const task = this.store.getScheduledTask(taskId);
-    if (!task || task.deletedAt) throw new SchedulerError('NOT_FOUND', `Scheduled task ${taskId} not found`);
+  async confirmTask(taskId: string, expectedWorkspaceId?: string): Promise<ScheduledTask> {
+    const task = expectedWorkspaceId
+      ? this.requireTaskInWorkspace(taskId, expectedWorkspaceId)
+      : this.getTask(taskId);
     if (task.status !== 'draft') throw new SchedulerError('CONFLICT', '任务已确认');
     const workspace = await this.store.get(task.workspaceId);
     if (!workspace) throw new SchedulerError('NOT_FOUND', '任务所属工作区不存在');
@@ -119,14 +120,30 @@ export class ScheduledTasksService {
     return tasks.map((t) => ({ ...t, latestRun: latest.get(t.id) ?? null }));
   }
 
+  /**
+   * Workspace-ownership guard (cross-workspace access returns NOT_FOUND, never
+   * a 403, so task ids in other workspaces are not even confirmed to exist).
+   * Workspace-scoped callers (REST /:taskId* handlers, MCP tools) must go
+   * through this instead of the unscoped getTask.
+   */
+  requireTaskInWorkspace(taskId: string, expectedWorkspaceId: string): ScheduledTask {
+    const task = this.getTask(taskId);
+    if (task.workspaceId !== expectedWorkspaceId) {
+      throw new SchedulerError('NOT_FOUND', `Scheduled task ${taskId} not found`);
+    }
+    return task;
+  }
+
   getTask(taskId: string): ScheduledTask {
     const task = this.store.getScheduledTask(taskId);
     if (!task || task.deletedAt) throw new SchedulerError('NOT_FOUND', `Scheduled task ${taskId} not found`);
     return task;
   }
 
-  updateTask(taskId: string, input: UpdateScheduledTaskInput): ScheduledTask {
-    const task = this.getTask(taskId);
+  updateTask(taskId: string, input: UpdateScheduledTaskInput, expectedWorkspaceId?: string): ScheduledTask {
+    const task = expectedWorkspaceId
+      ? this.requireTaskInWorkspace(taskId, expectedWorkspaceId)
+      : this.getTask(taskId);
     if (input.status && input.status !== task.status) {
       // Status transitions are limited to active ↔ paused. Drafts must go
       // through confirmTask (KTD-5: the confirm-time snapshot); disabled is
@@ -160,17 +177,26 @@ export class ScheduledTasksService {
     return updated!;
   }
 
-  deleteTask(taskId: string): void {
-    this.getTask(taskId);
+  deleteTask(taskId: string, expectedWorkspaceId?: string): void {
+    if (expectedWorkspaceId) {
+      this.requireTaskInWorkspace(taskId, expectedWorkspaceId);
+    } else {
+      this.getTask(taskId);
+    }
     this.store.softDeleteScheduledTask(taskId);
   }
 
-  listRuns(taskId: string): TaskRun[] {
-    this.getTask(taskId);
+  listRuns(taskId: string, expectedWorkspaceId?: string): TaskRun[] {
+    if (expectedWorkspaceId) {
+      this.requireTaskInWorkspace(taskId, expectedWorkspaceId);
+    } else {
+      this.getTask(taskId);
+    }
     return this.store.listTaskRuns(taskId);
   }
 
-  async runNow(taskId: string): Promise<TaskRun> {
+  async runNow(taskId: string, expectedWorkspaceId?: string): Promise<TaskRun> {
+    if (expectedWorkspaceId) this.requireTaskInWorkspace(taskId, expectedWorkspaceId);
     return schedulerService.runNow(taskId);
   }
 }

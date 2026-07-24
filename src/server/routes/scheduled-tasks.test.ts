@@ -159,6 +159,38 @@ describe('PUT/DELETE /:taskId', () => {
     assert.equal(badEdit.statusCode, 400);
   });
 
+  it('PUT whitelists editable keys: confirmedSnapshot/nextFireAt/workspaceId/deletedAt are dropped', async () => {
+    const task = await scheduledTasksService.createTask(workspaceId, {
+      workspaceId,
+      name: 'a',
+      instruction: 'x',
+      scheduleType: 'recurring',
+      cronExpr: '0 9 * * *',
+    });
+    const snapshotBefore = store.getScheduledTask(task.id)!.confirmedSnapshot;
+    assert.equal(snapshotBefore?.folderPath, '/tmp/ws-routes');
+    const res = await call('put', '/:taskId', {
+      params: { id: workspaceId, taskId: task.id },
+      body: {
+        name: 'renamed',
+        confirmedSnapshot: { folderPath: '/etc/evil', backend: 'opencode', approvalMode: 'auto' },
+        nextFireAt: '2020-01-01T00:00:00.000Z',
+        workspaceId: 'no-such-ws',
+        deletedAt: '2020-01-01T00:00:00.000Z',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const after = store.getScheduledTask(task.id)!;
+    assert.equal(after.name, 'renamed');
+    // Confirm-time snapshot untouched — still the value confirmTask captured
+    assert.deepEqual(after.confirmedSnapshot, snapshotBefore);
+    // Schedule cursor recomputed by the service, not taken from the body
+    assert.ok(after.nextFireAt);
+    assert.notEqual(after.nextFireAt, '2020-01-01T00:00:00.000Z');
+    assert.equal(after.workspaceId, workspaceId);
+    assert.equal(after.deletedAt, null);
+  });
+
   it('soft delete hides the task from list and detail', async () => {
     const task = await scheduledTasksService.createTask(workspaceId, {
       workspaceId,
@@ -247,5 +279,64 @@ describe('GET /:taskId/runs', () => {
     const runs = (res.jsonBody as { runs: { status: string }[] }).runs;
     assert.equal(runs.length, 2);
     assert.equal(runs[0].status, 'missed');
+  });
+});
+
+describe('workspace scoping (cross-workspace 404)', () => {
+  it('GET/PUT/DELETE/confirm/run-now/runs against another workspace\'s task all return 404 and change nothing', async () => {
+    const other = await store.create({ name: 'WS2', folderPath: '/tmp/ws-other' });
+    const task = await scheduledTasksService.createTask(workspaceId, {
+      workspaceId,
+      name: 'a',
+      instruction: 'x',
+      scheduleType: 'once',
+      scheduleTime: futureOnce(),
+    });
+    const draft = scheduledTasksService.createDraft(workspaceId, {
+      workspaceId,
+      name: 'd',
+      instruction: 'x',
+      scheduleType: 'recurring',
+      cronExpr: '0 9 * * *',
+    });
+
+    const get = await call('get', '/:taskId', { params: { id: other.id, taskId: task.id } });
+    assert.equal(get.statusCode, 404);
+
+    const put = await call('put', '/:taskId', { params: { id: other.id, taskId: task.id }, body: { name: 'hijack' } });
+    assert.equal(put.statusCode, 404);
+
+    const del = await call('delete', '/:taskId', { params: { id: other.id, taskId: task.id } });
+    assert.equal(del.statusCode, 404);
+
+    const confirm = await call('post', '/:taskId/confirm', { params: { id: other.id, taskId: draft.id } });
+    assert.equal(confirm.statusCode, 404);
+
+    const runNow = await call('post', '/:taskId/run-now', { params: { id: other.id, taskId: task.id } });
+    assert.equal(runNow.statusCode, 404);
+
+    const runs = await call('get', '/:taskId/runs', { params: { id: other.id, taskId: task.id } });
+    assert.equal(runs.statusCode, 404);
+
+    // Nothing was mutated: task still active with its original name, draft still a draft
+    const afterTask = store.getScheduledTask(task.id)!;
+    assert.equal(afterTask.name, 'a');
+    assert.equal(afterTask.status, 'active');
+    assert.equal(afterTask.deletedAt, null);
+    assert.equal(store.getScheduledTask(draft.id)!.status, 'draft');
+  });
+
+  it('same-workspace access still works; unknown task id 404s in either workspace', async () => {
+    const task = await scheduledTasksService.createTask(workspaceId, {
+      workspaceId,
+      name: 'a',
+      instruction: 'x',
+      scheduleType: 'once',
+      scheduleTime: futureOnce(),
+    });
+    const ok = await call('get', '/:taskId', { params: { id: workspaceId, taskId: task.id } });
+    assert.equal(ok.statusCode, 200);
+    const missing = await call('get', '/:taskId', { params: { id: workspaceId, taskId: 'no-such-task' } });
+    assert.equal(missing.statusCode, 404);
   });
 });

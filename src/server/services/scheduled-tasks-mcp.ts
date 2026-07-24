@@ -127,7 +127,9 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
       try {
-        scheduledTasksService.updateTask(args.taskId, { status: 'paused' });
+        // Scope to the session's workspace: an agent must not mutate tasks
+        // belonging to another workspace by guessing their ids.
+        scheduledTasksService.updateTask(args.taskId, { status: 'paused' }, deps.workspaceId);
         return textResult('任务已暂停。');
       } catch (err) {
         return textResult(`暂停失败：${err instanceof Error ? err.message : String(err)}`, true);
@@ -141,7 +143,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
       try {
-        scheduledTasksService.updateTask(args.taskId, { status: 'active' });
+        scheduledTasksService.updateTask(args.taskId, { status: 'active' }, deps.workspaceId);
         return textResult('任务已恢复，将按调度继续触发。');
       } catch (err) {
         return textResult(`恢复失败：${err instanceof Error ? err.message : String(err)}`, true);
@@ -155,7 +157,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
       try {
-        const run = await scheduledTasksService.runNow(args.taskId);
+        const run = await scheduledTasksService.runNow(args.taskId, deps.workspaceId);
         return textResult(`已触发执行（run id: ${run.id}），执行过程可在任务执行历史或对应会话中查看。`);
       } catch (err) {
         if (err instanceof SchedulerError) return textResult(`无法执行：${err.message}`, true);

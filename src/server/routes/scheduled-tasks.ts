@@ -3,8 +3,23 @@ import type { Response } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { scheduledTasksService, TaskValidationError } from '../services/scheduled-tasks-service.js';
 import { SchedulerError } from '../services/scheduler-service.js';
+import type { UpdateScheduledTaskInput } from '../models/scheduled-task.js';
 
 const router = Router({ mergeParams: true });
+
+/** Keys a PUT caller may edit; everything else (confirmedSnapshot, nextFireAt, id, workspaceId, deletedAt, timestamps) is dropped. */
+const EDITABLE_KEYS = [
+  'name',
+  'instruction',
+  'scheduleType',
+  'scheduleTime',
+  'cronExpr',
+  'notifyDesktop',
+  'notifyInApp',
+  'notifyWecom',
+  'wecomRecipient',
+  'status',
+] as const;
 
 function handleError(res: Response, error: unknown, fallback: string): void {
   if (error instanceof TaskValidationError) {
@@ -78,8 +93,11 @@ router.post('/', async (req, res) => {
 // GET /api/workspaces/:id/scheduled-tasks/:taskId
 router.get('/:taskId', async (req, res) => {
   try {
-    const { taskId } = req.params as { taskId: string };
-    const task = scheduledTasksService.getTask(taskId);
+    const { id: workspaceId, taskId } = req.params as { id?: string; taskId: string };
+    // Workspace-scoped mount enforces ownership; the global mount (panel) does not.
+    const task = workspaceId
+      ? scheduledTasksService.requireTaskInWorkspace(taskId, workspaceId)
+      : scheduledTasksService.getTask(taskId);
     res.json({ task });
   } catch (error) {
     handleError(res, error, 'Failed to get scheduled task');
@@ -89,9 +107,18 @@ router.get('/:taskId', async (req, res) => {
 // PUT /api/workspaces/:id/scheduled-tasks/:taskId
 router.put('/:taskId', async (req, res) => {
   try {
-    const { taskId } = req.params as { taskId: string };
+    const { id: workspaceId, taskId } = req.params as { id?: string; taskId: string };
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const task = scheduledTasksService.updateTask(taskId, body);
+    // Whitelist user-editable keys: confirmedSnapshot is written only by
+    // confirmTask (KTD-5) and nextFireAt only by the service's own recompute —
+    // a raw-body pass-through would let callers rewrite both.
+    const patch: UpdateScheduledTaskInput = {};
+    for (const key of EDITABLE_KEYS) {
+      if (body[key] !== undefined) {
+        (patch as Record<string, unknown>)[key] = body[key];
+      }
+    }
+    const task = scheduledTasksService.updateTask(taskId, patch, workspaceId);
     res.json({ task });
   } catch (error) {
     handleError(res, error, 'Failed to update scheduled task');
@@ -101,8 +128,8 @@ router.put('/:taskId', async (req, res) => {
 // DELETE /api/workspaces/:id/scheduled-tasks/:taskId — soft delete (KTD-2)
 router.delete('/:taskId', async (req, res) => {
   try {
-    const { taskId } = req.params as { taskId: string };
-    scheduledTasksService.deleteTask(taskId);
+    const { id: workspaceId, taskId } = req.params as { id?: string; taskId: string };
+    scheduledTasksService.deleteTask(taskId, workspaceId);
     res.json({ ok: true });
   } catch (error) {
     handleError(res, error, 'Failed to delete scheduled task');
@@ -112,8 +139,8 @@ router.delete('/:taskId', async (req, res) => {
 // POST /api/workspaces/:id/scheduled-tasks/:taskId/confirm — draft → active (R6)
 router.post('/:taskId/confirm', async (req, res) => {
   try {
-    const { taskId } = req.params as { taskId: string };
-    const task = await scheduledTasksService.confirmTask(taskId);
+    const { id: workspaceId, taskId } = req.params as { id?: string; taskId: string };
+    const task = await scheduledTasksService.confirmTask(taskId, workspaceId);
     res.json({ task });
   } catch (error) {
     handleError(res, error, 'Failed to confirm scheduled task');
@@ -123,8 +150,8 @@ router.post('/:taskId/confirm', async (req, res) => {
 // POST /api/workspaces/:id/scheduled-tasks/:taskId/run-now
 router.post('/:taskId/run-now', async (req, res) => {
   try {
-    const { taskId } = req.params as { taskId: string };
-    const run = await scheduledTasksService.runNow(taskId);
+    const { id: workspaceId, taskId } = req.params as { id?: string; taskId: string };
+    const run = await scheduledTasksService.runNow(taskId, workspaceId);
     res.status(201).json({ run });
   } catch (error) {
     handleError(res, error, 'Failed to run scheduled task');
@@ -134,8 +161,8 @@ router.post('/:taskId/run-now', async (req, res) => {
 // GET /api/workspaces/:id/scheduled-tasks/:taskId/runs — execution history
 router.get('/:taskId/runs', async (req, res) => {
   try {
-    const { taskId } = req.params as { taskId: string };
-    const runs = scheduledTasksService.listRuns(taskId);
+    const { id: workspaceId, taskId } = req.params as { id?: string; taskId: string };
+    const runs = scheduledTasksService.listRuns(taskId, workspaceId);
     res.json({ runs });
   } catch (error) {
     handleError(res, error, 'Failed to list task runs');
