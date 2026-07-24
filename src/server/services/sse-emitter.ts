@@ -315,6 +315,19 @@ export class SseEmitter {
               ? ((msg as Record<string, unknown>).origin as string)
               : undefined,
         });
+        // An error result must be visible: the client's result handler only
+        // manages stream state and discards the errors payload, so surface it
+        // as an error_note (the visible system-message channel) — the same
+        // surfacing runMessageLoop's catch path provides for fatal streams.
+        if (msg.is_error === true) {
+          const errors = 'errors' in msg ? (msg as { errors?: unknown }).errors : undefined;
+          const text = Array.isArray(errors) && errors.length > 0
+            ? errors.map((e) => String(e)).join('\n')
+            : typeof msg.subtype === 'string'
+              ? msg.subtype
+              : 'Unknown error';
+          this.emitErrorNote(text);
+        }
         return;
 
       default:
