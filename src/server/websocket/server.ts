@@ -2,6 +2,7 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import type { Server } from 'http';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
+import { schedulerEvents, type SchedulerRunEvent } from '../services/scheduler-service.js';
 import { gitChangesService } from '../services/git-changes-service.js';
 import { browserControlService } from '../services/browser-control.js';
 import { browserService } from '../services/browser-service.js';
@@ -55,7 +56,37 @@ export class ComateWebSocketServer {
     });
     this.wss.on('connection', (socket) => this.handleConnection(socket));
     chatService.setOnRuntimeClose((sessionId) => this.notifyRuntimeClosed(sessionId));
+    this.relaySchedulerEvents();
     diagLog('[WebSocket] server attached on /ws');
+  }
+
+  /**
+   * Relay scheduled-task lifecycle events to every connected client
+   * (R13/R15): the client's task store turns these into list refreshes,
+   * unread badges, and desktop notifications.
+   */
+  private relaySchedulerEvents(): void {
+    const relay = (kind: string) => (payload: SchedulerRunEvent | { taskId: string; taskName: string; workspaceId: string }) => {
+      this.broadcastEvent({
+        type: 'event',
+        eventType: 'scheduled_task_event',
+        workspaceId: payload.workspaceId,
+        data: { kind, ...payload },
+      });
+    };
+    schedulerEvents.on('run-started', relay('run-started'));
+    schedulerEvents.on('run-finished', relay('run-finished'));
+    schedulerEvents.on('draft-created', relay('draft-created'));
+  }
+
+  private broadcastEvent(msg: WsEventMessage): void {
+    for (const socket of this.clients.keys()) {
+      try {
+        this.sendEvent(socket, msg);
+      } catch (err) {
+        diagWarn(`[WebSocket] failed to broadcast ${msg.eventType} to a client: ${err}`);
+      }
+    }
   }
 
   private handleConnection(socket: WebSocket): void {
