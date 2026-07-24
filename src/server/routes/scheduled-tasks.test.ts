@@ -190,6 +190,21 @@ describe('confirm and run-now gates', () => {
     assert.equal(again.statusCode, 409);
   });
 
+  it('confirming an overdue one-shot draft keeps the past nextFireAt so reconcile marks it missed (deliberate divergence from recomputeNextFire)', async () => {
+    const draft = scheduledTasksService.createDraft(workspaceId, {
+      workspaceId,
+      name: 'late',
+      instruction: 'x',
+      scheduleType: 'once',
+      scheduleTime: futureOnce(),
+    });
+    // Time passes while the draft awaits confirmation
+    store.updateScheduledTask(draft.id, { scheduleTime: '2020-01-01T00:00:00.000Z' });
+    const confirmed = await scheduledTasksService.confirmTask(draft.id);
+    assert.equal(confirmed.nextFireAt, '2020-01-01T00:00:00.000Z');
+    assert.equal(confirmed.status, 'active');
+  });
+
   it('run-now on a draft is rejected with 409 (service-layer gate)', async () => {
     const draft = scheduledTasksService.createDraft(workspaceId, {
       workspaceId,

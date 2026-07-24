@@ -177,7 +177,7 @@ export default function SessionListItem({
                   'w-3 h-3 flex-shrink-0',
                   isActive ? 'text-accent' : 'text-text-tertiary/60',
                 )}
-                aria-label={t('scheduledRun', { ns: 'scheduledTasks' })}
+                aria-label={t('session.scheduledRun', { ns: 'scheduledTasks' })}
               />
             )}
             {session.source === 'feishu' && (

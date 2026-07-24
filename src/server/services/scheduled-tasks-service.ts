@@ -10,7 +10,6 @@ import type {
 } from '../models/scheduled-task.js';
 
 export class TaskValidationError extends Error {
-  readonly statusCode = 400;
   constructor(message: string) {
     super(message);
     this.name = 'TaskValidationError';
@@ -26,12 +25,15 @@ function computeNextFire(input: {
   scheduleTime?: string | null;
   cronExpr?: string | null;
 }): string | null {
-  const now = new Date();
   if (input.scheduleType === 'once') {
+    // Deliberately returns a PAST timestamp when the once-time lapsed while
+    // the task awaited confirmation: the scheduler's next reconcile turns it
+    // into one 'missed' run + disables the task (skip-and-mark, R11) instead
+    // of silently stalling it with nextFireAt=null.
     return input.scheduleTime ?? null;
   }
   if (!input.cronExpr) return null;
-  const next = nextCronFire(input.cronExpr, now);
+  const next = nextCronFire(input.cronExpr, new Date());
   return next ? next.toISOString() : null;
 }
 
@@ -108,6 +110,11 @@ export class ScheduledTasksService {
 
   listTasks(workspaceId?: string): TaskWithLatestRun[] {
     const tasks = this.store.listScheduledTasks(workspaceId ? { workspaceId } : {});
+    if (workspaceId) {
+      // Workspace-scoped callers (e.g. the MCP list tool) avoid the global
+      // latest-runs scan; per-task lookups are index-served LIMIT 1.
+      return tasks.map((t) => ({ ...t, latestRun: this.store.getLatestTaskRun(t.id) }));
+    }
     const latest = new Map(this.store.latestRunsPerTask().map((r) => [r.taskId, r]));
     return tasks.map((t) => ({ ...t, latestRun: latest.get(t.id) ?? null }));
   }

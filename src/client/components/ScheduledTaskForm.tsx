@@ -4,38 +4,8 @@ import { useTranslation } from 'react-i18next'
 import type { ScheduledTaskWithLatestRun } from '../stores/scheduled-task-store'
 import { useScheduledTaskStore } from '../stores/scheduled-task-store'
 import type { Workspace } from '../stores/workspace-store'
-
-type Preset = 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'custom'
-
-function cronFromPreset(preset: Preset, time: string, dayOfWeek: number): string {
-  const [hh, mm] = time.split(':').map(Number)
-  switch (preset) {
-    case 'hourly':
-      return `${mm} * * * *`
-    case 'daily':
-      return `${mm} ${hh} * * *`
-    case 'weekdays':
-      return `${mm} ${hh} * * 1-5`
-    case 'weekly':
-      return `${mm} ${hh} * * ${dayOfWeek}`
-    default:
-      return ''
-  }
-}
-
-function detectPreset(cronExpr: string | null): { preset: Preset; time: string; dayOfWeek: number } {
-  const fallback = { preset: 'daily' as Preset, time: '09:00', dayOfWeek: 1 }
-  if (!cronExpr) return fallback
-  let m = cronExpr.match(/^(\d{1,2}) \* \* \* \*$/)
-  if (m) return { preset: 'hourly', time: `00:${m[1].padStart(2, '0')}`, dayOfWeek: 1 }
-  m = cronExpr.match(/^(\d{1,2}) (\d{1,2}) \* \* \*$/)
-  if (m) return { preset: 'daily', time: `${m[2].padStart(2, '0')}:${m[1].padStart(2, '0')}`, dayOfWeek: 1 }
-  m = cronExpr.match(/^(\d{1,2}) (\d{1,2}) \* \* 1-5$/)
-  if (m) return { preset: 'weekdays', time: `${m[2].padStart(2, '0')}:${m[1].padStart(2, '0')}`, dayOfWeek: 1 }
-  m = cronExpr.match(/^(\d{1,2}) (\d{1,2}) \* \* (\d)$/)
-  if (m) return { preset: 'weekly', time: `${m[2].padStart(2, '0')}:${m[1].padStart(2, '0')}`, dayOfWeek: Number(m[3]) }
-  return { preset: 'custom', time: '09:00', dayOfWeek: 1 }
-}
+import { presetToCron } from '@server/services/cron-schedule.js'
+import { detectPreset, type CronPresetName as Preset } from '../lib/cron-presets'
 
 function toLocalInputValue(iso: string | null): string {
   if (!iso) return ''
@@ -89,14 +59,14 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
       }
       if (scheduleType === 'once') {
         if (!scheduleTime) {
-          setError(t('form.scheduleTime'))
+          setError(t('form.timeRequired'))
           setSaving(false)
           return
         }
         payload.scheduleTime = new Date(scheduleTime).toISOString()
         payload.cronExpr = null
       } else {
-        const expr = preset === 'custom' ? cronExpr.trim() : cronFromPreset(preset, time, dayOfWeek)
+        const expr = preset === 'custom' ? cronExpr.trim() : presetToCron(preset, time, dayOfWeek)
         if (!expr) {
           setError(t('form.invalidCron'))
           setSaving(false)

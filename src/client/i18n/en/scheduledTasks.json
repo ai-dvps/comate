@@ -52,7 +52,8 @@
     "wecomRecipient": "WeCom recipient (user id; defaults to workspace admin)",
     "save": "Save",
     "cancel": "Cancel",
-    "invalidCron": "Invalid cron expression"
+    "invalidCron": "Invalid cron expression",
+    "timeRequired": "Run time is required"
   },
   "status": {
     "draft": "Draft",
