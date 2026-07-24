@@ -55,6 +55,7 @@ import { browserControlService } from './browser-control.js';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
 import { getBrowserMcpToken } from './browser-mcp-http.js';
+import { SCHEDULED_TASKS_MCP_KEY, getScheduledTasksMcpToken } from './scheduled-tasks-mcp.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -1747,6 +1748,18 @@ export class ChatService {
       // Submit/handoff handler approval round-trips can wait on a human far
       // past the 60s SDK default — per-session env, never process-global.
       env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT = BROWSER_STREAM_CLOSE_TIMEOUT_MS;
+    }
+
+    // Scheduled-task MCP tools (U7, KTD-5 分级): local GUI sessions get the
+    // full tool set (draft/list/pause/resume/run-now); bot sessions get the
+    // draft tool only (their drafts always need UI confirmation); scheduled
+    // run sessions get none — confirm/edit/delete are never exposed as tools.
+    if (session.source !== 'scheduled') {
+      mcpServers[SCHEDULED_TASKS_MCP_KEY] = {
+        type: 'http',
+        url: `${getSidecarBaseUrl()}/mcp/scheduled-tasks/${session.id}`,
+        headers: { Authorization: `Bearer ${getScheduledTasksMcpToken()}` },
+      } as import('@anthropic-ai/claude-agent-sdk').McpServerConfig;
     }
 
     const claudePath = resolveSdkBinary();
