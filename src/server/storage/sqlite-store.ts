@@ -1685,7 +1685,7 @@ export class SqliteStore {
     name: string,
     approvalMode?: string,
     providerId?: string,
-    source?: 'gui' | 'wecom' | 'feishu',
+    source?: 'gui' | 'wecom' | 'feishu' | 'scheduled',
     customTitle?: string,
     botId?: string,
   ): ChatSession {
@@ -2976,7 +2976,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     isDraft: row.is_draft === 1,
     isWip: row.is_wip === 1,
     isArchived: row.is_archived === 1,
-    source: (row.source as 'gui' | 'wecom' | 'feishu') ?? undefined,
+    source: (row.source as 'gui' | 'wecom' | 'feishu' | 'scheduled') ?? undefined,
     approvalMode: (row.approval_mode as ApprovalMode) ?? undefined,
     providerId: row.provider_id ?? undefined,
     backend: row.backend ?? undefined,

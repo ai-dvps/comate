@@ -7,7 +7,7 @@ export interface ChatSession {
   isDraft?: boolean;
   isWip?: boolean;
   isArchived?: boolean;
-  source?: 'gui' | 'wecom' | 'feishu';
+  source?: 'gui' | 'wecom' | 'feishu' | 'scheduled';
   /**
    * Agent backend this session is locked to (KTD-5/KTD-9). Unset on drafts;
    * written once at first runtime creation and never changed afterwards —
@@ -36,7 +36,7 @@ export interface CreateSessionInput {
   name: string;
   approvalMode?: ApprovalMode;
   providerId?: string;
-  source?: 'gui' | 'wecom' | 'feishu';
+  source?: 'gui' | 'wecom' | 'feishu' | 'scheduled';
   customTitle?: string;
   /** Bot that created this session, if any. */
   botId?: string;

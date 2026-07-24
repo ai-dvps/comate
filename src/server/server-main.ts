@@ -36,6 +36,7 @@ import { browserViewerProxy } from './routes/browser-proxy.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
+import { schedulerService } from './services/scheduler-service.js';
 import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
 import { BotMigrationService } from './services/bot-migration-service.js';
@@ -311,6 +312,9 @@ const server = app.listen(PORT, () => {
 
   // Initialize WeCom proactive message queue worker
   wecomQueueWorker.initialize();
+
+  // Initialize the scheduled-task scheduler (tick + startup reconciliation)
+  schedulerService.initialize();
 
   // Backfill existing WeCom session names
   wecomSessionRenamer.backfillExistingSessions().catch((err) => {
