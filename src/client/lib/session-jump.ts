@@ -7,6 +7,15 @@ import { useChatStore } from '@/stores/chat-store';
  * sessions, so the standard session view (with replay) does the rendering.
  */
 export function openSessionDirect(workspaceId: string, sessionId: string): void {
-  useWorkspaceStore.getState().setActiveWorkspace(workspaceId);
+  const workspaceStore = useWorkspaceStore.getState();
+  if (workspaceStore.openWorkspaceIds.includes(workspaceId)) {
+    workspaceStore.setActiveWorkspace(workspaceId);
+  } else {
+    // openWorkspace appends to openWorkspaceIds and activates the workspace
+    // (state updates synchronously before its best-effort /open fetch), so the
+    // ChatPanel actually mounts — setActiveWorkspace alone would leave a blank
+    // main area for workspaces that are not currently open (KTD-4).
+    void workspaceStore.openWorkspace(workspaceId);
+  }
   useChatStore.getState().setActiveSession(workspaceId, sessionId);
 }

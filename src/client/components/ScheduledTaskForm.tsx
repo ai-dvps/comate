@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ScheduledTaskWithLatestRun } from '../stores/scheduled-task-store'
+import type { CreateTaskPayload, ScheduledTaskWithLatestRun } from '../stores/scheduled-task-store'
 import { useScheduledTaskStore } from '../stores/scheduled-task-store'
 import type { Workspace } from '../stores/workspace-store'
 import { presetToCron } from '@server/services/cron-schedule.js'
@@ -48,7 +48,7 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
     setError(null)
     setSaving(true)
     try {
-      const payload: Record<string, unknown> = {
+      const payload: CreateTaskPayload = {
         name: name.trim(),
         instruction: instruction.trim(),
         scheduleType,
@@ -56,6 +56,8 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
         notifyInApp,
         notifyWecom,
         wecomRecipient: wecomRecipient.trim() || null,
+        scheduleTime: null,
+        cronExpr: null,
       }
       if (scheduleType === 'once') {
         if (!scheduleTime) {
@@ -79,7 +81,7 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
       if (task) {
         await updateTask(task.workspaceId, task.id, payload)
       } else {
-        await createTask(workspaceId, payload as never)
+        await createTask(workspaceId, payload)
       }
       onSaved()
     } catch (err) {
@@ -173,7 +175,7 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
               <select className={inputCls} value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
                 {[1, 2, 3, 4, 5, 6, 0].map((d) => (
                   <option key={d} value={d}>
-                    {d === 0 ? 'Sun' : `D${d}`}
+                    {t(`weekday.${d}`)}
                   </option>
                 ))}
               </select>

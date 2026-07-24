@@ -46,6 +46,7 @@ function describeSchedule(task: ScheduledTaskWithLatestRun, t: (k: string) => st
     daily: t('form.daily'),
     weekdays: t('form.weekdays'),
     weekly: t('form.weekly'),
+    weekdayLabel: (day) => t(`weekday.${day}`),
   })
 }
 
@@ -192,6 +193,9 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
                           <div className="text-xs font-medium text-text-primary truncate">{task.name}</div>
                           <div className="text-[11px] text-text-tertiary truncate">
                             {workspaceName(task.workspaceId)} · {describeSchedule(task, t)}
+                          </div>
+                          <div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded bg-bg/60 px-2 py-1 text-[11px] text-text-secondary">
+                            {task.instruction}
                           </div>
                         </div>
                         <button

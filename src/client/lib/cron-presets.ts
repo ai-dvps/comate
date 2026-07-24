@@ -27,6 +27,8 @@ export interface PresetLabels {
   daily: string;
   weekdays: string;
   weekly: string;
+  /** Localized short label for a cron day-of-week (0 = Sunday). Falls back to `D<n>`. */
+  weekdayLabel?: (dayOfWeek: number) => string;
 }
 
 /** Human-readable schedule text for a cron expression; unmatched shapes pass through raw. */
@@ -40,7 +42,7 @@ export function describeCron(cronExpr: string, labels: PresetLabels): string {
     case 'weekdays':
       return `${labels.weekdays} ${time}`;
     case 'weekly':
-      return `${labels.weekly} D${dayOfWeek} ${time}`;
+      return `${labels.weekly} ${labels.weekdayLabel ? labels.weekdayLabel(dayOfWeek) : `D${dayOfWeek}`} ${time}`;
     default:
       return cronExpr;
   }
