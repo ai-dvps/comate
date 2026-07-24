@@ -268,6 +268,7 @@
     "unavailable": "Unavailable",
     "isDefault": "Default",
     "tab": "Backend",
-    "hooksNotWired": "Hook scripts are not executed yet on either backend"
+    "hooksNotWired": "Hook scripts are not executed yet on either backend",
+    "scheduledGoalNoEvaluator": "Scheduled runs execute as plain prompt on this backend — no completion check"
   }
 }

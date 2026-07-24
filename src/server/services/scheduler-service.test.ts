@@ -237,9 +237,13 @@ describe('events and wrapper seam', () => {
     assert.equal(events[1][1].status, 'succeeded');
   });
 
-  it('wrapInstructionForRun is the U4 seam and today returns the raw instruction', () => {
+  it('wrapInstructionForRun wraps the instruction in the goal protocol (KTD-3 path B)', () => {
     const wsId = 'ws-x';
     const task = makeTask(wsId);
-    assert.equal(wrapInstructionForRun(task), task.instruction);
+    const wrapped = wrapInstructionForRun(task);
+    assert.ok(wrapped.startsWith(task.instruction));
+    assert.match(wrapped, /GOAL_STATUS: COMPLETE/);
+    assert.match(wrapped, /GOAL_STATUS: BLOCKED/);
+    assert.match(wrapped, /20 轮/);
   });
 });

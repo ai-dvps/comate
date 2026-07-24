@@ -56,6 +56,7 @@ import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
 import { getBrowserMcpToken } from './browser-mcp-http.js';
 import { SCHEDULED_TASKS_MCP_KEY, getScheduledTasksMcpToken } from './scheduled-tasks-mcp.js';
+import { makeScheduledRunStopHook } from './goal-stop-hook.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -1123,6 +1124,15 @@ export class ChatService {
       }
 
       const options = this.buildSdkOptions(workspace, session, isBotSession, botUserId, provider);
+      if (session.source === 'scheduled' && backend === 'claude') {
+        // U4 (KTD-3, path B): scheduled runs get the completion evaluator —
+        // a programmatic Stop hook that continues the session until the goal
+        // prompt's status marker appears or the turn cap hits.
+        options.hooks = {
+          ...options.hooks,
+          Stop: [...(options.hooks?.Stop ?? []), { hooks: [makeScheduledRunStopHook(session.id)] }],
+        };
+      }
       diagLog(`[ChatService] runtime ${sessionId} buildSdkOptions elapsed=${Date.now() - optionsStart}ms pathToClaudeCodeExecutable=${options.pathToClaudeCodeExecutable || 'undefined'}`);
 
       const testStart = Date.now();

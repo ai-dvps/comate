@@ -265,6 +265,7 @@
     "unavailable": "不可用",
     "isDefault": "默认",
     "tab": "后端",
-    "hooksNotWired": "hooks 脚本目前在两个后端均不会执行"
+    "hooksNotWired": "hooks 脚本目前在两个后端均不会执行",
+    "scheduledGoalNoEvaluator": "该后端的定时执行为纯 prompt，无完成性校验"
   }
 }
