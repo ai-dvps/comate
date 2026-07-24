@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ScheduledTask, TaskRun } from '@server/models/scheduled-task.js';
+import type { ScheduledTask, ScheduledTaskStatus, TaskRun } from '@server/models/scheduled-task.js';
 import type { SchedulerRunEventPayload } from '@/lib/scheduled-task-events';
 import { notifyRunFinished } from '@/lib/notifications';
 
@@ -8,7 +8,7 @@ const API_BASE = '/api';
 /** Task row plus its latest run, as returned by the list endpoints. */
 export type ScheduledTaskWithLatestRun = ScheduledTask & { latestRun: TaskRun | null };
 
-interface CreateTaskPayload {
+export interface CreateTaskPayload {
   name: string;
   instruction: string;
   scheduleType: 'once' | 'recurring';
@@ -33,7 +33,7 @@ interface ScheduledTaskState {
   fetchDefaultBackend: () => Promise<void>;
   fetchRuns: (workspaceId: string, taskId: string) => Promise<TaskRun[]>;
   createTask: (workspaceId: string, payload: CreateTaskPayload) => Promise<ScheduledTask>;
-  updateTask: (workspaceId: string, taskId: string, patch: Record<string, unknown>) => Promise<void>;
+  updateTask: (workspaceId: string, taskId: string, patch: Partial<CreateTaskPayload> & { status?: ScheduledTaskStatus }) => Promise<void>;
   deleteTask: (workspaceId: string, taskId: string) => Promise<void>;
   confirmTask: (workspaceId: string, taskId: string) => Promise<void>;
   runNow: (workspaceId: string, taskId: string) => Promise<TaskRun>;

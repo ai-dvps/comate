@@ -4,6 +4,7 @@ import {
   sendNotification,
   onAction,
 } from '@tauri-apps/plugin-notification';
+import i18next from 'i18next';
 import type { SchedulerRunEventPayload } from '@/lib/scheduled-task-events';
 
 let permissionState: 'unknown' | 'granted' | 'denied' = 'unknown';
@@ -67,10 +68,15 @@ export async function notifyRunFinished(event: SchedulerRunEventPayload): Promis
   if (!(await ensureNotificationPermission())) return;
 
   const body = (event.resultText ?? event.reason ?? '').trim();
-  sendNotification({
-    title: `定时任务${event.status === 'succeeded' ? '执行成功' : '执行失败'}：${event.taskName}`,
-    body: body ? (body.length > 120 ? `${body.slice(0, 120)}…` : body) : undefined,
-  });
+  const titleKey = event.status === 'succeeded' ? 'notify.runSucceeded' : 'notify.runFailed';
+  try {
+    sendNotification({
+      title: i18next.t(`scheduledTasks:${titleKey}`, { name: event.taskName }),
+      body: body ? (body.length > 120 ? `${body.slice(0, 120)}…` : body) : undefined,
+    });
+  } catch {
+    // Best-effort channel: a failed desktop notification must not break the run flow.
+  }
 
   if (event.sessionId) {
     latestJump = { workspaceId: event.workspaceId, sessionId: event.sessionId };
