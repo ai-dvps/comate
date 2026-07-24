@@ -28,7 +28,8 @@ function parseLocalValue(v: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
-/** Weeks start Monday; returns up to 6 rows of 7 dates covering the month. */
+/** Weeks start Monday; always 6 rows of 7 so the popover height never changes
+ * between months (keeps the nav buttons in place for consecutive clicks). */
 function monthGrid(year: number, month: number): Date[][] {
   const first = new Date(year, month, 1)
   // Monday=0 ... Sunday=6
@@ -41,7 +42,6 @@ function monthGrid(year: number, month: number): Date[][] {
       week.push(new Date(start.getFullYear(), start.getMonth(), start.getDate() + w * 7 + d))
     }
     weeks.push(week)
-    if (week[6].getMonth() !== month) break
   }
   return weeks
 }
@@ -218,7 +218,7 @@ function TimeColumns({
         </button>
       </div>
       <div className="flex gap-1">
-        <div className="max-h-32 w-14 overflow-y-auto rounded-md border border-border" data-testid="dtf-hour-col">
+        <div className="h-44 w-14 overflow-y-auto rounded-md border border-border" data-testid="dtf-hour-col">
           {Array.from({ length: 24 }, (_, h) => (
             <button
               key={h}
@@ -234,7 +234,7 @@ function TimeColumns({
             </button>
           ))}
         </div>
-        <div className="max-h-32 w-14 overflow-y-auto rounded-md border border-border" data-testid="dtf-minute-col">
+        <div className="h-44 w-14 overflow-y-auto rounded-md border border-border" data-testid="dtf-minute-col">
           {minuteOptions.map((m) => (
             <button
               key={m}
