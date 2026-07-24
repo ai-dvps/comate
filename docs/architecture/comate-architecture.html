@@ -208,7 +208,7 @@ flowchart TB
     <div class="card">
       <h4>会话亲和与锁定（KTD-5/9）</h4>
       <ul>
-        <li><code>sessions.backend</code>：草稿期可选，<b>运行时成功启动后</b>锁定（评审修正：失败不留锁）</li>
+        <li><code>sessions.backend</code>：草稿期可任意改选，<b>首发消息时锁定</b>（仅查看不锁定；失败的首启也不留锁）</li>
         <li>锁定后不可改（API 409）；原后端缺失 → 只读 + 提示</li>
         <li><code>sessions.backend_session_id</code>：opencode 远端会话 id，用于恢复重连</li>
         <li>历史展示与后端无关（opencode 走 REST 历史翻译）</li>
