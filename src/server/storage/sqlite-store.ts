@@ -2344,9 +2344,20 @@ export class SqliteStore {
   }
 
   listTaskRuns(taskId: string): TaskRun[] {
+    // Bounded history: the panel only meaningfully shows recent runs, and an
+    // hourly task accumulates ~2k rows inside the retention window. The
+    // idx_task_runs_task_created index serves this ordering, so the cap is free.
     const rows = this.db
-      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY created_at DESC, rowid DESC')
+      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 200')
       .all(taskId) as RawTaskRunRow[];
+    return rows.map(parseTaskRunRow);
+  }
+
+  /** Watchdog support: running runs whose start predates the cutoff (a stalled stream never emits a result). */
+  listStaleRunningTaskRuns(cutoffIso: string): TaskRun[] {
+    const rows = this.db
+      .prepare("SELECT * FROM task_runs WHERE status = 'running' AND started_at < ?")
+      .all(cutoffIso) as RawTaskRunRow[];
     return rows.map(parseTaskRunRow);
   }
 
