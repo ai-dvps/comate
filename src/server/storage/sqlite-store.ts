@@ -29,6 +29,18 @@ import type { Provider, CreateProviderInput, UpdateProviderInput } from '../mode
 import { providerSupportsFastMode } from '../utils/provider-capability.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
 import type { WeComMediaCacheEntry, CreateWeComMediaCacheInput } from '../models/wecom-media-cache.js';
+import type {
+  ScheduledTask,
+  CreateScheduledTaskInput,
+  UpdateScheduledTaskInput,
+  ListScheduledTasksOptions,
+  ScheduledTaskStatus,
+  TaskRun,
+  CreateTaskRunInput,
+  UpdateTaskRunInput,
+  TaskRunStatus,
+  ConfirmedTaskSnapshot,
+} from '../models/scheduled-task.js';
 import { getStorageDir } from './data-dir.js';
 import { getNativeBindingPath } from './native-binding.js';
 import { ensureAnalyticsCacheSchema, AnalyticsCache } from './analytics-cache.js';
@@ -344,6 +356,57 @@ export class SqliteStore {
         created_at TEXT NOT NULL,
         PRIMARY KEY (workspace_id, relative_path, md5)
       )
+    `);
+    // Scheduled tasks (U2, KTD-2): task definitions + per-fire run records.
+    // Deletion is a soft delete (deleted_at); list and scheduler queries read
+    // only non-deleted rows, while run history stays traceable through the
+    // retained task definition.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS scheduled_tasks (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        instruction TEXT NOT NULL,
+        schedule_type TEXT NOT NULL,
+        schedule_time TEXT,
+        cron_expr TEXT,
+        notify_desktop INTEGER NOT NULL DEFAULT 1,
+        notify_in_app INTEGER NOT NULL DEFAULT 1,
+        notify_wecom INTEGER NOT NULL DEFAULT 0,
+        wecom_recipient TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        deleted_at TEXT,
+        confirmed_snapshot TEXT,
+        next_fire_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_workspace
+        ON scheduled_tasks (workspace_id, deleted_at)
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_fire
+        ON scheduled_tasks (status, next_fire_at)
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS task_runs (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        session_id TEXT,
+        status TEXT NOT NULL,
+        fire_at TEXT NOT NULL,
+        started_at TEXT,
+        ended_at TEXT,
+        reason TEXT,
+        instruction_snapshot TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_task_runs_task_created
+        ON task_runs (task_id, created_at DESC)
     `);
 
     ensureAnalyticsCacheSchema(this.db);
@@ -1489,6 +1552,8 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_media_cache WHERE workspace_id = ?').run(id);
+      this.db.prepare('DELETE FROM task_runs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE workspace_id = ?)').run(id);
+      this.db.prepare('DELETE FROM scheduled_tasks WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
       this.deleteBrowserAuditForWorkspace(id);
       this.getAnalyticsCache().clearByWorkspace(id);
@@ -2041,6 +2106,235 @@ export class SqliteStore {
   deleteProactiveMessage(id: string): boolean {
     const result = this.db.prepare('DELETE FROM wecom_proactive_messages WHERE id = ?').run(id);
     return result.changes > 0;
+  }
+
+  createScheduledTask(input: CreateScheduledTaskInput): ScheduledTask {
+    const now = new Date().toISOString();
+    const task: ScheduledTask = {
+      id: uuidv4(),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      instruction: input.instruction,
+      scheduleType: input.scheduleType,
+      scheduleTime: input.scheduleTime ?? null,
+      cronExpr: input.cronExpr ?? null,
+      notifyDesktop: input.notifyDesktop ?? true,
+      notifyInApp: input.notifyInApp ?? true,
+      notifyWecom: input.notifyWecom ?? false,
+      wecomRecipient: input.wecomRecipient ?? null,
+      // KTD-5: every new task lands as a draft; activation happens via
+      // updateScheduledTask at confirm time (REST route, human-only).
+      status: 'draft',
+      deletedAt: null,
+      confirmedSnapshot: null,
+      nextFireAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.db.prepare(`
+      INSERT INTO scheduled_tasks (
+        id, workspace_id, name, instruction, schedule_type, schedule_time, cron_expr,
+        notify_desktop, notify_in_app, notify_wecom, wecom_recipient,
+        status, deleted_at, confirmed_snapshot, next_fire_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      task.id,
+      task.workspaceId,
+      task.name,
+      task.instruction,
+      task.scheduleType,
+      task.scheduleTime,
+      task.cronExpr,
+      task.notifyDesktop ? 1 : 0,
+      task.notifyInApp ? 1 : 0,
+      task.notifyWecom ? 1 : 0,
+      task.wecomRecipient,
+      task.status,
+      task.deletedAt,
+      null,
+      task.nextFireAt,
+      task.createdAt,
+      task.updatedAt,
+    );
+    return task;
+  }
+
+  getScheduledTask(id: string): ScheduledTask | null {
+    const row = this.db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as RawScheduledTaskRow | undefined;
+    return row ? parseScheduledTaskRow(row) : null;
+  }
+
+  listScheduledTasks(options: ListScheduledTasksOptions = {}): ScheduledTask[] {
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    if (options.workspaceId !== undefined) {
+      conditions.push('workspace_id = ?');
+      values.push(options.workspaceId);
+    }
+    if (!options.includeDeleted) {
+      conditions.push('deleted_at IS NULL');
+    }
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const rows = this.db
+      .prepare(`SELECT * FROM scheduled_tasks${where} ORDER BY created_at ASC`)
+      .all(...values) as RawScheduledTaskRow[];
+    return rows.map(parseScheduledTaskRow);
+  }
+
+  updateScheduledTask(id: string, input: UpdateScheduledTaskInput): ScheduledTask | null {
+    const existing = this.getScheduledTask(id);
+    if (!existing) return null;
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (input.name !== undefined) {
+      sets.push('name = ?');
+      values.push(input.name);
+    }
+    if (input.instruction !== undefined) {
+      sets.push('instruction = ?');
+      values.push(input.instruction);
+    }
+    if (input.scheduleType !== undefined) {
+      sets.push('schedule_type = ?');
+      values.push(input.scheduleType);
+    }
+    if (input.scheduleTime !== undefined) {
+      sets.push('schedule_time = ?');
+      values.push(input.scheduleTime);
+    }
+    if (input.cronExpr !== undefined) {
+      sets.push('cron_expr = ?');
+      values.push(input.cronExpr);
+    }
+    if (input.notifyDesktop !== undefined) {
+      sets.push('notify_desktop = ?');
+      values.push(input.notifyDesktop ? 1 : 0);
+    }
+    if (input.notifyInApp !== undefined) {
+      sets.push('notify_in_app = ?');
+      values.push(input.notifyInApp ? 1 : 0);
+    }
+    if (input.notifyWecom !== undefined) {
+      sets.push('notify_wecom = ?');
+      values.push(input.notifyWecom ? 1 : 0);
+    }
+    if (input.wecomRecipient !== undefined) {
+      sets.push('wecom_recipient = ?');
+      values.push(input.wecomRecipient);
+    }
+    if (input.status !== undefined) {
+      sets.push('status = ?');
+      values.push(input.status);
+    }
+    if (input.confirmedSnapshot !== undefined) {
+      sets.push('confirmed_snapshot = ?');
+      values.push(input.confirmedSnapshot === null ? null : JSON.stringify(input.confirmedSnapshot));
+    }
+    if (input.nextFireAt !== undefined) {
+      sets.push('next_fire_at = ?');
+      values.push(input.nextFireAt);
+    }
+    if (sets.length === 0) return existing;
+    sets.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+    this.db.prepare(`UPDATE scheduled_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return this.getScheduledTask(id);
+  }
+
+  softDeleteScheduledTask(id: string): ScheduledTask | null {
+    const existing = this.getScheduledTask(id);
+    if (!existing) return null;
+    if (existing.deletedAt) return existing;
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE scheduled_tasks SET deleted_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
+    return this.getScheduledTask(id);
+  }
+
+  createTaskRun(input: CreateTaskRunInput): TaskRun {
+    const run: TaskRun = {
+      id: uuidv4(),
+      taskId: input.taskId,
+      sessionId: input.sessionId ?? null,
+      status: input.status,
+      fireAt: input.fireAt,
+      startedAt: input.startedAt ?? null,
+      endedAt: input.endedAt ?? null,
+      reason: input.reason ?? null,
+      instructionSnapshot: input.instructionSnapshot,
+      createdAt: new Date().toISOString(),
+    };
+    this.db.prepare(`
+      INSERT INTO task_runs (
+        id, task_id, session_id, status, fire_at, started_at, ended_at, reason, instruction_snapshot, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      run.id,
+      run.taskId,
+      run.sessionId,
+      run.status,
+      run.fireAt,
+      run.startedAt,
+      run.endedAt,
+      run.reason,
+      run.instructionSnapshot,
+      run.createdAt,
+    );
+    return run;
+  }
+
+  getTaskRun(id: string): TaskRun | null {
+    const row = this.db.prepare('SELECT * FROM task_runs WHERE id = ?').get(id) as RawTaskRunRow | undefined;
+    return row ? parseTaskRunRow(row) : null;
+  }
+
+  updateTaskRun(id: string, input: UpdateTaskRunInput): TaskRun | null {
+    const existing = this.getTaskRun(id);
+    if (!existing) return null;
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (input.sessionId !== undefined) {
+      sets.push('session_id = ?');
+      values.push(input.sessionId);
+    }
+    if (input.status !== undefined) {
+      sets.push('status = ?');
+      values.push(input.status);
+    }
+    if (input.startedAt !== undefined) {
+      sets.push('started_at = ?');
+      values.push(input.startedAt);
+    }
+    if (input.endedAt !== undefined) {
+      sets.push('ended_at = ?');
+      values.push(input.endedAt);
+    }
+    if (input.reason !== undefined) {
+      sets.push('reason = ?');
+      values.push(input.reason);
+    }
+    if (sets.length === 0) return existing;
+    values.push(id);
+    this.db.prepare(`UPDATE task_runs SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return this.getTaskRun(id);
+  }
+
+  listTaskRuns(taskId: string): TaskRun[] {
+    const rows = this.db
+      .prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY created_at DESC, rowid DESC')
+      .all(taskId) as RawTaskRunRow[];
+    return rows.map(parseTaskRunRow);
+  }
+
+  latestRunsPerTask(): TaskRun[] {
+    // rowid order matches insertion order, so MAX(rowid) per task is the
+    // newest run even when several runs share a created_at timestamp.
+    const rows = this.db.prepare(`
+      SELECT * FROM task_runs
+      WHERE rowid IN (SELECT MAX(rowid) FROM task_runs GROUP BY task_id)
+      ORDER BY created_at DESC
+    `).all() as RawTaskRunRow[];
+    return rows.map(parseTaskRunRow);
   }
 
   getWecomMediaCacheEntry(workspaceId: string, relativePath: string, md5: string): WeComMediaCacheEntry | null {
@@ -2984,6 +3278,78 @@ function parseMediaCacheRow(row: RawMediaCacheRow): WeComMediaCacheEntry {
     md5: row.md5,
     filename: row.filename,
     mediaId: row.media_id,
+    createdAt: row.created_at,
+  };
+}
+
+interface RawScheduledTaskRow {
+  id: string;
+  workspace_id: string;
+  name: string;
+  instruction: string;
+  schedule_type: string;
+  schedule_time: string | null;
+  cron_expr: string | null;
+  notify_desktop: number;
+  notify_in_app: number;
+  notify_wecom: number;
+  wecom_recipient: string | null;
+  status: string;
+  deleted_at: string | null;
+  confirmed_snapshot: string | null;
+  next_fire_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function parseScheduledTaskRow(row: RawScheduledTaskRow): ScheduledTask {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    name: row.name,
+    instruction: row.instruction,
+    scheduleType: row.schedule_type as ScheduledTask['scheduleType'],
+    scheduleTime: row.schedule_time,
+    cronExpr: row.cron_expr,
+    notifyDesktop: row.notify_desktop === 1,
+    notifyInApp: row.notify_in_app === 1,
+    notifyWecom: row.notify_wecom === 1,
+    wecomRecipient: row.wecom_recipient,
+    status: row.status as ScheduledTaskStatus,
+    deletedAt: row.deleted_at,
+    confirmedSnapshot: row.confirmed_snapshot
+      ? safeJsonParse<ConfirmedTaskSnapshot | null>(row.confirmed_snapshot, null)
+      : null,
+    nextFireAt: row.next_fire_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+interface RawTaskRunRow {
+  id: string;
+  task_id: string;
+  session_id: string | null;
+  status: string;
+  fire_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+  reason: string | null;
+  instruction_snapshot: string;
+  created_at: string;
+}
+
+function parseTaskRunRow(row: RawTaskRunRow): TaskRun {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    sessionId: row.session_id,
+    status: row.status as TaskRunStatus,
+    fireAt: row.fire_at,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    reason: row.reason,
+    instructionSnapshot: row.instruction_snapshot,
     createdAt: row.created_at,
   };
 }
