@@ -57,7 +57,8 @@ export type CapabilityId =
   | 'todos'
   | 'sessionManagement'
   | 'modelSwitching'
-  | 'analytics';
+  | 'analytics'
+  | 'scheduledGoalWrap';
 
 const FULL: CapabilityEntry = { state: 'full' };
 
@@ -92,6 +93,13 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
     analytics: {
       state: 'unavailable',
       reasonKey: 'backend.analyticsNotCounted',
+      evidence: 'verified',
+    },
+    // R10: scheduled runs still fire on opencode, but as plain prompt — the
+    // Stop-hook completion evaluator only exists on the claude backend.
+    scheduledGoalWrap: {
+      state: 'degraded',
+      reasonKey: 'backend.scheduledGoalNoEvaluator',
       evidence: 'verified',
     },
     hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired', evidence: 'verified' },

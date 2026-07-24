@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { nextCronFire } from './cron-schedule.js';
+import { buildGoalPrompt } from './goal-wrapper.js';
 import { diagLog } from '../utils/diag-logger.js';
 import type { ScheduledTask, TaskRun, UpdateScheduledTaskInput } from '../models/scheduled-task.js';
 import type { ChatSession } from '../models/session.js';
@@ -326,12 +327,13 @@ export class SchedulerService {
 }
 
 /**
- * Placeholder for U4's /goal wrapper (KTD-3). Today the instruction goes out
- * as-is; U4 replaces this with the system-wrapped goal condition (instruction +
- * completion standard + turn cap), keeping this seam as the single swap point.
+ * Run instructions go out wrapped in the goal protocol (KTD-3, path B): the
+ * instruction plus the completion standard, status-marker contract, and turn
+ * cap. On the claude backend the Stop-hook evaluator (goal-stop-hook) drives
+ * the loop; on other backends the wrapped text alone is the degraded mode.
  */
 export function wrapInstructionForRun(task: ScheduledTask): string {
-  return task.instruction;
+  return buildGoalPrompt(task.instruction);
 }
 
 export const schedulerService = new SchedulerService();
