@@ -271,7 +271,11 @@ export class SchedulerService {
         this.finishRun(run.id, task, session.id, event);
       }
     };
-    this.chat.pushMessage(session.id, task.workspaceId, wrapped, true, onEvent).catch((err) => {
+    // isBotSession=false: the run is a normal session — approvalMode 'auto'
+    // seeds from the session (chat-service only seeds non-bot runtimes), the
+    // backend follows the app default (R10 degradation), and the event
+    // handler still receives the result stream (KTD-9).
+    this.chat.pushMessage(session.id, task.workspaceId, wrapped, false, onEvent).catch((err) => {
       const reason = err instanceof Error ? err.message : String(err);
       this.finishRun(run.id, task, session.id, null, reason);
     });
