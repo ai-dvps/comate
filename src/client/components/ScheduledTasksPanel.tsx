@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
-  CheckCircle2,
   Clock,
   Pencil,
   Play,
@@ -81,7 +80,6 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
   const fetchTasks = useScheduledTaskStore((s) => s.fetchTasks)
   const fetchDefaultBackend = useScheduledTaskStore((s) => s.fetchDefaultBackend)
   const clearUnread = useScheduledTaskStore((s) => s.clearUnread)
-  const confirmTask = useScheduledTaskStore((s) => s.confirmTask)
   const deleteTask = useScheduledTaskStore((s) => s.deleteTask)
   const runNow = useScheduledTaskStore((s) => s.runNow)
   const updateTask = useScheduledTaskStore((s) => s.updateTask)
@@ -102,8 +100,7 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
   }, [workspaces])
 
   const degraded = defaultBackend !== null && defaultBackend !== 'claude'
-  const drafts = tasks.filter((task) => task.status === 'draft')
-  const active = tasks.filter((task) => task.status !== 'draft')
+  const active = tasks
 
   const handle = async (fn: () => Promise<unknown>) => {
     setActionError(null)
@@ -182,45 +179,9 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
                 <div className="mb-3 px-3 py-2 rounded-md bg-amber-500/10 text-amber-600 text-xs">{t('panel.degraded')}</div>
               )}
 
-              {drafts.length > 0 && (
-                <section className="mb-4">
-                  <h3 className="text-xs font-medium text-text-secondary mb-1.5">{t('panel.pendingSection')}</h3>
-                  <p className="text-[11px] text-text-tertiary mb-2">{t('panel.confirmHint')}</p>
-                  <div className="space-y-1.5">
-                    {drafts.map((task) => (
-                      <div key={task.id} className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-500/30 bg-amber-500/5">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-medium text-text-primary truncate">{task.name}</div>
-                          <div className="text-[11px] text-text-tertiary truncate">
-                            {workspaceName(task.workspaceId)} · {describeSchedule(task, t)}
-                          </div>
-                          <div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded bg-bg/60 px-2 py-1 text-[11px] text-text-secondary">
-                            {task.instruction}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => setView({ kind: 'form', task })}
-                          className="p-1 rounded text-text-tertiary hover:text-text-secondary hover:bg-surface-hover"
-                          title={t('panel.edit')}
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handle(() => confirmTask(task.workspaceId, task.id))}
-                          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-green-600 hover:bg-green-500/10"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          {t('panel.confirm')}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
               <section>
                 <h3 className="text-xs font-medium text-text-secondary mb-1.5">{t('panel.tasksSection')}</h3>
-                {active.length === 0 && drafts.length === 0 && !loading && (
+                {active.length === 0 && !loading && (
                   <p className="text-xs text-text-tertiary py-6 text-center">{t('panel.empty')}</p>
                 )}
                 <div className="space-y-1">

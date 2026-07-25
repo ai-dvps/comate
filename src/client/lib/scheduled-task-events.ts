@@ -3,7 +3,7 @@
  * server (see src/server/websocket/server.ts relaySchedulerEvents).
  */
 export interface SchedulerRunEventPayload {
-  kind: 'run-started' | 'run-finished' | 'draft-created';
+  kind: 'run-started' | 'run-finished' | 'task-created';
   taskId: string;
   taskName: string;
   workspaceId: string;

@@ -37,10 +37,10 @@ beforeEach(async () => {
 });
 
 describe('tool surface by session source (KTD-5)', () => {
-  it('local GUI sessions get draft + list + pause + resume + run-now; never confirm/edit/delete', () => {
+  it('local GUI sessions get create + list + pause + resume + run-now; edit/delete stay human-only', () => {
     const names = toolsFor(undefined).map((t) => t.name);
     assert.deepEqual(names.sort(), [
-      'create_scheduled_task_draft',
+      'create_scheduled_task',
       'list_scheduled_tasks',
       'pause_scheduled_task',
       'resume_scheduled_task',
@@ -51,9 +51,9 @@ describe('tool surface by session source (KTD-5)', () => {
     }
   });
 
-  it('bot sessions (wecom/feishu) get only the draft tool', () => {
-    assert.deepEqual(toolsFor('wecom').map((t) => t.name), ['create_scheduled_task_draft']);
-    assert.deepEqual(toolsFor('feishu').map((t) => t.name), ['create_scheduled_task_draft']);
+  it('bot sessions (wecom/feishu) get create + list only', () => {
+    assert.deepEqual(toolsFor('wecom').map((t) => t.name).sort(), ['create_scheduled_task', 'list_scheduled_tasks']);
+    assert.deepEqual(toolsFor('feishu').map((t) => t.name).sort(), ['create_scheduled_task', 'list_scheduled_tasks']);
   });
 
   it('resolveScheduledTasksMcpDeps: gui → deps, wecom → deps, scheduled → null, unknown → null', async () => {
@@ -67,26 +67,26 @@ describe('tool surface by session source (KTD-5)', () => {
   });
 });
 
-describe('draft tool (R5/R6)', () => {
-  it('creates a draft and emits draft-created; nothing becomes active without UI confirm', async () => {
+describe('create tool', () => {
+  it('creates an active task and emits task-created', async () => {
     const events: { taskId: string }[] = [];
-    schedulerEvents.on('draft-created', (e) => events.push(e));
-    const result = await callTool('wecom', 'create_scheduled_task_draft', {
+    schedulerEvents.on('task-created', (e) => events.push(e));
+    const result = await callTool('wecom', 'create_scheduled_task', {
       name: 'deploy',
       instruction: 'run the deploy script at repo root and report the result',
       scheduleType: 'once',
       scheduleTime: new Date(Date.now() + 3600_000).toISOString(),
     });
     assert.equal(result.isError ?? false, false);
-    assert.match(textOf(result), /待确认|确认/);
+    assert.match(textOf(result), /生效/);
     const tasks = store.listScheduledTasks({ workspaceId });
     assert.equal(tasks.length, 1);
-    assert.equal(tasks[0].status, 'draft');
+    assert.equal(tasks[0].status, 'active');
     assert.equal(events.length, 1);
   });
 
   it('rejects invalid schedules as error text instead of throwing', async () => {
-    const result = await callTool(undefined, 'create_scheduled_task_draft', {
+    const result = await callTool(undefined, 'create_scheduled_task', {
       name: 'bad',
       instruction: 'x',
       scheduleType: 'recurring',
@@ -98,25 +98,19 @@ describe('draft tool (R5/R6)', () => {
 });
 
 describe('list/pause/resume/run-now tools', () => {
-  it('list shows tasks with status; pause/resume flip status; run-now rejects drafts', async () => {
-    const draft = await callTool(undefined, 'create_scheduled_task_draft', {
+  it('list shows tasks with status; pause/resume flip status; run-now fires', async () => {
+    const created = await callTool(undefined, 'create_scheduled_task', {
       name: 'nightly',
       instruction: 'do the nightly thing',
       scheduleType: 'recurring',
       cronExpr: '0 3 * * *',
     });
-    assert.equal(draft.isError ?? false, false);
+    assert.equal(created.isError ?? false, false);
     const taskId = store.listScheduledTasks({ workspaceId })[0].id;
 
     const listed = await callTool(undefined, 'list_scheduled_tasks', {});
     assert.match(textOf(listed), /nightly/);
-    assert.match(textOf(listed), /draft/);
-
-    // Drafts cannot be paused/resumed directly — the confirm gate comes first (KTD-5)
-    const pausedDraft = await callTool(undefined, 'pause_scheduled_task', { taskId });
-    assert.equal(pausedDraft.isError, true);
-
-    await scheduledTasksService.confirmTask(taskId);
+    assert.match(textOf(listed), /active/);
 
     const paused = await callTool(undefined, 'pause_scheduled_task', { taskId });
     assert.match(textOf(paused), /已暂停/);
@@ -126,9 +120,8 @@ describe('list/pause/resume/run-now tools', () => {
     assert.match(textOf(resumed), /已恢复/);
     assert.equal(store.getScheduledTask(taskId)!.status, 'active');
 
-    const runDraft = await callTool(undefined, 'run_scheduled_task_now', { taskId: store.createScheduledTask({ workspaceId, name: 'd2', instruction: 'x', scheduleType: 'recurring', cronExpr: '0 9 * * *' }).id });
-    assert.equal(runDraft.isError, true);
-    assert.match(textOf(runDraft), /尚未确认/);
+    const runNow = await callTool(undefined, 'run_scheduled_task_now', { taskId });
+    assert.equal(runNow.isError ?? false, false);
   });
 
   it('pause/resume/run-now against another workspace\'s task fail with error text; the task is untouched', async () => {

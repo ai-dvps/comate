@@ -44,7 +44,7 @@ describe('SqliteStore scheduled tasks', { concurrency: false }, () => {
 
   // ---------- Happy path ----------
 
-  it('createScheduledTask creates a draft task with defaults', () => {
+  it('createScheduledTask creates an active task with defaults', () => {
     const task = store.createScheduledTask(createTaskInput());
     assert.ok(task.id);
     assert.strictEqual(task.workspaceId, 'ws-1');
@@ -53,7 +53,7 @@ describe('SqliteStore scheduled tasks', { concurrency: false }, () => {
     assert.strictEqual(task.scheduleType, 'recurring');
     assert.strictEqual(task.cronExpr, '0 9 * * *');
     assert.strictEqual(task.scheduleTime, null);
-    assert.strictEqual(task.status, 'draft');
+    assert.strictEqual(task.status, 'active');
     assert.strictEqual(task.deletedAt, null);
     assert.strictEqual(task.confirmedSnapshot, null);
     assert.strictEqual(task.nextFireAt, null);
@@ -87,11 +87,11 @@ describe('SqliteStore scheduled tasks', { concurrency: false }, () => {
     assert.strictEqual(all.length, 3);
   });
 
-  it('updateScheduledTask walks the status lifecycle draft→active→paused→active→disabled', () => {
+  it('updateScheduledTask walks the status lifecycle active→paused→active→disabled', () => {
     const task = store.createScheduledTask(createTaskInput());
-    assert.strictEqual(task.status, 'draft');
+    assert.strictEqual(task.status, 'active');
 
-    // draft → active (confirm): snapshot + next fire written at confirm time (KTD-5).
+    // snapshot + next fire written by the service layer at creation.
     const confirmed = store.updateScheduledTask(task.id, {
       status: 'active',
       confirmedSnapshot: { folderPath: '/repo', backend: 'claude', approvalMode: 'auto' },

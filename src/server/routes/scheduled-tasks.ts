@@ -136,17 +136,6 @@ router.delete('/:taskId', async (req, res) => {
   }
 });
 
-// POST /api/workspaces/:id/scheduled-tasks/:taskId/confirm — draft → active (R6)
-router.post('/:taskId/confirm', async (req, res) => {
-  try {
-    const { id: workspaceId, taskId } = req.params as { id?: string; taskId: string };
-    const task = await scheduledTasksService.confirmTask(taskId, workspaceId);
-    res.json({ task });
-  } catch (error) {
-    handleError(res, error, 'Failed to confirm scheduled task');
-  }
-});
-
 // POST /api/workspaces/:id/scheduled-tasks/:taskId/run-now
 router.post('/:taskId/run-now', async (req, res) => {
   try {

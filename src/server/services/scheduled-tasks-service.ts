@@ -62,51 +62,34 @@ function validateInput(input: CreateScheduledTaskInput): void {
 }
 
 /**
- * Shared service layer for scheduled-task management (KTD-5): the REST routes
- * and U7's MCP tools both go through here so the confirm gate and validation
- * rules live in exactly one place.
+ * Shared service layer for scheduled-task management. Tasks are active at
+ * creation — every surface (local form, chat MCP tool, WeCom bot) creates
+ * through here and captures the workspace snapshot at creation time.
  */
 export class ScheduledTasksService {
   constructor(private readonly store: SqliteStore) {}
 
-  /** Local UI creation (F1): the user fills the form directly — active immediately. */
+  /**
+   * The single creation path: validate, create active, capture the workspace
+   * identity + capability snapshot, compute the first fire time, and emit
+   * task-created so the panel refreshes (and the user sees chat-created tasks).
+   */
   async createTask(workspaceId: string, input: CreateScheduledTaskInput): Promise<ScheduledTask> {
     validateInput(input);
-    const task = this.store.createScheduledTask({ ...input, workspaceId });
-    return this.confirmTask(task.id);
-  }
-
-  /** Chat/MCP creation (R5/R6): lands as a draft awaiting UI confirmation. */
-  createDraft(workspaceId: string, input: CreateScheduledTaskInput): ScheduledTask {
-    validateInput(input);
-    const draft = this.store.createScheduledTask({ ...input, workspaceId });
-    schedulerEvents.emit('draft-created', {
-      taskId: draft.id,
-      taskName: draft.name,
-      workspaceId,
-    });
-    return draft;
-  }
-
-  /**
-   * Confirm a draft (R6): the only path from draft to active. Captures the
-   * workspace identity + capability scope snapshot (KTD-5) and computes the
-   * first fire time.
-   */
-  async confirmTask(taskId: string, expectedWorkspaceId?: string): Promise<ScheduledTask> {
-    const task = expectedWorkspaceId
-      ? this.requireTaskInWorkspace(taskId, expectedWorkspaceId)
-      : this.getTask(taskId);
-    if (task.status !== 'draft') throw new SchedulerError('CONFLICT', '任务已确认');
-    const workspace = await this.store.get(task.workspaceId);
+    const workspace = await this.store.get(workspaceId);
     if (!workspace) throw new SchedulerError('NOT_FOUND', '任务所属工作区不存在');
     const backend = (await resolveDefaultBackend()).backend;
-    const confirmed = this.store.updateScheduledTask(taskId, {
-      status: 'active',
+    const task = this.store.createScheduledTask({ ...input, workspaceId });
+    const created = this.store.updateScheduledTask(task.id, {
       confirmedSnapshot: { folderPath: workspace.folderPath, backend, approvalMode: 'auto' },
       nextFireAt: computeNextFire(task),
+    })!;
+    schedulerEvents.emit('task-created', {
+      taskId: created.id,
+      taskName: created.name,
+      workspaceId,
     });
-    return confirmed!;
+    return created;
   }
 
   listTasks(workspaceId?: string): TaskWithLatestRun[] {
@@ -145,14 +128,13 @@ export class ScheduledTasksService {
       ? this.requireTaskInWorkspace(taskId, expectedWorkspaceId)
       : this.getTask(taskId);
     if (input.status && input.status !== task.status) {
-      // Status transitions are limited to active ↔ paused. Drafts must go
-      // through confirmTask (KTD-5: the confirm-time snapshot); disabled is
+      // Status transitions are limited to active ↔ paused; disabled is
       // terminal and set only by the scheduler.
       const allowed =
         (task.status === 'active' && input.status === 'paused') ||
         (task.status === 'paused' && input.status === 'active');
       if (!allowed) {
-        throw new TaskValidationError('非法的任务状态变更：草稿需在待确认区确认后生效，已停用任务不可再变更');
+        throw new TaskValidationError('非法的任务状态变更：已停用任务不可再变更');
       }
     }
     if (input.scheduleType || input.scheduleTime !== undefined || input.cronExpr !== undefined) {

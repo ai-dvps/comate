@@ -125,13 +125,14 @@ describe('tick firing (KTD-1 window semantics)', () => {
     assert.ok(after.nextFireAt && new Date(after.nextFireAt) > current);
   });
 
-  it('does not fire future, out-of-window, paused, draft, or disabled tasks', async () => {
+  it('does not fire future, out-of-window, paused, or disabled tasks', async () => {
     const wsId = await makeWorkspace();
     activate(makeTask(wsId, { name: 'future' }), '2026-07-24T09:01:00.000Z');
     activate(makeTask(wsId, { name: 'stale' }), '2026-07-24T08:59:00.000Z'); // older than 30s window
     const paused = activate(makeTask(wsId, { name: 'paused' }), '2026-07-24T08:59:50.000Z');
     store.updateScheduledTask(paused.id, { status: 'paused' });
-    makeTask(wsId, { name: 'draft' }); // stays draft
+    const disabled = activate(makeTask(wsId, { name: 'disabled' }), '2026-07-24T08:59:50.000Z');
+    store.updateScheduledTask(disabled.id, { status: 'disabled' });
     await service().tickForTest();
     assert.equal(createdSessions.length, 0);
   });
@@ -288,10 +289,8 @@ describe('startup reconciliation', () => {
 });
 
 describe('runNow', () => {
-  it('rejects draft, disabled, and overlapping tasks; allows paused', async () => {
+  it('rejects disabled and overlapping tasks; allows paused', async () => {
     const wsId = await makeWorkspace();
-    const draft = makeTask(wsId);
-    await assert.rejects(() => service().runNow(draft.id), (e: SchedulerError) => e.code === 'CONFLICT');
 
     const once = activate(makeTask(wsId, { scheduleType: 'once', cronExpr: null, scheduleTime: '2026-07-24T08:59:50' }), '2026-07-24T08:59:50.000Z');
     await service().runNow(once.id);
