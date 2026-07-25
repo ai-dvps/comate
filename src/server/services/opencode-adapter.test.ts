@@ -7,6 +7,9 @@ import assert from 'node:assert/strict';
 // relies on (provider mapping, permission reply translation, prompt text).
 
 import type { Provider } from '../models/provider.js';
+import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+
+async function* emptyInput(): AsyncGenerator<SDKUserMessage> {}
 
 function makeProvider(overrides: Partial<Provider> = {}): Provider {
   return {
@@ -101,5 +104,32 @@ describe('extractPromptText', () => {
       'a\nb',
     );
     assert.equal(__testables.extractPromptText({ message: { role: 'user' } } as never), '');
+  });
+});
+
+describe('OpencodeBackendDriver model preprocessing', () => {
+  it('strips claude-code alias suffix from the provider model at construction', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/tmp',
+      comateSessionId: 's',
+      provider: makeProvider({ model: 'glm-5.2[1m]' }),
+      env: {},
+    });
+    assert.equal((driver as unknown as { modelID: string }).modelID, 'glm-5.2');
+  });
+
+  it('strips claude-code alias suffix when setModel is called', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/tmp',
+      comateSessionId: 's',
+      provider: makeProvider({ model: 'glm-5.2' }),
+      env: {},
+    });
+    const { query } = driver.createStreamingQuery(emptyInput(), {} as Options);
+    await query.setModel('k3[1m]');
+    assert.equal((driver as unknown as { modelID: string }).modelID, 'k3');
+    query.close();
   });
 });
