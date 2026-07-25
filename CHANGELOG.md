@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Opencode backend echoing the first user message** — `opencode serve` emits the user message as a `message.part.updated` event before the assistant response. The event mapper was rendering every text part as assistant content, so the user's own prompt appeared as an identical reply and any empty model output left no further response. The mapper now tracks each message's role and only renders parts that belong to assistant messages.
 
+## [0.0.27] - 2026-07-25
+
+### Fixed
+
+- **Embedded browser failing to start with `browser_start_failed`** — the vendored Steel bundle's pruning step treated all `doc` / `docs` directories as non-runtime dead weight and deleted `yaml/dist/doc/`, which contains modules required at runtime (`directives.js`, `Document.js`, etc.). Steel crashed during startup with `MODULE_NOT_FOUND` before it could launch Chrome, so the browser pane stayed black and no chrome process appeared. The build script no longer prunes `doc` / `docs`, and the rebuilt bundle preserves these runtime modules.
+
 ## [0.0.26] - 2026-07-23
 
 ### Added
