@@ -35,7 +35,6 @@ interface ScheduledTaskState {
   createTask: (workspaceId: string, payload: CreateTaskPayload) => Promise<ScheduledTask>;
   updateTask: (workspaceId: string, taskId: string, patch: Partial<CreateTaskPayload> & { status?: ScheduledTaskStatus }) => Promise<void>;
   deleteTask: (workspaceId: string, taskId: string) => Promise<void>;
-  confirmTask: (workspaceId: string, taskId: string) => Promise<void>;
   runNow: (workspaceId: string, taskId: string) => Promise<TaskRun>;
   clearUnread: () => void;
   /** Entry point for the WebSocket `scheduled_task_event` relay. */
@@ -119,14 +118,6 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
     await get().fetchTasks();
   },
 
-  confirmTask: async (workspaceId, taskId) => {
-    const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/scheduled-tasks/${taskId}/confirm`, {
-      method: 'POST',
-    });
-    await parseJson(res);
-    await get().fetchTasks();
-  },
-
   runNow: async (workspaceId, taskId) => {
     const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/scheduled-tasks/${taskId}/run-now`, {
       method: 'POST',
@@ -139,7 +130,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   clearUnread: () => set({ unreadCount: 0 }),
 
   handleSchedulerEvent: (payload) => {
-    if (payload.kind === 'run-finished' || payload.kind === 'draft-created') {
+    if (payload.kind === 'run-finished' || payload.kind === 'task-created') {
       set((state) => ({ unreadCount: state.unreadCount + 1 }));
     }
     if (payload.kind === 'run-finished') {

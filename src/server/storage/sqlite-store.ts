@@ -384,7 +384,7 @@ export class SqliteStore {
         notify_in_app INTEGER NOT NULL DEFAULT 1,
         notify_wecom INTEGER NOT NULL DEFAULT 0,
         wecom_recipient TEXT,
-        status TEXT NOT NULL DEFAULT 'draft',
+        status TEXT NOT NULL DEFAULT 'active',
         deleted_at TEXT,
         confirmed_snapshot TEXT,
         next_fire_at TEXT,
@@ -392,6 +392,9 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       )
     `);
+    // Confirmation-gate removal: tasks created as drafts before the gate was
+    // removed are activated (their creation intent is honored).
+    this.db.exec(`UPDATE scheduled_tasks SET status = 'active' WHERE status = 'draft'`);
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_workspace
         ON scheduled_tasks (workspace_id, deleted_at)
@@ -2146,9 +2149,9 @@ export class SqliteStore {
       notifyInApp: input.notifyInApp ?? true,
       notifyWecom: input.notifyWecom ?? false,
       wecomRecipient: input.wecomRecipient ?? null,
-      // KTD-5: every new task lands as a draft; activation happens via
-      // updateScheduledTask at confirm time (REST route, human-only).
-      status: 'draft',
+      // Tasks are active at creation (the confirmation gate was removed);
+      // the workspace snapshot is captured by the service layer at creation.
+      status: 'active',
       deletedAt: null,
       confirmedSnapshot: null,
       nextFireAt: null,

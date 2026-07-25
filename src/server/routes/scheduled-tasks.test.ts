@@ -119,7 +119,7 @@ describe('GET / (list)', () => {
       scheduleType: 'once',
       scheduleTime: futureOnce(),
     });
-    scheduledTasksService.createDraft(workspaceId, {
+    await scheduledTasksService.createTask(workspaceId, {
       workspaceId,
       name: 'b',
       instruction: 'y',
@@ -182,7 +182,7 @@ describe('PUT/DELETE /:taskId', () => {
     assert.equal(res.statusCode, 200);
     const after = store.getScheduledTask(task.id)!;
     assert.equal(after.name, 'renamed');
-    // Confirm-time snapshot untouched — still the value confirmTask captured
+    // Creation-time snapshot untouched — still the value createTask captured
     assert.deepEqual(after.confirmedSnapshot, snapshotBefore);
     // Schedule cursor recomputed by the service, not taken from the body
     assert.ok(after.nextFireAt);
@@ -206,49 +206,7 @@ describe('PUT/DELETE /:taskId', () => {
   });
 });
 
-describe('confirm and run-now gates', () => {
-  it('confirm moves draft to active with snapshot; second confirm returns 409 (R6)', async () => {
-    const draft = scheduledTasksService.createDraft(workspaceId, {
-      workspaceId,
-      name: 'd',
-      instruction: 'x',
-      scheduleType: 'recurring',
-      cronExpr: '0 9 * * *',
-    });
-    const confirmed = await call('post', '/:taskId/confirm', { params: { id: workspaceId, taskId: draft.id } });
-    assert.equal(confirmed.statusCode, 200);
-    assert.equal((confirmed.jsonBody as { task: { status: string } }).task.status, 'active');
-    const again = await call('post', '/:taskId/confirm', { params: { id: workspaceId, taskId: draft.id } });
-    assert.equal(again.statusCode, 409);
-  });
-
-  it('confirming an overdue one-shot draft keeps the past nextFireAt so reconcile marks it missed (deliberate divergence from recomputeNextFire)', async () => {
-    const draft = scheduledTasksService.createDraft(workspaceId, {
-      workspaceId,
-      name: 'late',
-      instruction: 'x',
-      scheduleType: 'once',
-      scheduleTime: futureOnce(),
-    });
-    // Time passes while the draft awaits confirmation
-    store.updateScheduledTask(draft.id, { scheduleTime: '2020-01-01T00:00:00.000Z' });
-    const confirmed = await scheduledTasksService.confirmTask(draft.id);
-    assert.equal(confirmed.nextFireAt, '2020-01-01T00:00:00.000Z');
-    assert.equal(confirmed.status, 'active');
-  });
-
-  it('run-now on a draft is rejected with 409 (service-layer gate)', async () => {
-    const draft = scheduledTasksService.createDraft(workspaceId, {
-      workspaceId,
-      name: 'd',
-      instruction: 'x',
-      scheduleType: 'recurring',
-      cronExpr: '0 9 * * *',
-    });
-    const res = await call('post', '/:taskId/run-now', { params: { id: workspaceId, taskId: draft.id } });
-    assert.equal(res.statusCode, 409);
-  });
-
+describe('run-now gates', () => {
   it('run-now on a task with a running run is rejected with 409', async () => {
     const task = await scheduledTasksService.createTask(workspaceId, {
       workspaceId,
@@ -260,6 +218,18 @@ describe('confirm and run-now gates', () => {
     store.createTaskRun({ taskId: task.id, status: 'running', fireAt: '2026-07-24T09:00:00.000Z', instructionSnapshot: 'x' });
     const res = await call('post', '/:taskId/run-now', { params: { id: workspaceId, taskId: task.id } });
     assert.equal(res.statusCode, 409);
+  });
+
+  it('run-now on an active task fires and returns the run', async () => {
+    const task = await scheduledTasksService.createTask(workspaceId, {
+      workspaceId,
+      name: 'a',
+      instruction: 'x',
+      scheduleType: 'recurring',
+      cronExpr: '0 9 * * *',
+    });
+    const res = await call('post', '/:taskId/run-now', { params: { id: workspaceId, taskId: task.id } });
+    assert.equal(res.statusCode, 201);
   });
 });
 
@@ -283,7 +253,7 @@ describe('GET /:taskId/runs', () => {
 });
 
 describe('workspace scoping (cross-workspace 404)', () => {
-  it('GET/PUT/DELETE/confirm/run-now/runs against another workspace\'s task all return 404 and change nothing', async () => {
+  it('GET/PUT/DELETE/run-now/runs against another workspace\'s task all return 404 and change nothing', async () => {
     const other = await store.create({ name: 'WS2', folderPath: '/tmp/ws-other' });
     const task = await scheduledTasksService.createTask(workspaceId, {
       workspaceId,
@@ -292,14 +262,6 @@ describe('workspace scoping (cross-workspace 404)', () => {
       scheduleType: 'once',
       scheduleTime: futureOnce(),
     });
-    const draft = scheduledTasksService.createDraft(workspaceId, {
-      workspaceId,
-      name: 'd',
-      instruction: 'x',
-      scheduleType: 'recurring',
-      cronExpr: '0 9 * * *',
-    });
-
     const get = await call('get', '/:taskId', { params: { id: other.id, taskId: task.id } });
     assert.equal(get.statusCode, 404);
 
@@ -309,21 +271,17 @@ describe('workspace scoping (cross-workspace 404)', () => {
     const del = await call('delete', '/:taskId', { params: { id: other.id, taskId: task.id } });
     assert.equal(del.statusCode, 404);
 
-    const confirm = await call('post', '/:taskId/confirm', { params: { id: other.id, taskId: draft.id } });
-    assert.equal(confirm.statusCode, 404);
-
     const runNow = await call('post', '/:taskId/run-now', { params: { id: other.id, taskId: task.id } });
     assert.equal(runNow.statusCode, 404);
 
     const runs = await call('get', '/:taskId/runs', { params: { id: other.id, taskId: task.id } });
     assert.equal(runs.statusCode, 404);
 
-    // Nothing was mutated: task still active with its original name, draft still a draft
+    // Nothing was mutated: task still active with its original name
     const afterTask = store.getScheduledTask(task.id)!;
     assert.equal(afterTask.name, 'a');
     assert.equal(afterTask.status, 'active');
     assert.equal(afterTask.deletedAt, null);
-    assert.equal(store.getScheduledTask(draft.id)!.status, 'draft');
   });
 
   it('same-workspace access still works; unknown task id 404s in either workspace', async () => {

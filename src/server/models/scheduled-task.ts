@@ -2,16 +2,16 @@ import type { ApprovalMode } from './session.js';
 
 export type ScheduleType = 'once' | 'recurring';
 
-export type ScheduledTaskStatus = 'draft' | 'active' | 'paused' | 'disabled';
+export type ScheduledTaskStatus = 'active' | 'paused' | 'disabled';
 
 export type TaskRunStatus = 'running' | 'succeeded' | 'failed' | 'missed' | 'skipped';
 
 /**
- * Workspace identity + capability scope captured when a draft task is
- * confirmed (KTD-5). The scheduler re-validates the workspace against this
- * snapshot before each fire; drift rejects that run with a recorded reason.
- * Persisted as a JSON string in scheduled_tasks.confirmed_snapshot — the
- * store layer only serializes/parses it, it never interprets the contents.
+ * Workspace identity + capability scope captured at task creation. The
+ * scheduler re-validates the workspace against this snapshot before each
+ * fire; drift rejects that run with a recorded reason. Persisted as a JSON
+ * string in scheduled_tasks.confirmed_snapshot — the store layer only
+ * serializes/parses it, it never interprets the contents.
  */
 export interface ConfirmedTaskSnapshot {
   folderPath: string;

@@ -283,7 +283,6 @@ export class SchedulerService {
   async runNow(taskId: string): Promise<TaskRun> {
     const task = this.store.getScheduledTask(taskId);
     if (!task || task.deletedAt) throw new SchedulerError('NOT_FOUND', `Scheduled task ${taskId} not found`);
-    if (task.status === 'draft') throw new SchedulerError('CONFLICT', '任务尚未确认，不能执行');
     if (task.status === 'disabled') throw new SchedulerError('CONFLICT', '一次性任务已执行完成');
     if (this.inFlight.has(task.id) || this.latestRun(task.id)?.status === 'running') {
       throw new SchedulerError('CONFLICT', SKIP_REASON_PREVIOUS_RUNNING);

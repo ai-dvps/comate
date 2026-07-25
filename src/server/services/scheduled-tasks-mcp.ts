@@ -22,9 +22,9 @@ export interface ScheduledTasksMcpDeps {
 }
 
 /**
- * Resolve the MCP surface for a session from its row (KTD-5): local GUI
- * sessions get the full tool set, bot sessions (wecom/feishu) get only the
- * draft tool, scheduled-run sessions get nothing.
+ * Resolve the MCP surface for a session from its row: local GUI sessions get
+ * the full tool set, bot sessions (wecom/feishu) get create + list only,
+ * scheduled-run sessions get nothing.
  */
 export async function resolveScheduledTasksMcpDeps(sessionId: string): Promise<ScheduledTasksMcpDeps | null> {
   const session = store.getLocalSession(sessionId);
@@ -61,16 +61,17 @@ interface ToolDef {
 }
 
 /**
- * The tool set for a session (KTD-5 分级):
- * - every surface: create_scheduled_task_draft (drafts always need UI confirm)
- * - local GUI only: list / pause / resume / run-now
- * - human-only by design (never exposed): confirm, edit, delete
+ * The tool set for a session (per-source 分级):
+ * - local GUI sessions: create / list / pause / resume / run-now
+ * - bot sessions (wecom/feishu): create + list only
+ * - human-only by design (never exposed): edit, delete
+ * Tasks are active at creation — every surface uses the same unified path.
  */
 export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): ToolDef[] {
-  const draftTool: ToolDef = {
-    name: 'create_scheduled_task_draft',
+  const createTool: ToolDef = {
+    name: 'create_scheduled_task',
     description:
-      '创建定时任务草稿（不会在聊天中直接生效；用户必须在 Comate 的任务面板"待确认"区确认后才会进入调度）。' +
+      '创建一个定时任务（创建后立即生效并进入调度）。' +
       'instruction 必须是自包含提示词：不要写"这个/如上/刚才"等依赖当前聊天上下文的指代，写清工作区相对路径与完成标准——执行时是一个全新会话，看不到本次对话。',
     inputSchema: {
       name: z.string().min(1).describe('任务名称'),
@@ -85,7 +86,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
       cronExpr?: string;
     }) => {
       try {
-        const draft = scheduledTasksService.createDraft(deps.workspaceId, {
+        const task = await scheduledTasksService.createTask(deps.workspaceId, {
           workspaceId: deps.workspaceId,
           name: args.name,
           instruction: args.instruction,
@@ -93,18 +94,12 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
           scheduleTime: args.scheduleTime ?? null,
           cronExpr: args.cronExpr ?? null,
         });
-        return textResult(
-          `草稿已创建（id: ${draft.id}），等待用户在任务面板确认后生效。请告知用户去"定时任务"面板确认。`,
-        );
+        return textResult(`定时任务已创建并生效（id: ${task.id}），将按调度执行。可在 Comate 的定时任务面板中查看和管理。`);
       } catch (err) {
-        return textResult(`创建草稿失败：${err instanceof Error ? err.message : String(err)}`, true);
+        return textResult(`创建任务失败：${err instanceof Error ? err.message : String(err)}`, true);
       }
     }),
   };
-
-  if (deps.source === 'wecom' || deps.source === 'feishu') {
-    return [draftTool];
-  }
 
   const listTool: ToolDef = {
     name: 'list_scheduled_tasks',
@@ -120,6 +115,10 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
       return textResult(tasks.length > 0 ? tasks.join('\n') : '当前工作区没有定时任务。');
     }),
   };
+
+  if (deps.source === 'wecom' || deps.source === 'feishu') {
+    return [createTool, listTool];
+  }
 
   const pauseTool: ToolDef = {
     name: 'pause_scheduled_task',
@@ -153,7 +152,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
 
   const runNowTool: ToolDef = {
     name: 'run_scheduled_task_now',
-    description: '立即执行一个已确认的定时任务（草稿或未确认的任务不能执行）。',
+    description: '立即执行一个定时任务。',
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
       try {
@@ -166,7 +165,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
     }),
   };
 
-  return [draftTool, listTool, pauseTool, resumeTool, runNowTool];
+  return [createTool, listTool, pauseTool, resumeTool, runNowTool];
 }
 
 /**

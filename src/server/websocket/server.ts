@@ -76,7 +76,7 @@ export class ComateWebSocketServer {
     };
     schedulerEvents.on('run-started', relay('run-started'));
     schedulerEvents.on('run-finished', relay('run-finished'));
-    schedulerEvents.on('draft-created', relay('draft-created'));
+    schedulerEvents.on('task-created', relay('task-created'));
   }
 
   private broadcastEvent(msg: WsEventMessage): void {
