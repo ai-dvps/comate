@@ -47,6 +47,7 @@ import {
   decideModelFallback,
   expandModelAliases,
   isModelNotFoundError,
+  stripModelSuffix,
 } from './opencode-model-fallback.js';
 import type { PermissionSuggestion } from '../types/message.js';
 
@@ -143,7 +144,9 @@ export class OpencodeBackendDriver implements BackendDriver {
   constructor(private readonly deps: OpencodeAdapterDeps) {
     this.backendSessionId = deps.backendSessionId;
     this.providerID = `comate-${deps.provider.id}`;
-    this.modelID = deps.provider.model ?? '';
+    // Strip claude-code alias suffixes (e.g. `glm-5.2[1m]`) before they reach
+    // the opencode backend, which does not accept them as model ids.
+    this.modelID = stripModelSuffix(deps.provider.model ?? '');
   }
 
   createStreamingQuery(
@@ -185,7 +188,7 @@ export class OpencodeBackendDriver implements BackendDriver {
         return undefined;
       },
       setModel: async (model: string) => {
-        this.modelID = model;
+        this.modelID = stripModelSuffix(model);
         return undefined;
       },
     } as unknown as Query;
