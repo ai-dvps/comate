@@ -1651,6 +1651,15 @@ export class ChatService {
     const claudeSettings = loadClaudeSettings();
     let { env } = buildClaudeEnv(claudeSettings);
 
+    // One scheduling system (KTD-3): Claude Code's built-in session-scoped
+    // cron (CronCreate/CronList/CronDelete and /loop) lives in the project's
+    // .claude directory — invisible to the Comate panel, unconfirmable, and
+    // outside the unified execution path. Disable it for every Comate session
+    // so natural-language scheduling always flows through the scheduled-task
+    // MCP tools (draft -> UI confirm -> unified scheduler). Official switch:
+    // https://code.claude.com/docs/en/scheduled-tasks#disable-scheduled-tasks
+    env.CLAUDE_CODE_DISABLE_CRON = '1';
+
     // Resolve active provider: session -> default, when not already provided.
     const resolvedProvider = provider ?? (session.providerId
       ? workspaceStore.getProvider(session.providerId)
