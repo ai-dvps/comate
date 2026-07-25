@@ -449,12 +449,13 @@ export class SchedulerService {
     const resultText = resultEvent?.result ?? null;
     let failed = errorReason !== undefined || (resultEvent?.isError ?? false);
     let reason = errorReason ?? (failed ? (resultText ?? '执行失败') : null);
-    if (!failed && resultEvent) {
-      // Goal-protocol classification (KTD-3): the wrapped instruction carries
-      // the marker contract on every backend — the degraded opencode path
-      // receives the same wrapped text — so the rule applies uniformly. A
-      // normal-exit session whose final text reports BLOCKED, or lacks the
-      // COMPLETE marker (e.g. force-stopped at the turn cap), is not a success.
+    // Marker classification only applies on the claude backend, where the Stop
+    // hook enforces the marker protocol (injecting continuation until the
+    // model writes GOAL_STATUS or the turn cap is hit). The degraded opencode
+    // path has no evaluator — the wrapped text is only a prompt convention the
+    // model may or may not follow — so there the honest signal is isError.
+    const backend = this.store.getLocalSession(sessionId)?.backend;
+    if (!failed && resultEvent && backend === 'claude') {
       const text = typeof resultText === 'string' ? resultText : '';
       const blocked = text
         .split('\n')

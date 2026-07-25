@@ -27,6 +27,9 @@ let failNextPush: Error | null;
 let failNextCreate: Error | null;
 let autoComplete: boolean;
 
+let fakeBackend: string;
+let lastSessionId: string;
+
 const fakeChat = {
   async createSession(input: { workspaceId: string; name: string; source?: string; approvalMode?: string }) {
     if (failNextCreate) {
@@ -35,7 +38,12 @@ const fakeChat = {
       throw err;
     }
     createdSessions.push(input);
-    return { id: `sess-${createdSessions.length}`, workspaceId: input.workspaceId, name: input.name } as never;
+    // Mirror production: the backend lock is written at the first message.
+    const session = store.createLocalSession(input.workspaceId, input.name, 'auto', undefined, input.source as never);
+    store.updateSessionBackend(session.id, fakeBackend);
+    store.updateSessionBackendSessionId(session.id, `sdk-${session.id}`);
+    lastSessionId = session.id;
+    return session as never;
   },
   async pushMessage(
     sessionId: string,
@@ -88,6 +96,7 @@ beforeEach(() => {
   failNextPush = null;
   failNextCreate = null;
   autoComplete = true;
+  fakeBackend = 'claude';
   schedulerEvents.removeAllListeners();
 });
 
@@ -103,7 +112,7 @@ describe('tick firing (KTD-1 window semantics)', () => {
     const runs = store.listTaskRuns(task.id);
     assert.equal(runs.length, 1);
     assert.equal(runs[0].status, 'succeeded');
-    assert.equal(runs[0].sessionId, 'sess-1');
+    assert.equal(runs[0].sessionId, lastSessionId);
   });
 
   it('once task is disabled after firing and never fires again (AE1)', async () => {
@@ -338,7 +347,7 @@ describe('events and wrapper seam', () => {
     await service().tickForTest();
     assert.equal(events.length, 2);
     assert.equal(events[0][1].taskId, task.id);
-    assert.equal(events[0][1].sessionId, 'sess-1');
+    assert.equal(events[0][1].sessionId, lastSessionId);
     assert.equal(events[1][1].status, 'succeeded');
   });
 
@@ -428,6 +437,30 @@ describe('finishRun goal-marker classification (KTD-3)', () => {
     const run = store.listTaskRuns(task.id)[0];
     assert.equal(run.status, 'succeeded');
     assert.equal(run.reason, null);
+  });
+
+  it('opencode session with a plain result (no marker) → succeeded (no evaluator on the degraded path)', async () => {
+    autoComplete = false;
+    fakeBackend = 'opencode';
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    await service().tickForTest();
+    pushed[0].handler!(0, { type: 'result', subtype: 'success', isError: false, result: '文件已创建完成' });
+    const run = store.listTaskRuns(task.id)[0];
+    assert.equal(run.status, 'succeeded');
+    assert.equal(run.reason, null);
+  });
+
+  it('opencode session with isError result → failed', async () => {
+    autoComplete = false;
+    fakeBackend = 'opencode';
+    const wsId = await makeWorkspace();
+    const task = activate(makeTask(wsId), '2026-07-24T08:59:50.000Z');
+    await service().tickForTest();
+    pushed[0].handler!(0, { type: 'result', subtype: 'error', isError: true, result: 'rate limited' });
+    const run = store.listTaskRuns(task.id)[0];
+    assert.equal(run.status, 'failed');
+    assert.equal(run.reason, 'rate limited');
   });
 
   it('isError still wins over a COMPLETE marker', async () => {
