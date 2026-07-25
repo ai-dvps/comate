@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Nothing yet.
+- **Opencode backend echoing the first user message** — `opencode serve` emits the user message as a `message.part.updated` event before the assistant response. The event mapper was rendering every text part as assistant content, so the user's own prompt appeared as an identical reply and any empty model output left no further response. The mapper now tracks each message's role and only renders parts that belong to assistant messages.
 
 ## [0.0.26] - 2026-07-23
 
