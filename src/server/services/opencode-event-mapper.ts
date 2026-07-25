@@ -34,6 +34,12 @@ export interface OpencodeMapperState {
   partTypeById: Map<string, string>;
   lastTextByPartId: Map<string, string>;
   seenTodos: Set<string>;
+  /**
+   * Maps opencode message IDs to their declared role (from `message.updated`).
+   * Parts are only rendered when the owning message is an assistant message,
+   * so a user message's text part is not echoed back as an assistant reply.
+   */
+  messageRoleById: Map<string, string>;
   currentMessageId?: string;
   currentModel?: string;
   /**
@@ -61,6 +67,7 @@ export function createOpencodeMapperState(): OpencodeMapperState {
     partTypeById: new Map(),
     lastTextByPartId: new Map(),
     seenTodos: new Set(),
+    messageRoleById: new Map(),
     erroredTurn: false,
   };
 }
@@ -148,6 +155,14 @@ function blockIndex(state: OpencodeMapperState, partId: string): number {
   state.nextIndex += 1;
   state.partIndexById.set(partId, index);
   return index;
+}
+
+/** Returns true when a part on this message should be rendered as assistant content.
+ * Unknown roles are treated as assistant for backwards compatibility with events
+ * that arrive before (or without) a `message.updated`. */
+function shouldRenderAssistantPart(state: OpencodeMapperState, messageID: string): boolean {
+  const role = state.messageRoleById.get(messageID);
+  return role === undefined || role === 'assistant';
 }
 
 function mapTextLikePart(
@@ -305,6 +320,7 @@ export function mapOpencodeEvent(
   switch (event.type) {
     case 'message.updated': {
       const info = (properties.info ?? properties) as OpencodeMessageInfo;
+      state.messageRoleById.set(info.id, info.role);
       if (info.tokens) state.lastUsage = info.tokens;
       if (info.modelID) state.currentModel = info.modelID;
       if (info.role !== 'assistant') return [];
@@ -314,6 +330,7 @@ export function mapOpencodeEvent(
     case 'message.part.updated': {
       const part = properties.part as OpencodePart | undefined;
       if (!part) return [];
+      if (!shouldRenderAssistantPart(state, part.messageID)) return [];
       state.partTypeById.set(part.id, part.type);
       if (part.type === 'text') {
         return [
@@ -338,11 +355,12 @@ export function mapOpencodeEvent(
       const field = String(properties.field ?? 'text');
       const delta = String(properties.delta ?? '');
       if (!partId || field !== 'text' || !delta) return [];
+      const messageID = String(properties.messageID ?? state.currentMessageId ?? '');
+      if (!messageID || !shouldRenderAssistantPart(state, messageID)) return [];
       const partType = state.partTypeById.get(partId) ?? 'text';
       const kind = partType === 'reasoning' ? 'thinking' : 'text';
       const index = blockIndex(state, partId);
       const out: SDKMessage[] = [];
-      const messageID = String(properties.messageID ?? state.currentMessageId ?? '');
       if (messageID) out.push(...ensureMessageStart(state, messageID));
       if (!state.startedParts.has(partId)) {
         state.startedParts.add(partId);
