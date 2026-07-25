@@ -21,6 +21,7 @@ import { checkForUpdates, getAppVersion, downloadAndInstallUpdate, restartToUpda
 import i18n from '../i18n'
 import type { Workspace } from '../stores/workspace-store'
 import ProviderSection from './ProviderSection'
+import BackendSection from './BackendSection'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 import BotManagementPage, { type BotManagementPageHandle } from './BotManagementPage'
 import UnsavedChangesDialog from './UnsavedChangesDialog'
@@ -29,7 +30,7 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-type SettingsTab = 'general' | 'appearance' | 'workspace' | 'providers' | 'bots'
+type SettingsTab = 'general' | 'appearance' | 'workspace' | 'backend' | 'providers' | 'bots'
 
 type WorkspaceSection = 'general' | 'bot' | 'security' | 'danger'
 
@@ -152,6 +153,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
       activeTab !== 'general' &&
       activeTab !== 'appearance' &&
       activeTab !== 'workspace' &&
+      activeTab !== 'backend' &&
       activeTab !== 'providers' &&
       activeTab !== 'bots'
     ) {
@@ -429,6 +431,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
     { id: 'general', label: t('tabs.general') },
     { id: 'appearance', label: t('tabs.appearance') },
     { id: 'workspace', label: t('tabs.workspace') },
+    { id: 'backend', label: t('tabs.backend') },
     { id: 'providers', label: t('tabs.providers') },
     { id: 'bots', label: t('tabs.bots') },
   ]
@@ -509,6 +512,8 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
             )}
 
             {activeTab === 'appearance' && <AppearanceTab />}
+
+            {activeTab === 'backend' && <BackendSection />}
 
             {activeTab === 'providers' && <ProviderSection />}
 

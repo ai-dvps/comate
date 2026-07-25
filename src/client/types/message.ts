@@ -10,7 +10,51 @@
  * `diff src/client/types/message.ts src/server/types/message.ts`.
  */
 
-import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
+// Local mirror of the claude-agent-sdk `PermissionUpdate` union (KTD-8 type
+// decoupling): structurally compatible so SDK values assign directly without
+// mapping code, but free of the SDK import so any agent backend can produce
+// or consume these shapes.
+export type PermissionRuleValue = { toolName: string; ruleContent?: string }
+export type PermissionBehavior = 'allow' | 'deny' | 'ask'
+export type PermissionUpdateDestination =
+  | 'userSettings'
+  | 'projectSettings'
+  | 'localSettings'
+  | 'session'
+  | 'cliArg'
+export type PermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'bypassPermissions'
+  | 'plan'
+  | 'dontAsk'
+  | 'auto'
+export type PermissionSuggestion =
+  | {
+      type: 'addRules'
+      rules: PermissionRuleValue[]
+      behavior: PermissionBehavior
+      destination: PermissionUpdateDestination
+    }
+  | {
+      type: 'replaceRules'
+      rules: PermissionRuleValue[]
+      behavior: PermissionBehavior
+      destination: PermissionUpdateDestination
+    }
+  | {
+      type: 'removeRules'
+      rules: PermissionRuleValue[]
+      behavior: PermissionBehavior
+      destination: PermissionUpdateDestination
+    }
+  | { type: 'setMode'; mode: PermissionMode; destination: PermissionUpdateDestination }
+  | { type: 'addDirectories'; directories: string[]; destination: PermissionUpdateDestination }
+  | {
+      type: 'removeDirectories'
+      directories: string[]
+      destination: PermissionUpdateDestination
+    }
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
@@ -262,7 +306,7 @@ export type SseEvent =
       inputSummary: string
       title?: string
       description?: string
-      suggestions?: PermissionUpdate[]
+      suggestions?: PermissionSuggestion[]
       expiresAt?: number
       denialReason?: 'safetyCheck' | 'asyncAgent' | string
     }

@@ -7,12 +7,14 @@ import enSettings from './en/settings.json'
 import enChat from './en/chat.json'
 import enAnalytics from './en/analytics.json'
 import enBrowser from './en/browser.json'
+import enScheduledTasks from './en/scheduledTasks.json'
 
 import zhCNCommon from './zh-CN/common.json'
 import zhCNSettings from './zh-CN/settings.json'
 import zhCNChat from './zh-CN/chat.json'
 import zhCNAnalytics from './zh-CN/analytics.json'
 import zhCNBrowser from './zh-CN/browser.json'
+import zhCNScheduledTasks from './zh-CN/scheduledTasks.json'
 
 i18n
   .use(LanguageDetector)
@@ -25,6 +27,7 @@ i18n
         chat: enChat,
         analytics: enAnalytics,
         browser: enBrowser,
+        scheduledTasks: enScheduledTasks,
       },
       'zh-CN': {
         common: zhCNCommon,
@@ -32,6 +35,7 @@ i18n
         chat: zhCNChat,
         analytics: zhCNAnalytics,
         browser: zhCNBrowser,
+        scheduledTasks: zhCNScheduledTasks,
       },
     },
     fallbackLng: 'en',

@@ -4,17 +4,17 @@ import type {
   SDKMessage,
   SDKUserMessage,
   PermissionResult,
-  PermissionUpdate,
   Query,
   SDKRateLimitInfo,
   SDKControlGetContextUsageResponse,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { SseEvent, QuestionPayload, TaskSignal } from '../types/message.js';
+import type { SseEvent, QuestionPayload, TaskSignal, PermissionSuggestion } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
+import { ClaudeBackendDriver, type BackendDriver } from './backend-driver.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { KimiLoopDetector, isKimiProvider } from './kimi-loop-detector.js';
 import { BROWSER_TOOL_NAMES } from './browser-tool-names.js';
@@ -53,7 +53,7 @@ export class SessionRuntime {
   private workspaceId: string;
   private serverNonce: string;
   private options: Options;
-  private sdkClient: SdkClient;
+  private driver: BackendDriver;
   private input: PushableIterator<SDKUserMessage>;
   private query!: Query;
   private emitter: SseEmitter;
@@ -68,7 +68,7 @@ export class SessionRuntime {
       toolUseId?: string;
       title?: string;
       description?: string;
-      suggestions?: PermissionUpdate[];
+      suggestions?: PermissionSuggestion[];
       questions?: QuestionPayload[];
       expiresAt?: number;
       timer?: NodeJS.Timeout;
@@ -112,6 +112,7 @@ export class SessionRuntime {
     onUnsubscribed?: () => void,
     onActivity?: () => void,
     provider?: Provider,
+    driver?: BackendDriver,
   ): SessionRuntime {
     diagLog(`[Runtime ${sessionId}] SessionRuntime.open called`);
     const input = new PushableIterator<SDKUserMessage>();
@@ -126,6 +127,7 @@ export class SessionRuntime {
       onUnsubscribed,
       onActivity,
       provider,
+      driver,
     );
     if (botEventHandler) {
       runtime.botEventHandlers.add(botEventHandler);
@@ -166,6 +168,11 @@ export class SessionRuntime {
     return this.approvalMode;
   }
 
+  /** The backend this runtime drives (the driver's identity). */
+  getBackendId(): import('./backend-driver.js').BackendDriver['backendId'] {
+    return this.driver.backendId;
+  }
+
   private provider?: Provider;
   private kimiLoopDetector?: KimiLoopDetector;
 
@@ -180,6 +187,7 @@ export class SessionRuntime {
     onUnsubscribed?: () => void,
     onActivity?: () => void,
     provider?: Provider,
+    driver?: BackendDriver,
   ) {
     diagLog(`[Runtime ${sessionId}] constructed`);
     this.sessionId = sessionId;
@@ -187,7 +195,8 @@ export class SessionRuntime {
     this.serverNonce = serverNonce;
     this.input = input;
     this.options = options;
-    this.sdkClient = sdkClient;
+    // Backend seam (KTD-1): no driver means the built-in claude transport.
+    this.driver = driver ?? new ClaudeBackendDriver(sdkClient);
     this.onSubscribed = onSubscribed;
     this.onUnsubscribed = onUnsubscribed;
     this.onActivity = onActivity;
@@ -235,7 +244,7 @@ export class SessionRuntime {
       canUseTool,
       ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     };
-    const { query, messages } = this.sdkClient.createStreamingQuery(
+    const { query, messages } = this.driver.createStreamingQuery(
       this.input,
       optionsWithCallback,
     );
@@ -304,7 +313,7 @@ export class SessionRuntime {
       input: Record<string, unknown>,
       options: {
         signal: AbortSignal;
-        suggestions?: PermissionUpdate[];
+        suggestions?: PermissionSuggestion[];
         title?: string;
         description?: string;
         toolUseID: string;
@@ -457,7 +466,7 @@ export class SessionRuntime {
       input: Record<string, unknown>,
       options: {
         signal: AbortSignal;
-        suggestions?: PermissionUpdate[];
+        suggestions?: PermissionSuggestion[];
         title?: string;
         description?: string;
         toolUseID: string;
@@ -470,7 +479,7 @@ export class SessionRuntime {
     input: Record<string, unknown>,
     options: {
       signal: AbortSignal;
-      suggestions?: PermissionUpdate[];
+      suggestions?: PermissionSuggestion[];
       title?: string;
       description?: string;
       toolUseID: string;
@@ -910,7 +919,7 @@ export class SessionRuntime {
   getPendingCardState(
     requestId: string,
   ):
-    | { type: 'approval'; toolName?: string; toolUseId?: string; suggestions?: PermissionUpdate[] }
+    | { type: 'approval'; toolName?: string; toolUseId?: string; suggestions?: PermissionSuggestion[] }
     | { type: 'question'; questions: QuestionPayload[] }
     | undefined {
     const pending = this.pendingApprovals.get(requestId);
@@ -939,7 +948,7 @@ export class SessionRuntime {
     options: {
       title?: string;
       description?: string;
-      suggestions?: PermissionUpdate[];
+      suggestions?: PermissionSuggestion[];
       timeout?: number;
       signal?: AbortSignal;
       decisionReasonType?: string;
@@ -1002,7 +1011,7 @@ export class SessionRuntime {
       toolUseId?: string;
       title?: string;
       description?: string;
-      suggestions?: PermissionUpdate[];
+      suggestions?: PermissionSuggestion[];
       questions?: QuestionPayload[];
       expiresAt?: number;
       timer?: NodeJS.Timeout;

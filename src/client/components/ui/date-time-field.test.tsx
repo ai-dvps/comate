@@ -1,0 +1,103 @@
+import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest'
+import { render, cleanup, fireEvent, screen, within } from '@testing-library/react'
+import { I18nextProvider } from 'react-i18next'
+
+import i18n from '../../i18n'
+import { DateTimeField, TimeField } from './date-time-field'
+
+function renderWithI18n(ui: React.ReactElement) {
+  return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
+}
+
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn()
+})
+
+afterEach(cleanup)
+
+describe('DateTimeField', () => {
+  it('renders the formatted value on the trigger', () => {
+    renderWithI18n(<DateTimeField value="2026-07-25T14:30" onChange={() => {}} />)
+    expect(screen.getByText('2026-07-25 14:30')).toBeTruthy()
+  })
+
+  it('opens the calendar and commits the clicked day while preserving time', () => {
+    const onChange = vi.fn()
+    renderWithI18n(<DateTimeField value="2026-07-25T14:30" onChange={onChange} />)
+    fireEvent.click(screen.getByText('2026-07-25 14:30'))
+    // July 2026: the 10th is in the same month and not disabled (no min)
+    fireEvent.click(within(screen.getByTestId('dtf-calendar')).getByText('10'))
+    expect(onChange).toHaveBeenCalledWith('2026-07-10T14:30')
+  })
+
+  it('disables days before min', () => {
+    const onChange = vi.fn()
+    const min = new Date(2026, 6, 24, 9, 0)
+    renderWithI18n(<DateTimeField value="2026-07-25T14:30" onChange={onChange} min={min} />)
+    fireEvent.click(screen.getByText('2026-07-25 14:30'))
+    const day20 = within(screen.getByTestId('dtf-calendar')).getByText('20')
+    expect(day20).toHaveProperty('disabled', true)
+    fireEvent.click(day20)
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('navigates months with the chevrons', () => {
+    renderWithI18n(<DateTimeField value="2026-07-25T14:30" onChange={() => {}} />)
+    fireEvent.click(screen.getByText('2026-07-25 14:30'))
+    const header = document.querySelector('.text-xs.font-medium')!
+    const before = header.textContent
+    fireEvent.click(screen.getByLabelText('next month'))
+    expect(header.textContent).not.toBe(before)
+  })
+
+  it('commits time changes from the hour/minute columns', () => {
+    const onChange = vi.fn()
+    renderWithI18n(<DateTimeField value="2026-07-25T14:30" onChange={onChange} />)
+    fireEvent.click(screen.getByText('2026-07-25 14:30'))
+    fireEvent.click(within(screen.getByTestId('dtf-hour-col')).getByText('08'))
+    expect(onChange).toHaveBeenCalledWith('2026-07-25T08:30')
+  })
+})
+
+describe('TimeColumns direct input', () => {
+  it('commits a valid HH:mm typed into the input on Enter', () => {
+    const onChange = vi.fn()
+    renderWithI18n(<TimeField value="09:05" onChange={onChange} />)
+    fireEvent.click(screen.getByText('09:05'))
+    const input = screen.getByTestId('dtf-time-input')
+    fireEvent.change(input, { target: { value: '18:45' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('18:45')
+  })
+
+  it('rejects invalid input without committing', () => {
+    const onChange = vi.fn()
+    renderWithI18n(<TimeField value="09:05" onChange={onChange} />)
+    fireEvent.click(screen.getByText('09:05'))
+    const input = screen.getByTestId('dtf-time-input')
+    fireEvent.change(input, { target: { value: '25:99' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('minute column uses 5-minute steps and keeps the current minute selectable', () => {
+    renderWithI18n(<TimeField value="09:07" onChange={() => {}} />)
+    fireEvent.click(screen.getByText('09:07'))
+    const minuteCol = screen.getByTestId('dtf-minute-col') as HTMLElement
+    // 5-step list (00, 05, 10, ...) plus the injected current value 07
+    expect(within(minuteCol).getByText('00')).toBeTruthy()
+    expect(within(minuteCol).getByText('05')).toBeTruthy()
+    expect(within(minuteCol).getByText('07')).toBeTruthy()
+    expect(within(minuteCol).queryByText('03')).toBeNull()
+  })
+})
+
+describe('TimeField', () => {
+  it('shows the value and commits hour selection', () => {
+    const onChange = vi.fn()
+    renderWithI18n(<TimeField value="09:05" onChange={onChange} />)
+    fireEvent.click(screen.getByText('09:05'))
+    fireEvent.click(within(screen.getByTestId('dtf-hour-col')).getByText('18'))
+    expect(onChange).toHaveBeenCalledWith('18:05')
+  })
+})

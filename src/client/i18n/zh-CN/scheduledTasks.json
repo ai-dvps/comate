@@ -1,0 +1,85 @@
+{
+  "panel": {
+    "title": "定时任务",
+    "newTask": "新建任务",
+    "empty": "还没有定时任务。在这里新建，或在聊天中让助手草拟。",
+    "tasksSection": "任务",
+    "workspace": "工作区",
+    "schedule": "调度",
+    "nextFire": "下次触发",
+    "lastRun": "最近执行",
+    "status": "状态",
+    "actions": "操作",
+    "runNow": "立即执行",
+    "pause": "暂停",
+    "resume": "恢复",
+    "edit": "编辑",
+    "delete": "删除",
+    "deleteConfirm": "删除该任务？执行历史会保留。",
+    "back": "返回",
+    "history": "执行历史",
+    "openSession": "打开会话",
+    "degraded": "该后端为纯 prompt 执行，无完成性校验",
+    "close": "关闭"
+  },
+  "form": {
+    "createTitle": "新建定时任务",
+    "editTitle": "编辑定时任务",
+    "name": "名称",
+    "namePlaceholder": "例如：每晚跑测试",
+    "instruction": "执行指令",
+    "instructionPlaceholder": "自包含提示词——执行是全新会话，看不到当前对话上下文",
+    "scheduleType": "类型",
+    "once": "一次性",
+    "recurring": "周期",
+    "scheduleTime": "执行时间",
+    "preset": "预设",
+    "hourly": "每小时",
+    "daily": "每天",
+    "weekdays": "工作日",
+    "weekly": "每周",
+    "customCron": "自定义 cron",
+    "cronPlaceholder": "例如 0 9 * * 1-5",
+    "time": "时间",
+    "dayOfWeek": "星期",
+    "notify": "通知",
+    "notifyDesktop": "桌面通知",
+    "notifyInApp": "应用内标记",
+    "notifyWecom": "推送结果摘要到企业微信",
+    "wecomRecipient": "企业微信接收人（用户 id，默认工作区管理员）",
+    "save": "保存",
+    "cancel": "取消",
+    "invalidCron": "cron 表达式无效",
+    "timeRequired": "请选择执行时间"
+  },
+  "status": {
+    "draft": "草稿",
+    "active": "启用",
+    "paused": "已暂停",
+    "disabled": "已完成",
+    "running": "执行中",
+    "succeeded": "已成功",
+    "failed": "已失败",
+    "missed": "已错过",
+    "skipped": "已跳过"
+  },
+  "weekday": {
+    "0": "周日",
+    "1": "周一",
+    "2": "周二",
+    "3": "周三",
+    "4": "周四",
+    "5": "周五",
+    "6": "周六"
+  },
+  "notify": {
+    "runSucceeded": "定时任务执行成功：{{name}}",
+    "runFailed": "定时任务执行失败：{{name}}"
+  },
+  "session": {
+    "scheduledRun": "定时执行"
+  },
+  "picker": {
+    "now": "现在"
+  }
+}

@@ -1637,6 +1637,33 @@ export class WeComBotService {
     }
   }
 
+  /**
+   * Send a scheduled-task run summary to a WeCom user (KTD-7). Returns false
+   * (and logs) when the workspace has no live bot connection or the send
+   * fails — notification delivery never throws into the scheduler path.
+   */
+  async sendScheduledTaskSummary(
+    workspaceId: string,
+    wecomUserId: string,
+    markdown: string,
+  ): Promise<boolean> {
+    const conn = this.getConnectionForWorkspace(workspaceId);
+    if (!conn) {
+      console.warn(`[WeComBotService] no live connection for workspace ${workspaceId}; task summary not sent`);
+      return false;
+    }
+    try {
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: { content: markdown },
+      });
+      return true;
+    } catch (err) {
+      console.error('[WeComBotService] failed to send scheduled task summary:', err);
+      return false;
+    }
+  }
+
 }
 
 export const wecomBotService = new WeComBotService();

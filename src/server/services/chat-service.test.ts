@@ -9,17 +9,24 @@ import {
   __restoreRebuildPollInterval,
   __setSessionVerifyTimeoutForTesting,
   __restoreSessionVerifyTimeout,
+  __setOpencodeFetchForTesting,
 } from './chat-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { SessionRuntime } from './session-runtime.js';
+import {
+  registerBackendRuntime,
+  resetBackendRegistryForTests,
+  clearDefaultBackend,
+  setDefaultBackend,
+} from './agent-backends.js';
 import { SdkClient } from './sdk-client.js';
 import type { Workspace, McpServer } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import type { SseEvent } from '../types/message.js';
-import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, PermissionUpdate, Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, Query } from '@anthropic-ai/claude-agent-sdk';
 import type { BotPersona, BotRole } from '../models/bot.js';
-import type { QuestionPayload, TaskSignal } from '../types/message.js';
+import type { QuestionPayload, TaskSignal, PermissionSuggestion } from '../types/message.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -182,6 +189,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
       removeBotEventHandler: () => {},
       setApprovalMode: () => {},
       getApprovalMode: () => 'manual' as const,
+      getBackendId: () => 'claude' as const,
     };
     return mock as unknown as SessionRuntime;
   }
@@ -670,6 +678,7 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       removeBotEventHandler: () => {},
       setApprovalMode: () => {},
       getApprovalMode: () => 'manual' as const,
+      getBackendId: () => 'claude' as const,
       pushMessageCalls,
       botHandlers,
     };
@@ -830,7 +839,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
         pendingApprovals.delete(requestId);
         pending.resolve(result);
       },
-      requestToolApproval: (requestId: string, _toolName: string, _toolUseId: string, _input: Record<string, unknown>, options: { signal?: AbortSignal; timeout?: number; suggestions?: PermissionUpdate[] } = {}) => {
+      requestToolApproval: (requestId: string, _toolName: string, _toolUseId: string, _input: Record<string, unknown>, options: { signal?: AbortSignal; timeout?: number; suggestions?: PermissionSuggestion[] } = {}) => {
         return new Promise<PermissionResult>((resolve) => {
           pendingApprovals.set(requestId, { resolve });
           if (options.timeout) {
@@ -864,6 +873,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       removeBotEventHandler: () => {},
       setApprovalMode: () => {},
       getApprovalMode: () => 'manual' as const,
+      getBackendId: () => 'claude' as const,
     };
     return mock as unknown as SessionRuntime;
   }
@@ -967,6 +977,13 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     workspaceStore.getBotUser = () => null;
     const options = await captureBotOptions({ wecomBotEnabled: true }, 'feishu-user-1');
     assert.strictEqual(options.env.WECOM_USER_ID, undefined);
+  });
+
+  it('every session disables Claude Code built-in cron (one scheduling system)', async () => {
+    workspaceStore.getSessionUsers = () => [];
+    workspaceStore.getBotUser = () => null;
+    const options = await captureBotOptions({ wecomBotEnabled: true }, 'feishu-user-1');
+    assert.strictEqual(options.env.CLAUDE_CODE_DISABLE_CRON, '1');
   });
 
   it('GUI session does not set WECOM_USER_ID', async () => {
@@ -1383,7 +1400,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    const suggestions: PermissionUpdate[] = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'allow' }], behavior: 'allow' }];
+    const suggestions: PermissionSuggestion[] = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'allow' }], behavior: 'allow', destination: 'session' }];
     const promise = canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-ask-2', signal: new AbortController().signal, suggestions });
 
     const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
@@ -2963,5 +2980,287 @@ describe('chat-service deferred runtime rebuild', { concurrency: false }, () => 
     await service.closeRuntime('s1');
     const pendingAfter = (service as unknown as { pendingRebuilds: Map<string, unknown> }).pendingRebuilds.has('s1');
     assert.ok(!pendingAfter, 'pending rebuild should be cleared on manual close');
+  });
+});
+
+describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+  let captured: unknown[] | undefined;
+
+  beforeEach(async () => {
+    workspaceStore.resetData();
+    resetBackendRegistryForTests();
+    await clearDefaultBackend();
+    registerBackendRuntime('claude', {
+      resolveBinaryPath: () => '/fake/claude',
+      healthCheck: async () => true,
+    });
+    service = new ChatService();
+    captured = undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      captured = args;
+      return {
+        isClosed: () => false,
+        getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws' }),
+        close: () => Promise.resolve(),
+        subscribe: () => {},
+        unsubscribe: () => {},
+        pushMessage: () => {},
+        resolveApproval: () => {},
+        interrupt: () => Promise.resolve(),
+        addBotEventHandler: () => {},
+        clearBotEventHandlers: () => {},
+        removeBotEventHandler: () => {},
+        setApprovalMode: () => {},
+        getApprovalMode: () => 'manual' as const,
+        getBackendId: () => 'claude' as const,
+      } as unknown as SessionRuntime;
+    };
+  });
+
+  afterEach(async () => {
+    SessionRuntime.open = originalOpen;
+    await service.closeAllRuntimes();
+    resetBackendRegistryForTests();
+    await clearDefaultBackend();
+  });
+
+  async function createFixture(source: 'gui' | 'wecom') {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-backend-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: `Provider ${crypto.randomUUID()}`,
+      baseUrl: 'http://test',
+      authToken: 't',
+      model: 'm',
+      isDefault: false,
+    });
+    const session = workspaceStore.createLocalSession(
+      workspace.id,
+      'S',
+      undefined,
+      provider.id,
+      source,
+    );
+    return { workspace, provider, session };
+  }
+
+  it('does NOT persist the backend at runtime creation — locks at first message (R4)', async () => {
+    const { workspace, session } = await createFixture('gui');
+    await service.getOrCreateRuntime(session.id, workspace.id);
+    assert.ok(captured, 'runtime opened');
+    assert.strictEqual(
+      workspaceStore.getLocalSession(session.id)?.backend,
+      undefined,
+      'viewing a draft (runtime created) must not lock the backend',
+    );
+
+    await service.pushMessage(session.id, workspace.id, 'first real message');
+    assert.strictEqual(
+      workspaceStore.getLocalSession(session.id)?.backend,
+      'claude',
+      'first message locks the backend to the runtime backend',
+    );
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.isDraft, false);
+  });
+
+  it('bot sessions always lock to claude regardless of the stored default', async () => {
+    await setDefaultBackend('opencode');
+    const { workspace, session } = await createFixture('wecom');
+    await service.getOrCreateRuntime(session.id, workspace.id, true);
+    assert.ok(captured, 'runtime opened');
+    await service.pushMessage(session.id, workspace.id, 'bot message', true);
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
+  });
+
+  it('reuses the session locked backend instead of re-resolving', async () => {
+    const { workspace, session } = await createFixture('gui');
+    workspaceStore.updateSessionBackend(session.id, 'claude');
+    await setDefaultBackend('opencode');
+    await service.getOrCreateRuntime(session.id, workspace.id);
+    assert.ok(captured, 'runtime opened');
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
+  });
+
+  it('rejects with a clear error when the session backend has no registered runtime', async () => {
+    const { workspace, session } = await createFixture('gui');
+    workspaceStore.updateSessionBackend(session.id, 'opencode');
+    await assert.rejects(
+      () => service.getOrCreateRuntime(session.id, workspace.id),
+      /opencode|not available|unavailable/i,
+    );
+  });
+});
+
+describe('chat-service session backend update guard (R4)', { concurrency: false }, () => {
+  let service: ChatService;
+
+  beforeEach(async () => {
+    workspaceStore.resetData();
+    service = new ChatService();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+  });
+
+  async function createSession() {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-backend-guard-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: `Provider ${crypto.randomUUID()}`,
+      baseUrl: 'http://test',
+      authToken: 't',
+      model: 'm',
+      isDefault: false,
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
+    return { workspace, session };
+  }
+
+  it('pre-selects the backend on an unlocked session', async () => {
+    const { workspace, session } = await createSession();
+    const updated = await service.updateSession(session.id, { backend: 'opencode' }, workspace.id);
+    assert.ok(updated);
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'opencode');
+  });
+
+  it('rejects changing a locked backend with 409 once the conversation started', async () => {
+    const { workspace, session } = await createSession();
+    workspaceStore.updateSessionBackend(session.id, 'claude');
+    workspaceStore.clearDraftFlag(session.id);
+    await assert.rejects(
+      () => service.updateSession(session.id, { backend: 'opencode' }, workspace.id),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /locked/i);
+        assert.strictEqual((err as { statusCode?: number }).statusCode, 409);
+        return true;
+      },
+    );
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
+  });
+
+  it('allows re-selection while the session is still a draft, closing the live runtime', async () => {
+    const { workspace, session } = await createSession();
+    workspaceStore.updateSessionBackend(session.id, 'claude');
+    const runtime = await service.getOrCreateRuntime(session.id, workspace.id);
+    assert.ok(runtime);
+    await service.updateSession(session.id, { backend: 'opencode' }, workspace.id);
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'opencode');
+    assert.ok(
+      !service.getRuntimeIfExists(session.id),
+      'live runtime must be closed so the next use rebuilds on the new backend',
+    );
+  });
+
+  it('rejects an unknown backend value with 400', async () => {
+    const { workspace, session } = await createSession();
+    await assert.rejects(
+      () => service.updateSession(session.id, { backend: 'kimi' }, workspace.id),
+      (err: unknown) => {
+        assert.strictEqual((err as { statusCode?: number }).statusCode, 400);
+        return true;
+      },
+    );
+  });
+});
+
+describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+
+  beforeEach(async () => {
+    workspaceStore.resetData();
+    resetBackendRegistryForTests();
+    await clearDefaultBackend();
+    registerBackendRuntime('claude', {
+      resolveBinaryPath: () => '/fake/claude',
+      healthCheck: async () => true,
+    });
+    service = new ChatService();
+  });
+
+  afterEach(async () => {
+    SessionRuntime.open = originalOpen;
+    __setOpencodeFetchForTesting(undefined);
+    await service.closeAllRuntimes();
+    resetBackendRegistryForTests();
+    await clearDefaultBackend();
+  });
+
+  async function createFixture(source: 'gui' | 'wecom', backend?: string) {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-reviewfix-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: `Provider ${crypto.randomUUID()}`,
+      baseUrl: 'http://test',
+      authToken: 't',
+      model: 'm',
+      isDefault: false,
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, source);
+    if (backend) workspaceStore.updateSessionBackend(session.id, backend);
+    return { workspace, provider, session };
+  }
+
+  it('getSession SDK-sync preserves local backend identity (P1)', async () => {
+    const { workspace, session } = await createFixture('gui');
+    workspaceStore.updateSessionBackend(session.id, 'claude');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_remote_1');
+    class SyncSdkClient extends SdkClient {
+      override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+        return {
+          sessionId: session.id,
+          summary: 'synced',
+          lastModified: Date.now(),
+          fileSize: 100,
+        } as unknown as SDKSessionInfo;
+      }
+    }
+    const synced = await new ChatService(new SyncSdkClient()).getSession(session.id, workspace.id);
+    assert.strictEqual(synced?.backend, 'claude');
+    assert.strictEqual(synced?.backendSessionId, 'ses_remote_1');
+  });
+
+  it('failed first runtime attempt leaves the draft backend unset (P2)', async () => {
+    const { workspace, session } = await createFixture('gui');
+    SessionRuntime.open = () => {
+      throw new Error('simulated start failure');
+    };
+    await assert.rejects(() => service.getOrCreateRuntime(session.id, workspace.id));
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, undefined);
+  });
+
+  it('opencode history loads via the backend-aware REST path (P1)', async () => {
+    const { workspace, session } = await createFixture('gui', 'opencode');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_remote_2');
+    __setOpencodeFetchForTesting((async (_instance: unknown, path: string) => {
+      if (path.endsWith('/children')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      assert.match(path, /\/session\/ses_remote_2\/message/);
+      return new Response(
+        JSON.stringify([
+          {
+            info: { id: 'm1', role: 'assistant' },
+            parts: [{ id: 'p1', type: 'text', messageID: 'm1', text: 'hello from opencode' }],
+          },
+        ]),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as never);
+    const result = await service.loadMessages(session.id, workspace.id);
+    const texts = result.messages.flatMap((m) =>
+      m.parts.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text),
+    );
+    assert.ok(
+      texts.some((t) => t.includes('hello from opencode')),
+      `expected opencode history, got ${texts.join(' | ').slice(0, 120)}`,
+    );
   });
 });

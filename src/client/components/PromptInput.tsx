@@ -14,6 +14,8 @@ import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import FastModeToggle from './FastModeToggle'
 import ProviderSelector from './ProviderSelector'
+import BackendSelector from './BackendSelector'
+import { useBackendStore, backendAvailability } from '../stores/backend-store'
 import PromptGhostText from './PromptGhostText'
 import {
   extractPlainText,
@@ -806,7 +808,20 @@ export default function PromptInput({
     setHistoryPickerOpen(true)
   }
 
-  const canSend = input.trim().length > 0 && hasSession && !isStreaming && !isRestarting && !disabled
+  const sessionBackend = useChatStore((s) =>
+    s.sessions[workspaceId]?.find((ses) => ses.id === sessionId)?.backend,
+  )
+  const backends = useBackendStore((s) => s.backends)
+  const fetchBackends = useBackendStore((s) => s.fetchBackends)
+  useEffect(() => {
+    if (backends.length === 0) {
+      fetchBackends()
+    }
+  }, [fetchBackends, backends.length])
+  const lockedBackendUnavailable =
+    !!sessionBackend && backendAvailability(backends, sessionBackend)?.status === 'unavailable'
+
+  const canSend = input.trim().length > 0 && hasSession && !isStreaming && !isRestarting && !disabled && !lockedBackendUnavailable
   const canClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
   const {
@@ -856,6 +871,11 @@ export default function PromptInput({
 
   return (
     <div className={`max-w-3xl mx-auto px-4 ${isBotSession ? 'py-2' : 'py-4'}`}>
+      {lockedBackendUnavailable && (
+        <div className="mb-2 px-3 py-1.5 text-[11px] rounded-md text-destructive bg-destructive/10 border border-destructive/20">
+          {t('backend.unavailableReadOnly', { backend: sessionBackend })}
+        </div>
+      )}
       {isBotSession ? (
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -1039,6 +1059,7 @@ export default function PromptInput({
               <div className="flex items-center gap-1">
                 {sessionId && !isBotSession && (
                   <>
+                    <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} hideNameBelowSm />
                     {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} hideNameBelowSm />}
                     {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />}
                     {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />}

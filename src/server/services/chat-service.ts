@@ -10,8 +10,21 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import type { ChatMessage, SubagentState, TaskItem, SseEvent, WorkflowState } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
+import {
+  getBackendAvailability,
+  resolveDefaultBackend,
+  type BackendId,
+} from './agent-backends.js';
+import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
 import { SessionRuntime } from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
+import { opencodeServerManager, opencodeFetch } from './opencode-server-manager.js';
+import {
+  opencodeMessagesToSessionMessages,
+  pairTaskToolCallsWithChildren,
+  type OpencodeRestMessage,
+} from './opencode-transcript.js';
+import type { SlashCommandDto } from '../types/initialization.js';
 import { resolveTranscriptDir } from './analytics-transcript-path.js';
 import { listWorkflowAgentIds, listWorkflowRunIds, loadWorkflowState } from './workflow-loader.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
@@ -34,25 +47,22 @@ import type { Provider } from '../models/provider.js';
 import {
   BROWSER_MCP_SERVER_KEY,
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
-  createBrowserMcpServer,
   type BrowserApprovalRequester,
 } from './browser-mcp.js';
 import { isBrowserToolName } from './browser-tool-names.js';
 
 import { browserControlService } from './browser-control.js';
+import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
+import { getSidecarBaseUrl } from '../utils/self-port.js';
+import { getBrowserMcpToken } from './browser-mcp-http.js';
+import { SCHEDULED_TASKS_MCP_KEY, getScheduledTasksMcpToken } from './scheduled-tasks-mcp.js';
+import { makeScheduledRunStopHook } from './goal-stop-hook.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
 
 function sanitizeBotEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (key.startsWith('WECOM_')) continue;
-    if (/^(AWS_|GOOGLE_|AZURE_|OPENAI_)/i.test(key)) continue;
-    if (/^CLAUDE_(API_KEY|AUTH)/i.test(key)) continue;
-    out[key] = value;
-  }
-  return out;
+  return sanitizeSubprocessEnv(env);
 }
 
 /**
@@ -119,6 +129,13 @@ export function __setSessionVerifyTimeoutForTesting(ms: number): void {
 
 export function __restoreSessionVerifyTimeout(): void {
   SESSION_VERIFY_TIMEOUT_MS = 10000;
+}
+
+let opencodeFetchForTesting: typeof import('./opencode-server-manager.js').opencodeFetch | undefined;
+export function __setOpencodeFetchForTesting(
+  fetchImpl: typeof import('./opencode-server-manager.js').opencodeFetch | undefined,
+): void {
+  opencodeFetchForTesting = fetchImpl;
 }
 
 class SessionVerifyTimeoutError extends Error {
@@ -212,6 +229,23 @@ export class ChatService {
       ? { behavior: 'allow' as const }
       : { behavior: 'deny' as const, message: result.message };
   };
+
+  /**
+   * Per-session deps for the HTTP-hosted browser MCP (U6): resolves the
+   * session's workspace and shares this service's approval requester so
+   * browser approval cards keep flowing through the unified flow regardless
+   * of which backend drives the session.
+   */
+  async resolveBrowserMcpDeps(sessionId: string): Promise<{
+    workspaceId: string;
+    approvalRequester: BrowserApprovalRequester;
+  }> {
+    const workspace = await this.findWorkspaceForSession(sessionId);
+    return {
+      workspaceId: workspace?.id ?? '',
+      approvalRequester: this.browserApprovalRequester,
+    };
+  }
 
   setOnRuntimeClose(callback: (sessionId: string) => void): void {
     this.onRuntimeClose = callback;
@@ -344,9 +378,13 @@ export class ChatService {
         const sdkSession = await this.sdkClient.getSessionInfo(id, { dir: workspace.folderPath });
         if (sdkSession) {
           const session = this.mapSdkSessionInfo(sdkSession, workspaceId);
-          // Preserve providerId and local-only booleans from local DB — the SDK doesn't know about them
+          // Preserve providerId, backend identity, and local-only booleans from
+          // local DB — the SDK doesn't know about them (review P1: dropping
+          // backend here let a default change silently rebind a locked session).
           const localSession = workspaceStore.getLocalSession(id);
           session.providerId = localSession?.providerId;
+          session.backend = localSession?.backend;
+          session.backendSessionId = localSession?.backendSessionId;
           session.isWip = localSession?.isWip;
           session.isArchived = localSession?.isArchived;
           session.approvalMode = localSession?.approvalMode;
@@ -379,6 +417,31 @@ export class ChatService {
     // Check local DB for current provider before update
     const localSession = workspaceStore.getLocalSession(id);
     const previousProviderId = localSession?.providerId;
+
+    // Backend changes are free while the session is a draft (R4: the lock
+    // lands at the first message). Once the conversation has started, a
+    // different backend is a conflict, not a silent no-op. A change with a
+    // live runtime closes it so the next use rebuilds on the new backend.
+    if (input.backend !== undefined) {
+      if (input.backend !== 'claude' && input.backend !== 'opencode') {
+        throw new ChatError(`Unknown agent backend '${input.backend}'`, 'INVALID_BACKEND', 400);
+      }
+      if (!localSession?.isDraft && localSession?.backend && localSession.backend !== input.backend) {
+        throw new ChatError(
+          `Session backend is locked to '${localSession.backend}' and cannot be changed`,
+          'BACKEND_LOCKED',
+          409,
+        );
+      }
+      workspaceStore.updateSessionBackend(id, input.backend);
+      if (localSession?.backend !== input.backend) {
+        const existing = this.getRuntimeIfExists(id);
+        if (existing) {
+          diagLog(`[ChatService] session ${id} backend changed to '${input.backend}' — closing runtime for rebuild`);
+          await this.closeRuntime(id);
+        }
+      }
+    }
 
     if (localSession && localSession.isDraft) {
       const draftInput: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
@@ -506,6 +569,124 @@ export class ChatService {
     return workflows;
   }
 
+  /** opencode REST read honoring the test hook (review P1 fixes). */
+  private ocFetch(
+    instance: Parameters<typeof opencodeFetch>[0],
+    path: string,
+    init?: Parameters<typeof opencodeFetch>[2],
+  ) {
+    return (opencodeFetchForTesting ?? opencodeFetch)(instance, path, init);
+  }
+
+  /** Shared serve lookup/spawn for opencode history + subagent loading. */
+  private async ensureOpencodeServe(
+    comateSessionId: string,
+    workspace: Workspace,
+  ) {
+    const existing = opencodeServerManager.getInstance(comateSessionId);
+    if (existing) return existing;
+    const localSession = workspaceStore.getLocalSession(comateSessionId);
+    const provider = localSession?.providerId
+      ? workspaceStore.getProvider(localSession.providerId)
+      : workspaceStore.getDefaultProvider();
+    if (!provider) return undefined;
+    return opencodeServerManager.ensureServer(comateSessionId, workspace.folderPath, {
+      config: { ...buildServeConfig(provider, provider.model ?? ''), mcp: {} },
+      env: process.env,
+    });
+  }
+
+  /**
+   * opencode history loading (review P1): fetch the backend session's REST
+   * message history from its serve and translate to claude-shaped
+   * SessionMessage. Spawns a serve for a closed session when none is live.
+   */
+  private async loadOpencodeSessionMessages(
+    comateSessionId: string,
+    backendSessionId: string,
+    workspace: Workspace,
+  ): Promise<SessionMessage[]> {
+    const instance = await this.ensureOpencodeServe(comateSessionId, workspace);
+    if (!instance) return [];
+    const messages = (await (
+      await this.ocFetch(instance, `/session/${backendSessionId}/message`)
+    ).json()) as OpencodeRestMessage[];
+    return opencodeMessagesToSessionMessages(messages);
+  }
+
+  /**
+   * opencode subagent loading (U7): children of the backend session on the
+   * session's serve, translated from opencode REST history into claude-shaped
+   * SessionMessage and reconstructed through the same panel path. Spawns a
+   * serve for historical viewing when none is live.
+   */
+  private async loadOpencodeSubagents(
+    comateSessionId: string,
+    backendSessionId: string,
+    workspace: Workspace,
+  ): Promise<SubagentState[]> {
+    const instance = await this.ensureOpencodeServe(comateSessionId, workspace);
+    if (!instance) return [];
+
+    const children = (await (
+      await this.ocFetch(instance, `/session/${backendSessionId}/children`)
+    ).json()) as Array<{ id: string; title?: string }>;
+    if (children.length === 0) return [];
+
+    const parentMessages = (await (
+      await this.ocFetch(instance, `/session/${backendSessionId}/message`)
+    ).json()) as OpencodeRestMessage[];
+    const pairings = pairTaskToolCallsWithChildren(parentMessages, children.length);
+
+    // Fetch child transcripts concurrently; a single failure never blocks the rest.
+    const subagents: SubagentState[] = [];
+    await Promise.all(
+      children.map(async (child, index) => {
+        try {
+          const childMessages = (await (
+            await this.ocFetch(instance, `/session/${child.id}/message`)
+          ).json()) as OpencodeRestMessage[];
+          const subMessages = opencodeMessagesToSessionMessages(childMessages);
+          const pairing = pairings[index];
+          const reconstructed = reconstructSubagentState(
+            pairing?.parentToolUseId ?? child.id,
+            subMessages,
+            pairing?.description ?? child.title ?? `Agent ${child.id.slice(-6)}`,
+            {},
+          );
+          if (reconstructed) {
+            subagents.push(reconstructed);
+          }
+        } catch (err) {
+          console.error(`Failed to load opencode subagent ${child.id}:`, err);
+        }
+      }),
+    );
+    return subagents;
+  }
+
+  /**
+   * Slash commands advertised by an opencode session's serve (U7). Empty
+   * when no serve is live for the session (rather than claude-flavored
+   * builtins, which differ between runtimes).
+   */
+  async getSessionBackendCommands(sessionId: string): Promise<SlashCommandDto[]> {
+    const instance = opencodeServerManager.getInstance(sessionId);
+    if (!instance) return [];
+    const res = await opencodeFetch(instance, '/command');
+    if (!res.ok) return [];
+    const commands = (await res.json()) as Array<{
+      name: string;
+      description?: string;
+      template?: string;
+    }>;
+    return commands.map((command) => ({
+      name: command.name,
+      description: command.description ?? '',
+      argumentHint: command.template?.includes('$ARGUMENTS') ? 'arguments' : undefined,
+    }));
+  }
+
   async loadSubagentsForSession(
     sessionId: string,
     workspaceId: string,
@@ -517,6 +698,14 @@ export class ChatService {
     }
 
     const dir = normalizeWindowsPath(workspace.folderPath);
+
+    // Backend-aware loading (U7): opencode subagents are child sessions on
+    // the session's serve, translated into the same SubagentState shape.
+    const localSession = workspaceStore.getLocalSession(sessionId);
+    if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
+      return this.loadOpencodeSubagents(sessionId, localSession.backendSessionId, workspace);
+    }
+
     let agentIds: string[] = [];
     try {
       agentIds = await this.sdkClient.listSubagents(sessionId, { dir });
@@ -685,11 +874,26 @@ export class ChatService {
       dir: normalizeWindowsPath(workspace.folderPath),
     };
     const sdkLoadStartedAt = Date.now();
-    const sdkMessages = await this.sdkClient.getSessionMessages(sessionId, options);
+
+    // Backend-aware history (review P1): opencode sessions load from their
+    // serve's REST history and translate into the same SessionMessage shape —
+    // asking the claude SDK for them always returned empty and lost history on
+    // refresh.
+    const localSession = workspaceStore.getLocalSession(sessionId);
+    let sdkMessages: SessionMessage[];
+    if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
+      sdkMessages = await this.loadOpencodeSessionMessages(
+        sessionId,
+        localSession.backendSessionId,
+        workspace,
+      );
+    } else {
+      sdkMessages = await this.sdkClient.getSessionMessages(sessionId, options);
+    }
     const sdkLoadMs = Date.now() - sdkLoadStartedAt;
 
     // If we successfully loaded messages from SDK, the session is real — sync it
-    if (sdkMessages.length > 0) {
+    if (sdkMessages.length > 0 && localSession?.backend !== 'opencode') {
       try {
         const sdkSession = await this.sdkClient.getSessionInfo(sessionId, { dir: workspace.folderPath });
         if (sdkSession) {
@@ -780,6 +984,23 @@ export class ChatService {
 
   // Session runtime management
 
+  /**
+   * Resolve the agent backend for a session (KTD-5/KTD-9). A locked session
+   * reuses its stored backend; a draft resolves now, and the result is
+   * persisted only after the runtime actually starts (review P2 — persisting
+   * on a failed first attempt cemented a failed lock). Bot sessions always
+   * resolve to claude regardless of the app default (R14).
+   */
+  private async resolveSessionBackend(
+    session: ChatSession,
+    isBotSession?: boolean,
+  ): Promise<BackendId> {
+    if (session.backend) {
+      return session.backend as BackendId;
+    }
+    return isBotSession ? 'claude' : (await resolveDefaultBackend()).backend;
+  }
+
   async getOrCreateRuntime(
     sessionId: string,
     workspaceId: string,
@@ -831,11 +1052,25 @@ export class ChatService {
       }
       diagLog(`[ChatService] runtime ${sessionId} session loaded elapsed=${Date.now() - startedAt}ms isDraft=${!!session.isDraft}`);
 
+      const backend = await this.resolveSessionBackend(session, isBotSession);
+      if (backend === 'opencode') {
+        const availability = await getBackendAvailability(backend);
+        if (availability.status !== 'available') {
+          throw new ChatError(
+            `Agent backend 'opencode' is not available${availability.reason ? `: ${availability.reason}` : ''}`,
+            'BACKEND_UNAVAILABLE',
+            409,
+          );
+        }
+      } else if (backend !== 'claude') {
+        throw new ChatError(`Unknown agent backend '${backend}'`, 'BACKEND_UNAVAILABLE', 409);
+      }
+
       // Verify non-draft sessions actually exist in SDK before resuming.
       // If the SDK has lost track of the session, fall back to sessionId mode
       // so the conversation can be recreated rather than failing with
       // "No conversation found with session ID".
-      if (!session.isDraft) {
+      if (!session.isDraft && backend === 'claude') {
         try {
           const verifyStart = Date.now();
           diagLog(`[ChatService] runtime ${sessionId} verifying session in SDK`);
@@ -889,11 +1124,35 @@ export class ChatService {
       }
 
       const options = this.buildSdkOptions(workspace, session, isBotSession, botUserId, provider);
+      if (session.source === 'scheduled' && backend === 'claude') {
+        // U4 (KTD-3, path B): scheduled runs get the completion evaluator —
+        // a programmatic Stop hook that continues the session until the goal
+        // prompt's status marker appears or the turn cap hits.
+        options.hooks = {
+          ...options.hooks,
+          Stop: [...(options.hooks?.Stop ?? []), { hooks: [makeScheduledRunStopHook(session.id)] }],
+        };
+      }
       diagLog(`[ChatService] runtime ${sessionId} buildSdkOptions elapsed=${Date.now() - optionsStart}ms pathToClaudeCodeExecutable=${options.pathToClaudeCodeExecutable || 'undefined'}`);
 
       const testStart = Date.now();
-      await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
-      diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
+      if (backend === 'claude') {
+        await this.testClaudeBinary(options.pathToClaudeCodeExecutable, normalizeWindowsPath(workspace.folderPath), options.env || process.env);
+        diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
+      }
+
+      const driver =
+        backend === 'opencode'
+          ? new OpencodeBackendDriver({
+              directory: normalizeWindowsPath(workspace.folderPath),
+              comateSessionId: sessionId,
+              backendSessionId: session.backendSessionId,
+              provider,
+              env: (options.env ?? process.env) as NodeJS.ProcessEnv,
+              onBackendSessionId: (backendSessionId) =>
+                workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
+            })
+          : undefined;
 
       diagLog(`[ChatService] runtime ${sessionId} calling SessionRuntime.open`);
       const openStart = Date.now();
@@ -908,6 +1167,7 @@ export class ChatService {
         () => {},
         () => this.scheduleIdleClose(sessionId),
         provider,
+        driver,
       );
       diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - openStart}ms`);
       this.runtimes.set(sessionId, runtime);
@@ -1194,6 +1454,14 @@ export class ChatService {
     // of only updating the local SQLite row.
     const localSession = workspaceStore.getLocalSession(sessionId);
     if (localSession?.isDraft) {
+      // The backend lock lands HERE — at the first message (R4), not at
+      // runtime creation: a draft may be re-selected any time before this
+      // point (a runtime created by merely viewing the session never locks).
+      if (!localSession.backend) {
+        const backend = runtime.getBackendId();
+        workspaceStore.updateSessionBackend(sessionId, backend);
+        diagLog(`[ChatService] session ${sessionId} backend locked to '${backend}' at first message`);
+      }
       workspaceStore.clearDraftFlag(sessionId);
     }
 
@@ -1383,6 +1651,15 @@ export class ChatService {
     const claudeSettings = loadClaudeSettings();
     let { env } = buildClaudeEnv(claudeSettings);
 
+    // One scheduling system (KTD-3): Claude Code's built-in session-scoped
+    // cron (CronCreate/CronList/CronDelete and /loop) lives in the project's
+    // .claude directory — invisible to the Comate panel, unconfirmable, and
+    // outside the unified execution path. Disable it for every Comate session
+    // so natural-language scheduling always flows through the scheduled-task
+    // MCP tools (draft -> UI confirm -> unified scheduler). Official switch:
+    // https://code.claude.com/docs/en/scheduled-tasks#disable-scheduled-tasks
+    env.CLAUDE_CODE_DISABLE_CRON = '1';
+
     // Resolve active provider: session -> default, when not already provided.
     const resolvedProvider = provider ?? (session.providerId
       ? workspaceStore.getProvider(session.providerId)
@@ -1479,14 +1756,29 @@ export class ChatService {
     // condition itself is the first line of bot defense). The instance is
     // keyed by sessionId; the browser process outlives it via browserService.
     if (!isBotSession) {
-      mcpServers[BROWSER_MCP_SERVER_KEY] = createBrowserMcpServer({
-        sessionId: session.id,
-        workspaceId: workspace.id,
-        approvalRequester: this.browserApprovalRequester,
-      });
+      // U6 (KTD-6): the browser MCP surface is served by the sidecar over
+      // HTTP so both backends consume it; the per-session URL binds tools to
+      // this session's embedded browser.
+      mcpServers[BROWSER_MCP_SERVER_KEY] = {
+        type: 'http',
+        url: `${getSidecarBaseUrl()}/mcp/browser/${session.id}`,
+        headers: { Authorization: `Bearer ${getBrowserMcpToken()}` },
+      } as import('@anthropic-ai/claude-agent-sdk').McpServerConfig;
       // Submit/handoff handler approval round-trips can wait on a human far
       // past the 60s SDK default — per-session env, never process-global.
       env.CLAUDE_CODE_STREAM_CLOSE_TIMEOUT = BROWSER_STREAM_CLOSE_TIMEOUT_MS;
+    }
+
+    // Scheduled-task MCP tools (U7, KTD-5 分级): local GUI sessions get the
+    // full tool set (draft/list/pause/resume/run-now); bot sessions get the
+    // draft tool only (their drafts always need UI confirmation); scheduled
+    // run sessions get none — confirm/edit/delete are never exposed as tools.
+    if (session.source !== 'scheduled') {
+      mcpServers[SCHEDULED_TASKS_MCP_KEY] = {
+        type: 'http',
+        url: `${getSidecarBaseUrl()}/mcp/scheduled-tasks/${session.id}`,
+        headers: { Authorization: `Bearer ${getScheduledTasksMcpToken()}` },
+      } as import('@anthropic-ai/claude-agent-sdk').McpServerConfig;
     }
 
     const claudePath = resolveSdkBinary();
@@ -1594,7 +1886,7 @@ export class ChatService {
             input: Record<string, unknown>,
             sdkOptions: {
               signal: AbortSignal;
-              suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
+              suggestions?: import('../types/message.js').PermissionSuggestion[];
               title?: string;
               description?: string;
               toolUseID: string;
