@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comate 应用架构总览 — 2026-07-23</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-2: #1c2330;
+    --border: #2d333f;
+    --text: #e6e9ef;
+    --text-2: #9aa4b2;
+    --accent: #6e9fff;
+    --accent-2: #4ec9a7;
+    --warn: #e0a33e;
+    --danger: #e05e5e;
+    --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+    line-height: 1.65;
+    padding: 40px 24px 80px;
+  }
+  .page { max-width: 1080px; margin: 0 auto; }
+  header { margin-bottom: 32px; }
+  header .eyebrow {
+    color: var(--accent);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  header h1 { font-size: 30px; font-weight: 700; }
+  header p { color: var(--text-2); margin-top: 8px; font-size: 14px; }
+  header .meta {
+    margin-top: 14px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+  }
+  .chip b { color: var(--text); font-weight: 600; }
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+  }
+  section h2 {
+    font-size: 19px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  section h2 .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  section h3 { font-size: 15px; margin: 18px 0 8px; color: var(--accent-2); }
+  section p.lede { color: var(--text-2); font-size: 13.5px; margin-bottom: 14px; }
+  .diagram {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    overflow-x: auto;
+    margin: 10px 0 6px;
+  }
+  .diagram .caption { color: var(--text-2); font-size: 12px; margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-2); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.mono, .mono { font-family: var(--mono); font-size: 12px; }
+  .state-full { color: var(--accent-2); font-weight: 600; }
+  .state-degraded { color: var(--warn); font-weight: 600; }
+  .state-unavailable { color: var(--danger); font-weight: 600; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card h4 { font-size: 13.5px; margin-bottom: 6px; }
+  .card p, .card li { font-size: 12.5px; color: var(--text-2); }
+  .card ul { padding-left: 18px; }
+  .note {
+    border-left: 3px solid var(--accent);
+    background: rgba(110,159,255,0.08);
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: 12px;
+  }
+  .note.warn { border-left-color: var(--warn); background: rgba(224,163,62,0.08); }
+  .note.danger { border-left-color: var(--danger); background: rgba(224,94,94,0.08); }
+  code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border); }
+  .fileindex td:first-child { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+  .mermaid { text-align: center; }
+  .mermaid svg { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="eyebrow">Comate · Architecture Overview</div>
+  <h1>应用架构总览（当前状态）</h1>
+  <p>截至 2026-07-23 · 分支 <code>feat/pluggable-agent-backend</code> · 双 agent 后端（claude / opencode）已落地</p>
+  <div class="meta">
+    <span class="chip">实施：<b>U1–U8 全部提交</b></span>
+    <span class="chip">测试：<b>1644 server / 942 client 全绿</b></span>
+    <span class="chip">评审：<b>3 P1 + 4 P2 已修复</b></span>
+    <span class="chip">构建：<b>双 flavor 均已验证</b></span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="num">1</span>全局拓扑</h2>
+  <p class="lede">Comate 是 Tauri 桌面壳 + Express sidecar + React UI 的三层结构。sidecar 承载全部 agent 运行时编排；新增的后端层（蓝色）把 agent 运行时变成了可插拔的两套实现。</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TB
+  subgraph Desktop["Tauri 桌面壳 (Rust)"]
+      Shell["窗口 / 原生资源<br/>(ripgrep, Steel, 二进制)"]
+  end
+  subgraph UI["React 18 UI (Vite)"]
+      Chat["ChatPanel + PromptInput<br/>BackendSelector / ProviderSelector"]
+      Panels["Subagent 面板 / Task 面板<br/>ApprovalSurface / 内置浏览器视图"]
+      Settings["Settings · BackendSection"]
+  end
+  subgraph Sidecar["Express sidecar (Node, pkg 单文件)"]
+      Routes["/api/* 路由层"]
+      MCP["/mcp/browser/:sessionId<br/>HTTP MCP (Bearer)"]
+      Core["会话核心 SessionRuntime<br/>(后端无关: 审批/提问/超时/扇出)"]
+      Registry["agent-backends 注册表<br/>枚举 + 能力声明表 + 可用性 + 默认后端"]
+      CA["claude 适配器<br/>(SdkClient/query)"]
+      OA["opencode 适配器<br/>(serve REST+SSE)"]
+      Store[("SQLite data.db<br/>workspaces/sessions/providers<br/>app-settings.json")]
+  end
+  ClaudeBin["claude 二进制<br/>(SDK 平台 optionalDep)"]
+  OcServe["opencode serve ×N<br/>(每会话一个, Basic auth)"]
+  Models["模型端点<br/>(Anthropic 兼容: Kimi/GLM/DeepSeek/企业网关)"]
+
+  Shell --> UI
+  UI --> Routes
+  Routes --> Core
+  Routes --> Registry
+  Core --> CA
+  Core --> OA
+  Registry -.能力表/可用性.-> UI
+  CA --> ClaudeBin
+  OA --> OcServe
+  ClaudeBin --> Models
+  OcServe --> Models
+  Core --> MCP
+  OA --> MCP
+  Core --> Store
+  Registry --> Store
+
+  style Core fill:#1b2a4a,stroke:#6e9fff
+  style Registry fill:#1b2a4a,stroke:#6e9fff
+  style OA fill:#123b31,stroke:#4ec9a7
+  style MCP fill:#123b31,stroke:#4ec9a7
+    </pre>
+    <div class="caption">蓝 = 新增后端层核心；绿 = opencode 侧新链路；灰 = 既有结构</div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>Agent 后端层（本次新增的核心）</h2>
+  <p class="lede">设计要点：<b>共享核心 + 双适配器</b>（KTD-1）。会话核心不感知后端；两个适配器各自把运行时翻译成同一内部消息模型。客户端与渲染层零分支。</p>
+  <div class="grid2">
+    <div class="card">
+      <h4>agent-backends 注册表（KTD-4）</h4>
+      <ul>
+        <li>固定枚举 <code>claude | opencode</code>（方案 B，session-settled）</li>
+        <li>静态能力声明表：full / degraded / unavailable + reason + evidence 状态位（verified vs declared）</li>
+        <li>默认值分后端：claude 未声明=full；opencode 未声明=unavailable</li>
+        <li>可用性 = 二进制解析 + spawn 健康检查（缓存）</li>
+        <li>应用级默认后端（app-settings.json）+ 不可用回退</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>会话亲和与锁定（KTD-5/9）</h4>
+      <ul>
+        <li><code>sessions.backend</code>：草稿期可任意改选，<b>首发消息时锁定</b>（仅查看不锁定；失败的首启也不留锁）</li>
+        <li>锁定后不可改（API 409）；原后端缺失 → 只读 + 提示</li>
+        <li><code>sessions.backend_session_id</code>：opencode 远端会话 id，用于恢复重连</li>
+        <li>历史展示与后端无关（opencode 走 REST 历史翻译）</li>
+        <li>迁移：PRAGMA + ALTER 增量模式，存量默认 claude</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>claude 适配器</h4>
+      <ul>
+        <li>BackendDriver 薄封装：现有 SdkClient/query 路径原样包裹</li>
+        <li>二进制：<code>@anthropic-ai/claude-agent-sdk-{platform}-{arch}</code> optionalDep，四策略解析</li>
+        <li>bot 会话（WeCom/飞书）强制此后端（R14）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>opencode 适配器（U4–U7）</h4>
+      <ul>
+        <li>每会话一个 serve 子进程：随机 Basic auth、env 净化、Comate 自有 XDG 存储、启动版本校验（锁 1.18.4）</li>
+        <li>事件映射：SSE → 内部消息模型（text/thinking/tool/todo/idle/error）</li>
+        <li>审批桥：permission.asked → 核心 canUseTool → once/always/reject</li>
+        <li>提问桥：question.asked → 问题阶梯 → /question/{id}/reply</li>
+        <li>slash 命令 / 子代理（children 会话翻译）/ fork / 历史加载</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">3</span>opencode 会话生命周期</h2>
+  <p class="lede">一次带审批的 prompt 在 opencode 后端的完整链路（AE4 实测通过的同一流程）。</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+  participant U as 用户
+  participant UI as React UI
+  participant Core as 会话核心
+  participant Ad as opencode 适配器
+  participant Sv as opencode serve<br/>(每会话进程)
+  participant M as 模型端点
+
+  U->>UI: 选择后端(opencode) + 发送
+  UI->>Core: pushMessage
+  Core->>Ad: prompt (input iterator)
+  Ad->>Sv: POST /session → prompt_async
+  Sv->>M: 模型调用
+  M-->>Sv: 流式生成
+  Sv-->>Ad: SSE message.part.*（text/reasoning/tool）
+  Ad-->>Core: 映射为内部消息
+  Core-->>UI: 渲染更新
+  Sv-->>Ad: permission.asked（含 diff/patterns/tool join key）
+  Ad->>Core: canUseTool 统一回调
+  Core-->>UI: pending_approval（审批卡片）
+  U->>Core: 批准 once / always
+  Core-->>Ad: PermissionResult
+  Ad->>Sv: POST permissions/{id} {once|always|reject}
+  Sv->>M: 工具执行
+  Sv-->>Ad: tool_result + session.idle
+  Ad-->>Core: result
+  Core-->>UI: 完成
+    </pre>
+  </div>
+  <div class="note">提问（AskUserQuestion 等价流）走独立的 <code>question.asked → /question/{id}/reply</code> 通道（v2 API，1.18.4 锁定二进制实测通过 AE5）。</div>
+</section>
+
+<section>
+  <h2><span class="num">4</span>内置浏览器 MCP — 双后端共用（U6）</h2>
+  <p class="lede">浏览器 MCP 从 claude SDK 的进程内托管改为 sidecar 自托管的 HTTP MCP，两个后端以同一方式接入；工具处理器仍在 sidecar 进程内，审批门不变。</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  CA["claude 适配器"] -->|"McpHttpServerConfig<br/>url + Bearer"| EP["/mcp/browser/:sessionId<br/>Streamable HTTP · 无状态"]
+  OA["opencode serve"] -->|"remote MCP<br/>url + Bearer"| EP
+  EP --> Auth{"Bearer 校验<br/>(进程级随机 token)"}
+  Auth --> Tools["buildBrowserToolDefinitions<br/>open/snapshot/act/submit/<br/>extract/requestHandoff/close"]
+  Tools --> BS["BrowserService<br/>(按 sessionId 绑定的浏览器)"]
+  Tools --> Gate["浏览器审批门 → 核心统一审批流"]
+    </pre>
+  </div>
+  <div class="note warn">评审修复：路由自带 JSON 解析（生产挂载顺序在全局 express.json() 之前）。bot 会话不注入（KTD-4③，第二道防线仍在）。</div>
+</section>
+
+<section>
+  <h2><span class="num">5</span>分发形态（U3）</h2>
+  <p class="lede">单发布线、双 flavor。两个后端的二进制都经 npm 平台 optionalDependencies 锁版本分发，构建期拷贝进 Tauri resources；变体由 <code>COMATE_BUNDLE_BACKENDS</code> 控制。</p>
+  <table>
+    <tr><th>形态</th><th>内容物</th><th>构建</th><th>目标场景</th></tr>
+    <tr>
+      <td class="mono">default（双后端）</td>
+      <td>claude + opencode 二进制（均为 Mach-O/PE 可执行）</td>
+      <td class="mono">npm run release</td>
+      <td>主流用户；后端自由选择</td>
+    </tr>
+    <tr>
+      <td class="mono">claude-free（企业）</td>
+      <td>仅 opencode 二进制；claude 后端按 R3 自动不可见</td>
+      <td class="mono">COMATE_BUNDLE_BACKENDS=opencode npm run release</td>
+      <td>安全扫描型企业（禁二进制存在）</td>
+    </tr>
+  </table>
+  <div class="note">构建断言按 <b>isFile</b> 校验变体内容（修复：旧目录形残留曾令 existsSync 断言失效）；过期二进制按变体自动清理。版本锁定：opencode 二进制与 @opencode-ai/sdk 钉为同一兼容单元（1.18.4），serve 启动即校验。</div>
+</section>
+
+<section>
+  <h2><span class="num">6</span>能力声明表（当前真实状态）</h2>
+  <p class="lede">降级 UI（禁用+说明，R10）与验收清单（docs/acceptance）的唯一数据源。evidence=verified 表示有可执行验证路径。</p>
+  <table>
+    <tr><th>能力</th><th>claude</th><th>opencode</th><th>说明</th></tr>
+    <tr><td>streaming / toolRendering</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>事件映射 E2E 实测</td></tr>
+    <tr><td>approvals（含 always 规则）</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>permission.asked 桥 → 统一审批</td></tr>
+    <tr><td>askUserQuestion</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>独立 question 通道（v2）</td></tr>
+    <tr><td>subagents 面板</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>children 会话翻译（task↔child 按序配对，已知边界）</td></tr>
+    <tr><td>内置浏览器</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>HTTP MCP 双后端共用</td></tr>
+    <tr><td>slash 命令</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>serve /command 发现 + 模板展开执行</td></tr>
+    <tr><td>todos / 任务面板</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>todo.updated → task 事件</td></tr>
+    <tr><td>会话管理（列表/重命名/fork/恢复）</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>REST fork + backend_session_id 重连</td></tr>
+    <tr><td>模型切换</td><td class="state-full">full</td><td class="state-full">full ✓verified</td><td>Provider → opencode provider 映射</td></tr>
+    <tr><td>analytics 用量统计</td><td class="state-full">full</td><td class="state-unavailable">unavailable</td><td>KTD-10：opencode 会话 v1 暂不计入（界面有说明）</td></tr>
+    <tr><td>workspace hooks</td><td class="state-unavailable">unavailable</td><td class="state-unavailable">unavailable</td><td>地面实况：脚本在全后端均无消费者，未执行；后续单独立项</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">7</span>UI 集成</h2>
+  <div class="grid2">
+    <div class="card">
+      <h4>BackendSelector（聊天输入框）</h4>
+      <ul>
+        <li>草稿期下拉（仅列可用后端，R3）——与 ProviderSelector 同位同形</li>
+        <li>锁定后只读徽章（Lock 图标 + 后端名）</li>
+        <li>原后端不可用 → 红色横幅 + 禁发（R7）</li>
+        <li>bot 会话不渲染（R14）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Settings · Backend（R2）</h4>
+      <ul>
+        <li>应用级默认后端选择（双卡 + 可用性指示）</li>
+        <li>持久化于 app-settings.json</li>
+        <li>存储后端不可用 → 回退可用后端并提示（KTD-5）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">8</span>关键模块索引</h2>
+  <table class="fileindex">
+    <tr><th>模块</th><th>职责</th></tr>
+    <tr><td>src/server/services/agent-backends.ts</td><td>后端注册表：枚举 / 能力声明表 / 可用性 / 默认后端</td></tr>
+    <tr><td>src/server/services/backend-driver.ts</td><td>BackendDriver 接缝 + ClaudeBackendDriver</td></tr>
+    <tr><td>src/server/services/session-runtime.ts</td><td>后端无关会话核心（审批/提问/超时/扇出）</td></tr>
+    <tr><td>src/server/services/opencode-adapter.ts</td><td>opencode 适配器（驱动 + 审批/提问桥 + 命令/会话操作）</td></tr>
+    <tr><td>src/server/services/opencode-server-manager.ts</td><td>每会话 serve：Basic auth / env 净化 / 版本校验 / 生命周期</td></tr>
+    <tr><td>src/server/services/opencode-event-mapper.ts</td><td>SSE 事件 → 内部消息模型（纯函数，12 单测）</td></tr>
+    <tr><td>src/server/services/opencode-transcript.ts</td><td>REST 历史 → claude 形 transcript（子代理/历史）</td></tr>
+    <tr><td>src/server/services/browser-mcp-http.ts</td><td>HTTP MCP 宿主（Bearer + 无状态 transport）</td></tr>
+    <tr><td>src/server/utils/resolve-opencode-binary.ts</td><td>opencode 二进制四策略解析 + 兼容单元版本常量</td></tr>
+    <tr><td>src/server/storage/app-settings-store.ts</td><td>应用级设置（默认后端）JSON 存储</td></tr>
+    <tr><td>src/server/routes/backends.ts</td><td>/api/backends：可用性 + 能力表 + 默认读写</td></tr>
+    <tr><td>src/client/components/BackendSelector.tsx</td><td>会话级后端选择器（草稿/锁定/只读）</td></tr>
+    <tr><td>src/client/components/BackendSection.tsx</td><td>设置页默认后端</td></tr>
+    <tr><td>scripts/build-sidecar.ts</td><td>sidecar 打包 + 变体门控拷贝 + isFile 断言</td></tr>
+    <tr><td>scripts/verify-opencode-{surface,adapter}.ts</td><td>活验证驱动（8/8 surface 探针 + 8/8 E2E）</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">9</span>边界与已知残留（诚实清单）</h2>
+  <ul style="font-size:13.5px; color:var(--text-2); padding-left:20px; line-height:1.9;">
+    <li><b>WeCom bot 仅 claude</b>：opencode 的无人值守隔离门未做等价实现（v1 明确排除，后续单评）</li>
+    <li><b>analytics</b>：opencode 会话暂不计入用量/费用（KTD-10，后续经适配器会话枚举补齐）</li>
+    <li><b>hooks</b>：双后端均无执行（数据模型半成品），真实执行引擎单独立项</li>
+    <li><b>残留风险</b>：MCP Bearer 进入会话 transcript（回环+进程级随机，可接受）；可用性缓存对带外二进制变更不感知（随进程重启刷新）；opencode 原生工具面与 claude 的差异（LSP/WebSearch 等价物）待设备走查确认</li>
+    <li><b>验证方式</b>：关键链路均有活验证驱动（surface probes + adapter E2E），能力表带 verified/declared 状态位防自我认证</li>
+  </ul>
+</section>
+
+<footer style="color:var(--text-2); font-size:12px; text-align:center; margin-top:32px;">
+  Comate · feat/pluggable-agent-backend @ 6f34ffe · 生成于 2026-07-23 · 数据源：代码与验收清单（docs/acceptance/agent-backend-parity-checklist.md）
+</footer>
+
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', themeVariables: {
+    background: '#0d1117',
+    primaryColor: '#1c2330',
+    primaryTextColor: '#e6e9ef',
+    primaryBorderColor: '#2d333f',
+    lineColor: '#6e9fff',
+    secondaryColor: '#161b22',
+    tertiaryColor: '#161b22',
+    actorBkg: '#1c2330',
+    actorBorder: '#2d333f',
+    actorTextColor: '#e6e9ef',
+    signalColor: '#9aa4b2',
+    signalTextColor: '#e6e9ef'
+  }});
+</script>
+</body>
+</html>

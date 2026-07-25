@@ -1080,3 +1080,29 @@ describe('SqliteStore browser_audit pruning (F18)', { concurrency: false }, () =
     assert.strictEqual(store.listBrowserAudit('ws-1').length, 2);
   });
 });
+
+describe('SqliteStore session backend column (KTD-9)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  it('creates sessions without a backend by default and round-trips a set backend', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/w' });
+    const session = store.createLocalSession(ws.id, 'S');
+    assert.strictEqual(session.backend, undefined);
+
+    store.updateSessionBackend(session.id, 'opencode');
+    const reloaded = store.getLocalSession(session.id);
+    assert.strictEqual(reloaded?.backend, 'opencode');
+  });
+
+  it('legacy rows (no backend value) read as undefined', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/w' });
+    const session = store.createLocalSession(ws.id, 'S');
+    const reloaded = store.getLocalSession(session.id);
+    assert.strictEqual(reloaded?.backend, undefined);
+  });
+});

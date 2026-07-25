@@ -83,7 +83,10 @@ describe('WeComBotService handleMediaMessage', { concurrency: false }, () => {
       pushedMessages.push(args[2] as string);
     }) as any;
     chatService.getOrCreateRuntime = async () =>
-      ({ pushMessage: (content: string) => { pushedMessages.push(content); } }) as any;
+      ({
+        pushMessage: (content: string) => { pushedMessages.push(content); },
+        getBackendId: () => 'claude',
+      }) as any;
   });
 
   afterEach(async () => {
@@ -2268,7 +2271,7 @@ describe('auto-add bot members on first inbound message', { concurrency: false }
     (service as any).botIdToWorkspaceId.set(bot.id, ws.id);
 
     chatService.getOrCreateRuntime = async () =>
-      ({ pushMessage: () => {} }) as any;
+      ({ pushMessage: () => {}, getBackendId: () => 'claude' }) as any;
   });
 
   afterEach(() => {

@@ -10,6 +10,11 @@ const execAsync = promisify(exec);
 import workspaceRoutes from './routes/workspaces.js';
 import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
+import backendRoutes from './routes/backends.js';
+import { createBrowserMcpHttpRouter } from './services/browser-mcp-http.js';
+import { createScheduledTasksMcpHttpRouter, resolveScheduledTasksMcpDeps } from './services/scheduled-tasks-mcp.js';
+import { chatService } from './services/chat-service.js';
+import { setBoundPort } from './utils/self-port.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
 import gitStatusRoutes from './routes/git-status.js';
 import gitChangesRoutes from './routes/git-changes.js';
@@ -21,6 +26,7 @@ import wecomDocRoutes from './routes/wecom-doc.js';
 import wecomSmartsheetExportRoutes from './routes/wecom-smartsheet-export.js';
 import systemRoutes from './routes/system.js';
 import todoRoutes from './routes/todos.js';
+import scheduledTasksRoutes from './routes/scheduled-tasks.js';
 import providerRoutes from './routes/providers.js';
 import pluginRoutes from './routes/plugins.js';
 import skillRoutes from './routes/skills.js';
@@ -32,6 +38,8 @@ import { browserViewerProxy } from './routes/browser-proxy.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
+import { schedulerService } from './services/scheduler-service.js';
+import { runNotifier } from './services/run-notifier.js';
 import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
 import { BotMigrationService } from './services/bot-migration-service.js';
@@ -112,18 +120,28 @@ let boundPort: number | undefined;
 const getSelfPort = (): number | undefined => boundPort;
 
 app.use(hostHeaderGuard());
+// U6: HTTP-hosted browser MCP for both agent backends (Bearer token auth,
+// loopback; no browser Origin — mount ahead of the CORS/origin guards).
+app.use('/mcp/browser', createBrowserMcpHttpRouter((sessionId) => chatService.resolveBrowserMcpDeps(sessionId)));
+// U7: HTTP-hosted scheduled-task MCP (Bearer token auth, loopback; same
+// pre-guard mount rationale as the browser MCP).
+app.use('/mcp/scheduled-tasks', createScheduledTasksMcpHttpRouter((sessionId) => resolveScheduledTasksMcpDeps(sessionId)));
+
 app.use(cors({ origin: createCorsOriginCallback({ getSelfPort }) }));
 app.use(stateChangingRequestGuard({ getSelfPort }));
 app.use(express.json());
 
 // API routes
 app.use('/api/workspaces', workspaceRoutes);
+app.use('/api/backends', backendRoutes);
 app.use('/api/workspaces/:id/files', fileRoutes);
 app.use('/api/workspaces/:id/commands', workspaceCommandsRoutes);
 app.use('/api/workspaces/:id/git-ref', gitStatusRoutes);
 app.use('/api/workspaces/:id/git-changes', gitChangesRoutes);
 app.use('/api/workspaces/:id', chatRoutes);
 app.use('/api/workspaces/:id/todos', todoRoutes);
+app.use('/api/scheduled-tasks', scheduledTasksRoutes);
+app.use('/api/workspaces/:id/scheduled-tasks', scheduledTasksRoutes);
 app.use('/api/workspaces/:id/wecom-queue', wecomQueueRoutes);
 app.use('/api/workspaces/:workspaceId/wecom/send', wecomSendRoutes);
 app.use('/api/workspaces/:workspaceId/wecom/send-file', wecomSendFileRoutes);
@@ -224,6 +242,7 @@ const server = app.listen(PORT, () => {
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : PORT;
   boundPort = Number(actualPort);
+  setBoundPort(boundPort);
   const serverUrl = `http://localhost:${actualPort}`;
   console.log(`Server running on ${serverUrl}`);
   diagLog(`Server started on ${serverUrl} (diag log file: ${path.join(getLogsDir(), 'sse-diag.log')})`);
@@ -301,6 +320,12 @@ const server = app.listen(PORT, () => {
 
   // Initialize WeCom proactive message queue worker
   wecomQueueWorker.initialize();
+
+  // Initialize the scheduled-task scheduler (tick + startup reconciliation)
+  schedulerService.initialize();
+
+  // Fan out run results (WeCom summary push; WS relay lives in the ws server)
+  runNotifier.initialize();
 
   // Backfill existing WeCom session names
   wecomSessionRenamer.backfillExistingSessions().catch((err) => {

@@ -1,12 +1,13 @@
 import { create } from 'zustand'
 import i18next from 'i18next'
 
-import type { ChatMessage, MessagePart, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem, WorkflowState } from '../types/message'
-import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
+import type { ChatMessage, MessagePart, PermissionSuggestion, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem, WorkflowState } from '../types/message'
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
 import { useToastStore } from './toast-store'
+import { useScheduledTaskStore } from './scheduled-task-store'
+import type { SchedulerRunEventPayload } from '../lib/scheduled-task-events'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
 import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
@@ -223,9 +224,11 @@ export interface ChatSession {
   isDraft?: boolean
   isWip?: boolean
   isArchived?: boolean
-  source?: 'gui' | 'wecom' | 'feishu'
+  source?: 'gui' | 'wecom' | 'feishu' | 'scheduled'
   approvalMode?: ApprovalMode
   providerId?: string
+  /** Agent backend the session is locked to; unset on drafts (pre-selectable). */
+  backend?: string
   fastMode?: boolean
   createdAt: string
   updatedAt: string
@@ -244,7 +247,7 @@ interface PendingApproval {
   inputSummary: string
   title?: string
   description?: string
-  suggestions?: PermissionUpdate[]
+  suggestions?: PermissionSuggestion[]
   expiresAt?: number
   denialReason?: 'safetyCheck' | 'asyncAgent' | string
 }
@@ -368,7 +371,7 @@ export interface ChatState {
     workspaceId: string,
     sessionId: string,
     requestId: string,
-    result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionUpdate[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
+    result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionSuggestion[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
   ) => Promise<void>
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
   cleanupWorkspace: (workspaceId: string) => void
@@ -376,6 +379,7 @@ export interface ChatState {
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
+  setSessionBackend: (workspaceId: string, sessionId: string, backend: string) => Promise<void>
 }
 
 function generateId(): string {
@@ -1154,6 +1158,12 @@ export function handleWsEvent(set: SseSetter, get: SseGetter, msg: WsEventMessag
     if (!(state.backgroundSessions[workspaceId] || []).includes(sessionId)) {
       set((state) => addBackgroundSession(state, workspaceId, sessionId))
     }
+  } else if (msg.eventType === 'scheduled_task_event') {
+    // Server relay of scheduler lifecycle events (run started/finished, draft
+    // created) — drive the task store's unread badge, list refresh, and
+    // desktop notification.
+    useScheduledTaskStore.getState().handleSchedulerEvent(msg.data as SchedulerRunEventPayload)
+    return
   } else if (msg.eventType === 'runtime_closed' && msg.sessionId) {
     // The server closed this session's runtime (e.g. idle timeout). Tear down
     // the stale local subscription and clear the server nonce so the next
@@ -3175,7 +3185,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     requestId: string,
     result: {
       behavior: 'allow' | 'deny'
-      updatedPermissions?: PermissionUpdate[]
+      updatedPermissions?: PermissionSuggestion[]
       answers?: Record<string, string>
       questions?: QuestionPayload[]
       message?: string
@@ -3373,6 +3383,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
           sessions: { ...state.sessions, [workspaceId]: nextSessions },
         }
       })
+    }
+  },
+
+  setSessionBackend: async (workspaceId: string, sessionId: string, backend: string) => {
+    const previous = (get().sessions[workspaceId] || []).find((s) => s.id === sessionId)?.backend
+    set((state) => {
+      const workspaceSessions = state.sessions[workspaceId] || []
+      return {
+        sessions: {
+          ...state.sessions,
+          [workspaceId]: workspaceSessions.map((s) =>
+            s.id === sessionId ? { ...s, backend } : s,
+          ),
+        },
+      }
+    })
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend }),
+      })
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+    } catch (err) {
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        return {
+          sessions: {
+            ...state.sessions,
+            [workspaceId]: workspaceSessions.map((s) =>
+              s.id === sessionId ? { ...s, backend: previous } : s,
+            ),
+          },
+        }
+      })
+      throw err
     }
   },
 

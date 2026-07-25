@@ -9,9 +9,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Loader2, Square, SlashSquare, Paperclip } from 'lucide-react'
 import { Streamdown } from 'streamdown'
-import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
-
-import type { QuestionPayload } from '../types/message'
+import type { QuestionPayload, PermissionSuggestion } from '../types/message'
 import type { SlashCommandDto } from '../stores/commands-store'
 import { Button } from './ui/button'
 import {
@@ -70,7 +68,7 @@ interface PendingApproval {
   inputSummary: string
   title?: string
   description?: string
-  suggestions?: PermissionUpdate[]
+  suggestions?: PermissionSuggestion[]
   expiresAt?: number
   denialReason?: 'safetyCheck' | 'asyncAgent' | string
 }

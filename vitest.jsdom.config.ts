@@ -18,6 +18,8 @@ export default defineProject({
     include: [
       'src/client/{components,hooks}/**/*.{test,spec}.{ts,tsx}',
       'src/client/stores/chat-store.test.ts',
+      'src/client/stores/scheduled-task-store.test.ts',
+      'src/client/stores/backend-store.test.ts',
       'src/client/stores/bot-store.test.ts',
       'src/client/stores/git-changes-store.test.ts',
       'src/client/stores/right-panel-store.test.ts',

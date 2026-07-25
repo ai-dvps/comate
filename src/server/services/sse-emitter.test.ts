@@ -944,3 +944,44 @@ describe('SseEmitter + SessionRuntime task-signal integration', { concurrency: f
     assert.ok(resultIdx < settleIdx, 'the turn result precedes the settle edge');
   });
 });
+
+describe('result error visibility (silent-error fix)', () => {
+  it('emits error_note with the error text when a result carries is_error and errors', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 0,
+      total_cost_usd: 0,
+      session_id: 's1',
+      errors: ['[1211][模型不存在]'],
+    } as never);
+
+    const errorNotes = events.filter((e) => e.type === 'error_note') as Array<{ text: string }>;
+    assert.equal(errorNotes.length, 1, 'an error result must surface a visible error_note');
+    assert.match(errorNotes[0].text, /模型不存在/);
+  });
+
+  it('does not emit error_note for successful results', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1,
+      duration_api_ms: 1,
+      num_turns: 1,
+      total_cost_usd: 0,
+      session_id: 's1',
+    } as never);
+
+    assert.equal(events.filter((e) => e.type === 'error_note').length, 0);
+  });
+});

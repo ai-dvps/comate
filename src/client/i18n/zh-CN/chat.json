@@ -249,5 +249,23 @@
     "title": "询问用户",
     "multiSelect": "多选",
     "optionFallback": "选项 {{number}}"
+  },
+  "backend": {
+    "selectorTitle": "Agent 后端",
+    "claude": "Claude Code",
+    "opencode": "opencode",
+    "locked": "已锁定为 {{backend}}",
+    "unavailableReadOnly": "该会话的后端（{{backend}}）在当前安装中不可用，已切换为只读。",
+    "noneAvailable": "无可用后端",
+    "fallbackNotice": "默认后端不可用，已回退到 {{backend}}",
+    "capabilityUndeclared": "当前后端暂不支持",
+    "analyticsNotCounted": "opencode 会话暂不计入用量统计",
+    "defaultDescription": "新会话的默认后端。可用性取决于本安装包内置的运行时二进制。",
+    "available": "可用",
+    "unavailable": "不可用",
+    "isDefault": "默认",
+    "tab": "后端",
+    "hooksNotWired": "hooks 脚本目前在两个后端均不会执行",
+    "scheduledGoalNoEvaluator": "该后端的定时执行为纯 prompt，无完成性校验"
   }
 }

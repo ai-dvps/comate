@@ -252,5 +252,23 @@
     "title": "Ask User Question",
     "multiSelect": "Multi-select",
     "optionFallback": "Option {{number}}"
+  },
+  "backend": {
+    "selectorTitle": "Agent backend",
+    "claude": "Claude Code",
+    "opencode": "opencode",
+    "locked": "Locked to {{backend}}",
+    "unavailableReadOnly": "This session's backend ({{backend}}) is unavailable in this install — read-only.",
+    "noneAvailable": "No backend available",
+    "fallbackNotice": "Default backend unavailable — using {{backend}}",
+    "capabilityUndeclared": "Not available on this backend",
+    "analyticsNotCounted": "opencode sessions are not counted in analytics yet",
+    "defaultDescription": "Default backend for new sessions. Availability reflects the runtime binaries bundled in this install.",
+    "available": "Available",
+    "unavailable": "Unavailable",
+    "isDefault": "Default",
+    "tab": "Backend",
+    "hooksNotWired": "Hook scripts are not executed yet on either backend",
+    "scheduledGoalNoEvaluator": "Scheduled runs execute as plain prompt on this backend — no completion check"
   }
 }
