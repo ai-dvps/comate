@@ -154,6 +154,64 @@ describe('tool parts', () => {
   });
 });
 
+describe('message role filtering', () => {
+  it('does not render user message text as assistant content', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent(
+      { type: 'message.updated', properties: { info: { id: 'm-user', role: 'user', sessionID: 's1' } } },
+      state,
+    );
+    const out = mapOpencodeEvent(
+      { type: 'message.part.updated', properties: { part: textPart({ id: 'p-user', messageID: 'm-user', text: '今天天气如何' }) } },
+      state,
+    );
+    assert.deepEqual(out, [], 'user text part must not emit assistant stream events');
+  });
+
+  it('ignores deltas on user message parts', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent(
+      { type: 'message.updated', properties: { info: { id: 'm-user', role: 'user', sessionID: 's1' } } },
+      state,
+    );
+    mapOpencodeEvent(
+      { type: 'message.part.updated', properties: { part: textPart({ id: 'p-user', messageID: 'm-user', text: '' }) } },
+      state,
+    );
+    const out = mapOpencodeEvent(
+      { type: 'message.part.delta', properties: { partID: 'p-user', messageID: 'm-user', field: 'text', delta: '今天天气如何' } },
+      state,
+    );
+    assert.deepEqual(out, [], 'user text delta must not emit assistant stream events');
+  });
+
+  it('still renders assistant text after a user message', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent(
+      { type: 'message.updated', properties: { info: { id: 'm-user', role: 'user', sessionID: 's1' } } },
+      state,
+    );
+    mapOpencodeEvent(
+      { type: 'message.part.updated', properties: { part: textPart({ id: 'p-user', messageID: 'm-user', text: 'user prompt' }) } },
+      state,
+    );
+    const startOut = mapOpencodeEvent(
+      { type: 'message.updated', properties: { info: { id: 'm-assistant', role: 'assistant', sessionID: 's1' } } },
+      state,
+    );
+    assert.deepEqual(
+      startOut.map((m) => (m as { type: string; event?: { type: string } }).event?.type ?? m.type),
+      ['message_start'],
+    );
+    const out = mapOpencodeEvent(
+      { type: 'message.part.updated', properties: { part: textPart({ id: 'p-assistant', messageID: 'm-assistant', text: 'assistant reply' }) } },
+      state,
+    );
+    const types = out.map((m) => (m as { type: string; event?: { type: string } }).event?.type ?? m.type);
+    assert.deepEqual(types, ['content_block_start', 'content_block_delta']);
+  });
+});
+
 describe('todos and lifecycle', () => {
   it('maps todo.updated to task_started + task_updated system messages', () => {
     const state = createOpencodeMapperState();
