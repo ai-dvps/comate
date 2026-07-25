@@ -449,13 +449,13 @@ export class SchedulerService {
     const resultText = resultEvent?.result ?? null;
     let failed = errorReason !== undefined || (resultEvent?.isError ?? false);
     let reason = errorReason ?? (failed ? (resultText ?? '执行失败') : null);
-    // Marker classification only applies on the claude backend, where the Stop
-    // hook enforces the marker protocol (injecting continuation until the
-    // model writes GOAL_STATUS or the turn cap is hit). The degraded opencode
-    // path has no evaluator — the wrapped text is only a prompt convention the
-    // model may or may not follow — so there the honest signal is isError.
+    // A model self-reporting BLOCKED is a failure on any backend (text signal).
+    // Requiring the COMPLETE marker applies only on claude, where the Stop hook
+    // enforces the marker protocol (injecting continuation until the model
+    // writes GOAL_STATUS or the turn cap is hit); the degraded opencode path
+    // has no evaluator, so there the honest signal is isError.
     const backend = this.store.getLocalSession(sessionId)?.backend;
-    if (!failed && resultEvent && backend === 'claude') {
+    if (!failed && resultEvent) {
       const text = typeof resultText === 'string' ? resultText : '';
       const blocked = text
         .split('\n')
@@ -464,7 +464,7 @@ export class SchedulerService {
       if (blocked) {
         failed = true;
         reason = blocked;
-      } else if (!text.includes(GOAL_COMPLETE_MARKER)) {
+      } else if (backend === 'claude' && !text.includes(GOAL_COMPLETE_MARKER)) {
         failed = true;
         reason = FAIL_REASON_INCOMPLETE;
       }
