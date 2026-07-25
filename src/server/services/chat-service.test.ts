@@ -979,6 +979,13 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     assert.strictEqual(options.env.WECOM_USER_ID, undefined);
   });
 
+  it('every session disables Claude Code built-in cron (one scheduling system)', async () => {
+    workspaceStore.getSessionUsers = () => [];
+    workspaceStore.getBotUser = () => null;
+    const options = await captureBotOptions({ wecomBotEnabled: true }, 'feishu-user-1');
+    assert.strictEqual(options.env.CLAUDE_CODE_DISABLE_CRON, '1');
+  });
+
   it('GUI session does not set WECOM_USER_ID', async () => {
     workspaceStore.getSessionUsers = () => ['user-1'];
     workspaceStore.getBotUser = () =>
