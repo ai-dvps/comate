@@ -484,13 +484,17 @@ function stageVendoredTree(checkout: string, workDir: string): string {
 // Directory names that are never required at runtime. Vendoring copies whole
 // package directories, so these ride along as dead weight — and some carry
 // non-ASCII fixture names that break the Windows MSI bundler (see below).
+//
+// NOTE: 'doc' / 'docs' are intentionally excluded. The name is too generic:
+// packages such as `yaml` ship runtime-required modules under `dist/doc/`
+// (e.g. directives.js, Document.js). Pruning them breaks module loading at
+// Steel startup. Non-ASCII paths inside doc trees are still caught by the
+// assertNoNonAsciiPaths gate below.
 const NON_RUNTIME_DIR_NAMES = new Set([
   'test',
   'tests',
   '__tests__',
   '__mocks__',
-  'docs',
-  'doc',
   'example',
   'examples',
   'coverage',
@@ -500,14 +504,17 @@ const NON_RUNTIME_DIR_NAMES = new Set([
 const NON_ASCII_NAME = /[^\x20-\x7E]/;
 
 /**
- * Strip directories never needed at runtime: package test/docs/example trees
- * are dead weight (and bloat the 80 MiB budget), and some contain non-ASCII
+ * Strip directories never needed at runtime: package test/example trees are
+ * dead weight (and bloat the 80 MiB budget), and some contain non-ASCII
  * fixture names — e.g. `@fastify/send` ships `test/fixtures/snow ☃`, whose ☃
  * (U+2603) is outside WiX's default code page 1252 and aborts light.exe with
  * LGHT0311. Any directory whose own name is non-ASCII is dropped for the same
  * reason. Walked bottom-up so a pruned parent doesn't disturb sibling traversal.
+ *
+ * We do NOT prune `doc` / `docs`: the name is too generic and some packages
+ * (notably `yaml`) place runtime-required modules there.
  */
-function pruneNonRuntimeDirs(staging: string): void {
+export function pruneNonRuntimeDirs(staging: string): void {
   let removed = 0;
   const walk = (current: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
