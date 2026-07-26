@@ -80,7 +80,7 @@ export function providerDisplayName(providerId: string): string {
     case 'openai':
       return 'Codex CLI'
     case 'google':
-      return 'OpenCode'
+      return 'Open Code'
     case 'other':
       return 'Other'
     case 'unknown':
