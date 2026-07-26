@@ -7,7 +7,7 @@
     "providers": "Providers",
     "wecom": "WeCom Bot",
     "bots": "Bots",
-    "backend": "Backend"
+    "backend": "Agent"
   },
   "general": {
     "archiveThresholdDays": "Archive Threshold (days)",

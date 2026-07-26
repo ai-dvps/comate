@@ -19,7 +19,7 @@
     "back": "Back",
     "history": "Run History",
     "openSession": "Open session",
-    "degraded": "Plain-prompt execution on this backend — no completion check",
+    "degraded": "Plain-prompt execution on this agent — no completion check",
     "close": "Close"
   },
   "form": {

@@ -7,7 +7,7 @@
     "providers": "服务商",
     "wecom": "企业微信机器人",
     "bots": "机器人",
-    "backend": "后端"
+    "backend": "智能体"
   },
   "general": {
     "archiveThresholdDays": "归档阈值（天）",

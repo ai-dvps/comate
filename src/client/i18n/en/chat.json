@@ -254,21 +254,21 @@
     "optionFallback": "Option {{number}}"
   },
   "backend": {
-    "selectorTitle": "Agent backend",
+    "selectorTitle": "Agent",
     "claude": "Claude Code",
-    "opencode": "opencode",
+    "opencode": "Open Code",
     "locked": "Locked to {{backend}}",
-    "unavailableReadOnly": "This session's backend ({{backend}}) is unavailable in this install — read-only.",
-    "noneAvailable": "No backend available",
-    "fallbackNotice": "Default backend unavailable — using {{backend}}",
-    "capabilityUndeclared": "Not available on this backend",
-    "analyticsNotCounted": "opencode sessions are not counted in analytics yet",
-    "defaultDescription": "Default backend for new sessions. Availability reflects the runtime binaries bundled in this install.",
+    "unavailableReadOnly": "This session's agent ({{backend}}) is unavailable in this install — read-only.",
+    "noneAvailable": "No agent available",
+    "fallbackNotice": "Default agent unavailable — using {{backend}}",
+    "capabilityUndeclared": "Not available on this agent",
+    "analyticsNotCounted": "Open Code sessions are not counted in analytics yet",
+    "defaultDescription": "Default agent for new sessions. Availability reflects the runtime binaries bundled in this install.",
     "available": "Available",
     "unavailable": "Unavailable",
     "isDefault": "Default",
-    "tab": "Backend",
-    "hooksNotWired": "Hook scripts are not executed yet on either backend",
-    "scheduledGoalNoEvaluator": "Scheduled runs execute as plain prompt on this backend — no completion check"
+    "tab": "Agent",
+    "hooksNotWired": "Hook scripts are not executed yet on either agent",
+    "scheduledGoalNoEvaluator": "Scheduled runs execute as plain prompt on this agent — no completion check"
   }
 }
