@@ -3263,4 +3263,49 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
       `expected opencode history, got ${texts.join(' | ').slice(0, 120)}`,
     );
   });
+
+  it('opencode rename PATCHes the backend serve and mirrors the title locally (P1)', async () => {
+    const { workspace, session } = await createFixture('gui', 'opencode');
+    // Graduate the draft so updateSession takes the SDK/opencode rename branch,
+    // and stamp a backend session id so the PATCH has a target.
+    workspaceStore.clearDraftFlag(session.id);
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_remote_rename');
+
+    const patched: Array<{ path: string; method: string; body: unknown }> = [];
+    __setOpencodeFetchForTesting((async (_instance: unknown, path: string, init?: RequestInit) => {
+      patched.push({ path, method: init?.method ?? 'GET', body: init?.body });
+      return new Response(JSON.stringify({ id: 'ses_remote_rename', title: 'New Title' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as never);
+
+    const updated = await service.updateSession(session.id, { name: 'New Title' }, workspace.id);
+    assert.ok(
+      patched.some((p) => p.method === 'PATCH' && p.path === '/session/ses_remote_rename'),
+      `expected PATCH /session/ses_remote_rename, got ${JSON.stringify(patched)}`,
+    );
+    assert.strictEqual(
+      JSON.parse(patched.find((p) => p.method === 'PATCH')!.body as string).title,
+      'New Title',
+    );
+    assert.strictEqual(updated?.name, 'New Title');
+    assert.strictEqual(updated?.customTitle, 'New Title');
+
+    // The opencode store is the source of truth — the local mirror must also be persisted.
+    const reloaded = workspaceStore.getLocalSession(session.id);
+    assert.strictEqual(reloaded?.name, 'New Title');
+    assert.strictEqual(reloaded?.customTitle, 'New Title');
+  });
+
+  it('opencode rename without a backend session id fails closed (P1)', async () => {
+    const { workspace, session } = await createFixture('gui', 'opencode');
+    workspaceStore.clearDraftFlag(session.id);
+    // No updateSessionBackendSessionId — rename must fail rather than fall through
+    // to the claude SDK renameSession (which would throw the project-dir error).
+    await assert.rejects(
+      () => service.updateSession(session.id, { name: 'Whatever' }, workspace.id),
+      /backend session id/i,
+    );
+  });
 });

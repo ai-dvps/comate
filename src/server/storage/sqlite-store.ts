@@ -1714,7 +1714,7 @@ export class SqliteStore {
     return session;
   }
 
-  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null; fastMode?: boolean }): ChatSession | null {
+  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null; fastMode?: boolean; customTitle?: string | null }): ChatSession | null {
     const existing = this.getLocalSession(id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -1722,6 +1722,10 @@ export class SqliteStore {
     if (input.name !== undefined) {
       sets.push('name = ?');
       values.push(input.name);
+    }
+    if (input.customTitle !== undefined) {
+      sets.push('custom_title = ?');
+      values.push(input.customTitle ?? null);
     }
     if (input.isWip !== undefined) {
       sets.push('is_wip = ?');

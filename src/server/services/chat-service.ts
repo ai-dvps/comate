@@ -469,8 +469,19 @@ export class ChatService {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
     }
 
+    const isOpencodeBackend = localSession?.backend === 'opencode';
+
     if (input.name) {
-      await this.sdkClient.renameSession(id, input.name, { dir: workspace.folderPath });
+      if (isOpencodeBackend) {
+        // opencode stores its own session title in its sqlite store; route the
+        // rename through the opencode serve's PATCH /session/{id} so the title
+        // is persisted on the backend side (and survives a Comate restart).
+        // The claude-flavored SDK renameSession would fail here because the
+        // session id has no matching .jsonl transcript.
+        await this.renameOpencodeSession(id, localSession, input.name, workspace);
+      } else {
+        await this.sdkClient.renameSession(id, input.name, { dir: workspace.folderPath });
+      }
     }
 
     // Also update local DB for providerId and isArchived changes on non-draft sessions
@@ -478,6 +489,12 @@ export class ChatService {
     if (input.providerId !== undefined) localUpdates.providerId = input.providerId;
     if (input.isArchived !== undefined) localUpdates.isArchived = input.isArchived;
     if (input.fastMode !== undefined) localUpdates.fastMode = input.fastMode;
+    // For opencode sessions the title lives on the backend; mirror it locally
+    // (name + custom_title) so the UI reflects the change without a round-trip.
+    if (input.name && isOpencodeBackend) {
+      localUpdates.name = input.name;
+      localUpdates.customTitle = input.name;
+    }
     if (Object.keys(localUpdates).length > 0) {
       workspaceStore.updateLocalSession(id, localUpdates);
     }
@@ -491,6 +508,14 @@ export class ChatService {
           console.error(`Failed to close runtime ${id} during provider switch:`, err);
         });
       }
+    }
+
+    // opencode sessions have no claude .jsonl transcript, so getSessionInfo
+    // (which scans project dirs for {id}.jsonl) would throw — return the
+    // locally-mirrored session instead.
+    if (isOpencodeBackend) {
+      const local = workspaceStore.getLocalSession(id);
+      if (local) return local;
     }
 
     // Return updated session info
@@ -507,6 +532,48 @@ export class ChatService {
       return session;
     }
     return workspaceStore.getLocalSession(id);
+  }
+
+  /**
+   * Rename an opencode-backed session by PATCHing its serve's
+   * /session/{backendSessionId} with `{ title }`. Spawns a serve for a closed
+   * session when none is live (mirrors loadOpencodeSessionMessages) — the
+   * opencode store is the source of truth for the title and must be updated
+   * even when the runtime is cold.
+   */
+  private async renameOpencodeSession(
+    comateSessionId: string,
+    localSession: { backendSessionId?: string } | null | undefined,
+    title: string,
+    workspace: Workspace,
+  ): Promise<void> {
+    const backendSessionId = localSession?.backendSessionId;
+    if (!backendSessionId) {
+      throw new ChatError(
+        'opencode session has no backend session id yet; cannot rename',
+        'BACKEND_SESSION_MISSING',
+        409,
+      );
+    }
+    const instance = await this.ensureOpencodeServe(comateSessionId, workspace);
+    if (!instance) {
+      throw new ChatError(
+        'opencode serve unavailable; cannot rename session',
+        'OPENCODE_SERVE_UNAVAILABLE',
+        503,
+      );
+    }
+    const res = await this.ocFetch(instance, `/session/${backendSessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    });
+    if (!res.ok) {
+      throw new ChatError(
+        `opencode rename failed: ${res.status} ${await res.text().catch(() => '')}`.trim(),
+        'OPENCODE_RENAME_FAILED',
+        502,
+      );
+    }
   }
 
   async deleteSession(id: string, workspaceId: string): Promise<boolean> {
