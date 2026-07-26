@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Opencode backend echoing the first user message** — `opencode serve` emits the user message as a `message.part.updated` event before the assistant response. The event mapper was rendering every text part as assistant content, so the user's own prompt appeared as an identical reply and any empty model output left no further response. The mapper now tracks each message's role and only renders parts that belong to assistant messages.
+- **Renaming an opencode session failed with "Session … not found in project directory"** — `updateSession` always called the Claude Code SDK's `renameSession`, which scans project dirs for a `.jsonl` transcript that opencode sessions never have. Opencode-backed sessions now rename via their serve's `PATCH /session/{id}` (persisting the title in opencode's own store), the new title is mirrored into the local `name`/`custom_title`, and the post-rename `getSessionInfo` re-read is skipped for opencode (it would throw the same project-dir error).
 
 ## [0.0.27] - 2026-07-25
 
