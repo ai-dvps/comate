@@ -429,6 +429,114 @@ export class BotService {
     });
   }
 
+  /**
+   * Atomically reassign a channel's owner to an existing member. The target
+   * becomes owner and the previous owner is demoted to admin in one store
+   * transaction, so a failure between the two updates can never leave a channel
+   * with zero or two owners. No-op when the target already owns the channel.
+   * The per-channel owner guards on addMember/setMemberRole/removeMember stay
+   * intact for every non-transfer path.
+   */
+  transferChannelOwnership(
+    botId: string,
+    channelKey: BotChannelKey,
+    newOwnerChannelUserId: string,
+    actor: BotActor = systemActor(),
+  ): BotUser[] {
+    const bot = this.store.getBot(botId);
+    if (!bot) {
+      throw new BotNotFoundError(botId);
+    }
+
+    this.requireChannelOwner(botId, channelKey, actor);
+
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) {
+      throw new BotValidationError(`Channel ${channelKey} not found`);
+    }
+
+    const newOwner = this.store.getBotUserByChannelIdentity(botId, channel.id, newOwnerChannelUserId);
+    if (!newOwner) {
+      throw new BotUserNotFoundError(botId, channelKey, newOwnerChannelUserId);
+    }
+
+    if (newOwner.roleKey === 'owner') {
+      return this.store.listBotUsers(botId);
+    }
+
+    const ownerRole = this.store.getBotRoleByKey(botId, 'owner');
+    const adminRole = this.store.getBotRoleByKey(botId, 'admin');
+    if (!ownerRole || !adminRole) {
+      throw new BotValidationError('Owner or admin role not found');
+    }
+
+    const currentOwner = this.store
+      .listBotUsersByChannel(botId, channel.id)
+      .find((u) => u.roleKey === 'owner');
+
+    this.store.runInTransaction(() => {
+      this.store.updateBotUser(newOwner.id, { roleId: ownerRole.id });
+      if (currentOwner) {
+        this.store.updateBotUser(currentOwner.id, { roleId: adminRole.id });
+      }
+    });
+
+    this.auditLogger.log(botId, actor, 'user_role_changed', {
+      channel: channelKey,
+      channelUserId: newOwnerChannelUserId,
+      previousRole: newOwner.roleKey,
+      newRole: 'owner',
+      transferredFrom: currentOwner?.channelUserId ?? null,
+    });
+
+    return this.store.listBotUsers(botId);
+  }
+
+  /**
+   * Promote the first sender of an owner-less channel to owner. Idempotent and
+   * safe to call on every inbound message: if the channel already has an owner,
+   * or the user is not yet a member, it does nothing. The check-then-set runs in
+   * one store transaction so two near-simultaneous first senders cannot both
+   * win. Owner grants tool/skill/bash bypass plus /workspace authority, so every
+   * promotion is logged and emitted as a diagnostic warning for incident response.
+   */
+  autoAssignOwnerIfAbsent(
+    botId: string,
+    channelKey: BotChannelKey,
+    channelUserId: string,
+  ): void {
+    const bot = this.store.getBot(botId);
+    if (!bot) return;
+
+    const channel = this.store.getBotChannelByKey(botId, channelKey);
+    if (!channel) return;
+
+    const ownerRole = this.store.getBotRoleByKey(botId, 'owner');
+    if (!ownerRole) return;
+
+    const promoted = this.store.runInTransaction(() => {
+      const users = this.store.listBotUsersByChannel(botId, channel.id);
+      if (users.some((u) => u.roleKey === 'owner')) return null;
+      const target = users.find((u) => u.channelUserId === channelUserId);
+      if (!target) return null;
+      this.store.updateBotUser(target.id, { roleId: ownerRole.id });
+      return target;
+    });
+
+    if (!promoted) return;
+
+    diagLog(
+      `[BotService] auto-assigned channel owner bot=${botId} channel=${channelKey} user=${channelUserId} (gains owner privilege)`,
+    );
+    this.auditLogger.log(botId, { type: 'system' }, 'user_role_changed', {
+      channel: channelKey,
+      channelUserId,
+      previousRole: promoted.roleKey,
+      newRole: 'owner',
+      autoAssigned: true,
+    });
+  }
+
   // Workspace-scoped helpers for backward-compatible routes
 
   getBotForWorkspace(workspaceId: string): Bot | null {

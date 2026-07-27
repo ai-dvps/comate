@@ -6,6 +6,7 @@ import {
   BotAuthorizationError,
   BotNotFoundError,
   BotService,
+  BotUserNotFoundError,
   BotValidationError,
   BotWorkspaceBoundError,
 } from './bot-service.js';
@@ -509,6 +510,116 @@ describe('BotService', { concurrency: false }, () => {
       const member = service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-1', roleKey: 'normal', plaintextUserId: 'plain-1' });
       assert.strictEqual(member.plaintextUserId, 'plain-1');
       assert.strictEqual(member.resolutionStatus, 'resolved');
+    });
+  });
+
+  describe('transferChannelOwnership', () => {
+    it('promotes the target to owner and demotes the prior owner to admin', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'b', roleKey: 'normal' });
+
+      service.transferChannelOwnership(bot.id, 'wecom', 'b');
+
+      const owners = service.listMembers(bot.id).filter((m) => m.channelKey === 'wecom' && m.roleKey === 'owner');
+      assert.strictEqual(owners.length, 1, 'exactly one wecom owner after transfer');
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'b'), 'owner');
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'a'), 'admin');
+    });
+
+    it('is a no-op when the target is already the owner', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+
+      service.transferChannelOwnership(bot.id, 'wecom', 'a');
+
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'a'), 'owner');
+      const owners = service.listMembers(bot.id).filter((m) => m.channelKey === 'wecom' && m.roleKey === 'owner');
+      assert.strictEqual(owners.length, 1);
+    });
+
+    it('promotes the target on an owner-less channel and demotes no one', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'normal' });
+
+      service.transferChannelOwnership(bot.id, 'wecom', 'a');
+
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'a'), 'owner');
+    });
+
+    it('throws BotUserNotFoundError when the target is not a member of the channel', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+
+      assert.throws(
+        () => service.transferChannelOwnership(bot.id, 'wecom', 'absent'),
+        BotUserNotFoundError,
+      );
+      // Prior owner unchanged when the target is invalid.
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'a'), 'owner');
+    });
+
+    it('emits an audit-log entry for the transfer', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'b', roleKey: 'normal' });
+
+      service.transferChannelOwnership(bot.id, 'wecom', 'b');
+
+      const logs = store.listAuditLogs(bot.id);
+      assert.ok(logs.some((l) => l.eventType === 'user_role_changed'));
+    });
+
+    it('still rejects adding a second owner via setMemberRole on the normal path', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'b', roleKey: 'normal' });
+
+      assert.throws(
+        () => service.setMemberRole(bot.id, 'wecom', 'b', 'owner'),
+        (err: Error) => err.name === 'BotAuthorizationError',
+      );
+    });
+  });
+
+  describe('autoAssignOwnerIfAbsent', () => {
+    it('promotes the given user on an owner-less channel', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'normal' });
+
+      service.autoAssignOwnerIfAbsent(bot.id, 'wecom', 'a');
+
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'a'), 'owner');
+    });
+
+    it('leaves roles unchanged when the channel already has an owner', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'b', roleKey: 'normal' });
+
+      service.autoAssignOwnerIfAbsent(bot.id, 'wecom', 'b');
+
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'a'), 'owner');
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'b'), 'normal');
+    });
+
+    it('does nothing when the user is not yet a member', () => {
+      const bot = createBotWithDefaults(service);
+
+      service.autoAssignOwnerIfAbsent(bot.id, 'wecom', 'ghost');
+
+      assert.strictEqual(service.listMembers(bot.id).length, 0);
+    });
+
+    it('promotes an existing normal member on an owner-less channel (migrated-channel path)', () => {
+      const bot = createBotWithDefaults(service);
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'normal' });
+      service.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'b', roleKey: 'normal' });
+
+      service.autoAssignOwnerIfAbsent(bot.id, 'wecom', 'b');
+
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'b'), 'owner');
+      assert.strictEqual(service.getMemberRole(bot.id, 'wecom', 'a'), 'normal');
     });
   });
 });
