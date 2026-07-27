@@ -34,10 +34,12 @@ export interface CreateTodoOptions {
 interface TodoState {
   todos: Todo[];
   isLoading: boolean;
+  isSyncing: boolean;
   error: string | null;
   searchQuery: string;
 
   fetchTodos: () => Promise<void>;
+  syncTodos: () => Promise<void>;
   createTodo: (text: string, options?: CreateTodoOptions) => Promise<Todo | null>;
   updateTodo: (todoId: string, patch: Partial<Todo>) => Promise<Todo | null>;
   deleteTodo: (todoId: string) => Promise<boolean>;
@@ -63,6 +65,7 @@ function sortTodos(todos: Todo[]): Todo[] {
 export const useTodoStore = create<TodoState>((set, get) => ({
   todos: [],
   isLoading: false,
+  isSyncing: false,
   error: null,
   searchQuery: '',
 
@@ -78,6 +81,25 @@ export const useTodoStore = create<TodoState>((set, get) => ({
         error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'),
         isLoading: false,
       });
+    }
+  },
+
+  // On-demand GitHub sync (panel-open / manual refresh). Triggers the
+  // server reconcile, then reloads the list so mirrored changes appear (F3).
+  syncTodos: async () => {
+    set({ isSyncing: true, error: null });
+    try {
+      const res = await fetch('/api/todos/sync', { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || i18next.t('todos:syncFailed', 'Failed to sync'));
+      }
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error') });
+    } finally {
+      // Always reload after a sync attempt so the UI reflects persisted state.
+      await get().fetchTodos();
+      set({ isSyncing: false });
     }
   },
 

@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
+import { todoSyncService, SyncError } from '../services/todo-sync.js';
+import { redactGithubError } from '../services/github-types.js';
+import { diagLog } from '../utils/diag-logger.js';
 import type { CreateTodoInput, UpdateTodoInput } from '../models/todo.js';
 
 const router = Router({ mergeParams: true });
@@ -17,6 +20,17 @@ function validateTodoText(text: unknown): string | null {
   if (typeof text !== 'string' || text.trim().length === 0) return 'text is required';
   if (text.trim().length > 2000) return 'text must be 2000 characters or less';
   return null;
+}
+
+/** Redact any GitHub-derived error before it reaches a logger or response (R13). */
+function handleSyncError(res: { status(code: number): unknown; json(body: unknown): void }, err: unknown, fallback: string): void {
+  if (err instanceof SyncError) {
+    res.status(err.status).json({ error: err.message });
+    return;
+  }
+  const redacted = redactGithubError(err);
+  diagLog('[todos] ' + fallback + ': ' + JSON.stringify(redacted));
+  res.status(500).json({ error: fallback });
 }
 
 // GET /api/todos (global) or /api/workspaces/:id/todos (workspace-scoped)
@@ -88,6 +102,71 @@ router.delete('/:todoId', async (req, res) => {
   } catch (error) {
     console.error('Failed to delete todo:', error);
     res.status(500).json({ error: 'Failed to delete todo' });
+  }
+});
+
+// POST /api/todos/sync — on-demand reconcile (panel-open / manual refresh). F3.
+router.post('/sync', async (_req, res) => {
+  try {
+    const result = await todoSyncService.reconcile();
+    res.json({ sync: result });
+  } catch (err) {
+    handleSyncError(res, err, 'Failed to sync todos');
+  }
+});
+
+// POST /api/todos/pull — pull a GitHub issue into a local replica (F2).
+router.post('/pull', async (req, res) => {
+  try {
+    const body = req.body as { repo?: string; issueNumber?: number; workspaceId?: string | null } | undefined;
+    if (!body?.repo || typeof body.issueNumber !== 'number') {
+      res.status(400).json({ error: 'repo and issueNumber are required' });
+      return;
+    }
+    const todo = await todoSyncService.pull(body.repo, body.issueNumber, body.workspaceId ?? null);
+    res.status(201).json({ todo });
+  } catch (err) {
+    handleSyncError(res, err, 'Failed to pull issue');
+  }
+});
+
+// GET /api/todos/:todoId/comments — merged comment stream (append-only, R10).
+router.get('/:todoId/comments', (req, res) => {
+  try {
+    res.json({ comments: store.listTodoComments(req.params.todoId) });
+  } catch (err) {
+    handleSyncError(res, err, 'Failed to list comments');
+  }
+});
+
+// POST /api/todos/:todoId/comments — add a local comment (pushed outward on next sync).
+router.post('/:todoId/comments', (req, res) => {
+  try {
+    const body = req.body as { body?: string; author?: string } | undefined;
+    if (!body?.body || body.body.trim().length === 0) {
+      res.status(400).json({ error: 'body is required' });
+      return;
+    }
+    const todo = store.getTodoById(req.params.todoId);
+    if (!todo) {
+      res.status(404).json({ error: 'Todo not found' });
+      return;
+    }
+    const comment = store.addLocalTodoComment(req.params.todoId, body.body.trim(), body.author?.trim() || 'you');
+    res.status(201).json({ comment });
+  } catch (err) {
+    handleSyncError(res, err, 'Failed to add comment');
+  }
+});
+
+// POST /api/todos/:todoId/publish — publish a local todo to a GitHub issue (F1).
+router.post('/:todoId/publish', async (req, res) => {
+  try {
+    const repo = (req.body as { repo?: string } | undefined)?.repo;
+    const todo = await todoSyncService.publish(req.params.todoId, repo);
+    res.status(201).json({ todo });
+  } catch (err) {
+    handleSyncError(res, err, 'Failed to publish todo');
   }
 });
 

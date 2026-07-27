@@ -24,7 +24,7 @@ import type {
   UpdateBotUserInput,
 } from '../models/bot-user.js';
 import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
-import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin } from '../models/todo.js';
+import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin, TodoComment, TodoConflict } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import { providerSupportsFastMode } from '../utils/provider-capability.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
@@ -362,6 +362,31 @@ export class SqliteStore {
         repo_full_name TEXT PRIMARY KEY,
         repo_last_updated_at TEXT,
         etag TEXT
+      )
+    `);
+    // U5: append-only comments (bidirectional merge, R10) + structural-field
+    // conflicts (R11, detected by U5, resolved by U6). Additive, idempotent.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS todo_comments (
+        id TEXT PRIMARY KEY,
+        todo_id TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        remote_id INTEGER,
+        author TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        pushed INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS todo_conflicts (
+        todo_id TEXT NOT NULL,
+        field TEXT NOT NULL,
+        local_value TEXT NOT NULL,
+        remote_value TEXT NOT NULL,
+        baseline_value TEXT,
+        detected_at TEXT NOT NULL,
+        PRIMARY KEY (todo_id, field)
       )
     `);
     this.db.exec(`
@@ -2191,6 +2216,169 @@ export class SqliteStore {
     return row ? parseTodoRow(row) : null;
   }
 
+  // -------------------------------------------------------------------------
+  // U5 sync storage: per-repo cursor, repo lookups, comments, conflicts.
+  // -------------------------------------------------------------------------
+
+  getRepoSyncState(repo: string): { repoLastUpdatedAt: string | null; etag: string | null } | null {
+    const row = this.db
+      .prepare('SELECT repo_last_updated_at, etag FROM repo_sync_state WHERE repo_full_name = ?')
+      .get(repo) as { repo_last_updated_at: string | null; etag: string | null } | undefined;
+    return row ? { repoLastUpdatedAt: row.repo_last_updated_at, etag: row.etag } : null;
+  }
+
+  setRepoSyncState(repo: string, state: { repoLastUpdatedAt: string | null; etag: string | null }): void {
+    this.db
+      .prepare(
+        `INSERT INTO repo_sync_state (repo_full_name, repo_last_updated_at, etag)
+         VALUES (?, ?, ?)
+         ON CONFLICT(repo_full_name) DO UPDATE SET
+           repo_last_updated_at = excluded.repo_last_updated_at,
+           etag = excluded.etag`,
+      )
+      .run(repo, state.repoLastUpdatedAt, state.etag);
+  }
+
+  /** The local todo linked to a repo/issue, or null (pull dedupe — F2). */
+  findTodoByRepoIssue(repo: string, issueNumber: number): Todo | null {
+    const row = this.db
+      .prepare('SELECT * FROM todos WHERE repo_full_name = ? AND issue_number = ?')
+      .get(repo, issueNumber) as RawTodoRow | undefined;
+    return row ? parseTodoRow(row) : null;
+  }
+
+  /** All todos linked to a repo (the reconcile working set for that repo). */
+  getTodosByRepo(repo: string): Todo[] {
+    const rows = this.db
+      .prepare('SELECT * FROM todos WHERE repo_full_name = ? ORDER BY created_at DESC')
+      .all(repo) as RawTodoRow[];
+    return rows.map(parseTodoRow);
+  }
+
+  /** Distinct repo full names that have at least one linked todo (reconcile scoping). */
+  getLinkedRepos(): string[] {
+    const rows = this.db
+      .prepare("SELECT DISTINCT repo_full_name FROM todos WHERE repo_full_name IS NOT NULL")
+      .all() as Array<{ repo_full_name: string }>;
+    return rows.map((r) => r.repo_full_name);
+  }
+
+  listTodoComments(todoId: string): TodoComment[] {
+    const rows = this.db
+      .prepare('SELECT * FROM todo_comments WHERE todo_id = ? ORDER BY created_at ASC')
+      .all(todoId) as Array<{
+      id: string;
+      todo_id: string;
+      origin: string;
+      remote_id: number | null;
+      author: string;
+      body: string;
+      created_at: string;
+      pushed: number;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      todoId: r.todo_id,
+      origin: r.origin as 'local' | 'github',
+      remoteId: r.remote_id,
+      author: r.author,
+      body: r.body,
+      createdAt: r.created_at,
+      pushed: r.pushed === 1,
+    }));
+  }
+
+  listUnpushedTodoComments(todoId: string): TodoComment[] {
+    return this.listTodoComments(todoId).filter((c) => c.origin === 'local' && !c.pushed);
+  }
+
+  addLocalTodoComment(todoId: string, body: string, author: string): TodoComment {
+    const comment: TodoComment = {
+      id: uuidv4(),
+      todoId,
+      origin: 'local',
+      remoteId: null,
+      author,
+      body,
+      createdAt: new Date().toISOString(),
+      pushed: false,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO todo_comments (id, todo_id, origin, remote_id, author, body, created_at, pushed)
+         VALUES (?, ?, 'local', NULL, ?, ?, ?, 0)`,
+      )
+      .run(comment.id, todoId, author, body, comment.createdAt);
+    return comment;
+  }
+
+  /** Insert a pulled GitHub comment unless already present (dedupe by remote_id, any origin —
+   *  a just-pushed local comment carries that remote_id and must not be mirrored twice). */
+  upsertRemoteTodoComment(todoId: string, remoteId: number, author: string, body: string, createdAt: string): void {
+    const exists = this.db
+      .prepare('SELECT 1 FROM todo_comments WHERE todo_id = ? AND remote_id = ?')
+      .get(todoId, remoteId);
+    if (exists) return;
+    this.db
+      .prepare(
+        `INSERT INTO todo_comments (id, todo_id, origin, remote_id, author, body, created_at, pushed)
+         VALUES (?, ?, 'github', ?, ?, ?, ?, 1)`,
+      )
+      .run(uuidv4(), todoId, remoteId, author, body, createdAt);
+  }
+
+  /** Mark a local comment pushed and record its GitHub-side id so the pull does not re-mirror it. */
+  markTodoCommentPushed(commentId: string, remoteId: number | null): void {
+    this.db.prepare('UPDATE todo_comments SET pushed = 1, remote_id = ? WHERE id = ?').run(remoteId, commentId);
+  }
+
+  getTodoConflicts(todoId: string): TodoConflict[] {
+    const rows = this.db.prepare('SELECT * FROM todo_conflicts WHERE todo_id = ?').all(todoId) as Array<{
+      todo_id: string;
+      field: string;
+      local_value: string;
+      remote_value: string;
+      baseline_value: string | null;
+      detected_at: string;
+    }>;
+    return rows.map((r) => ({
+      todoId: r.todo_id,
+      field: r.field as 'title' | 'body',
+      localValue: r.local_value,
+      remoteValue: r.remote_value,
+      baselineValue: r.baseline_value,
+      detectedAt: r.detected_at,
+    }));
+  }
+
+  setTodoConflict(
+    todoId: string,
+    field: 'title' | 'body',
+    localValue: string,
+    remoteValue: string,
+    baselineValue: string | null,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO todo_conflicts (todo_id, field, local_value, remote_value, baseline_value, detected_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(todo_id, field) DO UPDATE SET
+           local_value = excluded.local_value,
+           remote_value = excluded.remote_value,
+           baseline_value = excluded.baseline_value,
+           detected_at = excluded.detected_at`,
+      )
+      .run(todoId, field, localValue, remoteValue, baselineValue, new Date().toISOString());
+  }
+
+  clearTodoConflict(todoId: string, field?: 'title' | 'body'): void {
+    if (field) {
+      this.db.prepare('DELETE FROM todo_conflicts WHERE todo_id = ? AND field = ?').run(todoId, field);
+    } else {
+      this.db.prepare('DELETE FROM todo_conflicts WHERE todo_id = ?').run(todoId);
+    }
+  }
+
   updateTodo(id: string, input: UpdateTodoInput): Todo | null {
     const existing = this.getTodoById(id);
     if (!existing) return null;
@@ -2229,6 +2417,10 @@ export class SqliteStore {
 
   deleteTodo(id: string): boolean {
     const result = this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+    if (result.changes > 0) {
+      this.db.prepare('DELETE FROM todo_comments WHERE todo_id = ?').run(id);
+      this.db.prepare('DELETE FROM todo_conflicts WHERE todo_id = ?').run(id);
+    }
     return result.changes > 0;
   }
 
