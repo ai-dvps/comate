@@ -62,5 +62,8 @@
   "conflictFieldTitle": "Title",
   "conflictFieldBody": "Body",
   "conflictAcceptLocal": "Keep local",
-  "conflictAcceptRemote": "Take remote"
+  "conflictAcceptRemote": "Take remote",
+  "spawnSession": "Start session",
+  "spawnPickWorkspace": "Pick a workspace…",
+  "detailHasSession": "Linked to a session"
 }
