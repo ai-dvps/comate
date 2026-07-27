@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Nothing yet.
+- **Bot channel owner lifecycle** — a bot no longer requires an "Initial owner user ID" at creation time. That field asked for the encrypted WeCom/Feishu channel user ID, which is unknowable until the first inbound message, so it could never be filled with a valid value. Channels now start owner-less: the first sender on each owner-less channel is auto-promoted to owner, and an operator can reassign a channel's owner to any other member from the members UI (previously the owner was effectively immutable once set). Auto-promotion and transfers are wrapped in a store transaction and logged for auditing. Note: owner grants tool/skill/bash bypass and `/workspace` authority, so auto-promotion is a privilege grant to whoever messages first — review the members UI and transfer if the first sender was unintended.
 
 ### Fixed
 
