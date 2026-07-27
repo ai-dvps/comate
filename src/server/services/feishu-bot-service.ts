@@ -631,6 +631,12 @@ export class FeishuBotService {
 
         // Auto-add first-time messengers as normal bot members.
         this.ensureBotUser(connection.botId, 'feishu', feishuUserId);
+        // First sender of an owner-less channel becomes its owner (idempotent).
+        try {
+          botService.autoAssignOwnerIfAbsent(connection.botId, 'feishu', feishuUserId);
+        } catch (err) {
+          console.error(`[FeishuBotService] failed to auto-assign owner ${feishuUserId} for bot ${connection.botId}:`, err);
+        }
       }
 
       diagLog(
