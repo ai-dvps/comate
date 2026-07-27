@@ -14,6 +14,7 @@ describe('BotUserList', () => {
   beforeEach(() => {
     cleanup();
     baseProps.onSetRole.mockClear();
+    baseProps.onTransferOwnership.mockClear();
     baseProps.onRemoveMember.mockClear();
     baseProps.onSetPlaintext.mockClear();
   });
@@ -26,6 +27,7 @@ describe('BotUserList', () => {
     botId: 'bot-1',
     members: [],
     onSetRole: vi.fn().mockResolvedValue(undefined),
+    onTransferOwnership: vi.fn().mockResolvedValue(undefined),
     onRemoveMember: vi.fn().mockResolvedValue(undefined),
     onRefreshMembers: vi.fn().mockResolvedValue(undefined),
     onResolvePending: vi.fn().mockResolvedValue(undefined),
@@ -64,6 +66,45 @@ describe('BotUserList', () => {
     await waitFor(() => {
       expect(baseProps.onSetRole).toHaveBeenCalledWith('wecom', 'u-1', 'admin');
     });
+  });
+
+  it('transfers ownership after confirmation when picking owner on a channel that already has one', async () => {
+    const members: BotUser[] = [
+      { id: 'u1', botId: 'bot-1', channelId: 'chan-1', roleId: 'role-1', channelKey: 'wecom', channelUserId: 'u-owner', roleKey: 'owner', createdAt: '', updatedAt: '', plaintextUserId: null, displayName: null, resolutionStatus: 'pending' },
+      { id: 'u2', botId: 'bot-1', channelId: 'chan-1', roleId: 'role-1', channelKey: 'wecom', channelUserId: 'u-normal', roleKey: 'normal', createdAt: '', updatedAt: '', plaintextUserId: null, displayName: null, resolutionStatus: 'pending' },
+    ];
+    renderWithI18n(<BotUserList {...baseProps} members={members} />);
+
+    // Open the non-owner member's role select and pick Owner.
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(screen.getByRole('option', { name: 'Owner' }));
+
+    // Confirm dialog appears naming the prior owner; nothing transferred yet.
+    expect(screen.getByText(/will become an admin/)).toBeInTheDocument();
+    expect(baseProps.onTransferOwnership).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => {
+      expect(baseProps.onTransferOwnership).toHaveBeenCalledWith('wecom', 'u-normal');
+    });
+    // Direct role-set was not used for the swap.
+    expect(baseProps.onSetRole).not.toHaveBeenCalled();
+  });
+
+  it('assigns owner directly on an owner-less channel without a transfer dialog', async () => {
+    const members: BotUser[] = [
+      { id: 'u1', botId: 'bot-1', channelId: 'chan-1', roleId: 'role-1', channelKey: 'wecom', channelUserId: 'u-1', roleKey: 'normal', createdAt: '', updatedAt: '', plaintextUserId: null, displayName: null, resolutionStatus: 'pending' },
+    ];
+    renderWithI18n(<BotUserList {...baseProps} members={members} />);
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(screen.getByRole('option', { name: 'Owner' }));
+
+    await waitFor(() => {
+      expect(baseProps.onSetRole).toHaveBeenCalledWith('wecom', 'u-1', 'owner');
+    });
+    expect(baseProps.onTransferOwnership).not.toHaveBeenCalled();
   });
 
   it('renders owner badge and no role select for owner rows', () => {

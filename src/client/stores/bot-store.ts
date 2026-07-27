@@ -126,6 +126,7 @@ export interface BotState {
   fetchMembers: (botId: string) => Promise<void>;
   addMember: (botId: string, input: { channel: BotChannel; channelUserId: string; role: BotRole }) => Promise<BotUser | null>;
   setMemberRole: (botId: string, channel: BotChannel, channelUserId: string, role: BotRole) => Promise<boolean>;
+  transferOwnership: (botId: string, channel: BotChannel, newOwnerChannelUserId: string) => Promise<boolean>;
   removeMember: (botId: string, channel: BotChannel, channelUserId: string) => Promise<boolean>;
   resolvePendingMembers: (botId: string) => Promise<{ resolved: number; failed: number } | null>;
   setMemberPlaintext: (
@@ -315,6 +316,28 @@ export const useBotStore = create<BotState>((set, get) => ({
             m.channelKey === channel && m.channelUserId === channelUserId ? { ...m, roleKey: role } : m,
           ),
         },
+        isSaving: false,
+      });
+      return true;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err), isSaving: false });
+      return false;
+    }
+  },
+
+  transferOwnership: async (botId, channel, newOwnerChannelUserId) => {
+    set({ isSaving: true, error: null });
+    try {
+      const res = await fetch(
+        `${API_BASE}/bots/${botId}/members/${encodeURIComponent(newOwnerChannelUserId)}/transfer-ownership?channel=${channel}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+      );
+      if (!res.ok) throw new Error(await handleError(res));
+      // The endpoint returns the refreshed member list; trust it over an optimistic
+      // local rewrite so the new owner and the demoted prior owner are both correct.
+      const data = (await res.json()) as { members: BotUser[] };
+      set({
+        membersByBotId: { ...get().membersByBotId, [botId]: data.members },
         isSaving: false,
       });
       return true;

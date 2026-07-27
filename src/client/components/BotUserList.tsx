@@ -11,6 +11,7 @@ interface BotUserListProps {
   isSaving?: boolean;
   error?: string | null;
   onSetRole: (channel: BotChannel, channelUserId: string, role: BotRole) => Promise<unknown>;
+  onTransferOwnership: (channel: BotChannel, newOwnerChannelUserId: string) => Promise<unknown>;
   onRemoveMember: (channel: BotChannel, channelUserId: string) => Promise<unknown>;
   onRefreshMembers: () => Promise<unknown>;
   onResolvePending: () => Promise<unknown>;
@@ -26,6 +27,7 @@ export default function BotUserList({
   isSaving,
   error,
   onSetRole,
+  onTransferOwnership,
   onRemoveMember,
   onRefreshMembers,
   onResolvePending,
@@ -35,6 +37,12 @@ export default function BotUserList({
   const [formError, setFormError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [confirmRemoveKey, setConfirmRemoveKey] = useState<string | null>(null);
+  const [transferTarget, setTransferTarget] = useState<{
+    channel: BotChannel;
+    newOwnerChannelUserId: string;
+    priorOwnerChannelUserId: string | null;
+  } | null>(null);
+  const [transferring, setTransferring] = useState(false);
   const [editingPlaintext, setEditingPlaintext] = useState<Record<string, string>>({});
   const [savingPlaintextKey, setSavingPlaintextKey] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -43,6 +51,7 @@ export default function BotUserList({
   useEffect(() => {
     setFormError(null);
     setConfirmRemoveKey(null);
+    setTransferTarget(null);
     setEditingPlaintext({});
     setSavingPlaintextKey(null);
   }, [botId]);
@@ -71,6 +80,20 @@ export default function BotUserList({
     setConfirmRemoveKey(null);
     await onRemoveMember(member.channelKey, member.channelUserId);
     setRemoving(null);
+  };
+
+  // Picking "owner" for a non-owner member in a channel that already has an
+  // owner opens a confirm: the prior owner is demoted to admin atomically. On
+  // an owner-less channel it assigns the owner directly (no demotion).
+  const handleConfirmTransfer = async () => {
+    if (!transferTarget) return;
+    setTransferring(true);
+    try {
+      await onTransferOwnership(transferTarget.channel, transferTarget.newOwnerChannelUserId);
+    } finally {
+      setTransferring(false);
+      setTransferTarget(null);
+    }
   };
 
   const handleRefresh = async () => {
@@ -245,6 +268,9 @@ export default function BotUserList({
                 {items.map((member) => {
                   const key = `${member.channelKey}:${member.channelUserId}`;
                   const isConfirming = confirmRemoveKey === key;
+                  const isTransferConfirm =
+                    transferTarget?.channel === member.channelKey &&
+                    transferTarget?.newOwnerChannelUserId === member.channelUserId;
                   const isPending = member.resolutionStatus === 'pending';
                   const isEditingPlaintext = key in editingPlaintext;
                   return (
@@ -264,9 +290,18 @@ export default function BotUserList({
                             ) : (
                               <Select
                                 value={member.roleKey}
-                                onValueChange={(value) =>
-                                  onSetRole(member.channelKey, member.channelUserId, value as BotRole)
-                                }
+                                onValueChange={(value) => {
+                                  if (value === 'owner' && channelHasOwner(member.channelKey)) {
+                                    const priorOwner = items.find((m) => m.roleKey === 'owner');
+                                    setTransferTarget({
+                                      channel: member.channelKey,
+                                      newOwnerChannelUserId: member.channelUserId,
+                                      priorOwnerChannelUserId: priorOwner?.channelUserId ?? null,
+                                    });
+                                    return;
+                                  }
+                                  onSetRole(member.channelKey, member.channelUserId, value as BotRole);
+                                }}
                                 disabled={isSaving}
                               >
                                 <SelectTrigger className="w-auto min-w-[80px] text-xs py-1 px-2 h-auto">
@@ -275,9 +310,7 @@ export default function BotUserList({
                                 <SelectContent>
                                   <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
                                   <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
-                                  <SelectItem value="owner" disabled={channelHasOwner(member.channelKey)}>
-                                    {t('bots.roleOwner')}
-                                  </SelectItem>
+                                  <SelectItem value="owner">{t('bots.roleOwner')}</SelectItem>
                                 </SelectContent>
                               </Select>
                             )}
@@ -361,6 +394,35 @@ export default function BotUserList({
                               className="px-2 py-1 text-[10px] font-medium bg-destructive hover:bg-destructive/90 text-destructive-foreground rounded-md transition-colors"
                             >
                               {t('actions.confirm')}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {isTransferConfirm && transferTarget && (
+                        <div className="mt-2 p-2 bg-warning/10 border border-warning/30 rounded-lg flex items-center justify-between gap-2">
+                          <p className="text-[11px] text-text-secondary">
+                            {t('bots.transferOwnershipBody', {
+                              newOwner: member.channelUserId,
+                              priorOwner: transferTarget.priorOwnerChannelUserId ?? '',
+                            })}
+                          </p>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setTransferTarget(null)}
+                              disabled={transferring}
+                              className="px-2 py-1 text-[10px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-md transition-colors disabled:opacity-50"
+                            >
+                              {t('actions.cancel')}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleConfirmTransfer}
+                              disabled={transferring || isSaving}
+                              className="px-2 py-1 text-[10px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors disabled:opacity-50"
+                            >
+                              {transferring ? <Loader2 className="w-3 h-3 animate-spin" /> : t('actions.confirm')}
                             </button>
                           </div>
                         </div>

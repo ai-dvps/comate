@@ -227,6 +227,7 @@
     "ownerlessChannel": "无所有者频道",
     "noMembersInChannel": "该频道还没有成员。",
     "lastOwnerRemoveWarning": "移除最后一位所有者将导致该频道无法管理。确定吗？",
+    "transferOwnershipBody": "将 {{newOwner}} 设为该频道的所有者？{{priorOwner}} 将降级为管理员。",
     "noMembers": "还没有成员。",
     "roleNormal": "普通",
     "roleAdmin": "管理员",

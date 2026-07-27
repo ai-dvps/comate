@@ -82,6 +82,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       deleteBot,
       fetchMembers,
       setMemberRole,
+      transferOwnership,
       removeMember,
       resolvePendingMembers,
       setMemberPlaintext,
@@ -681,6 +682,9 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
               isSaving={isSaving}
               error={storeError}
               onSetRole={(channel, channelUserId, role) => setMemberRole(selectedBot.id, channel, channelUserId, role)}
+              onTransferOwnership={(channel, newOwnerChannelUserId) =>
+                transferOwnership(selectedBot.id, channel, newOwnerChannelUserId)
+              }
               onRemoveMember={(channel, channelUserId) => removeMember(selectedBot.id, channel, channelUserId)}
               onRefreshMembers={() => refreshMembers(selectedBot.id)}
               onResolvePending={() => resolvePendingMembers(selectedBot.id)}
