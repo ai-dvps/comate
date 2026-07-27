@@ -140,6 +140,7 @@ app.use('/api/workspaces/:id/git-ref', gitStatusRoutes);
 app.use('/api/workspaces/:id/git-changes', gitChangesRoutes);
 app.use('/api/workspaces/:id', chatRoutes);
 app.use('/api/workspaces/:id/todos', todoRoutes);
+app.use('/api/todos', todoRoutes);
 app.use('/api/scheduled-tasks', scheduledTasksRoutes);
 app.use('/api/workspaces/:id/scheduled-tasks', scheduledTasksRoutes);
 app.use('/api/workspaces/:id/wecom-queue', wecomQueueRoutes);
