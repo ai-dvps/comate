@@ -81,7 +81,6 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
       updateBot,
       deleteBot,
       fetchMembers,
-      addMember,
       setMemberRole,
       removeMember,
       resolvePendingMembers,
@@ -324,27 +323,10 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
         const input = buildCreateBotInput(draft);
         const bot = await createBot(input);
         if (bot) {
-          const ownerAdds: Promise<unknown>[] = [];
-          if (draft.wecomEnabled && draft.wecomOwnerUserId.trim()) {
-            ownerAdds.push(
-              addMember(bot.id, {
-                channel: 'wecom',
-                channelUserId: draft.wecomOwnerUserId.trim(),
-                role: 'owner',
-              }),
-            );
-          }
-          if (draft.feishuEnabled && draft.feishuOwnerUserId.trim()) {
-            ownerAdds.push(
-              addMember(bot.id, {
-                channel: 'feishu',
-                channelUserId: draft.feishuOwnerUserId.trim(),
-                role: 'owner',
-              }),
-            );
-          }
-          await Promise.all(ownerAdds);
-
+          // No owner is assigned at creation time: the encrypted channel user ID
+          // is unknowable before the first inbound message. The first sender of
+          // each owner-less channel is auto-promoted, and an operator can
+          // transfer ownership from the members UI.
           setTempBot(null);
           setSelectedBotId(bot.id);
           setFormEpoch((n) => n + 1);
@@ -393,7 +375,7 @@ const BotManagementPage = forwardRef<BotManagementPageHandle, BotManagementPageP
           throw new Error(err);
         }
       }
-    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t, addMember, fetchStatus, snapshots, reconcilePendingActions]);
+    }, [selectedBotId, selectedBot, drafts, tempBot, createBot, updateBot, storeError, t, fetchStatus, snapshots, reconcilePendingActions]);
 
     const handleCancelBasic = useCallback(() => {
       if (!selectedBotId) return;

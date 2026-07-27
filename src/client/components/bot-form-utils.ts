@@ -10,14 +10,12 @@ export interface BotFormData {
   wecomBotName: string;
   wecomCorpId: string;
   wecomCorpSecret: string;
-  wecomOwnerUserId: string;
   feishuEnabled: boolean;
   feishuAppId: string;
   feishuAppSecret: string;
   feishuEncryptKey: string;
   feishuVerificationToken: string;
   feishuBotName: string;
-  feishuOwnerUserId: string;
 }
 
 export function emptyForm(): BotFormData {
@@ -30,14 +28,12 @@ export function emptyForm(): BotFormData {
     wecomBotName: '',
     wecomCorpId: '',
     wecomCorpSecret: '',
-    wecomOwnerUserId: '',
     feishuEnabled: false,
     feishuAppId: '',
     feishuAppSecret: '',
     feishuEncryptKey: '',
     feishuVerificationToken: '',
     feishuBotName: '',
-    feishuOwnerUserId: '',
   };
 }
 
@@ -53,14 +49,12 @@ export function botToForm(bot: Bot): BotFormData {
     wecomBotName: typeof wecom?.botName === 'string' ? wecom.botName : '',
     wecomCorpId: typeof wecom?.corpId === 'string' ? wecom.corpId : '',
     wecomCorpSecret: typeof wecom?.corpSecret === 'string' ? wecom.corpSecret : '',
-    wecomOwnerUserId: '',
     feishuEnabled: !!feishu?.enabled,
     feishuAppId: typeof feishu?.appId === 'string' ? feishu.appId : '',
     feishuAppSecret: typeof feishu?.appSecret === 'string' ? feishu.appSecret : '',
     feishuEncryptKey: typeof feishu?.encryptKey === 'string' ? feishu.encryptKey : '',
     feishuVerificationToken: typeof feishu?.verificationToken === 'string' ? feishu.verificationToken : '',
     feishuBotName: typeof feishu?.botName === 'string' ? feishu.botName : '',
-    feishuOwnerUserId: '',
   };
 }
 
@@ -207,17 +201,11 @@ export function validateBotForm(
   if (form.wecomEnabled && !isEditing && !form.wecomBotSecret.trim()) {
     return t('bots.wecomBotSecretRequired');
   }
-  if (form.wecomEnabled && !isEditing && !form.wecomOwnerUserId.trim()) {
-    return t('bots.wecomOwnerUserIdRequired');
-  }
   if (form.feishuEnabled && !form.feishuAppId.trim()) {
     return t('bots.feishuAppIdRequired');
   }
   if (form.feishuEnabled && !isEditing && !form.feishuAppSecret.trim()) {
     return t('bots.feishuAppSecretRequired');
-  }
-  if (form.feishuEnabled && !isEditing && !form.feishuOwnerUserId.trim()) {
-    return t('bots.feishuOwnerUserIdRequired');
   }
 
   return null;
