@@ -159,6 +159,38 @@ router.post('/:todoId/comments', (req, res) => {
   }
 });
 
+// GET /api/todos/:todoId/conflicts — structural-field conflicts awaiting review (R11).
+router.get('/:todoId/conflicts', (req, res) => {
+  try {
+    if (!store.getTodoById(req.params.todoId)) {
+      res.status(404).json({ error: 'Todo not found' });
+      return;
+    }
+    res.json({ conflicts: store.getTodoConflicts(req.params.todoId) });
+  } catch (err) {
+    handleSyncError(res, err, 'Failed to list conflicts');
+  }
+});
+
+// POST /api/todos/:todoId/conflicts/resolve — accept-local / accept-remote (R11). Body: {field, choice}.
+router.post('/:todoId/conflicts/resolve', (req, res) => {
+  try {
+    const body = req.body as { field?: string; choice?: string } | undefined;
+    if (body?.field !== 'title' && body?.field !== 'body') {
+      res.status(400).json({ error: 'field must be "title" or "body"' });
+      return;
+    }
+    if (body?.choice !== 'local' && body?.choice !== 'remote') {
+      res.status(400).json({ error: 'choice must be "local" or "remote"' });
+      return;
+    }
+    const todo = todoSyncService.resolveConflict(req.params.todoId, body.field, body.choice);
+    res.json({ todo });
+  } catch (err) {
+    handleSyncError(res, err, 'Failed to resolve conflict');
+  }
+});
+
 // POST /api/todos/:todoId/publish — publish a local todo to a GitHub issue (F1).
 router.post('/:todoId/publish', async (req, res) => {
   try {

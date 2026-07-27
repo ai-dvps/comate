@@ -186,6 +186,30 @@ class TodoSyncService {
     return store.getTodoById(created.id) ?? created;
   }
 
+  // --- Conflict resolution (R11 / U6) --------------------------------------
+
+  /**
+   * Apply the user's accept-local/accept-remote choice for a structural-field
+   * conflict, reset the baseline to the chosen value, and clear the conflict.
+   * Convergence with the remote happens on the next reconcile (origin-wins push
+   * or accept-remote mirror); no immediate network call is needed.
+   */
+  resolveConflict(todoId: string, field: 'title' | 'body', choice: 'local' | 'remote'): Todo {
+    const conflict = store.getTodoConflicts(todoId).find((c) => c.field === field);
+    if (!conflict) throw new SyncError('No such conflict', 404);
+    const chosen = choice === 'local' ? conflict.localValue : conflict.remoteValue;
+    // `title` maps to the local `text`; `body` has no local field in v1.
+    if (field === 'title') {
+      store.updateTodo(todoId, { text: chosen, remoteSnapshot: snapshotJson(chosen) });
+    } else {
+      store.updateTodo(todoId, { remoteSnapshot: snapshotJson(chosen) });
+    }
+    store.clearTodoConflict(todoId, field);
+    const updated = store.getTodoById(todoId);
+    if (!updated) throw new SyncError('Todo not found', 404);
+    return updated;
+  }
+
   // --- Reconcile (on-demand, single-flight) F3 -----------------------------
 
   async reconcile(): Promise<SyncResult> {

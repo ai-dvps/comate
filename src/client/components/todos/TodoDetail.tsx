@@ -1,9 +1,11 @@
 import { useTranslation } from 'react-i18next'
 import type { Todo } from '../../stores/todo-store'
 import { cn } from '../ui/utils'
+import ConflictReview from './ConflictReview'
 
 interface TodoDetailProps {
   todo: Todo | null
+  onResolved: () => void
 }
 
 /**
@@ -12,7 +14,7 @@ interface TodoDetailProps {
  * schema (R16) once the sync engine (U5) populates them; private-repo content is
  * kept out of cross-workspace aggregation (R17) at the data layer.
  */
-export default function TodoDetail({ todo }: TodoDetailProps) {
+export default function TodoDetail({ todo, onResolved }: TodoDetailProps) {
   const { t } = useTranslation('todos')
 
   if (!todo) {
@@ -45,6 +47,9 @@ export default function TodoDetail({ todo }: TodoDetailProps) {
         {todo.repoFullName && <Field label={t('groupRepo')} value={`${todo.repoFullName}#${todo.issueNumber ?? ''}`} />}
         <Field label={t('detailSynced')} value={todo.lastSyncedAt ? t('detailSynced') : t('detailNotSynced')} />
       </dl>
+      <div className="px-4 pb-4">
+        <ConflictReview todoId={todo.id} onResolved={onResolved} />
+      </div>
     </aside>
   )
 }
