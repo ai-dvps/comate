@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X, Plus, Loader2 } from 'lucide-react'
+import { X, Plus, Loader2, Github } from 'lucide-react'
 import { useTodoStore, type Todo } from '../stores/todo-store'
+import { useGithubStore } from '../stores/github-store'
 import { cn } from './ui/utils'
 import TodosRail, { type SmartView, type GroupBy } from './todos/TodosRail'
 import TodoDetail from './todos/TodoDetail'
+import GitHubConnect from './todos/GitHubConnect'
 
 interface TodosPanelProps {
   onClose: () => void
@@ -27,14 +29,18 @@ function filterByView(todos: Todo[], view: SmartView): Todo[] {
 export default function TodosPanel({ onClose }: TodosPanelProps) {
   const { t } = useTranslation('todos')
   const { todos, isLoading, fetchTodos, createTodo, changeStatus, deleteTodo } = useTodoStore()
+  const githubConnected = useGithubStore((s) => s.connection?.connected ?? false)
+  const fetchGithubStatus = useGithubStore((s) => s.fetchStatus)
   const [draft, setDraft] = useState('')
   const [view, setView] = useState<SmartView>('inbox')
   const [groupBy, setGroupBy] = useState<GroupBy>('none')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [showConnect, setShowConnect] = useState(false)
 
   useEffect(() => {
     fetchTodos()
-  }, [fetchTodos])
+    fetchGithubStatus()
+  }, [fetchTodos, fetchGithubStatus])
 
   const handleAdd = async () => {
     if (!draft.trim()) return
@@ -68,6 +74,20 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
     <div className="flex flex-col h-full bg-bg">
       <header className="flex items-center gap-2 px-4 h-12 border-b border-border flex-shrink-0">
         <h1 className="text-sm font-semibold text-text-primary flex-1">{t('title')}</h1>
+        <button
+          onClick={() => setShowConnect(true)}
+          className={cn(
+            'flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border',
+            githubConnected
+              ? 'border-green-500/40 text-green-600 dark:text-green-400 bg-green-500/10'
+              : 'border-border text-text-secondary hover:bg-surface-hover',
+          )}
+          aria-label={t('ghConnect')}
+          title={t('ghConnect')}
+        >
+          <Github className="w-3.5 h-3.5" />
+          {githubConnected ? t('ghConnected') : t('ghConnect')}
+        </button>
         <button
           onClick={onClose}
           className="p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
@@ -135,6 +155,8 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
 
         <TodoDetail todo={selected} />
       </div>
+
+      {showConnect && <GitHubConnect onClose={() => setShowConnect(false)} />}
     </div>
   )
 }

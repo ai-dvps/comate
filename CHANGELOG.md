@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GitHub connection** — the top-level Todos panel can now connect to a GitHub account. Sign in with a GitHub App (OAuth Device Flow — authorize at github.com, no redirect URL needed) or paste a fine-grained personal access token as a fallback. The access and refresh tokens are encrypted at rest and never leave the sidecar process; they never appear in any response or log. Each workspace can associate one or more of the account's repositories (private repo names hidden by default) so todos created there default their publish target to the linked repo. Connect and manage the association from the new GitHub button in the Todos panel header. (Publish/pull sync and field-level reconcile arrive in a follow-up.)
 - **Scheduled tasks** — the assistant can now run tasks unattended on a schedule. Tasks are drafted from chat or WeCom and only take effect after you confirm them in the new Scheduled Tasks panel (opened from the header), which shows the exact instruction being approved. Supports one-shot and recurring cron schedules (hourly/daily/weekdays/weekly presets or a raw expression), keeps a per-task run history whose entries open as regular sessions, and reports results through desktop notifications, an in-app title-bar badge, and optional WeCom summaries. Runs execute as fresh sessions in auto-approval mode with a goal-completion check on the Claude backend; on other backends execution degrades to a plain prompt without the completion check.
 
 ### Changed
