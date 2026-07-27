@@ -379,6 +379,32 @@ router.delete('/:id/members/:channelUserId', (req, res) => {
   }
 });
 
+// POST /api/bots/:id/members/:channelUserId/transfer-ownership?channel=<wecom|feishu>
+// Atomically reassign the channel's owner to :channelUserId, demoting the prior
+// owner to admin. Returns the refreshed member list.
+router.post('/:id/members/:channelUserId/transfer-ownership', (req, res) => {
+  try {
+    const { channel } = req.query as { channel?: unknown };
+    if (!channel || (channel !== 'wecom' && channel !== 'feishu')) {
+      res.status(400).json({ error: 'channel query parameter must be wecom or feishu' });
+      return;
+    }
+
+    const members = botService.transferChannelOwnership(
+      req.params.id,
+      channel,
+      req.params.channelUserId,
+      systemActor(),
+    );
+    chatService.scheduleRebuildsForBot(req.params.id);
+    res.json({ members });
+  } catch (error) {
+    const mapped = mapBotError(error);
+    console.error('Failed to transfer channel ownership:', error);
+    res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
+  }
+});
+
 // POST /api/bots/:id/members/resolve-pending
 router.post('/:id/members/resolve-pending', async (req, res) => {
   try {
