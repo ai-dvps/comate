@@ -218,7 +218,7 @@ describe('BotManagementPage', () => {
     vi.unstubAllGlobals();
   });
 
-  it('creates a bot and adds initial channel owners when saving a new bot', async () => {
+  it('creates a bot without assigning an owner when saving a new bot', async () => {
     vi.stubGlobal('crypto', { randomUUID: () => 'temp-uuid' });
 
     const newBot = makeBot({
@@ -257,7 +257,6 @@ describe('BotManagementPage', () => {
 
     fireEvent.change(screen.getByPlaceholderText('your-bot-id'), { target: { value: 'wecom-bot-id' } });
     fireEvent.change(screen.getByPlaceholderText('your-bot-secret'), { target: { value: 'wecom-secret' } });
-    fireEvent.change(screen.getByPlaceholderText('owner-user-id'), { target: { value: 'owner-1' } });
 
     fireEvent.click(screen.getByText('Save'));
 
@@ -272,13 +271,10 @@ describe('BotManagementPage', () => {
       );
     });
 
-    await waitFor(() => {
-      expect(addMember).toHaveBeenCalledWith('new-bot', {
-        channel: 'wecom',
-        channelUserId: 'owner-1',
-        role: 'owner',
-      });
-    });
+    // No owner is assigned at creation time; the encrypted channel user ID is
+    // unknowable before the first inbound message. The first sender of an
+    // owner-less channel is auto-promoted, or an operator transfers ownership.
+    expect(addMember).not.toHaveBeenCalled();
 
     vi.unstubAllGlobals();
   });

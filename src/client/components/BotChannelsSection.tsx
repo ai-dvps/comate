@@ -278,20 +278,6 @@ export default function BotChannelsSection({
                 onReveal={onRevealCredential ? () => onRevealCredential('wecomCorpSecret') : undefined}
               />
             </div>
-            {!originalBot && (
-              <div>
-                <label className="block text-[11px] font-medium text-text-tertiary mb-1">
-                  {t('bots.wecomOwnerUserId')} *
-                </label>
-                <input
-                  value={form.wecomOwnerUserId}
-                  onChange={(e) => onUpdate({ wecomOwnerUserId: e.target.value })}
-                  placeholder={t('bots.wecomOwnerUserIdPlaceholder')}
-                  className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                />
-                <p className="mt-1 text-[10px] text-text-tertiary">{t('bots.ownerUserIdHint')}</p>
-              </div>
-            )}
           </div>
         )}
       </ChannelCard>
@@ -366,20 +352,6 @@ export default function BotChannelsSection({
                 onReveal={onRevealCredential ? () => onRevealCredential('feishuVerificationToken') : undefined}
               />
             </div>
-            {!originalBot && (
-              <div>
-                <label className="block text-[11px] font-medium text-text-tertiary mb-1">
-                  {t('bots.feishuOwnerUserId')} *
-                </label>
-                <input
-                  value={form.feishuOwnerUserId}
-                  onChange={(e) => onUpdate({ feishuOwnerUserId: e.target.value })}
-                  placeholder={t('bots.feishuOwnerUserIdPlaceholder')}
-                  className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                />
-                <p className="mt-1 text-[10px] text-text-tertiary">{t('bots.ownerUserIdHint')}</p>
-              </div>
-            )}
           </div>
         )}
       </ChannelCard>
