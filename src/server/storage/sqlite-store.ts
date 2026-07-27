@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, copyFil
 import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput, BrowserSiteAuthEntry } from '../models/workspace.js';
+import type { Workspace, WorkspaceSettings, CreateWorkspaceInput, UpdateWorkspaceInput, BrowserSiteAuthEntry } from '../models/workspace.js';
 import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type {
   Bot,
@@ -106,6 +106,16 @@ export class SqliteStore {
         version INTEGER NOT NULL,
         run_at TEXT NOT NULL,
         snapshot_json TEXT NOT NULL DEFAULT '{}'
+      )
+    `);
+    // KTD5: app-global singleton row. The encrypted GitHub connection blob
+    // (credential-crypto ciphertext of the access+refresh token bundle — never
+    // plaintext) lives here; WorkspaceSettings carries only public repo names.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        github_connection_json TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
       )
     `);
     const migrationVersion = this.getMigrationVersion();
@@ -3134,6 +3144,72 @@ export class SqliteStore {
         run_at = excluded.run_at,
         snapshot_json = excluded.snapshot_json
     `).run(version, runAt, JSON.stringify(snapshot));
+  }
+
+  // -------------------------------------------------------------------------
+  // Global GitHub account connection (KTD5). The stored value is
+  // credential-crypto ciphertext of the token bundle — these methods move the
+  // blob; encryption/decryption is the caller's (github-auth) responsibility.
+  // -------------------------------------------------------------------------
+
+  /** Encrypted connection blob, or null when no connection is stored. */
+  getGithubConnection(): string | null {
+    const row = this.db
+      .prepare('SELECT github_connection_json FROM app_settings WHERE id = 1')
+      .get() as { github_connection_json: string } | undefined;
+    const json = row?.github_connection_json;
+    return json && json.length > 0 ? json : null;
+  }
+
+  /** Upsert the encrypted connection blob into the singleton row. */
+  setGithubConnection(encryptedJson: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (id, github_connection_json, updated_at)
+        VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          github_connection_json = excluded.github_connection_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(encryptedJson, now);
+  }
+
+  /** Remove the stored connection (Disconnect). */
+  clearGithubConnection(): void {
+    this.db.prepare('DELETE FROM app_settings WHERE id = 1').run();
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-workspace GitHub repository association (KTD5/R8). Repo *names* are a
+  // public soft reference on WorkspaceSettings; secrets never live here. The
+  // RMW is a synchronous critical section, mirroring mutateWorkspaceSiteAuth.
+  // -------------------------------------------------------------------------
+
+  /** Associated repo full names (`owner/repo`), or [] when the workspace has none. */
+  getWorkspaceGithubRepos(id: string): string[] {
+    const row = this.db.prepare('SELECT settings FROM workspaces WHERE id = ?').get(id) as
+      | { settings: string }
+      | undefined;
+    if (!row) return [];
+    const settings = safeJsonParse(row.settings, {}) as WorkspaceSettings;
+    return Array.isArray(settings.githubRepoFullNames) ? [...settings.githubRepoFullNames] : [];
+  }
+
+  /** Replace the workspace's associated repos; returns the stored list, or null if the workspace is missing. */
+  setWorkspaceGithubRepos(id: string, repos: string[]): string[] | null {
+    const row = this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as
+      | RawWorkspaceRow
+      | undefined;
+    if (!row) return null;
+    const workspace = parseRow(row);
+    const deduped = [...new Set(repos.filter((r) => typeof r === 'string' && r.length > 0))];
+    const settings: WorkspaceSettings = { ...workspace.settings, githubRepoFullNames: deduped };
+    const updatedAt = new Date().toISOString();
+    this.db
+      .prepare('UPDATE workspaces SET settings = ?, updatedAt = ? WHERE id = ?')
+      .run(JSON.stringify(settings), updatedAt, id);
+    return settings.githubRepoFullNames;
   }
 
   setSessionBotId(sessionId: string, botId: string): void {
