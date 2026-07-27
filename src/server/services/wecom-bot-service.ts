@@ -411,6 +411,19 @@ export class WeComBotService {
     }
   }
 
+  // First sender of an owner-less WeCom channel becomes its owner. Called after
+  // ensureBotUser so an existing member (e.g. a migrated channel with members
+  // but no owner) is promoted too, not only brand-new users. Best-effort.
+  private autoAssignOwnerForWorkspace(workspaceId: string, channelUserId: string): void {
+    const botId = this.getBotIdForWorkspace(workspaceId);
+    if (!botId) return;
+    try {
+      botService.autoAssignOwnerIfAbsent(botId, 'wecom', channelUserId);
+    } catch (err) {
+      console.error(`[WeComBotService] failed to auto-assign owner ${channelUserId} for bot ${botId}:`, err);
+    }
+  }
+
   private getWecomBotForWorkspace(workspaceId: string): { botId: string; channelId: string } | null {
     const botId = this.getBotIdForWorkspace(workspaceId);
     if (botId) {
@@ -580,6 +593,8 @@ export class WeComBotService {
 
     // Auto-add first-time messengers as normal bot members.
     this.ensureBotUser(workspaceId, 'wecom', wecomUserId);
+    // First sender of an owner-less channel becomes its owner (idempotent).
+    this.autoAssignOwnerForWorkspace(workspaceId, wecomUserId);
 
     // /clear and /new (aliases) start a fresh session. Intercepted before the
     // message reaches the agent so the literal command is never a chat turn.
@@ -978,6 +993,8 @@ export class WeComBotService {
 
     // Auto-add first-time messengers as normal bot members.
     this.ensureBotUser(workspaceId, 'wecom', wecomUserId);
+    // First sender of an owner-less channel becomes its owner (idempotent).
+    this.autoAssignOwnerForWorkspace(workspaceId, wecomUserId);
 
     const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn) return;

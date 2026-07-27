@@ -992,6 +992,36 @@ describe('FeishuBotService', () => {
 
       assert.strictEqual(botService.getMemberRole(botId, 'feishu', newUserId), 'admin');
     });
+
+    it('auto-promotes the first direct messenger to owner on an owner-less channel', async () => {
+      // Make the channel owner-less (e.g. a migrated bot) by demoting the seeded owner directly.
+      const seededOwner = botService.getMember(botId, 'feishu', feishuUserId)!;
+      const adminRole = workspaceStore.getBotRoleByKey(botId, 'admin')!;
+      workspaceStore.updateBotUser(seededOwner.id, { roleId: adminRole.id });
+
+      const handler = (service as unknown as { createDispatchHandler: () => (thread: MockThread, message: unknown) => Promise<void> }).createDispatchHandler();
+      const newUserId = 'ou-first';
+
+      await handler(makeThread(true), makeMessage('hello', newUserId));
+
+      assert.strictEqual(botService.getMemberRole(botId, 'feishu', newUserId), 'owner');
+      // The demoted prior member is not re-promoted.
+      assert.strictEqual(botService.getMemberRole(botId, 'feishu', feishuUserId), 'admin');
+    });
+
+    it('auto-promotes a pre-existing normal member on an owner-less channel (migrated path)', async () => {
+      const seededOwner = botService.getMember(botId, 'feishu', feishuUserId)!;
+      const normalRole = workspaceStore.getBotRoleByKey(botId, 'normal')!;
+      workspaceStore.updateBotUser(seededOwner.id, { roleId: normalRole.id });
+      const existingId = 'ou-existing';
+      botService.addMember(botId, { channelKey: 'feishu', channelUserId: existingId, roleKey: 'normal' });
+
+      const handler = (service as unknown as { createDispatchHandler: () => (thread: MockThread, message: unknown) => Promise<void> }).createDispatchHandler();
+
+      await handler(makeThread(true), makeMessage('hello', existingId));
+
+      assert.strictEqual(botService.getMemberRole(botId, 'feishu', existingId), 'owner');
+    });
   });
 
   describe('bot menu events (handleMenuEvent)', () => {

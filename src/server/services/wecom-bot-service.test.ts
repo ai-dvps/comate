@@ -2331,4 +2331,39 @@ describe('auto-add bot members on first inbound message', { concurrency: false }
 
     assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'owner-1'), 'owner');
   });
+
+  it('auto-promotes the first text messenger to owner on an owner-less channel', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const bot = workspaceStore.listBotsForWorkspace(ws.id)[0];
+    // Make the channel owner-less (e.g. a migrated bot) by demoting owner-1 directly.
+    const ownerMember = botService.getMember(bot.id, 'wecom', 'owner-1')!;
+    const adminRole = workspaceStore.getBotRoleByKey(bot.id, 'admin')!;
+    workspaceStore.updateBotUser(ownerMember.id, { roleId: adminRole.id });
+
+    await (service as any).handleTextMessage(ws.id, makeTextFrame('first-sender'));
+
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'first-sender'), 'owner');
+    // The demoted prior member is not re-promoted.
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'owner-1'), 'admin');
+  });
+
+  it('auto-promotes a pre-existing normal member on an owner-less channel (migrated path)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const bot = workspaceStore.listBotsForWorkspace(ws.id)[0];
+    const ownerMember = botService.getMember(bot.id, 'wecom', 'owner-1')!;
+    const normalRole = workspaceStore.getBotRoleByKey(bot.id, 'normal')!;
+    workspaceStore.updateBotUser(ownerMember.id, { roleId: normalRole.id });
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'wecom')!;
+    workspaceStore.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: normalRole.id,
+      channelUserId: 'existing-member',
+      plaintextUserId: null,
+    });
+
+    await (service as any).handleTextMessage(ws.id, makeTextFrame('existing-member'));
+
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'existing-member'), 'owner');
+  });
 });
