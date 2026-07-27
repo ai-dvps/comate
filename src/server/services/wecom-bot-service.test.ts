@@ -2366,4 +2366,26 @@ describe('auto-add bot members on first inbound message', { concurrency: false }
 
     assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'existing-member'), 'owner');
   });
+
+  it('continues message handling when auto-owner promotion throws', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const bot = workspaceStore.listBotsForWorkspace(ws.id)[0];
+    // Owner-less channel so auto-assign attempts a promotion it will fail.
+    const ownerMember = botService.getMember(bot.id, 'wecom', 'owner-1')!;
+    const normalRole = workspaceStore.getBotRoleByKey(bot.id, 'normal')!;
+    workspaceStore.updateBotUser(ownerMember.id, { roleId: normalRole.id });
+
+    const original = botService.autoAssignOwnerIfAbsent;
+    botService.autoAssignOwnerIfAbsent = () => {
+      throw new Error('promotion boom');
+    };
+    try {
+      // Must not throw: the promotion failure must not break message handling.
+      await (service as any).handleTextMessage(ws.id, makeTextFrame('first-sender'));
+    } finally {
+      botService.autoAssignOwnerIfAbsent = original;
+    }
+    // The sender was still auto-added as a normal member despite the failure.
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'first-sender'), 'normal');
+  });
 });

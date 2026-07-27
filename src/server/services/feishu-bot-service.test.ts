@@ -1022,6 +1022,27 @@ describe('FeishuBotService', () => {
 
       assert.strictEqual(botService.getMemberRole(botId, 'feishu', existingId), 'owner');
     });
+
+    it('continues message handling when auto-owner promotion throws', async () => {
+      // Owner-less channel so auto-assign attempts a promotion it will fail.
+      const seededOwner = botService.getMember(botId, 'feishu', feishuUserId)!;
+      const normalRole = workspaceStore.getBotRoleByKey(botId, 'normal')!;
+      workspaceStore.updateBotUser(seededOwner.id, { roleId: normalRole.id });
+
+      const handler = (service as unknown as { createDispatchHandler: () => (thread: MockThread, message: unknown) => Promise<void> }).createDispatchHandler();
+      const original = botService.autoAssignOwnerIfAbsent;
+      botService.autoAssignOwnerIfAbsent = () => {
+        throw new Error('promotion boom');
+      };
+      try {
+        // Must not throw: the promotion failure must not break message handling.
+        await handler(makeThread(true), makeMessage('hello', 'ou-first'));
+      } finally {
+        botService.autoAssignOwnerIfAbsent = original;
+      }
+      // The sender was still auto-added as a normal member despite the failure.
+      assert.strictEqual(botService.getMemberRole(botId, 'feishu', 'ou-first'), 'normal');
+    });
   });
 
   describe('bot menu events (handleMenuEvent)', () => {
