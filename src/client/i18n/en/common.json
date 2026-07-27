@@ -3,6 +3,7 @@
   "header": {
     "analytics": "Analytics",
     "createWorkspace": "Create workspace",
+    "todos": "Todos",
     "scheduledTasks": "Scheduled Tasks",
     "toggleTheme": "Toggle theme",
     "settings": "Settings",

@@ -13,6 +13,7 @@ import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
 import ScheduledTasksPanel from './components/ScheduledTasksPanel'
+import TodosPanel from './components/TodosPanel'
 import { initNotificationClickHandler } from './lib/notifications'
 import { openSessionDirect } from './lib/session-jump'
 import RightPanel from './components/RightPanel'
@@ -58,6 +59,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showScheduledTasks, setShowScheduledTasks] = useState(false)
   const [showAnalytics, setShowAnalytics] = useState(false)
+  const [showTodos, setShowTodos] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false)
   const [isMac, setIsMac] = useState(false)
@@ -257,6 +259,7 @@ function App() {
             onOpenSettings={() => setShowSettings(true)}
             onOpenAnalytics={() => setShowAnalytics(true)}
             onOpenScheduledTasks={() => setShowScheduledTasks(true)}
+            onOpenTodos={() => setShowTodos(true)}
           />
         </div>
       </header>
@@ -318,7 +321,7 @@ function App() {
                 key={wsId}
                 className={cn(
                   'absolute inset-0 flex flex-col',
-                  wsId === activeWorkspaceId ? 'visible' : 'invisible pointer-events-none'
+                  wsId === activeWorkspaceId && !showTodos ? 'visible' : 'invisible pointer-events-none'
                 )}
                 aria-hidden={wsId !== activeWorkspaceId}
                 {...(wsId !== activeWorkspaceId ? { inert: '' } : {})}
@@ -339,6 +342,11 @@ function App() {
               onSelectWorkspace={(id) => openWorkspace(id)}
               onBrowseWorkspaces={() => setIsWorkspaceSwitcherOpen(true)}
             />
+          )}
+          {showTodos && (
+            <div className="absolute inset-0 flex flex-col z-10">
+              <TodosPanel onClose={() => setShowTodos(false)} />
+            </div>
           )}
         </main>
 

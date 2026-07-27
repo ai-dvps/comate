@@ -1,0 +1,13 @@
+{
+  "title": "待办",
+  "addPlaceholder": "添加一个待办…",
+  "add": "添加",
+  "empty": "还没有待办。",
+  "close": "关闭",
+  "toggleDone": "切换完成",
+  "delete": "删除",
+  "fetchFailed": "获取待办失败",
+  "createFailed": "创建待办失败",
+  "updateFailed": "更新待办失败",
+  "deleteFailed": "删除待办失败"
+}
