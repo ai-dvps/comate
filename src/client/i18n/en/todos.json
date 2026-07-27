@@ -1,0 +1,13 @@
+{
+  "title": "Todos",
+  "addPlaceholder": "Add a todo…",
+  "add": "Add",
+  "empty": "No todos yet.",
+  "close": "Close",
+  "toggleDone": "Toggle complete",
+  "delete": "Delete",
+  "fetchFailed": "Failed to fetch todos",
+  "createFailed": "Failed to create todo",
+  "updateFailed": "Failed to update todo",
+  "deleteFailed": "Failed to delete todo"
+}

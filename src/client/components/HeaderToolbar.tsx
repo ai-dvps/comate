@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { BarChart3, Clock, Plus, Settings, Sun, Moon } from 'lucide-react'
+import { BarChart3, CheckSquare, Clock, Plus, Settings, Sun, Moon } from 'lucide-react'
 import { useScheduledTaskStore } from '../stores/scheduled-task-store'
 import { useTheme } from '../hooks/use-theme'
 
@@ -8,6 +8,7 @@ interface HeaderToolbarProps {
   onOpenSettings: () => void
   onOpenAnalytics: () => void
   onOpenScheduledTasks: () => void
+  onOpenTodos: () => void
 }
 
 export default function HeaderToolbar({
@@ -15,6 +16,7 @@ export default function HeaderToolbar({
   onOpenSettings,
   onOpenAnalytics,
   onOpenScheduledTasks,
+  onOpenTodos,
 }: HeaderToolbarProps) {
   const { t } = useTranslation('common')
   const unreadScheduledTasks = useScheduledTaskStore((s) => s.unreadCount)
@@ -28,6 +30,14 @@ export default function HeaderToolbar({
         title={t('header.createWorkspace')}
       >
         <Plus className="w-4 h-4" />
+      </button>
+
+      <button
+        onClick={onOpenTodos}
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        title={t('header.todos')}
+      >
+        <CheckSquare className="w-4 h-4" />
       </button>
 
       <button
