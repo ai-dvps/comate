@@ -57,5 +57,10 @@
   "ghNoRepos": "没有可访问的仓库。",
   "ghPrivate": "私有",
   "ghShowPrivate": "显示私有仓库",
-  "ghNoWorkspace": "未选择工作区。"
+  "ghNoWorkspace": "未选择工作区。",
+  "conflictTitle": "标题/正文在两边都被编辑了",
+  "conflictFieldTitle": "标题",
+  "conflictFieldBody": "正文",
+  "conflictAcceptLocal": "保留本地",
+  "conflictAcceptRemote": "采用远程"
 }

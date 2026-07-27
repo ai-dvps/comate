@@ -168,7 +168,7 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
           )}
         </div>
 
-        <TodoDetail todo={selected} />
+        <TodoDetail todo={selected} onResolved={fetchTodos} />
       </div>
 
       {showConnect && <GitHubConnect onClose={() => setShowConnect(false)} />}

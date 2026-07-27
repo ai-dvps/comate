@@ -343,6 +343,38 @@ describe('origin-side deletion', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Conflict resolution (R11 / U6)
+// ---------------------------------------------------------------------------
+describe('resolveConflict (R11)', () => {
+  it('accept-local keeps the local value, resets the baseline, and clears the conflict', () => {
+    const todo = store.createTodo(workspaceId, { text: 'Local title' });
+    store.updateTodo(todo.id, { remoteSnapshot: JSON.stringify({ title: 'Baseline' }) });
+    store.setTodoConflict(todo.id, 'title', 'Local title', 'Remote title', 'Baseline');
+
+    const resolved = todoSyncService.resolveConflict(todo.id, 'title', 'local');
+    assert.equal(resolved.text, 'Local title');
+    assert.equal(JSON.parse(resolved.remoteSnapshot!).title, 'Local title');
+    assert.equal(store.getTodoConflicts(todo.id).length, 0);
+  });
+
+  it('accept-remote takes the remote value, resets the baseline, and clears the conflict', () => {
+    const todo = store.createTodo(workspaceId, { text: 'Local title' });
+    store.updateTodo(todo.id, { remoteSnapshot: JSON.stringify({ title: 'Baseline' }) });
+    store.setTodoConflict(todo.id, 'title', 'Local title', 'Remote title', 'Baseline');
+
+    const resolved = todoSyncService.resolveConflict(todo.id, 'title', 'remote');
+    assert.equal(resolved.text, 'Remote title');
+    assert.equal(JSON.parse(resolved.remoteSnapshot!).title, 'Remote title');
+    assert.equal(store.getTodoConflicts(todo.id).length, 0);
+  });
+
+  it('resolving a non-existent conflict 404s', () => {
+    const todo = store.createTodo(workspaceId, { text: 'x' });
+    assert.throws(() => todoSyncService.resolveConflict(todo.id, 'title', 'local'), (err: { status?: number }) => err.status === 404);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Sync error redaction (R13)
 // ---------------------------------------------------------------------------
 describe('sync error redaction (R13)', () => {

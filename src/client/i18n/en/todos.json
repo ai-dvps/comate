@@ -57,5 +57,10 @@
   "ghNoRepos": "No accessible repositories.",
   "ghPrivate": "private",
   "ghShowPrivate": "Show private repositories",
-  "ghNoWorkspace": "No workspace selected."
+  "ghNoWorkspace": "No workspace selected.",
+  "conflictTitle": "Title/body edited on both sides",
+  "conflictFieldTitle": "Title",
+  "conflictFieldBody": "Body",
+  "conflictAcceptLocal": "Keep local",
+  "conflictAcceptRemote": "Take remote"
 }
