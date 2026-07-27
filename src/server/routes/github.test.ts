@@ -508,6 +508,10 @@ describe('R13 sentinel leakage', () => {
     await disconnect().catch(() => {});
 
     const written = newLogLines(before);
+    // The redaction is only proven if the catch sites actually wrote log lines —
+    // an empty `written` would make the absence assertions pass vacuously.
+    assert.ok(written.length > 0, 'no log lines written — redaction path not exercised');
+    assert.ok(written.includes('[github]'), 'expected a redacted [github] log marker to prove catch sites fired');
     assert.ok(!written.includes(ACCESS_SENTINEL), 'access sentinel leaked to sse-diag.log:\n' + written);
     assert.ok(!written.includes(REFRESH_SENTINEL), 'refresh sentinel leaked to sse-diag.log:\n' + written);
     assert.ok(!written.includes('Bearer ' + ACCESS_SENTINEL), 'Bearer header leaked to sse-diag.log');

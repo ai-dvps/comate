@@ -41,7 +41,7 @@ interface GithubState {
 
   fetchStatus: () => Promise<void>;
   startDeviceFlow: () => Promise<DeviceFlowStart>;
-  pollDeviceFlow: () => Promise<{ status: DevicePollStatus }>;
+  pollDeviceFlow: () => Promise<{ status: DevicePollStatus; interval: number }>;
   connectPat: (token: string) => Promise<boolean>;
   disconnect: () => Promise<{ deepLink?: string } | null>;
   fetchRepos: () => Promise<void>;
@@ -93,11 +93,11 @@ export const useGithubStore = create<GithubState>((set) => ({
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(body.error ?? 'Failed to poll device flow');
     }
-    const data = (await res.json()) as { status: DevicePollStatus; connection: GithubConnectionStatus };
+    const data = (await res.json()) as { status: DevicePollStatus; interval: number; connection: GithubConnectionStatus };
     if (data.status === 'success' && data.connection) {
       set({ connection: data.connection });
     }
-    return { status: data.status };
+    return { status: data.status, interval: data.interval };
   },
 
   connectPat: async (token: string) => {

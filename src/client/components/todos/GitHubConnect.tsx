@@ -52,28 +52,36 @@ export default function GitHubConnect({ onClose }: GitHubConnectProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection?.connected]);
 
-  // Device Flow polling loop.
+  // Device Flow polling loop — adapts its cadence on slow_down (RFC 8628).
   useEffect(() => {
     if (!device) return;
     let active = true;
-    const interval = setInterval(async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cadence = { current: device.interval || 5 };
+    const tick = async () => {
       try {
         const result = await pollDeviceFlow();
         if (!active) return;
         if (result.status === 'success') {
           setDevice(null);
           clearError();
-        } else if (result.status === 'expired' || result.status === 'access_denied' || result.status === 'incorrect_device_code') {
-          setDevice(null);
+          return;
         }
-        // 'pending' / 'slow_down' → keep polling
+        if (result.status === 'expired' || result.status === 'access_denied' || result.status === 'incorrect_device_code') {
+          setDevice(null);
+          return;
+        }
+        if (result.interval && result.interval > cadence.current) cadence.current = result.interval; // slow_down → back off
       } catch {
         if (active) setDevice(null);
+        return;
       }
-    }, (device.interval || 5) * 1000);
+      timer = setTimeout(tick, cadence.current * 1000);
+    };
+    timer = setTimeout(tick, cadence.current * 1000);
     return () => {
       active = false;
-      clearInterval(interval);
+      if (timer) clearTimeout(timer);
     };
   }, [device, pollDeviceFlow, clearError]);
 

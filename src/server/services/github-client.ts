@@ -109,7 +109,7 @@ export function createOctokitAdapter(token: string): GithubBackendAdapter {
       onSecondaryRateLimit: (_retryAfter: number, _options: unknown, _octokit: unknown, retryCount: number) =>
         retryCount < 1,
     },
-    retry: { retries: 2, retryAfterBaseSeconds: 1 },
+    retry: { retries: 2 },
   });
 
   return {
@@ -120,17 +120,23 @@ export function createOctokitAdapter(token: string): GithubBackendAdapter {
 
     async listChanged(repo: string, since: string | null, etag: string | null): Promise<ListChangedResult> {
       const [owner, name] = parseRepo(repo);
-      const resp = await octokit.request('GET /repos/{owner}/{repo}/issues', {
-        owner,
-        repo: name,
-        since: since ?? undefined,
-        state: 'all',
-        per_page: 100,
-        headers: etag ? { 'If-None-Match': etag } : undefined,
-      });
-      // ETag short-circuit: 304 means nothing changed since the last fetch.
-      if (resp.status === 304) {
-        return { issues: [], etag, latestUpdatedAt: null };
+      let resp;
+      try {
+        resp = await octokit.request('GET /repos/{owner}/{repo}/issues', {
+          owner,
+          repo: name,
+          since: since ?? undefined,
+          state: 'all',
+          per_page: 100,
+          headers: etag ? { 'If-None-Match': etag } : undefined,
+        });
+      } catch (err) {
+        // ETag 304 (no change): octokit throws it rather than resolving it. Treat
+        // it as a clean short-circuit so on-demand sync does not burn the budget.
+        if ((err as { status?: number }).status === 304) {
+          return { issues: [], etag, latestUpdatedAt: null, notModified: true };
+        }
+        throw err;
       }
       const data = (resp.data as unknown as OctokitIssue[]).filter((i) => !i.pull_request).map(mapIssue);
       const newEtag = (resp.headers as { etag?: string }).etag ?? null;

@@ -3401,7 +3401,7 @@ export class SqliteStore {
     this.db
       .prepare('UPDATE workspaces SET settings = ?, updatedAt = ? WHERE id = ?')
       .run(JSON.stringify(settings), updatedAt, id);
-    return settings.githubRepoFullNames;
+    return settings.githubRepoFullNames ?? null;
   }
 
   setSessionBotId(sessionId: string, botId: string): void {

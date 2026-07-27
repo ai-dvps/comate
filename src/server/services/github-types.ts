@@ -53,6 +53,8 @@ export interface ListChangedResult {
   etag: string | null;
   /** `max(updated_at)` seen, or null when no issues returned. */
   latestUpdatedAt: string | null;
+  /** True when GitHub returned 304 Not Modified (ETag short-circuit). */
+  notModified?: boolean;
 }
 
 export interface CreateIssueInput {

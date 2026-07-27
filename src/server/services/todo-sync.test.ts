@@ -346,31 +346,31 @@ describe('origin-side deletion', () => {
 // Conflict resolution (R11 / U6)
 // ---------------------------------------------------------------------------
 describe('resolveConflict (R11)', () => {
-  it('accept-local keeps the local value, resets the baseline, and clears the conflict', () => {
+  it('accept-local keeps the local value, resets the baseline, and clears the conflict', async () => {
     const todo = store.createTodo(workspaceId, { text: 'Local title' });
     store.updateTodo(todo.id, { remoteSnapshot: JSON.stringify({ title: 'Baseline' }) });
     store.setTodoConflict(todo.id, 'title', 'Local title', 'Remote title', 'Baseline');
 
-    const resolved = todoSyncService.resolveConflict(todo.id, 'title', 'local');
+    const resolved = await todoSyncService.resolveConflict(todo.id, 'title', 'local');
     assert.equal(resolved.text, 'Local title');
     assert.equal(JSON.parse(resolved.remoteSnapshot!).title, 'Local title');
     assert.equal(store.getTodoConflicts(todo.id).length, 0);
   });
 
-  it('accept-remote takes the remote value, resets the baseline, and clears the conflict', () => {
+  it('accept-remote takes the remote value, resets the baseline, and clears the conflict', async () => {
     const todo = store.createTodo(workspaceId, { text: 'Local title' });
     store.updateTodo(todo.id, { remoteSnapshot: JSON.stringify({ title: 'Baseline' }) });
     store.setTodoConflict(todo.id, 'title', 'Local title', 'Remote title', 'Baseline');
 
-    const resolved = todoSyncService.resolveConflict(todo.id, 'title', 'remote');
+    const resolved = await todoSyncService.resolveConflict(todo.id, 'title', 'remote');
     assert.equal(resolved.text, 'Remote title');
     assert.equal(JSON.parse(resolved.remoteSnapshot!).title, 'Remote title');
     assert.equal(store.getTodoConflicts(todo.id).length, 0);
   });
 
-  it('resolving a non-existent conflict 404s', () => {
+  it('resolving a non-existent conflict 404s', async () => {
     const todo = store.createTodo(workspaceId, { text: 'x' });
-    assert.throws(() => todoSyncService.resolveConflict(todo.id, 'title', 'local'), (err: { status?: number }) => err.status === 404);
+    await assert.rejects(() => todoSyncService.resolveConflict(todo.id, 'title', 'local'), (err: { status?: number }) => err.status === 404);
   });
 });
 
@@ -393,5 +393,34 @@ describe('sync error redaction (R13)', () => {
     const serialized = JSON.stringify(result.errors);
     assert.ok(!serialized.includes(SENTINEL), 'sentinel token leaked into sync result errors: ' + serialized);
     void local;
+  });
+
+  it('per-issue adapter failures (update/addComment/fetchComments) are redacted — no token reaches the response', async () => {
+    store.setWorkspaceGithubRepos(workspaceId, ['myorg/webapp']);
+    const local = store.createTodo(workspaceId, { text: 'Owner title' });
+    const published = await todoSyncService.publish(local.id);
+    store.addLocalTodoComment(local.id, 'unpushed comment', 'owner');
+    // A changed issue drives applyRemoteIssue (update + fetchComments) and the
+    // unpushed-comment push (addComment) — all three per-issue catch sites.
+    fake.state.issueList.set(published.repoFullName!, [makeIssue(published.issueNumber!, { title: 'Teammate rename' })]);
+    const sentinel = {
+      message: 'token=' + SENTINEL,
+      status: 500,
+      request: { method: 'POST', url: 'https://api.github.com/repos/o/r/issues', headers: { authorization: 'Bearer ' + SENTINEL } },
+      response: { status: 500, data: { access_token: SENTINEL } },
+    };
+    fake.adapter.update = async () => {
+      throw sentinel;
+    };
+    fake.adapter.addComment = async () => {
+      throw sentinel;
+    };
+    fake.adapter.fetchComments = async () => {
+      throw sentinel;
+    };
+    const result = await todoSyncService.reconcile();
+    assert.ok(result.errors.length >= 1, 'no per-issue errors recorded');
+    const serialized = JSON.stringify(result.errors);
+    assert.ok(!serialized.includes(SENTINEL), 'sentinel leaked from a per-issue catch site: ' + serialized);
   });
 });
