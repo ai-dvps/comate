@@ -481,6 +481,58 @@ describe('bots routes', { concurrency: false }, () => {
     assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'u-1'), null);
   });
 
+  it('POST /:id/members/:channelUserId/transfer-ownership transfers ownership', async () => {
+    const bot = createWeComBot();
+    botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+    botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'b', roleKey: 'normal' });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:channelUserId/transfer-ownership'].post(
+      {
+        params: { id: bot.id, channelUserId: 'b' },
+        query: { channel: 'wecom' },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'b'), 'owner');
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'a'), 'admin');
+    const body = res.jsonBody as { members: unknown[] };
+    assert.ok(Array.isArray(body.members));
+  });
+
+  it('POST /:id/members/:channelUserId/transfer-ownership validates channel', async () => {
+    const bot = createWeComBot();
+    botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:channelUserId/transfer-ownership'].post(
+      {
+        params: { id: bot.id, channelUserId: 'a' },
+        query: { channel: 'slack' },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 400);
+  });
+
+  it('POST /:id/members/:channelUserId/transfer-ownership 404s for an unknown target', async () => {
+    const bot = createWeComBot();
+    botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'a', roleKey: 'owner' });
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id/members/:channelUserId/transfer-ownership'].post(
+      {
+        params: { id: bot.id, channelUserId: 'absent' },
+        query: { channel: 'wecom' },
+      },
+      res,
+    );
+    assert.strictEqual(res.statusCode, 404);
+    // Prior owner unchanged.
+    assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'a'), 'owner');
+  });
+
   it('POST /:id/members/resolve-pending resolves WeCom pending members', async () => {
     const bot = createWeComBot();
     botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'enc-2', roleKey: 'normal' });
