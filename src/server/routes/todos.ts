@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Response } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
 import { todoSyncService, SyncError } from '../services/todo-sync.js';
@@ -23,7 +24,7 @@ function validateTodoText(text: unknown): string | null {
 }
 
 /** Redact any GitHub-derived error before it reaches a logger or response (R13). */
-function handleSyncError(res: { status(code: number): unknown; json(body: unknown): void }, err: unknown, fallback: string): void {
+function handleSyncError(res: Response, err: unknown, fallback: string): void {
   if (err instanceof SyncError) {
     res.status(err.status).json({ error: err.message });
     return;
@@ -40,7 +41,7 @@ router.get('/', async (req, res) => {
     const todos = id ? store.getTodosByWorkspace(id) : store.getAllTodos();
     res.json({ todos });
   } catch (error) {
-    console.error('Failed to list todos:', error);
+    diagLog('[todos] Failed to list todos: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to list todos' });
   }
 });
@@ -58,7 +59,7 @@ router.post('/', async (req, res) => {
     const todo = store.createTodo(workspaceId, { text: input.text, dueDate: input.dueDate });
     res.status(201).json({ todo });
   } catch (error) {
-    console.error('Failed to create todo:', error);
+    diagLog('[todos] Failed to create todo: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to create todo' });
   }
 });
@@ -85,7 +86,7 @@ router.put('/:todoId', async (req, res) => {
     }
     res.json({ todo });
   } catch (error) {
-    console.error('Failed to update todo:', error);
+    diagLog('[todos] Failed to update todo: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to update todo' });
   }
 });
@@ -100,7 +101,7 @@ router.delete('/:todoId', async (req, res) => {
     }
     res.status(204).send();
   } catch (error) {
-    console.error('Failed to delete todo:', error);
+    diagLog('[todos] Failed to delete todo: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to delete todo' });
   }
 });
@@ -119,11 +120,12 @@ router.post('/sync', async (_req, res) => {
 router.post('/pull', async (req, res) => {
   try {
     const body = req.body as { repo?: string; issueNumber?: number; workspaceId?: string | null } | undefined;
-    if (!body?.repo || typeof body.issueNumber !== 'number') {
-      res.status(400).json({ error: 'repo and issueNumber are required' });
+    const { repo, issueNumber } = body ?? {};
+    if (typeof repo !== 'string' || repo.trim().length === 0 || typeof issueNumber !== 'number' || !Number.isInteger(issueNumber) || issueNumber <= 0) {
+      res.status(400).json({ error: 'repo and a positive integer issueNumber are required' });
       return;
     }
-    const todo = await todoSyncService.pull(body.repo, body.issueNumber, body.workspaceId ?? null);
+    const todo = await todoSyncService.pull(repo, issueNumber, body?.workspaceId ?? null);
     res.status(201).json({ todo });
   } catch (err) {
     handleSyncError(res, err, 'Failed to pull issue');
@@ -133,6 +135,10 @@ router.post('/pull', async (req, res) => {
 // GET /api/todos/:todoId/comments — merged comment stream (append-only, R10).
 router.get('/:todoId/comments', (req, res) => {
   try {
+    if (!store.getTodoById(req.params.todoId)) {
+      res.status(404).json({ error: 'Todo not found' });
+      return;
+    }
     res.json({ comments: store.listTodoComments(req.params.todoId) });
   } catch (err) {
     handleSyncError(res, err, 'Failed to list comments');
@@ -173,7 +179,7 @@ router.get('/:todoId/conflicts', (req, res) => {
 });
 
 // POST /api/todos/:todoId/conflicts/resolve — accept-local / accept-remote (R11). Body: {field, choice}.
-router.post('/:todoId/conflicts/resolve', (req, res) => {
+router.post('/:todoId/conflicts/resolve', async (req, res) => {
   try {
     const body = req.body as { field?: string; choice?: string } | undefined;
     if (body?.field !== 'title' && body?.field !== 'body') {
@@ -184,7 +190,7 @@ router.post('/:todoId/conflicts/resolve', (req, res) => {
       res.status(400).json({ error: 'choice must be "local" or "remote"' });
       return;
     }
-    const todo = todoSyncService.resolveConflict(req.params.todoId, body.field, body.choice);
+    const todo = await todoSyncService.resolveConflict(req.params.todoId, body.field, body.choice);
     res.json({ todo });
   } catch (err) {
     handleSyncError(res, err, 'Failed to resolve conflict');
@@ -195,6 +201,10 @@ router.post('/:todoId/conflicts/resolve', (req, res) => {
 router.post('/:todoId/publish', async (req, res) => {
   try {
     const repo = (req.body as { repo?: string } | undefined)?.repo;
+    if (repo !== undefined && typeof repo !== 'string') {
+      res.status(400).json({ error: 'repo must be a string' });
+      return;
+    }
     const todo = await todoSyncService.publish(req.params.todoId, repo);
     res.status(201).json({ todo });
   } catch (err) {
@@ -236,7 +246,7 @@ router.post('/:todoId/session', async (req, res) => {
     store.linkTodoToSession(todoId, session.id);
     res.status(201).json(session);
   } catch (error) {
-    console.error('Failed to create session from todo:', error);
+    diagLog('[todos] Failed to create session from todo: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to create session from todo' });
   }
 });

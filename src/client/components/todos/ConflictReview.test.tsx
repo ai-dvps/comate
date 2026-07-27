@@ -60,4 +60,27 @@ describe('ConflictReview (R11)', () => {
     expect(JSON.parse(String(resolveCall.init!.body))).toEqual({ field: 'title', choice: 'remote' });
     expect(onResolved).toHaveBeenCalled();
   });
+
+  it('accept-local fires the resolve call with choice:local', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith('/conflicts') && init?.method !== 'POST') {
+        return jsonOk({
+          conflicts: [{ field: 'title', localValue: 'Local title', remoteValue: 'Remote title', baselineValue: 'Baseline' }],
+        });
+      }
+      return jsonOk({ todo: { id: 't1' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithI18n(<ConflictReview todoId="t1" onResolved={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText('Local title')).toBeInTheDocument());
+
+    await userEvent.click(screen.getByText('Local title').closest('button')!);
+
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/conflicts/resolve'))).toBe(true));
+    const resolveCall = calls.find((c) => c.url.endsWith('/conflicts/resolve'))!;
+    expect(JSON.parse(String(resolveCall.init!.body))).toEqual({ field: 'title', choice: 'local' });
+  });
 });

@@ -178,18 +178,30 @@ export function getConnectionStatus(): GithubConnectionStatus {
   };
 }
 
+/** True when a device-flow access token is within the refresh margin of expiry. */
+function needsRefresh(conn: GithubConnection): boolean {
+  if (conn.tokenType !== 'device-flow' || !conn.expiresAt) return false;
+  const expiresAtMs = Date.parse(conn.expiresAt);
+  return Number.isNaN(expiresAtMs) || expiresAtMs - now() <= REFRESH_MARGIN_MS;
+}
+
+/** Single-flight a refresh so concurrent callers share one token-endpoint request. */
+let refreshInFlight: Promise<GithubConnection | null> | null = null;
+function singleFlightRefresh(conn: GithubConnection): Promise<GithubConnection | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = refreshTokenGrant(conn).finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
 /** A non-expired access token, refreshing first when device-flow is near expiry. */
 export async function getValidToken(): Promise<string | null> {
   const conn = ensureLoaded();
   if (!conn) return null;
-  if (conn.tokenType === 'pat' || !conn.expiresAt) return conn.accessToken;
-
-  const expiresAtMs = Date.parse(conn.expiresAt);
-  if (Number.isNaN(expiresAtMs) || expiresAtMs - now() > REFRESH_MARGIN_MS) {
-    return conn.accessToken;
-  }
+  if (!needsRefresh(conn)) return conn.accessToken;
   if (!conn.refreshToken) return conn.accessToken; // can't refresh; let the call fail auth-wise
-  const refreshed = await refreshTokenGrant(conn.refreshToken);
+  const refreshed = await singleFlightRefresh(conn);
   if (refreshed) {
     persistConnection(refreshed);
     return refreshed.accessToken;
@@ -199,6 +211,12 @@ export async function getValidToken(): Promise<string | null> {
 
 /** Build/return the adapter for the current valid token, or null when not connected. */
 export async function getAdapter(): Promise<GithubBackendAdapter | null> {
+  const conn = ensureLoaded();
+  if (!conn) return null;
+  // Reuse the cached adapter when its token is still valid — avoids hitting the
+  // refresh endpoint on every call (and the concurrent-refresh race). A refresh
+  // clears cachedAdapter via persistConnection, so a rotated token rebuilds it.
+  if (cachedAdapter && !needsRefresh(conn)) return cachedAdapter;
   const token = await getValidToken();
   if (!token) return null;
   if (cachedAdapter) return cachedAdapter;
@@ -224,15 +242,25 @@ async function postJson(url: string, payload: Record<string, unknown>): Promise<
   return body as Record<string, unknown>;
 }
 
-function bundleTokenResponse(body: Record<string, unknown>, tokenType: GithubTokenType): GithubConnection {
+function bundleTokenResponse(
+  body: Record<string, unknown>,
+  tokenType: GithubTokenType,
+  fallback?: { refreshToken?: string | null; refreshTokenExpiresAt?: string | null },
+): GithubConnection {
   const expiresInSec = Number(body.expires_in ?? 0);
   const refreshExpiresInSec = Number(body.refresh_token_expires_in ?? 0);
+  // RFC 6749 permits omitting refresh_token on a refresh response — fall back to
+  // the existing one so a non-rotating refresh token is not discarded.
+  const refreshToken = body.refresh_token ? String(body.refresh_token) : (fallback?.refreshToken ?? null);
   return {
     tokenType,
     accessToken: String(body.access_token),
-    refreshToken: body.refresh_token ? String(body.refresh_token) : null,
+    refreshToken,
     expiresAt: expiresInSec > 0 ? new Date(now() + expiresInSec * 1000).toISOString() : null,
-    refreshTokenExpiresAt: refreshExpiresInSec > 0 ? new Date(now() + refreshExpiresInSec * 1000).toISOString() : null,
+    refreshTokenExpiresAt:
+      refreshExpiresInSec > 0
+        ? new Date(now() + refreshExpiresInSec * 1000).toISOString()
+        : (fallback?.refreshTokenExpiresAt ?? null),
     login: null, // not returned by the token endpoint; resolved elsewhere if at all
     scope: body.scope ? String(body.scope) : null,
     obtainedAt: new Date(now()).toISOString(),
@@ -274,14 +302,14 @@ export async function startDeviceFlow(): Promise<DeviceCodeStart> {
 }
 
 /** Poll the token endpoint once. Honors `slow_down`; clears the handle on terminal states. */
-export async function pollDeviceFlow(): Promise<{ status: DevicePollStatus }> {
+export async function pollDeviceFlow(): Promise<{ status: DevicePollStatus; interval: number }> {
   const handle = inFlightDeviceFlow;
   if (!handle) {
     throw new GithubAuthError('No device flow in progress', 400);
   }
   if (now() - handle.startedAt > handle.expiresIn * 1000) {
     inFlightDeviceFlow = null;
-    return { status: 'expired' };
+    return { status: 'expired', interval: handle.interval };
   }
   const body = await postJson(TOKEN_URL, {
     client_id: getClientId(),
@@ -291,44 +319,49 @@ export async function pollDeviceFlow(): Promise<{ status: DevicePollStatus }> {
   if (body.access_token) {
     persistConnection(bundleTokenResponse(body, 'device-flow'));
     inFlightDeviceFlow = null;
-    return { status: 'success' };
+    return { status: 'success', interval: handle.interval };
   }
   const errorCode = String(body.error ?? '');
+  const intervalOut = handle.interval;
   switch (errorCode) {
     case 'authorization_pending':
-      return { status: 'pending' };
+      return { status: 'pending', interval: intervalOut };
     case 'slow_down':
       handle.interval += 5;
-      return { status: 'slow_down' };
+      return { status: 'slow_down', interval: handle.interval };
     case 'expired_token':
       inFlightDeviceFlow = null;
-      return { status: 'expired' };
+      return { status: 'expired', interval: intervalOut };
     case 'access_denied':
       inFlightDeviceFlow = null;
-      return { status: 'access_denied' };
+      return { status: 'access_denied', interval: intervalOut };
     case 'incorrect_device_code':
       inFlightDeviceFlow = null;
-      return { status: 'incorrect_device_code' };
+      return { status: 'incorrect_device_code', interval: intervalOut };
     default:
       throw new GithubAuthError(`Device flow polling failed: ${errorCode || 'unknown error'}`, 502);
   }
 }
 
 /** Refresh an expiring device-flow access token using the stored refresh token. */
-export async function refreshTokenGrant(refreshToken: string): Promise<GithubConnection | null> {
+export async function refreshTokenGrant(conn: GithubConnection): Promise<GithubConnection | null> {
   const clientId = getClientId();
-  if (!clientId) return null;
+  if (!clientId || !conn.refreshToken) return null;
   try {
     const body = await postJson(TOKEN_URL, {
       client_id: clientId,
-      refresh_token: refreshToken,
+      refresh_token: conn.refreshToken,
       grant_type: 'refresh_token',
     });
     if (!body.access_token) {
-      diagLog('[github] token refresh failed: ' + String(body.error ?? 'no access_token returned'));
+      // Static message — never interpolate the token-endpoint response body.
+      diagLog('[github] token refresh failed (no access_token returned)');
       return null;
     }
-    return bundleTokenResponse(body, 'device-flow');
+    return bundleTokenResponse(body, 'device-flow', {
+      refreshToken: conn.refreshToken,
+      refreshTokenExpiresAt: conn.refreshTokenExpiresAt,
+    });
   } catch (err) {
     diagLog('[github] token refresh threw: ' + redactGithubError(err).message);
     return null;
@@ -370,6 +403,7 @@ export async function disconnect(): Promise<{ deepLink?: string }> {
     }
   }
   clearCachedToken();
+  inFlightDeviceFlow = null; // a pending device flow must not resurrect the connection
   store.clearGithubConnection();
   return deepLink ? { deepLink } : {};
 }

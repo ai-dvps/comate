@@ -162,28 +162,42 @@ class TodoSyncService {
     if (!issue) throw new SyncError('Issue not found', 404);
 
     const wsId = workspaceId ?? (await workspaceForRepo(repo));
-    const created = store.createTodo(wsId, { text: issue.title });
-    store.updateTodo(created.id, {
-      origin: 'github',
-      repoFullName: repo,
-      issueNumber: issue.number,
-      status: stateToLocalStatus(issue.state),
-      assignee: issue.assignee,
-      labels: issue.labels,
-      remoteSnapshot: snapshotJson(issue.title),
-      remoteUpdatedAt: issue.updatedAt,
-      lastSyncedAt: new Date().toISOString(),
-      originDeleted: false,
-    });
+    // createTodo + the repo/issue update run in one transaction so a UNIQUE
+    // (repo, issue) violation from a concurrent pull rolls back the partial row
+    // instead of orphaning a duplicate local todo.
+    let createdId: string;
+    try {
+      createdId = store.runInTransaction(() => {
+        const c = store.createTodo(wsId, { text: issue.title });
+        store.updateTodo(c.id, {
+          origin: 'github',
+          repoFullName: repo,
+          issueNumber: issue.number,
+          status: stateToLocalStatus(issue.state),
+          assignee: issue.assignee,
+          labels: issue.labels,
+          remoteSnapshot: snapshotJson(issue.title),
+          remoteUpdatedAt: issue.updatedAt,
+          lastSyncedAt: new Date().toISOString(),
+          originDeleted: false,
+        });
+        return c.id;
+      });
+    } catch (err) {
+      // A concurrent pull won the race — return its row.
+      const winner = store.findTodoByRepoIssue(repo, issueNumber);
+      if (winner) return winner;
+      throw err;
+    }
 
     // Pull comments (append-only).
     try {
       const comments = await adapter.fetchComments(repo, issueNumber);
-      for (const c of comments) store.upsertRemoteTodoComment(created.id, c.id, c.author, c.body, c.createdAt);
+      for (const c of comments) store.upsertRemoteTodoComment(createdId, c.id, c.author, c.body, c.createdAt);
     } catch (err) {
       diagLogSync('pull', repo, err);
     }
-    return store.getTodoById(created.id) ?? created;
+    return store.getTodoById(createdId) ?? store.createTodo(wsId, { text: issue.title });
   }
 
   // --- Conflict resolution (R11 / U6) --------------------------------------
@@ -191,10 +205,11 @@ class TodoSyncService {
   /**
    * Apply the user's accept-local/accept-remote choice for a structural-field
    * conflict, reset the baseline to the chosen value, and clear the conflict.
-   * Convergence with the remote happens on the next reconcile (origin-wins push
-   * or accept-remote mirror); no immediate network call is needed.
+   * accept-local propagates the chosen value outward (a one-time origin override)
+   * so the next reconcile does not revert it — otherwise origin-wins would mirror
+   * the remote back over the user's local choice for a github-origin todo.
    */
-  resolveConflict(todoId: string, field: 'title' | 'body', choice: 'local' | 'remote'): Todo {
+  async resolveConflict(todoId: string, field: 'title' | 'body', choice: 'local' | 'remote'): Promise<Todo> {
     const conflict = store.getTodoConflicts(todoId).find((c) => c.field === field);
     if (!conflict) throw new SyncError('No such conflict', 404);
     const chosen = choice === 'local' ? conflict.localValue : conflict.remoteValue;
@@ -207,6 +222,15 @@ class TodoSyncService {
     store.clearTodoConflict(todoId, field);
     const updated = store.getTodoById(todoId);
     if (!updated) throw new SyncError('Todo not found', 404);
+
+    if (choice === 'local' && field === 'title' && updated.repoFullName && updated.issueNumber) {
+      try {
+        const adapter = await getAdapter();
+        if (adapter) await adapter.update(updated.repoFullName, updated.issueNumber, { title: chosen });
+      } catch (err) {
+        diagLog('[todo-sync] conflict resolve push failed: ' + redactGithubError(err).message);
+      }
+    }
     return updated;
   }
 
@@ -239,9 +263,10 @@ class TodoSyncService {
     const changed = await adapter.listChanged(repo, cursor?.repoLastUpdatedAt ?? null, cursor?.etag ?? null);
     const seenNumbers = new Set(changed.issues.map((i) => i.number));
 
-    // 1. Push local-origin outward: unpushed comments + divergent title/status.
+    // 1. Push outward: unpushed local comments on any linked todo (comments are
+    //    append-only both ways regardless of origin — R10).
     for (const todo of store.getTodosByRepo(repo)) {
-      if (todo.origin !== 'local' || todo.originDeleted || !todo.issueNumber) continue;
+      if (todo.originDeleted || !todo.issueNumber) continue;
       for (const comment of store.listUnpushedTodoComments(todo.id)) {
         try {
           const remote = await adapter.addComment(repo, todo.issueNumber, comment.body);
@@ -252,25 +277,34 @@ class TodoSyncService {
       }
     }
 
-    // 2. Apply remote changes to linked todos.
+    // 2. Apply remote changes to linked todos (per-issue isolation: one store
+    //    error never aborts the rest of the repo's issues).
     for (const issue of changed.issues) {
       const todo = store.findTodoByRepoIssue(repo, issue.number);
       if (!todo) continue; // reconcile only touches linked todos; pull is explicit
-      await this.applyRemoteIssue(adapter, repo, todo, issue, result);
-    }
-
-    // 3. Origin-side deletion detection (github-origin todos whose issue is gone).
-    for (const todo of store.getTodosByRepo(repo)) {
-      if (todo.origin !== 'github' || todo.originDeleted || !todo.issueNumber) continue;
-      if (seenNumbers.has(todo.issueNumber)) continue; // present in the changed set → exists
       try {
-        const found = await adapter.getIssue(repo, todo.issueNumber);
-        if (!found) {
-          store.updateTodo(todo.id, { originDeleted: true });
-          result.deletedDetected++;
-        }
+        await this.applyRemoteIssue(adapter, repo, todo, issue, result);
       } catch (err) {
         recordError(result, repo, err);
+      }
+    }
+
+    // 3. Origin-side deletion detection — only when GitHub reported changes. A
+    //    304 means nothing changed, so skip the per-todo getIssue fan-out that
+    //    would otherwise burn the rate budget on every panel-open.
+    if (!changed.notModified) {
+      for (const todo of store.getTodosByRepo(repo)) {
+        if (todo.origin !== 'github' || todo.originDeleted || !todo.issueNumber) continue;
+        if (seenNumbers.has(todo.issueNumber)) continue; // present in the changed set → exists
+        try {
+          const found = await adapter.getIssue(repo, todo.issueNumber);
+          if (!found) {
+            store.updateTodo(todo.id, { originDeleted: true });
+            result.deletedDetected++;
+          }
+        } catch (err) {
+          recordError(result, repo, err);
+        }
       }
     }
 
@@ -299,8 +333,10 @@ class TodoSyncService {
     const remoteTitleChanged = hasBaseline && remoteTitle !== baselineTitle;
     let conflicted = false;
 
-    if (hasBaseline && localTitleChanged && remoteTitleChanged) {
-      // Both sides edited the title → conflict (R11). Leave the field unchanged.
+    if (hasBaseline && localTitleChanged && remoteTitleChanged && localTitle !== remoteTitle) {
+      // Both sides edited the title to different values → conflict (R11). Leave
+      // the field unchanged. (If both converged to the same value, no conflict —
+      // fall through to the origin-wins branch, which no-ops and advances the baseline.)
       store.setTodoConflict(todo.id, 'title', localTitle, remoteTitle, baselineTitle);
       result.conflicts++;
       conflicted = true;
