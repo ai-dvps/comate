@@ -7,6 +7,8 @@
   "toggleDone": "Toggle complete",
   "delete": "Delete",
   "fetchFailed": "Failed to fetch todos",
+  "sync": "Sync now",
+  "syncFailed": "Failed to sync",
   "createFailed": "Failed to create todo",
   "updateFailed": "Failed to update todo",
   "deleteFailed": "Failed to delete todo",

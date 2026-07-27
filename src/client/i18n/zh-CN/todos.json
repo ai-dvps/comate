@@ -7,6 +7,8 @@
   "toggleDone": "切换完成",
   "delete": "删除",
   "fetchFailed": "获取待办失败",
+  "sync": "立即同步",
+  "syncFailed": "同步失败",
   "createFailed": "创建待办失败",
   "updateFailed": "更新待办失败",
   "deleteFailed": "删除待办失败",

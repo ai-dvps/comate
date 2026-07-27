@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X, Plus, Loader2, Github } from 'lucide-react'
+import { X, Plus, Loader2, Github, RefreshCw } from 'lucide-react'
 import { useTodoStore, type Todo } from '../stores/todo-store'
 import { useGithubStore } from '../stores/github-store'
 import { cn } from './ui/utils'
@@ -28,7 +28,7 @@ function filterByView(todos: Todo[], view: SmartView): Todo[] {
 
 export default function TodosPanel({ onClose }: TodosPanelProps) {
   const { t } = useTranslation('todos')
-  const { todos, isLoading, fetchTodos, createTodo, changeStatus, deleteTodo } = useTodoStore()
+  const { todos, isLoading, isSyncing, fetchTodos, syncTodos, createTodo, changeStatus, deleteTodo } = useTodoStore()
   const githubConnected = useGithubStore((s) => s.connection?.connected ?? false)
   const fetchGithubStatus = useGithubStore((s) => s.fetchStatus)
   const [draft, setDraft] = useState('')
@@ -41,6 +41,12 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
     fetchTodos()
     fetchGithubStatus()
   }, [fetchTodos, fetchGithubStatus])
+
+  // AE5: opening the panel triggers an on-demand sync when connected.
+  useEffect(() => {
+    if (githubConnected) syncTodos()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [githubConnected])
 
   const handleAdd = async () => {
     if (!draft.trim()) return
@@ -74,6 +80,15 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
     <div className="flex flex-col h-full bg-bg">
       <header className="flex items-center gap-2 px-4 h-12 border-b border-border flex-shrink-0">
         <h1 className="text-sm font-semibold text-text-primary flex-1">{t('title')}</h1>
+        <button
+          onClick={() => syncTodos()}
+          disabled={isSyncing}
+          className="p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-surface-hover disabled:opacity-50"
+          aria-label={t('sync')}
+          title={t('sync')}
+        >
+          <RefreshCw className={cn('w-4 h-4', isSyncing && 'animate-spin')} />
+        </button>
         <button
           onClick={() => setShowConnect(true)}
           className={cn(

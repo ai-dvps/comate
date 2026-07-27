@@ -54,3 +54,36 @@ export interface UpdateTodoInput {
   labels?: string[];
   originDeleted?: boolean;
 }
+
+/**
+ * A comment on a todo. Append-only both directions (R10): `local` comments are
+ * pushed to the GitHub issue on the next sync; `github` comments are pulled and
+ * mirrored locally. Merged by `remoteId` for github-origin comments.
+ */
+export interface TodoComment {
+  id: string;
+  todoId: string;
+  origin: 'local' | 'github';
+  /** GitHub comment id when origin is github; null for local-only comments. */
+  remoteId: number | null;
+  author: string;
+  body: string;
+  createdAt: string;
+  /** Local comments not yet pushed outward to the GitHub issue. */
+  pushed: boolean;
+}
+
+/**
+ * A structural-field conflict (R11): both origin and remote edited `title` or
+ * `body` since the last-seen baseline. U5 detects and records these; U6
+ * surfaces accept-local/accept-remote and clears them. The field is left
+ * unchanged (the local value) until the user resolves.
+ */
+export interface TodoConflict {
+  todoId: string;
+  field: 'title' | 'body';
+  localValue: string;
+  remoteValue: string;
+  baselineValue: string | null;
+  detectedAt: string;
+}
