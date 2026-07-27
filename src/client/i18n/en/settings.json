@@ -227,6 +227,7 @@
     "ownerlessChannel": "Owner-less channel",
     "noMembersInChannel": "No members in this channel yet.",
     "lastOwnerRemoveWarning": "Removing the last owner will leave this channel unmanageable. Are you sure?",
+    "transferOwnershipBody": "Make {{newOwner}} the owner of this channel? {{priorOwner}} will become an admin.",
     "noMembers": "No members yet.",
     "roleNormal": "Normal",
     "roleAdmin": "Admin",
