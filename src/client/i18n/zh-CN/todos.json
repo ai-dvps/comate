@@ -62,5 +62,8 @@
   "conflictFieldTitle": "标题",
   "conflictFieldBody": "正文",
   "conflictAcceptLocal": "保留本地",
-  "conflictAcceptRemote": "采用远程"
+  "conflictAcceptRemote": "采用远程",
+  "spawnSession": "开始会话",
+  "spawnPickWorkspace": "选择一个工作区…",
+  "detailHasSession": "已关联会话"
 }

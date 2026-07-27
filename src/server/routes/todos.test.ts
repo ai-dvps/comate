@@ -1,7 +1,8 @@
 import '../test-utils/test-env.js';
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { store } from '../storage/sqlite-store.js';
+import { chatService } from '../services/chat-service.js';
 import router from './todos.js';
 
 type Handler = (req: unknown, res: unknown) => Promise<void>;
@@ -64,11 +65,23 @@ async function call(
 
 describe('global todo routes (U2)', () => {
   let workspaceId: string;
+  let originalCreateSession: typeof chatService.createSession;
 
   beforeEach(async () => {
     store.resetData();
     const ws = await store.create({ name: 'WS', folderPath: '/tmp/ws-todos' });
     workspaceId = ws.id;
+    // Stub createSession so spawn tests don't spawn a real SDK session.
+    originalCreateSession = chatService.createSession;
+    chatService.createSession = (async (opts: { workspaceId: string; name: string }) => ({
+      id: 'sess-mock',
+      workspaceId: opts.workspaceId,
+      name: opts.name,
+    })) as typeof chatService.createSession;
+  });
+
+  afterEach(() => {
+    chatService.createSession = originalCreateSession;
   });
 
   it('GET / returns every todo globally when no workspace id is present', async () => {
@@ -147,5 +160,28 @@ describe('global todo routes (U2)', () => {
     store.updateTodo(created.id, { status: 'done' });
     const res = await call('post', '/:todoId/session', { params: { id: workspaceId, todoId: created.id }, body: {} });
     assert.strictEqual(res.statusCode, 400);
+  });
+
+  // U7: preserve "start session from todo" for global todos (R4)
+  it('POST /:todoId/session spawns + links when the todo has a workspace', async () => {
+    const created = store.createTodo(workspaceId, { text: 'do it' });
+    const res = await call('post', '/:todoId/session', { params: { id: workspaceId, todoId: created.id }, body: {} });
+    assert.strictEqual(res.statusCode, 201);
+    assert.strictEqual((res.jsonBody as { id: string }).id, 'sess-mock');
+    assert.strictEqual(store.getTodoById(created.id)!.sessionId, 'sess-mock');
+  });
+
+  it('POST /:todoId/session spawns for a workspace-less todo when workspaceId is in the body', async () => {
+    const created = store.createTodo(null, { text: 'global todo' });
+    const res = await call('post', '/:todoId/session', { params: { todoId: created.id }, body: { workspaceId } });
+    assert.strictEqual(res.statusCode, 201);
+    assert.strictEqual(store.getTodoById(created.id)!.sessionId, 'sess-mock');
+  });
+
+  it('POST /:todoId/session 409s when the todo already has a session', async () => {
+    const created = store.createTodo(workspaceId, { text: 'linked' });
+    store.linkTodoToSession(created.id, 'existing-session');
+    const res = await call('post', '/:todoId/session', { params: { id: workspaceId, todoId: created.id }, body: {} });
+    assert.strictEqual(res.statusCode, 409);
   });
 });
