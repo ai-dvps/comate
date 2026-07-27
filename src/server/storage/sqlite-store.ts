@@ -24,7 +24,7 @@ import type {
   UpdateBotUserInput,
 } from '../models/bot-user.js';
 import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
-import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
+import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import { providerSupportsFastMode } from '../utils/provider-capability.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
@@ -329,12 +329,29 @@ export class SqliteStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todos (
         id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
+        workspace_id TEXT,
         text TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending',
         session_id TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        origin TEXT NOT NULL DEFAULT 'local',
+        due_date TEXT,
+        repo_full_name TEXT,
+        issue_number INTEGER,
+        remote_snapshot_json TEXT,
+        remote_updated_at TEXT,
+        last_synced_at TEXT,
+        assignee TEXT,
+        labels_json TEXT NOT NULL DEFAULT '[]',
+        origin_deleted INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS repo_sync_state (
+        repo_full_name TEXT PRIMARY KEY,
+        repo_last_updated_at TEXT,
+        etag TEXT
       )
     `);
     this.db.exec(`
@@ -436,6 +453,7 @@ export class SqliteStore {
     this.migrateBotMembersChannelColumns();
     this.migrateToUnifiedSchema();
     this.migrateBrowserAuditSchema();
+    this.migrateTodosGlobalSchema();
   }
 
   /**
@@ -454,6 +472,130 @@ export class SqliteStore {
       ...previous,
       browser_audit_schema: true,
     });
+  }
+
+  /**
+   * Schema version 7 (U1): make todos global. `workspace_id` becomes nullable
+   * (a soft link), and sync/due-date/origin columns are added. Mirrors the safe
+   * `migrateToUnifiedSchema` shape (file backup, explicit transaction, version
+   * bump inside the txn, count verification, re-throw) — NOT the bare-exec
+   * `migrateTodoDetailColumn`. The gate keys on table shape (not row count) so
+   * fresh/empty DBs created with the new base CREATE skip the rebuild.
+   */
+  private migrateTodosGlobalSchema(): void {
+    const version = this.getMigrationVersion();
+    if (version !== null && version >= 7) {
+      return;
+    }
+
+    const cols = this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string; notnull: number }>;
+    const hasOrigin = cols.some((c) => c.name === 'origin');
+    const workspaceIdCol = cols.find((c) => c.name === 'workspace_id');
+    const alreadyNewShape = hasOrigin && workspaceIdCol != null && workspaceIdCol.notnull === 0;
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS repo_sync_state (
+        repo_full_name TEXT PRIMARY KEY,
+        repo_last_updated_at TEXT,
+        etag TEXT
+      )
+    `);
+
+    if (alreadyNewShape) {
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_repo_issue
+          ON todos (repo_full_name, issue_number)
+          WHERE repo_full_name IS NOT NULL AND issue_number IS NOT NULL
+      `);
+      const prev = this.getMigrationState().snapshot;
+      this.setMigrationState(7, new Date().toISOString(), { ...prev, todos_global_schema: 'already_new_shape' });
+      return;
+    }
+
+    if (!this.inMemory) {
+      const backupDir = join(STORAGE_DIR, 'backup');
+      ensureDirSync(backupDir);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = join(backupDir, `pre-todos-global-${timestamp}.db`);
+      try {
+        copyFileSync(DB_FILE, backupPath);
+        console.log(`[SqliteStore] Created pre-migration backup: ${backupPath}`);
+      } catch (err) {
+        console.error('[SqliteStore] Failed to create pre-migration backup:', err);
+      }
+    }
+
+    // Snapshot existing indexes (by sql) to re-create on the rebuilt table.
+    const oldIndexes = this.db
+      .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'todos' AND sql IS NOT NULL")
+      .all() as Array<{ name: string; sql: string }>;
+
+    const nowIso = new Date().toISOString();
+
+    const migrate = this.db.transaction(() => {
+      this.db.exec('ALTER TABLE todos RENAME TO todos_old;');
+      this.db.exec(`
+        CREATE TABLE todos (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT,
+          text TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          session_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          origin TEXT NOT NULL DEFAULT 'local',
+          due_date TEXT,
+          repo_full_name TEXT,
+          issue_number INTEGER,
+          remote_snapshot_json TEXT,
+          remote_updated_at TEXT,
+          last_synced_at TEXT,
+          assignee TEXT,
+          labels_json TEXT NOT NULL DEFAULT '[]',
+          origin_deleted INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+      const oldCount = (this.db.prepare('SELECT COUNT(*) AS c FROM todos_old').get() as { c: number }).c;
+      this.db.exec(`
+        INSERT INTO todos (
+          id, workspace_id, text, status, session_id, created_at, updated_at,
+          origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
+          remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted
+        )
+        SELECT
+          id, workspace_id, text, status, session_id, created_at, updated_at,
+          'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', 0
+        FROM todos_old;
+      `);
+      const newCount = (this.db.prepare('SELECT COUNT(*) AS c FROM todos').get() as { c: number }).c;
+      if (oldCount !== newCount) {
+        throw new Error(`todos global migration count mismatch: ${oldCount} -> ${newCount}`);
+      }
+      this.db.exec('DROP TABLE todos_old;');
+      for (const idx of oldIndexes) {
+        try {
+          this.db.exec(idx.sql);
+        } catch {
+          /* index name collision on the rebuilt table; ignore */
+        }
+      }
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_repo_issue
+          ON todos (repo_full_name, issue_number)
+          WHERE repo_full_name IS NOT NULL AND issue_number IS NOT NULL
+      `);
+
+      const prev = this.getMigrationState().snapshot;
+      this.setMigrationState(7, nowIso, { ...prev, todos_global_schema: 'rebuilt', todosCount: newCount });
+    });
+
+    try {
+      migrate();
+      console.log('[SqliteStore] Todos global schema migration completed');
+    } catch (err) {
+      console.error('[SqliteStore] Todos global schema migration failed:', err);
+      throw err;
+    }
   }
 
   getAnalyticsCache(): AnalyticsCache {
@@ -1562,7 +1704,8 @@ export class SqliteStore {
       `).run(id);
       this.db.prepare('DELETE FROM session_metadata WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)').run(id);
       this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id);
-      this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
+      // R15: deleting a workspace nulls the soft link on global todos; it never destroys them.
+      this.db.prepare('UPDATE todos SET workspace_id = NULL WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_media_cache WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM task_runs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE workspace_id = ?)').run(id);
@@ -1959,21 +2102,58 @@ export class SqliteStore {
     return result.changes > 0;
   }
 
-  createTodo(workspaceId: string, input: CreateTodoInput): Todo {
-    const now = new Date().toISOString();
+  createTodo(workspaceId: string | null, input: CreateTodoInput): Todo {
+    const nowIso = new Date().toISOString();
     const todo: Todo = {
       id: uuidv4(),
-      workspaceId,
+      workspaceId: workspaceId ?? null,
       text: input.text.trim(),
       status: 'pending',
       sessionId: null,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      origin: 'local',
+      dueDate: input.dueDate ?? null,
+      repoFullName: null,
+      issueNumber: null,
+      remoteSnapshot: null,
+      remoteUpdatedAt: null,
+      lastSyncedAt: null,
+      assignee: null,
+      labels: [],
+      originDeleted: false,
     };
-    this.db.prepare(`
-      INSERT INTO todos (id, workspace_id, text, status, session_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(todo.id, todo.workspaceId, todo.text, todo.status, todo.sessionId, todo.createdAt, todo.updatedAt);
+    this.db
+      .prepare(
+        `INSERT INTO todos (
+          id, workspace_id, text, status, session_id, created_at, updated_at,
+          origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
+          remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted
+        ) VALUES (
+          @id, @workspace_id, @text, @status, @session_id, @created_at, @updated_at,
+          @origin, @due_date, @repo_full_name, @issue_number, @remote_snapshot_json,
+          @remote_updated_at, @last_synced_at, @assignee, @labels_json, @origin_deleted
+        )`,
+      )
+      .run({
+        id: todo.id,
+        workspace_id: todo.workspaceId,
+        text: todo.text,
+        status: todo.status,
+        session_id: todo.sessionId,
+        created_at: todo.createdAt,
+        updated_at: todo.updatedAt,
+        origin: todo.origin,
+        due_date: todo.dueDate,
+        repo_full_name: todo.repoFullName,
+        issue_number: todo.issueNumber,
+        remote_snapshot_json: todo.remoteSnapshot,
+        remote_updated_at: todo.remoteUpdatedAt,
+        last_synced_at: todo.lastSyncedAt,
+        assignee: todo.assignee,
+        labels_json: JSON.stringify(todo.labels),
+        origin_deleted: todo.originDeleted ? 1 : 0,
+      });
     return todo;
   }
 
@@ -1981,6 +2161,18 @@ export class SqliteStore {
     const rows = this.db
       .prepare('SELECT * FROM todos WHERE workspace_id = ? ORDER BY created_at DESC')
       .all(workspaceId) as RawTodoRow[];
+    return rows.map(parseTodoRow);
+  }
+
+  /** Global todo list (U1/R2). Optional workspace filter preserves the legacy view. */
+  getAllTodos(filter?: { workspaceId?: string }): Todo[] {
+    if (filter?.workspaceId) {
+      const rows = this.db
+        .prepare('SELECT * FROM todos WHERE workspace_id = ? ORDER BY created_at DESC')
+        .all(filter.workspaceId) as RawTodoRow[];
+      return rows.map(parseTodoRow);
+    }
+    const rows = this.db.prepare('SELECT * FROM todos ORDER BY created_at DESC').all() as RawTodoRow[];
     return rows.map(parseTodoRow);
   }
 
@@ -2006,6 +2198,17 @@ export class SqliteStore {
       sets.push('session_id = ?');
       values.push(input.sessionId);
     }
+    if (input.workspaceId !== undefined) { sets.push('workspace_id = ?'); values.push(input.workspaceId); }
+    if (input.dueDate !== undefined) { sets.push('due_date = ?'); values.push(input.dueDate); }
+    if (input.origin !== undefined) { sets.push('origin = ?'); values.push(input.origin); }
+    if (input.repoFullName !== undefined) { sets.push('repo_full_name = ?'); values.push(input.repoFullName); }
+    if (input.issueNumber !== undefined) { sets.push('issue_number = ?'); values.push(input.issueNumber); }
+    if (input.remoteSnapshot !== undefined) { sets.push('remote_snapshot_json = ?'); values.push(input.remoteSnapshot); }
+    if (input.remoteUpdatedAt !== undefined) { sets.push('remote_updated_at = ?'); values.push(input.remoteUpdatedAt); }
+    if (input.lastSyncedAt !== undefined) { sets.push('last_synced_at = ?'); values.push(input.lastSyncedAt); }
+    if (input.assignee !== undefined) { sets.push('assignee = ?'); values.push(input.assignee); }
+    if (input.labels !== undefined) { sets.push('labels_json = ?'); values.push(JSON.stringify(input.labels)); }
+    if (input.originDeleted !== undefined) { sets.push('origin_deleted = ?'); values.push(input.originDeleted ? 1 : 0); }
     if (sets.length === 0) return existing;
     sets.push('updated_at = ?');
     values.push(new Date().toISOString());
@@ -3233,23 +3436,43 @@ function parseBrowserAuditRow(row: RawBrowserAuditRow): BrowserAuditEntry {
 
 interface RawTodoRow {
   id: string;
-  workspace_id: string;
+  workspace_id: string | null;
   text: string;
   status: string;
   session_id: string | null;
   created_at: string;
   updated_at: string;
+  origin: string;
+  due_date: string | null;
+  repo_full_name: string | null;
+  issue_number: number | null;
+  remote_snapshot_json: string | null;
+  remote_updated_at: string | null;
+  last_synced_at: string | null;
+  assignee: string | null;
+  labels_json: string;
+  origin_deleted: number;
 }
 
 function parseTodoRow(row: RawTodoRow): Todo {
   return {
     id: row.id,
-    workspaceId: row.workspace_id,
+    workspaceId: row.workspace_id ?? null,
     text: row.text,
     status: row.status as TodoStatus,
     sessionId: row.session_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    origin: (row.origin as TodoOrigin | undefined) ?? 'local',
+    dueDate: row.due_date ?? null,
+    repoFullName: row.repo_full_name ?? null,
+    issueNumber: row.issue_number ?? null,
+    remoteSnapshot: row.remote_snapshot_json ?? null,
+    remoteUpdatedAt: row.remote_updated_at ?? null,
+    lastSyncedAt: row.last_synced_at ?? null,
+    assignee: row.assignee ?? null,
+    labels: safeJsonParse(row.labels_json, []) as string[],
+    originDeleted: Boolean(row.origin_deleted),
   };
 }
 
