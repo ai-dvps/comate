@@ -939,7 +939,7 @@ export class BrowserService {
    * instead of a workspace's settings. Best-effort: returns silently when the
    * session is gone or there is nothing replayable.
    */
-  async rememberGlobalSiteAuth(sessionId: string, siteKey: string): Promise<void> {
+  async rememberGlobalSiteAuth(sessionId: string, siteKey: string, bearerToken?: string): Promise<void> {
     const entry = this.registry.get(sessionId);
     if (!entry?.handle) return;
     const raw = await this.deps.exportContext(entry.handle.baseUrl).catch(() => null);
@@ -965,6 +965,7 @@ export class BrowserService {
       sessionContext: scoped,
       createdAt,
       updatedAt: now,
+      ...(bearerToken ? { bearerToken } : {}),
     };
     this.deps.store.setGlobalSiteAuth(siteKey, JSON.stringify(authEntry));
     diagLog(

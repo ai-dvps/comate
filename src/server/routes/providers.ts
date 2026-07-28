@@ -256,15 +256,10 @@ router.post('/:id/usage-login/start', async (req, res) => {
 });
 
 // POST /api/providers/:id/usage-login/finalize — verify origin, extract the JWT,
-// encrypt+store it, and tear the capture session down (body: { captureId }).
+// store the login in the global site-auth store, and tear the capture session down.
 router.post('/:id/usage-login/finalize', async (req, res) => {
   try {
-    const captureId = Number(req.body?.captureId);
-    if (!Number.isFinite(captureId)) {
-      res.status(400).json({ error: 'captureId is required' });
-      return;
-    }
-    const result = await providerUsageLoginService.finalizeLogin(req.params.id, captureId);
+    const result = await providerUsageLoginService.finalizeLogin(req.params.id);
     res.json(result);
   } catch (error) {
     console.error('Failed to finalize usage login:', error);

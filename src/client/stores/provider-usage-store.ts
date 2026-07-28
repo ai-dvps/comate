@@ -33,7 +33,6 @@ export type LoginPhase = 'connecting' | 'ready' | 'capturing' | 'success' | 'fai
 export interface UsageLoginState {
   providerId: string
   sessionId: string
-  captureId: number
   phase: LoginPhase
   error?: string
 }
@@ -110,7 +109,7 @@ export const useProviderUsageStore = create<ProviderUsageState>((set, get) => ({
   },
 
   startUsageLogin: async (id) => {
-    set({ login: { providerId: id, sessionId: '', captureId: Date.now(), phase: 'connecting' } })
+    set({ login: { providerId: id, sessionId: '', phase: 'connecting' } })
     try {
       const res = await fetch(`${API_BASE}/${id}/usage-login/start`, { method: 'POST' })
       const data = (await res.json()) as { sessionId?: string; error?: string }
@@ -132,8 +131,6 @@ export const useProviderUsageStore = create<ProviderUsageState>((set, get) => ({
     try {
       const res = await fetch(`${API_BASE}/${login.providerId}/usage-login/finalize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ captureId: login.captureId }),
       })
       const data = (await res.json()) as { status?: 'ready' | 'relogin'; reason?: string }
       if (data.status === 'ready') {

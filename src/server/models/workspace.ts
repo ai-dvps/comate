@@ -34,6 +34,12 @@ export interface BrowserSiteAuthEntry {
   updatedAt: string;
   /** Set on the last successful injection (server-side bookkeeping only). */
   lastUsedAt?: string;
+  /**
+   * Optional bearer JWT carried by a global site-auth entry (e.g. the Kimi
+   * login), read by the usage query. Absent on plain workspace remember-site
+   * entries. Server-only — never returned to clients.
+   */
+  bearerToken?: string;
 }
 
 /**

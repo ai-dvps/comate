@@ -1,24 +1,16 @@
 import { browserService } from './browser-service.js';
-import { providerUsageStore } from './provider-usage-store.js';
-import { isKimiCodingPlanProvider, KIMI_LOGIN_URL } from './kimi-usage-service.js';
+import { isKimiCodingPlanProvider, KIMI_LOGIN_URL, KIMI_SITE_KEY } from './kimi-usage-service.js';
 import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 
 /**
- * Sentinel workspace id for capture sessions (KTD1). Provider usage tokens are
- * app-global, so the capture session has no real workspace; this id keeps the
- * registry/workspace-scoped machinery (audit, event routing) satisfied without
- * binding to a real workspace.
+ * Sentinel workspace id for capture sessions (KTD1). The Kimi login is app-global,
+ * so the capture session has no real workspace; this id keeps the registry/
+ * workspace-scoped machinery (audit, event routing) satisfied without binding to
+ * a real workspace.
  */
 const USAGE_LOGIN_WORKSPACE_ID = '__provider_usage_login__';
-
-/**
- * The Kimi registrable-domain site key. The captured login is remembered under
- * this key in the global site-auth store so it is reusable by the chat browser
- * in any workspace (browserSiteAuth global fallback), not just the usage query.
- */
-const KIMI_SITE_KEY = 'kimi.com';
 
 export function captureSessionId(providerId: string): string {
   return `usage-login-${providerId}`;
@@ -43,7 +35,7 @@ const EXTRACT_EXPR =
 
 export type UsageLoginResult =
   | { status: 'ready' }
-  | { status: 'relogin'; reason: 'wrong-origin' | 'no-token-found' | 'superseded' };
+  | { status: 'relogin'; reason: 'wrong-origin' | 'no-token-found' };
 
 export class UsageLoginError extends Error {
   constructor(readonly code: 'unsupported', message: string) {
@@ -69,14 +61,13 @@ export interface UsageBrowserSurface {
   setControlState(sessionId: string, state: 'user_in_control'): Promise<void> | void;
   teardownSession(sessionId: string): Promise<void>;
   /** Remember the session's site context globally (cross-workspace reuse). */
-  rememberGlobalSiteAuth(sessionId: string, siteKey: string): Promise<void>;
+  rememberGlobalSiteAuth(sessionId: string, siteKey: string, bearerToken?: string): Promise<void>;
 }
 
 export class ProviderUsageLoginService {
   constructor(
     private readonly sqlite: SqliteStore,
     private readonly browser: UsageBrowserSurface = browserService,
-    private readonly usage = providerUsageStore,
   ) {}
 
   /**
@@ -106,11 +97,12 @@ export class ProviderUsageLoginService {
 
   /**
    * Finalize a capture: verify the page origin is exactly www.kimi.com, extract
-   * the billing JWT in-page, encrypt+store it (identity-guarded), and tear the
-   * capture session down unconditionally (R12 — no live kimi.com session
-   * remains, on success, failure, or cancel).
+   * the billing JWT in-page, then store the login once in the global site-auth
+   * store (session context for the chat browser + the JWT as bearerToken for the
+   * usage query), and tear the capture session down unconditionally (R12 — no
+   * live kimi.com session remains, on success, failure, or cancel).
    */
-  async finalizeLogin(providerId: string, captureId: number): Promise<UsageLoginResult> {
+  async finalizeLogin(providerId: string): Promise<UsageLoginResult> {
     const sessionId = captureSessionId(providerId);
     try {
       const hostname = await this.browser.evaluateInSession(sessionId, ORIGIN_EXPR);
@@ -122,17 +114,15 @@ export class ProviderUsageLoginService {
       if (typeof jwt !== 'string' || jwt.length === 0) {
         return { status: 'relogin', reason: 'no-token-found' };
       }
-      const accepted = this.usage.setToken(providerId, jwt, captureId);
-      if (!accepted) {
-        return { status: 'relogin', reason: 'superseded' };
-      }
-      // Best-effort: also remember the kimi.com session globally so the chat
-      // browser in any workspace can reuse the login (browserSiteAuth global
-      // fallback). A failure here must not affect the usage capture.
-      await this.browser.rememberGlobalSiteAuth(sessionId, KIMI_SITE_KEY).catch((err) => {
+      // Store the login once, in the global site-auth store: the session context
+      // (cookies) lets the chat browser reuse the login in any workspace, and the
+      // bearerToken is read by the usage query. A failure here must not affect the
+      // user-visible capture result beyond surfacing a relogin.
+      await this.browser.rememberGlobalSiteAuth(sessionId, KIMI_SITE_KEY, jwt).catch((err) => {
         diagLog('Kimi global site-auth capture failed', {
           error: err instanceof Error ? err.message : String(err),
         });
+        throw err;
       });
       return { status: 'ready' };
     } finally {
