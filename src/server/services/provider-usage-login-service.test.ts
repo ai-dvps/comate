@@ -22,6 +22,7 @@ function fakeBrowser(opts: { origin?: string; extracted?: unknown; extractThrows
   const calls = {
     ensureSession: [] as Array<Record<string, unknown>>,
     evaluate: [] as string[],
+    navigate: [] as string[],
     setControlState: [] as string[],
     teardown: [] as string[],
   };
@@ -29,6 +30,9 @@ function fakeBrowser(opts: { origin?: string; extracted?: unknown; extractThrows
     async ensureSession(input) {
       calls.ensureSession.push(input);
       return { sessionId: input.sessionId };
+    },
+    async navigateInSession(_sid, url) {
+      calls.navigate.push(url);
     },
     async evaluateInSession(_sid, expr) {
       calls.evaluate.push(expr);
@@ -77,8 +81,9 @@ describe('ProviderUsageLoginService', () => {
     assert.equal(result.sessionId, `usage-login-${id}`);
     assert.equal(calls.ensureSession[0]?.transient, true);
     assert.equal(calls.setControlState[0], 'user_in_control');
-    const nav = calls.evaluate.find((e) => e.includes('location.href')) ?? '';
-    assert.equal(nav.includes(KIMI_LOGIN_URL), true);
+    // Navigates via CDP Page.navigate (Steel-tracked), not evaluate(location.href).
+    assert.equal(calls.navigate.includes(KIMI_LOGIN_URL), true);
+    assert.equal(calls.evaluate.some((e) => e.includes('location.href')), false);
   });
 
   test('finalizeLogin happy path: stores the token and tears down', async () => {
