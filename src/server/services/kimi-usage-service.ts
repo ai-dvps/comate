@@ -77,13 +77,15 @@ function readJwtExp(token: string): number | null {
  * carries the reset time. An account with no coding plan returns no
  * totalQuota / no FEATURE_CODING entry → all fields null → `no-plan`.
  */
-function asRecord(value: unknown): Record<string, unknown> | null {
+/** @internal — shared by all provider usage services. */
+export function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
 }
 
-function asNum(value: unknown): number | null {
+/** @internal */
+export function asNum(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
     const n = Number(value);
@@ -92,7 +94,8 @@ function asNum(value: unknown): number | null {
   return null;
 }
 
-function asStr(value: unknown): string | null {
+/** @internal */
+export function asStr(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 

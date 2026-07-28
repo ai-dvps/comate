@@ -939,7 +939,11 @@ export class BrowserService {
    * instead of a workspace's settings. Best-effort: returns silently when the
    * session is gone or there is nothing replayable.
    */
-  async rememberGlobalSiteAuth(sessionId: string, siteKey: string, bearerToken?: string): Promise<void> {
+  async rememberGlobalSiteAuth(
+    sessionId: string,
+    siteKey: string,
+    opts?: { bearerToken?: string; bearerCookieName?: string },
+  ): Promise<void> {
     const entry = this.registry.get(sessionId);
     if (!entry?.handle) return;
     const raw = await this.deps.exportContext(entry.handle.baseUrl).catch(() => null);
@@ -951,6 +955,19 @@ export class BrowserService {
     const storageDomainCount =
       Object.keys(scoped.localStorage ?? {}).length + Object.keys(scoped.sessionStorage ?? {}).length;
     if (scoped.cookies.length === 0 && storageDomainCount === 0) return;
+
+    // Determine the bearer token: explicit (Kimi, from cdp.evaluate) or
+    // extracted from the captured cookies by name (BigModel, httpOnly-safe).
+    let bearerToken: string | undefined;
+    if (opts?.bearerToken) {
+      bearerToken = opts.bearerToken;
+    } else if (opts?.bearerCookieName) {
+      const cookie = scoped.cookies.find(
+        (c) => (c as Record<string, unknown>)?.name === opts.bearerCookieName,
+      );
+      bearerToken = (cookie as Record<string, unknown> | undefined)?.value as string | undefined;
+    }
+
     const now = new Date().toISOString();
     const existingJson = this.deps.store.getGlobalSiteAuth(siteKey);
     let createdAt = now;
