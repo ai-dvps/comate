@@ -40,6 +40,22 @@ const API_BASE = '/api/providers'
 /** Avoid refetching on every render/open; the server holds the 24h cache. */
 const CLIENT_FETCH_THROTTLE_MS = 10_000
 
+/**
+ * Client-side gate mirroring the server's `isKimiCodingPlanProvider` (KTD7) —
+ * the Kimi coding plan lives on api.kimi.com, distinct from api.moonshot.cn
+ * API-key providers whose account may not match the kimi.com web billing
+ * account. Only these providers get usage display/login affordances.
+ */
+export function isKimiCodingPlanProvider(baseUrl: string): boolean {
+  return baseUrl.toLowerCase().includes('kimi.com')
+}
+
+/** Format a remaining-quota value for the minimal selector line (unit TBD/OQ2). */
+export function formatRemaining(remaining: number | null | undefined): string {
+  if (remaining === null || remaining === undefined) return ''
+  return `${remaining} left`
+}
+
 interface ProviderUsageState {
   usageByProvider: Record<string, UsageState>
   login: UsageLoginState | null
