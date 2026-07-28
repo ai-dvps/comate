@@ -336,6 +336,17 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       )
     `);
+    // Per-provider usage tokens (KTD2): credential-crypto ciphertext of a
+    // provider's billing web-login JWT. Value-only — these accessors move the
+    // blob; encrypt/decrypt is the caller's (provider-usage-store) job, and the
+    // plaintext is never returned to clients.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_usage_tokens (
+        provider_id TEXT PRIMARY KEY,
+        encrypted_token TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todos (
         id TEXT PRIMARY KEY,
@@ -3370,6 +3381,42 @@ export class SqliteStore {
   /** Remove the stored connection (Disconnect). */
   clearGithubConnection(): void {
     this.db.prepare('DELETE FROM app_settings WHERE id = 1').run();
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-provider usage tokens (KTD2). Encrypted ciphertext of a provider's
+  // billing web-login JWT. Value-only: these methods move the blob;
+  // encrypt/decrypt is the caller's (provider-usage-store) responsibility and
+  // the plaintext never reaches clients. Keyed by provider id (unlike the
+  // singleton github connection above).
+  // -------------------------------------------------------------------------
+
+  /** Encrypted usage-token ciphertext for a provider, or null when none stored. */
+  getProviderUsageToken(providerId: string): string | null {
+    const row = this.db
+      .prepare('SELECT encrypted_token FROM provider_usage_tokens WHERE provider_id = ?')
+      .get(providerId) as { encrypted_token: string } | undefined;
+    const token = row?.encrypted_token;
+    return token && token.length > 0 ? token : null;
+  }
+
+  /** Upsert the encrypted usage-token ciphertext for a provider. */
+  setProviderUsageToken(providerId: string, encryptedToken: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO provider_usage_tokens (provider_id, encrypted_token, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(provider_id) DO UPDATE SET
+          encrypted_token = excluded.encrypted_token,
+          updated_at = excluded.updated_at
+      `)
+      .run(providerId, encryptedToken, now);
+  }
+
+  /** Remove the stored usage token for a provider (e.g. on re-login / disconnect). */
+  clearProviderUsageToken(providerId: string): void {
+    this.db.prepare('DELETE FROM provider_usage_tokens WHERE provider_id = ?').run(providerId);
   }
 
   // -------------------------------------------------------------------------
