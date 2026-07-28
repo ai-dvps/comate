@@ -36,6 +36,8 @@ interface TodoState {
   isLoading: boolean;
   isSyncing: boolean;
   error: string | null;
+  /** Per-repo failures from the last on-demand sync (redacted, safe to show). Null until a sync runs. */
+  lastSyncErrors: Array<{ repo: string; message: string }> | null;
   searchQuery: string;
 
   fetchTodos: () => Promise<void>;
@@ -67,6 +69,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   isLoading: false,
   isSyncing: false,
   error: null,
+  lastSyncErrors: null,
   searchQuery: '',
 
   fetchTodos: async () => {
@@ -88,18 +91,22 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   // server reconcile, then reloads the list so mirrored changes appear (F3).
   syncTodos: async () => {
     set({ isSyncing: true, error: null });
+    let syncErrors: Array<{ repo: string; message: string }> | null = null;
     try {
       const res = await fetch('/api/todos/sync', { method: 'POST' });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error || i18next.t('todos:syncFailed', 'Failed to sync'));
       }
+      const data = (await res.json().catch(() => ({}))) as { sync?: { errors?: Array<{ repo: string; message: string }> } };
+      syncErrors = data.sync?.errors && data.sync.errors.length > 0 ? data.sync.errors : [];
     } catch (err) {
       set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error') });
+      syncErrors = null;
     } finally {
       // Always reload after a sync attempt so the UI reflects persisted state.
       await get().fetchTodos();
-      set({ isSyncing: false });
+      set({ isSyncing: false, lastSyncErrors: syncErrors });
     }
   },
 

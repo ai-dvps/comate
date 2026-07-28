@@ -26,8 +26,12 @@ import type {
   CreateIssueInput,
   UpdateIssueInput,
 } from './github-types.js';
+import { fetchWithTimeout } from './github-types.js';
 
 const ThrottledOctokit = Octokit.plugin(throttling, retry);
+
+/** Per-request timeout for Issues API calls (pagination/retries each get their own). */
+const API_TIMEOUT_MS = 30_000;
 
 /** Factory type so tests can swap in a fake adapter without touching octokit. */
 export type OctokitAdapterFactory = (token: string) => GithubBackendAdapter;
@@ -110,6 +114,12 @@ export function createOctokitAdapter(token: string): GithubBackendAdapter {
         retryCount < 1,
     },
     retry: { retries: 2 },
+    // Wrap every Issues-API call with a 30s abort timeout so a hung connection
+    // cannot spin the on-demand sync indefinitely. The thrown timeout error is
+    // redacted downstream like any other GitHub error.
+    request: {
+      fetch: (url: string, init: RequestInit) => fetchWithTimeout(fetch, url, init, API_TIMEOUT_MS),
+    },
   });
 
   return {

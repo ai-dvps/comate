@@ -20,6 +20,7 @@ import { store } from '../storage/sqlite-store.js';
 import { encryptCredential, decryptCredential } from '../utils/credential-crypto.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { redactGithubError } from './github-types.js';
+import { fetchWithTimeout } from './github-types.js';
 import type { GithubBackendAdapter, GithubConnectionStatus } from './github-types.js';
 import { createOctokitAdapter } from './github-client.js';
 import type { OctokitAdapterFactory } from './github-client.js';
@@ -105,6 +106,8 @@ let inFlightDeviceFlow: DeviceFlowHandle | null = null;
 let fetchImpl: typeof fetch = globalThis.fetch;
 let adapterFactory: OctokitAdapterFactory = createOctokitAdapter;
 let now: () => number = () => Date.now();
+/** Timeout for token-endpoint calls (device code, poll, refresh, revoke). */
+let tokenTimeoutMs = 15_000;
 
 /** @internal Tests inject a controlled fetch to assert payloads/ordering. */
 export function __setFetch(fn: typeof fetch): void {
@@ -118,11 +121,16 @@ export function __setAdapterFactory(fn: OctokitAdapterFactory): void {
 export function __setNow(fn: () => number): void {
   now = fn;
 }
+/** @internal Tests shrink the token-endpoint timeout to exercise the timeout path quickly. */
+export function __setTokenTimeout(ms: number): void {
+  tokenTimeoutMs = ms;
+}
 /** @internal Wipe the holder + in-flight device flow between tests. */
 export function __reset(): void {
   cachedConnection = null;
   cachedAdapter = null;
   inFlightDeviceFlow = null;
+  tokenTimeoutMs = 15_000;
 }
 
 /** Zero the in-process token holder (shutdown / disconnect). R13/KTD3. */
@@ -227,11 +235,16 @@ export async function getAdapter(): Promise<GithubBackendAdapter | null> {
 // --- Token endpoint helpers --------------------------------------------------
 
 async function postJson(url: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const resp = await fetchImpl(url, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const resp = await fetchWithTimeout(
+    fetchImpl,
+    url,
+    {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    tokenTimeoutMs,
+  );
   const text = await resp.text();
   let body: unknown;
   try {
@@ -419,14 +432,19 @@ async function revoke(conn: GithubConnection): Promise<{ deepLink?: string }> {
   // Without the app private key this 401/422s — expected. The caller clears local
   // state regardless (R18: does not block local deletion on failure).
   try {
-    await fetchImpl(REVOKE_URL(clientId), {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${clientId}:`).toString('base64')}`,
-        Accept: 'application/json',
+    await fetchWithTimeout(
+      fetchImpl,
+      REVOKE_URL(clientId),
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${clientId}:`).toString('base64')}`,
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ access_token: conn.accessToken }),
       },
-      body: JSON.stringify({ access_token: conn.accessToken }),
-    });
+      tokenTimeoutMs,
+    );
   } catch (err) {
     diagLog('[github] best-effort App token revocation failed: ' + redactGithubError(err).message);
   }

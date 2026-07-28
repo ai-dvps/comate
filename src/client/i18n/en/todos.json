@@ -9,6 +9,7 @@
   "fetchFailed": "Failed to fetch todos",
   "sync": "Sync now",
   "syncFailed": "Failed to sync",
+  "syncFailedRepos": "{{count}} repository(s) failed to sync (offline?).",
   "createFailed": "Failed to create todo",
   "updateFailed": "Failed to update todo",
   "deleteFailed": "Failed to delete todo",

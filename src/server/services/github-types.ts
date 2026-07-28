@@ -213,3 +213,36 @@ export function redactGithubError(err: unknown): RedactedGithubError {
     response,
   };
 }
+
+/**
+ * Wrap a fetch call with an abort timeout so a hung network connection cannot
+ * spin indefinitely. On timeout the promise rejects with a plain "timed out"
+ * Error (no token) that downstream catch sites redact like any other GitHub
+ * error. An existing caller-supplied signal is honored alongside the timer.
+ */
+export function fetchWithTimeout(
+  fetchFn: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const existing = init?.signal;
+  if (existing) {
+    if (existing.aborted) controller.abort();
+    else existing.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  return fetchFn(url, { ...init, signal: controller.signal })
+    .catch((err: unknown) => {
+      if (timedOut) {
+        throw new Error(`GitHub request timed out after ${timeoutMs}ms`);
+      }
+      throw err;
+    })
+    .finally(() => clearTimeout(timer));
+}
