@@ -72,33 +72,46 @@ describe('KimiUsageService', () => {
   test('happy path returns a ready whitelist summary', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
     usage.setToken(id, makeJwt(Math.floor(Date.now() / 1000) + 1e6), 1);
-    trackFetch(() => jsonResponse(200, { used: 3, total: 10, remaining: 7, resetDate: '2026-08-01' }));
+    trackFetch(() =>
+      jsonResponse(200, {
+        totalQuota: { limit: '100', used: '49', remaining: '51' },
+        usages: [
+          {
+            scope: 'FEATURE_CODING',
+            detail: { limit: '100', used: '100', resetTime: '2026-07-29T08:20:53.375248Z' },
+          },
+        ],
+      }),
+    );
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'ready');
-    assert.equal(result.summary?.used, 3);
-    assert.equal(result.summary?.total, 10);
-    assert.equal(result.summary?.remaining, 7);
-    assert.equal(result.summary?.resetDate, '2026-08-01');
+    assert.equal(result.summary?.used, 49);
+    assert.equal(result.summary?.total, 100);
+    assert.equal(result.summary?.remaining, 51);
+    assert.equal(result.summary?.resetDate, '2026-07-29T08:20:53.375248Z');
     assert.equal(fetchedUrls[0], KIMI_GET_USAGES_URL);
   });
 
   test('whitelist: account-identifying fields never reach the summary', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
     usage.setToken(id, makeJwt(Math.floor(Date.now() / 1000) + 1e6), 1);
-    trackFetch(
-      () =>
-        jsonResponse(200, {
-          used: 3,
-          total: 10,
-          remaining: 7,
-          resetDate: '2026-08-01',
-          email: 'user@example.com',
-          user_id: 'u-123',
-          payment: 'card-cc-4242',
-        }),
+    trackFetch(() =>
+      jsonResponse(200, {
+        totalQuota: { limit: '100', used: '49', remaining: '51' },
+        usages: [
+          {
+            scope: 'FEATURE_CODING',
+            detail: { limit: '100', used: '100', resetTime: '2026-07-29T08:20:53.375248Z' },
+          },
+        ],
+        email: 'user@example.com',
+        user_id: 'u-123',
+        payment: 'card-cc-4242',
+      }),
     );
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'ready');
+    assert.equal(result.summary?.used, 49);
     const serialized = JSON.stringify(result.summary);
     assert.equal(serialized.includes('user@example.com'), false);
     assert.equal(serialized.includes('u-123'), false);
