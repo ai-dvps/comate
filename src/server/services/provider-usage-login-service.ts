@@ -52,6 +52,12 @@ export interface UsageBrowserSurface {
     workspaceId: string;
     transient?: boolean;
   }): Promise<unknown>;
+  /**
+   * Navigate the session's page via CDP `Page.navigate` (Steel-tracked), NOT a
+   * JS location.href assignment — Steel only registers pages that go through
+   * Page.navigate, and the viewer-proxy warm-up requires a registered page.
+   */
+  navigateInSession(sessionId: string, url: string): Promise<void>;
   evaluateInSession(sessionId: string, expression: string): Promise<unknown>;
   setControlState(sessionId: string, state: 'user_in_control'): Promise<void> | void;
   teardownSession(sessionId: string): Promise<void>;
@@ -81,7 +87,10 @@ export class ProviderUsageLoginService {
       workspaceId: USAGE_LOGIN_WORKSPACE_ID,
       transient: true,
     });
-    await this.browser.evaluateInSession(sessionId, `location.href = ${JSON.stringify(KIMI_LOGIN_URL)}`);
+    // Navigate via CDP Page.navigate so Steel registers the page (the viewer-
+    // proxy warm-up requires a tracked page). A JS location.href assignment is
+    // NOT tracked and leaves live-details.pages empty.
+    await this.browser.navigateInSession(sessionId, KIMI_LOGIN_URL);
     await this.browser.setControlState(sessionId, 'user_in_control');
     return { sessionId };
   }

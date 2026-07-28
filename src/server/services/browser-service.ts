@@ -485,6 +485,21 @@ export class BrowserService {
     return page.evaluate(expression);
   }
 
+  /**
+   * Navigate a registered session's page via CDP `Page.navigate` (KTD1/U3).
+   * Steel only registers/tracks pages reached through Page.navigate (a JS
+   * `location.href` assignment is NOT tracked), and the viewer-proxy warm-up
+   * requires a tracked page — so the capture flow must navigate this way.
+   */
+  async navigateInSession(sessionId: string, url: string): Promise<void> {
+    const entry = this.registry.get(sessionId);
+    if (!entry?.handle) {
+      throw new Error(`No live browser session for ${sessionId}`);
+    }
+    const page = await connectSteelPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
+    await page.navigate(url);
+  }
+
   listSessions(): BrowserSessionInfo[] {
     const infos: BrowserSessionInfo[] = [];
     for (const entry of this.registry.values()) {
