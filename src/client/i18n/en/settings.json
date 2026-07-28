@@ -99,7 +99,29 @@
     "createFailed": "Failed to create provider",
     "updateFailed": "Failed to update provider",
     "deleteFailed": "Failed to delete provider",
-    "setDefaultFailed": "Failed to set default provider"
+    "setDefaultFailed": "Failed to set default provider",
+    "usage": {
+      "loading": "Loading usage…",
+      "used": "used",
+      "left": "left",
+      "resets": "resets",
+      "refresh": "Refresh usage",
+      "connect": "Connect Kimi account",
+      "reconnect": "Reconnect to refresh",
+      "noPlan": "No coding plan found for this account",
+      "unavailable": "Usage unavailable",
+      "retry": "Retry"
+    },
+    "usageLogin": {
+      "title": "Log in to Kimi",
+      "cancel": "Cancel",
+      "connecting": "Preparing login…",
+      "capturing": "Capturing your session…",
+      "failed": "Could not capture your session. Finish logging in on kimi.com, then try again.",
+      "retry": "Try again",
+      "capture": "I've logged in — capture",
+      "startFailed": "Failed to start login"
+    }
   },
   "appearance": {
     "theme": "Theme",
