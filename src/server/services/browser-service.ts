@@ -222,6 +222,12 @@ interface RegistryEntry {
    * browser-mcp via setCloseCardPending around its requestApproval round-trip.
    */
   closeCardPending: boolean;
+  /**
+   * Transient capture session (Kimi usage-login, KTD1): excluded from
+   * idle-reclaim so a slow login is never auto-closed mid-capture. Defaults
+   * false; chat browser sessions are unaffected.
+   */
+  transient: boolean;
 }
 
 export interface BrowserServiceDeps {
@@ -464,6 +470,21 @@ export class BrowserService {
     return this.registry.get(sessionId)?.workspaceId;
   }
 
+  /**
+   * Run CDP `Runtime.evaluate` in a registered session's primary page (KTD4).
+   * Used by the Kimi usage-login capture to read the billing JWT in-page after
+   * verifying origin. Server-side only; the expression's return value is the
+   * only thing handed back to the caller.
+   */
+  async evaluateInSession(sessionId: string, expression: string): Promise<unknown> {
+    const entry = this.registry.get(sessionId);
+    if (!entry?.handle) {
+      throw new Error(`No live browser session for ${sessionId}`);
+    }
+    const page = await connectSteelPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
+    return page.evaluate(expression);
+  }
+
   listSessions(): BrowserSessionInfo[] {
     const infos: BrowserSessionInfo[] = [];
     for (const entry of this.registry.values()) {
@@ -515,9 +536,14 @@ export class BrowserService {
    * identity (KTD-5). A session_lost entry is respawned — the next tool call
    * after a crash transparently rebuilds the browser (KTD-1).
    */
-  async ensureSession(input: { sessionId: string; workspaceId: string }): Promise<BrowserSessionInfo> {
+  async ensureSession(input: {
+    sessionId: string;
+    workspaceId: string;
+    /** Transient capture sessions skip idle-reclaim (KTD1). */
+    transient?: boolean;
+  }): Promise<BrowserSessionInfo> {
     await this.initialize();
-    const { sessionId, workspaceId } = input;
+    const { sessionId, workspaceId, transient = false } = input;
 
     const existing = this.registry.get(sessionId);
     if (existing) {
@@ -548,6 +574,7 @@ export class BrowserService {
       idlePromptTimerHandle: null,
       idleCloseTimerHandle: null,
       closeCardPending: false,
+      transient,
     };
     entry.starting = starting;
     if (!existing) {
@@ -768,6 +795,10 @@ export class BrowserService {
   private armIdlePrompt(sessionId: string): void {
     const entry = this.registry.get(sessionId);
     if (!entry) return;
+    // Transient capture sessions (Kimi usage-login) skip idle-reclaim so a slow
+    // login is never auto-closed mid-capture (KTD1). They are torn down
+    // explicitly on capture complete/cancel.
+    if (entry.transient) return;
     if (entry.idlePromptTimerHandle !== null) {
       this.deps.timer.clear(entry.idlePromptTimerHandle);
     }

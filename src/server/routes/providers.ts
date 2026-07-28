@@ -4,6 +4,7 @@ import { ChatError } from '../services/chat-service.js';
 import { chatService } from '../services/chat-service.js';
 import { detectProviderConfig } from '../services/provider-detection.js';
 import { kimiUsageService } from '../services/kimi-usage-service.js';
+import { providerUsageLoginService, UsageLoginError } from '../services/provider-usage-login-service.js';
 import type { CreateProviderInput, UpdateProviderInput, Provider } from '../models/provider.js';
 
 const router = Router();
@@ -236,6 +237,49 @@ router.post('/:id/usage', async (req, res) => {
   } catch (error) {
     console.error('Failed to fetch provider usage:', error);
     res.status(500).json({ error: 'Failed to fetch provider usage' });
+  }
+});
+
+// POST /api/providers/:id/usage-login/start — open a transient capture session.
+router.post('/:id/usage-login/start', async (req, res) => {
+  try {
+    const result = await providerUsageLoginService.startLogin(req.params.id);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof UsageLoginError) {
+      res.status(400).json({ error: error.message, code: error.code });
+      return;
+    }
+    console.error('Failed to start usage login:', error);
+    res.status(500).json({ error: 'Failed to start usage login' });
+  }
+});
+
+// POST /api/providers/:id/usage-login/finalize — verify origin, extract the JWT,
+// encrypt+store it, and tear the capture session down (body: { captureId }).
+router.post('/:id/usage-login/finalize', async (req, res) => {
+  try {
+    const captureId = Number(req.body?.captureId);
+    if (!Number.isFinite(captureId)) {
+      res.status(400).json({ error: 'captureId is required' });
+      return;
+    }
+    const result = await providerUsageLoginService.finalizeLogin(req.params.id, captureId);
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to finalize usage login:', error);
+    res.status(500).json({ error: 'Failed to finalize usage login' });
+  }
+});
+
+// POST /api/providers/:id/usage-login/cancel — tear down an in-flight capture.
+router.post('/:id/usage-login/cancel', async (_req, res) => {
+  try {
+    await providerUsageLoginService.cancelLogin(_req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Failed to cancel usage login:', error);
+    res.status(500).json({ error: 'Failed to cancel usage login' });
   }
 });
 
