@@ -18,6 +18,7 @@ import { initNotificationClickHandler } from './lib/notifications'
 import { openSessionDirect } from './lib/session-jump'
 import RightPanel from './components/RightPanel'
 import BrowserPopout from './components/browser/BrowserPopout'
+import UsageLoginModal from './components/UsageLoginModal'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
@@ -386,6 +387,8 @@ function App() {
       <UpdateRestartDialog onForceShowWindow={handleForceShowWindow} />
 
       <BrowserPopout />
+
+      <UsageLoginModal />
 
       <ToastContainer />
     </div>
