@@ -3,6 +3,7 @@
   "header": {
     "analytics": "分析",
     "createWorkspace": "创建工作区",
+    "todos": "待办",
     "scheduledTasks": "定时任务",
     "toggleTheme": "切换主题",
     "settings": "设置",

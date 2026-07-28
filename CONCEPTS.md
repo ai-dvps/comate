@@ -33,3 +33,11 @@ A session is bound to the backend selected at its first message and cannot switc
 
 ### 执行会话 (run session)
 定时任务单次触发所产生的全新独立会话；同一任务的各次执行互不共享上下文。任务详情中执行历史列表的每条记录对应一个执行会话，状态取值为：已成功 / 已失败 / 已错过（触发时应用未运行，不补跑）/ 已跳过（上一班次仍在执行）。
+
+## Todos
+
+### 来源锚定 (origin-anchored ownership)
+每个 todo 的「来源端」（创建方）是它的真相源；同步是有方向的，从来源端流向副本。本地创建的 todo 以本地为准，可发布成 GitHub issue；GitHub 上创建的 issue 以 GitHub 为准，可拉取成本地 todo。副本端对结构字段（标题/正文）的改动以来源端为准，检测到分歧时提示用户处理，不静默覆盖。
+
+### 字段级同步 (field-class sync)
+todo 同步行为按字段类别分区，而非单一全局策略：评论双向追加（永不冲突）；协作状态（开/关、标签、指派人）接受远端并镜像回本地；结构字段（标题、正文）来源端为准、冲突时提示。GitHub 是第一个后端适配器，后续其他服务端走同一套通用适配器契约。

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Comate 后端能力对照：Claude Code vs Open Code</title>
+  <style>
+    :root {
+      --bg: #f9fafb;
+      --surface: #ffffff;
+      --text: #1f2937;
+      --text-muted: #6b7280;
+      --border: #e5e7eb;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --ok: #059669;
+      --ok-soft: #d1fae5;
+      --warn: #d97706;
+      --warn-soft: #fef3c7;
+      --bad: #dc2626;
+      --bad-soft: #fee2e2;
+      --code-bg: #f3f4f6;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111827;
+        --surface: #1f2937;
+        --text: #f9fafb;
+        --text-muted: #9ca3af;
+        --border: #374151;
+        --accent: #60a5fa;
+        --accent-soft: #1e3a8a;
+        --ok: #34d399;
+        --ok-soft: #064e3b;
+        --warn: #fbbf24;
+        --warn-soft: #78350f;
+        --bad: #f87171;
+        --bad-soft: #7f1d1d;
+        --code-bg: #111827;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      margin: 0;
+      padding: 2rem 1rem;
+    }
+    main {
+      max-width: 70ch;
+      margin: 0 auto;
+    }
+    header {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin: 0 0 0.75rem;
+      line-height: 1.25;
+    }
+    dl.meta {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.35rem 1rem;
+      margin: 0;
+      font-size: 0.9rem;
+    }
+    dl.meta dt { color: var(--text-muted); }
+    dl.meta dd { margin: 0; }
+    .lead {
+      font-size: 1.1rem;
+      margin: 1.5rem 0;
+      padding: 1rem 1.25rem;
+      background: var(--accent-soft);
+      border-left: 4px solid var(--accent);
+      border-radius: 0 0.5rem 0.5rem 0;
+    }
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    h2 {
+      font-size: 1.2rem;
+      margin-top: 0;
+      margin-bottom: 1rem;
+    }
+    h3 {
+      font-size: 1rem;
+      margin-top: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    p { margin: 0.75rem 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      margin: 1rem 0;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--code-bg); }
+    .state-full { color: var(--ok); font-weight: 600; }
+    .state-degraded { color: var(--warn); font-weight: 600; }
+    .state-unavailable { color: var(--bad); font-weight: 600; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.45rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .badge-full { background: var(--ok-soft); color: var(--ok); }
+    .badge-degraded { background: var(--warn-soft); color: var(--warn); }
+    .badge-unavailable { background: var(--bad-soft); color: var(--bad); }
+    code {
+      font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85em;
+      background: var(--code-bg);
+      padding: 0.15rem 0.35rem;
+      border-radius: 0.25rem;
+    }
+    pre {
+      background: var(--code-bg);
+      padding: 1rem;
+      border-radius: 0.5rem;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      margin: 1rem 0;
+    }
+    pre code { background: transparent; padding: 0; }
+    ul { padding-left: 1.25rem; }
+    li { margin: 0.4rem 0; }
+    .citation {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      display: block;
+      margin-top: 0.35rem;
+    }
+    .diagram {
+      margin: 1rem 0;
+      padding: 1rem;
+      background: var(--code-bg);
+      border-radius: 0.5rem;
+      overflow-x: auto;
+    }
+    .diagram pre { margin: 0; background: transparent; }
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Comate 后端能力对照：Claude Code vs Open Code</h1>
+      <dl class="meta">
+        <dt>Date</dt><dd>2026-07-25</dd>
+        <dt>Input shape</dt><dd>concept</dd>
+        <dt>Subject</dt><dd>Claude Code 与 Open Code 后端在 Comate 中的功能差异与缺失清单</dd>
+      </dl>
+    </header>
+
+    <p class="lead">
+      <strong>结论先行：</strong>Open Code 在 Comate 里不是“半成品”，而是覆盖了普通 GUI 会话的核心路径；真正的缺口集中在<strong>机器人入口、分析统计、定时任务完成判定、以及 Comate 的 MCP/Skill/Plugin 生态</strong>。下面按源码给出的“能力声明表”逐条拆解。
+    </p>
+
+    <section>
+      <h2>1. 权威来源：能力声明表</h2>
+      <p>
+        项目里唯一的事实来源是 <code>src/server/services/agent-backends.ts</code> 中的 <code>CAPABILITY_TABLE</code>。Claude 是 canonical 后端，默认全部 <span class="state-full">full</span>；Open Code 必须逐项声明，未声明即 <span class="state-unavailable">unavailable</span>。
+      </p>
+      <table>
+        <thead>
+          <tr><th>能力</th><th>Claude</th><th>Open Code</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>streaming</td><td class="state-full">full</td><td class="state-full">full</td><td>已验证</td></tr>
+          <tr><td>toolRendering</td><td class="state-full">full</td><td class="state-full">full</td><td>已验证</td></tr>
+          <tr><td>approvals</td><td class="state-full">full</td><td class="state-full">full</td><td>permission.asked 桥接到统一审批流</td></tr>
+          <tr><td>askUserQuestion</td><td class="state-full">full</td><td class="state-full">full</td><td>已验证</td></tr>
+          <tr><td>subagents</td><td class="state-full">full</td><td class="state-full">full</td><td>子会话加载各有实现</td></tr>
+          <tr><td>browser</td><td class="state-full">full</td><td class="state-full">full</td><td>通过 HTTP MCP 共用浏览器</td></tr>
+          <tr><td>slashCommands</td><td class="state-full">full</td><td class="state-full">full</td><td>但命令来源不同，见下文</td></tr>
+          <tr><td>todos</td><td class="state-full">full</td><td class="state-full">full</td><td>已验证</td></tr>
+          <tr><td>sessionManagement</td><td class="state-full">full</td><td class="state-full">full</td><td>backend_session_id 持久化</td></tr>
+          <tr><td>modelSwitching</td><td class="state-full">full</td><td class="state-full">full</td><td>含别名剥离与兜底</td></tr>
+          <tr><td>analytics</td><td class="state-full">full</td><td class="state-unavailable">unavailable</td><td>KTD-10：v1 不计入用量</td></tr>
+          <tr><td>scheduledGoalWrap</td><td class="state-full">full</td><td class="state-degraded">degraded</td><td>可触发，但无 Stop-hook 完成判定</td></tr>
+          <tr><td>hooks</td><td class="state-unavailable">unavailable</td><td class="state-unavailable">unavailable</td><td>数据模型存在，执行端未接线</td></tr>
+        </tbody>
+      </table>
+      <p class="citation">来源：src/server/services/agent-backends.ts:71-107；docs/acceptance/agent-backend-parity-checklist.md</p>
+    </section>
+
+    <section>
+      <h2>2. 完整缺口清单（Open Code 相对 Claude 缺少或降级）</h2>
+
+      <h3>2.1 Bot 会话 —— 强制锁死 Claude</h3>
+      <p>
+        这是清单里最大的一块。<code>ChatService.resolveSessionBackend</code> 对任何 <code>isBotSession</code> 都直接返回 <code>'claude'</code>，完全无视应用默认后端：
+      </p>
+      <pre><code>// src/server/services/chat-service.ts:994-1002
+private async resolveSessionBackend(
+  session: ChatSession,
+  isBotSession?: boolean,
+): Promise&lt;BackendId&gt; {
+  if (session.backend) {
+    return session.backend as BackendId;
+  }
+  return isBotSession ? 'claude' : (await resolveDefaultBackend()).backend;
+}</code></pre>
+      <p>
+        影响范围：WeCom 机器人、飞书机器人、所有通过 <code>botEventHandler</code> 进入的会话。文档也明确写了这是 R14 “out of scope for v1”。
+      </p>
+      <p class="citation">来源：src/server/services/chat-service.ts:991-992；docs/acceptance/agent-backend-parity-checklist.md “Known declarations to revisit”</p>
+
+      <h3>2.2 Analytics —— Open Code 会话不计入用量统计</h3>
+      <p>
+        能力表里 <code>analytics</code> 对 Open Code 是 <span class="state-unavailable">unavailable</span>。transcript/usage 在 Open Code 路径里虽然能拿到 token 数，但未被纳入 Comate 的用量分析 UI。
+      </p>
+      <p class="citation">来源：src/server/services/agent-backends.ts:93-97；docs/acceptance/agent-backend-parity-checklist.md:19</p>
+
+      <h3>2.3 定时任务 —— 可运行，但缺少完成判定器</h3>
+      <p>
+        定时任务触发时会新建会话，Claude 后端会注入 <code>Stop</code> hook，持续追问直到模型写出 <code>GOAL_STATUS: COMPLETE</code> 或达到轮次上限。Open Code 只能拿到包装后的 prompt，没有等价判定器。
+      </p>
+      <pre><code>// src/server/services/chat-service.ts:1127-1135
+if (session.source === 'scheduled' && backend === 'claude') {
+  options.hooks = {
+    ...options.hooks,
+    Stop: [...(options.hooks?.Stop ?? []), { hooks: [makeScheduledRunStopHook(session.id)] }],
+  };
+}</code></pre>
+      <p>
+        因此在 <code>SchedulerService.finishRun</code> 里，Open Code 不会因为没有 <code>GOAL_COMPLETE_MARKER</code> 而被判失败，但这也意味着它无法主动确认任务真的“完成”了目标。
+      </p>
+      <p class="citation">来源：src/server/services/chat-service.ts:1127-1135；src/server/services/scheduler-service.ts:453-470</p>
+
+      <h3>2.4 MCP 生态 —— 只有浏览器 MCP 被接入</h3>
+      <p>
+        <code>buildSdkOptions</code> 为 Claude 后端拼装了一整组 MCP 服务器：
+      </p>
+      <ul>
+        <li>用户在 Workspace 里配置的 MCP servers（<code>workspace.mcpServers</code>）</li>
+        <li>Plugin 声明的 MCP servers（<code>loadPluginMcpServers</code>）</li>
+        <li>Comate 内置的浏览器 MCP</li>
+        <li>Comate 内置的定时任务 MCP</li>
+      </ul>
+      <p>
+        但 Open Code 的 serve config 只显式注入了浏览器 MCP：
+      </p>
+      <pre><code>// src/server/services/opencode-adapter.ts:100-109
+function buildSessionMcpConfig(comateSessionId: string): Record&lt;string, unknown&gt; {
+  return {
+    [BROWSER_MCP_SERVER_KEY]: {
+      type: 'remote',
+      url: `${getSidecarBaseUrl()}/mcp/browser/${comateSessionId}`,
+      headers: { Authorization: `Bearer ${getBrowserMcpToken()}` },
+      oauth: false,
+    },
+  };
+}</code></pre>
+      <p>
+        也就是说，Open Code 会话<strong>看不到用户 MCP、Plugin MCP 和定时任务 MCP</strong>。这是把“plugins / skills / 定时任务”变成缺口的真正技术原因。
+      </p>
+      <p class="citation">来源：src/server/services/chat-service.ts:1732-1782；src/server/services/opencode-adapter.ts:81-109</p>
+
+      <h3>2.5 Skills / Plugins 的 Slash 命令 —— 仅 Open Code 原生命令可用</h3>
+      <p>
+        Comate 的 <code>/commands</code> 路由是后端感知的：Claude 路径走 <code>commandsService</code>，合并 SDK 命令、<code>.claude/commands</code>、<code>.claude/skills</code>、个人命令和 Plugin 命令；Open Code 路径则只向该会话的 opencode serve 取 <code>/command</code>：
+      </p>
+      <pre><code>// src/server/routes/workspace-commands.ts:23-33
+if (sessionId) {
+  const session = workspaceStore.getLocalSession(sessionId);
+  if (session?.backend === 'opencode') {
+    const commands = await chatService.getSessionBackendCommands(sessionId);
+    res.json({ commands, partial: false });
+    return;
+  }
+}</code></pre>
+      <p>
+        因此 Open Code 能执行的是 opencode 自己 advertise 出来的命令，而 Comate 安装的 Skill/Plugin 提供的 slash 命令不会出现在列表里，也不会被 <code>executeBackendCommand</code> 执行。
+      </p>
+      <p class="citation">来源：src/server/routes/workspace-commands.ts:20-33；src/server/services/chat-service.ts:668-688</p>
+
+      <h3>2.6 Session 生命周期 —— Open Code 有几个未对齐的边角</h3>
+      <p>
+        这些不是“功能缺失”，而是当前实现默认走 Claude SDK，Open Code 会话会报错或行为不完整：
+      </p>
+      <ul>
+        <li><strong>Fork：</strong><code>forkSession</code> 始终调用 <code>sdkClient.forkSession</code>，不会 fork opencode 远程会话。</li>
+        <li><strong>Rename：</strong>非 draft 会话的改名直接调用 <code>sdkClient.renameSession</code>，对 Open Code 会话无效。</li>
+        <li><strong>Delete：</strong>只删本地 SQLite 行，没有清理 opencode 后端会话。</li>
+        <li><strong>List：</strong>扫描所有 workspace 的 SDK 会话时不会发现 opencode 会话。</li>
+        <li><strong>Background stop：</strong>Open Code query handle 的 <code>stopTask</code> 是 no-op。</li>
+      </ul>
+      <p class="citation">来源：src/server/services/chat-service.ts:472-474, 512-533, 535-543；src/server/services/opencode-adapter.ts:184-188</p>
+
+      <h3>2.7 Session 设置 —— fastMode / 系统提示预设</h3>
+      <ul>
+        <li><strong>Fast mode：</strong>Claude 会读 <code>session.fastMode</code> 和 <code>provider.supportsFastMode</code>，Open Code 的 <code>buildServeConfig</code> 没有传这个标志。</li>
+        <li><strong>System prompt preset：</strong>Claude 支持字符串或 preset 对象；Open Code 只转发字符串，对象形式会被丢弃。</li>
+      </ul>
+      <p class="citation">来源：src/server/services/chat-service.ts:1793-1794；src/server/services/opencode-adapter.ts:526-533</p>
+
+      <h3>2.8 Hooks —— 两个后端都没有</h3>
+      <p>
+        Workspace settings 里可以配置 hook 脚本，但能力表明确声明 <code>hooks: unavailable</code> 在 Claude 和 Open Code 上都是 unavailable。执行端目前没有任何消费者。
+      </p>
+      <p class="citation">来源：src/server/services/agent-backends.ts:77,105</p>
+    </section>
+
+    <section>
+      <h2>3. 你提到的 “message” 指什么？</h2>
+      <p>
+        如果指<strong>普通聊天消息</strong>（发送、流式接收、消息归一化、渲染），那是 <span class="state-full">full parity</span>。<code>message-normalizer.ts</code> 是后端无关的，<code>opencode-event-mapper.ts</code> 已经把 opencode 的 SSE 事件翻译成 SDKMessage 形状。
+      </p>
+      <p>
+        如果指<strong>Bot 消息入口</strong>（WeCom/飞书来的消息），那它属于 2.1 的缺口：所有 Bot 会话都被锁在 Claude 后端。
+      </p>
+      <p class="citation">来源：src/server/services/opencode-event-mapper.ts；src/server/services/message-normalizer.ts</p>
+    </section>
+
+    <section>
+      <h2>4. 一句话总结</h2>
+      <p>
+        Open Code 已覆盖“人在 Comate GUI 里正常聊天、审批、工具调用、浏览器、子代理、换模型”的完整路径；<strong>缺口集中在企业/自动化入口（Bot、Analytics、定时任务完成判定）、Comate 扩展生态（MCP、Skill、Plugin），以及若干 Session 生命周期操作（fork/rename/delete/stopTask）</strong>。Bot 会话被强制绑定 Claude 是最显性的限制。
+      </p>
+    </section>
+
+    <footer>
+      Composed 2026-07-25 by ce-explain
+    </footer>
+  </main>
+</body>
+</html>

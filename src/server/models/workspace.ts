@@ -81,6 +81,13 @@ export interface WorkspaceSettings {
    * injections from this store.
    */
   browserSiteAuth?: Record<string, BrowserSiteAuthEntry>;
+  /**
+   * Repositories this workspace associates with the global GitHub account
+   * (KTD5). `owner/repo` full names; a todo created here defaults its publish
+   * target to the first entry (overridable). Public list — repo *secrets*
+   * never live here; only the connection (in app_settings) holds a token.
+   */
+  githubRepoFullNames?: string[];
 }
 
 export interface Skill {

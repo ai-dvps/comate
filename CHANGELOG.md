@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Nothing yet.
+- **GitHub Issues sync** — todos are now global, shareable entities that sync with GitHub Issues. Connect a GitHub account (GitHub App via Device Flow, or a fine-grained PAT), then publish a local todo to an issue or pull an issue into a local replica. Sync is origin-anchored and field-class: comments merge append-only both ways, status/labels/assignee accept the remote, and title is origin-wins with both-sides-edited conflicts surfaced for an accept-local/accept-remote choice (never auto-clobbered). Sync runs on-demand when the Todos panel opens or you click refresh; a single-flight guard collapses overlapping triggers. A remote deletion is detected and flagged, never silently destroying local comments. Tokens are encrypted at rest and never appear in any response or log.
 
 ### Changed
 

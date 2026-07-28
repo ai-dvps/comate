@@ -1,12 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare, CheckSquare } from 'lucide-react'
+import { MessageSquare } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { RAIL_WIDTH } from '../hooks/use-sidebar-width'
 import SessionList from './SessionList'
-import TodoList from './TodoList'
 
 interface SidebarProps {
   width: number
@@ -15,7 +14,7 @@ interface SidebarProps {
   onToggleCollapse?: () => void
 }
 
-type SidebarTab = 'sessions' | 'todos'
+type SidebarTab = 'sessions'
 
 export default function Sidebar({
   width,
@@ -79,12 +78,6 @@ export default function Sidebar({
       label: t('sidebar.sessions'),
       tooltip: t('sidebar.showSessions'),
       icon: <MessageSquare className="w-4 h-4" />,
-    },
-    {
-      id: 'todos',
-      label: t('sidebar.todos'),
-      tooltip: t('sidebar.showTodos'),
-      icon: <CheckSquare className="w-4 h-4" />,
     },
   ]
 
@@ -150,19 +143,6 @@ export default function Sidebar({
               <SessionList workspaceId={activeWorkspaceId} />
             )}
             {activeTab === 'sessions' && !activeWorkspaceId && (
-              <div className="flex-1 flex items-center justify-center p-4">
-                <p className="text-text-tertiary text-center">
-                  {t('sidebar.noWorkspace')}
-                </p>
-              </div>
-            )}
-            {activeTab === 'todos' && activeWorkspaceId && (
-              <TodoList
-                workspaceId={activeWorkspaceId}
-                onSessionNavigate={() => setActiveTab('sessions')}
-              />
-            )}
-            {activeTab === 'todos' && !activeWorkspaceId && (
               <div className="flex-1 flex items-center justify-center p-4">
                 <p className="text-text-tertiary text-center">
                   {t('sidebar.noWorkspace')}

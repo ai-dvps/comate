@@ -21,17 +21,14 @@ vi.mock('./SessionList', () => ({
   default: () => <div data-testid="session-list">SessionList</div>,
 }));
 
-vi.mock('./TodoList', () => ({
-  default: () => <div data-testid="todo-list">TodoList</div>,
-}));
-
-
 describe('Sidebar', () => {
   beforeEach(() => {
     cleanup();
   });
 
-  it('renders exactly two tabs: Sessions and Todos', () => {
+  // R1: the workspace-sidebar Todos tab was removed — Todos are now a top-level
+  // panel. Only the Sessions tab remains in the sidebar.
+  it('renders only the Sessions tab (no Todos tab — R1)', () => {
     renderWithI18n(
       <Sidebar
         width={240}
@@ -40,7 +37,7 @@ describe('Sidebar', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Sessions' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Todos' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Todos' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Queue' })).not.toBeInTheDocument();
   });
@@ -69,7 +66,7 @@ describe('Sidebar', () => {
     expect(screen.queryByTestId('sidebar-resize-handle')).not.toBeInTheDocument();
   });
 
-  it('renders two icon buttons when collapsed', () => {
+  it('renders only the sessions icon button when collapsed', () => {
     renderWithI18n(
       <Sidebar
         width={48}
@@ -79,16 +76,12 @@ describe('Sidebar', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Show sessions' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show todos' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show todos' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show files' })).not.toBeInTheDocument();
-
-    expect(screen.queryByRole('button', { name: 'Sessions' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Todos' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument();
   });
 
-  it('switches between sessions and todos in both expanded and collapsed states', () => {
-    const { rerender } = renderWithI18n(
+  it('defaults to the Sessions tab active', () => {
+    renderWithI18n(
       <Sidebar
         width={240}
         onWidthChange={vi.fn()}
@@ -96,36 +89,10 @@ describe('Sidebar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Todos' }));
-    expect(screen.getByRole('button', { name: 'Todos' })).toHaveClass('border-b');
-
-    rerender(
-      <I18nextProvider i18n={i18n}>
-        <Sidebar
-          width={48}
-          onWidthChange={vi.fn()}
-          isCollapsed={true}
-        />
-      </I18nextProvider>,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show sessions' }));
-
-    rerender(
-      <I18nextProvider i18n={i18n}>
-        <Sidebar
-          width={240}
-          onWidthChange={vi.fn()}
-          isCollapsed={false}
-        />
-      </I18nextProvider>,
-    );
-
     expect(screen.getByRole('button', { name: 'Sessions' })).toHaveClass('border-b');
-    expect(screen.getByRole('button', { name: 'Todos' })).not.toHaveClass('border-b-2');
   });
 
-  it('expands the sidebar when clicking an icon in collapsed state', () => {
+  it('expands the sidebar when clicking the sessions icon in collapsed state', () => {
     const toggleCollapse = vi.fn();
     renderWithI18n(
       <Sidebar
@@ -136,7 +103,7 @@ describe('Sidebar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show todos' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show sessions' }));
     expect(toggleCollapse).toHaveBeenCalledTimes(1);
   });
 });

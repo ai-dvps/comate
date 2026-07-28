@@ -314,7 +314,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const store = triggerMigration(seedDb, dbPath);
     const db = openRawDb(store);
 
-    assert.strictEqual(store.getMigrationVersion(), 6);
+    assert.strictEqual(store.getMigrationVersion(), 7);
 
     const tables = tableNames(db);
     assert.ok(tables.includes('bot_channels'));
@@ -429,7 +429,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const firstStore = triggerMigration(seedDb, dbPath);
 
     const secondStore = new SqliteStore(dbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 6);
+    assert.strictEqual(secondStore.getMigrationVersion(), 7);
 
     const db = openRawDb(secondStore);
     assert.strictEqual(tableNames(db).includes('bot_members'), false);
@@ -507,7 +507,7 @@ describe('unified schema migration', { concurrency: false }, () => {
 
     // Must not throw (previously: UNIQUE constraint failed: user_sessions.user_id).
     const store = new SqliteStore(dbPath);
-    assert.strictEqual(store.getMigrationVersion(), 6);
+    assert.strictEqual(store.getMigrationVersion(), 7);
     const db = openRawDb(store);
 
     // No row was lost to the multi-active collisions: wecom-u1 has 2 sessions,
@@ -573,6 +573,158 @@ describe('unified schema migration', { concurrency: false }, () => {
     // Version must not have been bumped.
     const version = (db.prepare('SELECT version FROM bot_migration_state WHERE id = 1').get() as { version: number }).version;
     assert.strictEqual(version, 0);
+    db.close();
+  });
+});
+
+function seedOldTodosDb(
+  dbPath: string,
+  rows: Array<{
+    id: string;
+    workspace_id: string;
+    text: string;
+    status: string;
+    session_id: string | null;
+    created_at: string;
+    updated_at: string;
+  }>,
+): Database.Database {
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE bot_migration_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL,
+      run_at TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL DEFAULT '{}'
+    )
+  `);
+  db.exec(`
+    CREATE TABLE todos (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      session_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  const insert = db.prepare(
+    'INSERT INTO todos (id, workspace_id, text, status, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  );
+  for (const r of rows) {
+    insert.run(r.id, r.workspace_id, r.text, r.status, r.session_id, r.created_at, r.updated_at);
+  }
+  db.prepare("INSERT INTO bot_migration_state (id, version, run_at, snapshot_json) VALUES (1, 6, ?, '{}')").run(now());
+  return db;
+}
+
+function todoColumns(db: Database.Database): Array<{ name: string; notnull: number }> {
+  return db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string; notnull: number }>;
+}
+
+describe('todos global schema migration (v7)', { concurrency: false }, () => {
+  let dbDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbDir = mkdtempSync(join(tmpdir(), 'todos-global-migration-'));
+    dbPath = join(dbDir, 'data.db');
+  });
+
+  it('migrates an old-shape todos table to the global schema non-lossy (covers AE6)', () => {
+    const ts = now();
+    const seedDb = seedOldTodosDb(dbPath, [
+      { id: 't1', workspace_id: 'ws-a', text: 'plain todo', status: 'pending', session_id: null, created_at: ts, updated_at: ts },
+      { id: 't2', workspace_id: 'ws-a', text: 'session-linked', status: 'done', session_id: 'sess-1', created_at: ts, updated_at: ts },
+      { id: 't3', workspace_id: 'ws-b', text: '多字节 unicode 文本', status: 'did-but-need-verify', session_id: null, created_at: ts, updated_at: ts },
+    ]);
+    seedDb.close();
+
+    const store = new SqliteStore(dbPath);
+    assert.strictEqual(store.getMigrationVersion(), 7);
+
+    const db = openRawDb(store);
+    const cols = todoColumns(db);
+    const workspaceIdCol = cols.find((c) => c.name === 'workspace_id');
+    assert.ok(workspaceIdCol);
+    assert.strictEqual(workspaceIdCol!.notnull, 0, 'workspace_id is nullable');
+    for (const name of ['origin', 'due_date', 'repo_full_name', 'issue_number', 'remote_snapshot_json', 'labels_json', 'origin_deleted']) {
+      assert.ok(cols.some((c) => c.name === name), `${name} column present`);
+    }
+    assert.strictEqual((db.prepare('SELECT COUNT(*) AS c FROM todos').get() as { c: number }).c, 3);
+    assert.strictEqual((db.prepare("SELECT COUNT(*) AS c FROM todos WHERE workspace_id IS NULL").get() as { c: number }).c, 0, 'no legacy row lost its workspace soft-link');
+
+    const t3 = store.getTodoById('t3');
+    assert.ok(t3);
+    assert.strictEqual(t3!.text, '多字节 unicode 文本');
+    assert.strictEqual(t3!.status, 'did-but-need-verify');
+    assert.strictEqual(t3!.workspaceId, 'ws-b');
+    assert.strictEqual(t3!.origin, 'local');
+    assert.deepStrictEqual(t3!.labels, []);
+    assert.strictEqual(t3!.originDeleted, false);
+  });
+
+  it('a fresh db lands on the new shape without a rebuild (shape-keyed gate)', () => {
+    const store = new SqliteStore(dbPath); // file does not exist yet -> fresh construction
+    assert.strictEqual(store.getMigrationVersion(), 7);
+    const db = openRawDb(store);
+    const cols = todoColumns(db);
+    assert.strictEqual(cols.find((c) => c.name === 'workspace_id')!.notnull, 0);
+    assert.ok(cols.some((c) => c.name === 'origin'));
+    const todo = store.createTodo(null, { text: 'global todo' });
+    assert.strictEqual(todo.workspaceId, null);
+    assert.strictEqual(store.getAllTodos().length, 1);
+  });
+
+  it('is idempotent: a second construction leaves new rows intact and the version at 7', () => {
+    const ts = now();
+    const seedDb = seedOldTodosDb(dbPath, [
+      { id: 't1', workspace_id: 'ws-a', text: 'legacy', status: 'pending', session_id: null, created_at: ts, updated_at: ts },
+    ]);
+    seedDb.close();
+    const first = new SqliteStore(dbPath);
+    first.createTodo(null, { text: 'new global todo' });
+    const second = new SqliteStore(dbPath);
+    assert.strictEqual(second.getMigrationVersion(), 7);
+    const all = second.getAllTodos();
+    assert.strictEqual(all.length, 2);
+    assert.ok(all.some((t) => t.text === 'new global todo' && t.workspaceId === null));
+  });
+
+  it('rolls back atomically when the rebuild cannot complete', () => {
+    const ts = now();
+    const seedDb = seedOldTodosDb(dbPath, [
+      { id: 't1', workspace_id: 'ws-a', text: 'keep me', status: 'pending', session_id: null, created_at: ts, updated_at: ts },
+    ]);
+    // Pre-create todos_old so the in-transaction RENAME fails -> rollback.
+    seedDb.exec('CREATE TABLE todos_old (id TEXT)');
+    seedDb.close();
+
+    assert.throws(() => new SqliteStore(dbPath));
+    const db = new Database(dbPath);
+    const cols = todoColumns(db);
+    assert.strictEqual(cols.find((c) => c.name === 'workspace_id')!.notnull, 1, 'workspace_id still NOT NULL (unchanged old shape)');
+    assert.ok(!cols.some((c) => c.name === 'origin'), 'origin not added (rollback)');
+    assert.strictEqual((db.prepare('SELECT COUNT(*) AS c FROM todos').get() as { c: number }).c, 1);
+    assert.strictEqual(
+      (db.prepare('SELECT version FROM bot_migration_state WHERE id = 1').get() as { version: number }).version,
+      6,
+    );
+    db.close();
+  });
+
+  it('creates repo_sync_state and the linked-issue unique index', () => {
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+    assert.strictEqual(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='repo_sync_state'").all() as unknown[]).length,
+      1,
+    );
+    assert.strictEqual(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='todos' AND name='idx_todos_repo_issue'").all() as unknown[]).length,
+      1,
+    );
     db.close();
   });
 });

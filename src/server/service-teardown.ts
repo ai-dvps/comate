@@ -8,6 +8,7 @@ import { gitChangesService } from './services/git-changes-service.js';
 import { chatService } from './services/chat-service.js';
 import { browserService } from './services/browser-service.js';
 import { browserViewerProxy } from './routes/browser-proxy.js';
+import { shutdown as shutdownGithubAuth } from './services/github-auth.js';
 
 /**
  * Graceful service teardown for sidecar shutdown (SIGTERM/SIGINT and the
@@ -20,6 +21,9 @@ import { browserViewerProxy } from './routes/browser-proxy.js';
  * bounded stop (KTD-1 2s budget), and only then are chat runtimes closed.
  */
 export async function teardownServices(): Promise<void> {
+  // Zero the GitHub token holder first (R13/KTD3) — cheap, and ensures the
+  // decrypted token never outlives the sidecar process.
+  shutdownGithubAuth();
   wecomBotService.disconnectAll();
   feishuBotService.disconnect();
   await wecomQueueWorker.shutdown();
