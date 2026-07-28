@@ -336,6 +336,17 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       )
     `);
+    // Global (app-level) remembered site-auth: a captured web-login session
+    // context keyed by site, reusable across workspaces (e.g. the Kimi login
+    // captured for usage also auto-fills the chat browser). Server-only — the
+    // entry JSON is never returned to clients.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS global_site_auth (
+        site_key TEXT PRIMARY KEY,
+        entry_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todos (
         id TEXT PRIMARY KEY,
@@ -3370,6 +3381,39 @@ export class SqliteStore {
   /** Remove the stored connection (Disconnect). */
   clearGithubConnection(): void {
     this.db.prepare('DELETE FROM app_settings WHERE id = 1').run();
+  }
+
+  // -------------------------------------------------------------------------
+  // Global remembered site-auth (cross-workspace). entry_json is a serialized
+  // BrowserSiteAuthEntry; server-only — never returned to clients.
+  // -------------------------------------------------------------------------
+
+  /** Serialized BrowserSiteAuthEntry JSON for a site, or null when none stored. */
+  getGlobalSiteAuth(siteKey: string): string | null {
+    const row = this.db
+      .prepare('SELECT entry_json FROM global_site_auth WHERE site_key = ?')
+      .get(siteKey) as { entry_json: string } | undefined;
+    const json = row?.entry_json;
+    return json && json.length > 0 ? json : null;
+  }
+
+  /** Upsert the serialized site-auth entry JSON for a site. */
+  setGlobalSiteAuth(siteKey: string, entryJson: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO global_site_auth (site_key, entry_json, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(site_key) DO UPDATE SET
+          entry_json = excluded.entry_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(siteKey, entryJson, now);
+  }
+
+  /** Remove the stored site-auth entry for a site. */
+  clearGlobalSiteAuth(siteKey: string): void {
+    this.db.prepare('DELETE FROM global_site_auth WHERE site_key = ?').run(siteKey);
   }
 
   // -------------------------------------------------------------------------

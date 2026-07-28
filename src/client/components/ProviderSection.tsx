@@ -14,8 +14,13 @@ import {
   ChevronDown,
   ChevronUp,
   Server,
+  RefreshCw,
 } from 'lucide-react'
 import { useProviderStore, type Provider } from '../stores/provider-store'
+import {
+  useProviderUsageStore,
+  hasUsageSupport,
+} from '../stores/provider-usage-store'
 import ConfirmDialog from './ConfirmDialog'
 
 interface ProviderFormData {
@@ -487,6 +492,119 @@ export default function ProviderSection() {
   )
 }
 
+/** Rich usage panel for a Kimi coding-plan provider (R10/U6): used/total,
+ * remaining, reset date, last-updated, manual refresh, and a login affordance.
+ * Renders nothing for non-coding-plan providers (the store returns 'unsupported'). */
+function ProviderUsagePanel({ providerId }: { providerId: string }) {
+  const { t } = useTranslation('settings')
+  const entry = useProviderUsageStore((s) => s.usageByProvider[providerId])
+  const fetchUsage = useProviderUsageStore((s) => s.fetchUsage)
+  const startLogin = useProviderUsageStore((s) => s.startUsageLogin)
+  const loginOpen = useProviderUsageStore((s) => s.login !== null)
+  const status = entry?.status ?? 'idle'
+  const summary = entry?.summary ?? null
+
+  useEffect(() => {
+    fetchUsage(providerId)
+  }, [providerId, fetchUsage])
+
+  if (status === 'unsupported') return null
+
+  const fmt = (n: number | null | undefined): string =>
+    n === null || n === undefined ? '—' : String(n)
+  const fmtDate = (iso: string | null | undefined): string =>
+    iso ? new Date(iso).toLocaleString() : '—'
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
+      {status === 'fetching' && (
+        <span className="inline-flex items-center gap-1">
+          <RefreshCw className="h-3 w-3 animate-spin" aria-hidden="true" />
+          {t('providers.usage.loading', 'Loading usage…')}
+        </span>
+      )}
+      {status === 'ready' && summary && (
+        <>
+          <span>
+            {fmt(summary.used)} / {fmt(summary.total)} {t('providers.usage.used', 'used')}
+          </span>
+          <span>·</span>
+          <span className="text-accent/80">
+            {summary.remaining !== null && summary.remaining !== undefined
+              ? `${summary.remaining} ${t('providers.usage.left', 'left')}`
+              : '—'}
+          </span>
+          {summary.resetDate && (
+            <>
+              <span>·</span>
+              <span>
+                {t('providers.usage.resets', 'resets')} {fmtDate(summary.resetDate)}
+              </span>
+            </>
+          )}
+          {summary.rolling &&
+            (summary.rolling.remaining !== null || summary.rolling.resetDate) && (
+              <>
+                <span>·</span>
+                <span>
+                  {t('providers.usage.rolling', '5h window')}:{' '}
+                  {summary.rolling.remaining !== null
+                    ? `${summary.rolling.remaining} ${t('providers.usage.left', 'left')}`
+                    : '—'}
+                  {summary.rolling.resetDate
+                    ? ` · ${t('providers.usage.resets', 'resets')} ${fmtDate(summary.rolling.resetDate)}`
+                    : ''}
+                </span>
+              </>
+            )}
+          {entry?.lastUpdated && (
+            <>
+              <span>·</span>
+              <span>{new Date(entry.lastUpdated).toLocaleTimeString()}</span>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => fetchUsage(providerId, { force: true })}
+            className="rounded p-0.5 hover:text-text-secondary"
+            title={t('providers.usage.refresh', 'Refresh usage')}
+            aria-label={t('providers.usage.refresh', 'Refresh usage')}
+          >
+            <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          </button>
+        </>
+      )}
+      {(status === 'idle' || status === 'relogin') && (
+        <button
+          type="button"
+          disabled={loginOpen}
+          onClick={() => startLogin(providerId)}
+          className="text-accent hover:underline disabled:opacity-50"
+        >
+          {status === 'idle'
+            ? t('providers.usage.connect', 'Connect account')
+            : t('providers.usage.reconnect', 'Reconnect to refresh')}
+        </button>
+      )}
+      {status === 'no-plan' && (
+        <span>{t('providers.usage.noPlan', 'No coding plan found for this account')}</span>
+      )}
+      {status === 'error' && (
+        <span className="inline-flex items-center gap-1">
+          <span>{t('providers.usage.unavailable', 'Usage unavailable')}</span>
+          <button
+            type="button"
+            onClick={() => fetchUsage(providerId, { force: true })}
+            className="text-accent hover:underline"
+          >
+            {t('providers.usage.retry', 'Retry')}
+          </button>
+        </span>
+      )}
+    </div>
+  )
+}
+
 function ProviderListItem({
   provider,
   isHealthChecking,
@@ -548,6 +666,9 @@ function ProviderListItem({
                 </>
               )}
             </div>
+          )}
+          {hasUsageSupport(provider.baseUrl) && (
+            <ProviderUsagePanel providerId={provider.id} />
           )}
         </div>
       </div>

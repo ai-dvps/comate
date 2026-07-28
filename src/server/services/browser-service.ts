@@ -5,7 +5,7 @@ import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { getStorageDir } from '../storage/data-dir.js';
 import { resolveChromium } from '../utils/resolve-chromium.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
-import type { BrowserSessionContext } from '../models/workspace.js';
+import type { BrowserSessionContext, BrowserSiteAuthEntry } from '../models/workspace.js';
 import { connectSteelPage } from './browser-cdp.js';
 import { siteKeyForUrl } from './browser-site-key.js';
 import { clearBrowserGateSession } from './browser-gate-state.js';
@@ -222,6 +222,12 @@ interface RegistryEntry {
    * browser-mcp via setCloseCardPending around its requestApproval round-trip.
    */
   closeCardPending: boolean;
+  /**
+   * Transient capture session (Kimi usage-login, KTD1): excluded from
+   * idle-reclaim so a slow login is never auto-closed mid-capture. Defaults
+   * false; chat browser sessions are unaffected.
+   */
+  transient: boolean;
 }
 
 export interface BrowserServiceDeps {
@@ -464,6 +470,36 @@ export class BrowserService {
     return this.registry.get(sessionId)?.workspaceId;
   }
 
+  /**
+   * Run CDP `Runtime.evaluate` in a registered session's primary page (KTD4).
+   * Used by the Kimi usage-login capture to read the billing JWT in-page after
+   * verifying origin. Server-side only; the expression's return value is the
+   * only thing handed back to the caller.
+   */
+  async evaluateInSession(sessionId: string, expression: string): Promise<unknown> {
+    const entry = this.registry.get(sessionId);
+    if (!entry?.handle) {
+      throw new Error(`No live browser session for ${sessionId}`);
+    }
+    const page = await connectSteelPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
+    return page.evaluate(expression);
+  }
+
+  /**
+   * Navigate a registered session's page via CDP `Page.navigate` (KTD1/U3).
+   * Steel only registers/tracks pages reached through Page.navigate (a JS
+   * `location.href` assignment is NOT tracked), and the viewer-proxy warm-up
+   * requires a tracked page — so the capture flow must navigate this way.
+   */
+  async navigateInSession(sessionId: string, url: string): Promise<void> {
+    const entry = this.registry.get(sessionId);
+    if (!entry?.handle) {
+      throw new Error(`No live browser session for ${sessionId}`);
+    }
+    const page = await connectSteelPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
+    await page.navigate(url);
+  }
+
   listSessions(): BrowserSessionInfo[] {
     const infos: BrowserSessionInfo[] = [];
     for (const entry of this.registry.values()) {
@@ -515,9 +551,14 @@ export class BrowserService {
    * identity (KTD-5). A session_lost entry is respawned — the next tool call
    * after a crash transparently rebuilds the browser (KTD-1).
    */
-  async ensureSession(input: { sessionId: string; workspaceId: string }): Promise<BrowserSessionInfo> {
+  async ensureSession(input: {
+    sessionId: string;
+    workspaceId: string;
+    /** Transient capture sessions skip idle-reclaim (KTD1). */
+    transient?: boolean;
+  }): Promise<BrowserSessionInfo> {
     await this.initialize();
-    const { sessionId, workspaceId } = input;
+    const { sessionId, workspaceId, transient = false } = input;
 
     const existing = this.registry.get(sessionId);
     if (existing) {
@@ -548,6 +589,7 @@ export class BrowserService {
       idlePromptTimerHandle: null,
       idleCloseTimerHandle: null,
       closeCardPending: false,
+      transient,
     };
     entry.starting = starting;
     if (!existing) {
@@ -768,6 +810,10 @@ export class BrowserService {
   private armIdlePrompt(sessionId: string): void {
     const entry = this.registry.get(sessionId);
     if (!entry) return;
+    // Transient capture sessions (Kimi usage-login) skip idle-reclaim so a slow
+    // login is never auto-closed mid-capture (KTD1). They are torn down
+    // explicitly on capture complete/cancel.
+    if (entry.transient) return;
     if (entry.idlePromptTimerHandle !== null) {
       this.deps.timer.clear(entry.idlePromptTimerHandle);
     }
@@ -886,6 +932,66 @@ export class BrowserService {
   }
 
   /**
+   * Capture the session's context for a site and store it in the GLOBAL
+   * site-auth store (cross-workspace), keyed by site. Used so a login captured
+   * for one feature (e.g. Kimi usage) is reusable by the chat browser in any
+   * workspace. Mirrors rememberCurrentSite but writes the app-level store
+   * instead of a workspace's settings. Best-effort: returns silently when the
+   * session is gone or there is nothing replayable.
+   */
+  async rememberGlobalSiteAuth(
+    sessionId: string,
+    siteKey: string,
+    opts?: { bearerToken?: string; bearerCookieName?: string },
+  ): Promise<void> {
+    const entry = this.registry.get(sessionId);
+    if (!entry?.handle) return;
+    const raw = await this.deps.exportContext(entry.handle.baseUrl).catch(() => null);
+    if (!raw) return;
+    const scoped = filterContextToScope(
+      raw as { cookies?: unknown; localStorage?: unknown; sessionStorage?: unknown },
+      siteKey,
+    );
+    const storageDomainCount =
+      Object.keys(scoped.localStorage ?? {}).length + Object.keys(scoped.sessionStorage ?? {}).length;
+    if (scoped.cookies.length === 0 && storageDomainCount === 0) return;
+
+    // Determine the bearer token: explicit (Kimi, from cdp.evaluate) or
+    // extracted from the captured cookies by name (BigModel, httpOnly-safe).
+    let bearerToken: string | undefined;
+    if (opts?.bearerToken) {
+      bearerToken = opts.bearerToken;
+    } else if (opts?.bearerCookieName) {
+      const cookie = scoped.cookies.find(
+        (c) => (c as Record<string, unknown>)?.name === opts.bearerCookieName,
+      );
+      bearerToken = (cookie as Record<string, unknown> | undefined)?.value as string | undefined;
+    }
+
+    const now = new Date().toISOString();
+    const existingJson = this.deps.store.getGlobalSiteAuth(siteKey);
+    let createdAt = now;
+    if (existingJson) {
+      try {
+        createdAt = (JSON.parse(existingJson) as { createdAt?: string }).createdAt ?? now;
+      } catch {
+        /* ignore malformed prior entry */
+      }
+    }
+    const authEntry: BrowserSiteAuthEntry = {
+      sessionContext: scoped,
+      createdAt,
+      updatedAt: now,
+      ...(bearerToken ? { bearerToken } : {}),
+    };
+    this.deps.store.setGlobalSiteAuth(siteKey, JSON.stringify(authEntry));
+    diagLog(
+      `[browser] remembered global site ${siteKey} from session ${sessionId} ` +
+        `(cookies=${scoped.cookies.length} storageDomains=${storageDomainCount})`,
+    );
+  }
+
+  /**
    * Injection lookup for the tool layer's open(): consumes the session's
    * one-shot eligibility (first open after every spawn/rebuild) and returns
    * the remembered context when the URL's site key has one. Returns null
@@ -904,15 +1010,36 @@ export class BrowserService {
     const keyResult = siteKeyForUrl(url);
     if (!keyResult.ok) return null;
     const workspace = await this.deps.store.get(entry.workspaceId);
-    const siteAuthEntry = workspace
+    let siteAuthEntry = workspace
       ? readSiteAuthEntry(workspace.settings ?? {}, keyResult.key)
       : undefined;
+    let fromGlobal = false;
+    if (!siteAuthEntry) {
+      // Global fallback: a login captured for another feature (e.g. Kimi usage)
+      // is reusable by the chat browser in any workspace.
+      const globalJson = this.deps.store.getGlobalSiteAuth(keyResult.key);
+      if (globalJson) {
+        try {
+          siteAuthEntry = JSON.parse(globalJson) as BrowserSiteAuthEntry;
+          fromGlobal = true;
+        } catch {
+          siteAuthEntry = undefined;
+        }
+      }
+    }
     if (!siteAuthEntry) return null;
     const now = new Date().toISOString();
-    this.deps.store.setWorkspaceSiteAuthEntry(entry.workspaceId, keyResult.key, {
-      ...siteAuthEntry,
-      lastUsedAt: now,
-    });
+    if (fromGlobal) {
+      this.deps.store.setGlobalSiteAuth(
+        keyResult.key,
+        JSON.stringify({ ...siteAuthEntry, lastUsedAt: now }),
+      );
+    } else {
+      this.deps.store.setWorkspaceSiteAuthEntry(entry.workspaceId, keyResult.key, {
+        ...siteAuthEntry,
+        lastUsedAt: now,
+      });
+    }
     this.deps.audit.logSiteAuth({
       workspaceId: entry.workspaceId,
       sessionId,

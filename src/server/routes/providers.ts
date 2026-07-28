@@ -3,6 +3,9 @@ import { store } from '../storage/sqlite-store.js';
 import { ChatError } from '../services/chat-service.js';
 import { chatService } from '../services/chat-service.js';
 import { detectProviderConfig } from '../services/provider-detection.js';
+import { kimiUsageService } from '../services/kimi-usage-service.js';
+import { bigModelUsageService } from '../services/bigmodel-usage-service.js';
+import { providerUsageLoginService, UsageLoginError } from '../services/provider-usage-login-service.js';
 import type { CreateProviderInput, UpdateProviderInput, Provider } from '../models/provider.js';
 
 const router = Router();
@@ -222,6 +225,67 @@ router.post('/:id/health', async (req, res) => {
   } catch (error) {
     console.error('Failed to run health check:', error);
     res.status(500).json({ error: 'Failed to run health check' });
+  }
+});
+
+// POST /api/providers/:id/usage — coding-plan usage (server-side only).
+// Dispatches to the right service by provider baseUrl.
+router.post('/:id/usage', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const provider = store.getProvider(id);
+    if (!provider) {
+      res.status(404).json({ error: 'Provider not found' });
+      return;
+    }
+    const url = provider.baseUrl.toLowerCase();
+    const result = url.includes('kimi.com')
+      ? await kimiUsageService.runUsageCheck(id)
+      : url.includes('bigmodel.cn')
+        ? await bigModelUsageService.runUsageCheck(id)
+        : { status: 'unsupported' as const };
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to fetch provider usage:', error);
+    res.status(500).json({ error: 'Failed to fetch provider usage' });
+  }
+});
+
+// POST /api/providers/:id/usage-login/start — open a transient capture session.
+router.post('/:id/usage-login/start', async (req, res) => {
+  try {
+    const result = await providerUsageLoginService.startLogin(req.params.id);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof UsageLoginError) {
+      res.status(400).json({ error: error.message, code: error.code });
+      return;
+    }
+    console.error('Failed to start usage login:', error);
+    res.status(500).json({ error: 'Failed to start usage login' });
+  }
+});
+
+// POST /api/providers/:id/usage-login/finalize — verify origin, extract the JWT,
+// store the login in the global site-auth store, and tear the capture session down.
+router.post('/:id/usage-login/finalize', async (req, res) => {
+  try {
+    const result = await providerUsageLoginService.finalizeLogin(req.params.id);
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to finalize usage login:', error);
+    res.status(500).json({ error: 'Failed to finalize usage login' });
+  }
+});
+
+// POST /api/providers/:id/usage-login/cancel — tear down an in-flight capture.
+router.post('/:id/usage-login/cancel', async (_req, res) => {
+  try {
+    await providerUsageLoginService.cancelLogin(_req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Failed to cancel usage login:', error);
+    res.status(500).json({ error: 'Failed to cancel usage login' });
   }
 });
 
