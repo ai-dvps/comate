@@ -582,7 +582,7 @@ function ProviderUsagePanel({ providerId }: { providerId: string }) {
           className="text-accent hover:underline disabled:opacity-50"
         >
           {status === 'idle'
-            ? t('providers.usage.connect', 'Connect Kimi account')
+            ? t('providers.usage.connect', 'Connect account')
             : t('providers.usage.reconnect', 'Reconnect to refresh')}
         </button>
       )}

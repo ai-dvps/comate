@@ -63,7 +63,7 @@ function ProviderUsageLine({
         className="text-[10px] text-accent hover:underline disabled:opacity-50"
       >
         {status === 'idle'
-          ? t('provider.usage.connect', 'Connect Kimi')
+          ? t('provider.usage.connect', 'Connect')
           : t('provider.usage.reconnect', 'Reconnect')}
       </button>
     )
