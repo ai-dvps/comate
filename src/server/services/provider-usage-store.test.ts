@@ -102,6 +102,23 @@ describe('ProviderUsageStore', () => {
     assert.equal(serialized.includes('jwt-secret-value'), false);
     assert.equal(serialized.includes('sk-coding-key'), true); // sanity: provider data is present
   });
+
+  test('global site-auth store round-trips an entry by site key', () => {
+    assert.equal(store.getGlobalSiteAuth('kimi.com'), null);
+    store.setGlobalSiteAuth(
+      'kimi.com',
+      JSON.stringify({
+        sessionContext: { cookies: [], localStorage: {}, sessionStorage: {} },
+        createdAt: 't',
+        updatedAt: 't',
+      }),
+    );
+    const got = store.getGlobalSiteAuth('kimi.com');
+    assert.ok(got !== null);
+    assert.equal((JSON.parse(got as string) as { updatedAt: string }).updatedAt, 't');
+    store.clearGlobalSiteAuth('kimi.com');
+    assert.equal(store.getGlobalSiteAuth('kimi.com'), null);
+  });
 });
 
 interface UsageSummaryLike {

@@ -5,7 +5,7 @@ import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { getStorageDir } from '../storage/data-dir.js';
 import { resolveChromium } from '../utils/resolve-chromium.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
-import type { BrowserSessionContext } from '../models/workspace.js';
+import type { BrowserSessionContext, BrowserSiteAuthEntry } from '../models/workspace.js';
 import { connectSteelPage } from './browser-cdp.js';
 import { siteKeyForUrl } from './browser-site-key.js';
 import { clearBrowserGateSession } from './browser-gate-state.js';
@@ -932,6 +932,48 @@ export class BrowserService {
   }
 
   /**
+   * Capture the session's context for a site and store it in the GLOBAL
+   * site-auth store (cross-workspace), keyed by site. Used so a login captured
+   * for one feature (e.g. Kimi usage) is reusable by the chat browser in any
+   * workspace. Mirrors rememberCurrentSite but writes the app-level store
+   * instead of a workspace's settings. Best-effort: returns silently when the
+   * session is gone or there is nothing replayable.
+   */
+  async rememberGlobalSiteAuth(sessionId: string, siteKey: string): Promise<void> {
+    const entry = this.registry.get(sessionId);
+    if (!entry?.handle) return;
+    const raw = await this.deps.exportContext(entry.handle.baseUrl).catch(() => null);
+    if (!raw) return;
+    const scoped = filterContextToScope(
+      raw as { cookies?: unknown; localStorage?: unknown; sessionStorage?: unknown },
+      siteKey,
+    );
+    const storageDomainCount =
+      Object.keys(scoped.localStorage ?? {}).length + Object.keys(scoped.sessionStorage ?? {}).length;
+    if (scoped.cookies.length === 0 && storageDomainCount === 0) return;
+    const now = new Date().toISOString();
+    const existingJson = this.deps.store.getGlobalSiteAuth(siteKey);
+    let createdAt = now;
+    if (existingJson) {
+      try {
+        createdAt = (JSON.parse(existingJson) as { createdAt?: string }).createdAt ?? now;
+      } catch {
+        /* ignore malformed prior entry */
+      }
+    }
+    const authEntry: BrowserSiteAuthEntry = {
+      sessionContext: scoped,
+      createdAt,
+      updatedAt: now,
+    };
+    this.deps.store.setGlobalSiteAuth(siteKey, JSON.stringify(authEntry));
+    diagLog(
+      `[browser] remembered global site ${siteKey} from session ${sessionId} ` +
+        `(cookies=${scoped.cookies.length} storageDomains=${storageDomainCount})`,
+    );
+  }
+
+  /**
    * Injection lookup for the tool layer's open(): consumes the session's
    * one-shot eligibility (first open after every spawn/rebuild) and returns
    * the remembered context when the URL's site key has one. Returns null
@@ -950,15 +992,36 @@ export class BrowserService {
     const keyResult = siteKeyForUrl(url);
     if (!keyResult.ok) return null;
     const workspace = await this.deps.store.get(entry.workspaceId);
-    const siteAuthEntry = workspace
+    let siteAuthEntry = workspace
       ? readSiteAuthEntry(workspace.settings ?? {}, keyResult.key)
       : undefined;
+    let fromGlobal = false;
+    if (!siteAuthEntry) {
+      // Global fallback: a login captured for another feature (e.g. Kimi usage)
+      // is reusable by the chat browser in any workspace.
+      const globalJson = this.deps.store.getGlobalSiteAuth(keyResult.key);
+      if (globalJson) {
+        try {
+          siteAuthEntry = JSON.parse(globalJson) as BrowserSiteAuthEntry;
+          fromGlobal = true;
+        } catch {
+          siteAuthEntry = undefined;
+        }
+      }
+    }
     if (!siteAuthEntry) return null;
     const now = new Date().toISOString();
-    this.deps.store.setWorkspaceSiteAuthEntry(entry.workspaceId, keyResult.key, {
-      ...siteAuthEntry,
-      lastUsedAt: now,
-    });
+    if (fromGlobal) {
+      this.deps.store.setGlobalSiteAuth(
+        keyResult.key,
+        JSON.stringify({ ...siteAuthEntry, lastUsedAt: now }),
+      );
+    } else {
+      this.deps.store.setWorkspaceSiteAuthEntry(entry.workspaceId, keyResult.key, {
+        ...siteAuthEntry,
+        lastUsedAt: now,
+      });
+    }
     this.deps.audit.logSiteAuth({
       workspaceId: entry.workspaceId,
       sessionId,
