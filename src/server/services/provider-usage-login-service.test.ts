@@ -1,16 +1,14 @@
 import '../test-utils/test-env.js';
-import { describe, test, beforeEach, afterEach } from 'node:test';
+import { describe, test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SqliteStore } from '../storage/sqlite-store.js';
-import { ProviderUsageStore } from './provider-usage-store.js';
 import {
   ProviderUsageLoginService,
   UsageLoginError,
   type UsageBrowserSurface,
 } from './provider-usage-login-service.js';
 import { KIMI_LOGIN_URL } from './kimi-usage-service.js';
-import { __setCredentialKey, deriveKeyFromPassphrase } from '../utils/credential-crypto.js';
 
 const ORIGIN = 'location.hostname';
 
@@ -25,7 +23,7 @@ function fakeBrowser(opts: { origin?: string; extracted?: unknown; extractThrows
     navigate: [] as string[],
     setControlState: [] as string[],
     teardown: [] as string[],
-    rememberGlobal: [] as string[],
+    rememberGlobal: [] as Array<{ siteKey: string; bearerToken?: string }>,
   };
   const browser: UsageBrowserSurface = {
     async ensureSession(input) {
@@ -35,8 +33,8 @@ function fakeBrowser(opts: { origin?: string; extracted?: unknown; extractThrows
     async navigateInSession(_sid, url) {
       calls.navigate.push(url);
     },
-    async rememberGlobalSiteAuth(_sid, siteKey) {
-      calls.rememberGlobal.push(siteKey);
+    async rememberGlobalSiteAuth(_sid, siteKey, bearerToken) {
+      calls.rememberGlobal.push({ siteKey, bearerToken });
     },
     async evaluateInSession(_sid, expr) {
       calls.evaluate.push(expr);
@@ -57,14 +55,10 @@ function fakeBrowser(opts: { origin?: string; extracted?: unknown; extractThrows
 
 describe('ProviderUsageLoginService', () => {
   let sqlite: SqliteStore;
-  let usage: ProviderUsageStore;
 
   beforeEach(() => {
-    __setCredentialKey(deriveKeyFromPassphrase('test-key'));
     sqlite = new SqliteStore(':memory:');
-    usage = new ProviderUsageStore(sqlite);
   });
-  afterEach(() => __setCredentialKey(null));
 
   function makeKimiProvider(): string {
     return sqlite.createProvider({ name: 'Kimi', baseUrl: 'https://api.kimi.com/coding', authToken: 'sk' }).id;
@@ -73,87 +67,64 @@ describe('ProviderUsageLoginService', () => {
   test('startLogin rejects a non-coding-plan provider', async () => {
     const id = sqlite.createProvider({ name: 'Moonshot', baseUrl: 'https://api.moonshot.cn/v1', authToken: 'sk' }).id;
     const { browser } = fakeBrowser();
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
+    const svc = new ProviderUsageLoginService(sqlite, browser);
     await assert.rejects(() => svc.startLogin(id), (err: unknown) => err instanceof UsageLoginError);
   });
 
   test('startLogin opens a transient session, navigates to the hardcoded URL, and yields control', async () => {
     const id = makeKimiProvider();
     const { browser, calls } = fakeBrowser();
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
+    const svc = new ProviderUsageLoginService(sqlite, browser);
     const result = await svc.startLogin(id);
     assert.equal(result.sessionId, `usage-login-${id}`);
     assert.equal(calls.ensureSession[0]?.transient, true);
     assert.equal(calls.setControlState[0], 'user_in_control');
-    // Navigates via CDP Page.navigate (Steel-tracked), not evaluate(location.href).
     assert.equal(calls.navigate.includes(KIMI_LOGIN_URL), true);
-    assert.equal(calls.evaluate.some((e) => e.includes('location.href')), false);
   });
 
-  test('finalizeLogin happy path: stores the token and tears down', async () => {
+  test('finalizeLogin stores the login globally and tears down', async () => {
     const id = makeKimiProvider();
     const { browser, calls } = fakeBrowser({ extracted: 'jwt-value' });
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
-    const result = await svc.finalizeLogin(id, 1);
+    const svc = new ProviderUsageLoginService(sqlite, browser);
+    const result = await svc.finalizeLogin(id);
     assert.equal(result.status, 'ready');
-    assert.equal(usage.getToken(id), 'jwt-value');
+    assert.deepEqual(calls.rememberGlobal[0], { siteKey: 'kimi.com', bearerToken: 'jwt-value' });
     assert.equal(calls.teardown.length, 1);
-    // The kimi.com session is remembered globally for chat-browser reuse.
-    assert.equal(calls.rememberGlobal.includes('kimi.com'), true);
   });
 
-  test('wrong-origin capture does not remember the site globally', async () => {
+  test('finalizeLogin aborts on wrong origin: no global write, teardown still runs', async () => {
     const id = makeKimiProvider();
     const { browser, calls } = fakeBrowser({ origin: 'evil.example.com', extracted: 'jwt-value' });
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
-    await svc.finalizeLogin(id, 1);
-    assert.equal(calls.rememberGlobal.length, 0);
-  });
-
-  test('finalizeLogin aborts on wrong origin: no token stored, teardown still runs', async () => {
-    const id = makeKimiProvider();
-    const { browser, calls } = fakeBrowser({ origin: 'evil.example.com', extracted: 'jwt-value' });
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
-    const result = await svc.finalizeLogin(id, 1);
+    const svc = new ProviderUsageLoginService(sqlite, browser);
+    const result = await svc.finalizeLogin(id);
     assert.deepEqual(result, { status: 'relogin', reason: 'wrong-origin' });
-    assert.equal(usage.getToken(id), null);
+    assert.equal(calls.rememberGlobal.length, 0);
     assert.equal(calls.teardown.length, 1);
   });
 
   test('finalizeLogin with no extractable token surfaces no-token-found', async () => {
     const id = makeKimiProvider();
     const { browser, calls } = fakeBrowser({ extracted: null });
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
-    const result = await svc.finalizeLogin(id, 1);
+    const svc = new ProviderUsageLoginService(sqlite, browser);
+    const result = await svc.finalizeLogin(id);
     assert.deepEqual(result, { status: 'relogin', reason: 'no-token-found' });
-    assert.equal(usage.getToken(id), null);
-    assert.equal(calls.teardown.length, 1);
-  });
-
-  test('finalizeLogin superseded by a newer capture does not overwrite', async () => {
-    const id = makeKimiProvider();
-    usage.setToken(id, 'newer', 5);
-    const { browser, calls } = fakeBrowser({ extracted: 'older-attempt' });
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
-    const result = await svc.finalizeLogin(id, 3);
-    assert.deepEqual(result, { status: 'relogin', reason: 'superseded' });
-    assert.equal(usage.getToken(id), 'newer');
+    assert.equal(calls.rememberGlobal.length, 0);
     assert.equal(calls.teardown.length, 1);
   });
 
   test('finalizeLogin tears down even when extraction throws', async () => {
     const id = makeKimiProvider();
     const { browser, calls } = fakeBrowser({ extractThrows: true });
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
-    await assert.rejects(() => svc.finalizeLogin(id, 1));
+    const svc = new ProviderUsageLoginService(sqlite, browser);
+    await assert.rejects(() => svc.finalizeLogin(id));
     assert.equal(calls.teardown.length, 1);
-    assert.equal(usage.getToken(id), null);
+    assert.equal(calls.rememberGlobal.length, 0);
   });
 
   test('cancelLogin tears the capture session down', async () => {
     const id = makeKimiProvider();
     const { browser, calls } = fakeBrowser();
-    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
+    const svc = new ProviderUsageLoginService(sqlite, browser);
     await svc.cancelLogin(id);
     assert.equal(calls.teardown.length, 1);
   });

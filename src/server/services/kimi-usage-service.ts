@@ -13,6 +13,8 @@ import { diagLog } from '../utils/diag-logger.js';
 export const KIMI_LOGIN_URL = 'https://www.kimi.com';
 export const KIMI_GET_USAGES_URL =
   'https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages';
+/** Registrable-domain site key under which the Kimi login is stored globally. */
+export const KIMI_SITE_KEY = 'kimi.com';
 
 const USAGE_TIMEOUT_MS = 8000;
 
@@ -20,6 +22,22 @@ const USAGE_TIMEOUT_MS = 8000;
 export function isKimiCodingPlanProvider(provider?: Provider): boolean {
   if (!provider) return false;
   return provider.baseUrl.toLowerCase().includes('kimi.com');
+}
+
+/**
+ * Read the captured Kimi bearer JWT from the global site-auth store
+ * (`global_site_auth['kimi.com'].bearerToken`). Null when no login is captured.
+ * Server-side only; the token is never returned to clients.
+ */
+function readKimiBearerToken(sqlite: SqliteStore): string | null {
+  const json = sqlite.getGlobalSiteAuth(KIMI_SITE_KEY);
+  if (!json) return null;
+  try {
+    const entry = JSON.parse(json) as { bearerToken?: string };
+    return entry.bearerToken && entry.bearerToken.length > 0 ? entry.bearerToken : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface UsageResult {
@@ -137,7 +155,7 @@ export class KimiUsageService {
       return { status: 'ready', summary: cached, lastUpdated: cached.lastUpdated };
     }
 
-    const token = this.usage.getToken(providerId);
+    const token = readKimiBearerToken(this.sqlite);
     if (!token) {
       return { status: 'idle' };
     }

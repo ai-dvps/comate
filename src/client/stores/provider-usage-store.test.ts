@@ -71,7 +71,7 @@ describe('useProviderUsageStore', () => {
 
   it('finalizeUsageLogin ready clears login and refetches usage', async () => {
     useProviderUsageStore.setState({
-      login: { providerId: 'p1', sessionId: 'usage-login-p1', captureId: 123, phase: 'ready' },
+      login: { providerId: 'p1', sessionId: 'usage-login-p1', phase: 'ready' },
     })
     mockFetch((url) => {
       calls.push(url)
@@ -85,7 +85,7 @@ describe('useProviderUsageStore', () => {
 
   it('finalizeUsageLogin relogin sets phase failed', async () => {
     useProviderUsageStore.setState({
-      login: { providerId: 'p1', sessionId: 'usage-login-p1', captureId: 123, phase: 'ready' },
+      login: { providerId: 'p1', sessionId: 'usage-login-p1', phase: 'ready' },
     })
     mockFetch(() => jsonRes({ status: 'relogin', reason: 'wrong-origin' }))
     await useProviderUsageStore.getState().finalizeUsageLogin()
@@ -94,7 +94,7 @@ describe('useProviderUsageStore', () => {
 
   it('cancelUsageLogin clears login', async () => {
     useProviderUsageStore.setState({
-      login: { providerId: 'p1', sessionId: 'usage-login-p1', captureId: 123, phase: 'ready' },
+      login: { providerId: 'p1', sessionId: 'usage-login-p1', phase: 'ready' },
     })
     mockFetch(() => jsonRes({ ok: true }))
     await useProviderUsageStore.getState().cancelUsageLogin()
