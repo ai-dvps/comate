@@ -17,6 +17,7 @@ import {
   __setFetch,
   __setAdapterFactory,
   __setNow,
+  __setTokenTimeout,
   __reset,
 } from '../services/github-auth.js';
 import { createOctokitAdapter } from '../services/github-client.js';
@@ -272,6 +273,27 @@ describe('Device Flow (KTD1)', () => {
     // handle cleared → next poll is a 400 (no flow in progress), not an upstream call
     const res = await call('post', '/device-flow/poll', {});
     assert.equal(res.statusCode, 400);
+  });
+
+  it('a hanging device-flow poll times out instead of hanging (no token leaked)', async () => {
+    __setTokenTimeout(50); // shrink so the test does not wait 15s
+    const startFetch = recorderFetch([() => jsonResponse(deviceCodeBody(), 200)]);
+    __setFetch(startFetch.fetch);
+    await startDeviceFlow();
+    // Hanging fetch that honors the abort signal (like real fetch): it never
+    // resolves on its own, but rejects when fetchWithTimeout aborts it. If the
+    // timeout did not fire, this test hangs.
+    __setFetch(
+      ((_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal?.aborted) reject(new Error('aborted'));
+          signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })) as unknown as typeof fetch,
+    );
+    const res = await call('post', '/device-flow/poll', {});
+    assert.equal(res.statusCode, 500);
+    assert.ok(!JSON.stringify(res.jsonBody).includes('Bearer'));
   });
 });
 

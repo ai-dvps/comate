@@ -29,6 +29,7 @@ function filterByView(todos: Todo[], view: SmartView): Todo[] {
 export default function TodosPanel({ onClose }: TodosPanelProps) {
   const { t } = useTranslation('todos')
   const { todos, isLoading, isSyncing, fetchTodos, syncTodos, createTodo, changeStatus, deleteTodo } = useTodoStore()
+  const lastSyncErrors = useTodoStore((s) => s.lastSyncErrors)
   const githubConnected = useGithubStore((s) => s.connection?.connected ?? false)
   const fetchGithubStatus = useGithubStore((s) => s.fetchStatus)
   const [draft, setDraft] = useState('')
@@ -111,6 +112,22 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
           <X className="w-4 h-4" />
         </button>
       </header>
+
+      {lastSyncErrors && lastSyncErrors.length > 0 && (
+        <div className="flex items-start gap-2 px-4 py-1.5 border-b border-border bg-yellow-500/5 flex-shrink-0">
+          <span className="text-[11px] text-yellow-600 dark:text-yellow-400 flex-1">
+            {t('syncFailedRepos', { count: lastSyncErrors.length })}{' '}
+            <span className="text-text-tertiary">{lastSyncErrors[0].repo}: {lastSyncErrors[0].message}</span>
+          </span>
+          <button
+            onClick={() => useTodoStore.setState({ lastSyncErrors: null })}
+            className="text-text-tertiary hover:text-text-primary text-xs"
+            aria-label={t('close')}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0">
         <input
