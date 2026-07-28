@@ -49,6 +49,15 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [githubConnected])
 
+  // Close on Escape — matches the Settings/Analytics overlay pattern.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
   const handleAdd = async () => {
     if (!draft.trim()) return
     await createTodo(draft)
@@ -78,7 +87,13 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
   const selected = todos.find((todo) => todo.id === selectedId) ?? null
 
   return (
-    <div className="flex flex-col h-full bg-bg">
+    <div className="fixed top-11 inset-x-0 bottom-0 z-50 flex flex-col">
+      {/* Modal area */}
+      <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
+        {/* Backdrop */}
+        <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onClose} />
+        {/* Card */}
+        <div className="relative w-full h-full max-h-[90vh] max-w-[90vw] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
       <header className="flex items-center gap-2 px-4 h-12 border-b border-border flex-shrink-0">
         <h1 className="text-sm font-semibold text-text-primary flex-1">{t('title')}</h1>
         <button
@@ -189,6 +204,8 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
       </div>
 
       {showConnect && <GitHubConnect onClose={() => setShowConnect(false)} />}
+        </div>
+      </div>
     </div>
   )
 }
