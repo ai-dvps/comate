@@ -68,6 +68,7 @@ const mockState: BotState = {
   fetchMembers: vi.fn(),
   addMember: vi.fn(),
   setMemberRole: vi.fn(),
+  transferOwnership: vi.fn(),
   removeMember: vi.fn(),
   resolvePendingMembers: vi.fn(),
   setMemberPlaintext: vi.fn(),
