@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Nothing yet.
+
+### Changed
+
+- Nothing yet.
+
+### Fixed
+
+- Nothing yet.
+
+## [0.0.28] - 2026-07-28
+
+### Added
+
 - **Scheduled tasks** — the assistant can now run tasks unattended on a schedule. Tasks are drafted from chat or WeCom and only take effect after you confirm them in the new Scheduled Tasks panel (opened from the header), which shows the exact instruction being approved. Supports one-shot and recurring cron schedules (hourly/daily/weekdays/weekly presets or a raw expression), keeps a per-task run history whose entries open as regular sessions, and reports results through desktop notifications, an in-app title-bar badge, and optional WeCom summaries. Runs execute as fresh sessions in auto-approval mode with a goal-completion check on the Claude backend; on other backends execution degrades to a plain prompt without the completion check.
 
 ### Changed
