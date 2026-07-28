@@ -76,7 +76,7 @@ describe('ProviderUsageLoginService', () => {
     const result = await svc.startLogin(id);
     assert.equal(result.sessionId, `usage-login-${id}`);
     assert.equal(calls.ensureSession[0]?.transient, true);
-    assert.equal(calls.setControlState[0], 'human_in_control');
+    assert.equal(calls.setControlState[0], 'user_in_control');
     const nav = calls.evaluate.find((e) => e.includes('location.href')) ?? '';
     assert.equal(nav.includes(KIMI_LOGIN_URL), true);
   });
