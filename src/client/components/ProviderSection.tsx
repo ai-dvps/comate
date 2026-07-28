@@ -512,6 +512,8 @@ function ProviderUsagePanel({ providerId }: { providerId: string }) {
 
   const fmt = (n: number | null | undefined): string =>
     n === null || n === undefined ? '—' : String(n)
+  const fmtDate = (iso: string | null | undefined): string =>
+    iso ? new Date(iso).toLocaleString() : '—'
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
@@ -536,10 +538,25 @@ function ProviderUsagePanel({ providerId }: { providerId: string }) {
             <>
               <span>·</span>
               <span>
-                {t('providers.usage.resets', 'resets')} {summary.resetDate}
+                {t('providers.usage.resets', 'resets')} {fmtDate(summary.resetDate)}
               </span>
             </>
           )}
+          {summary.rolling &&
+            (summary.rolling.remaining !== null || summary.rolling.resetDate) && (
+              <>
+                <span>·</span>
+                <span>
+                  {t('providers.usage.rolling', '5h window')}:{' '}
+                  {summary.rolling.remaining !== null
+                    ? `${summary.rolling.remaining} ${t('providers.usage.left', 'left')}`
+                    : '—'}
+                  {summary.rolling.resetDate
+                    ? ` · ${t('providers.usage.resets', 'resets')} ${fmtDate(summary.rolling.resetDate)}`
+                    : ''}
+                </span>
+              </>
+            )}
           {entry?.lastUpdated && (
             <>
               <span>·</span>

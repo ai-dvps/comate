@@ -79,16 +79,26 @@ describe('KimiUsageService', () => {
           {
             scope: 'FEATURE_CODING',
             detail: { limit: '100', used: '100', resetTime: '2026-07-29T08:20:53.375248Z' },
+            limits: [
+              {
+                window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
+                detail: { limit: '100', remaining: '100', resetTime: '2026-07-28T14:20:53.375248Z' },
+              },
+            ],
           },
         ],
       }),
     );
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'ready');
-    assert.equal(result.summary?.used, 49);
+    // 7-day coding-plan window (totalQuota is ignored — not coding-plan-usable).
+    assert.equal(result.summary?.used, 100);
     assert.equal(result.summary?.total, 100);
-    assert.equal(result.summary?.remaining, 51);
+    assert.equal(result.summary?.remaining, 0);
     assert.equal(result.summary?.resetDate, '2026-07-29T08:20:53.375248Z');
+    // 5-hour rolling rate limit.
+    assert.equal(result.summary?.rolling?.remaining, 100);
+    assert.equal(result.summary?.rolling?.resetDate, '2026-07-28T14:20:53.375248Z');
     assert.equal(fetchedUrls[0], KIMI_GET_USAGES_URL);
   });
 
@@ -102,6 +112,12 @@ describe('KimiUsageService', () => {
           {
             scope: 'FEATURE_CODING',
             detail: { limit: '100', used: '100', resetTime: '2026-07-29T08:20:53.375248Z' },
+            limits: [
+              {
+                window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
+                detail: { limit: '100', remaining: '100', resetTime: '2026-07-28T14:20:53.375248Z' },
+              },
+            ],
           },
         ],
         email: 'user@example.com',
@@ -111,7 +127,7 @@ describe('KimiUsageService', () => {
     );
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'ready');
-    assert.equal(result.summary?.used, 49);
+    assert.equal(result.summary?.used, 100);
     const serialized = JSON.stringify(result.summary);
     assert.equal(serialized.includes('user@example.com'), false);
     assert.equal(serialized.includes('u-123'), false);
