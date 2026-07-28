@@ -19,7 +19,7 @@ import {
 import { useProviderStore, type Provider } from '../stores/provider-store'
 import {
   useProviderUsageStore,
-  isKimiCodingPlanProvider,
+  hasUsageSupport,
 } from '../stores/provider-usage-store'
 import ConfirmDialog from './ConfirmDialog'
 
@@ -667,7 +667,7 @@ function ProviderListItem({
               )}
             </div>
           )}
-          {isKimiCodingPlanProvider(provider.baseUrl) && (
+          {hasUsageSupport(provider.baseUrl) && (
             <ProviderUsagePanel providerId={provider.id} />
           )}
         </div>

@@ -4,7 +4,7 @@ import { useChatStore } from '../stores/chat-store'
 import { useProviderStore } from '../stores/provider-store'
 import {
   useProviderUsageStore,
-  isKimiCodingPlanProvider,
+  hasUsageSupport,
   formatRemaining,
 } from '../stores/provider-usage-store'
 import { ChevronDown, Check, Loader2 } from 'lucide-react'
@@ -101,7 +101,7 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
   useEffect(() => {
     if (!open) return
     for (const provider of providers) {
-      if (isKimiCodingPlanProvider(provider.baseUrl)) {
+      if (hasUsageSupport(provider.baseUrl)) {
         fetchUsage(provider.id)
       }
     }
@@ -154,7 +154,7 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
         </div>
         {providers.map((provider) => {
           const isActive = provider.id === currentProviderId
-          const showUsage = isKimiCodingPlanProvider(provider.baseUrl)
+          const showUsage = hasUsageSupport(provider.baseUrl)
           return (
             <div
               key={provider.id}

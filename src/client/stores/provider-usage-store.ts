@@ -42,13 +42,12 @@ const API_BASE = '/api/providers'
 const CLIENT_FETCH_THROTTLE_MS = 10_000
 
 /**
- * Client-side gate mirroring the server's `isKimiCodingPlanProvider` (KTD7) —
- * the Kimi coding plan lives on api.kimi.com, distinct from api.moonshot.cn
- * API-key providers whose account may not match the kimi.com web billing
- * account. Only these providers get usage display/login affordances.
+ * Client-side gate: does this provider's baseUrl belong to a provider whose
+ * coding-plan usage we support (kimi.com or bigmodel.cn)?
  */
-export function isKimiCodingPlanProvider(baseUrl: string): boolean {
-  return baseUrl.toLowerCase().includes('kimi.com')
+export function hasUsageSupport(baseUrl: string): boolean {
+  const url = baseUrl.toLowerCase()
+  return url.includes('kimi.com') || url.includes('bigmodel.cn')
 }
 
 /** Format a remaining-quota value for the minimal selector line (unit TBD/OQ2). */

@@ -33,8 +33,8 @@ function fakeBrowser(opts: { origin?: string; extracted?: unknown; extractThrows
     async navigateInSession(_sid, url) {
       calls.navigate.push(url);
     },
-    async rememberGlobalSiteAuth(_sid, siteKey, bearerToken) {
-      calls.rememberGlobal.push({ siteKey, bearerToken });
+    async rememberGlobalSiteAuth(_sid, siteKey, opts) {
+      calls.rememberGlobal.push({ siteKey, opts });
     },
     async evaluateInSession(_sid, expr) {
       calls.evaluate.push(expr);
@@ -88,7 +88,7 @@ describe('ProviderUsageLoginService', () => {
     const svc = new ProviderUsageLoginService(sqlite, browser);
     const result = await svc.finalizeLogin(id);
     assert.equal(result.status, 'ready');
-    assert.deepEqual(calls.rememberGlobal[0], { siteKey: 'kimi.com', bearerToken: 'jwt-value' });
+    assert.deepEqual(calls.rememberGlobal[0], { siteKey: 'kimi.com', opts: { bearerToken: 'jwt-value' } });
     assert.equal(calls.teardown.length, 1);
   });
 

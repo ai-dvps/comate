@@ -4,6 +4,7 @@ import { ChatError } from '../services/chat-service.js';
 import { chatService } from '../services/chat-service.js';
 import { detectProviderConfig } from '../services/provider-detection.js';
 import { kimiUsageService } from '../services/kimi-usage-service.js';
+import { bigModelUsageService } from '../services/bigmodel-usage-service.js';
 import { providerUsageLoginService, UsageLoginError } from '../services/provider-usage-login-service.js';
 import type { CreateProviderInput, UpdateProviderInput, Provider } from '../models/provider.js';
 
@@ -227,12 +228,22 @@ router.post('/:id/health', async (req, res) => {
   }
 });
 
-// POST /api/providers/:id/usage — Kimi coding-plan usage (server-side only).
-// The response carries only the whitelist summary + status; never the token or
-// account-identifying fields (R5/R14).
+// POST /api/providers/:id/usage — coding-plan usage (server-side only).
+// Dispatches to the right service by provider baseUrl.
 router.post('/:id/usage', async (req, res) => {
   try {
-    const result = await kimiUsageService.runUsageCheck(req.params.id);
+    const id = req.params.id;
+    const provider = store.getProvider(id);
+    if (!provider) {
+      res.status(404).json({ error: 'Provider not found' });
+      return;
+    }
+    const url = provider.baseUrl.toLowerCase();
+    const result = url.includes('kimi.com')
+      ? await kimiUsageService.runUsageCheck(id)
+      : url.includes('bigmodel.cn')
+        ? await bigModelUsageService.runUsageCheck(id)
+        : { status: 'unsupported' as const };
     res.json(result);
   } catch (error) {
     console.error('Failed to fetch provider usage:', error);
