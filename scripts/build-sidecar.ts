@@ -223,10 +223,14 @@ async function build() {
 
   if (bundleBackends.has('opencode')) {
     const opencodeBinaryName = platform === 'win32' ? 'opencode.exe' : 'opencode';
+    // opencode's platform packages are named `opencode-windows-x64` on Windows,
+    // NOT `opencode-win32-x64` — unlike @anthropic-ai/claude-agent-sdk which
+    // uses Node's `win32`. Map the segment or the Windows build can't find it.
+    const opencodePlatformSegment = platform === 'win32' ? 'windows' : platform;
     const opencodeBinarySource = join(
       rootDir,
       'node_modules',
-      `opencode-${platform}-${arch}`,
+      `opencode-${opencodePlatformSegment}-${arch}`,
       'bin',
       opencodeBinaryName,
     );
