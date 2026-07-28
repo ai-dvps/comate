@@ -18,7 +18,11 @@ import { normalizeWindowsPath } from './normalize-windows-path.js';
  */
 export const OPENCODE_EXPECTED_VERSION = '1.18.4';
 
-const PLATFORM_ARCH = `${process.platform}-${process.arch}`;
+// opencode's platform packages use 'windows' for Windows (opencode-windows-x64),
+// NOT Node's 'win32' (which @anthropic-ai/claude-agent-sdk does use). Map the
+// segment so dev-tree and node_modules resolution find the binary on Windows.
+const OPENCODE_PLATFORM = process.platform === 'win32' ? 'windows' : process.platform;
+const PLATFORM_ARCH = `${OPENCODE_PLATFORM}-${process.arch}`;
 const OPENCODE_BINARY_NAME = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
 
 const require = createRequire(import.meta.url);
