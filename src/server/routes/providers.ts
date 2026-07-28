@@ -3,6 +3,7 @@ import { store } from '../storage/sqlite-store.js';
 import { ChatError } from '../services/chat-service.js';
 import { chatService } from '../services/chat-service.js';
 import { detectProviderConfig } from '../services/provider-detection.js';
+import { kimiUsageService } from '../services/kimi-usage-service.js';
 import type { CreateProviderInput, UpdateProviderInput, Provider } from '../models/provider.js';
 
 const router = Router();
@@ -222,6 +223,19 @@ router.post('/:id/health', async (req, res) => {
   } catch (error) {
     console.error('Failed to run health check:', error);
     res.status(500).json({ error: 'Failed to run health check' });
+  }
+});
+
+// POST /api/providers/:id/usage — Kimi coding-plan usage (server-side only).
+// The response carries only the whitelist summary + status; never the token or
+// account-identifying fields (R5/R14).
+router.post('/:id/usage', async (req, res) => {
+  try {
+    const result = await kimiUsageService.runUsageCheck(req.params.id);
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to fetch provider usage:', error);
+    res.status(500).json({ error: 'Failed to fetch provider usage' });
   }
 });
 

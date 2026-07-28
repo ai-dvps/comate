@@ -1,4 +1,5 @@
 import { encryptCredential, decryptCredential } from '../utils/credential-crypto.js';
+import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 
 /**
@@ -122,3 +123,11 @@ export class ProviderUsageStore {
     this.cache.set(providerId, summary);
   }
 }
+
+/**
+ * Process singleton. The in-memory caches (decrypted tokens, usage summaries)
+ * require a single shared instance across the query route, the capture flow,
+ * and the expiry probe.
+ */
+export const providerUsageStore = new ProviderUsageStore(sqliteStoreSingleton);
+
