@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import TodosPanel from './TodosPanel';
 import { useTodoStore } from '../stores/todo-store';
@@ -54,5 +54,56 @@ describe('TodosPanel — AE5 panel-open sync', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(calls).not.toContain('POST /api/todos/sync');
     expect(screen.getByRole('button', { name: 'GitHub' })).toBeInTheDocument();
+  });
+});
+
+describe('TodosPanel — full-screen overlay (U1)', () => {
+  function stubFetch() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/todos') return { ok: true, json: async () => ({ todos: [] }) } as unknown as Response;
+        if (url === '/api/github/connection')
+          return { ok: true, json: async () => ({ connection: { connected: false } }) } as unknown as Response;
+        return { ok: true, json: async () => ({}) } as unknown as Response;
+      }),
+    );
+  }
+
+  afterEach(() => {
+    cleanup();
+    useTodoStore.setState({ todos: [], isSyncing: false });
+    useGithubStore.setState({ connection: null });
+  });
+
+  it('renders the fixed overlay shell with a dimmed backdrop (AE1)', () => {
+    stubFetch();
+    const { container } = renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    expect(container.querySelector('.fixed.z-50')).not.toBeNull();
+    expect(container.querySelector('[class*="bg-overlay"]')).not.toBeNull();
+  });
+
+  it('calls onClose when the backdrop is clicked (AE2)', () => {
+    stubFetch();
+    const onClose = vi.fn();
+    const { container } = renderWithI18n(<TodosPanel onClose={onClose} />);
+    fireEvent.click(container.querySelector('[class*="bg-overlay"]')!);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onClose when Escape is pressed (AE2)', () => {
+    stubFetch();
+    const onClose = vi.fn();
+    renderWithI18n(<TodosPanel onClose={onClose} />);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not close when clicking inside the panel card (paint order)', () => {
+    stubFetch();
+    const onClose = vi.fn();
+    const { container } = renderWithI18n(<TodosPanel onClose={onClose} />);
+    fireEvent.click(container.querySelector('[class*="shadow-2xl"]')!);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
