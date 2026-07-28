@@ -173,7 +173,7 @@
     "selectProvider": "服务商",
     "noProviders": "尚未配置服务商。请前往设置 → 服务商添加。",
     "usage": {
-      "connect": "连接 Kimi",
+      "connect": "连接",
       "reconnect": "重新连接",
       "noPlan": "无 Coding 套餐"
     }

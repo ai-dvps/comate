@@ -70,7 +70,7 @@ export default function UsageLoginModal() {
       data-testid="usage-login-modal"
       role="dialog"
       aria-modal="true"
-      aria-label={t('providers.usageLogin.title', 'Log in to Kimi')}
+      aria-label={t('providers.usageLogin.title', 'Log in to your account')}
       tabIndex={-1}
       onKeyDown={onKeyDown}
       className={cn(
@@ -81,7 +81,7 @@ export default function UsageLoginModal() {
       <div className="flex w-[800px] max-w-[95vw] h-[600px] max-h-[90vh] flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
         <div className="flex h-10 flex-shrink-0 items-center gap-2 border-b border-border/50 px-3">
           <span className="flex-1 truncate text-sm font-medium text-text-primary">
-            {t('providers.usageLogin.title', 'Log in to Kimi')}
+            {t('providers.usageLogin.title', 'Log in to your account')}
           </span>
           <button
             type="button"
@@ -95,7 +95,7 @@ export default function UsageLoginModal() {
 
         <div className="relative min-h-0 flex-1 bg-surface">
           {showIframe ? (
-            <iframe src={viewerUrl!} title="Kimi login" className="h-full w-full border-0" />
+            <iframe src={viewerUrl!} title="Login" className="h-full w-full border-0" />
           ) : (
             <div className="flex h-full items-center justify-center gap-2 text-text-tertiary">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -115,7 +115,7 @@ export default function UsageLoginModal() {
               <p className="text-sm text-text-primary">
                 {t(
                   'providers.usageLogin.failed',
-                  'Could not capture your session. Finish logging in on kimi.com, then try again.',
+                  'Could not capture your session. Finish logging in, then try again.',
                 )}
               </p>
               <div className="flex gap-2">

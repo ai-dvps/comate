@@ -107,18 +107,18 @@
       "resets": "resets",
       "rolling": "5h window",
       "refresh": "Refresh usage",
-      "connect": "Connect Kimi account",
+      "connect": "Connect account",
       "reconnect": "Reconnect to refresh",
       "noPlan": "No coding plan found for this account",
       "unavailable": "Usage unavailable",
       "retry": "Retry"
     },
     "usageLogin": {
-      "title": "Log in to Kimi",
+      "title": "Log in to your account",
       "cancel": "Cancel",
       "connecting": "Preparing login…",
       "capturing": "Capturing your session…",
-      "failed": "Could not capture your session. Finish logging in on kimi.com, then try again.",
+      "failed": "Could not capture your session. Finish logging in, then try again.",
       "retry": "Try again",
       "capture": "I've logged in — capture",
       "startFailed": "Failed to start login"
