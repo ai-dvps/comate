@@ -105,6 +105,7 @@
       "used": "used",
       "left": "left",
       "resets": "resets",
+      "rolling": "5h window",
       "refresh": "Refresh usage",
       "connect": "Connect Kimi account",
       "reconnect": "Reconnect to refresh",

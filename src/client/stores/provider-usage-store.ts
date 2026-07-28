@@ -6,6 +6,8 @@ export interface UsageSummary {
   total: number | null
   remaining: number | null
   resetDate: string | null
+  /** Secondary rolling rate-limit window (e.g. Kimi's 5-hour limit), settings-only. */
+  rolling: { remaining: number | null; resetDate: string | null } | null
   lastUpdated: string
 }
 

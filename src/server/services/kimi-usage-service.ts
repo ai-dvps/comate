@@ -82,29 +82,33 @@ function parseUsageSummary(body: unknown): UsageSummary | null {
   const rec = asRecord(body);
   if (!rec) return null;
 
-  const totalQuota = asRecord(rec.totalQuota);
+  // The coding-plan usage is usages[scope=FEATURE_CODING]. `totalQuota` is the
+  // overall subscription total and is NOT coding-plan-usable, so it is ignored.
   const usages = Array.isArray(rec.usages) ? (rec.usages as unknown[]) : [];
   const coding = asRecord(usages.find((u) => asRecord(u)?.scope === 'FEATURE_CODING'));
-  const codingDetail = asRecord(coding?.detail);
+  const codingDetail = asRecord(coding?.detail); // 7-day coding-plan window
   const limits = Array.isArray(coding?.limits) ? (coding.limits as unknown[]) : [];
-  const firstLimitDetail = asRecord(asRecord(limits[0])?.detail);
+  const firstLimitDetail = asRecord(asRecord(limits[0])?.detail); // rolling rate limit
 
-  const used = asNum(totalQuota?.used) ?? asNum(codingDetail?.used);
-  const total = asNum(totalQuota?.limit) ?? asNum(codingDetail?.limit);
-  const remaining =
-    asNum(totalQuota?.remaining) ??
-    asNum(codingDetail?.remaining) ??
-    asNum(firstLimitDetail?.remaining) ??
-    (total !== null && used !== null ? total - used : null);
-  const resetDate = asStr(codingDetail?.resetTime) ?? asStr(firstLimitDetail?.resetTime);
+  const used = asNum(codingDetail?.used);
+  const total = asNum(codingDetail?.limit);
+  const remaining = total !== null && used !== null ? total - used : null;
+  const resetDate = asStr(codingDetail?.resetTime);
 
-  // No recognizable usage fields → not a coding-plan payload.
-  if (used === null && total === null && remaining === null && resetDate === null) {
+  // No FEATURE_CODING detail → not a coding-plan payload (no-plan).
+  if (used === null && total === null && resetDate === null) {
     return null;
   }
 
+  const rollingRemaining = asNum(firstLimitDetail?.remaining);
+  const rollingReset = asStr(firstLimitDetail?.resetTime);
+  const rolling =
+    rollingRemaining !== null || rollingReset !== null
+      ? { remaining: rollingRemaining, resetDate: rollingReset }
+      : null;
+
   // Construct the whitelist object literal explicitly — never spread `rec`.
-  return { used, total, remaining, resetDate, lastUpdated: new Date().toISOString() };
+  return { used, total, remaining, resetDate, rolling, lastUpdated: new Date().toISOString() };
 }
 
 export class KimiUsageService {

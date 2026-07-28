@@ -105,6 +105,7 @@
       "used": "已用",
       "left": "剩余",
       "resets": "重置于",
+      "rolling": "5小时窗口",
       "refresh": "刷新用量",
       "connect": "连接 Kimi 账号",
       "reconnect": "重新连接以刷新",
