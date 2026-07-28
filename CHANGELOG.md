@@ -17,7 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Nothing yet.
+- WeCom plaintext user ID resolution no longer fails with "credentials not
+  configured": the resolver now reads corp credentials from the bot's wecom
+  channel config (their home after the unified-schema migration) instead of the
+  deleted `workspace.settings.wecomCorpId`/`wecomCorpSecret` fields. Fixes both
+  automatic background resolution and manual "resolve pending" resolution.
 
 ## [0.0.28] - 2026-07-28
 

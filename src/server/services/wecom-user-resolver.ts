@@ -160,8 +160,7 @@ export class WeComUserIdResolver {
 
     resolverLog(`[WeComUserIdResolver] Immediate resolve workspace=${workspaceId} user=${tid(encryptedUserId)} cacheHit=false`);
 
-    const workspace = await workspaceStore.get(workspaceId);
-    if (!workspace?.settings.wecomCorpId || !workspace.settings.wecomCorpSecret) {
+    if (!this.getCorpCredentials(workspaceId)) {
       throw new Error('WeCom corp credentials are not configured for this workspace');
     }
 
@@ -236,8 +235,7 @@ export class WeComUserIdResolver {
   }
 
   private async flushWorkspace(workspaceId: string): Promise<{ resolved: number; failed: number }> {
-    const workspace = await workspaceStore.get(workspaceId);
-    if (!workspace?.settings.wecomCorpId || !workspace.settings.wecomCorpSecret) {
+    if (!this.getCorpCredentials(workspaceId)) {
       resolverWarn(`[WeComUserIdResolver] Flush skipped workspace=${workspaceId} reason=no_credentials`);
       this.queue.delete(workspaceId);
       this.retryMeta.delete(workspaceId);
@@ -340,16 +338,16 @@ export class WeComUserIdResolver {
   }
 
   private async fetchToken(workspaceId: string): Promise<string> {
-    const workspace = await workspaceStore.get(workspaceId);
-    if (!workspace?.settings.wecomCorpId || !workspace.settings.wecomCorpSecret) {
+    const creds = this.getCorpCredentials(workspaceId);
+    if (!creds) {
       throw new Error('WeCom corp credentials are not configured for this workspace');
     }
 
     resolverLog(`[WeComUserIdResolver] Fetching token workspace=${workspaceId}`);
     const fetchStart = Date.now();
 
-    const corpId = workspace.settings.wecomCorpId;
-    const corpSecret = workspace.settings.wecomCorpSecret;
+    const corpId = creds.corpId;
+    const corpSecret = creds.corpSecret;
     const url = `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${encodeURIComponent(corpId)}&corpsecret=${encodeURIComponent(corpSecret)}`;
 
     const response = await fetch(url, { method: 'GET' });
@@ -447,6 +445,22 @@ export class WeComUserIdResolver {
     } catch (err) {
       resolverError('[WeComUserIdResolver] onMappingStored callback failed:', this.redactedError(err));
     }
+  }
+
+  /**
+   * Resolve WeCom corp credentials for a workspace from the bot's wecom
+   * channel config. The unified-schema migration relocated these out of
+   * workspace.settings (wecomCorpId/wecomCorpSecret) into the channel config
+   * (config.wecom.corpId/corpSecret) and deleted them from settings.
+   */
+  private getCorpCredentials(workspaceId: string): { corpId: string; corpSecret: string } | null {
+    const bot = workspaceStore.listBotsForWorkspace(workspaceId)[0];
+    if (!bot) return null;
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'wecom');
+    const corpId = channel?.config.wecom?.corpId;
+    const corpSecret = channel?.config.wecom?.corpSecret;
+    if (!corpId || !corpSecret) return null;
+    return { corpId, corpSecret };
   }
 
   private findWecomBotUser(workspaceId: string, encryptedUserId: string) {
