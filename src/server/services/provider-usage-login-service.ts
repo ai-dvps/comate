@@ -53,7 +53,7 @@ export interface UsageBrowserSurface {
     transient?: boolean;
   }): Promise<unknown>;
   evaluateInSession(sessionId: string, expression: string): Promise<unknown>;
-  setControlState(sessionId: string, state: 'human_in_control'): Promise<void> | void;
+  setControlState(sessionId: string, state: 'user_in_control'): Promise<void> | void;
   teardownSession(sessionId: string): Promise<void>;
 }
 
@@ -67,7 +67,7 @@ export class ProviderUsageLoginService {
   /**
    * Open a transient capture session for the provider and navigate to the Kimi
    * login URL. The client mounts the session's viewer-url in a modal. The
-   * session is set to human_in_control so the user can type credentials without
+   * session is set to user_in_control so the user can type credentials without
    * a takeover round-trip; transient sessions skip idle-reclaim (KTD1).
    */
   async startLogin(providerId: string): Promise<{ sessionId: string }> {
@@ -82,7 +82,7 @@ export class ProviderUsageLoginService {
       transient: true,
     });
     await this.browser.evaluateInSession(sessionId, `location.href = ${JSON.stringify(KIMI_LOGIN_URL)}`);
-    await this.browser.setControlState(sessionId, 'human_in_control');
+    await this.browser.setControlState(sessionId, 'user_in_control');
     return { sessionId };
   }
 
