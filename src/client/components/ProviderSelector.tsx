@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useProviderStore } from '../stores/provider-store'
+import {
+  useProviderUsageStore,
+  isKimiCodingPlanProvider,
+  formatRemaining,
+} from '../stores/provider-usage-store'
 import { ChevronDown, Check, Loader2 } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 
@@ -23,6 +28,53 @@ function ProviderAvatar({ name, className = '' }: { name: string; className?: st
   )
 }
 
+/** Minimal glanceable usage line + login affordance for a Kimi coding-plan provider. */
+function ProviderUsageLine({
+  providerId,
+  onLogin,
+}: {
+  providerId: string
+  onLogin: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const entry = useProviderUsageStore((s) => s.usageByProvider[providerId])
+  const startLogin = useProviderUsageStore((s) => s.startUsageLogin)
+  const loginOpen = useProviderUsageStore((s) => s.login !== null)
+  const status = entry?.status ?? 'idle'
+
+  if (status === 'fetching') {
+    return <span className="text-[10px] text-text-tertiary">…</span>
+  }
+  if (status === 'ready' && entry?.summary) {
+    const text = formatRemaining(entry.summary.remaining)
+    if (!text) return null
+    return <span className="text-[10px] text-accent/80">{text}</span>
+  }
+  if (status === 'relogin' || status === 'idle') {
+    return (
+      <button
+        type="button"
+        disabled={loginOpen}
+        onClick={(e) => {
+          e.stopPropagation()
+          startLogin(providerId)
+          onLogin()
+        }}
+        className="text-[10px] text-accent hover:underline disabled:opacity-50"
+      >
+        {status === 'idle'
+          ? t('provider.usage.connect', 'Connect Kimi')
+          : t('provider.usage.reconnect', 'Reconnect')}
+      </button>
+    )
+  }
+  if (status === 'no-plan') {
+    return <span className="text-[10px] text-text-tertiary">{t('provider.usage.noPlan', 'No coding plan')}</span>
+  }
+  // error / unsupported → nothing
+  return null
+}
+
 export default function ProviderSelector({ workspaceId, sessionId, disabled = false, hideNameBelowSm = false }: ProviderSelectorProps) {
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
@@ -35,12 +87,25 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
   const providers = useProviderStore((s) => s.providers)
   const defaultProvider = useProviderStore((s) => s.providers.find((p) => p.isDefault))
   const fetchProviders = useProviderStore((s) => s.fetchProviders)
+  const fetchUsage = useProviderUsageStore((s) => s.fetchUsage)
 
   useEffect(() => {
     if (providers.length === 0) {
       fetchProviders()
     }
   }, [fetchProviders, providers.length])
+
+  // On open, fetch usage for each Kimi coding-plan provider (on-demand; the
+  // client throttle + server 24h cache prevent over-fetching). Never auto-open
+  // the login modal — that only happens on explicit click (R3).
+  useEffect(() => {
+    if (!open) return
+    for (const provider of providers) {
+      if (isKimiCodingPlanProvider(provider.baseUrl)) {
+        fetchUsage(provider.id)
+      }
+    }
+  }, [open, providers, fetchUsage])
 
   const currentProviderId = session?.providerId
   const currentProvider = providers.find((p) => p.id === currentProviderId)
@@ -49,6 +114,13 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
   const handleSelect = (providerId: string | null) => {
     setSessionProvider(workspaceId, sessionId, providerId)
     setOpen(false)
+  }
+
+  const handleRowKey = (e: React.KeyboardEvent, providerId: string) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      handleSelect(providerId)
+    }
   }
 
   const displayName = currentProvider?.name ?? defaultProvider?.name ?? t('provider.default')
@@ -82,11 +154,15 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
         </div>
         {providers.map((provider) => {
           const isActive = provider.id === currentProviderId
+          const showUsage = isKimiCodingPlanProvider(provider.baseUrl)
           return (
-            <button
+            <div
               key={provider.id}
+              role="button"
+              tabIndex={0}
               onClick={() => handleSelect(provider.id)}
-              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors ${
+              onKeyDown={(e) => handleRowKey(e, provider.id)}
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors cursor-pointer ${
                 isActive
                   ? 'bg-accent/10 text-accent'
                   : 'text-text-secondary hover:bg-surface-hover'
@@ -96,9 +172,14 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
               <div className="min-w-0 flex-1">
                 <div className="font-medium truncate">{provider.name}</div>
                 <div className="text-[10px] text-text-tertiary truncate">{provider.baseUrl}</div>
+                {showUsage && (
+                  <div className="mt-0.5">
+                    <ProviderUsageLine providerId={provider.id} onLogin={() => setOpen(false)} />
+                  </div>
+                )}
               </div>
               <Check className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? '' : 'opacity-0'}`} />
-            </button>
+            </div>
           )
         })}
         {providers.length === 0 && (

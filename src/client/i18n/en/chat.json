@@ -172,7 +172,12 @@
     "noDefault": "No default configured",
     "selectorTitle": "Select LLM provider for this session",
     "selectProvider": "Provider",
-    "noProviders": "No providers configured. Add one in Settings → Providers."
+    "noProviders": "No providers configured. Add one in Settings → Providers.",
+    "usage": {
+      "connect": "Connect Kimi",
+      "reconnect": "Reconnect",
+      "noPlan": "No coding plan"
+    }
   },
   "agent": "Agent",
   "agentLabel": "Agent: {{type}}",

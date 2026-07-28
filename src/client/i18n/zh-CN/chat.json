@@ -171,7 +171,12 @@
     "noDefault": "未配置默认服务商",
     "selectorTitle": "选择此会话使用的 LLM 服务商",
     "selectProvider": "服务商",
-    "noProviders": "尚未配置服务商。请前往设置 → 服务商添加。"
+    "noProviders": "尚未配置服务商。请前往设置 → 服务商添加。",
+    "usage": {
+      "connect": "连接 Kimi",
+      "reconnect": "重新连接",
+      "noPlan": "无 Coding 套餐"
+    }
   },
   "agent": "代理",
   "agentLabel": "代理: {{type}}",
