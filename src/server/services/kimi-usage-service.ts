@@ -48,50 +48,63 @@ function readJwtExp(token: string): number | null {
 
 /**
  * Build the whitelist summary (R14) by reading NAMED fields only. Never spreads
- * or clones the response, so account-identifying fields (email, user_id,
- * payment) cannot reach the client. Candidate keys are provisional pending the
- * real response shape (OQ2); the security property holds regardless.
+ * or clones the response, so account-identifying fields cannot reach the client.
+ *
+ * Real GetUsages shape (FEATURE_CODING): values are STRINGS, and the data is
+ * nested —
+ *   { totalQuota: { limit, used, remaining },
+ *     usages: [ { scope: 'FEATURE_CODING', detail: { limit, used, resetTime },
+ *                 limits: [ { detail: { limit, remaining, resetTime } } ] } ] }
+ * `totalQuota` is the headline coding-plan quota; the FEATURE_CODING detail
+ * carries the reset time. An account with no coding plan returns no
+ * totalQuota / no FEATURE_CODING entry → all fields null → `no-plan`.
  */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asNum(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function asStr(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 function parseUsageSummary(body: unknown): UsageSummary | null {
-  if (!body || typeof body !== 'object') return null;
-  const rec = body as Record<string, unknown>;
-  const pickNum = (keys: string[]): number | null => {
-    for (const k of keys) {
-      const v = rec[k];
-      if (typeof v === 'number' && Number.isFinite(v)) return v;
-    }
-    return null;
-  };
-  const pickStr = (keys: string[]): string | null => {
-    for (const k of keys) {
-      const v = rec[k];
-      if (typeof v === 'string' && v.length > 0) return v;
-    }
-    return null;
-  };
+  const rec = asRecord(body);
+  if (!rec) return null;
 
-  const used = pickNum(['used', 'usage', 'consumed', 'usedQuota']);
-  const total = pickNum(['total', 'quota', 'limit', 'totalQuota']);
-  const remaining = pickNum(['remaining', 'left']);
-  const resetDate = pickStr(['resetDate', 'reset_at', 'reset', 'renewalDate', 'expireAt']);
+  const totalQuota = asRecord(rec.totalQuota);
+  const usages = Array.isArray(rec.usages) ? (rec.usages as unknown[]) : [];
+  const coding = asRecord(usages.find((u) => asRecord(u)?.scope === 'FEATURE_CODING'));
+  const codingDetail = asRecord(coding?.detail);
+  const limits = Array.isArray(coding?.limits) ? (coding.limits as unknown[]) : [];
+  const firstLimitDetail = asRecord(asRecord(limits[0])?.detail);
 
-  // If none of the usage fields are present, this is not a recognizable coding-
-  // plan usage payload (provisional "no-plan" heuristic, KTD7/OQ2).
+  const used = asNum(totalQuota?.used) ?? asNum(codingDetail?.used);
+  const total = asNum(totalQuota?.limit) ?? asNum(codingDetail?.limit);
+  const remaining =
+    asNum(totalQuota?.remaining) ??
+    asNum(codingDetail?.remaining) ??
+    asNum(firstLimitDetail?.remaining) ??
+    (total !== null && used !== null ? total - used : null);
+  const resetDate = asStr(codingDetail?.resetTime) ?? asStr(firstLimitDetail?.resetTime);
+
+  // No recognizable usage fields → not a coding-plan payload.
   if (used === null && total === null && remaining === null && resetDate === null) {
     return null;
   }
 
-  const derivedRemaining =
-    remaining ?? (total !== null && used !== null ? total - used : null);
-
   // Construct the whitelist object literal explicitly — never spread `rec`.
-  return {
-    used,
-    total,
-    remaining: derivedRemaining,
-    resetDate,
-    lastUpdated: new Date().toISOString(),
-  };
+  return { used, total, remaining, resetDate, lastUpdated: new Date().toISOString() };
 }
 
 export class KimiUsageService {
