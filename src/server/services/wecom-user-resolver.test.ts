@@ -46,17 +46,18 @@ describe('WeComUserIdResolver flushWorkspaceNow', { concurrency: false }, () => 
     resolverRetryMeta.clear();
   });
 
-  async function createWorkspace(withCredentials: boolean) {
+  // Mirrors the post-migration layout: corp credentials live in the bot's
+  // wecom channel config, never in workspace.settings (the unified-schema
+  // migration deletes settings.wecomCorpId/wecomCorpSecret).
+  async function createWorkspace() {
     return workspaceStore.create({
       name: 'ws',
       folderPath: '/tmp/ws',
-      settings: withCredentials
-        ? { wecomCorpId: 'CORP', wecomCorpSecret: 'SECRET' }
-        : {},
+      settings: {},
     });
   }
 
-  function createWecomBot(workspaceId: string) {
+  function createWecomBot(workspaceId: string, withCorpCredentials = true) {
     return botService.createBot({
       name: 'WeCom Bot',
       activeWorkspaceId: workspaceId,
@@ -65,13 +66,14 @@ describe('WeComUserIdResolver flushWorkspaceNow', { concurrency: false }, () => 
           enabled: true,
           botId: 'wecom-bot',
           botSecret: 'wecom-secret',
+          ...(withCorpCredentials ? { corpId: 'CORP', corpSecret: 'SECRET' } : {}),
         },
       },
     });
   }
 
   it('resolves queued IDs and stores mappings', async () => {
-    const ws = await createWorkspace(true);
+    const ws = await createWorkspace();
     const bot = createWecomBot(ws.id);
     global.fetch = mockFetchForBatch({ E1: 'U1', E2: 'U2' });
 
@@ -90,9 +92,55 @@ describe('WeComUserIdResolver flushWorkspaceNow', { concurrency: false }, () => 
     assert.ok(resolved.some((u) => u.channelUserId === 'E2' && u.plaintextUserId === 'U2'));
   });
 
+  it('resolveImmediate resolves using corp credentials from the bot channel config', async () => {
+    // Regression: the unified-schema migration moves corpId/corpSecret out of
+    // workspace.settings into the bot's wecom channel config and deletes them
+    // from settings. The manual resolve path must read them from the config.
+    const ws = await createWorkspace();
+    const bot = createWecomBot(ws.id);
+    global.fetch = mockFetchForBatch({ E1: 'U1' });
+
+    const plaintext = await wecomUserResolver.resolveImmediate(ws.id, 'E1');
+
+    assert.strictEqual(plaintext, 'U1');
+    const users = workspaceStore.listBotUsers(bot.id);
+    assert.ok(users.some((u) => u.channelUserId === 'E1' && u.plaintextUserId === 'U1'));
+  });
+
+  it('resolveImmediate throws when corp credentials are absent from the channel config', async () => {
+    const ws = await createWorkspace();
+    createWecomBot(ws.id, false);
+    let fetchCalled = false;
+    global.fetch = async () => {
+      fetchCalled = true;
+      return { ok: false, status: 500, json: async () => ({}) } as Response;
+    };
+
+    await assert.rejects(
+      () => wecomUserResolver.resolveImmediate(ws.id, 'E1'),
+      /not configured/i,
+    );
+    assert.strictEqual(fetchCalled, false);
+  });
+
+  it('resolveImmediate throws when the workspace has no bot (no credentials source)', async () => {
+    const ws = await createWorkspace();
+    let fetchCalled = false;
+    global.fetch = async () => {
+      fetchCalled = true;
+      return { ok: false, status: 500, json: async () => ({}) } as Response;
+    };
+
+    await assert.rejects(
+      () => wecomUserResolver.resolveImmediate(ws.id, 'E1'),
+      /not configured/i,
+    );
+    assert.strictEqual(fetchCalled, false);
+  });
+
   it('returns zero counts and clears the queue when workspace has no credentials', async () => {
-    const ws = await createWorkspace(false);
-    createWecomBot(ws.id);
+    const ws = await createWorkspace();
+    createWecomBot(ws.id, false);
     let fetchCalled = false;
     global.fetch = async () => {
       fetchCalled = true;
@@ -109,7 +157,7 @@ describe('WeComUserIdResolver flushWorkspaceNow', { concurrency: false }, () => 
   });
 
   it('returns zero counts without calling the API when the queue is empty', async () => {
-    const ws = await createWorkspace(true);
+    const ws = await createWorkspace();
     createWecomBot(ws.id);
     let fetchCalled = false;
     global.fetch = async () => {
@@ -124,7 +172,7 @@ describe('WeComUserIdResolver flushWorkspaceNow', { concurrency: false }, () => 
   });
 
   it('short-circuits when mapping is already resolved', async () => {
-    const ws = await createWorkspace(true);
+    const ws = await createWorkspace();
     createWecomBot(ws.id);
     global.fetch = mockFetchForBatch({ E1: 'U1' });
 
@@ -145,7 +193,7 @@ describe('WeComUserIdResolver flushWorkspaceNow', { concurrency: false }, () => 
   });
 
   it('tracks workspace user without resolving', async () => {
-    const ws = await createWorkspace(true);
+    const ws = await createWorkspace();
     const bot = createWecomBot(ws.id);
     let fetchCalled = false;
     global.fetch = async () => {
