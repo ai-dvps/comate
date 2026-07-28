@@ -83,16 +83,19 @@ describe('BigModelUsageService', () => {
     assert.equal(result.status, 'idle');
   });
 
-  test('happy path returns a ready summary from TIME_LIMIT', async () => {
+  test('happy path returns a ready summary from weekly + 5h coding limits', async () => {
     const id = makeProvider('https://open.bigmodel.cn/api/anthropic');
     seedBearer('bm-token');
     trackFetch(() => jsonResponse(200, REAL_RESPONSE));
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'ready');
-    assert.equal(result.summary?.used, 37);
-    assert.equal(result.summary?.total, 4000);
-    assert.equal(result.summary?.remaining, 3963);
+    // Primary: weekly (unit 6) percentage 63 → mapped to /100.
+    assert.equal(result.summary?.used, 63);
+    assert.equal(result.summary?.total, 100);
+    assert.equal(result.summary?.remaining, 37);
     assert.ok(result.summary?.resetDate);
+    // Rolling: 5h (unit 3) percentage 33 → remaining 67.
+    assert.equal(result.summary?.rolling?.remaining, 67);
   });
 
   test('auth is raw token (no Bearer prefix)', async () => {

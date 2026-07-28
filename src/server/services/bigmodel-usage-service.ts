@@ -25,27 +25,47 @@ export interface UsageResult {
 }
 
 /**
- * Parse the BigModel `quota/limit` response. The `data.limits` array has
- * entries by `type`; `TIME_LIMIT` carries the monthly MCP quota with absolute
- * used/total/remaining; `TOKENS_LIMIT` entries carry percentages only (5h,
- * weekly) and are deferred for now.
+ * Parse the BigModel `quota/limit` response. The `data.limits` array entries
+ * are distinguished by `unit`:
+ *   unit 5 = TIME_LIMIT (MCP monthly — NOT coding plan, dropped)
+ *   unit 6 = TOKENS_LIMIT (coding plan weekly) → primary
+ *   unit 3 = TOKENS_LIMIT (coding plan 5h)    → rolling
+ * The coding-plan limits only expose `percentage`; map to used/total/remaining
+ * (total=100) so the display matches Kimi's "X / 100 used · Y left" format.
  */
 function parseBigModelUsage(body: unknown): UsageSummary | null {
   const root = asRecord(body);
   const data = asRecord(root?.data);
   if (!data) return null;
   const limits = Array.isArray(data.limits) ? (data.limits as unknown[]) : [];
-  const monthly = asRecord(limits.find((l) => asRecord(l)?.type === 'TIME_LIMIT'));
-  if (!monthly) return null;
 
-  const used = asNum(monthly.currentValue);
-  const total = asNum(monthly.usage);
-  const remaining = asNum(monthly.remaining);
-  const resetMs = asNum(monthly.nextResetTime);
-  const resetDate = resetMs !== null ? new Date(resetMs).toISOString() : null;
+  const weekly = asRecord(limits.find((l) => asRecord(l)?.unit === 6));
+  const fiveHour = asRecord(limits.find((l) => asRecord(l)?.unit === 3));
+  if (!weekly && !fiveHour) return null;
 
-  if (used === null && total === null && remaining === null) return null;
-  return { used, total, remaining, resetDate, rolling: null, lastUpdated: new Date().toISOString() };
+  // Primary: weekly coding (unit 6).
+  const weeklyPct = asNum(weekly?.percentage);
+  const used = weeklyPct;
+  const total = weeklyPct !== null ? 100 : null;
+  const remaining = weeklyPct !== null ? 100 - weeklyPct : null;
+  const weeklyResetMs = asNum(weekly?.nextResetTime);
+  const resetDate = weeklyResetMs !== null ? new Date(weeklyResetMs).toISOString() : null;
+
+  // Rolling: 5h coding (unit 3).
+  const fiveHourPct = asNum(fiveHour?.percentage);
+  const fiveHourResetMs = asNum(fiveHour?.nextResetTime);
+  const rolling =
+    fiveHourPct !== null || fiveHourResetMs !== null
+      ? {
+          remaining: fiveHourPct !== null ? 100 - fiveHourPct : null,
+          resetDate: fiveHourResetMs !== null ? new Date(fiveHourResetMs).toISOString() : null,
+        }
+      : null;
+
+  if (used === null && total === null && remaining === null && resetDate === null) {
+    return null;
+  }
+  return { used, total, remaining, resetDate, rolling, lastUpdated: new Date().toISOString() };
 }
 
 /** Read the captured BigModel bearer from global_site_auth. */
