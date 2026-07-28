@@ -25,6 +25,7 @@ function fakeBrowser(opts: { origin?: string; extracted?: unknown; extractThrows
     navigate: [] as string[],
     setControlState: [] as string[],
     teardown: [] as string[],
+    rememberGlobal: [] as string[],
   };
   const browser: UsageBrowserSurface = {
     async ensureSession(input) {
@@ -33,6 +34,9 @@ function fakeBrowser(opts: { origin?: string; extracted?: unknown; extractThrows
     },
     async navigateInSession(_sid, url) {
       calls.navigate.push(url);
+    },
+    async rememberGlobalSiteAuth(_sid, siteKey) {
+      calls.rememberGlobal.push(siteKey);
     },
     async evaluateInSession(_sid, expr) {
       calls.evaluate.push(expr);
@@ -94,6 +98,16 @@ describe('ProviderUsageLoginService', () => {
     assert.equal(result.status, 'ready');
     assert.equal(usage.getToken(id), 'jwt-value');
     assert.equal(calls.teardown.length, 1);
+    // The kimi.com session is remembered globally for chat-browser reuse.
+    assert.equal(calls.rememberGlobal.includes('kimi.com'), true);
+  });
+
+  test('wrong-origin capture does not remember the site globally', async () => {
+    const id = makeKimiProvider();
+    const { browser, calls } = fakeBrowser({ origin: 'evil.example.com', extracted: 'jwt-value' });
+    const svc = new ProviderUsageLoginService(sqlite, browser, usage);
+    await svc.finalizeLogin(id, 1);
+    assert.equal(calls.rememberGlobal.length, 0);
   });
 
   test('finalizeLogin aborts on wrong origin: no token stored, teardown still runs', async () => {

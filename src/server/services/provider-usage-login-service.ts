@@ -13,6 +13,13 @@ import { diagLog } from '../utils/diag-logger.js';
  */
 const USAGE_LOGIN_WORKSPACE_ID = '__provider_usage_login__';
 
+/**
+ * The Kimi registrable-domain site key. The captured login is remembered under
+ * this key in the global site-auth store so it is reusable by the chat browser
+ * in any workspace (browserSiteAuth global fallback), not just the usage query.
+ */
+const KIMI_SITE_KEY = 'kimi.com';
+
 export function captureSessionId(providerId: string): string {
   return `usage-login-${providerId}`;
 }
@@ -61,6 +68,8 @@ export interface UsageBrowserSurface {
   evaluateInSession(sessionId: string, expression: string): Promise<unknown>;
   setControlState(sessionId: string, state: 'user_in_control'): Promise<void> | void;
   teardownSession(sessionId: string): Promise<void>;
+  /** Remember the session's site context globally (cross-workspace reuse). */
+  rememberGlobalSiteAuth(sessionId: string, siteKey: string): Promise<void>;
 }
 
 export class ProviderUsageLoginService {
@@ -117,6 +126,14 @@ export class ProviderUsageLoginService {
       if (!accepted) {
         return { status: 'relogin', reason: 'superseded' };
       }
+      // Best-effort: also remember the kimi.com session globally so the chat
+      // browser in any workspace can reuse the login (browserSiteAuth global
+      // fallback). A failure here must not affect the usage capture.
+      await this.browser.rememberGlobalSiteAuth(sessionId, KIMI_SITE_KEY).catch((err) => {
+        diagLog('Kimi global site-auth capture failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
       return { status: 'ready' };
     } finally {
       // R12: always tear down — success, failure, or a thrown error.
