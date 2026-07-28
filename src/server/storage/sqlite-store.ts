@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, copyFil
 import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import type { Workspace, CreateWorkspaceInput, UpdateWorkspaceInput, BrowserSiteAuthEntry } from '../models/workspace.js';
+import type { Workspace, WorkspaceSettings, CreateWorkspaceInput, UpdateWorkspaceInput, BrowserSiteAuthEntry } from '../models/workspace.js';
 import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type {
   Bot,
@@ -24,7 +24,7 @@ import type {
   UpdateBotUserInput,
 } from '../models/bot-user.js';
 import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
-import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus } from '../models/todo.js';
+import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin, TodoComment, TodoConflict } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import { providerSupportsFastMode } from '../utils/provider-capability.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
@@ -106,6 +106,16 @@ export class SqliteStore {
         version INTEGER NOT NULL,
         run_at TEXT NOT NULL,
         snapshot_json TEXT NOT NULL DEFAULT '{}'
+      )
+    `);
+    // KTD5: app-global singleton row. The encrypted GitHub connection blob
+    // (credential-crypto ciphertext of the access+refresh token bundle — never
+    // plaintext) lives here; WorkspaceSettings carries only public repo names.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        github_connection_json TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
       )
     `);
     const migrationVersion = this.getMigrationVersion();
@@ -329,12 +339,54 @@ export class SqliteStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todos (
         id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
+        workspace_id TEXT,
         text TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending',
         session_id TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        origin TEXT NOT NULL DEFAULT 'local',
+        due_date TEXT,
+        repo_full_name TEXT,
+        issue_number INTEGER,
+        remote_snapshot_json TEXT,
+        remote_updated_at TEXT,
+        last_synced_at TEXT,
+        assignee TEXT,
+        labels_json TEXT NOT NULL DEFAULT '[]',
+        origin_deleted INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS repo_sync_state (
+        repo_full_name TEXT PRIMARY KEY,
+        repo_last_updated_at TEXT,
+        etag TEXT
+      )
+    `);
+    // U5: append-only comments (bidirectional merge, R10) + structural-field
+    // conflicts (R11, detected by U5, resolved by U6). Additive, idempotent.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS todo_comments (
+        id TEXT PRIMARY KEY,
+        todo_id TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        remote_id INTEGER,
+        author TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        pushed INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS todo_conflicts (
+        todo_id TEXT NOT NULL,
+        field TEXT NOT NULL,
+        local_value TEXT NOT NULL,
+        remote_value TEXT NOT NULL,
+        baseline_value TEXT,
+        detected_at TEXT NOT NULL,
+        PRIMARY KEY (todo_id, field)
       )
     `);
     this.db.exec(`
@@ -436,6 +488,7 @@ export class SqliteStore {
     this.migrateBotMembersChannelColumns();
     this.migrateToUnifiedSchema();
     this.migrateBrowserAuditSchema();
+    this.migrateTodosGlobalSchema();
   }
 
   /**
@@ -454,6 +507,130 @@ export class SqliteStore {
       ...previous,
       browser_audit_schema: true,
     });
+  }
+
+  /**
+   * Schema version 7 (U1): make todos global. `workspace_id` becomes nullable
+   * (a soft link), and sync/due-date/origin columns are added. Mirrors the safe
+   * `migrateToUnifiedSchema` shape (file backup, explicit transaction, version
+   * bump inside the txn, count verification, re-throw) — NOT the bare-exec
+   * `migrateTodoDetailColumn`. The gate keys on table shape (not row count) so
+   * fresh/empty DBs created with the new base CREATE skip the rebuild.
+   */
+  private migrateTodosGlobalSchema(): void {
+    const version = this.getMigrationVersion();
+    if (version !== null && version >= 7) {
+      return;
+    }
+
+    const cols = this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string; notnull: number }>;
+    const hasOrigin = cols.some((c) => c.name === 'origin');
+    const workspaceIdCol = cols.find((c) => c.name === 'workspace_id');
+    const alreadyNewShape = hasOrigin && workspaceIdCol != null && workspaceIdCol.notnull === 0;
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS repo_sync_state (
+        repo_full_name TEXT PRIMARY KEY,
+        repo_last_updated_at TEXT,
+        etag TEXT
+      )
+    `);
+
+    if (alreadyNewShape) {
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_repo_issue
+          ON todos (repo_full_name, issue_number)
+          WHERE repo_full_name IS NOT NULL AND issue_number IS NOT NULL
+      `);
+      const prev = this.getMigrationState().snapshot;
+      this.setMigrationState(7, new Date().toISOString(), { ...prev, todos_global_schema: 'already_new_shape' });
+      return;
+    }
+
+    if (!this.inMemory) {
+      const backupDir = join(STORAGE_DIR, 'backup');
+      ensureDirSync(backupDir);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = join(backupDir, `pre-todos-global-${timestamp}.db`);
+      try {
+        copyFileSync(DB_FILE, backupPath);
+        console.log(`[SqliteStore] Created pre-migration backup: ${backupPath}`);
+      } catch (err) {
+        console.error('[SqliteStore] Failed to create pre-migration backup:', err);
+      }
+    }
+
+    // Snapshot existing indexes (by sql) to re-create on the rebuilt table.
+    const oldIndexes = this.db
+      .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'todos' AND sql IS NOT NULL")
+      .all() as Array<{ name: string; sql: string }>;
+
+    const nowIso = new Date().toISOString();
+
+    const migrate = this.db.transaction(() => {
+      this.db.exec('ALTER TABLE todos RENAME TO todos_old;');
+      this.db.exec(`
+        CREATE TABLE todos (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT,
+          text TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          session_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          origin TEXT NOT NULL DEFAULT 'local',
+          due_date TEXT,
+          repo_full_name TEXT,
+          issue_number INTEGER,
+          remote_snapshot_json TEXT,
+          remote_updated_at TEXT,
+          last_synced_at TEXT,
+          assignee TEXT,
+          labels_json TEXT NOT NULL DEFAULT '[]',
+          origin_deleted INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+      const oldCount = (this.db.prepare('SELECT COUNT(*) AS c FROM todos_old').get() as { c: number }).c;
+      this.db.exec(`
+        INSERT INTO todos (
+          id, workspace_id, text, status, session_id, created_at, updated_at,
+          origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
+          remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted
+        )
+        SELECT
+          id, workspace_id, text, status, session_id, created_at, updated_at,
+          'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', 0
+        FROM todos_old;
+      `);
+      const newCount = (this.db.prepare('SELECT COUNT(*) AS c FROM todos').get() as { c: number }).c;
+      if (oldCount !== newCount) {
+        throw new Error(`todos global migration count mismatch: ${oldCount} -> ${newCount}`);
+      }
+      this.db.exec('DROP TABLE todos_old;');
+      for (const idx of oldIndexes) {
+        try {
+          this.db.exec(idx.sql);
+        } catch {
+          /* index name collision on the rebuilt table; ignore */
+        }
+      }
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_repo_issue
+          ON todos (repo_full_name, issue_number)
+          WHERE repo_full_name IS NOT NULL AND issue_number IS NOT NULL
+      `);
+
+      const prev = this.getMigrationState().snapshot;
+      this.setMigrationState(7, nowIso, { ...prev, todos_global_schema: 'rebuilt', todosCount: newCount });
+    });
+
+    try {
+      migrate();
+      console.log('[SqliteStore] Todos global schema migration completed');
+    } catch (err) {
+      console.error('[SqliteStore] Todos global schema migration failed:', err);
+      throw err;
+    }
   }
 
   getAnalyticsCache(): AnalyticsCache {
@@ -1562,7 +1739,8 @@ export class SqliteStore {
       `).run(id);
       this.db.prepare('DELETE FROM session_metadata WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)').run(id);
       this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id);
-      this.db.prepare('DELETE FROM todos WHERE workspace_id = ?').run(id);
+      // R15: deleting a workspace nulls the soft link on global todos; it never destroys them.
+      this.db.prepare('UPDATE todos SET workspace_id = NULL WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_media_cache WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM task_runs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE workspace_id = ?)').run(id);
@@ -1959,21 +2137,58 @@ export class SqliteStore {
     return result.changes > 0;
   }
 
-  createTodo(workspaceId: string, input: CreateTodoInput): Todo {
-    const now = new Date().toISOString();
+  createTodo(workspaceId: string | null, input: CreateTodoInput): Todo {
+    const nowIso = new Date().toISOString();
     const todo: Todo = {
       id: uuidv4(),
-      workspaceId,
+      workspaceId: workspaceId ?? null,
       text: input.text.trim(),
       status: 'pending',
       sessionId: null,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      origin: 'local',
+      dueDate: input.dueDate ?? null,
+      repoFullName: null,
+      issueNumber: null,
+      remoteSnapshot: null,
+      remoteUpdatedAt: null,
+      lastSyncedAt: null,
+      assignee: null,
+      labels: [],
+      originDeleted: false,
     };
-    this.db.prepare(`
-      INSERT INTO todos (id, workspace_id, text, status, session_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(todo.id, todo.workspaceId, todo.text, todo.status, todo.sessionId, todo.createdAt, todo.updatedAt);
+    this.db
+      .prepare(
+        `INSERT INTO todos (
+          id, workspace_id, text, status, session_id, created_at, updated_at,
+          origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
+          remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted
+        ) VALUES (
+          @id, @workspace_id, @text, @status, @session_id, @created_at, @updated_at,
+          @origin, @due_date, @repo_full_name, @issue_number, @remote_snapshot_json,
+          @remote_updated_at, @last_synced_at, @assignee, @labels_json, @origin_deleted
+        )`,
+      )
+      .run({
+        id: todo.id,
+        workspace_id: todo.workspaceId,
+        text: todo.text,
+        status: todo.status,
+        session_id: todo.sessionId,
+        created_at: todo.createdAt,
+        updated_at: todo.updatedAt,
+        origin: todo.origin,
+        due_date: todo.dueDate,
+        repo_full_name: todo.repoFullName,
+        issue_number: todo.issueNumber,
+        remote_snapshot_json: todo.remoteSnapshot,
+        remote_updated_at: todo.remoteUpdatedAt,
+        last_synced_at: todo.lastSyncedAt,
+        assignee: todo.assignee,
+        labels_json: JSON.stringify(todo.labels),
+        origin_deleted: todo.originDeleted ? 1 : 0,
+      });
     return todo;
   }
 
@@ -1984,9 +2199,184 @@ export class SqliteStore {
     return rows.map(parseTodoRow);
   }
 
+  /** Global todo list (U1/R2). Optional workspace filter preserves the legacy view. */
+  getAllTodos(filter?: { workspaceId?: string }): Todo[] {
+    if (filter?.workspaceId) {
+      const rows = this.db
+        .prepare('SELECT * FROM todos WHERE workspace_id = ? ORDER BY created_at DESC')
+        .all(filter.workspaceId) as RawTodoRow[];
+      return rows.map(parseTodoRow);
+    }
+    const rows = this.db.prepare('SELECT * FROM todos ORDER BY created_at DESC').all() as RawTodoRow[];
+    return rows.map(parseTodoRow);
+  }
+
   getTodoById(id: string): Todo | null {
     const row = this.db.prepare('SELECT * FROM todos WHERE id = ?').get(id) as RawTodoRow | undefined;
     return row ? parseTodoRow(row) : null;
+  }
+
+  // -------------------------------------------------------------------------
+  // U5 sync storage: per-repo cursor, repo lookups, comments, conflicts.
+  // -------------------------------------------------------------------------
+
+  getRepoSyncState(repo: string): { repoLastUpdatedAt: string | null; etag: string | null } | null {
+    const row = this.db
+      .prepare('SELECT repo_last_updated_at, etag FROM repo_sync_state WHERE repo_full_name = ?')
+      .get(repo) as { repo_last_updated_at: string | null; etag: string | null } | undefined;
+    return row ? { repoLastUpdatedAt: row.repo_last_updated_at, etag: row.etag } : null;
+  }
+
+  setRepoSyncState(repo: string, state: { repoLastUpdatedAt: string | null; etag: string | null }): void {
+    this.db
+      .prepare(
+        `INSERT INTO repo_sync_state (repo_full_name, repo_last_updated_at, etag)
+         VALUES (?, ?, ?)
+         ON CONFLICT(repo_full_name) DO UPDATE SET
+           repo_last_updated_at = excluded.repo_last_updated_at,
+           etag = excluded.etag`,
+      )
+      .run(repo, state.repoLastUpdatedAt, state.etag);
+  }
+
+  /** The local todo linked to a repo/issue, or null (pull dedupe — F2). */
+  findTodoByRepoIssue(repo: string, issueNumber: number): Todo | null {
+    const row = this.db
+      .prepare('SELECT * FROM todos WHERE repo_full_name = ? AND issue_number = ?')
+      .get(repo, issueNumber) as RawTodoRow | undefined;
+    return row ? parseTodoRow(row) : null;
+  }
+
+  /** All todos linked to a repo (the reconcile working set for that repo). */
+  getTodosByRepo(repo: string): Todo[] {
+    const rows = this.db
+      .prepare('SELECT * FROM todos WHERE repo_full_name = ? ORDER BY created_at DESC')
+      .all(repo) as RawTodoRow[];
+    return rows.map(parseTodoRow);
+  }
+
+  /** Distinct repo full names that have at least one linked todo (reconcile scoping). */
+  getLinkedRepos(): string[] {
+    const rows = this.db
+      .prepare("SELECT DISTINCT repo_full_name FROM todos WHERE repo_full_name IS NOT NULL")
+      .all() as Array<{ repo_full_name: string }>;
+    return rows.map((r) => r.repo_full_name);
+  }
+
+  listTodoComments(todoId: string): TodoComment[] {
+    const rows = this.db
+      .prepare('SELECT * FROM todo_comments WHERE todo_id = ? ORDER BY created_at ASC')
+      .all(todoId) as Array<{
+      id: string;
+      todo_id: string;
+      origin: string;
+      remote_id: number | null;
+      author: string;
+      body: string;
+      created_at: string;
+      pushed: number;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      todoId: r.todo_id,
+      origin: r.origin as 'local' | 'github',
+      remoteId: r.remote_id,
+      author: r.author,
+      body: r.body,
+      createdAt: r.created_at,
+      pushed: r.pushed === 1,
+    }));
+  }
+
+  listUnpushedTodoComments(todoId: string): TodoComment[] {
+    return this.listTodoComments(todoId).filter((c) => c.origin === 'local' && !c.pushed);
+  }
+
+  addLocalTodoComment(todoId: string, body: string, author: string): TodoComment {
+    const comment: TodoComment = {
+      id: uuidv4(),
+      todoId,
+      origin: 'local',
+      remoteId: null,
+      author,
+      body,
+      createdAt: new Date().toISOString(),
+      pushed: false,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO todo_comments (id, todo_id, origin, remote_id, author, body, created_at, pushed)
+         VALUES (?, ?, 'local', NULL, ?, ?, ?, 0)`,
+      )
+      .run(comment.id, todoId, author, body, comment.createdAt);
+    return comment;
+  }
+
+  /** Insert a pulled GitHub comment unless already present (dedupe by remote_id, any origin —
+   *  a just-pushed local comment carries that remote_id and must not be mirrored twice). */
+  upsertRemoteTodoComment(todoId: string, remoteId: number, author: string, body: string, createdAt: string): void {
+    const exists = this.db
+      .prepare('SELECT 1 FROM todo_comments WHERE todo_id = ? AND remote_id = ?')
+      .get(todoId, remoteId);
+    if (exists) return;
+    this.db
+      .prepare(
+        `INSERT INTO todo_comments (id, todo_id, origin, remote_id, author, body, created_at, pushed)
+         VALUES (?, ?, 'github', ?, ?, ?, ?, 1)`,
+      )
+      .run(uuidv4(), todoId, remoteId, author, body, createdAt);
+  }
+
+  /** Mark a local comment pushed and record its GitHub-side id so the pull does not re-mirror it. */
+  markTodoCommentPushed(commentId: string, remoteId: number | null): void {
+    this.db.prepare('UPDATE todo_comments SET pushed = 1, remote_id = ? WHERE id = ?').run(remoteId, commentId);
+  }
+
+  getTodoConflicts(todoId: string): TodoConflict[] {
+    const rows = this.db.prepare('SELECT * FROM todo_conflicts WHERE todo_id = ?').all(todoId) as Array<{
+      todo_id: string;
+      field: string;
+      local_value: string;
+      remote_value: string;
+      baseline_value: string | null;
+      detected_at: string;
+    }>;
+    return rows.map((r) => ({
+      todoId: r.todo_id,
+      field: r.field as 'title' | 'body',
+      localValue: r.local_value,
+      remoteValue: r.remote_value,
+      baselineValue: r.baseline_value,
+      detectedAt: r.detected_at,
+    }));
+  }
+
+  setTodoConflict(
+    todoId: string,
+    field: 'title' | 'body',
+    localValue: string,
+    remoteValue: string,
+    baselineValue: string | null,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO todo_conflicts (todo_id, field, local_value, remote_value, baseline_value, detected_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(todo_id, field) DO UPDATE SET
+           local_value = excluded.local_value,
+           remote_value = excluded.remote_value,
+           baseline_value = excluded.baseline_value,
+           detected_at = excluded.detected_at`,
+      )
+      .run(todoId, field, localValue, remoteValue, baselineValue, new Date().toISOString());
+  }
+
+  clearTodoConflict(todoId: string, field?: 'title' | 'body'): void {
+    if (field) {
+      this.db.prepare('DELETE FROM todo_conflicts WHERE todo_id = ? AND field = ?').run(todoId, field);
+    } else {
+      this.db.prepare('DELETE FROM todo_conflicts WHERE todo_id = ?').run(todoId);
+    }
   }
 
   updateTodo(id: string, input: UpdateTodoInput): Todo | null {
@@ -2006,6 +2396,17 @@ export class SqliteStore {
       sets.push('session_id = ?');
       values.push(input.sessionId);
     }
+    if (input.workspaceId !== undefined) { sets.push('workspace_id = ?'); values.push(input.workspaceId); }
+    if (input.dueDate !== undefined) { sets.push('due_date = ?'); values.push(input.dueDate); }
+    if (input.origin !== undefined) { sets.push('origin = ?'); values.push(input.origin); }
+    if (input.repoFullName !== undefined) { sets.push('repo_full_name = ?'); values.push(input.repoFullName); }
+    if (input.issueNumber !== undefined) { sets.push('issue_number = ?'); values.push(input.issueNumber); }
+    if (input.remoteSnapshot !== undefined) { sets.push('remote_snapshot_json = ?'); values.push(input.remoteSnapshot); }
+    if (input.remoteUpdatedAt !== undefined) { sets.push('remote_updated_at = ?'); values.push(input.remoteUpdatedAt); }
+    if (input.lastSyncedAt !== undefined) { sets.push('last_synced_at = ?'); values.push(input.lastSyncedAt); }
+    if (input.assignee !== undefined) { sets.push('assignee = ?'); values.push(input.assignee); }
+    if (input.labels !== undefined) { sets.push('labels_json = ?'); values.push(JSON.stringify(input.labels)); }
+    if (input.originDeleted !== undefined) { sets.push('origin_deleted = ?'); values.push(input.originDeleted ? 1 : 0); }
     if (sets.length === 0) return existing;
     sets.push('updated_at = ?');
     values.push(new Date().toISOString());
@@ -2016,6 +2417,10 @@ export class SqliteStore {
 
   deleteTodo(id: string): boolean {
     const result = this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+    if (result.changes > 0) {
+      this.db.prepare('DELETE FROM todo_comments WHERE todo_id = ?').run(id);
+      this.db.prepare('DELETE FROM todo_conflicts WHERE todo_id = ?').run(id);
+    }
     return result.changes > 0;
   }
 
@@ -2933,6 +3338,72 @@ export class SqliteStore {
     `).run(version, runAt, JSON.stringify(snapshot));
   }
 
+  // -------------------------------------------------------------------------
+  // Global GitHub account connection (KTD5). The stored value is
+  // credential-crypto ciphertext of the token bundle — these methods move the
+  // blob; encryption/decryption is the caller's (github-auth) responsibility.
+  // -------------------------------------------------------------------------
+
+  /** Encrypted connection blob, or null when no connection is stored. */
+  getGithubConnection(): string | null {
+    const row = this.db
+      .prepare('SELECT github_connection_json FROM app_settings WHERE id = 1')
+      .get() as { github_connection_json: string } | undefined;
+    const json = row?.github_connection_json;
+    return json && json.length > 0 ? json : null;
+  }
+
+  /** Upsert the encrypted connection blob into the singleton row. */
+  setGithubConnection(encryptedJson: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (id, github_connection_json, updated_at)
+        VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          github_connection_json = excluded.github_connection_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(encryptedJson, now);
+  }
+
+  /** Remove the stored connection (Disconnect). */
+  clearGithubConnection(): void {
+    this.db.prepare('DELETE FROM app_settings WHERE id = 1').run();
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-workspace GitHub repository association (KTD5/R8). Repo *names* are a
+  // public soft reference on WorkspaceSettings; secrets never live here. The
+  // RMW is a synchronous critical section, mirroring mutateWorkspaceSiteAuth.
+  // -------------------------------------------------------------------------
+
+  /** Associated repo full names (`owner/repo`), or [] when the workspace has none. */
+  getWorkspaceGithubRepos(id: string): string[] {
+    const row = this.db.prepare('SELECT settings FROM workspaces WHERE id = ?').get(id) as
+      | { settings: string }
+      | undefined;
+    if (!row) return [];
+    const settings = safeJsonParse(row.settings, {}) as WorkspaceSettings;
+    return Array.isArray(settings.githubRepoFullNames) ? [...settings.githubRepoFullNames] : [];
+  }
+
+  /** Replace the workspace's associated repos; returns the stored list, or null if the workspace is missing. */
+  setWorkspaceGithubRepos(id: string, repos: string[]): string[] | null {
+    const row = this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as
+      | RawWorkspaceRow
+      | undefined;
+    if (!row) return null;
+    const workspace = parseRow(row);
+    const deduped = [...new Set(repos.filter((r) => typeof r === 'string' && r.length > 0))];
+    const settings: WorkspaceSettings = { ...workspace.settings, githubRepoFullNames: deduped };
+    const updatedAt = new Date().toISOString();
+    this.db
+      .prepare('UPDATE workspaces SET settings = ?, updatedAt = ? WHERE id = ?')
+      .run(JSON.stringify(settings), updatedAt, id);
+    return settings.githubRepoFullNames ?? null;
+  }
+
   setSessionBotId(sessionId: string, botId: string): void {
     this.db.prepare('UPDATE sessions SET bot_id = ? WHERE id = ?').run(botId, sessionId);
   }
@@ -3233,23 +3704,43 @@ function parseBrowserAuditRow(row: RawBrowserAuditRow): BrowserAuditEntry {
 
 interface RawTodoRow {
   id: string;
-  workspace_id: string;
+  workspace_id: string | null;
   text: string;
   status: string;
   session_id: string | null;
   created_at: string;
   updated_at: string;
+  origin: string;
+  due_date: string | null;
+  repo_full_name: string | null;
+  issue_number: number | null;
+  remote_snapshot_json: string | null;
+  remote_updated_at: string | null;
+  last_synced_at: string | null;
+  assignee: string | null;
+  labels_json: string;
+  origin_deleted: number;
 }
 
 function parseTodoRow(row: RawTodoRow): Todo {
   return {
     id: row.id,
-    workspaceId: row.workspace_id,
+    workspaceId: row.workspace_id ?? null,
     text: row.text,
     status: row.status as TodoStatus,
     sessionId: row.session_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    origin: (row.origin as TodoOrigin | undefined) ?? 'local',
+    dueDate: row.due_date ?? null,
+    repoFullName: row.repo_full_name ?? null,
+    issueNumber: row.issue_number ?? null,
+    remoteSnapshot: row.remote_snapshot_json ?? null,
+    remoteUpdatedAt: row.remote_updated_at ?? null,
+    lastSyncedAt: row.last_synced_at ?? null,
+    assignee: row.assignee ?? null,
+    labels: safeJsonParse(row.labels_json, []) as string[],
+    originDeleted: Boolean(row.origin_deleted),
   };
 }
 
