@@ -75,7 +75,12 @@ function makeFake(state: FakeState) {
     },
     async create(repo: string, input: CreateIssueInput): Promise<RemoteIssue> {
       const num = ++nextIssueNumber;
-      const issue = makeIssue(num, { title: input.title, labels: input.labels ?? [], assignee: input.assignees?.[0] ?? null });
+      const issue = makeIssue(num, {
+        title: input.title,
+        body: input.body,
+        labels: input.labels ?? [],
+        assignee: input.assignees?.[0] ?? null,
+      });
       calls.create.push({ repo, input });
       state.issues.set(repo, issue);
       return issue;
@@ -87,6 +92,7 @@ function makeFake(state: FakeState) {
         const merged: RemoteIssue = {
           ...existing,
           ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.body !== undefined ? { body: input.body } : {}),
           ...(input.state ? { state: input.state } : {}),
         };
         state.issues.set(repo, merged);
@@ -422,5 +428,192 @@ describe('sync error redaction (R13)', () => {
     assert.ok(result.errors.length >= 1, 'no per-issue errors recorded');
     const serialized = JSON.stringify(result.errors);
     assert.ok(!serialized.includes(SENTINEL), 'sentinel leaked from a per-issue catch site: ' + serialized);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bidirectional body sync — content mirrors the GitHub issue body (U3 / KTD5)
+// ---------------------------------------------------------------------------
+describe('body sync (U3)', () => {
+  it('pull writes the issue body into the local content field (R5, AE4)', async () => {
+    fake.state.issues.set('myorg/webapp', makeIssue(31, { title: 'Remote title', body: '## Remote body' }));
+    const todo = await todoSyncService.pull('myorg/webapp', 31);
+    assert.equal(todo.text, 'Remote title');
+    assert.equal(todo.content, '## Remote body');
+    // baseline snapshot carries BOTH title and body
+    const snap = JSON.parse(todo.remoteSnapshot!);
+    assert.equal(snap.title, 'Remote title');
+    assert.equal(snap.body, '## Remote body');
+  });
+
+  it('publish pushes todo.content as the issue body instead of null (R5, AE2)', async () => {
+    store.setWorkspaceGithubRepos(workspaceId, ['myorg/webapp']);
+    const todo = store.createTodo(workspaceId, { text: 'Ship it', content: '## Details' });
+    const published = await todoSyncService.publish(todo.id);
+    assert.equal(fake.calls.create.length, 1);
+    assert.equal(fake.calls.create[0].input.title, 'Ship it');
+    assert.equal(fake.calls.create[0].input.body, '## Details');
+    // baseline snapshot records the body too
+    assert.equal(JSON.parse(published.remoteSnapshot!).body, '## Details');
+  });
+
+  it('local-origin content edit pushes the body outward on reconcile (origin-wins, R5/R8)', async () => {
+    store.setWorkspaceGithubRepos(workspaceId, ['myorg/webapp']);
+    const local = store.createTodo(workspaceId, { text: 'Owner', content: 'orig body' });
+    const published = await todoSyncService.publish(local.id); // baseline body = 'origbody'
+    // local content drifts; remote (title+body) unchanged from baseline
+    store.updateTodo(local.id, { content: 'new body' });
+    fake.state.issueList.set(published.repoFullName!, [
+      makeIssue(published.issueNumber!, { title: 'Owner', body: 'orig body' }),
+    ]);
+    await todoSyncService.reconcile();
+    assert.ok(fake.calls.update.some((c) => c.input.body === 'new body'), 'new content not pushed outward as body');
+    // local value preserved (origin-wins)
+    assert.equal(store.getTodoById(local.id)!.content, 'new body');
+  });
+
+  it('both-sides-edited body is a conflict; local content is left unchanged (R7, AE3)', async () => {
+    const todo = await todoSyncService.pull('myorg/webapp', 41); // baseline, body null
+    // establish a non-null body baseline, then drift both sides independently
+    store.updateTodo(todo.id, { remoteSnapshot: JSON.stringify({ title: 'Issue 41', body: 'base body' }) });
+    store.updateTodo(todo.id, { content: 'local body' });
+    fake.state.issueList.set('myorg/webapp', [makeIssue(41, { title: 'Issue 41', body: 'remote body' })]);
+    const result = await todoSyncService.reconcile();
+    assert.ok(result.conflicts >= 1);
+    const bodyConflict = store.getTodoConflicts(todo.id).find((c) => c.field === 'body');
+    assert.ok(bodyConflict, 'no body conflict surfaced');
+    assert.equal(bodyConflict!.localValue, 'local body');
+    assert.equal(bodyConflict!.remoteValue, 'remote body');
+    assert.equal(bodyConflict!.baselineValue, 'base body');
+    // local content NOT overwritten while the conflict is open
+    assert.equal(store.getTodoById(todo.id)!.content, 'local body');
+    // body baseline preserved (stays detected until resolved)
+    assert.equal(JSON.parse(store.getTodoById(todo.id)!.remoteSnapshot!).body, 'base body');
+  });
+
+  it('resolveConflict(body, local) writes local content AND pushes body outward (R7)', async () => {
+    const todo = store.createTodo(workspaceId, { text: 'T', content: 'local body' });
+    store.updateTodo(todo.id, {
+      origin: 'github',
+      repoFullName: 'myorg/webapp',
+      issueNumber: 51,
+      remoteSnapshot: JSON.stringify({ title: 'T', body: 'base body' }),
+    });
+    store.setTodoConflict(todo.id, 'body', 'local body', 'remote body', 'base body');
+
+    const resolved = await todoSyncService.resolveConflict(todo.id, 'body', 'local');
+    assert.equal(resolved.content, 'local body');
+    const snap = JSON.parse(resolved.remoteSnapshot!);
+    assert.equal(snap.body, 'local body'); // body baseline reset to chosen
+    assert.equal(snap.title, 'T'); // title baseline preserved (F1)
+    assert.equal(store.getTodoConflicts(todo.id).length, 0);
+    assert.ok(fake.calls.update.some((c) => c.input.body === 'local body'), 'chosen body not pushed outward');
+  });
+
+  it('resolveConflict(body, remote) writes the remote body into content and does not push (R7)', async () => {
+    const todo = store.createTodo(workspaceId, { text: 'T', content: 'local body' });
+    store.updateTodo(todo.id, {
+      origin: 'github',
+      repoFullName: 'myorg/webapp',
+      issueNumber: 52,
+      remoteSnapshot: JSON.stringify({ title: 'T', body: 'base body' }),
+    });
+    store.setTodoConflict(todo.id, 'body', 'local body', 'remote body', 'base body');
+
+    const resolved = await todoSyncService.resolveConflict(todo.id, 'body', 'remote');
+    assert.equal(resolved.content, 'remote body');
+    const snap = JSON.parse(resolved.remoteSnapshot!);
+    assert.equal(snap.body, 'remote body');
+    assert.equal(snap.title, 'T'); // title baseline preserved (F1)
+    assert.equal(store.getTodoConflicts(todo.id).length, 0);
+    assert.ok(
+      !fake.calls.update.some((c) => c.input.body === 'remote body'),
+      'accept-remote must not push outward',
+    );
+  });
+
+  it('title and body both push outward when both diverge for a local-origin todo (R8, no title regression)', async () => {
+    store.setWorkspaceGithubRepos(workspaceId, ['myorg/webapp']);
+    const local = store.createTodo(workspaceId, { text: 'Owner', content: 'orig body' });
+    const published = await todoSyncService.publish(local.id);
+    store.updateTodo(local.id, { text: 'Owner new', content: 'new body' });
+    fake.state.issueList.set(published.repoFullName!, [
+      makeIssue(published.issueNumber!, { title: 'Owner', body: 'orig body' }),
+    ]);
+    await todoSyncService.reconcile();
+    assert.ok(fake.calls.update.some((c) => c.input.title === 'Owner new'), 'title not pushed');
+    assert.ok(fake.calls.update.some((c) => c.input.body === 'new body'), 'body not pushed');
+    const after = store.getTodoById(local.id)!;
+    assert.equal(after.text, 'Owner new');
+    assert.equal(after.content, 'new body');
+  });
+
+  it('null body and null content are handled without crashing (empty vs null)', async () => {
+    const todo = await todoSyncService.pull('myorg/webapp', 61); // body null -> content null
+    assert.equal(todo.content, null);
+    fake.state.issueList.set('myorg/webapp', [makeIssue(61, { body: null })]);
+    const result = await todoSyncService.reconcile(); // must not throw
+    assert.ok(result.upserted >= 1);
+    assert.equal(store.getTodoById(todo.id)!.content, null);
+  });
+
+  it('backfill: an existing github-origin todo with empty content receives the body on reconcile (R9, AE4)', async () => {
+    // Simulate a pre-U3 github-origin todo: linked, title-only snapshot, empty content.
+    const todo = store.createTodo(workspaceId, { text: 'Issue 71' });
+    store.updateTodo(todo.id, {
+      origin: 'github',
+      repoFullName: 'myorg/webapp',
+      issueNumber: 71,
+      content: null,
+      remoteSnapshot: JSON.stringify({ title: 'Issue 71' }), // pre-U3: no body in snapshot
+    });
+    fake.state.issueList.set('myorg/webapp', [makeIssue(71, { title: 'Issue 71', body: '## Backfilled body' })]);
+    await todoSyncService.reconcile();
+    assert.equal(store.getTodoById(todo.id)!.content, '## Backfilled body', 'content not backfilled from body');
+  });
+
+  it('F1: resolving a title conflict preserves a diverged body baseline', async () => {
+    const todo = store.createTodo(workspaceId, { text: 'Local title', content: 'local body' });
+    store.updateTodo(todo.id, {
+      origin: 'github',
+      repoFullName: 'myorg/webapp',
+      issueNumber: 81,
+      remoteSnapshot: JSON.stringify({ title: 'Base title', body: 'Base body' }),
+    });
+    // A title conflict is open AND body has diverged from its own baseline.
+    store.setTodoConflict(todo.id, 'title', 'Local title', 'Remote title', 'Base title');
+    const resolved = await todoSyncService.resolveConflict(todo.id, 'title', 'local');
+    // title baseline advanced to the chosen value
+    assert.equal(JSON.parse(resolved.remoteSnapshot!).title, 'Local title');
+    // body baseline SURVIVES into the new snapshot -> next reconcile still detects body divergence
+    assert.equal(JSON.parse(resolved.remoteSnapshot!).body, 'Base body');
+  });
+
+  it('F3: title converges but body diverges -> body conflict with NO title side-effect', async () => {
+    const todo = await todoSyncService.pull('myorg/webapp', 91);
+    store.updateTodo(todo.id, { remoteSnapshot: JSON.stringify({ title: 'Issue 91', body: 'base body' }) });
+    store.updateTodo(todo.id, { content: 'local body' });
+    // title converged on both sides; only body diverged
+    fake.state.issueList.set('myorg/webapp', [makeIssue(91, { title: 'Issue 91', body: 'remote body' })]);
+    await todoSyncService.reconcile();
+    const conflicts = store.getTodoConflicts(todo.id);
+    assert.equal(conflicts.length, 1);
+    assert.equal(conflicts[0].field, 'body');
+    assert.ok(!conflicts.some((c) => c.field === 'title'), 'title surfaced a spurious conflict');
+  });
+
+  it('F3: title and body both diverge -> both conflicts surfaced independently', async () => {
+    const todo = await todoSyncService.pull('myorg/webapp', 92);
+    store.updateTodo(todo.id, { remoteSnapshot: JSON.stringify({ title: 'Issue 92', body: 'base body' }) });
+    store.updateTodo(todo.id, { text: 'local title', content: 'local body' });
+    fake.state.issueList.set('myorg/webapp', [
+      makeIssue(92, { title: 'remote title', body: 'remote body' }),
+    ]);
+    await todoSyncService.reconcile();
+    const fields = store
+      .getTodoConflicts(todo.id)
+      .map((c) => c.field)
+      .sort();
+    assert.deepEqual(fields, ['body', 'title']);
   });
 });
