@@ -50,7 +50,21 @@ export function hasUsageSupport(baseUrl: string): boolean {
   return url.includes('kimi.com') || url.includes('bigmodel.cn')
 }
 
-/** Format a remaining-quota value for the minimal selector line (unit TBD/OQ2). */
+/** Usage percentage (0–100) for the progress bar; null when not computable. */
+export function usagePercentage(summary: UsageSummary | null): number | null {
+  if (!summary || summary.used === null || summary.total === null || summary.total === 0) return null
+  return Math.min(100, Math.max(0, (summary.used / summary.total) * 100))
+}
+
+/** Semantic bar color by usage severity: green < 60%, yellow 60–80%, red > 80%. */
+export function usageBarColor(pct: number | null): string {
+  if (pct === null) return 'bg-text-tertiary'
+  if (pct > 80) return 'bg-destructive'
+  if (pct > 60) return 'bg-warning'
+  return 'bg-success'
+}
+
+/** Format a remaining-quota value for the minimal selector line. */
 export function formatRemaining(remaining: number | null | undefined): string {
   if (remaining === null || remaining === undefined) return ''
   return `${remaining} left`

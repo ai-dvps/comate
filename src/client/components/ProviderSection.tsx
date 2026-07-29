@@ -20,8 +20,11 @@ import { useProviderStore, type Provider } from '../stores/provider-store'
 import {
   useProviderUsageStore,
   hasUsageSupport,
+  usagePercentage,
+  usageBarColor,
 } from '../stores/provider-usage-store'
 import ConfirmDialog from './ConfirmDialog'
+import { cn } from './ui/utils'
 
 interface ProviderFormData {
   name: string
@@ -515,63 +518,77 @@ function ProviderUsagePanel({ providerId }: { providerId: string }) {
   const fmtDate = (iso: string | null | undefined): string =>
     iso ? new Date(iso).toLocaleString() : '—'
 
+  const pct = usagePercentage(summary)
+
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
+    <div className="mt-1.5 space-y-1">
+      {/* Row 1: progress bar + numbers + refresh */}
       {status === 'fetching' && (
-        <span className="inline-flex items-center gap-1">
+        <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
           <RefreshCw className="h-3 w-3 animate-spin" aria-hidden="true" />
-          {t('providers.usage.loading', 'Loading usage…')}
-        </span>
+          <span>{t('providers.usage.loading', 'Loading usage…')}</span>
+        </div>
       )}
       {status === 'ready' && summary && (
         <>
-          <span>
-            {fmt(summary.used)} / {fmt(summary.total)} {t('providers.usage.used', 'used')}
-          </span>
-          <span>·</span>
-          <span className="text-accent/80">
-            {summary.remaining !== null && summary.remaining !== undefined
-              ? `${summary.remaining} ${t('providers.usage.left', 'left')}`
-              : '—'}
-          </span>
-          {summary.resetDate && (
-            <>
-              <span>·</span>
-              <span>
-                {t('providers.usage.resets', 'resets')} {fmtDate(summary.resetDate)}
-              </span>
-            </>
-          )}
-          {summary.rolling &&
-            (summary.rolling.remaining !== null || summary.rolling.resetDate) && (
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 min-w-[60px] flex-1 rounded-full bg-surface-hover overflow-hidden">
+              <div
+                className={cn('h-full rounded-full transition-all duration-300', usageBarColor(pct))}
+                style={{ width: `${pct ?? 0}%` }}
+              />
+            </div>
+            <span className="text-[10px] font-medium text-text-secondary whitespace-nowrap">
+              {fmt(summary.used)} / {fmt(summary.total)} {t('providers.usage.used', 'used')}
+            </span>
+            <button
+              type="button"
+              onClick={() => fetchUsage(providerId, { force: true })}
+              className="rounded p-0.5 text-text-tertiary hover:text-text-secondary"
+              title={t('providers.usage.refresh', 'Refresh usage')}
+              aria-label={t('providers.usage.refresh', 'Refresh usage')}
+            >
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+            </button>
+          </div>
+          {/* Row 2: detail text */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
+            <span className={cn(
+              'font-medium',
+              pct !== null && pct > 80 ? 'text-destructive' : pct !== null && pct > 60 ? 'text-warning' : 'text-success',
+            )}>
+              {summary.remaining !== null && summary.remaining !== undefined
+                ? `${summary.remaining} ${t('providers.usage.left', 'left')}`
+                : '—'}
+            </span>
+            {summary.resetDate && (
               <>
                 <span>·</span>
-                <span>
-                  {t('providers.usage.rolling', '5h window')}:{' '}
-                  {summary.rolling.remaining !== null
-                    ? `${summary.rolling.remaining} ${t('providers.usage.left', 'left')}`
-                    : '—'}
-                  {summary.rolling.resetDate
-                    ? ` · ${t('providers.usage.resets', 'resets')} ${fmtDate(summary.rolling.resetDate)}`
-                    : ''}
-                </span>
+                <span>{t('providers.usage.resets', 'resets')} {fmtDate(summary.resetDate)}</span>
               </>
             )}
-          {entry?.lastUpdated && (
-            <>
-              <span>·</span>
-              <span>{new Date(entry.lastUpdated).toLocaleTimeString()}</span>
-            </>
-          )}
-          <button
-            type="button"
-            onClick={() => fetchUsage(providerId, { force: true })}
-            className="rounded p-0.5 hover:text-text-secondary"
-            title={t('providers.usage.refresh', 'Refresh usage')}
-            aria-label={t('providers.usage.refresh', 'Refresh usage')}
-          >
-            <RefreshCw className="h-3 w-3" aria-hidden="true" />
-          </button>
+            {summary.rolling &&
+              (summary.rolling.remaining !== null || summary.rolling.resetDate) && (
+                <>
+                  <span>·</span>
+                  <span>
+                    {t('providers.usage.rolling', '5h window')}:{' '}
+                    {summary.rolling.remaining !== null
+                      ? `${summary.rolling.remaining} ${t('providers.usage.left', 'left')}`
+                      : '—'}
+                    {summary.rolling.resetDate
+                      ? ` · ${fmtDate(summary.rolling.resetDate)}`
+                      : ''}
+                  </span>
+                </>
+              )}
+            {entry?.lastUpdated && (
+              <>
+                <span>·</span>
+                <span>{new Date(entry.lastUpdated).toLocaleTimeString()}</span>
+              </>
+            )}
+          </div>
         </>
       )}
       {(status === 'idle' || status === 'relogin') && (
@@ -579,7 +596,7 @@ function ProviderUsagePanel({ providerId }: { providerId: string }) {
           type="button"
           disabled={loginOpen}
           onClick={() => startLogin(providerId)}
-          className="text-accent hover:underline disabled:opacity-50"
+          className="text-[10px] text-accent hover:underline disabled:opacity-50"
         >
           {status === 'idle'
             ? t('providers.usage.connect', 'Connect account')
@@ -587,10 +604,12 @@ function ProviderUsagePanel({ providerId }: { providerId: string }) {
         </button>
       )}
       {status === 'no-plan' && (
-        <span>{t('providers.usage.noPlan', 'No coding plan found for this account')}</span>
+        <span className="text-[10px] text-text-tertiary">
+          {t('providers.usage.noPlan', 'No coding plan found for this account')}
+        </span>
       )}
       {status === 'error' && (
-        <span className="inline-flex items-center gap-1">
+        <span className="inline-flex items-center gap-1 text-[10px] text-text-tertiary">
           <span>{t('providers.usage.unavailable', 'Usage unavailable')}</span>
           <button
             type="button"

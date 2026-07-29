@@ -6,9 +6,12 @@ import {
   useProviderUsageStore,
   hasUsageSupport,
   formatRemaining,
+  usagePercentage,
+  usageBarColor,
 } from '../stores/provider-usage-store'
 import { ChevronDown, Check, Loader2 } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
+import { cn } from './ui/utils'
 
 interface ProviderSelectorProps {
   workspaceId: string
@@ -48,7 +51,18 @@ function ProviderUsageLine({
   if (status === 'ready' && entry?.summary) {
     const text = formatRemaining(entry.summary.remaining)
     if (!text) return null
-    return <span className="text-[10px] text-accent/80">{text}</span>
+    const pct = usagePercentage(entry.summary)
+    return (
+      <div className="flex items-center gap-1.5">
+        <div className="h-1 w-12 rounded-full bg-surface-hover overflow-hidden">
+          <div
+            className={cn('h-full rounded-full transition-all duration-300', usageBarColor(pct))}
+            style={{ width: `${pct ?? 0}%` }}
+          />
+        </div>
+        <span className="text-[10px] text-text-tertiary whitespace-nowrap">{text}</span>
+      </div>
+    )
   }
   if (status === 'relogin' || status === 'idle') {
     return (
