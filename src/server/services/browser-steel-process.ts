@@ -181,6 +181,12 @@ export function allocateLoopbackPort(): Promise<number> {
  * lets Chrome pick a free CDP port (Steel hardcodes 9222, dropped via
  * FILTER_CHROME_ARGS).
  *
+ * Disable Chromium's automatic HTTPS upgrades so CDP-driven navigations honor
+ * an explicit `http://` URL. Unlike address-bar navigations, `Page.navigate`
+ * cannot mark explicit HTTP as user-approved. On sites whose HTTPS endpoint
+ * redirects back to HTTP, the upgrade otherwise loops until Chromium surfaces
+ * ERR_BLOCKED_BY_CLIENT.
+ *
  * With `ignoreCertErrors`, also pass `--ignore-certificate-errors` so internal
  * sites behind a private CA or with a hostname-mismatched cert load. The
  * embedded browser is headless with NO cert-warning interstitial, so without
@@ -189,7 +195,10 @@ export function allocateLoopbackPort(): Promise<number> {
  * embedded browser.
  */
 export function buildChromeArgs(opts: { ignoreCertErrors: boolean }): string {
-  const args = ['--remote-debugging-port=0'];
+  const args = [
+    '--remote-debugging-port=0',
+    '--disable-features=HttpsUpgrades,HttpsFirstBalancedMode',
+  ];
   if (opts.ignoreCertErrors) {
     args.push('--ignore-certificate-errors');
   }
