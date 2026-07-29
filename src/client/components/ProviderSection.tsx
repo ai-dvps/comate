@@ -532,7 +532,7 @@ function ProviderUsagePanel({ providerId }: { providerId: string }) {
       {status === 'ready' && summary && (
         <>
           <div className="flex items-center gap-2">
-            <div className="h-1.5 min-w-[60px] flex-1 rounded-full bg-surface-hover overflow-hidden">
+            <div className="h-1.5 min-w-[60px] flex-1 rounded-full bg-border overflow-hidden">
               <div
                 className={cn('h-full rounded-full transition-all duration-300', usageBarColor(pct))}
                 style={{ width: `${pct ?? 0}%` }}

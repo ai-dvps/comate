@@ -54,7 +54,7 @@ function ProviderUsageLine({
     const pct = usagePercentage(entry.summary)
     return (
       <div className="flex items-center gap-1.5">
-        <div className="h-1 w-12 rounded-full bg-surface-hover overflow-hidden">
+        <div className="h-1 w-12 rounded-full bg-border overflow-hidden">
           <div
             className={cn('h-full rounded-full transition-all duration-300', usageBarColor(pct))}
             style={{ width: `${pct ?? 0}%` }}
