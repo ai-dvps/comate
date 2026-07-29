@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Embedded browser: opt-in insecure-certificate loading** — set `COMATE_BROWSER_IGNORE_CERT_ERRORS=1` (or `true`) to launch the embedded Chrome with `--ignore-certificate-errors`, so internal sites behind a private CA or with a hostname-mismatched cert load. The embedded browser is headless Chrome for Testing with no cert-warning interstitial, so such sites otherwise hard-fail (surfaced in the viewer as `ERR_BLOCKED_BY_CLIENT`). Opt-in because it disables certificate validation in the embedded browser only.
 - **GitHub Issues sync** — todos are now global, shareable entities that sync with GitHub Issues. Connect a GitHub account (GitHub App via Device Flow, or a fine-grained PAT), then publish a local todo to an issue or pull an issue into a local replica. Sync is origin-anchored and field-class: comments merge append-only both ways, status/labels/assignee accept the remote, and title is origin-wins with both-sides-edited conflicts surfaced for an accept-local/accept-remote choice (never auto-clobbered). Sync runs on-demand when the Todos panel opens or you click refresh; a single-flight guard collapses overlapping triggers. A remote deletion is detected and flagged, never silently destroying local comments. Tokens are encrypted at rest and never appear in any response or log.
 
 ### Changed

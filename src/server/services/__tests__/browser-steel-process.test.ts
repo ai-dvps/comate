@@ -19,6 +19,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   allocateLoopbackPort,
+  buildChromeArgs,
   cleanupStaleSteelProcesses,
   reapStaleProfileLock,
   resolveSteelSpawnSpec,
@@ -428,6 +429,91 @@ describe('reapStaleProfileLock', { concurrency: false }, () => {
     } finally {
       holder.kill();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('buildChromeArgs (cert-ignore opt-in)', () => {
+  it('exposes only the free CDP port by default', () => {
+    assert.strictEqual(buildChromeArgs({ ignoreCertErrors: false }), '--remote-debugging-port=0');
+  });
+
+  it('appends --ignore-certificate-errors when the opt-in is enabled', () => {
+    const args = buildChromeArgs({ ignoreCertErrors: true });
+    assert.ok(args.includes('--remote-debugging-port=0'), 'must keep the free CDP port flag');
+    assert.ok(args.includes('--ignore-certificate-errors'), 'must add the cert-ignore flag');
+  });
+});
+
+describe('SteelProcess cert-ignore wiring (COMATE_BROWSER_IGNORE_CERT_ERRORS)', () => {
+  let workDir: string;
+  let runDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(path.join(tmpdir(), 'comate-steel-cert-test-'));
+    runDir = path.join(workDir, 'run');
+  });
+
+  afterEach(() => {
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  // Spawns the real fake-steel fixture but intercepts spawnImpl to capture the
+  // exact env Comate hands the Steel child — the only place CHROME_ARGS lives.
+  async function startCapturingEnv(
+    sessionId: string,
+  ): Promise<{ proc: SteelProcess; env: NodeJS.ProcessEnv }> {
+    const port = await allocateLoopbackPort();
+    let captured: NodeJS.ProcessEnv = {};
+    const proc = new SteelProcess(
+      {
+        sessionId,
+        port,
+        userDataDir: path.join(workDir, 'profiles', sessionId),
+        pidfilePath: path.join(runDir, `${sessionId}.json`),
+      },
+      {
+        spawnSpec: fixtureSpawnSpec,
+        spawnImpl: (command, args, options) => {
+          captured = options?.env ?? {};
+          return spawn(command, args, options);
+        },
+        healthTimeoutMs: 10_000,
+        healthIntervalMs: 50,
+      },
+    );
+    await proc.start();
+    return { proc, env: captured };
+  }
+
+  it('forwards --ignore-certificate-errors to the Steel child when the env var is set', async () => {
+    process.env.COMATE_BROWSER_IGNORE_CERT_ERRORS = '1';
+    let proc: SteelProcess | undefined;
+    try {
+      const started = await startCapturingEnv('cert-on');
+      proc = started.proc;
+      assert.match(
+        String(started.env.CHROME_ARGS),
+        /--ignore-certificate-errors/,
+        'Steel child must receive --ignore-certificate-errors in CHROME_ARGS',
+      );
+    } finally {
+      delete process.env.COMATE_BROWSER_IGNORE_CERT_ERRORS;
+      await proc?.stop().catch(() => undefined);
+    }
+  });
+
+  it('does NOT forward --ignore-certificate-errors by default', async () => {
+    delete process.env.COMATE_BROWSER_IGNORE_CERT_ERRORS;
+    const { proc, env } = await startCapturingEnv('cert-off');
+    try {
+      assert.doesNotMatch(
+        String(env.CHROME_ARGS),
+        /--ignore-certificate-errors/,
+        'cert-ignore must be opt-in only',
+      );
+    } finally {
+      await proc.stop().catch(() => undefined);
     }
   });
 });

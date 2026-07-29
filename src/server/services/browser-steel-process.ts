@@ -166,6 +166,33 @@ export function allocateLoopbackPort(): Promise<number> {
   });
 }
 
+/**
+ * Build the CHROME_ARGS value. The vendored Steel splits this string on single
+ * spaces into Chrome launch args (steel/build/env.js: `val.split(" ")`), so a
+ * space-joined flag list is the contract. The base `--remote-debugging-port=0`
+ * lets Chrome pick a free CDP port (Steel hardcodes 9222, dropped via
+ * FILTER_CHROME_ARGS).
+ *
+ * With `ignoreCertErrors`, also pass `--ignore-certificate-errors` so internal
+ * sites behind a private CA or with a hostname-mismatched cert load. The
+ * embedded browser is headless with NO cert-warning interstitial, so without
+ * this such navigations hard-fail (surfaced in the viewer as
+ * ERR_BLOCKED_BY_CLIENT). Opt-in: it disables ALL certificate validation in the
+ * embedded browser.
+ */
+export function buildChromeArgs(opts: { ignoreCertErrors: boolean }): string {
+  const args = ['--remote-debugging-port=0'];
+  if (opts.ignoreCertErrors) {
+    args.push('--ignore-certificate-errors');
+  }
+  return args.join(' ');
+}
+
+/** Truthy check for "1"/"true" opt-in env vars (mirrors resolve-chromium). */
+function isOptInEnv(value: string | undefined): boolean {
+  return value === '1' || value === 'true';
+}
+
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -270,7 +297,9 @@ export class SteelProcess implements SteelProcessHandle {
       // and let Chrome pick a free port; puppeteer reads the real port from
       // stderr. Spike-verified against vendored steel + Chrome 150.
       FILTER_CHROME_ARGS: '--remote-debugging-port=9222',
-      CHROME_ARGS: '--remote-debugging-port=0',
+      CHROME_ARGS: buildChromeArgs({
+        ignoreCertErrors: isOptInEnv(process.env.COMATE_BROWSER_IGNORE_CERT_ERRORS),
+      }),
       ...this.options.env,
     };
     if (this.options.chromiumPath) {
