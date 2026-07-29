@@ -53,6 +53,27 @@ export default function TodoDetail({ todo, onResolved }: TodoDetailProps) {
   const lastSavedRef = useRef<{ id: string; text: string; content: string | null } | null>(
     todo ? { id: todo.id, text: todo.text, content: todo.content } : null,
   )
+  // The currently-selected todo id and per-todo auto-save errors, tracked in
+  // refs so async continuations (handleSave's post-await code, the switch
+  // auto-save's resolution) read the latest values instead of a stale closure.
+  const selectedIdRef = useRef<string | undefined>(todo?.id)
+  selectedIdRef.current = todo?.id
+  const switchSaveErrors = useRef<Record<string, string>>({})
+
+  // Shared validation for the explicit Save and the switch auto-save, so the
+  // switch path can never fire a guaranteed-400 payload (a 400 rolls back the
+  // whole patch and silently discards even the valid parts of the edit).
+  const validateDrafts = useCallback(
+    (title: string, content: string): string | null => {
+      if (!title.trim()) return t('titleRequired')
+      if (title.length > MAX_TODO_TEXT_LENGTH)
+        return t('titleTooLong', { max: MAX_TODO_TEXT_LENGTH })
+      if (content.length > MAX_TODO_CONTENT_LENGTH)
+        return t('contentTooLong', { max: MAX_TODO_CONTENT_LENGTH })
+      return null
+    },
+    [t],
+  )
 
   useEffect(() => {
     const prev = lastSavedRef.current
@@ -62,11 +83,27 @@ export default function TodoDetail({ todo, onResolved }: TodoDetailProps) {
       draftsRef.current.title !== prevText || draftsRef.current.content !== prevContent
 
     // On todo switch: auto-save outgoing dirty drafts (never silently discard).
+    // P2: validate with the same rules as Save, and record failures instead of
+    // fire-and-forgetting — a bad payload must never reach the server, and a
+    // store/network failure must surface when the user returns to the todo.
+    let outgoingError: string | null = null
     if (prev && todo && prev.id !== todo.id && draftsDirty) {
-      void updateTodo(prev.id, {
-        text: draftsRef.current.title,
-        content: draftsRef.current.content,
-      })
+      const outgoingId = prev.id
+      const outgoingTitle = draftsRef.current.title
+      const outgoingContent = draftsRef.current.content
+      outgoingError = validateDrafts(outgoingTitle, outgoingContent)
+      if (outgoingError) {
+        switchSaveErrors.current[outgoingId] = outgoingError
+      } else {
+        updateTodo(outgoingId, { text: outgoingTitle, content: outgoingContent })
+          .then((updated) => {
+            if (updated) delete switchSaveErrors.current[outgoingId]
+            else switchSaveErrors.current[outgoingId] = t('updateFailed')
+          })
+          .catch(() => {
+            switchSaveErrors.current[outgoingId] = t('updateFailed')
+          })
+      }
     }
 
     const switched = !prev || !todo || prev.id !== todo?.id
@@ -79,26 +116,22 @@ export default function TodoDetail({ todo, onResolved }: TodoDetailProps) {
       setDraftContent(incomingContent)
       if (switched) {
         setMode('edit')
-        setSaveError(null)
+        // Surface the outgoing validation error immediately, or any pending
+        // save error recorded for the incoming todo; otherwise clear.
+        const incomingError = todo ? (switchSaveErrors.current[todo.id] ?? null) : null
+        setSaveError(outgoingError ?? incomingError)
       }
     }
     lastSavedRef.current = todo ? { id: todo.id, text: todo.text, content: todo.content } : null
-  }, [todo, updateTodo])
+  }, [todo, updateTodo, validateDrafts, t])
 
   const isDirty = !!todo && (draftTitle !== todo.text || draftContent !== (todo.content ?? ''))
 
   const handleSave = useCallback(async () => {
     if (!todo || saving) return
-    if (!draftTitle.trim()) {
-      setSaveError(t('titleRequired'))
-      return
-    }
-    if (draftTitle.length > MAX_TODO_TEXT_LENGTH) {
-      setSaveError(t('titleTooLong', { max: MAX_TODO_TEXT_LENGTH }))
-      return
-    }
-    if (draftContent.length > MAX_TODO_CONTENT_LENGTH) {
-      setSaveError(t('contentTooLong', { max: MAX_TODO_CONTENT_LENGTH }))
+    const err = validateDrafts(draftTitle, draftContent)
+    if (err) {
+      setSaveError(err)
       return
     }
     setSaving(true)
@@ -106,7 +139,15 @@ export default function TodoDetail({ todo, onResolved }: TodoDetailProps) {
     try {
       const updated = await updateTodo(todo.id, { text: draftTitle, content: draftContent })
       if (updated) {
-        lastSavedRef.current = { id: todo.id, text: draftTitle, content: draftContent }
+        // P1: only record the saved snapshot if we're still on the same todo.
+        // A stale completion (the user switched while the PUT was in flight)
+        // must never overwrite the new todo's snapshot and redirect a later
+        // switch's auto-save onto the stale todo's id.
+        if (selectedIdRef.current === todo.id) {
+          lastSavedRef.current = { id: todo.id, text: draftTitle, content: draftContent }
+        }
+        // A successful explicit save clears any prior switch-save error.
+        delete switchSaveErrors.current[todo.id]
       } else {
         setSaveError(t('updateFailed'))
       }
@@ -115,7 +156,7 @@ export default function TodoDetail({ todo, onResolved }: TodoDetailProps) {
     } finally {
       setSaving(false)
     }
-  }, [todo, saving, draftTitle, draftContent, updateTodo, t])
+  }, [todo, saving, draftTitle, draftContent, updateTodo, validateDrafts, t])
 
   // Ctrl/Cmd+S triggers the explicit save (KTD7).
   useEffect(() => {
