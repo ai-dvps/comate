@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import i18next from 'i18next';
 
 export const MAX_TODO_TEXT_LENGTH = 2000;
+/** Cap for the optional markdown content body (KTD2). Title stays at 2000. */
+export const MAX_TODO_CONTENT_LENGTH = 50000;
 
 export type TodoStatus = 'pending' | 'done' | 'discard' | 'did-but-need-verify';
 export type TodoOrigin = 'local' | 'github';
@@ -10,6 +12,8 @@ export interface Todo {
   id: string;
   workspaceId: string | null;
   text: string;
+  /** Optional markdown detail body; mirrors the GitHub issue body (KTD1). */
+  content: string | null;
   status: TodoStatus;
   sessionId: string | null;
   createdAt: string;
@@ -122,6 +126,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       id: `temp-${Date.now()}`,
       workspaceId: options?.workspaceId ?? null,
       text: trimmedText,
+      content: null,
       status: 'pending',
       sessionId: null,
       createdAt: new Date().toISOString(),

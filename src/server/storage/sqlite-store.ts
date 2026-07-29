@@ -352,6 +352,7 @@ export class SqliteStore {
         id TEXT PRIMARY KEY,
         workspace_id TEXT,
         text TEXT NOT NULL,
+        content TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         session_id TEXT,
         created_at TEXT NOT NULL,
@@ -368,6 +369,14 @@ export class SqliteStore {
         origin_deleted INTEGER NOT NULL DEFAULT 0
       )
     `);
+    // KTD4: additive `content` column (nullable markdown body). Idempotent on
+    // column existence; fresh DBs have it from the CREATE above, and the rebuild
+    // migrations below also declare it, so this ADD COLUMN is the backfill path
+    // for v7-shape DBs that predate the column.
+    const todoColumns = this.db.prepare("PRAGMA table_info(todos)").all() as { name: string }[];
+    if (!todoColumns.some((col) => col.name === 'content')) {
+      this.db.exec('ALTER TABLE todos ADD COLUMN content TEXT');
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS repo_sync_state (
         repo_full_name TEXT PRIMARY KEY,
@@ -585,6 +594,7 @@ export class SqliteStore {
           id TEXT PRIMARY KEY,
           workspace_id TEXT,
           text TEXT NOT NULL,
+          content TEXT,
           status TEXT NOT NULL DEFAULT 'pending',
           session_id TEXT,
           created_at TEXT NOT NULL,
@@ -679,6 +689,7 @@ export class SqliteStore {
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
           text TEXT NOT NULL,
+          content TEXT,
           status TEXT NOT NULL DEFAULT 'pending',
           session_id TEXT,
           created_at TEXT NOT NULL,
@@ -2154,6 +2165,7 @@ export class SqliteStore {
       id: uuidv4(),
       workspaceId: workspaceId ?? null,
       text: input.text.trim(),
+      content: input.content ?? null,
       status: 'pending',
       sessionId: null,
       createdAt: nowIso,
@@ -2172,11 +2184,11 @@ export class SqliteStore {
     this.db
       .prepare(
         `INSERT INTO todos (
-          id, workspace_id, text, status, session_id, created_at, updated_at,
+          id, workspace_id, text, content, status, session_id, created_at, updated_at,
           origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
           remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted
         ) VALUES (
-          @id, @workspace_id, @text, @status, @session_id, @created_at, @updated_at,
+          @id, @workspace_id, @text, @content, @status, @session_id, @created_at, @updated_at,
           @origin, @due_date, @repo_full_name, @issue_number, @remote_snapshot_json,
           @remote_updated_at, @last_synced_at, @assignee, @labels_json, @origin_deleted
         )`,
@@ -2185,6 +2197,7 @@ export class SqliteStore {
         id: todo.id,
         workspace_id: todo.workspaceId,
         text: todo.text,
+        content: todo.content,
         status: todo.status,
         session_id: todo.sessionId,
         created_at: todo.createdAt,
@@ -2398,6 +2411,10 @@ export class SqliteStore {
     if (input.text !== undefined) {
       sets.push('text = ?');
       values.push(input.text.trim());
+    }
+    if (input.content !== undefined) {
+      sets.push('content = ?');
+      values.push(input.content);
     }
     if (input.status !== undefined) {
       sets.push('status = ?');
@@ -3750,6 +3767,7 @@ interface RawTodoRow {
   id: string;
   workspace_id: string | null;
   text: string;
+  content: string | null;
   status: string;
   session_id: string | null;
   created_at: string;
@@ -3771,6 +3789,7 @@ function parseTodoRow(row: RawTodoRow): Todo {
     id: row.id,
     workspaceId: row.workspace_id ?? null,
     text: row.text,
+    content: row.content ?? null,
     status: row.status as TodoStatus,
     sessionId: row.session_id ?? null,
     createdAt: row.created_at,
