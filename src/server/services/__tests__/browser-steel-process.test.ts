@@ -445,7 +445,7 @@ describe('buildChromeArgs (cert-ignore opt-in)', () => {
   });
 });
 
-describe('SteelProcess cert-ignore wiring (COMATE_BROWSER_IGNORE_CERT_ERRORS)', () => {
+describe('SteelProcess cert-ignore wiring (SteelProcessOptions.ignoreCertErrors)', () => {
   let workDir: string;
   let runDir: string;
 
@@ -462,6 +462,7 @@ describe('SteelProcess cert-ignore wiring (COMATE_BROWSER_IGNORE_CERT_ERRORS)', 
   // exact env Comate hands the Steel child — the only place CHROME_ARGS lives.
   async function startCapturingEnv(
     sessionId: string,
+    ignoreCertErrors?: boolean,
   ): Promise<{ proc: SteelProcess; env: NodeJS.ProcessEnv }> {
     const port = await allocateLoopbackPort();
     let captured: NodeJS.ProcessEnv = {};
@@ -471,6 +472,7 @@ describe('SteelProcess cert-ignore wiring (COMATE_BROWSER_IGNORE_CERT_ERRORS)', 
         port,
         userDataDir: path.join(workDir, 'profiles', sessionId),
         pidfilePath: path.join(runDir, `${sessionId}.json`),
+        ignoreCertErrors,
       },
       {
         spawnSpec: fixtureSpawnSpec,
@@ -486,31 +488,26 @@ describe('SteelProcess cert-ignore wiring (COMATE_BROWSER_IGNORE_CERT_ERRORS)', 
     return { proc, env: captured };
   }
 
-  it('forwards --ignore-certificate-errors to the Steel child when the env var is set', async () => {
-    process.env.COMATE_BROWSER_IGNORE_CERT_ERRORS = '1';
-    let proc: SteelProcess | undefined;
+  it('forwards --ignore-certificate-errors to the Steel child when the option is set', async () => {
+    const { proc, env } = await startCapturingEnv('cert-on', true);
     try {
-      const started = await startCapturingEnv('cert-on');
-      proc = started.proc;
       assert.match(
-        String(started.env.CHROME_ARGS),
+        String(env.CHROME_ARGS),
         /--ignore-certificate-errors/,
         'Steel child must receive --ignore-certificate-errors in CHROME_ARGS',
       );
     } finally {
-      delete process.env.COMATE_BROWSER_IGNORE_CERT_ERRORS;
-      await proc?.stop().catch(() => undefined);
+      await proc.stop().catch(() => undefined);
     }
   });
 
-  it('does NOT forward --ignore-certificate-errors by default', async () => {
-    delete process.env.COMATE_BROWSER_IGNORE_CERT_ERRORS;
-    const { proc, env } = await startCapturingEnv('cert-off');
+  it('does NOT forward --ignore-certificate-errors when the option is false/absent', async () => {
+    const { proc, env } = await startCapturingEnv('cert-off', false);
     try {
       assert.doesNotMatch(
         String(env.CHROME_ARGS),
         /--ignore-certificate-errors/,
-        'cert-ignore must be opt-in only',
+        'cert-ignore must only be added when explicitly enabled',
       );
     } finally {
       await proc.stop().catch(() => undefined);
