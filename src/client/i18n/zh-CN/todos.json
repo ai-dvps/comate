@@ -66,5 +66,17 @@
   "conflictAcceptRemote": "采用远程",
   "spawnSession": "开始会话",
   "spawnPickWorkspace": "选择一个工作区…",
-  "detailHasSession": "已关联会话"
+  "detailHasSession": "已关联会话",
+  "titlePlaceholder": "标题",
+  "detailContent": "内容",
+  "edit": "编辑",
+  "preview": "预览",
+  "save": "保存",
+  "saving": "保存中…",
+  "saveTooltip": "保存(⌘S / Ctrl+S)",
+  "unsavedChanges": "有未保存的修改",
+  "titleRequired": "标题不能为空",
+  "titleTooLong": "标题超过 {{max}} 字符上限",
+  "contentTooLong": "内容超过 {{max}} 字符上限",
+  "contentEmpty": "暂无内容。"
 }
