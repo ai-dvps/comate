@@ -49,16 +49,28 @@ export interface SyncResult {
 interface Baseline {
   title: string;
   body: string | null;
+  /**
+   * Whether the snapshot carried a `body` key (PRESENCE), independent of value.
+   * A snapshot written with `body: null` (synced from an issue whose body was
+   * null/empty) is a PRESENT baseline — distinct from a legacy title-only
+   * snapshot that omits the body key entirely. Tracking presence separately
+   * from value keeps body conflict detection enabled for todos whose
+   * last-synced body was null (Defect 1). Title needs no presence flag: a
+   * valid baseline always carries a non-null title string, so
+   * `baseline?.title ?? null` already doubles as the title presence flag.
+   */
+  hasBody: boolean;
 }
 
 function parseSnapshot(json: string | null): Baseline | null {
   if (!json) return null;
   try {
-    const parsed = JSON.parse(json) as Partial<Baseline>;
+    const parsed = JSON.parse(json) as { title?: unknown; body?: unknown };
     if (typeof parsed.title === 'string') {
+      const hasBody = 'body' in parsed;
       // `body` is optional in snapshots written before U3 (title-only); default null.
       const body = typeof parsed.body === 'string' ? parsed.body : null;
-      return { title: parsed.title, body };
+      return { title: parsed.title, body, hasBody };
     }
     return null;
   } catch {
@@ -213,17 +225,42 @@ class TodoSyncService {
    * accept-local propagates the chosen value outward (a one-time origin override)
    * so the next reconcile does not revert it — otherwise origin-wins would mirror
    * the remote back over the user's local choice for a github-origin todo.
+   *
+   * Defect 2: for accept-local, the outward push happens BEFORE the conflict is
+   * cleared and the baseline advanced. If the push fails, the conflict is left
+   * in place so the next reconcile re-detects and re-surfaces it — otherwise the
+   * origin-wins/mirror branch would silently overwrite the user's choice and the
+   * conflict would never come back. accept-remote never pushes, so it clears
+   * immediately.
    */
   async resolveConflict(todoId: string, field: 'title' | 'body', choice: 'local' | 'remote'): Promise<Todo> {
     const conflict = store.getTodoConflicts(todoId).find((c) => c.field === field);
     if (!conflict) throw new SyncError('No such conflict', 404);
     const chosen = choice === 'local' ? conflict.localValue : conflict.remoteValue;
 
-    // F1: preserve BOTH field baselines. parseSnapshot the CURRENT remoteSnapshot
-    // and rewrite only the resolved field, so resolving a title conflict does not
-    // drop the body baseline (which would silence body conflict detection on the
-    // next reconcile) — and vice versa.
-    const current = parseSnapshot(store.getTodoById(todoId)?.remoteSnapshot ?? null);
+    const todo = store.getTodoById(todoId);
+    if (!todo) throw new SyncError('Todo not found', 404);
+
+    // accept-local: push the chosen value outward FIRST. On failure, leave the
+    // conflict in place and return the unchanged todo (no baseline advance).
+    if (choice === 'local' && todo.repoFullName && todo.issueNumber) {
+      try {
+        const adapter = await getAdapter();
+        if (adapter) {
+          const patch = field === 'title' ? { title: chosen } : { body: chosen };
+          await adapter.update(todo.repoFullName, todo.issueNumber, patch);
+        }
+      } catch (err) {
+        diagLog('[todo-sync] conflict resolve push failed: ' + redactGithubError(err).message);
+        return todo;
+      }
+    }
+
+    // Push succeeded, or accept-remote (which never pushes). Apply the chosen
+    // value, advance ONLY the resolved field's baseline, and preserve the other
+    // (F1: resolving a title conflict must not drop the body baseline — and
+    // vice versa), by rewriting only the resolved field of the parsed snapshot.
+    const current = parseSnapshot(todo.remoteSnapshot ?? null);
     const nextTitle = field === 'title' ? chosen : current?.title ?? '';
     const nextBody = field === 'body' ? chosen : current?.body ?? null;
 
@@ -234,24 +271,7 @@ class TodoSyncService {
       store.updateTodo(todoId, { content: chosen, remoteSnapshot: snapshotJson(nextTitle, nextBody) });
     }
     store.clearTodoConflict(todoId, field);
-    const updated = store.getTodoById(todoId);
-    if (!updated) throw new SyncError('Todo not found', 404);
-
-    // accept-local is a one-time origin override: push the chosen value outward
-    // so the next reconcile (origin-wins/mirror) does not revert the user's
-    // choice. Fires for both structural fields now (title AND body).
-    if (choice === 'local' && updated.repoFullName && updated.issueNumber) {
-      try {
-        const adapter = await getAdapter();
-        if (adapter) {
-          const patch = field === 'title' ? { title: chosen } : { body: chosen };
-          await adapter.update(updated.repoFullName, updated.issueNumber, patch);
-        }
-      } catch (err) {
-        diagLog('[todo-sync] conflict resolve push failed: ' + redactGithubError(err).message);
-      }
-    }
-    return updated;
+    return store.getTodoById(todoId)!;
   }
 
   // --- Reconcile (on-demand, single-flight) F3 -----------------------------
@@ -381,23 +401,51 @@ class TodoSyncService {
     // --- Body (structural: mirrors the title logic; content ↔ issue body) ---
     // F3: an INDEPENDENT if-else chain — title and body can each conflict/push/
     // mirror on their own, tracked by separate booleans and advanced independently.
+    //
+    // Coherent null/empty model (Defects 1/3/4):
+    //   - PRESENCE vs VALUE: bodyBaselineExists comes from the parsed snapshot's
+    //     hasBody flag, NOT from `baselineBody !== null`, so a synced null/empty
+    //     body still counts as a present baseline and conflict detection stays
+    //     armed (Defect 1).
+    //   - NULL == '': an emptied body and a null body are the SAME canonical
+    //     value (`v ?? ''`). Both detection and push use canonical equality, so
+    //     an emptied body converges instead of re-pushing every reconcile
+    //     (Defect 4).
+    //   - UNSET != EMPTY: a local-origin todo whose content is null AND has no
+    //     body baseline is "unset" (e.g. published before this feature). Treat
+    //     it as non-authoritative and backfill from the remote body inward
+    //     rather than pushing {body:null} outward and clobbering a GitHub-side
+    //     body. Only push body outward once content is explicitly set (non-null)
+    //     or a body baseline exists (Defect 3).
     const localContent = todo.content ?? null;
     const remoteBody = issue.body ?? null;
     const baselineBody = baseline?.body ?? null;
-    const bodyBaselineExists = baselineBody !== null;
-    const localContentChanged = bodyBaselineExists && localContent !== baselineBody;
-    const remoteBodyChanged = bodyBaselineExists && remoteBody !== baselineBody;
+    const bodyBaselineExists = baseline?.hasBody ?? false;
+    const canonLocalBody = localContent ?? '';
+    const canonRemoteBody = remoteBody ?? '';
+    const canonBaselineBody = baselineBody ?? '';
+    const localContentChanged = bodyBaselineExists && canonLocalBody !== canonBaselineBody;
+    const remoteBodyChanged = bodyBaselineExists && canonRemoteBody !== canonBaselineBody;
     let bodyConflicted = false;
+    // A local-origin todo whose content was never set (null + no body baseline)
+    // mirrors the remote inward instead of pushing null outward (Defect 3).
+    const localContentUnset = todo.origin === 'local' && localContent === null && !bodyBaselineExists;
 
-    if (bodyBaselineExists && localContentChanged && remoteBodyChanged && localContent !== remoteBody) {
+    if (bodyBaselineExists && localContentChanged && remoteBodyChanged && canonLocalBody !== canonRemoteBody) {
       // Both sides edited the body to different values → conflict (R7). The local
-      // conflict model stores strings, so coerce null → '' for local/remote values.
-      store.setTodoConflict(todo.id, 'body', localContent ?? '', remoteBody ?? '', baselineBody);
+      // conflict model stores strings, so pass canonical (non-null) values.
+      store.setTodoConflict(todo.id, 'body', canonLocalBody, canonRemoteBody, canonBaselineBody);
       result.conflicts++;
       bodyConflicted = true;
     } else if (todo.origin === 'local') {
-      // Origin-wins: push the local content outward as the issue body.
-      if (remoteBody !== localContent) {
+      if (localContentUnset) {
+        // Backfill: mirror the remote body inward, never push {body:null} outward.
+        if (canonRemoteBody !== canonLocalBody) {
+          store.updateTodo(todo.id, { content: remoteBody });
+        }
+      } else if (canonLocalBody !== canonRemoteBody) {
+        // Origin-wins: push the local content outward as the issue body. Canonical
+        // equality means '' (local) and null (remote) converge with no push loop.
         try {
           await adapter.update(repo, issue.number, { body: localContent });
         } catch (err) {
@@ -407,7 +455,7 @@ class TodoSyncService {
     } else {
       // origin=github: mirror the remote body inward into content. This is also
       // the backfill path (R9) for an existing todo whose content is empty/null.
-      if (remoteBody !== localContent) {
+      if (canonRemoteBody !== canonLocalBody) {
         store.updateTodo(todo.id, { content: remoteBody });
       }
     }
@@ -430,11 +478,18 @@ class TodoSyncService {
     // Advance baseline + remoteUpdatedAt + lastSyncedAt. Each field advances
     // independently (F3): a field under conflict keeps its old baseline so it
     // stays detected until U6 resolves it; a non-conflicted field advances to the
-    // origin-side value (local-origin → local value, github-origin → remote value).
+    // value the field converged to this reconcile. For body that is: local-origin
+    // push → local content; local-origin backfill (Defect 3, unset content) →
+    // remote body (what was mirrored inward); github-origin → remote body.
     const prevTitle = baselineTitle ?? localTitle;
-    const prevBody = baselineBody ?? (todo.origin === 'local' ? localContent : remoteBody);
     const newBaselineTitle = titleConflicted ? prevTitle : todo.origin === 'local' ? localTitle : remoteTitle;
-    const newBaselineBody = bodyConflicted ? prevBody : todo.origin === 'local' ? localContent : remoteBody;
+    const newBaselineBody = bodyConflicted
+      ? baselineBody
+      : todo.origin === 'local'
+        ? localContentUnset
+          ? remoteBody
+          : localContent
+        : remoteBody;
     store.updateTodo(todo.id, {
       remoteSnapshot: snapshotJson(newBaselineTitle ?? localTitle, newBaselineBody),
       remoteUpdatedAt: issue.updatedAt,
