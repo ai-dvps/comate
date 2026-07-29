@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, Loader2 } from 'lucide-react';
+import MarkdownPreview from '../MarkdownPreview';
+import { cn } from '../ui/utils';
 
 interface Conflict {
   field: 'title' | 'body';
@@ -63,31 +65,58 @@ export default function ConflictReview({ todoId, onResolved }: ConflictReviewPro
   return (
     <div className="flex flex-col gap-2 border border-yellow-500/40 bg-yellow-500/5 rounded-md p-3">
       <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400">{t('conflictTitle')}</p>
-      {conflicts.map((c) => (
-        <div key={c.field} className="flex flex-col gap-1.5">
-          <p className="text-[11px] text-text-tertiary">{c.field === 'title' ? t('conflictFieldTitle') : t('conflictFieldBody')}</p>
-          <div className="flex flex-col gap-1">
-            <button
-              onClick={() => resolve(c.field, 'local')}
-              disabled={busy}
-              className="flex items-center gap-1.5 text-left text-xs px-2 py-1 rounded border border-border bg-bg hover:bg-surface-hover disabled:opacity-50"
-            >
+      {conflicts.map((c) => {
+        // Body values are markdown (R2): render them formatted via the markdown
+        // previewer instead of the plain mono span used for titles, and cap the
+        // height so a very long body (up to ~50k chars) can't blow out the panel.
+        const isBody = c.field === 'body';
+        const sideClass = cn(
+          'text-left text-xs px-2 py-1 rounded border border-border bg-bg hover:bg-surface-hover disabled:opacity-50',
+          isBody ? 'flex flex-col items-stretch gap-1' : 'flex items-center gap-1.5',
+        );
+        const renderSide = (choice: 'local' | 'remote', value: string) => {
+          const label = choice === 'local' ? t('conflictAcceptLocal') : t('conflictAcceptRemote');
+          const icon =
+            busy && choice === 'remote' ? (
+              <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+            ) : (
               <Check className="w-3 h-3 flex-shrink-0" />
-              <span className="text-text-tertiary">{t('conflictAcceptLocal')}:</span>
-              <span className="font-mono text-text-primary break-all">{c.localValue}</span>
-            </button>
-            <button
-              onClick={() => resolve(c.field, 'remote')}
-              disabled={busy}
-              className="flex items-center gap-1.5 text-left text-xs px-2 py-1 rounded border border-border bg-bg hover:bg-surface-hover disabled:opacity-50"
-            >
-              {busy ? <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" /> : <Check className="w-3 h-3 flex-shrink-0" />}
-              <span className="text-text-tertiary">{t('conflictAcceptRemote')}:</span>
-              <span className="font-mono text-text-primary break-all">{c.remoteValue}</span>
-            </button>
+            );
+          if (isBody) {
+            return (
+              <>
+                <span className="flex items-center gap-1.5">
+                  {icon}
+                  <span className="text-text-tertiary">{label}:</span>
+                </span>
+                <div className="max-h-64 overflow-auto rounded bg-surface-hover/40">
+                  <MarkdownPreview content={value} className="px-3 py-2" />
+                </div>
+              </>
+            );
+          }
+          return (
+            <>
+              {icon}
+              <span className="text-text-tertiary">{label}:</span>
+              <span className="font-mono text-text-primary break-all">{value}</span>
+            </>
+          );
+        };
+        return (
+          <div key={c.field} className="flex flex-col gap-1.5">
+            <p className="text-[11px] text-text-tertiary">{isBody ? t('conflictFieldBody') : t('conflictFieldTitle')}</p>
+            <div className="flex flex-col gap-1">
+              <button onClick={() => resolve(c.field, 'local')} disabled={busy} className={sideClass}>
+                {renderSide('local', c.localValue)}
+              </button>
+              <button onClick={() => resolve(c.field, 'remote')} disabled={busy} className={sideClass}>
+                {renderSide('remote', c.remoteValue)}
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
