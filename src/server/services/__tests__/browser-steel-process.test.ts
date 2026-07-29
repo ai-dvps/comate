@@ -434,8 +434,11 @@ describe('reapStaleProfileLock', { concurrency: false }, () => {
 });
 
 describe('buildChromeArgs (cert-ignore opt-in)', () => {
-  it('exposes only the free CDP port by default', () => {
-    assert.strictEqual(buildChromeArgs({ ignoreCertErrors: false }), '--remote-debugging-port=0');
+  it('disables automatic HTTPS upgrades while exposing a free CDP port', () => {
+    assert.strictEqual(
+      buildChromeArgs({ ignoreCertErrors: false }),
+      '--remote-debugging-port=0 --disable-features=HttpsUpgrades,HttpsFirstBalancedMode',
+    );
   });
 
   it('appends --ignore-certificate-errors when the opt-in is enabled', () => {
