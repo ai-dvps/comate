@@ -21,6 +21,7 @@ import {
   type SteelProcessOptions,
   type StaleCleanupReport,
 } from './browser-steel-process.js';
+import { getBrowserAllowInsecureCerts } from './browser-app-settings.js';
 
 /**
  * browser-service — Steel process orchestration and session lifecycle (KTD-1,
@@ -277,18 +278,38 @@ export interface BrowserServiceDeps {
   idlePromptMs?: number;
   /** Server-fixed grace after the prompt before auto-close (U3). */
   idleCloseMs?: number;
+  /**
+   * Resolves the app-global "allow insecure certificates" value applied to
+   * every spawned Chrome (passed as --ignore-certificate-errors). Defaults to
+   * reading browser-app-settings (default ON); tests inject a stub.
+   */
+  resolveIgnoreCertErrors?: () => Promise<boolean>;
 }
 
 /** Constructor-resolved deps: the U8 + U3 additions have defaults, so internally
  * they are always present (the public interface keeps them optional). */
 type ResolvedBrowserServiceDeps = Omit<
   BrowserServiceDeps,
-  'store' | 'currentPageUrl' | 'exportContext' | 'audit' | 'timer' | 'idlePromptMs' | 'idleCloseMs'
+  | 'store'
+  | 'currentPageUrl'
+  | 'exportContext'
+  | 'audit'
+  | 'timer'
+  | 'idlePromptMs'
+  | 'idleCloseMs'
+  | 'resolveIgnoreCertErrors'
 > &
   Required<
     Pick<
       BrowserServiceDeps,
-      'store' | 'currentPageUrl' | 'exportContext' | 'audit' | 'timer' | 'idlePromptMs' | 'idleCloseMs'
+      | 'store'
+      | 'currentPageUrl'
+      | 'exportContext'
+      | 'audit'
+      | 'timer'
+      | 'idlePromptMs'
+      | 'idleCloseMs'
+      | 'resolveIgnoreCertErrors'
     >
   >;
 
@@ -370,6 +391,7 @@ export class BrowserService {
       },
       idlePromptMs: deps?.idlePromptMs ?? DEFAULT_IDLE_PROMPT_MS,
       idleCloseMs: deps?.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS,
+      resolveIgnoreCertErrors: deps?.resolveIgnoreCertErrors ?? (() => getBrowserAllowInsecureCerts()),
     };
   }
 
@@ -1215,6 +1237,7 @@ export class BrowserService {
       // U7: point Steel's absolute viewer URLs (cast wsUrl) at the viewer
       // proxy with the session token as path prefix (KTD-7).
       const viewerDomain = this.deps.viewerDomain?.(viewerToken);
+      const ignoreCertErrors = await this.deps.resolveIgnoreCertErrors();
       return this.deps.createProcess({
         sessionId,
         port,
@@ -1222,6 +1245,7 @@ export class BrowserService {
         chromiumPath,
         pidfilePath: path.join(this.runDir(), `${safeId}.json`),
         env: viewerDomain ? { DOMAIN: viewerDomain } : undefined,
+        ignoreCertErrors,
       });
     });
     // Keep the queue alive across failures.

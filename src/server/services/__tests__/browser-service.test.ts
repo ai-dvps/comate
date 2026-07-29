@@ -62,6 +62,10 @@ class FakeSteelHandle implements SteelProcessHandle {
     return this.options.userDataDir;
   }
 
+  get ignoreCertErrors(): boolean | undefined {
+    return this.options.ignoreCertErrors;
+  }
+
   get pid(): number | undefined {
     return this.exited ? undefined : 20_000 + this.options.port;
   }
@@ -119,6 +123,8 @@ function createHarness(overrides?: {
   maxSessions?: number;
   /** Default '/fake/chrome'; pass null to simulate "no Chromium anywhere". */
   chromiumPath?: string | null;
+  /** Resolved "allow insecure certificates" value threaded into spawned handles. */
+  ignoreCertErrors?: boolean;
 }): FakeHarness {
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-svc-test-'));
   const handles: FakeSteelHandle[] = [];
@@ -157,6 +163,7 @@ function createHarness(overrides?: {
         return { scanned: 0, killed: 0, removed: 0, skipped: 0 };
       },
       now: () => Date.now(),
+      resolveIgnoreCertErrors: async () => overrides?.ignoreCertErrors === true,
     },
   };
   harness.service = new BrowserService(harness.deps);
@@ -227,6 +234,18 @@ describe('browser-service', { concurrency: false }, () => {
     assert.strictEqual(service.getSession('s1'), undefined);
     assert.strictEqual(service.listSessions().length, 0);
     assert.ok(events.some((e) => e.type === 'browser_closed' && e.sessionId === 's1'));
+  });
+
+  it('threads the resolved ignoreCertErrors into the spawned handle', async () => {
+    const on = track(createHarness({ ignoreCertErrors: true }));
+    const onInfo = await on.service.ensureSession({ sessionId: 'cert-on', workspaceId: 'w1' });
+    assert.ok(onInfo);
+    assert.strictEqual(on.handles[0].ignoreCertErrors, true);
+
+    const off = track(createHarness({ ignoreCertErrors: false }));
+    const offInfo = await off.service.ensureSession({ sessionId: 'cert-off', workspaceId: 'w1' });
+    assert.ok(offInfo);
+    assert.strictEqual(off.handles[0].ignoreCertErrors, false);
   });
 
   it('rebinds to the live process on repeated and concurrent ensureSession (KTD-5)', async () => {

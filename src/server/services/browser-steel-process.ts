@@ -62,6 +62,14 @@ export interface SteelProcessOptions {
   pidfilePath: string;
   /** Extra environment overrides for the child. */
   env?: Record<string, string>;
+  /**
+   * Pass --ignore-certificate-errors so private-CA / hostname-mismatched
+   * internal sites load. Resolved by browser-service from the app-global
+   * "allow insecure certificates" setting (default ON). NOT carried via `env`
+   * — `env` is spread last in start() and would clobber the computed
+   * CHROME_ARGS.
+   */
+  ignoreCertErrors?: boolean;
 }
 
 export interface SteelProcessDeps {
@@ -188,11 +196,6 @@ export function buildChromeArgs(opts: { ignoreCertErrors: boolean }): string {
   return args.join(' ');
 }
 
-/** Truthy check for "1"/"true" opt-in env vars (mirrors resolve-chromium). */
-function isOptInEnv(value: string | undefined): boolean {
-  return value === '1' || value === 'true';
-}
-
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -298,7 +301,7 @@ export class SteelProcess implements SteelProcessHandle {
       // stderr. Spike-verified against vendored steel + Chrome 150.
       FILTER_CHROME_ARGS: '--remote-debugging-port=9222',
       CHROME_ARGS: buildChromeArgs({
-        ignoreCertErrors: isOptInEnv(process.env.COMATE_BROWSER_IGNORE_CERT_ERRORS),
+        ignoreCertErrors: this.options.ignoreCertErrors ?? false,
       }),
       ...this.options.env,
     };

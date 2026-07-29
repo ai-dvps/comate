@@ -14,6 +14,8 @@
     "archiveThresholdDaysHint": "Sessions inactive for longer than this are automatically archived. The default is 14 days. Changes apply on the next session list load.",
     "reopenLastWorkspace": "Reopen last workspace on launch",
     "reopenLastWorkspaceHint": "Automatically restore the last active workspace when the app starts.",
+    "allowInsecureCerts": "Allow insecure certificates in embedded browser",
+    "allowInsecureCertsHint": "Lets private-CA or self-signed internal sites load by ignoring certificate errors in the embedded browser. On by default; turn off for strict certificate validation. Applies to the embedded browser only.",
     "useModifierToSubmit": "Use Ctrl/Cmd + Enter to send",
     "useModifierToSubmitHint": "When enabled, press Ctrl+Enter (Windows) or Cmd+Enter (Mac) to submit. Press Enter alone to insert a new line.",
     "notificationSounds": "Notification sounds",
