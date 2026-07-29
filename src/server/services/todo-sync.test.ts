@@ -617,3 +617,127 @@ describe('body sync (U3)', () => {
     assert.deepEqual(fields, ['body', 'title']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Code-review defect fixes — null/empty body presence, value, and push semantics
+// ---------------------------------------------------------------------------
+describe('body sync defect fixes', () => {
+  it('Defect 1: a present null-value body baseline still detects a body conflict (presence != value)', async () => {
+    // github-origin todo synced from an issue whose body was null -> baseline
+    // {title, body: null} where the body key is PRESENT but its value is null.
+    const todo = store.createTodo(workspaceId, { text: 'Issue 101', content: null });
+    store.updateTodo(todo.id, {
+      origin: 'github',
+      repoFullName: 'myorg/webapp',
+      issueNumber: 101,
+      remoteSnapshot: JSON.stringify({ title: 'Issue 101', body: null }),
+    });
+    // User edits local content AND the remote body changes — both sides edited.
+    store.updateTodo(todo.id, { content: 'local edit' });
+    fake.state.issueList.set('myorg/webapp', [makeIssue(101, { title: 'Issue 101', body: 'remote edit' })]);
+
+    const result = await todoSyncService.reconcile();
+
+    // BUG: bodyBaselineExists was derived from (baselineBody !== null) = false,
+    // so the conflict was never detected and the mirror branch overwrote local.
+    // FIX: presence tracked separately -> conflict surfaced, local preserved.
+    assert.ok(result.conflicts >= 1, 'body conflict not surfaced for a null-value baseline');
+    const bodyConflict = store.getTodoConflicts(todo.id).find((c) => c.field === 'body');
+    assert.ok(bodyConflict, 'no body conflict recorded');
+    assert.equal(bodyConflict!.localValue, 'local edit');
+    assert.equal(bodyConflict!.remoteValue, 'remote edit');
+    assert.equal(store.getTodoById(todo.id)!.content, 'local edit'); // not mirrored over
+  });
+
+  it('Defect 2: accept-local body conflict whose outward push fails is NOT cleared and re-surfaces next reconcile', async () => {
+    const todo = store.createTodo(workspaceId, { text: 'T', content: 'local body' });
+    store.updateTodo(todo.id, {
+      origin: 'github',
+      repoFullName: 'myorg/webapp',
+      issueNumber: 201,
+      remoteSnapshot: JSON.stringify({ title: 'T', body: 'base body' }),
+    });
+    store.setTodoConflict(todo.id, 'body', 'local body', 'remote body', 'base body');
+    // The one-time accept-local outward push fails.
+    fake.adapter.update = async () => {
+      throw new Error('boom');
+    };
+
+    const resolved = await todoSyncService.resolveConflict(todo.id, 'body', 'local');
+
+    // Conflict NOT cleared; baseline NOT advanced.
+    const conflicts = store.getTodoConflicts(todo.id);
+    assert.equal(conflicts.length, 1, 'conflict was cleared despite push failure');
+    assert.equal(conflicts[0].field, 'body');
+    assert.equal(resolved.content, 'local body'); // local choice preserved
+    assert.equal(JSON.parse(store.getTodoById(todo.id)!.remoteSnapshot!).body, 'base body'); // baseline unchanged
+
+    // Next reconcile (remote unchanged): conflict re-detected, local NOT overwritten.
+    fake.adapter.update = async (repo: string, number: number, input: UpdateIssueInput) => {
+      // restore a working update for the reconcile loop itself
+      const existing = fake.state.issues.get(repo);
+      if (existing && existing.number === number) {
+        return { ...existing, ...(input.title !== undefined ? { title: input.title } : {}), ...(input.body !== undefined ? { body: input.body } : {}) };
+      }
+      return makeIssue(number);
+    };
+    fake.state.issueList.set('myorg/webapp', [makeIssue(201, { title: 'T', body: 'remote body' })]);
+    const result = await todoSyncService.reconcile();
+    assert.ok(result.conflicts >= 1, 'conflict was not re-surfaced after push failure');
+    const after = store.getTodoById(todo.id)!;
+    assert.equal(after.content, 'local body', 'local choice silently lost after push failure');
+    assert.ok(store.getTodoConflicts(todo.id).some((c) => c.field === 'body'), 'body conflict missing after reconcile');
+  });
+
+  it('Defect 3: local-origin null content with a non-null remote body backfills inward and does NOT push {body:null}', async () => {
+    store.setWorkspaceGithubRepos(workspaceId, ['myorg/webapp']);
+    // Simulate a pre-U3 local-origin todo: linked, content null, title-only
+    // snapshot (no body baseline). Someone wrote a body on the GitHub issue.
+    const local = store.createTodo(workspaceId, { text: 'Owner', content: null });
+    store.updateTodo(local.id, {
+      origin: 'local',
+      repoFullName: 'myorg/webapp',
+      issueNumber: 301,
+      remoteSnapshot: JSON.stringify({ title: 'Owner' }), // pre-U3: no body key
+    });
+    fake.state.issueList.set('myorg/webapp', [
+      makeIssue(301, { title: 'Owner', body: '## GitHub-side body' }),
+    ]);
+
+    const updatesBefore = fake.calls.update.length;
+    await todoSyncService.reconcile();
+
+    // Content backfilled from the remote body...
+    assert.equal(store.getTodoById(local.id)!.content, '## GitHub-side body');
+    // ...and {body:null} was NOT pushed outward (GitHub body preserved).
+    const bodyPushes = fake.calls.update
+      .slice(updatesBefore)
+      .filter((c) => c.input.body !== undefined);
+    assert.equal(bodyPushes.length, 0, '{body:null} was pushed outward, clobbering the GitHub body');
+  });
+
+  it('Defect 4: empty-string content vs null body converges (no repeated outward pushes)', async () => {
+    store.setWorkspaceGithubRepos(workspaceId, ['myorg/webapp']);
+    const local = store.createTodo(workspaceId, { text: 'Owner', content: '' });
+    const published = await todoSyncService.publish(local.id); // baseline body = ''
+    // Remote body is null; local content is '' (canonically the same empty value).
+    fake.state.issueList.set(published.repoFullName!, [
+      makeIssue(published.issueNumber!, { title: 'Owner', body: null }),
+    ]);
+
+    const before1 = fake.calls.update.length;
+    await todoSyncService.reconcile();
+    const pushes1 = fake.calls.update.slice(before1).filter((c) => c.input.body !== undefined).length;
+
+    // Second reconcile — a correct converge must NOT push body again.
+    fake.state.issueList.set(published.repoFullName!, [
+      makeIssue(published.issueNumber!, { title: 'Owner', body: null, updatedAt: '2026-07-28T00:00:00.000Z' }),
+    ]);
+    const before2 = fake.calls.update.length;
+    await todoSyncService.reconcile();
+    const pushes2 = fake.calls.update.slice(before2).filter((c) => c.input.body !== undefined).length;
+
+    assert.equal(pushes2, 0, 'body re-pushed on 2nd reconcile (null/empty push loop)');
+    assert.ok(pushes1 + pushes2 <= 1, `body pushed ${pushes1 + pushes2} times across two reconciles (must converge)`);
+  });
+});
