@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
 import TodoDetail from './TodoDetail'
@@ -223,5 +223,148 @@ describe('TodoDetail editing (U2)', () => {
     // Give the effect a chance; no save should fire for a clean switch.
     await waitFor(() => expect(screen.getByLabelText('Title')).toHaveValue('B title'))
     expect(mocks.updateTodo).not.toHaveBeenCalled()
+  })
+
+  // P1: a stale handleSave completion must never redirect a later switch's
+  // auto-save onto the wrong (stale-id) todo. Edit A, Save, switch to B before
+  // the PUT resolves, then switch B->C; B's drafts must be saved against B and
+  // never against A.
+  it('does not redirect a later switch auto-save to the wrong todo when Save resolves stale', async () => {
+    const todoA = makeTodo({ id: 'a', text: 'A title', content: 'A body' })
+    const todoB = makeTodo({ id: 'b', text: 'B title', content: 'B body' })
+    const todoC = makeTodo({ id: 'c', text: 'C title', content: 'C body' })
+
+    // Each updateTodo call returns a promise we resolve manually, so we can
+    // resolve handleSave's PUT only AFTER the switch effect has re-anchored.
+    const resolvers: Array<(v: Todo | null) => void> = []
+    mocks.updateTodo.mockImplementation(
+      () => new Promise<Todo | null>((resolve) => resolvers.push(resolve)),
+    )
+
+    const { rerender } = renderWithI18n(<TodoDetail todo={todoA} onResolved={vi.fn()} />)
+
+    // Edit A and Save (PUT in flight, unresolved).
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'A-edited' } })
+    fireEvent.change(screen.getByTestId('cm-editor'), { target: { value: 'A-edited body' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect(resolvers).toHaveLength(1) // handleSave's PUT
+
+    // Switch to B BEFORE the PUT resolves.
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TodoDetail todo={todoB} onResolved={vi.fn()} />
+      </I18nextProvider>,
+    )
+    await waitFor(() => expect(screen.getByLabelText('Title')).toHaveValue('B title'))
+
+    // Now resolve the stale handleSave PUT — without the guard this clobbers
+    // lastSavedRef back to A.
+    await act(async () => {
+      resolvers[0]({ ...todoA, text: 'A-edited', content: 'A-edited body' })
+      await Promise.resolve()
+    })
+
+    // Edit B, then switch to C.
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'B-edited' } })
+    fireEvent.change(screen.getByTestId('cm-editor'), { target: { value: 'B-edited body' } })
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TodoDetail todo={todoC} onResolved={vi.fn()} />
+      </I18nextProvider>,
+    )
+
+    // B's dirty drafts must land on B, never on A (the corruption we guard).
+    await waitFor(() => {
+      expect(mocks.updateTodo).toHaveBeenCalledWith('b', {
+        text: 'B-edited',
+        content: 'B-edited body',
+      })
+    })
+    expect(mocks.updateTodo).not.toHaveBeenCalledWith('a', {
+      text: 'B-edited',
+      content: 'B-edited body',
+    })
+  })
+
+  // P2 (validation): an invalid outgoing payload must not be sent (a 400 would
+  // roll back the whole patch and silently drop the valid title edit); the
+  // validation error surfaces instead, and re-surfaces on return to the todo.
+  it('blocks an invalid switch auto-save and surfaces the error instead of sending a 400', async () => {
+    const todoA = makeTodo({ id: 'a', text: 'A title', content: 'A body' })
+    const todoB = makeTodo({ id: 'b', text: 'B title', content: 'B body' })
+
+    mocks.updateTodo.mockResolvedValue({ ...todoA, text: 'New', content: 'whatever' })
+
+    const { rerender } = renderWithI18n(<TodoDetail todo={todoA} onResolved={vi.fn()} />)
+
+    // Valid title edit + over-cap content.
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New' } })
+    fireEvent.change(screen.getByTestId('cm-editor'), { target: { value: 'x'.repeat(50001) } })
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TodoDetail todo={todoB} onResolved={vi.fn()} />
+      </I18nextProvider>,
+    )
+
+    // The invalid payload is not sent (no 400 rollback that drops the title),
+    // and the switch still re-anchors to B.
+    await waitFor(() => expect(screen.getByLabelText('Title')).toHaveValue('B title'))
+    expect(mocks.updateTodo).not.toHaveBeenCalled()
+
+    // The validation error surfaces (recorded per-todo for return trips).
+    expect(screen.getByText(/character limit/i)).toBeInTheDocument()
+
+    // Returning to A re-surfaces the recorded error.
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TodoDetail todo={todoA} onResolved={vi.fn()} />
+      </I18nextProvider>,
+    )
+    await waitFor(() => expect(screen.getByText(/character limit/i)).toBeInTheDocument())
+  })
+
+  // P2 (failure): a store/network failure during switch auto-save is recorded
+  // and surfaced when the user returns to that todo, not swallowed.
+  it('surfaces a switch auto-save failure instead of swallowing it', async () => {
+    const todoA = makeTodo({ id: 'a', text: 'A title', content: 'A body' })
+    const todoB = makeTodo({ id: 'b', text: 'B title', content: 'B body' })
+
+    // Auto-save fails (store rolled back / network error → updateTodo null).
+    mocks.updateTodo.mockResolvedValue(null)
+
+    const { rerender } = renderWithI18n(<TodoDetail todo={todoA} onResolved={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'A-edited' } })
+    fireEvent.change(screen.getByTestId('cm-editor'), { target: { value: 'A-edited body' } })
+
+    // Switch to B → outgoing auto-save of A is attempted and fails.
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TodoDetail todo={todoB} onResolved={vi.fn()} />
+      </I18nextProvider>,
+    )
+    await waitFor(() => {
+      expect(mocks.updateTodo).toHaveBeenCalledWith('a', {
+        text: 'A-edited',
+        content: 'A-edited body',
+      })
+    })
+    // Let the failure resolution record the per-todo error.
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Return to A — the failure must be surfaced, not swallowed.
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TodoDetail todo={todoA} onResolved={vi.fn()} />
+      </I18nextProvider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/failed to update/i)).toBeInTheDocument()
+    })
   })
 })
