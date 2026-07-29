@@ -77,3 +77,60 @@ describe('global todo store (U1)', () => {
     assert.strictEqual(belonging!.workspaceId, null, 'soft link cleared, not destroyed');
   });
 });
+
+describe('todo content field (U1)', () => {
+  let store: Store;
+
+  beforeEach(() => {
+    store = createIsolatedStore();
+  });
+
+  it('creates a todo with content and round-trips it through getTodoById', () => {
+    const todo = store.createTodo(null, { text: 'title', content: '## detail body' });
+    assert.strictEqual(todo.content, '## detail body');
+    const fetched = store.getTodoById(todo.id);
+    assert.ok(fetched);
+    assert.strictEqual(fetched!.content, '## detail body');
+    // title is unaffected
+    assert.strictEqual(fetched!.text, 'title');
+  });
+
+  it('creates a todo without content and reads content back as null', () => {
+    const todo = store.createTodo(null, { text: 'no body' });
+    assert.strictEqual(todo.content, null);
+    const fetched = store.getTodoById(todo.id);
+    assert.ok(fetched);
+    assert.strictEqual(fetched!.content, null);
+  });
+
+  it('updateTodo sets and clears content', () => {
+    const todo = store.createTodo(null, { text: 't' });
+    assert.strictEqual(todo.content, null);
+
+    const set = store.updateTodo(todo.id, { content: 'first body' });
+    assert.ok(set);
+    assert.strictEqual(set!.content, 'first body');
+    assert.strictEqual(store.getTodoById(todo.id)!.content, 'first body');
+
+    const cleared = store.updateTodo(todo.id, { content: null });
+    assert.ok(cleared);
+    assert.strictEqual(cleared!.content, null);
+    assert.strictEqual(store.getTodoById(todo.id)!.content, null);
+  });
+
+  it('updateTodo leaves content untouched when content is absent from the patch', () => {
+    const todo = store.createTodo(null, { text: 't', content: 'keep me' });
+    // A patch that does not mention content must not null it out.
+    const updated = store.updateTodo(todo.id, { status: 'done' });
+    assert.ok(updated);
+    assert.strictEqual(updated!.status, 'done');
+    assert.strictEqual(updated!.content, 'keep me');
+  });
+
+  it('content at the 50000-char cap round-trips through the store', () => {
+    const big = 'a'.repeat(50000);
+    const todo = store.createTodo(null, { text: 'cap', content: big });
+    assert.strictEqual(todo.content, big);
+    assert.strictEqual(store.getTodoById(todo.id)!.content, big);
+  });
+});
