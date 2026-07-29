@@ -32,8 +32,8 @@ export interface UsageState {
   lastUpdated: string | null;
 }
 
-/** KTD3 / OQ3: a cached usage value older than this is stale and re-fetched. */
-const STALENESS_MS = 24 * 60 * 60 * 1000;
+/** A cached usage value older than this is stale and re-fetched. */
+const STALENESS_MS = 60 * 60 * 1000; // 1 hour
 
 export class ProviderUsageStore {
   private readonly cache = new Map<string, UsageSummary>();

@@ -33,9 +33,9 @@ describe('ProviderUsageStore', () => {
     assert.equal(usage.getCachedUsage('p2'), null);
   });
 
-  test('cache staleness uses the 24h threshold', () => {
+  test('cache staleness uses the 1h threshold', () => {
     const fresh = summary();
-    const stale = summary({ lastUpdated: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() });
+    const stale = summary({ lastUpdated: new Date(Date.now() - 61 * 60 * 1000).toISOString() });
     assert.equal(usage.isStale(fresh), false);
     assert.equal(usage.isStale(stale), true);
     assert.equal(usage.isStale(null), true);
