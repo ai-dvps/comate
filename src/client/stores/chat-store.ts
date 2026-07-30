@@ -3169,12 +3169,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const historyLoadState = session?.isDraft
         ? { ...state.historyLoadState, [sessionId]: 'loaded' as const }
         : state.historyLoadState
+      const currentActivity = state.sessionActivity[sessionId]
+      const foregroundActivity: SessionActivitySnapshot = {
+        phase: 'foreground',
+        active: true,
+        backgroundTasks: currentActivity?.backgroundTasks ?? [],
+      }
       return {
         messages: { ...state.messages, [sessionId]: newMessages },
         drafts: nextDrafts,
         sessions: { ...state.sessions, [workspaceId]: nextSessions },
         historyLoadState,
         isStreaming: { ...state.isStreaming, [sessionId]: true },
+        sessionActivity: { ...state.sessionActivity, [sessionId]: foregroundActivity },
         streamStartedAt: { ...state.streamStartedAt, [sessionId]: Date.now() },
         unreadCompletions: nextUnread,
         totalMessageCount: {
