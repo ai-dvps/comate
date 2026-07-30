@@ -16,8 +16,6 @@ import TaskPanel from './TaskPanel'
 import StatusBar from './StatusBar'
 import MessageSearchBar from './MessageSearchBar'
 import WorkflowFloatingPanel from './WorkflowFloatingPanel'
-import BrowserPane from './browser/BrowserPane'
-import BrowserPaneButton from './browser/BrowserPaneButton'
 
 import { isBotSession } from '../lib/session-filter'
 
@@ -434,7 +432,6 @@ export default function ChatPanel({
         </div>
         {/* Right cluster */}
         <div className="flex-shrink-0 flex items-center gap-1">
-          <BrowserPaneButton workspaceId={workspaceId} />
           {onToggleRightPanelCollapse && (
             <button
               className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
@@ -577,11 +574,6 @@ export default function ChatPanel({
             onPush={handlePushDrawer}
           />
         )}
-
-        {/* Embedded browser pane (U6) — independent of the RightPanel; stays
-            mounted (CSS-hidden while collapsed) so the viewer iframe keeps
-            its cast stream alive across collapse/expand. */}
-        <BrowserPane workspaceId={workspaceId} />
       </div>
     </div>
   )

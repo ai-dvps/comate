@@ -21,10 +21,12 @@ describe('right-panel-store', () => {
     ) as unknown as typeof global.fetch
   })
 
-  it('setActiveListTab updates the active list tab', () => {
+  it('setActiveListTab updates the active list tab, including the browser tab', () => {
     const { setActiveListTab } = useRightPanelStore.getState()
     setActiveListTab('git-changes')
     expect(useRightPanelStore.getState().activeListTab).toBe('git-changes')
+    setActiveListTab('browser')
+    expect(useRightPanelStore.getState().activeListTab).toBe('browser')
   })
 
   it('openFile fetches content and adds a file tab', async () => {

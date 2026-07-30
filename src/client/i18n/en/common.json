@@ -143,8 +143,10 @@
   "rightPanel": {
     "files": "Files",
     "gitChanges": "Git Changes",
+    "browser": "Browser",
     "showFiles": "Show files",
     "showGitChanges": "Show git changes",
+    "showBrowser": "Show browser",
     "collapse": "Collapse",
     "expand": "Expand",
     "emptyState": "Open a file or change to view it",
