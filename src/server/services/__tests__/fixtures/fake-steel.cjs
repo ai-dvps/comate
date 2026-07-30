@@ -18,17 +18,25 @@
 
 const http = require('http');
 const { spawn } = require('child_process');
-const { writeFileSync } = require('fs');
+const { symlinkSync, writeFileSync } = require('fs');
 
 process.on('SIGTERM', () => {
   // Deliberately ignored — mirrors the real Steel's SIGTERM behavior.
 });
 
 if (process.env.FAKE_STEEL_CHILD_PIDFILE) {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+  const childArgs = ['-e', 'setInterval(() => {}, 1000)'];
+  if (process.env.FAKE_STEEL_DETACHED_CHILD === '1' && process.env.CHROME_USER_DATA_DIR) {
+    childArgs.push('--', `--user-data-dir=${process.env.CHROME_USER_DATA_DIR}`);
+  }
+  const child = spawn(process.execPath, childArgs, {
+    detached: process.env.FAKE_STEEL_DETACHED_CHILD === '1',
     stdio: 'ignore',
   });
   writeFileSync(process.env.FAKE_STEEL_CHILD_PIDFILE, String(child.pid));
+  if (process.env.FAKE_STEEL_DETACHED_CHILD === '1' && process.env.CHROME_USER_DATA_DIR) {
+    symlinkSync(`fake-host-${child.pid}`, `${process.env.CHROME_USER_DATA_DIR}/SingletonLock`);
+  }
 }
 
 if (process.env.FAKE_STEEL_NEVER_HEALTHY === '1') {
