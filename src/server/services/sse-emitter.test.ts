@@ -6,7 +6,7 @@ import type { SDKMessage, Query, Options } from '@anthropic-ai/claude-agent-sdk'
 import { SseEmitter } from './sse-emitter.js';
 import { SessionRuntime } from './session-runtime.js';
 import type { SdkClient } from './sdk-client.js';
-import type { SseEvent, TaskSignal } from '../types/message.js';
+import type { SseEvent } from '../types/message.js';
 
 describe('SseEmitter rate limit', { concurrency: false }, () => {
   it('forwards rate_limit_event as rate_limit plus an error_note', () => {
@@ -553,299 +553,7 @@ describe('SseEmitter async subagent lifecycle', { concurrency: false }, () => {
   });
 });
 
-describe('SseEmitter task signals', { concurrency: false }, () => {
-  function createEmitter() {
-    const events: SseEvent[] = [];
-    const signals: TaskSignal[] = [];
-    const emitter = new SseEmitter(
-      null,
-      (_id, event) => events.push(event),
-      (signal) => signals.push(signal),
-    );
-    return { emitter, events, signals };
-  }
-
-  it('emits a started signal carrying raw fields on task_started; the wire event is unchanged', () => {
-    const { emitter, events, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'system',
-      subtype: 'task_started',
-      task_id: 'task-1',
-      description: 'background job',
-      tool_use_id: 'tu-1',
-      subagent_type: 'Explore',
-      skip_transcript: true,
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, [
-      {
-        kind: 'started',
-        taskId: 'task-1',
-        toolUseId: 'tu-1',
-        subagentType: 'Explore',
-        skipTranscript: true,
-      },
-    ]);
-    const wire = events.find((e) => e.type === 'task_started');
-    assert.deepStrictEqual(wire, {
-      type: 'task_started',
-      taskId: 'task-1',
-      description: 'background job',
-    });
-  });
-
-  it('emits started with toolUseId undefined when task_started carries no tool_use_id', () => {
-    const { emitter, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'system',
-      subtype: 'task_started',
-      task_id: 'task-2',
-      description: 'uncorrelated',
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, [
-      { kind: 'started', taskId: 'task-2', skipTranscript: false },
-    ]);
-  });
-
-  it('emits backgroundedPatch when task_updated patch.is_backgrounded is true', () => {
-    const { emitter, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'system',
-      subtype: 'task_updated',
-      task_id: 'task-1',
-      patch: { is_backgrounded: true },
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, [{ kind: 'backgroundedPatch', taskId: 'task-1' }]);
-  });
-
-  it('emits terminal for terminal task_updated statuses (completed/failed/killed)', () => {
-    const { emitter, events, signals } = createEmitter();
-
-    for (const status of ['completed', 'failed', 'killed']) {
-      emitter.handle({
-        type: 'system',
-        subtype: 'task_updated',
-        task_id: `task-${status}`,
-        patch: { status },
-      } as unknown as SDKMessage);
-    }
-
-    assert.deepStrictEqual(signals, [
-      { kind: 'terminal', taskId: 'task-completed' },
-      { kind: 'terminal', taskId: 'task-failed' },
-      { kind: 'terminal', taskId: 'task-killed' },
-    ]);
-    const updates = events.filter((e) => e.type === 'task_updated');
-    assert.strictEqual(updates.length, 3, 'wire task_updated events are unchanged');
-  });
-
-  it('emits no signal for a non-terminal task_updated status', () => {
-    const { emitter, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'system',
-      subtype: 'task_updated',
-      task_id: 'task-1',
-      patch: { status: 'in_progress', description: 'working' },
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, []);
-  });
-
-  it('emits terminal for task_notification completed/failed/stopped', () => {
-    const { emitter, signals } = createEmitter();
-
-    for (const status of ['completed', 'failed', 'stopped']) {
-      emitter.handle({
-        type: 'system',
-        subtype: 'task_notification',
-        task_id: `task-${status}`,
-        status,
-      } as unknown as SDKMessage);
-    }
-
-    assert.deepStrictEqual(signals, [
-      { kind: 'terminal', taskId: 'task-completed' },
-      { kind: 'terminal', taskId: 'task-failed' },
-      { kind: 'terminal', taskId: 'task-stopped' },
-    ]);
-  });
-
-  it('emits no signal for a non-terminal task_notification status', () => {
-    const { emitter, events, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'system',
-      subtype: 'task_notification',
-      task_id: 'task-1',
-      status: 'running',
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, []);
-    assert.ok(events.some((e) => e.type === 'task_updated'), 'wire event still sent');
-  });
-
-  it('emits asyncLaunched for an active sub-agent whose tool result is async_launched', () => {
-    const { emitter, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'assistant',
-      message: {
-        id: 'msg-1',
-        content: [{ type: 'tool_use', id: 'tu-agent-1', name: 'Agent', input: { prompt: 'bg work' } }],
-      },
-    } as unknown as SDKMessage);
-
-    emitter.handle({
-      type: 'user',
-      message: {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'tu-agent-1', content: 'launched', is_error: false }],
-      },
-      toolUseResult: { status: 'async_launched', agentId: 'agent-1' },
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, [
-      { kind: 'asyncLaunched', toolUseId: 'tu-agent-1', agentId: 'agent-1' },
-    ]);
-  });
-
-  it('emits bashBackgrounded when the message-level toolUseResult carries a backgroundTaskId string', () => {
-    const { emitter, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'user',
-      message: {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'tu-bash-1', content: 'running in background', is_error: false }],
-      },
-      toolUseResult: { status: 'backgrounded', backgroundTaskId: 'bash-task-9' },
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, [
-      { kind: 'bashBackgrounded', toolUseId: 'tu-bash-1', taskId: 'bash-task-9' },
-    ]);
-  });
-
-  it('emits no signal for a workflow async launch, and still sends workflow_start', () => {
-    const { emitter, events, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'system',
-      subtype: 'init',
-      model: 'claude-sonnet-4-6',
-      tools: [],
-      session_id: 'session-1',
-    } as unknown as SDKMessage);
-
-    emitter.handle({
-      type: 'assistant',
-      message: {
-        id: 'msg-1',
-        content: [{ type: 'tool_use', id: 'tu-wf-1', name: 'Workflow', input: { name: 'deep-research' } }],
-      },
-    } as unknown as SDKMessage);
-
-    emitter.handle({
-      type: 'user',
-      message: {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'tu-wf-1', content: 'Workflow launched', is_error: false }],
-      },
-      toolUseResult: { status: 'async_launched', taskId: 'task-1', runId: 'wf_run-1' },
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, [], 'workflow async launches emit no signal in v1');
-    assert.ok(events.some((e) => e.type === 'workflow_start'), 'workflow_start is still sent');
-  });
-
-  it('emits no signal when a synchronous sub-agent finalizes', () => {
-    const { emitter, events, signals } = createEmitter();
-
-    emitter.handle({
-      type: 'assistant',
-      message: {
-        id: 'msg-1',
-        content: [{ type: 'tool_use', id: 'tu-agent-1', name: 'Agent', input: { prompt: 'sync' } }],
-      },
-    } as unknown as SDKMessage);
-
-    emitter.handle({
-      type: 'user',
-      message: {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'tu-agent-1', content: 'Sync result', is_error: false }],
-      },
-    } as unknown as SDKMessage);
-
-    assert.deepStrictEqual(signals, []);
-    assert.strictEqual(
-      events.filter((e) => e.type === 'subagent_done').length,
-      1,
-      'the existing finalizeSubagent path is unchanged',
-    );
-  });
-
-  it('tolerates malformed raw fields: no signal and no throw', () => {
-    const { emitter, signals } = createEmitter();
-
-    assert.doesNotThrow(() => {
-      emitter.handle({
-        type: 'system',
-        subtype: 'task_started',
-        task_id: 42,
-        tool_use_id: 'tu-1',
-      } as unknown as SDKMessage);
-
-      emitter.handle({
-        type: 'system',
-        subtype: 'task_updated',
-        task_id: 'task-1',
-      } as unknown as SDKMessage);
-
-      emitter.handle({
-        type: 'system',
-        subtype: 'task_updated',
-        task_id: 'task-1',
-        patch: { is_backgrounded: 1, status: 7 },
-      } as unknown as SDKMessage);
-
-      emitter.handle({
-        type: 'system',
-        subtype: 'task_notification',
-        task_id: 99,
-        status: 'completed',
-      } as unknown as SDKMessage);
-
-      emitter.handle({
-        type: 'user',
-        message: {
-          role: 'user',
-          content: [{ type: 'tool_result', tool_use_id: 'tu-bash-1', content: 'x', is_error: false }],
-        },
-        toolUseResult: { backgroundTaskId: 12345 },
-      } as unknown as SDKMessage);
-
-      emitter.handle({
-        type: 'user',
-        message: {
-          role: 'user',
-          content: [{ type: 'tool_result', content: 'x', is_error: false }],
-        },
-        toolUseResult: { backgroundTaskId: 'bash-task-1' },
-      } as unknown as SDKMessage);
-    });
-
-    assert.deepStrictEqual(signals, []);
-  });
-});
-
-describe('SseEmitter + SessionRuntime task-signal integration', { concurrency: false }, () => {
+describe('SseEmitter + SessionRuntime task transcript integration', { concurrency: false }, () => {
   let runtime: SessionRuntime | undefined;
 
   afterEach(async () => {
@@ -875,7 +583,7 @@ describe('SseEmitter + SessionRuntime task-signal integration', { concurrency: f
     } as unknown as SdkClient;
   }
 
-  it('task_started + async_launched + result + task_notification yields the {true} → count-edge → {false} edge sequence', async () => {
+  it('task edges remain transcript events but do not produce activity membership', async () => {
     const events: SseEvent[] = [];
     const messages: SDKMessage[] = [
       {
@@ -925,23 +633,10 @@ describe('SseEmitter + SessionRuntime task-signal integration', { concurrency: f
 
     await new Promise((r) => setTimeout(r, 100));
 
-    const processing = events.filter(
-      (e): e is Extract<SseEvent, { type: 'session_processing' }> => e.type === 'session_processing',
-    );
-    assert.deepStrictEqual(processing, [
-      { type: 'session_processing', processing: true, backgroundTaskCount: 0 },
-      // Count-only edge: the task confirmation flips the count while the
-      // turn keeps the processing boolean true.
-      { type: 'session_processing', processing: true, backgroundTaskCount: 1 },
-      { type: 'session_processing', processing: false, backgroundTaskCount: 0 },
-    ]);
-
-    // The foreground turn's result must arrive before the settle edge: the
-    // confirmed background task held the session active past the turn result.
-    const resultIdx = events.findIndex((e) => e.type === 'result');
-    const settleIdx = events.indexOf(processing[2]);
-    assert.ok(resultIdx !== -1, 'expected a result wire event');
-    assert.ok(resultIdx < settleIdx, 'the turn result precedes the settle edge');
+    assert.ok(events.some((event) => event.type === 'task_started'));
+    assert.ok(events.some((event) => event.type === 'task_updated'));
+    assert.ok(events.some((event) => event.type === 'result'));
+    assert.ok(!events.some((event) => event.type === 'session_processing'));
   });
 });
 

@@ -59,6 +59,14 @@ function getRefreshStatusText(meta: RefreshMeta | undefined, t: TFunction): stri
   return `${timeAgo} · ${t('noNewMessages')}`
 }
 
+function getBackgroundTaskTypeLabel(type: string, t: TFunction): string {
+  const normalized = type.toLowerCase()
+  if (normalized.includes('agent')) return t('activity.taskType.agent')
+  if (normalized.includes('bash') || normalized.includes('command')) return t('activity.taskType.command')
+  if (normalized.includes('workflow')) return t('activity.taskType.workflow')
+  return t('activity.taskType.background')
+}
+
 const TOOLBAR_BREAKPOINTS = [
   { width: 680, hidden: [] as string[] },
   { width: 600, hidden: ['skills'] },
@@ -128,9 +136,9 @@ export default function PromptInput({
   )
   const setDraft = useChatStore((s) => s.setDraft)
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
-  const backgroundTaskCount = useChatStore(
-    (s) => s.sessionBackgroundTaskCount[sessionId] ?? 0,
-  )
+  const activity = useChatStore((s) => s.sessionActivity[sessionId])
+  const backgroundTasks = activity?.backgroundTasks ?? []
+  const backgroundTaskCount = backgroundTasks.length
   const { suggest, train } = useNgramCompletion(workspaceId)
 
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
@@ -927,6 +935,33 @@ export default function PromptInput({
           </div>
         </div>
       ) : (
+        <>
+          {(backgroundTasks.length > 0 || activity?.phase === 'stopping') && (
+            <div
+              className="mb-2 max-h-24 overflow-y-auto px-1 text-[11px] text-text-secondary"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              data-testid="session-activity-details"
+            >
+              <div className="flex items-center gap-1.5 font-medium text-text-primary">
+                {activity?.phase === 'stopping' && <Loader2 className="w-3 h-3 animate-spin" />}
+                <span>
+                  {activity?.phase === 'stopping'
+                    ? t('activity.stopping')
+                    : t('activity.backgroundRunning', { count: backgroundTasks.length })}
+                </span>
+              </div>
+              {backgroundTasks.map((task) => (
+                <div key={task.id} className="mt-1 flex min-w-0 items-start gap-1.5">
+                  <span className="flex-shrink-0 text-text-tertiary">
+                    {getBackgroundTaskTypeLabel(task.type, t)}
+                  </span>
+                  <span className="min-w-0 break-words">{task.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
         <div ref={inputCardRef} data-testid="input-card" className="relative bg-surface border border-border rounded-xl shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] focus-within:border-border-hover transition-colors">
           <>
             <div
@@ -1080,6 +1115,7 @@ export default function PromptInput({
                     <PopoverTrigger asChild>
                       <button
                         disabled={isInterrupting}
+                        aria-label={isInterrupting ? t('stopPopover.stopping') : t('stop')}
                         className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
                       >
                         {isInterrupting ? (
@@ -1151,6 +1187,7 @@ export default function PromptInput({
             </div>
           </>
         </div>
+        </>
       )}
     </div>
   )

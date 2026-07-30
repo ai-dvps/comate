@@ -7,6 +7,8 @@
  * - Support request/response multiplexing plus server-pushed events.
  */
 
+import type { SessionActivitySnapshot } from '../types/message.js'
+
 export type WsRequestType =
   | 'subscribe'
   | 'unsubscribe'
@@ -75,7 +77,11 @@ export interface StatusPayload {
 }
 
 export interface StatusResult {
-  statuses: Record<string, { pendingCount: number; isProcessing?: boolean }>
+  statuses: Record<string, {
+    pendingCount: number
+    isProcessing?: boolean
+    activity: SessionActivitySnapshot
+  }>
 }
 
 export interface SendMessagePayload {
