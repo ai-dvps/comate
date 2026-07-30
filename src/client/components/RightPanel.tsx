@@ -217,7 +217,7 @@ export default function RightPanel({
       >
         {/* Top tabs: Files / Git Changes / Browser */}
         <div
-          className="flex flex-shrink-0"
+          className="flex flex-shrink-0 h-10"
           role="tablist"
           aria-label={t('rightPanel.openTabs')}
         >
@@ -229,7 +229,7 @@ export default function RightPanel({
                 aria-selected={activeListTab === 'files'}
                 onClick={() => handleListTabClick('files')}
                 className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-all border-b',
+                  'flex-1 flex items-center justify-center gap-1.5 h-full text-xs font-medium transition-all border-b',
                   activeListTab === 'files'
                     ? 'text-text-primary border-accent'
                     : 'text-text-secondary hover:text-text-primary border-border/50',
@@ -251,7 +251,7 @@ export default function RightPanel({
                 aria-selected={activeListTab === 'git-changes'}
                 onClick={() => handleListTabClick('git-changes')}
                 className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-all border-b',
+                  'flex-1 flex items-center justify-center gap-1.5 h-full text-xs font-medium transition-all border-b',
                   activeListTab === 'git-changes'
                     ? 'text-text-primary border-accent'
                     : 'text-text-secondary hover:text-text-primary border-border/50',
@@ -273,7 +273,7 @@ export default function RightPanel({
                 aria-selected={activeListTab === 'browser'}
                 onClick={() => handleListTabClick('browser')}
                 className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-all border-b',
+                  'flex-1 flex items-center justify-center gap-1.5 h-full text-xs font-medium transition-all border-b',
                   activeListTab === 'browser'
                     ? 'text-text-primary border-accent'
                     : 'text-text-secondary hover:text-text-primary border-border/50',
