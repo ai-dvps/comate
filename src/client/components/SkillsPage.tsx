@@ -22,6 +22,7 @@ import ModalPanel from './ModalPanel'
 
 interface SkillsPageProps {
   workspaceId: string
+  isOpen: boolean
   onClose: () => void
 }
 
@@ -43,7 +44,7 @@ type SkillTab = 'installed' | 'search'
  *   - Legacy symlinked skills show a "symlinked (legacy)" tag and refuse
  *     Update via the store's update-error channel (Design #6).
  */
-export default function SkillsPage({ workspaceId, onClose }: SkillsPageProps) {
+export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageProps) {
   const { t } = useTranslation('settings')
   const [activeTab, setActiveTab] = useState<SkillTab>('installed')
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null)
@@ -77,10 +78,11 @@ export default function SkillsPage({ workspaceId, onClose }: SkillsPageProps) {
     clearUpdateError,
   } = useSkillsStore()
 
-  // Initial fetch of installed skills
+  // Initial fetch of installed skills when the panel opens.
   useEffect(() => {
+    if (!isOpen) return
     fetchInstalled(workspaceId)
-  }, [fetchInstalled, workspaceId])
+  }, [isOpen, fetchInstalled, workspaceId])
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -171,7 +173,7 @@ export default function SkillsPage({ workspaceId, onClose }: SkillsPageProps) {
 
   return (
     <>
-    <ModalPanel open onClose={onClose}>
+    <ModalPanel open={isOpen} onClose={onClose}>
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">

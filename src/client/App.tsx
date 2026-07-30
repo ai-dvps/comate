@@ -362,32 +362,26 @@ function App() {
         )}
       </div>
 
-      {activePanel === 'settings' && (
-        <SettingsPanel onClose={closePanel} />
-      )}
+      <SettingsPanel isOpen={activePanel === 'settings'} onClose={closePanel} />
 
-      {activePanel === 'analytics' && (
-        <AnalyticsPanel onClose={closePanel} />
-      )}
+      <AnalyticsPanel isOpen={activePanel === 'analytics'} onClose={closePanel} />
 
-      {activePanel === 'scheduledTasks' && (
-        <ScheduledTasksPanel onClose={closePanel} />
-      )}
+      <ScheduledTasksPanel isOpen={activePanel === 'scheduledTasks'} onClose={closePanel} />
 
-      {activePanel === 'todos' && (
-        <TodosPanel onClose={closePanel} />
-      )}
+      <TodosPanel isOpen={activePanel === 'todos'} onClose={closePanel} />
 
-      {activePanel === 'plugins' && activeWorkspaceId && (
+      {activeWorkspaceId && (
         <PluginSettingsPage
           workspaceId={activeWorkspaceId}
+          isOpen={activePanel === 'plugins'}
           onClose={closePanel}
         />
       )}
 
-      {activePanel === 'skills' && activeWorkspaceId && (
+      {activeWorkspaceId && (
         <SkillsPage
           workspaceId={activeWorkspaceId}
+          isOpen={activePanel === 'skills'}
           onClose={closePanel}
         />
       )}

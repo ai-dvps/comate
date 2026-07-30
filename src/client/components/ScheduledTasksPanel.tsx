@@ -21,6 +21,7 @@ import { ScheduledTaskForm } from './ScheduledTaskForm'
 import ModalPanel from './ModalPanel'
 
 interface ScheduledTasksPanelProps {
+  isOpen: boolean
   onClose: () => void
 }
 
@@ -73,7 +74,7 @@ function panelTitle(view: PanelView, t: (k: string) => string): string {
   return t('panel.title')
 }
 
-export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProps) {
+export default function ScheduledTasksPanel({ isOpen, onClose }: ScheduledTasksPanelProps) {
   const { t } = useTranslation('scheduledTasks')
   const tasks = useScheduledTaskStore((s) => s.tasks)
   const loading = useScheduledTaskStore((s) => s.loading)
@@ -90,10 +91,11 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
   const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!isOpen) return
     clearUnread()
     void fetchTasks()
     void fetchDefaultBackend()
-  }, [clearUnread, fetchTasks, fetchDefaultBackend])
+  }, [isOpen, clearUnread, fetchTasks, fetchDefaultBackend])
 
   const workspaceName = useMemo(() => {
     const map = new Map(workspaces.map((w) => [w.id, w.name]))
@@ -114,7 +116,7 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
 
   return (
     <ModalPanel
-      open
+      open={isOpen}
       onClose={onClose}
       className="w-[720px] max-w-[92vw] max-h-[82vh] rounded-lg shadow-xl"
     >

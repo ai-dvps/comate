@@ -24,6 +24,7 @@ const TAB_STORAGE_KEY = 'comate.analytics.activeTab'
 type AnalyticsTab = 'global' | 'workspace'
 
 interface AnalyticsPanelProps {
+  isOpen: boolean
   onClose: () => void
 }
 
@@ -37,7 +38,7 @@ function readInitialTab(): AnalyticsTab {
   return 'global'
 }
 
-export default function AnalyticsPanel({ onClose }: AnalyticsPanelProps) {
+export default function AnalyticsPanel({ isOpen, onClose }: AnalyticsPanelProps) {
   const { t } = useTranslation('analytics')
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
@@ -65,13 +66,14 @@ export default function AnalyticsPanel({ onClose }: AnalyticsPanelProps) {
     }
   }, [activeTab])
 
-  // Trigger a global fetch on first open (the store is idempotent if data is
-  // already fresh; user can still hit the refresh button to force re-fetch).
+  // Trigger a global fetch when the panel opens and data is not already fresh
+  // (the store is idempotent; user can still hit the refresh button to force re-fetch).
   useEffect(() => {
+    if (!isOpen) return
     if (!globalSummary && !isLoadingGlobal && !globalError) {
       void fetchGlobalSummary()
     }
-  }, [globalSummary, isLoadingGlobal, globalError, fetchGlobalSummary])
+  }, [isOpen, globalSummary, isLoadingGlobal, globalError, fetchGlobalSummary])
 
   // Default the Workspace tab's selector to the chat-active workspace on
   // first open if the user hasn't picked one yet.
@@ -99,7 +101,7 @@ export default function AnalyticsPanel({ onClose }: AnalyticsPanelProps) {
     : null
 
   return (
-    <ModalPanel open onClose={onClose}>
+    <ModalPanel open={isOpen} onClose={onClose}>
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}

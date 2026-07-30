@@ -9,7 +9,7 @@ interface ModalPanelProps {
   ignoreBackdropClick?: boolean
 }
 
-const TRANSITION_DURATION = 200
+const EXIT_DURATION = 220
 
 function isTextInput(target: EventTarget | null): boolean {
   return (
@@ -27,15 +27,17 @@ export default function ModalPanel({
 }: ModalPanelProps) {
   const [mounted, setMounted] = useState(false)
   const [visible, setVisible] = useState(false)
+  const [direction, setDirection] = useState<'enter' | 'exit'>('enter')
   const onCloseRef = useRef(onClose)
 
   useEffect(() => {
     onCloseRef.current = onClose
   }, [onClose])
 
-  // Mount/unmount with exit animation so the panel can fade out before unmounting.
+  // Mount/unmount with enter/exit animation so the panel can animate in and out.
   useEffect(() => {
     if (open) {
+      setDirection('enter')
       setMounted(true)
       // Double requestAnimationFrame ensures the browser sees the initial state
       // before the entering class is applied, so the transition runs.
@@ -45,8 +47,9 @@ export default function ModalPanel({
         })
       })
     } else {
+      setDirection('exit')
       setVisible(false)
-      const timer = setTimeout(() => setMounted(false), TRANSITION_DURATION)
+      const timer = setTimeout(() => setMounted(false), EXIT_DURATION)
       return () => clearTimeout(timer)
     }
   }, [open])
@@ -67,10 +70,16 @@ export default function ModalPanel({
 
   if (!mounted) return null
 
+  const isEnter = direction === 'enter'
+  const durationClass = isEnter ? 'duration-200' : 'duration-[220ms]'
+  const easingClass = isEnter ? 'ease-out' : 'ease-in'
+
   return (
     <div
       className={cn(
-        'fixed inset-0 z-50 flex flex-col transition-opacity duration-200 ease-out',
+        'fixed inset-0 z-50 flex flex-col transition-opacity',
+        durationClass,
+        easingClass,
         'motion-reduce:transition-none',
         visible ? 'opacity-100' : 'opacity-0',
       )}
@@ -79,7 +88,9 @@ export default function ModalPanel({
       <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
         <div
           className={cn(
-            'absolute inset-0 bg-overlay/60 backdrop-blur-sm transition-opacity duration-200 ease-out',
+            'absolute inset-0 bg-overlay/60 backdrop-blur-sm transition-opacity',
+            durationClass,
+            easingClass,
             'motion-reduce:transition-none',
             visible ? 'opacity-100' : 'opacity-0',
           )}
@@ -93,8 +104,15 @@ export default function ModalPanel({
         <div
           className={cn(
             'relative bg-surface border border-border flex flex-col overflow-hidden',
-            'transition-all duration-200 ease-out motion-reduce:transition-none',
-            visible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-2 scale-[0.98]',
+            'transition-all',
+            durationClass,
+            easingClass,
+            'motion-reduce:transition-none',
+            visible
+              ? 'opacity-100 translate-y-0 scale-100'
+              : isEnter
+                ? 'opacity-0 -translate-y-2 scale-[0.95]'
+                : 'opacity-0 translate-y-4 scale-[0.92]',
             !className && 'w-full h-full max-h-[90vh] max-w-[90vw] rounded-xl shadow-2xl',
             className,
           )}

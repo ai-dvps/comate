@@ -154,7 +154,7 @@ describe('SettingsPanel bot dirty guard delegation', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     // Switch to bots tab.
@@ -180,7 +180,7 @@ describe('SettingsPanel bot dirty guard delegation', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Bots/i }));
@@ -212,7 +212,7 @@ describe('SettingsPanel bot dirty guard delegation', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Bots/i }));
