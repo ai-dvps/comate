@@ -7,8 +7,6 @@ import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from
 import type { SessionStatusFilter } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
 import { Plus, Puzzle, BookOpen, Search, X, RefreshCw, FlaskConical, Archive, ArchiveRestore, Copy, GitBranch, Trash2 } from 'lucide-react'
-import PluginSettingsPage from './PluginSettingsPage'
-import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
 import { cn } from './ui/utils'
 import SessionStatusFilterControl from './SessionStatusFilterControl'
@@ -19,9 +17,11 @@ const EMPTY_ARRAY: [] = []
 
 interface SessionListProps {
   workspaceId: string
+  onOpenPlugins?: () => void
+  onOpenSkills?: () => void
 }
 
-export default function SessionList({ workspaceId }: SessionListProps) {
+export default function SessionList({ workspaceId, onOpenPlugins, onOpenSkills }: SessionListProps) {
   const { t } = useTranslation('chat')
   const { t: ts } = useTranslation('settings')
   const { useModifierToSubmit } = useAppSettings()
@@ -31,8 +31,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [editingName, setEditingName] = useState('')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
   const [deleteDialogSession, setDeleteDialogSession] = useState<import('../stores/chat-store').ChatSession | null>(null)
-  const [showPluginSettings, setShowPluginSettings] = useState(false)
-  const [showSkillsPage, setShowSkillsPage] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<SessionStatusFilter>('active')
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -360,14 +358,14 @@ export default function SessionList({ workspaceId }: SessionListProps) {
       {/* Plugin + Skills Settings Toolbar */}
       <div className="p-2 border-t border-border/50 flex-shrink-0 flex gap-2">
         <button
-          onClick={() => setShowPluginSettings(true)}
+          onClick={() => onOpenPlugins?.()}
           className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-bg border border-border hover:border-border-hover rounded-lg text-xs text-text-secondary hover:text-text-primary transition-colors"
         >
           <Puzzle className="w-3.5 h-3.5" />
           {ts('plugins.title')}
         </button>
         <button
-          onClick={() => setShowSkillsPage(true)}
+          onClick={() => onOpenSkills?.()}
           className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-bg border border-border hover:border-border-hover rounded-lg text-xs text-text-secondary hover:text-text-primary transition-colors"
           title={ts('skills.toolbarButton')}
         >
@@ -452,22 +450,6 @@ export default function SessionList({ workspaceId }: SessionListProps) {
           cancelLabel={t('deleteSessionCancel')}
           onConfirm={handleConfirmDelete}
           onCancel={() => setDeleteDialogSession(null)}
-        />
-      )}
-
-      {/* Plugin Settings Page */}
-      {showPluginSettings && (
-        <PluginSettingsPage
-          workspaceId={workspaceId}
-          onClose={() => setShowPluginSettings(false)}
-        />
-      )}
-
-      {/* Skills Page */}
-      {showSkillsPage && (
-        <SkillsPage
-          workspaceId={workspaceId}
-          onClose={() => setShowSkillsPage(false)}
         />
       )}
     </div>
