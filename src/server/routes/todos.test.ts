@@ -184,4 +184,51 @@ describe('global todo routes (U2)', () => {
     const res = await call('post', '/:todoId/session', { params: { id: workspaceId, todoId: created.id }, body: {} });
     assert.strictEqual(res.statusCode, 409);
   });
+
+  it('POST / accepts content and persists it', async () => {
+    const res = await call('post', '/', { params: {}, body: { text: 'with content', content: '## body' } });
+    assert.strictEqual(res.statusCode, 201);
+    const todo = (res.jsonBody as { todo: { content: string | null; text: string } }).todo;
+    assert.strictEqual(todo.content, '## body');
+    assert.strictEqual(todo.text, 'with content');
+  });
+
+  it('POST / still works when content is absent (optional)', async () => {
+    const res = await call('post', '/', { params: {}, body: { text: 'no content' } });
+    assert.strictEqual(res.statusCode, 201);
+    assert.strictEqual((res.jsonBody as { todo: { content: string | null } }).todo.content, null);
+  });
+
+  it('POST / rejects content over the 50000-char cap with 400', async () => {
+    const res = await call('post', '/', { params: {}, body: { text: 'too long', content: 'x'.repeat(50001) } });
+    assert.strictEqual(res.statusCode, 400);
+  });
+
+  it('PUT /:todoId updates content', async () => {
+    const created = store.createTodo(null, { text: 't' });
+    const res = await call('put', '/:todoId', { params: { todoId: created.id }, body: { content: 'new body' } });
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual((res.jsonBody as { todo: { content: string | null } }).todo.content, 'new body');
+    assert.strictEqual(store.getTodoById(created.id)!.content, 'new body');
+  });
+
+  it('PUT /:todoId rejects content over the 50000-char cap with 400', async () => {
+    const created = store.createTodo(null, { text: 't' });
+    const res = await call('put', '/:todoId', { params: { todoId: created.id }, body: { content: 'y'.repeat(50001) } });
+    assert.strictEqual(res.statusCode, 400);
+  });
+
+  it('PUT /:todoId accepts null content (clears it)', async () => {
+    const created = store.createTodo(null, { text: 't', content: 'body' });
+    const res = await call('put', '/:todoId', { params: { todoId: created.id }, body: { content: null } });
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual((res.jsonBody as { todo: { content: string | null } }).todo.content, null);
+  });
+
+  it('the session name still derives from text, not content', async () => {
+    const created = store.createTodo(workspaceId, { text: 'session-name-source', content: 'body should be ignored' });
+    const res = await call('post', '/:todoId/session', { params: { id: workspaceId, todoId: created.id }, body: {} });
+    assert.strictEqual(res.statusCode, 201);
+    assert.strictEqual((res.jsonBody as { name: string }).name, 'session-name-source');
+  });
 });

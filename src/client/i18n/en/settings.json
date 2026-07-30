@@ -14,6 +14,8 @@
     "archiveThresholdDaysHint": "Sessions inactive for longer than this are automatically archived. The default is 14 days. Changes apply on the next session list load.",
     "reopenLastWorkspace": "Reopen last workspace on launch",
     "reopenLastWorkspaceHint": "Automatically restore the last active workspace when the app starts.",
+    "allowInsecureCerts": "Allow insecure certificates in embedded browser",
+    "allowInsecureCertsHint": "Lets private-CA or self-signed internal sites load by ignoring certificate errors in the embedded browser. On by default; turn off for strict certificate validation. Applies to the embedded browser only.",
     "useModifierToSubmit": "Use Ctrl/Cmd + Enter to send",
     "useModifierToSubmitHint": "When enabled, press Ctrl+Enter (Windows) or Cmd+Enter (Mac) to submit. Press Enter alone to insert a new line.",
     "notificationSounds": "Notification sounds",
@@ -99,7 +101,30 @@
     "createFailed": "Failed to create provider",
     "updateFailed": "Failed to update provider",
     "deleteFailed": "Failed to delete provider",
-    "setDefaultFailed": "Failed to set default provider"
+    "setDefaultFailed": "Failed to set default provider",
+    "usage": {
+      "loading": "Loading usage…",
+      "used": "used",
+      "left": "left",
+      "resets": "resets",
+      "rolling": "5h window",
+      "refresh": "Refresh usage",
+      "connect": "Connect account",
+      "reconnect": "Reconnect to refresh",
+      "noPlan": "No coding plan found for this account",
+      "unavailable": "Usage unavailable",
+      "retry": "Retry"
+    },
+    "usageLogin": {
+      "title": "Log in to your account",
+      "cancel": "Cancel",
+      "connecting": "Preparing login…",
+      "capturing": "Capturing your session…",
+      "failed": "Could not capture your session. Finish logging in, then try again.",
+      "retry": "Try again",
+      "capture": "I've logged in — capture",
+      "startFailed": "Failed to start login"
+    }
   },
   "appearance": {
     "theme": "Theme",

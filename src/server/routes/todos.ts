@@ -23,6 +23,18 @@ function validateTodoText(text: unknown): string | null {
   return null;
 }
 
+/**
+ * Validate the optional markdown `content` body (KTD2). Optional and nullable:
+ * absent or null is always valid; a present string must stay under the 50,000-
+ * char cap. Title validation remains at 2000 (`validateTodoText`).
+ */
+function validateTodoContent(content: unknown): string | null {
+  if (content === undefined || content === null) return null;
+  if (typeof content !== 'string') return 'content must be a string';
+  if (content.length > 50000) return 'content must be 50000 characters or less';
+  return null;
+}
+
 /** Redact any GitHub-derived error before it reaches a logger or response (R13). */
 function handleSyncError(res: Response, err: unknown, fallback: string): void {
   if (err instanceof SyncError) {
@@ -55,8 +67,17 @@ router.post('/', async (req, res) => {
       res.status(400).json({ error: err });
       return;
     }
+    const contentErr = validateTodoContent(input?.content);
+    if (contentErr) {
+      res.status(400).json({ error: contentErr });
+      return;
+    }
     const workspaceId = workspaceIdFromReq(req);
-    const todo = store.createTodo(workspaceId, { text: input.text, content: input.content, dueDate: input.dueDate });
+    const todo = store.createTodo(workspaceId, {
+      text: input.text,
+      content: input.content,
+      dueDate: input.dueDate,
+    });
     res.status(201).json({ todo });
   } catch (error) {
     diagLog('[todos] Failed to create todo: ' + (error instanceof Error ? error.message : String(error)));
@@ -78,8 +99,9 @@ router.put('/:todoId', async (req, res) => {
       res.status(400).json({ error: 'text must be 2000 characters or less' });
       return;
     }
-    if (input.content && input.content.length > 20000) {
-      res.status(400).json({ error: 'content must be 20000 characters or less' });
+    const contentErr = validateTodoContent(input.content);
+    if (contentErr) {
+      res.status(400).json({ error: contentErr });
       return;
     }
 

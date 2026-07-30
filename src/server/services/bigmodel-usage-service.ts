@@ -1,0 +1,143 @@
+import type { Provider } from '../models/provider.js';
+import { providerUsageStore, type UsageSummary, type UsageStatus } from './provider-usage-store.js';
+import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
+import type { SqliteStore } from '../storage/sqlite-store.js';
+import { asRecord, asNum } from './kimi-usage-service.js';
+import { diagLog } from '../utils/diag-logger.js';
+
+export const BIGMODEL_LOGIN_URL = 'https://bigmodel.cn';
+export const BIGMODEL_USAGE_URL = 'https://bigmodel.cn/api/monitor/usage/quota/limit';
+export const BIGMODEL_SITE_KEY = 'bigmodel.cn';
+/** The cookie name that holds the BigModel access JWT. */
+export const BIGMODEL_TOKEN_COOKIE = 'bigmodel_token_production';
+
+const USAGE_TIMEOUT_MS = 8000;
+
+export function isBigModelProvider(provider?: Provider): boolean {
+  if (!provider) return false;
+  return provider.baseUrl.toLowerCase().includes('bigmodel.cn');
+}
+
+export interface UsageResult {
+  status: UsageStatus;
+  summary?: UsageSummary;
+  lastUpdated?: string;
+}
+
+/**
+ * Parse the BigModel `quota/limit` response. The `data.limits` array entries
+ * are distinguished by `unit`:
+ *   unit 5 = TIME_LIMIT (MCP monthly — NOT coding plan, dropped)
+ *   unit 6 = TOKENS_LIMIT (coding plan weekly) → primary
+ *   unit 3 = TOKENS_LIMIT (coding plan 5h)    → rolling
+ * The coding-plan limits only expose `percentage`; map to used/total/remaining
+ * (total=100) so the display matches Kimi's "X / 100 used · Y left" format.
+ */
+function parseBigModelUsage(body: unknown): UsageSummary | null {
+  const root = asRecord(body);
+  const data = asRecord(root?.data);
+  if (!data) return null;
+  const limits = Array.isArray(data.limits) ? (data.limits as unknown[]) : [];
+
+  const weekly = asRecord(limits.find((l) => asRecord(l)?.unit === 6));
+  const fiveHour = asRecord(limits.find((l) => asRecord(l)?.unit === 3));
+  if (!weekly && !fiveHour) return null;
+
+  // Primary: weekly coding (unit 6).
+  const weeklyPct = asNum(weekly?.percentage);
+  const used = weeklyPct;
+  const total = weeklyPct !== null ? 100 : null;
+  const remaining = weeklyPct !== null ? 100 - weeklyPct : null;
+  const weeklyResetMs = asNum(weekly?.nextResetTime);
+  const resetDate = weeklyResetMs !== null ? new Date(weeklyResetMs).toISOString() : null;
+
+  // Rolling: 5h coding (unit 3).
+  const fiveHourPct = asNum(fiveHour?.percentage);
+  const fiveHourResetMs = asNum(fiveHour?.nextResetTime);
+  const rolling =
+    fiveHourPct !== null || fiveHourResetMs !== null
+      ? {
+          remaining: fiveHourPct !== null ? 100 - fiveHourPct : null,
+          resetDate: fiveHourResetMs !== null ? new Date(fiveHourResetMs).toISOString() : null,
+        }
+      : null;
+
+  if (used === null && total === null && remaining === null && resetDate === null) {
+    return null;
+  }
+  return { used, total, remaining, resetDate, rolling, lastUpdated: new Date().toISOString() };
+}
+
+/** Read the captured BigModel bearer from global_site_auth. */
+function readBigModelBearer(sqlite: SqliteStore): string | null {
+  const json = sqlite.getGlobalSiteAuth(BIGMODEL_SITE_KEY);
+  if (!json) return null;
+  try {
+    const entry = JSON.parse(json) as { bearerToken?: string };
+    return entry.bearerToken && entry.bearerToken.length > 0 ? entry.bearerToken : null;
+  } catch {
+    return null;
+  }
+}
+
+export class BigModelUsageService {
+  constructor(
+    private readonly sqlite: SqliteStore = sqliteStoreSingleton,
+    private readonly cache = providerUsageStore,
+  ) {}
+
+  async runUsageCheck(providerId: string): Promise<UsageResult> {
+    const provider = this.sqlite.getProvider(providerId);
+    if (!provider || !isBigModelProvider(provider)) {
+      return { status: 'unsupported' };
+    }
+
+    const cached = this.cache.getCachedUsage(providerId);
+    if (cached && !this.cache.isStale(cached)) {
+      return { status: 'ready', summary: cached, lastUpdated: cached.lastUpdated };
+    }
+
+    const token = readBigModelBearer(this.sqlite);
+    if (!token) {
+      return { status: 'idle' };
+    }
+
+    // No exp claim in the BigModel JWT — rely on 401 for relogin.
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), USAGE_TIMEOUT_MS);
+      const response = await fetch(BIGMODEL_USAGE_URL, {
+        method: 'GET',
+        headers: {
+          Authorization: token,
+          Accept: 'application/json',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (response.status === 401 || response.status === 403) {
+        return { status: 'relogin' };
+      }
+      if (!response.ok) {
+        return { status: 'error' };
+      }
+
+      const body = await response.json().catch(() => null);
+      const summary = parseBigModelUsage(body);
+      if (!summary) {
+        return { status: 'no-plan' };
+      }
+      this.cache.setCachedUsage(providerId, summary);
+      return { status: 'ready', summary, lastUpdated: summary.lastUpdated };
+    } catch (err) {
+      diagLog('BigModel usage query failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { status: 'error' };
+    }
+  }
+}
+
+export const bigModelUsageService = new BigModelUsageService();

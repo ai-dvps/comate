@@ -79,5 +79,17 @@
   "conflictAcceptRemote": "Take remote",
   "spawnSession": "Start session",
   "spawnPickWorkspace": "Pick a workspace…",
-  "detailHasSession": "Linked to a session"
+  "detailHasSession": "Linked to a session",
+  "titlePlaceholder": "Title",
+  "detailContent": "Content",
+  "edit": "Edit",
+  "preview": "Preview",
+  "save": "Save",
+  "saving": "Saving…",
+  "saveTooltip": "Save (⌘S / Ctrl+S)",
+  "unsavedChanges": "Unsaved changes",
+  "titleRequired": "Title cannot be empty",
+  "titleTooLong": "Title exceeds the {{max}} character limit",
+  "contentTooLong": "Content exceeds the {{max}} character limit",
+  "contentEmpty": "No content yet."
 }
