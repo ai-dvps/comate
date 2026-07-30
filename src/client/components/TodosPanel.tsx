@@ -238,7 +238,7 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
 
               {/* Group by */}
               <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupBy)}>
-                <SelectTrigger className="w-28 sm:w-32 h-9 text-xs px-2.5" aria-label={t('groupBy')}>
+                <SelectTrigger className="w-28 sm:w-32 h-[34px] text-xs px-2.5" aria-label={t('groupBy')}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
