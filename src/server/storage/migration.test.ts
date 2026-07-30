@@ -728,3 +728,118 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     db.close();
   });
 });
+
+/**
+ * Seed a v7-shape todos table (global schema, version already at 7) that
+ * predates the `content` column. Opening it with SqliteStore must add the
+ * nullable `content` column additively without touching existing rows.
+ */
+function seedV7TodosWithoutContent(
+  dbPath: string,
+  rows: Array<{
+    id: string;
+    workspace_id: string | null;
+    text: string;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  }>,
+): void {
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE bot_migration_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL,
+      run_at TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL DEFAULT '{}'
+    )
+  `);
+  // Version already at 7 so migrateTodosGlobalSchema short-circuits; the table
+  // is the global shape but WITHOUT the new content column.
+  db.exec(`
+    CREATE TABLE todos (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT,
+      text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      session_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      origin TEXT NOT NULL DEFAULT 'local',
+      due_date TEXT,
+      repo_full_name TEXT,
+      issue_number INTEGER,
+      remote_snapshot_json TEXT,
+      remote_updated_at TEXT,
+      last_synced_at TEXT,
+      assignee TEXT,
+      labels_json TEXT NOT NULL DEFAULT '[]',
+      origin_deleted INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  const insert = db.prepare(
+    'INSERT INTO todos (id, workspace_id, text, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  for (const r of rows) {
+    insert.run(r.id, r.workspace_id, r.text, r.status, r.created_at, r.updated_at);
+  }
+  db.prepare("INSERT INTO bot_migration_state (id, version, run_at, snapshot_json) VALUES (1, 7, ?, '{}')").run(now());
+  db.close();
+}
+
+describe('todos content column migration (additive ADD COLUMN)', { concurrency: false }, () => {
+  let dbDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbDir = mkdtempSync(join(tmpdir(), 'todos-content-migration-'));
+    dbPath = join(dbDir, 'data.db');
+  });
+
+  it('a fresh db has the content column from creation', () => {
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+    const cols = todoColumns(db);
+    const contentCol = cols.find((c) => c.name === 'content');
+    assert.ok(contentCol, 'content column present on a fresh db');
+    assert.strictEqual(contentCol!.notnull, 0, 'content is nullable');
+    db.close();
+  });
+
+  it('adds the content column to a v7-shape db that predates it', () => {
+    const ts = now();
+    seedV7TodosWithoutContent(dbPath, [
+      { id: 't1', workspace_id: null, text: 'legacy v7 todo', status: 'pending', created_at: ts, updated_at: ts },
+    ]);
+
+    // Before: no content column.
+    const before = new Database(dbPath);
+    assert.ok(!todoColumns(before).some((c) => c.name === 'content'));
+    before.close();
+
+    // Open through SqliteStore — additive ADD COLUMN runs.
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+    const cols = todoColumns(db);
+    const contentCol = cols.find((c) => c.name === 'content');
+    assert.ok(contentCol, 'content column added by migration');
+    assert.strictEqual(contentCol!.notnull, 0, 'content is nullable');
+    // Existing row is untouched and reads back with null content.
+    assert.strictEqual((db.prepare('SELECT COUNT(*) AS c FROM todos').get() as { c: number }).c, 1);
+    const todo = store.getTodoById('t1');
+    assert.ok(todo);
+    assert.strictEqual(todo!.text, 'legacy v7 todo');
+    assert.strictEqual(todo!.content, null);
+    db.close();
+  });
+
+  it('is idempotent: a second construction leaves content intact', () => {
+    const store = new SqliteStore(dbPath);
+    const created = store.createTodo(null, { text: 'with body', content: 'persisted body' });
+    const second = new SqliteStore(dbPath);
+    const fetched = second.getTodoById(created.id);
+    assert.ok(fetched);
+    assert.strictEqual(fetched!.content, 'persisted body');
+    openRawDb(second).close();
+  });
+});

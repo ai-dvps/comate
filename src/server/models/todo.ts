@@ -12,7 +12,11 @@ export interface Todo {
   /** Global todos may carry no workspace; a workspace is an optional soft link. */
   workspaceId: string | null;
   text: string;
-  /** Optional long-form body / detail text. */
+  /**
+   * Optional markdown detail body. The existing `text` field remains the short
+   * title and session-name source (KTD1); `content` is a distinct, larger,
+   * nullable field that mirrors the GitHub issue body for github-origin todos.
+   */
   content: string | null;
   status: TodoStatus;
   sessionId: string | null;

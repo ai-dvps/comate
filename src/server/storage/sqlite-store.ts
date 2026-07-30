@@ -336,6 +336,17 @@ export class SqliteStore {
         updated_at TEXT NOT NULL
       )
     `);
+    // Global (app-level) remembered site-auth: a captured web-login session
+    // context keyed by site, reusable across workspaces (e.g. the Kimi login
+    // captured for usage also auto-fills the chat browser). Server-only — the
+    // entry JSON is never returned to clients.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS global_site_auth (
+        site_key TEXT PRIMARY KEY,
+        entry_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todos (
         id TEXT PRIMARY KEY,
@@ -358,6 +369,14 @@ export class SqliteStore {
         origin_deleted INTEGER NOT NULL DEFAULT 0
       )
     `);
+    // KTD4: additive `content` column (nullable markdown body). Idempotent on
+    // column existence; fresh DBs have it from the CREATE above, and the rebuild
+    // migrations below also declare it, so this ADD COLUMN is the backfill path
+    // for v7-shape DBs that predate the column.
+    const todoColumns = this.db.prepare("PRAGMA table_info(todos)").all() as { name: string }[];
+    if (!todoColumns.some((col) => col.name === 'content')) {
+      this.db.exec('ALTER TABLE todos ADD COLUMN content TEXT');
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS repo_sync_state (
         repo_full_name TEXT PRIMARY KEY,
@@ -576,6 +595,7 @@ export class SqliteStore {
           id TEXT PRIMARY KEY,
           workspace_id TEXT,
           text TEXT NOT NULL,
+          content TEXT,
           status TEXT NOT NULL DEFAULT 'pending',
           session_id TEXT,
           created_at TEXT NOT NULL,
@@ -698,6 +718,7 @@ export class SqliteStore {
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
           text TEXT NOT NULL,
+          content TEXT,
           status TEXT NOT NULL DEFAULT 'pending',
           session_id TEXT,
           created_at TEXT NOT NULL,
@@ -3406,6 +3427,39 @@ export class SqliteStore {
   /** Remove the stored connection (Disconnect). */
   clearGithubConnection(): void {
     this.db.prepare('DELETE FROM app_settings WHERE id = 1').run();
+  }
+
+  // -------------------------------------------------------------------------
+  // Global remembered site-auth (cross-workspace). entry_json is a serialized
+  // BrowserSiteAuthEntry; server-only — never returned to clients.
+  // -------------------------------------------------------------------------
+
+  /** Serialized BrowserSiteAuthEntry JSON for a site, or null when none stored. */
+  getGlobalSiteAuth(siteKey: string): string | null {
+    const row = this.db
+      .prepare('SELECT entry_json FROM global_site_auth WHERE site_key = ?')
+      .get(siteKey) as { entry_json: string } | undefined;
+    const json = row?.entry_json;
+    return json && json.length > 0 ? json : null;
+  }
+
+  /** Upsert the serialized site-auth entry JSON for a site. */
+  setGlobalSiteAuth(siteKey: string, entryJson: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO global_site_auth (site_key, entry_json, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(site_key) DO UPDATE SET
+          entry_json = excluded.entry_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(siteKey, entryJson, now);
+  }
+
+  /** Remove the stored site-auth entry for a site. */
+  clearGlobalSiteAuth(siteKey: string): void {
+    this.db.prepare('DELETE FROM global_site_auth WHERE site_key = ?').run(siteKey);
   }
 
   // -------------------------------------------------------------------------

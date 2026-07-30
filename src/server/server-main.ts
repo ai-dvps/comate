@@ -35,6 +35,7 @@ import analyticsRoutes from './routes/analytics.js';
 import botRoutes from './routes/bots.js';
 import healthBrowserRoutes from './routes/health-browser.js';
 import browserRoutes from './routes/browser.js';
+import settingsRoutes from './routes/settings.js';
 import { browserViewerProxy } from './routes/browser-proxy.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
@@ -159,6 +160,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/bots', botRoutes);
 app.use('/api/health/browser', healthBrowserRoutes);
 app.use('/api/browser', browserRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Health checks
 app.get('/api/health', (_req, res) => {

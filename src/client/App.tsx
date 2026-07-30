@@ -18,6 +18,7 @@ import { initNotificationClickHandler } from './lib/notifications'
 import { openSessionDirect } from './lib/session-jump'
 import RightPanel from './components/RightPanel'
 import BrowserPopout from './components/browser/BrowserPopout'
+import UsageLoginModal from './components/UsageLoginModal'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
@@ -321,7 +322,7 @@ function App() {
                 key={wsId}
                 className={cn(
                   'absolute inset-0 flex flex-col',
-                  wsId === activeWorkspaceId && !showTodos ? 'visible' : 'invisible pointer-events-none'
+                  wsId === activeWorkspaceId ? 'visible' : 'invisible pointer-events-none'
                 )}
                 aria-hidden={wsId !== activeWorkspaceId}
                 {...(wsId !== activeWorkspaceId ? { inert: '' } : {})}
@@ -342,11 +343,6 @@ function App() {
               onSelectWorkspace={(id) => openWorkspace(id)}
               onBrowseWorkspaces={() => setIsWorkspaceSwitcherOpen(true)}
             />
-          )}
-          {showTodos && (
-            <div className="absolute inset-0 flex flex-col z-10">
-              <TodosPanel onClose={() => setShowTodos(false)} />
-            </div>
           )}
         </main>
 
@@ -378,6 +374,10 @@ function App() {
         <ScheduledTasksPanel onClose={() => setShowScheduledTasks(false)} />
       )}
 
+      {showTodos && (
+        <TodosPanel onClose={() => setShowTodos(false)} />
+      )}
+
       {showCreateModal && (
         <CreateWorkspaceModal
           onClose={() => setShowCreateModal(false)}
@@ -387,6 +387,8 @@ function App() {
       <UpdateRestartDialog onForceShowWindow={handleForceShowWindow} />
 
       <BrowserPopout />
+
+      <UsageLoginModal />
 
       <ToastContainer />
     </div>

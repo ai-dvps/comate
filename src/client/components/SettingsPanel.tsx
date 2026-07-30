@@ -26,6 +26,75 @@ import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 import BotManagementPage, { type BotManagementPageHandle } from './BotManagementPage'
 import UnsavedChangesDialog from './UnsavedChangesDialog'
 
+/**
+ * Embedded browser "allow insecure certificates" toggle. App-global (not
+ * workspace-scoped), persisted server-side so it is readable at Chrome spawn.
+ * Self-contained: loads on mount and persists on toggle (optimistic), so it
+ * does not entangle with the localStorage-backed General-tab form/save flow.
+ */
+function BrowserInsecureCertsToggle() {
+  const { t } = useTranslation('settings')
+  const [value, setValue] = useState(true) // server default is ON
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    fetch('/api/settings/browser')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (alive && data && typeof data.allowInsecureCerts === 'boolean') {
+          setValue(data.allowInsecureCerts)
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setLoaded(true)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const toggle = async (): Promise<void> => {
+    const next = !value
+    setValue(next) // optimistic
+    try {
+      const res = await fetch('/api/settings/browser', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ allowInsecureCerts: next }),
+      })
+      if (!res.ok) throw new Error('save failed')
+    } catch {
+      setValue(!next) // revert on failure
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between py-3 border-t border-border/50">
+      <div>
+        <label className="block text-xs font-medium text-text-secondary">
+          {t('general.allowInsecureCerts')}
+        </label>
+        <p className="text-[10px] text-text-tertiary mt-0.5">{t('general.allowInsecureCertsHint')}</p>
+      </div>
+      <button
+        onClick={toggle}
+        disabled={!loaded}
+        className={`relative w-9 h-5 rounded-full transition-colors ${
+          value ? 'bg-accent' : 'bg-border'
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+            value ? 'translate-x-4' : 'translate-x-0'
+          }`}
+        />
+      </button>
+    </div>
+  )
+}
+
 interface SettingsPanelProps {
   onClose: () => void
 }
@@ -746,6 +815,8 @@ export function GeneralTab({
               />
             </button>
           </div>
+
+          <BrowserInsecureCertsToggle />
 
           <div className="flex items-center justify-between py-3 border-t border-border/50">
             <div>

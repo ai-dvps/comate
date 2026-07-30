@@ -62,6 +62,14 @@ export interface SteelProcessOptions {
   pidfilePath: string;
   /** Extra environment overrides for the child. */
   env?: Record<string, string>;
+  /**
+   * Pass --ignore-certificate-errors so private-CA / hostname-mismatched
+   * internal sites load. Resolved by browser-service from the app-global
+   * "allow insecure certificates" setting (default ON). NOT carried via `env`
+   * — `env` is spread last in start() and would clobber the computed
+   * CHROME_ARGS.
+   */
+  ignoreCertErrors?: boolean;
 }
 
 export interface SteelProcessDeps {
@@ -164,6 +172,37 @@ export function allocateLoopbackPort(): Promise<number> {
       srv.close(() => resolve(port));
     });
   });
+}
+
+/**
+ * Build the CHROME_ARGS value. The vendored Steel splits this string on single
+ * spaces into Chrome launch args (steel/build/env.js: `val.split(" ")`), so a
+ * space-joined flag list is the contract. The base `--remote-debugging-port=0`
+ * lets Chrome pick a free CDP port (Steel hardcodes 9222, dropped via
+ * FILTER_CHROME_ARGS).
+ *
+ * Disable Chromium's automatic HTTPS upgrades so CDP-driven navigations honor
+ * an explicit `http://` URL. Unlike address-bar navigations, `Page.navigate`
+ * cannot mark explicit HTTP as user-approved. On sites whose HTTPS endpoint
+ * redirects back to HTTP, the upgrade otherwise loops until Chromium surfaces
+ * ERR_BLOCKED_BY_CLIENT.
+ *
+ * With `ignoreCertErrors`, also pass `--ignore-certificate-errors` so internal
+ * sites behind a private CA or with a hostname-mismatched cert load. The
+ * embedded browser is headless with NO cert-warning interstitial, so without
+ * this such navigations hard-fail (surfaced in the viewer as
+ * ERR_BLOCKED_BY_CLIENT). Opt-in: it disables ALL certificate validation in the
+ * embedded browser.
+ */
+export function buildChromeArgs(opts: { ignoreCertErrors: boolean }): string {
+  const args = [
+    '--remote-debugging-port=0',
+    '--disable-features=HttpsUpgrades,HttpsFirstBalancedMode',
+  ];
+  if (opts.ignoreCertErrors) {
+    args.push('--ignore-certificate-errors');
+  }
+  return args.join(' ');
 }
 
 function isPidAlive(pid: number): boolean {
@@ -270,7 +309,9 @@ export class SteelProcess implements SteelProcessHandle {
       // and let Chrome pick a free port; puppeteer reads the real port from
       // stderr. Spike-verified against vendored steel + Chrome 150.
       FILTER_CHROME_ARGS: '--remote-debugging-port=9222',
-      CHROME_ARGS: '--remote-debugging-port=0',
+      CHROME_ARGS: buildChromeArgs({
+        ignoreCertErrors: this.options.ignoreCertErrors ?? false,
+      }),
       ...this.options.env,
     };
     if (this.options.chromiumPath) {
