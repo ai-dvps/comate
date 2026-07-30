@@ -4,6 +4,7 @@ import { Play } from 'lucide-react'
 import type { Todo, TodoStatus } from '../../stores/todo-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { cn } from '../ui/utils'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import ConflictReview from './ConflictReview'
 import CodeMirrorEditor from '../CodeMirrorEditor'
 import MarkdownPreview from '../MarkdownPreview'
@@ -38,7 +39,6 @@ export default function TodoDetail({
 }: TodoDetailProps) {
   const { t } = useTranslation('todos')
   const { workspaces } = useWorkspaceStore()
-  const [pickedWorkspace, setPickedWorkspace] = useState<string>('')
   const [spawning, setSpawning] = useState(false)
   const [bodyMode, setBodyMode] = useState<'edit' | 'preview'>('preview')
   const [bodyDraft, setBodyDraft] = useState('')
@@ -59,15 +59,13 @@ export default function TodoDetail({
   }, [todo?.text, todo?.id])
 
   const handleSpawn = async () => {
-    if (!todo) return
-    const target = todo.workspaceId ?? pickedWorkspace
-    if (!target) return
+    if (!todo?.workspaceId) return
     setSpawning(true)
     try {
       const res = await fetch(`/api/todos/${todo.id}/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId: target }),
+        body: JSON.stringify({ workspaceId: todo.workspaceId }),
       })
       if (res.ok) onResolved()
     } finally {
@@ -75,7 +73,7 @@ export default function TodoDetail({
     }
   }
 
-  const canSpawn = !!todo && todo.status === 'pending' && !todo.sessionId && (!!todo.workspaceId || !!pickedWorkspace)
+  const canSpawn = !!todo && todo.status === 'pending' && !todo.sessionId && !!todo.workspaceId
 
   const handleResizeMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -191,33 +189,33 @@ export default function TodoDetail({
         <div className="flex-1 overflow-y-auto">
           <dl className="flex flex-col gap-3 p-4 text-xs">
             <Field label={t('detailStatus')}>
-              <select
-                value={todo.status}
-                onChange={(e) => handleStatusChange(e.target.value)}
-                aria-label={t('detailStatus')}
-                className="w-full bg-surface text-text-primary text-xs rounded px-1.5 py-1 border border-border focus:outline-none focus:border-accent"
-              >
-                <option value="pending">{statusLabel.pending}</option>
-                <option value="done">{statusLabel.done}</option>
-                <option value="did-but-need-verify">{statusLabel['did-but-need-verify']}</option>
-                <option value="discard">{statusLabel.discard}</option>
-              </select>
+              <Select value={todo.status} onValueChange={handleStatusChange}>
+                <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label={t('detailStatus')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">{statusLabel.pending}</SelectItem>
+                  <SelectItem value="done">{statusLabel.done}</SelectItem>
+                  <SelectItem value="did-but-need-verify">{statusLabel['did-but-need-verify']}</SelectItem>
+                  <SelectItem value="discard">{statusLabel.discard}</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
             <Field label={t('detailOrigin')} value={todo.origin === 'github' ? t('originGithub') : t('originLocal')} />
             <Field label={t('detailWorkspace')}>
-              <select
-                value={todo.workspaceId ?? ''}
-                onChange={(e) => handleWorkspaceChange(e.target.value)}
-                aria-label={t('detailWorkspace')}
-                className="w-full bg-surface text-text-primary text-xs rounded px-1.5 py-1 border border-border focus:outline-none focus:border-accent"
-              >
-                <option value="">{t('noWorkspace')}</option>
-                {workspaces.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
+              <Select value={todo.workspaceId ?? ''} onValueChange={handleWorkspaceChange}>
+                <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label={t('detailWorkspace')}>
+                  <SelectValue placeholder={t('noWorkspace')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">{t('noWorkspace')}</SelectItem>
+                  {workspaces.map((w) => (
+                    <SelectItem key={w.id} value={w.id}>
+                      {w.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
             <Field label={t('detailDue')} value={todo.dueDate ?? '—'} />
             {todo.repoFullName && <Field label={t('groupRepo')} value={`${todo.repoFullName}#${todo.issueNumber ?? ''}`} />}
@@ -278,34 +276,18 @@ export default function TodoDetail({
           <div className="px-4 pb-4">
             <ConflictReview todoId={todo.id} onResolved={onResolved} />
 
-            {/* U7 (R4): start a session from a todo. A workspace-less todo picks a target first. */}
+            {/* U7 (R4): start a session from a todo. */}
             {todo.sessionId ? (
               <p className="text-[11px] text-text-tertiary">{t('detailHasSession')}</p>
             ) : (
-              <div className="flex flex-col gap-2">
-                {!todo.workspaceId && (
-                  <select
-                    value={pickedWorkspace}
-                    onChange={(e) => setPickedWorkspace(e.target.value)}
-                    className="bg-surface text-text-primary text-xs rounded px-1.5 py-1 border border-border focus:outline-none"
-                  >
-                    <option value="">{t('spawnPickWorkspace')}</option>
-                    {workspaces.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <button
-                  onClick={handleSpawn}
-                  disabled={!canSpawn || spawning}
-                  className="flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent-hover disabled:opacity-50 text-xs"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  {t('spawnSession')}
-                </button>
-              </div>
+              <button
+                onClick={handleSpawn}
+                disabled={!canSpawn || spawning}
+                className="flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent-hover disabled:opacity-50 text-xs"
+              >
+                <Play className="w-3.5 h-3.5" />
+                {t('spawnSession')}
+              </button>
             )}
           </div>
         </div>
