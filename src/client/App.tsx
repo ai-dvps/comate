@@ -199,7 +199,7 @@ function App() {
 
   if (claudeCheck.checking) {
     return (
-      <div className="h-screen flex items-center justify-center bg-bg text-text-primary">
+      <div className="h-screen flex items-center justify-center bg-work text-text-primary">
         <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-sm font-bold text-white">
             C
@@ -212,8 +212,8 @@ function App() {
 
   if (!claudeCheck.ok) {
     return (
-      <div className="h-screen flex items-center justify-center bg-bg text-text-primary p-8">
-        <div className="max-w-md w-full bg-surface rounded-xl border border-border p-8 flex flex-col items-center gap-6 text-center">
+      <div className="h-screen flex items-center justify-center bg-work text-text-primary p-8">
+        <div className="max-w-md w-full bg-chrome rounded-xl border border-border p-8 flex flex-col items-center gap-6 text-center">
           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-lg font-bold text-white">
             C
           </div>
@@ -241,9 +241,9 @@ function App() {
         onOpenFile: handleFileClick,
       }}
     >
-      <div className={`h-screen flex flex-col bg-bg text-text-primary ${fontSizeClass(uiFontSize)} overflow-hidden`}>
+      <div className={`h-screen flex flex-col bg-work text-text-primary ${fontSizeClass(uiFontSize)} overflow-hidden`}>
         {/* Top Bar */}
-        <header className="flex items-center h-11 flex-shrink-0 border-b border-border/50 relative z-30">
+        <header className="flex items-center h-11 flex-shrink-0 relative z-30 bg-chrome shadow-[0_1px_2px_0_rgba(0,0,0,0.06)]">
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>
           <div data-tauri-drag-region className="w-4 self-stretch select-none flex-shrink-0" onMouseDown={handleDrag} />
           <div className="flex-shrink-0">
