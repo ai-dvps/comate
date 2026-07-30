@@ -916,7 +916,7 @@ export default function PromptInput({
             <button
               onClick={onRefresh}
               disabled={!hasSession || refreshMeta?.isRefreshing || isRestarting}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover active:bg-surface-active active:scale-[0.98] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-chrome-hover active:bg-chrome-active active:scale-[0.98] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title={t('refresh')}
             >
               {refreshMeta?.isRefreshing ? (
@@ -974,7 +974,7 @@ export default function PromptInput({
               </div>
             </div>
           )}
-        <div ref={inputCardRef} data-testid="input-card" className="relative bg-surface border border-border rounded-xl shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] focus-within:border-border-hover transition-colors">
+        <div ref={inputCardRef} data-testid="input-card" className="relative bg-work border border-border rounded-xl shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] focus-within:border-border-hover transition-colors">
           <>
             <div
               className={`grid transition-[grid-template-rows] duration-300 ease-out ${isStreaming ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
@@ -1041,7 +1041,7 @@ export default function PromptInput({
                       type="button"
                       onClick={handleCommandsClick}
                       disabled={commandsDisabled}
-                      className={showSkills ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
+                      className={showSkills ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-chrome-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
                       title={t('skills')}
                     >
                       <SlashSquare className="w-3 h-3" />
@@ -1069,7 +1069,7 @@ export default function PromptInput({
                       type="button"
                       onClick={handleFilesClick}
                       disabled={filesDisabled}
-                      className={showFiles ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
+                      className={showFiles ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-chrome-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
                       title={t('files')}
                     >
                       <Paperclip className="w-3 h-3" />
@@ -1094,7 +1094,7 @@ export default function PromptInput({
                       type="button"
                       onClick={handleHistoryClick}
                       disabled={historyDisabled}
-                      className={showHistory ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
+                      className={showHistory ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-chrome-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
                       title={`${t('history')} (${t('historyShortcutHint')})`}
                     >
                       <History className="w-3 h-3" />
@@ -1154,7 +1154,7 @@ export default function PromptInput({
                         <button
                           onClick={() => setStopPopoverOpen(false)}
                           disabled={isInterrupting}
-                          className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
+                          className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-chrome-hover transition-colors"
                         >
                           {t('stopPopover.cancel')}
                         </button>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comate 极简白灰配色方案</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: light; }
+    .dark { color-scheme: dark; }
+
+    .scheme-minimal {
+      --chrome:       0 0% 96%;
+      --work:         0 0% 100%;
+      --border:       0 0% 88%;
+      --text-primary:   0 0% 10%;
+      --text-secondary: 0 0% 42%;
+      --text-tertiary:  0 0% 58%;
+      --accent:       24 90% 52%;
+      --shadow:       0 0% 0%;
+    }
+    .scheme-minimal.dark {
+      --chrome:       0 0% 13%;
+      --work:         0 0% 7%;
+      --border:       0 0% 22%;
+      --text-primary:   0 0% 96%;
+      --text-secondary: 0 0% 62%;
+      --text-tertiary:  0 0% 45%;
+      --accent:       24 90% 58%;
+      --shadow:       0 0% 0%;
+    }
+
+    .m-chrome { background: hsl(var(--chrome)); color: hsl(var(--text-primary)); }
+    .m-work { background: hsl(var(--work)); color: hsl(var(--text-primary)); }
+    .m-border { border-color: hsl(var(--border)); }
+    .m-text-secondary { color: hsl(var(--text-secondary)); }
+    .m-text-tertiary { color: hsl(var(--text-tertiary)); }
+    .m-accent { color: hsl(var(--accent)); }
+    .m-shadow { box-shadow: 0 1px 2px 0 hsl(var(--shadow) / 0.06), 0 0 0 1px hsl(var(--border)); }
+    .m-msg-user { background: hsl(0 0% 96% / 0.8); border: 1px solid hsl(var(--border)); }
+    .dark .m-msg-user { background: hsl(0 0% 18% / 0.6); border: 1px solid hsl(var(--border)); }
+  </style>
+</head>
+<body class="m-0 min-h-screen bg-neutral-100 p-6 font-sans text-neutral-800">
+
+  <div class="mx-auto max-w-4xl">
+    <div class="mb-6 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold">极简白灰方案</h1>
+        <p class="mt-1 text-neutral-600">Chrome 灰框包裹纯白工作区，输入框也是白色，靠 border 分隔</p>
+      </div>
+      <button id="themeToggle" class="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-black dark:hover:bg-neutral-200">
+        切换 Dark/Light
+      </button>
+    </div>
+
+    <div class="scheme-minimal rounded-xl border border-neutral-300 shadow-sm" id="schemeMinimal">
+      <div class="m-work flex h-[540px] flex-col overflow-hidden">
+        <header class="m-chrome flex h-11 items-center justify-between px-3 shadow-[0_1px_2px_0_rgba(0,0,0,0.06)]">
+          <div class="flex items-center gap-2">
+            <div class="h-6 w-6 rounded" style="background:hsl(24,90%,58%)"></div>
+            <span class="text-sm font-medium">Comate</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="rounded-md px-2 py-1 text-xs m-text-secondary hover:bg-black/5 dark:hover:bg-white/5">Settings</div>
+          </div>
+        </header>
+
+        <div class="flex flex-1 overflow-hidden">
+          <aside class="m-chrome flex w-52 flex-col border-r m-border">
+            <div class="flex border-b m-border">
+              <div class="flex-1 py-2.5 text-center text-xs font-medium m-text-secondary">Sessions</div>
+              <div class="flex-1 py-2.5 text-center text-xs font-medium m-accent border-b-2">Files</div>
+            </div>
+            <div class="flex-1 space-y-1 p-2">
+              <div class="rounded-md p-2 text-xs m-text-secondary hover:bg-black/5 dark:hover:bg-white/5">session-001</div>
+              <div class="rounded-md p-2 text-xs m-text-secondary hover:bg-black/5 dark:hover:bg-white/5">session-002</div>
+            </div>
+            <div class="border-t m-border p-2 text-xs m-text-tertiary">User</div>
+          </aside>
+
+          <main class="flex flex-1 flex-col min-w-0">
+            <div class="m-work flex h-10 items-center justify-center border-b m-border text-sm font-medium">
+              <span class="m-text-secondary">Current Session — <span class="m-text-primary">Claude Sonnet</span></span>
+            </div>
+
+            <div class="flex flex-1 overflow-hidden">
+              <div class="m-work flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded" style="background:linear-gradient(135deg,hsl(30,95%,65%),hsl(15,85%,58%))"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed m-text-secondary">Main work area is white. The chrome around it is a single gray.</div>
+                  </div>
+                </div>
+                <div class="flex justify-end">
+                  <div class="m-msg-user max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm">User message bubble</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded" style="background:linear-gradient(135deg,hsl(30,95%,65%),hsl(15,85%,58%))"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed m-text-secondary">Right panel is the same white as the message body - just a border separates them.</div>
+                  </div>
+                </div>
+              </div>
+
+              <aside class="m-work hidden w-56 border-l m-border lg:block p-3">
+                <div class="text-xs font-medium m-text-secondary mb-2">Details</div>
+                <div class="space-y-2">
+                  <div class="rounded-md p-2 m-chrome border m-border">
+                    <div class="text-xs m-text-secondary">File</div>
+                    <div class="text-xs font-mono mt-0.5">src/server/api.ts</div>
+                  </div>
+                  <div class="rounded-md p-2 m-chrome border m-border">
+                    <div class="text-xs m-text-secondary">Model</div>
+                    <div class="text-xs mt-0.5">Claude Sonnet 4.6</div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <div class="m-work border-t m-border p-3">
+              <div class="m-work rounded-xl border m-border p-3 m-shadow">
+                <div class="text-sm m-text-tertiary">Ask Claude anything...</div>
+                <div class="mt-2 flex justify-end gap-2">
+                  <div class="h-7 w-7 rounded-md border m-border"></div>
+                  <div class="h-7 w-7 rounded-md" style="background:hsl(24,90%,58%)"></div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+
+        <div class="m-chrome flex h-7 items-center border-t m-border px-3 text-xs m-text-tertiary">
+          Ready · Claude available
+        </div>
+      </div>
+
+      <div class="bg-white p-4 text-sm dark:bg-neutral-900 dark:text-neutral-200">
+        <h3 class="font-semibold">极简白灰方案</h3>
+        <ul class="mt-2 list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+          <li><strong>Chrome 灰</strong>：App Header、Left Sidebar、Status Bar 同一个灰</li>
+          <li><strong>工作区白</strong>：Chat Header、Message Body、Right Panel、Prompt Input 都是白色</li>
+          <li><strong>分隔</strong>：只靠 1px border，不用颜色堆层级</li>
+          <li><strong>输入框</strong>：白色 + subtle border/shadow，自然融入工作区但又有边界</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="mt-6 rounded-lg bg-white p-4 text-sm text-neutral-700 shadow-sm dark:bg-neutral-900 dark:text-neutral-300">
+      <strong>Token 设计</strong>
+      <pre class="mt-2 overflow-x-auto rounded bg-neutral-100 p-2 text-xs dark:bg-neutral-800"><code>/* Light */
+--color-chrome: 0 0% 96%;     /* #f5f5f5 */
+--color-work:   0 0% 100%;    /* #ffffff */
+--color-border: 0 0% 88%;     /* #e0e0e0 */
+
+/* Dark */
+--color-chrome: 0 0% 13%;     /* #212121 */
+--color-work:   0 0% 7%;      /* #121212 */
+--color-border: 0 0% 22%;     /* #383838 */</code></pre>
+    </div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('themeToggle');
+    let isDark = true;
+    function update() {
+      document.documentElement.classList.toggle('dark', isDark);
+      document.getElementById('schemeMinimal').classList.toggle('dark', isDark);
+    }
+    update();
+    btn.addEventListener('click', () => { isDark = !isDark; update(); });
+  </script>
+</body>
+</html>

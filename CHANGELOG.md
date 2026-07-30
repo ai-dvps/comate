@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Panel background color redesign** — simplified the main layout to a minimal white-and-gray palette. App header, left sidebar, and status bar now share a single `chrome` gray surface, while the chat header, message body, right panel, and prompt input share a single `work` white surface. App header uses a subtle shadow instead of a bottom border to avoid a double divider with the chat header. Added design comparison prototypes under `docs/design/`.
 - **Right sidebar browser integration** — the embedded browser is now a tab inside the right sidebar alongside Files and Git Changes. The old chat-header browser button and the separate in-chat browser pane are removed. The right sidebar now collapses completely (no 40 px rail) and animates its width when expanding or collapsing. Browser iframes stay mounted across tab switches and collapse/expand so the cast stream never reloads.
 
 - **Todos panel top-bar layout** — the todos panel is now a top-bar task list: the left view rail is removed, smart views (Inbox / Today / Upcoming / All) live in a segmented header control with counts, search filters the active view, and the list spans the full width with information-rich rows showing due dates, labels, and origin. Group-by moved into the header, quick-add sits at the top of the list, and empty/no-results/load-failure states are split so sync errors are visible.

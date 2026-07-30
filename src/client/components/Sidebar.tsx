@@ -72,7 +72,7 @@ export default function Sidebar({
   return (
     <aside
       className={cn(
-        'relative bg-surface flex flex-col h-full flex-shrink-0',
+        'relative bg-chrome flex flex-col h-full flex-shrink-0',
         'transition-[width] duration-200 ease-in-out overflow-hidden',
         'motion-reduce:transition-none',
         isCollapsed ? 'border-r-0 pointer-events-none' : 'border-r border-border',

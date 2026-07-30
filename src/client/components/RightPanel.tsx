@@ -202,7 +202,7 @@ export default function RightPanel({
       ref={panelRef}
       data-testid="right-panel"
       className={cn(
-        'relative bg-surface border-l border-border flex flex-col h-full flex-shrink-0',
+        'relative bg-work border-l border-border flex flex-col h-full flex-shrink-0',
         'transition-[width] duration-200 ease-in-out overflow-hidden',
         'motion-reduce:transition-none',
         isDragging && 'transition-none',
