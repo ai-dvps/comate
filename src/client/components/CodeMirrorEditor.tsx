@@ -11,6 +11,8 @@ interface CodeMirrorEditorProps {
   className?: string
   extensions?: Extension[]
   fontSize?: string
+  onChange?: (value: string) => void
+  onBlur?: () => void
 }
 
 export default function CodeMirrorEditor({
@@ -20,6 +22,8 @@ export default function CodeMirrorEditor({
   className,
   extensions = [],
   fontSize,
+  onChange,
+  onBlur,
 }: CodeMirrorEditorProps) {
   const { theme } = useTheme()
   const allExtensions = useMemo(() => {
@@ -45,6 +49,8 @@ export default function CodeMirrorEditor({
       basicSetup={{ lineNumbers: true }}
       extensions={allExtensions}
       className={className}
+      onChange={onChange}
+      onBlur={onBlur}
     />
   )
 }

@@ -37,7 +37,7 @@ function filterByView(todos: Todo[], view: SmartView): Todo[] {
   }
 }
 
-function isTextInput(target: EventTarget): boolean {
+function isTextInput(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
 }
 
@@ -52,6 +52,7 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
     syncTodos,
     createTodo,
     changeStatus,
+    updateTodo,
     deleteTodo,
     setSearchQuery,
     searchQuery,
@@ -64,6 +65,7 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
   const [groupBy, setGroupBy] = useState<GroupBy>('none')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showConnect, setShowConnect] = useState(false)
+  const [detailWidth, setDetailWidth] = useState(384)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -393,7 +395,14 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
             </div>
 
             {/* Detail pane */}
-            <TodoDetail todo={selected} onResolved={fetchTodos} />
+            <TodoDetail
+              todo={selected}
+              width={detailWidth}
+              onWidthChange={setDetailWidth}
+              onResolved={fetchTodos}
+              onUpdateTodo={updateTodo}
+              onChangeStatus={changeStatus}
+            />
           </div>
 
           {showConnect && <GitHubConnect onClose={() => setShowConnect(false)} />}
