@@ -44,6 +44,7 @@ function makeTodo(overrides: Partial<Todo> & { text: string }): Todo {
     id: overrides.id ?? `todo-${overrides.text}`,
     workspaceId: overrides.workspaceId ?? null,
     text: overrides.text,
+    content: overrides.content ?? null,
     status: overrides.status ?? 'pending',
     sessionId: null,
     createdAt: new Date().toISOString(),
@@ -167,7 +168,7 @@ describe('TodoDetail', () => {
     const user = userEvent.setup();
     renderWithI18n(
       <TodoDetail
-        todo={makeTodo({ text: '# Hello' })}
+        todo={makeTodo({ text: 'Task', content: '# Hello' })}
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
@@ -182,11 +183,11 @@ describe('TodoDetail', () => {
     expect(screen.getByTestId('markdown-preview')).toBeInTheDocument();
   });
 
-  it('updates todo text when the editor blurs', async () => {
+  it('updates todo content when the editor blurs', async () => {
     const user = userEvent.setup();
     renderWithI18n(
       <TodoDetail
-        todo={makeTodo({ text: 'Initial' })}
+        todo={makeTodo({ text: 'Task', content: 'Initial' })}
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
@@ -199,6 +200,6 @@ describe('TodoDetail', () => {
     await user.clear(editor);
     await user.type(editor, 'Updated body');
     fireEvent.blur(editor);
-    await waitFor(() => expect(onUpdateTodo).toHaveBeenCalledWith('todo-Initial', { text: 'Updated body' }));
+    await waitFor(() => expect(onUpdateTodo).toHaveBeenCalledWith('todo-Task', { content: 'Updated body' }));
   });
 });
