@@ -16,13 +16,18 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 vi.mock('../stores/workspace-store', () => ({
-  useWorkspaceStore: (selector?: (s: { activeWorkspaceId: string | null; workspaces: unknown[] }) => unknown) =>
+  useWorkspaceStore: (selector?: (s: { activeWorkspaceId: string | null; workspaces: unknown[]; openWorkspaceIds: string[] }) => unknown) =>
     selector
       ? selector({
           activeWorkspaceId: 'ws1',
           workspaces: [{ id: 'ws1', name: 'Test', folderPath: '/workspace' }],
+          openWorkspaceIds: ['ws1'],
         })
-      : { activeWorkspaceId: 'ws1', workspaces: [{ id: 'ws1', name: 'Test', folderPath: '/workspace' }] },
+      : {
+          activeWorkspaceId: 'ws1',
+          workspaces: [{ id: 'ws1', name: 'Test', folderPath: '/workspace' }],
+          openWorkspaceIds: ['ws1'],
+        },
 }))
 
 vi.mock('../stores/files-store', () => ({
@@ -87,6 +92,12 @@ vi.mock('@uiw/react-codemirror', () => ({
 vi.mock('@codemirror/merge', () => ({
   unifiedMergeView: vi.fn(() => []),
   MergeView: vi.fn(() => ({ destroy: vi.fn() })),
+}))
+
+vi.mock('./browser/BrowserPane', () => ({
+  default: function BrowserPaneMock({ workspaceId }: { workspaceId: string }) {
+    return <div data-testid="browser-pane" data-workspace={workspaceId} />
+  },
 }))
 
 function resetRightPanelStore() {

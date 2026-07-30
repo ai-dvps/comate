@@ -5,9 +5,9 @@ import { I18nextProvider } from 'react-i18next'
 import RightPanel from './RightPanel'
 import RightPanelContent from './RightPanelContent'
 import CodeMirrorDiffViewer from './CodeMirrorDiffViewer'
+import { MergeView } from '@codemirror/merge'
 import { useRightPanelStore, type FileTab, type DiffTab } from '../stores/right-panel-store'
 import i18n from '../i18n'
-import { MergeView } from '@codemirror/merge'
 
 vi.mock('@uiw/react-codemirror', () => ({
   default: function CodeMirrorMock({ value, className }: { value?: string; className?: string }) {
@@ -58,6 +58,35 @@ vi.mock('./GitChangesPanel', () => ({
   },
 }))
 
+vi.mock('./browser/BrowserPane', () => ({
+  default: function BrowserPaneMock({ workspaceId }: { workspaceId: string }) {
+    return <div data-testid="browser-pane" data-workspace={workspaceId} />
+  },
+}))
+
+vi.mock('../stores/workspace-store', () => ({
+  useWorkspaceStore: (selector?: (s: { openWorkspaceIds: string[] }) => unknown) =>
+    selector ? selector({ openWorkspaceIds: ['ws1'] }) : { openWorkspaceIds: ['ws1'] },
+}))
+
+vi.mock('../stores/chat-store', () => ({
+  useChatStore: (selector?: (s: { activeSessionIds: Record<string, string> }) => unknown) =>
+    selector
+      ? selector({ activeSessionIds: { ws1: 'sess-1' } })
+      : { activeSessionIds: { ws1: 'sess-1' } },
+}))
+
+vi.mock('../stores/browser-pane-store', () => ({
+  useBrowserPaneStore: (selector?: (s: {
+    setPaneOpen: (sessionId: string, open: boolean) => void
+  }) => unknown) =>
+    selector
+      ? selector({ setPaneOpen: vi.fn() })
+      : { setPaneOpen: vi.fn() },
+  selectSessionOpen: () => false,
+  selectHandoffPending: () => false,
+}))
+
 function resetStore() {
   useRightPanelStore.setState({
     activeListTab: 'files',
@@ -77,10 +106,10 @@ describe('RightPanel', () => {
     vi.clearAllMocks()
   })
 
-  it('renders collapsed icon rail with Files and Git icons', () => {
+  it('renders fully hidden when collapsed', () => {
     renderWithI18n(
       <RightPanel
-        width={48}
+        width={0}
         isCollapsed={true}
         toggleCollapse={vi.fn()}
         onWidthChange={vi.fn()}
@@ -88,11 +117,74 @@ describe('RightPanel', () => {
       />,
     )
 
-    expect(screen.getByTestId('right-panel-rail')).toBeInTheDocument()
-    expect(screen.getByLabelText('Show files')).toBeInTheDocument()
-    expect(screen.getByLabelText('Show git changes')).toBeInTheDocument()
+    const panel = screen.getByTestId('right-panel')
+    expect(panel).toHaveStyle({ width: '0px' })
+    const filesTab = screen.queryByTestId('right-panel-files-tab')
+    expect(filesTab).toBeInTheDocument()
+    // The content wrapper is hidden so nothing inside the panel is visible.
+    expect(filesTab?.closest('.hidden')).toBeInTheDocument()
+    expect(screen.queryByTestId('right-panel-rail')).not.toBeInTheDocument()
+  })
+
+  it('renders Files, Git Changes and Browser tabs when expanded', () => {
+    renderWithI18n(
+      <RightPanel
+        width={640}
+        isCollapsed={false}
+        toggleCollapse={vi.fn()}
+        onWidthChange={vi.fn()}
+        workspaceId="ws1"
+      />,
+    )
+
+    expect(screen.getByTestId('right-panel-files-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('right-panel-git-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('right-panel-browser-tab')).toBeInTheDocument()
+  })
+
+  it('switches to the browser tab and opens the browser pane', async () => {
+    const user = userEvent.setup()
+    renderWithI18n(
+      <RightPanel
+        width={640}
+        isCollapsed={false}
+        toggleCollapse={vi.fn()}
+        onWidthChange={vi.fn()}
+        workspaceId="ws1"
+      />,
+    )
+
+    expect(screen.getByTestId('browser-pane')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('right-panel-browser-tab'))
+
+    expect(useRightPanelStore.getState().activeListTab).toBe('browser')
+    expect(screen.getByTestId('browser-pane')).toBeInTheDocument()
     expect(screen.queryByTestId('right-panel-list-sidebar')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('right-panel-content')).not.toBeInTheDocument()
+  })
+
+  it('keeps the browser pane mounted but hidden when switching back to files', async () => {
+    const user = userEvent.setup()
+    useRightPanelStore.setState({ activeListTab: 'browser' })
+
+    renderWithI18n(
+      <RightPanel
+        width={640}
+        isCollapsed={false}
+        toggleCollapse={vi.fn()}
+        onWidthChange={vi.fn()}
+        workspaceId="ws1"
+      />,
+    )
+
+    expect(screen.getByTestId('browser-pane')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('right-panel-files-tab'))
+
+    expect(useRightPanelStore.getState().activeListTab).toBe('files')
+    // Browser pane stays mounted; its parent container is hidden via CSS.
+    expect(screen.getByTestId('browser-pane')).toBeInTheDocument()
+    expect(screen.getByTestId('right-panel-list-sidebar')).toBeInTheDocument()
   })
 
   it('expands to show the list sidebar and hides the content panel when no tabs are open', () => {
@@ -157,7 +249,7 @@ describe('RightPanel', () => {
     expect(useRightPanelStore.getState().activeListTab).toBe('git-changes')
   })
 
-  it('single-clicking a file in the Files tree selects/highlights it (R9)', async () => {
+  it('single-clicking a file in the Files tree selects/highlights it', async () => {
     const user = userEvent.setup()
     renderWithI18n(
       <RightPanel

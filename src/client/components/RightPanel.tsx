@@ -5,13 +5,21 @@ import {
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Folder, GitBranch } from 'lucide-react'
+import { Folder, GitBranch, Globe } from 'lucide-react'
 import { useRightPanelStore } from '../stores/right-panel-store'
+import { useWorkspaceStore } from '../stores/workspace-store'
+import { useChatStore } from '../stores/chat-store'
+import {
+  selectHandoffPending,
+  selectSessionOpen,
+  useBrowserPaneStore,
+} from '../stores/browser-pane-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import FileExplorer from './FileExplorer'
 import GitChangesPanel from './GitChangesPanel'
 import RightPanelContent from './RightPanelContent'
+import BrowserPane from './browser/BrowserPane'
 
 const LIST_SIDEBAR_WIDTH = 280
 const MIN_LIST_SIDEBAR_WIDTH = 180
@@ -38,17 +46,39 @@ export default function RightPanel({
   const activeListTab = useRightPanelStore((s) => s.activeListTab)
   const openTabs = useRightPanelStore((s) => s.openTabs)
   const setActiveListTab = useRightPanelStore((s) => s.setActiveListTab)
+  const openWorkspaceIds = useWorkspaceStore((s) => s.openWorkspaceIds)
   const [listSidebarWidth, setListSidebarWidth] = useState(LIST_SIDEBAR_WIDTH)
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ move: (e: MouseEvent) => void; up: () => void } | null>(null)
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
   const hasOpenTabs = openTabs.length > 0
+
+  const sessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
+  const isBrowserOpen = useBrowserPaneStore((s) => selectSessionOpen(s, sessionId))
+  const handoffPending = useBrowserPaneStore((s) => selectHandoffPending(s, sessionId))
+  const setPaneOpen = useBrowserPaneStore((s) => s.setPaneOpen)
+  const wasBrowserOpenRef = useRef(isBrowserOpen)
 
   // Clear the Files-tree selection when the workspace changes so a highlight
   // from a previous workspace does not linger.
   useEffect(() => {
     setSelectedFilePath(null)
   }, [workspaceId])
+
+  // Handoff auto-expand: when the browser opens for this workspace, switch to
+  // the browser tab and expand the panel.
+  useEffect(() => {
+    if (isBrowserOpen && !wasBrowserOpenRef.current && sessionId) {
+      if (activeListTab !== 'browser') {
+        setActiveListTab('browser')
+      }
+      if (isCollapsed) {
+        toggleCollapse()
+      }
+    }
+    wasBrowserOpenRef.current = isBrowserOpen
+  }, [isBrowserOpen, sessionId, activeListTab, isCollapsed, setActiveListTab, toggleCollapse])
 
   const handleFileOpen = useCallback(
     (path: string, name: string) => {
@@ -64,20 +94,13 @@ export default function RightPanel({
   )
 
   const handleListTabClick = useCallback(
-    (tab: 'files' | 'git-changes') => {
+    (tab: 'files' | 'git-changes' | 'browser') => {
       setActiveListTab(tab)
-    },
-    [setActiveListTab],
-  )
-
-  const handleIconClick = useCallback(
-    (tab: 'files' | 'git-changes') => {
-      setActiveListTab(tab)
-      if (isCollapsed) {
-        toggleCollapse()
+      if (tab === 'browser' && sessionId) {
+        setPaneOpen(sessionId, true)
       }
     },
-    [isCollapsed, setActiveListTab, toggleCollapse],
+    [setActiveListTab, sessionId, setPaneOpen],
   )
 
   const endDrag = useCallback(() => {
@@ -87,6 +110,7 @@ export default function RightPanel({
     document.body.style.userSelect = ''
     document.body.style.cursor = ''
     dragRef.current = null
+    setIsDragging(false)
   }, [])
 
   const handleResizeMouseDown = useCallback(
@@ -105,6 +129,7 @@ export default function RightPanel({
         endDrag()
       }
 
+      setIsDragging(true)
       dragRef.current = { move: handleMouseMove, up: handleMouseUp }
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'col-resize'
@@ -117,6 +142,7 @@ export default function RightPanel({
   const handleListResizeMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
+      if (isCollapsed) return
       const startX = e.clientX
       const startWidth = listSidebarWidth
 
@@ -135,13 +161,14 @@ export default function RightPanel({
         endDrag()
       }
 
+      setIsDragging(true)
       dragRef.current = { move: handleMouseMove, up: handleMouseUp }
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'col-resize'
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     },
-    [listSidebarWidth, endDrag],
+    [isCollapsed, listSidebarWidth, endDrag],
   )
 
   useEffect(() => {
@@ -150,150 +177,179 @@ export default function RightPanel({
     }
   }, [endDrag])
 
-  const railButtons = (
-    <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            data-testid="right-panel-files-icon"
-            onClick={() => handleIconClick('files')}
-            className={cn(
-              'p-1.5 rounded-md transition-colors',
-              activeListTab === 'files'
-                ? 'text-text-primary bg-accent/10'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-            )}
-            aria-label={t('rightPanel.showFiles')}
-          >
-            <Folder className="w-4 h-4" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="left">{t('rightPanel.showFiles')}</TooltipContent>
-      </Tooltip>
+  useEffect(() => {
+    if (isCollapsed) {
+      endDrag()
+    }
+  }, [isCollapsed, endDrag])
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            data-testid="right-panel-git-icon"
-            onClick={() => handleIconClick('git-changes')}
-            className={cn(
-              'p-1.5 rounded-md transition-colors',
-              activeListTab === 'git-changes'
-                ? 'text-text-primary bg-accent/10'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-            )}
-            aria-label={t('rightPanel.showGitChanges')}
-          >
-            <GitBranch className="w-4 h-4" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="left">{t('rightPanel.showGitChanges')}</TooltipContent>
-      </Tooltip>
-    </>
-  )
-
-  if (isCollapsed) {
-    return (
-      <aside
-        ref={panelRef}
-        data-testid="right-panel"
-        className="relative bg-surface border-l border-border flex flex-col h-full flex-shrink-0"
-        style={{ width }}
-      >
-        <div
-          data-testid="right-panel-rail"
-          className="flex flex-col items-center py-1.5 gap-0.5"
-        >
-          {railButtons}
-        </div>
-      </aside>
-    )
-  }
-
-  const panelWidth = hasOpenTabs ? width : listSidebarWidth
-  const contentWidth = Math.max(0, width - listSidebarWidth)
+  const showBrowser = activeListTab === 'browser'
+  const panelWidth = showBrowser || hasOpenTabs ? width : listSidebarWidth
+  const contentWidth = Math.max(0, panelWidth - listSidebarWidth)
 
   return (
     <aside
       ref={panelRef}
       data-testid="right-panel"
-      className="relative bg-surface border-l border-border flex flex-row h-full flex-shrink-0"
-      style={{ width: panelWidth }}
-    >
-      {hasOpenTabs && (
-        <div className="flex-1 min-w-0 flex flex-col h-full">
-          <RightPanelContent workspacePath={workspacePath} contentWidth={contentWidth} />
-        </div>
+      className={cn(
+        'relative bg-surface border-l border-border flex flex-col h-full flex-shrink-0',
+        'transition-[width] duration-200 ease-in-out overflow-hidden',
+        'motion-reduce:transition-none',
+        isDragging && 'transition-none',
       )}
-
+      style={{ width: isCollapsed ? 0 : panelWidth }}
+    >
       <div
-        data-testid="right-panel-list-sidebar"
         className={cn(
-          'relative flex flex-col h-full flex-shrink-0',
-          hasOpenTabs && 'border-l border-border/50',
+          'flex flex-col h-full',
+          isCollapsed && 'hidden',
         )}
-        style={{ width: listSidebarWidth }}
       >
-        <div
-          data-testid="right-panel-list-resize-handle"
-          role="separator"
-          aria-label={t('rightPanel.resize')}
-          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
-          onMouseDown={handleListResizeMouseDown}
-        />
+        {/* Top tabs: Files / Git Changes / Browser */}
         <div
           className="flex flex-shrink-0"
           role="tablist"
           aria-label={t('rightPanel.openTabs')}
         >
-          <button
-            data-testid="right-panel-files-tab"
-            role="tab"
-            aria-selected={activeListTab === 'files'}
-            onClick={() => handleListTabClick('files')}
-            className={cn(
-              'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
-              activeListTab === 'files'
-                ? 'text-text-primary border-accent'
-                : 'text-text-secondary hover:text-text-primary border-border/50',
-            )}
-          >
-            {t('rightPanel.files')}
-          </button>
-          <button
-            data-testid="right-panel-git-tab"
-            role="tab"
-            aria-selected={activeListTab === 'git-changes'}
-            onClick={() => handleListTabClick('git-changes')}
-            className={cn(
-              'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
-              activeListTab === 'git-changes'
-                ? 'text-text-primary border-accent'
-                : 'text-text-secondary hover:text-text-primary border-border/50',
-            )}
-          >
-            {t('rightPanel.gitChanges')}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                data-testid="right-panel-files-tab"
+                role="tab"
+                aria-selected={activeListTab === 'files'}
+                onClick={() => handleListTabClick('files')}
+                className={cn(
+                  'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-all border-b',
+                  activeListTab === 'files'
+                    ? 'text-text-primary border-accent'
+                    : 'text-text-secondary hover:text-text-primary border-border/50',
+                )}
+                aria-label={t('rightPanel.showFiles')}
+              >
+                <Folder className="w-3.5 h-3.5" />
+                <span>{t('rightPanel.files')}</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('rightPanel.showFiles')}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                data-testid="right-panel-git-tab"
+                role="tab"
+                aria-selected={activeListTab === 'git-changes'}
+                onClick={() => handleListTabClick('git-changes')}
+                className={cn(
+                  'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-all border-b',
+                  activeListTab === 'git-changes'
+                    ? 'text-text-primary border-accent'
+                    : 'text-text-secondary hover:text-text-primary border-border/50',
+                )}
+                aria-label={t('rightPanel.showGitChanges')}
+              >
+                <GitBranch className="w-3.5 h-3.5" />
+                <span>{t('rightPanel.gitChanges')}</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('rightPanel.showGitChanges')}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                data-testid="right-panel-browser-tab"
+                role="tab"
+                aria-selected={activeListTab === 'browser'}
+                onClick={() => handleListTabClick('browser')}
+                className={cn(
+                  'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-all border-b',
+                  activeListTab === 'browser'
+                    ? 'text-text-primary border-accent'
+                    : 'text-text-secondary hover:text-text-primary border-border/50',
+                )}
+                aria-label={t('rightPanel.showBrowser')}
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>{t('rightPanel.browser')}</span>
+                {handoffPending && (
+                  <span
+                    data-testid="browser-tab-badge"
+                    className="w-2 h-2 rounded-full bg-warning border border-bg animate-pulse"
+                  />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('rightPanel.showBrowser')}</TooltipContent>
+          </Tooltip>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {activeListTab === 'files' && (
-            <FileExplorer
-              onFileClick={handleFileOpen}
-              selectedPath={selectedFilePath ?? undefined}
-              onSelectPath={setSelectedFilePath}
-            />
+        {/* Body */}
+        <div className="flex-1 min-h-0 relative">
+          {/* Browser surfaces for all open workspaces — keep-alive across
+              workspace switches and tab toggles. */}
+          {openWorkspaceIds.map((wsId) => (
+            <div
+              key={wsId}
+              className={cn(
+                'absolute inset-0 flex flex-col',
+                wsId === workspaceId && showBrowser
+                  ? 'visible'
+                  : 'invisible pointer-events-none',
+              )}
+              aria-hidden={wsId !== workspaceId || !showBrowser}
+            >
+              <BrowserPane workspaceId={wsId} />
+            </div>
+          ))}
+
+          {/* Files / Git Changes layout */}
+          {!showBrowser && (
+            <div className="absolute inset-0 flex flex-row h-full">
+              {hasOpenTabs && (
+                <div className="flex-1 min-w-0 flex flex-col h-full">
+                  <RightPanelContent workspacePath={workspacePath} contentWidth={contentWidth} />
+                </div>
+              )}
+
+              <div
+                data-testid="right-panel-list-sidebar"
+                className={cn(
+                  'relative flex flex-col h-full flex-shrink-0',
+                  hasOpenTabs && 'border-l border-border/50',
+                )}
+                style={{ width: listSidebarWidth }}
+              >
+                <div
+                  data-testid="right-panel-list-resize-handle"
+                  role="separator"
+                  aria-label={t('rightPanel.resize')}
+                  className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
+                  onMouseDown={handleListResizeMouseDown}
+                />
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  {activeListTab === 'files' && (
+                    <FileExplorer
+                      onFileClick={handleFileOpen}
+                      selectedPath={selectedFilePath ?? undefined}
+                      onSelectPath={setSelectedFilePath}
+                    />
+                  )}
+                  {/* GitChangesPanel stays mounted (CSS-toggled) for the lifetime of
+                      the expanded right panel, so toggling the Files/Git-Changes tab
+                      no longer tears down and recreates the git watcher. */}
+                  <div className={cn('h-full', activeListTab !== 'git-changes' && 'hidden')}>
+                    <GitChangesPanel />
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
-          {/* GitChangesPanel stays mounted (CSS-toggled) for the lifetime of
-              the expanded right panel, so toggling the Files/Git-Changes tab
-              no longer tears down and recreates the git watcher. */}
-          <div className={cn('h-full', activeListTab !== 'git-changes' && 'hidden')}>
-            <GitChangesPanel />
-          </div>
         </div>
       </div>
 
-      {hasOpenTabs && (
+      {/* Panel resize handle */}
+      {!isCollapsed && (
         <div
           data-testid="right-panel-resize-handle"
           role="separator"
