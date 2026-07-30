@@ -380,6 +380,7 @@ export interface ChatState {
   setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
   setSessionBackend: (workspaceId: string, sessionId: string, backend: string) => Promise<void>
+  deleteSession: (workspaceId: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>
 }
 
 function generateId(): string {
@@ -2796,6 +2797,91 @@ export const useChatStore = create<ChatState>((set, get) => ({
           sessions: { ...state.sessions, [workspaceId]: nextSessions },
         }
       })
+    }
+  },
+
+  deleteSession: async (workspaceId: string, sessionId: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        throw new Error(i18next.t('chat:deleteSessionFailed', 'Failed to delete session'))
+      }
+
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.filter((s) => s.id !== sessionId)
+        const nextActiveSessionIds = { ...state.activeSessionIds }
+        if (nextActiveSessionIds[workspaceId] === sessionId) {
+          delete nextActiveSessionIds[workspaceId]
+        }
+
+        const withoutSession = <T extends Record<string, unknown>>(map: T): T => {
+          const next = { ...map }
+          delete next[sessionId]
+          return next
+        }
+
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+          activeSessionIds: nextActiveSessionIds,
+          messages: withoutSession(state.messages),
+          drafts: withoutSession(state.drafts),
+          inFlightBrowserTools: withoutSession(state.inFlightBrowserTools),
+          sessionStatus: withoutSession(state.sessionStatus),
+          sessionProcessing: withoutSession(state.sessionProcessing),
+          sessionBackgroundTaskCount: withoutSession(state.sessionBackgroundTaskCount),
+          unreadCompletions: withoutSession(state.unreadCompletions),
+          lastActivityAt: withoutSession(state.lastActivityAt),
+          isStreaming: withoutSession(state.isStreaming),
+          isCompacting: withoutSession(state.isCompacting),
+          compactingStartTime: withoutSession(state.compactingStartTime),
+          streamStartedAt: withoutSession(state.streamStartedAt),
+          isLoadingMessages: withoutSession(state.isLoadingMessages),
+          historyLoadState: withoutSession(state.historyLoadState),
+          approvalQueue: withoutSession(state.approvalQueue),
+          serverNonce: withoutSession(state.serverNonce),
+          draftQueue: withoutSession(state.draftQueue),
+          pendingSend: withoutSession(state.pendingSend),
+          subagents: withoutSession(state.subagents),
+          tasks: withoutSession(state.tasks),
+          pendingTaskCreates: withoutSession(state.pendingTaskCreates),
+          autoApprovedTools: withoutSession(state.autoApprovedTools),
+          totalMessageCount: withoutSession(state.totalMessageCount),
+          lastTurnUsage: withoutSession(state.lastTurnUsage),
+          sessionUsage: withoutSession(state.sessionUsage),
+          contextUsage: withoutSession(state.contextUsage),
+          resultMeta: withoutSession(state.resultMeta),
+          lastCompletion: withoutSession(state.lastCompletion),
+          workflows: withoutSession(state.workflows),
+          isRestartingRuntime: withoutSession(state.isRestartingRuntime),
+          domCache: {
+            ...state.domCache,
+            [workspaceId]: (state.domCache[workspaceId] || []).filter((id) => id !== sessionId),
+          },
+          backgroundSessions: {
+            ...state.backgroundSessions,
+            [workspaceId]: (state.backgroundSessions[workspaceId] || []).filter((id) => id !== sessionId),
+          },
+        }
+      })
+
+      // Tear down any live subscription for the deleted session.
+      const sub = sessionSubscriptions.get(sessionId)
+      if (sub) {
+        sub.close()
+        sessionSubscriptions.delete(sessionId)
+        stopAllWorkflowPollingForSession(sessionId)
+      }
+
+      return { ok: true }
+    } catch (err) {
+      console.error('Failed to delete session:', err)
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error'),
+      }
     }
   },
 

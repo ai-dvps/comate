@@ -2434,3 +2434,81 @@ describe('in-flight browser tool tracking (F14)', () => {
     assert.strictEqual(useChatStore.getState().inFlightBrowserTools['s1'], undefined)
   })
 })
+
+describe('deleteSession', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {
+        'ws-1': [
+          {
+            id: 's1',
+            workspaceId: 'ws-1',
+            name: 'Draft Session',
+            isDraft: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          {
+            id: 's2',
+            workspaceId: 'ws-1',
+            name: 'Other Session',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      },
+      activeSessionIds: { 'ws-1': 's1' },
+      messages: {
+        s1: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }], timestamp: Date.now() }],
+      },
+      domCache: { 'ws-1': ['s1'] },
+      backgroundSessions: { 'ws-1': ['s1'] },
+      sessionStatus: { s1: { pendingCount: 1 } },
+      isStreaming: { s1: true },
+      lastActivityAt: { s1: Date.now() },
+    })
+  })
+
+  it('removes the session and clears its state after a successful delete', async () => {
+    const fetchFn = vi.fn(() => Promise.resolve({ ok: true })) as unknown as Mock & typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+
+    try {
+      const result = await useChatStore.getState().deleteSession('ws-1', 's1')
+      assert.strictEqual(result.ok, true)
+      assert.strictEqual(
+        useChatStore.getState().sessions['ws-1'].some((s) => s.id === 's1'),
+        false,
+      )
+      assert.strictEqual(useChatStore.getState().activeSessionIds['ws-1'], undefined)
+      assert.strictEqual(useChatStore.getState().messages['s1'], undefined)
+      assert.strictEqual(useChatStore.getState().domCache['ws-1'].includes('s1'), false)
+      assert.strictEqual(useChatStore.getState().backgroundSessions['ws-1'].includes('s1'), false)
+      assert.strictEqual(useChatStore.getState().sessionStatus['s1'], undefined)
+      assert.strictEqual(useChatStore.getState().isStreaming['s1'], undefined)
+      assert.strictEqual(useChatStore.getState().lastActivityAt['s1'], undefined)
+      assert.strictEqual(fetchFn.mock.calls.length, 1)
+      assert.strictEqual((fetchFn.mock.calls[0][0] as string), '/api/workspaces/ws-1/sessions/s1')
+      assert.strictEqual((fetchFn.mock.calls[0][1] as RequestInit).method, 'DELETE')
+    } finally {
+      fetchFn.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('returns an error and leaves state unchanged when the delete request fails', async () => {
+    const fetchFn = vi.fn(() => Promise.resolve({ ok: false, status: 500 })) as unknown as Mock &
+      typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+
+    try {
+      const before = useChatStore.getState().sessions['ws-1']
+      const result = await useChatStore.getState().deleteSession('ws-1', 's1')
+      assert.strictEqual(result.ok, false)
+      assert.strictEqual(useChatStore.getState().sessions['ws-1'], before)
+    } finally {
+      fetchFn.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+})
