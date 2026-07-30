@@ -59,6 +59,7 @@ export default function RightPanel({
   const handoffPending = useBrowserPaneStore((s) => selectHandoffPending(s, sessionId))
   const setPaneOpen = useBrowserPaneStore((s) => s.setPaneOpen)
   const wasBrowserOpenRef = useRef(isBrowserOpen)
+  const prevSessionIdRef = useRef(sessionId)
 
   // Clear the Files-tree selection when the workspace changes so a highlight
   // from a previous workspace does not linger.
@@ -66,9 +67,18 @@ export default function RightPanel({
     setSelectedFilePath(null)
   }, [workspaceId])
 
-  // Handoff auto-expand: when the browser opens for this workspace, switch to
-  // the browser tab and expand the panel.
+  // Handoff auto-expand: when the browser opens for the current session,
+  // switch to the browser tab and expand the panel. Ignore session switches
+  // — they change selectSessionOpen because openBySession is per-session
+  // persisted, and we must not re-expand just because the user came back to
+  // a session whose browser tab was previously open.
   useEffect(() => {
+    if (sessionId !== prevSessionIdRef.current) {
+      prevSessionIdRef.current = sessionId
+      wasBrowserOpenRef.current = isBrowserOpen
+      return
+    }
+
     if (isBrowserOpen && !wasBrowserOpenRef.current && sessionId) {
       if (activeListTab !== 'browser') {
         setActiveListTab('browser')
