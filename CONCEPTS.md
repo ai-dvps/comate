@@ -26,6 +26,9 @@ A distribution/install form of the app that ships without the Claude Code runtim
 ### 会话后端锁定 (session backend lock)
 A session is bound to the backend selected at its first message and cannot switch afterward, because transcripts are not portable across runtimes. When the locked backend is unavailable in the current install, the session opens read-only with a notice.
 
+### Session Activity
+服务端维护的会话工作状态快照，统一表达 foreground turn、pending interaction、SDK background tasks、stopping 和 interruption。它是前端活跃展示、输入锁定与 runtime idle-close 判定的共同真相源；主 agent 的 `result` 只结束 foreground，不单独决定整个 Session 是否结束。
+
 ## Scheduled tasks (定时任务)
 
 ### 定时任务 (scheduled task)

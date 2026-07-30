@@ -74,7 +74,11 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
   it('handles status requests over the same connection', async () => {
     const original = chatService.getSessionsStatus.bind(chatService);
     chatService.getSessionsStatus = () => ({
-      'session-a': { pendingCount: 1, isProcessing: true },
+      'session-a': {
+        pendingCount: 1,
+        isProcessing: true,
+        activity: { phase: 'background', active: true, backgroundTasks: [] },
+      },
     });
 
     try {
@@ -85,8 +89,14 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
         'id' in msg && (msg as WsResponse).id === 'req-1',
       );
       assert.strictEqual(response.ok, true);
-      const payload = response.payload as { statuses: Record<string, { pendingCount: number; isProcessing: boolean }> };
-      assert.deepStrictEqual(payload.statuses, { 'session-a': { pendingCount: 1, isProcessing: true } });
+      const payload = response.payload as { statuses: ReturnType<typeof chatService.getSessionsStatus> };
+      assert.deepStrictEqual(payload.statuses, {
+        'session-a': {
+          pendingCount: 1,
+          isProcessing: true,
+          activity: { phase: 'background', active: true, backgroundTasks: [] },
+        },
+      });
     } finally {
       chatService.getSessionsStatus = original;
     }
@@ -94,7 +104,13 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
 
   it('multiplexes multiple concurrent requests', async () => {
     const originalStatus = chatService.getSessionsStatus.bind(chatService);
-    chatService.getSessionsStatus = () => ({ 'session-a': { pendingCount: 2, isProcessing: true } });
+    chatService.getSessionsStatus = () => ({
+      'session-a': {
+        pendingCount: 2,
+        isProcessing: true,
+        activity: { phase: 'foreground', active: true, backgroundTasks: [] },
+      },
+    });
 
     try {
       ws = await connect();
