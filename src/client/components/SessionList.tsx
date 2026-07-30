@@ -6,13 +6,14 @@ import { shouldSubmitOnEnter } from '../lib/keyboard'
 import { getSessionDisplayName, matchesSessionQuery, matchesSessionStatus } from '../lib/session-filter'
 import type { SessionStatusFilter } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
-import { Plus, Puzzle, BookOpen, Search, X, RefreshCw, FlaskConical, Archive, ArchiveRestore, Copy, GitBranch } from 'lucide-react'
+import { Plus, Puzzle, BookOpen, Search, X, RefreshCw, FlaskConical, Archive, ArchiveRestore, Copy, GitBranch, Trash2 } from 'lucide-react'
 import PluginSettingsPage from './PluginSettingsPage'
 import SkillsPage from './SkillsPage'
 import SessionListItem from './SessionListItem'
 import { cn } from './ui/utils'
 import SessionStatusFilterControl from './SessionStatusFilterControl'
 import { useToastStore } from '../stores/toast-store'
+import ConfirmDialog from './ConfirmDialog'
 
 const EMPTY_ARRAY: [] = []
 
@@ -29,6 +30,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
+  const [deleteDialogSession, setDeleteDialogSession] = useState<import('../stores/chat-store').ChatSession | null>(null)
   const [showPluginSettings, setShowPluginSettings] = useState(false)
   const [showSkillsPage, setShowSkillsPage] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -50,6 +52,7 @@ export default function SessionList({ workspaceId }: SessionListProps) {
   const toggleSessionWip = useChatStore((s) => s.toggleSessionWip)
   const toggleSessionArchive = useChatStore((s) => s.toggleSessionArchive)
   const fetchSessions = useChatStore((s) => s.fetchSessions)
+  const deleteSession = useChatStore((s) => s.deleteSession)
   const addToast = useToastStore((s) => s.addToast)
 
   const trimmedQuery = searchQuery.trim()
@@ -186,6 +189,16 @@ export default function SessionList({ workspaceId }: SessionListProps) {
       addToast({ severity: 'error', message: result.error ?? 'Failed to fork session' })
     }
     setContextMenu(null)
+  }
+
+  const handleConfirmDelete = async () => {
+    const session = deleteDialogSession
+    if (!session) return
+    setDeleteDialogSession(null)
+    const result = await deleteSession(workspaceId, session.id)
+    if (!result.ok) {
+      addToast({ severity: 'error', message: result.error ?? t('deleteSessionFailed') })
+    }
   }
 
   const searchDisabled = isLoading && sessions.length === 0
@@ -399,6 +412,18 @@ export default function SessionList({ workspaceId }: SessionListProps) {
                 )}
                 {session.isArchived ? t('unarchive') : t('archive')}
               </button>
+              {session.isDraft && (
+                <button
+                  onClick={() => {
+                    setDeleteDialogSession(session)
+                    setContextMenu(null)
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs text-destructive hover:bg-destructive/10 transition-colors flex items-center gap-2"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {t('deleteSession')}
+                </button>
+              )}
               <button
                 onClick={handleCopySessionId}
                 className="w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover transition-colors flex items-center gap-2"
@@ -416,6 +441,18 @@ export default function SessionList({ workspaceId }: SessionListProps) {
             </div>
           )
         })()
+      )}
+
+      {deleteDialogSession && (
+        <ConfirmDialog
+          isOpen={!!deleteDialogSession}
+          title={t('deleteSessionConfirmTitle')}
+          message={t('deleteSessionConfirmMessage', { name: getSessionDisplayName(deleteDialogSession) })}
+          confirmLabel={t('deleteSessionConfirm')}
+          cancelLabel={t('deleteSessionCancel')}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setDeleteDialogSession(null)}
+        />
       )}
 
       {/* Plugin Settings Page */}

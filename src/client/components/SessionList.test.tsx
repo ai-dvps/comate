@@ -39,6 +39,7 @@ const mockStore = {
   toggleSessionWip: vi.fn(),
   toggleSessionArchive: vi.fn(),
   fetchSessions: vi.fn(() => Promise.resolve({ ok: true })),
+  deleteSession: vi.fn(() => Promise.resolve({ ok: true })),
 }
 
 vi.mock('../stores/chat-store', () => ({
@@ -80,6 +81,7 @@ describe('SessionList', () => {
     mockStore.toggleSessionWip.mockClear()
     mockStore.toggleSessionArchive.mockClear()
     mockStore.fetchSessions.mockClear()
+    mockStore.deleteSession.mockClear()
     cleanup()
   })
 
@@ -191,5 +193,52 @@ describe('SessionList', () => {
     expect(screen.getAllByAltText(/^(Feishu|WeCom)$/)).toHaveLength(2)
     // The old Feishu text badge is gone.
     expect(screen.queryByText('Feishu')).not.toBeInTheDocument()
+  })
+
+  it('shows a delete option for draft sessions in the context menu', async () => {
+    const user = userEvent.setup()
+    mockStore.sessions.ws1 = [makeSession({ id: 's1', name: 'Draft Session', isDraft: true })]
+
+    renderWithI18n(<SessionList workspaceId="ws1" />)
+
+    const row = screen.getByText('Draft Session')
+    await user.pointer([{ keys: '[MouseRight]', target: row }])
+
+    const deleteButton = await screen.findByRole('button', { name: /Delete session/i })
+    expect(deleteButton).toBeInTheDocument()
+  })
+
+  it('does not show a delete option for non-draft sessions', async () => {
+    const user = userEvent.setup()
+    mockStore.sessions.ws1 = [makeSession({ id: 's1', name: 'Real Session', isDraft: false })]
+
+    renderWithI18n(<SessionList workspaceId="ws1" />)
+
+    const row = screen.getByText('Real Session')
+    await user.pointer([{ keys: '[MouseRight]', target: row }])
+
+    expect(screen.queryByRole('button', { name: /Delete session/i })).not.toBeInTheDocument()
+  })
+
+  it('confirms and deletes a draft session from the context menu', async () => {
+    const user = userEvent.setup()
+    mockStore.sessions.ws1 = [makeSession({ id: 's1', name: 'Draft Session', isDraft: true })]
+
+    renderWithI18n(<SessionList workspaceId="ws1" />)
+
+    const row = screen.getByText('Draft Session')
+    await user.pointer([{ keys: '[MouseRight]', target: row }])
+
+    const deleteButton = await screen.findByRole('button', { name: /Delete session/i })
+    await user.click(deleteButton)
+
+    expect(screen.getByText('Delete session?')).toBeInTheDocument()
+
+    const confirmButton = screen.getByRole('button', { name: /^Delete$/i })
+    await user.click(confirmButton)
+
+    await vi.waitFor(() => {
+      expect(mockStore.deleteSession).toHaveBeenCalledWith('ws1', 's1')
+    })
   })
 })
