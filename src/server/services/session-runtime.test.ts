@@ -1882,6 +1882,191 @@ describe('session-runtime fenced stop', { concurrency: false }, () => {
     assert.strictEqual(runtime.getActivitySnapshot().interruption?.foregroundInterrupted, false);
   });
 
+  it('stops one tracked background task without fencing the Session', async () => {
+    const sdk = createStopSdk();
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a' }, { id: 'b' }]));
+    await tick();
+
+    const stopped = await runtime.stopBackgroundTask('a');
+
+    assert.strictEqual(stopped, true);
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a']);
+    assert.strictEqual(sdk.calls.interrupt, 0);
+    assert.strictEqual(sdk.calls.close, 0);
+    assert.deepStrictEqual(runtime.getActivitySnapshot(), {
+      phase: 'background',
+      active: true,
+      backgroundTasks: [
+        { id: 'a', type: 'agent', description: 'a' },
+        { id: 'b', type: 'agent', description: 'b' },
+      ],
+    });
+  });
+
+  it('treats an unknown background task as an idempotent no-op', async () => {
+    const sdk = createStopSdk();
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+
+    const stopped = await runtime.stopBackgroundTask('missing');
+
+    assert.strictEqual(stopped, false);
+    assert.deepStrictEqual(sdk.calls.stopTask, []);
+  });
+
+  it('deduplicates repeated task stops until the SDK removes the task', async () => {
+    const sdk = createStopSdk();
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a' }]));
+    await tick();
+
+    await runtime.stopBackgroundTask('a');
+    await runtime.stopBackgroundTask('a');
+
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a']);
+
+    sdk.push(snapshot([]));
+    await tick();
+    sdk.push(snapshot([{ id: 'a' }]));
+    await tick();
+    await runtime.stopBackgroundTask('a');
+
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a', 'a']);
+  });
+
+  it('allows an individual task stop to be retried after the SDK rejects it', async () => {
+    let attempts = 0;
+    const sdk = createStopSdk({
+      stopTask: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error('temporary stop failure');
+      },
+    });
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a' }]));
+    await tick();
+
+    await assert.rejects(runtime.stopBackgroundTask('a'), /temporary stop failure/);
+    assert.strictEqual(await runtime.stopBackgroundTask('a'), true);
+
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a', 'a']);
+    assert.strictEqual(sdk.calls.interrupt, 0);
+  });
+
+  it('treats a task removed by an SDK snapshot during stop as already finished', async () => {
+    let rejectTaskStop!: (error: Error) => void;
+    const sdk = createStopSdk({
+      stopTask: () => new Promise<void>((_resolve, reject) => {
+        rejectTaskStop = reject;
+      }),
+    });
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a' }]));
+    await tick();
+
+    const stopping = runtime.stopBackgroundTask('a');
+    sdk.push(snapshot([]));
+    await tick();
+    rejectTaskStop(new Error('task already completed'));
+
+    assert.strictEqual(await stopping, false);
+    assert.strictEqual(runtime.getActivitySnapshot().active, false);
+  });
+
+  it('times out a stuck individual stop and allows retry', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let attempts = 0;
+    const sdk = createStopSdk({
+      stopTask: () => {
+        attempts++;
+        return attempts === 1 ? new Promise<void>(() => {}) : Promise.resolve();
+      },
+    });
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a' }]));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const firstStop = runtime.stopBackgroundTask('a');
+    t.mock.timers.tick(10_000);
+    await assert.rejects(firstStop, /Timed out stopping background task a/);
+    assert.strictEqual(await runtime.stopBackgroundTask('a'), true);
+
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a', 'a']);
+  });
+
+  it('joins an in-flight individual stop when the whole Session is stopped', async () => {
+    let resolveTaskStop!: () => void;
+    const sdk = createStopSdk({
+      stopTask: () => new Promise<void>((resolve) => {
+        resolveTaskStop = resolve;
+      }),
+    });
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a' }]));
+    await tick();
+
+    const individualStop = runtime.stopBackgroundTask('a');
+    const sessionStop = runtime.stopAll();
+    await tick();
+
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a']);
+    resolveTaskStop();
+    sdk.push(snapshot([]));
+    await Promise.all([individualStop, sessionStop]);
+
+    assert.strictEqual(sdk.calls.close, 0);
+    assert.strictEqual(runtime.getActivitySnapshot().active, false);
+  });
+
+  it('hard-closes when an in-flight individual stop fails during whole-Session Stop', async () => {
+    let rejectTaskStop!: (error: Error) => void;
+    const sdk = createStopSdk({
+      stopTask: () => new Promise<void>((_resolve, reject) => {
+        rejectTaskStop = reject;
+      }),
+    });
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a' }]));
+    await tick();
+
+    const individualStop = runtime.stopBackgroundTask('a');
+    const sessionStop = runtime.stopAll();
+    await tick();
+    rejectTaskStop(new Error('control request failed'));
+
+    await assert.rejects(individualStop, /control request failed/);
+    await sessionStop;
+    assert.strictEqual(sdk.calls.close, 1);
+    assert.match(runtime.getActivitySnapshot().interruption?.message ?? '', /control request failed/);
+  });
+
+  it('rejects individual task stopping for a non-Claude driver', async () => {
+    const sdk = createStopSdk();
+    const driver = {
+      backendId: 'opencode' as const,
+      createStreamingQuery: () => sdk.client.createStreamingQuery({} as never, {} as Options),
+    };
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      driver,
+    );
+
+    await assert.rejects(
+      runtime.stopBackgroundTask('task-1'),
+      /only supported for Claude Code sessions/,
+    );
+    assert.deepStrictEqual(sdk.calls.stopTask, []);
+  });
+
   it('hard-closes at the original two-second Stop deadline', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const sdk = createStopSdk();

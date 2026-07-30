@@ -37,6 +37,7 @@ import { browserAuditService } from './browser-audit.js';
 
 const RING_BUFFER_CAP = 500;
 const STOP_DRAIN_TIMEOUT_MS = 2000;
+const BACKGROUND_TASK_STOP_TIMEOUT_MS = 10_000;
 diagLog('[SessionRuntime] module loaded');
 
 function backgroundTasksEqual(
@@ -119,6 +120,8 @@ export class SessionRuntime {
   private resolveStopOperation?: () => void;
   private stopDeadlineTimer?: NodeJS.Timeout;
   private stopRequestedTaskIds = new Set<string>();
+  private backgroundTaskStopOperations = new Map<string, Promise<boolean>>();
+  private individuallyStoppedTaskIds = new Set<string>();
   private stopForegroundInterrupted = false;
   private activityInterruption?: SessionActivityInterruption;
   private lastEmittedActivity: SessionActivitySnapshot = {
@@ -374,6 +377,11 @@ export class SessionRuntime {
         { id: task.task_id, type: task.task_type, description: task.description },
       ]),
     );
+    for (const taskId of this.individuallyStoppedTaskIds) {
+      if (!this.backgroundTasks.has(taskId)) {
+        this.individuallyStoppedTaskIds.delete(taskId);
+      }
+    }
     if (this.stopFenceActive && !this.stopping && this.backgroundTasks.size > 0) {
       this.stopping = true;
       this.stopForegroundInterrupted = false;
@@ -1070,6 +1078,43 @@ export class SessionRuntime {
     }
   }
 
+  stopBackgroundTask(taskId: string): Promise<boolean> {
+    if (this.driver.backendId !== 'claude') {
+      return Promise.reject(
+        new Error('Individual background task stopping is only supported for Claude Code sessions'),
+      );
+    }
+    if (!this.backgroundTasks.has(taskId)) return Promise.resolve(false);
+
+    const existing = this.backgroundTaskStopOperations.get(taskId);
+    if (existing) return existing;
+    if (this.individuallyStoppedTaskIds.has(taskId)) return Promise.resolve(true);
+
+    this.individuallyStoppedTaskIds.add(taskId);
+    let timeout: NodeJS.Timeout | undefined;
+    const stopRequest = Promise.race([
+      this.query.stopTask(taskId),
+      new Promise<void>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`Timed out stopping background task ${taskId}`));
+        }, BACKGROUND_TASK_STOP_TIMEOUT_MS);
+      }),
+    ]);
+    const operation = stopRequest
+      .then(() => true)
+      .catch((error) => {
+        this.individuallyStoppedTaskIds.delete(taskId);
+        if (!this.backgroundTasks.has(taskId)) return false;
+        throw error;
+      })
+      .finally(() => {
+        if (timeout) clearTimeout(timeout);
+        this.backgroundTaskStopOperations.delete(taskId);
+      });
+    this.backgroundTaskStopOperations.set(taskId, operation);
+    return operation;
+  }
+
   stopAll(): Promise<void> {
     if (this.stopOperation) return this.stopOperation;
     if (!this.getActivitySnapshot().active) return Promise.resolve();
@@ -1122,6 +1167,16 @@ export class SessionRuntime {
     for (const taskId of this.backgroundTasks.keys()) {
       if (this.stopRequestedTaskIds.has(taskId)) continue;
       this.stopRequestedTaskIds.add(taskId);
+      const individualOperation = this.backgroundTaskStopOperations.get(taskId);
+      if (individualOperation) {
+        void individualOperation.catch((error) => {
+          this.hardCloseForStop(
+            `stopTask(${taskId}) failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+        continue;
+      }
+      if (this.individuallyStoppedTaskIds.has(taskId)) continue;
       void this.query.stopTask(taskId).catch((error) => {
         this.hardCloseForStop(
           `stopTask(${taskId}) failed: ${error instanceof Error ? error.message : String(error)}`,

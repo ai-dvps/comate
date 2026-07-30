@@ -289,6 +289,41 @@ router.post('/sessions/:sessionId/interrupt', async (req, res) => {
   }
 });
 
+// POST /api/workspaces/:id/sessions/:sessionId/tasks/:taskId/stop
+// Stop one Claude SDK background task without interrupting the foreground turn
+// or activating the Session-wide Stop fence.
+router.post('/sessions/:sessionId/tasks/:taskId/stop', async (req, res) => {
+  const workspaceId = (req.params as unknown as { id: string }).id;
+  const { sessionId, taskId } = req.params;
+
+  try {
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    if (!runtime) {
+      res.json({ ok: true, stopped: false });
+      return;
+    }
+    if (runtime.getStatus().workspaceId !== workspaceId) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    if (runtime.getBackendId() !== 'claude') {
+      res.status(409).json({
+        error: 'Individual background task stopping is only supported for Claude Code sessions',
+        code: 'TASK_STOP_UNSUPPORTED',
+      });
+      return;
+    }
+
+    const stopped = await runtime.stopBackgroundTask(taskId);
+    res.json({ ok: true, stopped });
+  } catch (error) {
+    diagLog(
+      `[Route] Failed to stop background task session=${sessionId} task=${taskId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    res.status(500).json({ error: 'Failed to stop background task' });
+  }
+});
+
 // POST /api/workspaces/:id/sessions/:sessionId/approval-mode
 // Change the approval mode for a session (mid-session or persist for next start)
 router.post('/sessions/:sessionId/approval-mode', async (req, res) => {

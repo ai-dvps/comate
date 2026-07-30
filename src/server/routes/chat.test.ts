@@ -232,3 +232,130 @@ describe('chat route interrupt (clear-all)', { concurrency: false }, () => {
     }
   });
 });
+
+describe('chat route background task stop', { concurrency: false }, () => {
+  beforeEach(() => {
+    workspaceStore.resetData();
+  });
+
+  async function importTaskStopHandler() {
+    const mod = await import('./chat.js');
+    const router = mod.default;
+    const layers = (router as unknown as { stack: Array<{ route?: { methods: Record<string, boolean>; path: string; stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }> } }> }).stack;
+    for (const layer of layers) {
+      if (layer.route?.path === '/sessions/:sessionId/tasks/:taskId/stop' && layer.route.methods.post) {
+        return layer.route.stack[layer.route.stack.length - 1].handle;
+      }
+    }
+    throw new Error('POST /sessions/:sessionId/tasks/:taskId/stop handler not found');
+  }
+
+  function stubRuntime(runtime: unknown): () => void {
+    const target = chatService as unknown as Record<string, unknown>;
+    target.getRuntimeIfExists = () => runtime;
+    return () => {
+      delete target.getRuntimeIfExists;
+    };
+  }
+
+  it('stops only the requested task on a Claude runtime', async () => {
+    const calls: string[] = [];
+    const restore = stubRuntime({
+      getStatus: () => ({ workspaceId: 'ws-1' }),
+      getBackendId: () => 'claude',
+      stopBackgroundTask: async (taskId: string) => {
+        calls.push(taskId);
+        return true;
+      },
+    });
+    try {
+      const handler = await importTaskStopHandler();
+      const res = createMockRes();
+      await handler({ params: { id: 'ws-1', sessionId: 'sess-1', taskId: 'task-2' } }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(res.jsonBody, { ok: true, stopped: true });
+      assert.deepStrictEqual(calls, ['task-2']);
+    } finally {
+      restore();
+    }
+  });
+
+  it('returns an idempotent success when the runtime is gone', async () => {
+    const restore = stubRuntime(undefined);
+    try {
+      const handler = await importTaskStopHandler();
+      const res = createMockRes();
+      await handler({ params: { id: 'ws-1', sessionId: 'sess-gone', taskId: 'task-1' } }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(res.jsonBody, { ok: true, stopped: false });
+    } finally {
+      restore();
+    }
+  });
+
+  it('rejects individual task stopping for non-Claude runtimes', async () => {
+    const restore = stubRuntime({
+      getStatus: () => ({ workspaceId: 'ws-1' }),
+      getBackendId: () => 'opencode',
+      stopBackgroundTask: async () => true,
+    });
+    try {
+      const handler = await importTaskStopHandler();
+      const res = createMockRes();
+      await handler({ params: { id: 'ws-1', sessionId: 'sess-1', taskId: 'task-1' } }, res);
+
+      assert.strictEqual(res.statusCode, 409);
+      assert.deepStrictEqual(res.jsonBody, {
+        error: 'Individual background task stopping is only supported for Claude Code sessions',
+        code: 'TASK_STOP_UNSUPPORTED',
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not stop a runtime through a different workspace path', async () => {
+    let stopCalls = 0;
+    const restore = stubRuntime({
+      getStatus: () => ({ workspaceId: 'ws-2' }),
+      getBackendId: () => 'claude',
+      stopBackgroundTask: async () => {
+        stopCalls++;
+        return true;
+      },
+    });
+    try {
+      const handler = await importTaskStopHandler();
+      const res = createMockRes();
+      await handler({ params: { id: 'ws-1', sessionId: 'sess-1', taskId: 'task-1' } }, res);
+
+      assert.strictEqual(res.statusCode, 404);
+      assert.deepStrictEqual(res.jsonBody, { error: 'Session not found' });
+      assert.strictEqual(stopCalls, 0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('returns 500 when the SDK task stop fails', async () => {
+    const restore = stubRuntime({
+      getStatus: () => ({ workspaceId: 'ws-1' }),
+      getBackendId: () => 'claude',
+      stopBackgroundTask: async () => {
+        throw new Error('control request failed');
+      },
+    });
+    try {
+      const handler = await importTaskStopHandler();
+      const res = createMockRes();
+      await handler({ params: { id: 'ws-1', sessionId: 'sess-1', taskId: 'task-1' } }, res);
+
+      assert.strictEqual(res.statusCode, 500);
+      assert.deepStrictEqual(res.jsonBody, { error: 'Failed to stop background task' });
+    } finally {
+      restore();
+    }
+  });
+});

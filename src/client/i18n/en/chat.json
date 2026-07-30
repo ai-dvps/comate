@@ -40,6 +40,8 @@
     "backgroundTaskCount_one": "{{count}} background task",
     "backgroundTaskCount_other": "{{count}} background tasks",
     "stopping": "Stopping all Session work...",
+    "stopTask": "Stop task: {{description}}",
+    "stoppingTask": "Stopping task: {{description}}",
     "taskType": {
       "agent": "Agent",
       "command": "Command",

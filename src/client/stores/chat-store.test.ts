@@ -603,6 +603,45 @@ describe('bot session guards', () => {
     }
   })
 
+  it('stops one background task through the task-scoped endpoint', async () => {
+    const fetchFn = vi.fn(() => Promise.resolve({ ok: true })) as unknown as Mock & typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+
+    try {
+      await useChatStore.getState().stopBackgroundTask('ws-1', 's1', 'task-2')
+
+      assert.strictEqual(fetchFn.mock.calls.length, 1)
+      assert.strictEqual(
+        fetchFn.mock.calls[0][0],
+        '/api/workspaces/ws-1/sessions/s1/tasks/task-2/stop',
+      )
+      assert.deepStrictEqual(fetchFn.mock.calls[0][1], { method: 'POST' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('adds a system message when a background task cannot be stopped', async () => {
+    const fetchFn = vi.fn(() => Promise.resolve({
+      ok: false,
+      json: () => Promise.resolve({ error: 'control request failed' }),
+    })) as unknown as Mock & typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+
+    try {
+      await useChatStore.getState().stopBackgroundTask('ws-1', 's1', 'task-2')
+
+      const message = useChatStore.getState().messages.s1?.at(-1)
+      assert.strictEqual(message?.role, 'system')
+      assert.deepStrictEqual(message?.parts, [{
+        type: 'text',
+        text: 'Task stop error: control request failed',
+      }])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('marks complete history ready when a draft sends its first message', () => {
     useChatStore.setState({
       sessions: { 'ws-1': [{ ...makeSession('gui'), isDraft: true }] },

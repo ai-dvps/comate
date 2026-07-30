@@ -96,6 +96,10 @@ function getToolbarVisibility(width: number | undefined) {
   }
 }
 
+function getBackgroundTaskStopKey(sessionId: string, taskId: string): string {
+  return JSON.stringify([sessionId, taskId])
+}
+
 interface PromptInputProps {
   workspaceId: string
   sessionId: string
@@ -135,6 +139,7 @@ export default function PromptInput({
     sessionId ? s.drafts[sessionId] ?? '' : '',
   )
   const setDraft = useChatStore((s) => s.setDraft)
+  const stopBackgroundTask = useChatStore((s) => s.stopBackgroundTask)
   const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
   const activity = useChatStore((s) => s.sessionActivity[sessionId])
   const backgroundTasks = activity?.backgroundTasks ?? []
@@ -144,6 +149,9 @@ export default function PromptInput({
   const { suggest, train } = useNgramCompletion(workspaceId)
 
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
+  const [stoppingBackgroundTaskIds, setStoppingBackgroundTaskIds] = useState<Set<string>>(
+    () => new Set(),
+  )
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerSource, setPickerSource] = useState<'slash' | 'button'>('slash')
   const [pickerFilter, setPickerFilter] = useState('')
@@ -877,6 +885,20 @@ export default function PromptInput({
   const filesDisabled = disabled || isComposerLocked || isRestarting || !workspaceId
   const historyDisabled = disabled || isComposerLocked || isRestarting || !hasSession
 
+  const handleStopBackgroundTask = async (taskId: string) => {
+    const stopKey = getBackgroundTaskStopKey(sessionId, taskId)
+    setStoppingBackgroundTaskIds((current) => new Set(current).add(stopKey))
+    try {
+      await stopBackgroundTask(workspaceId, sessionId, taskId)
+    } finally {
+      setStoppingBackgroundTaskIds((current) => {
+        const next = new Set(current)
+        next.delete(stopKey)
+        return next
+      })
+    }
+  }
+
   const stopControl = (isComposerLocked || isStreaming) ? (
     <Popover open={stopPopoverOpen} onOpenChange={setStopPopoverOpen}>
       <PopoverTrigger asChild>
@@ -1018,14 +1040,38 @@ export default function PromptInput({
                   </div>
                   {backgroundTasks.length > 0 && (
                     <div className="mt-0.5 space-y-1">
-                      {backgroundTasks.map((task) => (
-                        <div key={task.id} className="flex min-w-0 items-start gap-1.5 leading-4">
+                      {backgroundTasks.map((task) => {
+                        const isStopping = stoppingBackgroundTaskIds.has(
+                          getBackgroundTaskStopKey(sessionId, task.id),
+                        )
+                        const stopTaskLabel = t(
+                          isStopping ? 'activity.stoppingTask' : 'activity.stopTask',
+                          { description: task.description },
+                        )
+
+                        return <div key={task.id} className="flex min-w-0 items-start gap-1.5 leading-4">
                           <span className="flex-shrink-0 text-text-tertiary">
                             {getBackgroundTaskTypeLabel(task.type, t)}
                           </span>
-                          <span className="min-w-0 break-words">{task.description}</span>
+                          <span className="min-w-0 flex-1 break-words">{task.description}</span>
+                          {sessionBackend === 'claude' && activity?.phase !== 'stopping' && (
+                            <button
+                              type="button"
+                              onClick={() => void handleStopBackgroundTask(task.id)}
+                              disabled={isStopping}
+                              aria-label={stopTaskLabel}
+                              title={stopTaskLabel}
+                              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isStopping ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Square className="h-2.5 w-2.5 fill-current" />
+                              )}
+                            </button>
+                          )}
                         </div>
-                      ))}
+                      })}
                     </div>
                   )}
                 </div>

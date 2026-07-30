@@ -40,6 +40,8 @@
     "backgroundTaskCount_one": "{{count}} 个后台任务",
     "backgroundTaskCount_other": "{{count}} 个后台任务",
     "stopping": "正在停止 Session 的全部工作...",
+    "stopTask": "停止任务：{{description}}",
+    "stoppingTask": "正在停止任务：{{description}}",
     "taskType": {
       "agent": "Agent",
       "command": "命令",

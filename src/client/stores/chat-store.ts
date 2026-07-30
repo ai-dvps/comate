@@ -437,6 +437,7 @@ export interface ChatState {
     result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionSuggestion[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
   ) => Promise<void>
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
+  stopBackgroundTask: (workspaceId: string, sessionId: string, taskId: string) => Promise<void>
   cleanupWorkspace: (workspaceId: string) => void
   refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
@@ -3408,6 +3409,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
           state,
           sessionId,
           `${i18next.t('common:interruptError', 'Interrupt error')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
+        ),
+      )
+    }
+  },
+
+  stopBackgroundTask: async (workspaceId: string, sessionId: string, taskId: string) => {
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}/tasks/${encodeURIComponent(taskId)}/stop`,
+        { method: 'POST' },
+      )
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }))
+        throw new Error(error.error || i18next.t('common:requestFailed', 'Request failed'))
+      }
+    } catch (err) {
+      console.error('Failed to stop background task:', err)
+      set((state) =>
+        addSystemMessage(
+          state,
+          sessionId,
+          `${i18next.t('common:taskStopError', 'Task stop error')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
         ),
       )
     }

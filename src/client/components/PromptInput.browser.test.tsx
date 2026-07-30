@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { render, screen, waitFor, cleanup } from '@testing-library/react'
+import { act, render, screen, waitFor, cleanup } from '@testing-library/react'
 import { page, userEvent } from '@vitest/browser/context'
 import { I18nextProvider } from 'react-i18next'
 import PromptInput from './PromptInput'
@@ -33,6 +33,7 @@ const chatStoreMock = vi.hoisted(() => {
     promptHistory: {} as Record<string, string[]>,
     isRestartingRuntime: {} as Record<string, boolean>,
     sessionActivity: {} as Record<string, SessionActivitySnapshot>,
+    stopBackgroundTask: vi.fn(() => Promise.resolve()),
     setDraft: vi.fn((sessionId: string, content: string) => {
       if (content === '') {
         delete state.drafts[sessionId]
@@ -629,6 +630,75 @@ describe('PromptInput browser', () => {
 
     expect(screen.getByText('Background task')).toBeInTheDocument()
     expect(screen.getByText('Index the repository')).toBeInTheDocument()
+  })
+
+  it('stops only the selected Claude background task', async () => {
+    let resolveStop!: () => void
+    chatStoreMock.getState().sessions[DEFAULT_PROPS.workspaceId] = [
+      { id: DEFAULT_PROPS.sessionId, backend: 'claude' },
+    ]
+    chatStoreMock.getState().sessionActivity[DEFAULT_PROPS.sessionId] = {
+      phase: 'background',
+      active: true,
+      backgroundTasks: [
+        { id: 'agent-1', type: 'agent', description: 'Review the runtime lifecycle' },
+        { id: 'command-1', type: 'command', description: 'Run focused tests' },
+      ],
+    }
+    chatStoreMock.getState().stopBackgroundTask.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        resolveStop = resolve
+      }),
+    )
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+
+    const stopAgent = screen.getByRole('button', {
+      name: 'Stop task: Review the runtime lifecycle',
+    })
+    await userEvent.click(stopAgent)
+
+    expect(chatStoreMock.getState().stopBackgroundTask).toHaveBeenCalledWith(
+      DEFAULT_PROPS.workspaceId,
+      DEFAULT_PROPS.sessionId,
+      'agent-1',
+    )
+    expect(DEFAULT_PROPS.onStop).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', {
+      name: 'Stopping task: Review the runtime lifecycle',
+    })).toBeDisabled()
+    expect(screen.getByRole('button', {
+      name: 'Stop task: Run focused tests',
+    })).toBeEnabled()
+
+    await act(async () => {
+      resolveStop()
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', {
+        name: 'Stop task: Review the runtime lifecycle',
+      })).toBeEnabled()
+    })
+  })
+
+  it('does not offer individual task stopping for OpenCode sessions', () => {
+    chatStoreMock.getState().sessions[DEFAULT_PROPS.workspaceId] = [
+      { id: DEFAULT_PROPS.sessionId, backend: 'opencode' },
+    ]
+    chatStoreMock.getState().sessionActivity[DEFAULT_PROPS.sessionId] = {
+      phase: 'background',
+      active: true,
+      backgroundTasks: [
+        { id: 'agent-1', type: 'agent', description: 'Review the runtime lifecycle' },
+      ],
+    }
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+
+    expect(screen.queryByRole('button', {
+      name: 'Stop task: Review the runtime lifecycle',
+    })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'stop' })).toBeInTheDocument()
   })
 
   it('shows immediate stopping feedback without an actionable Stop button', () => {
