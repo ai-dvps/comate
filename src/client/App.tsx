@@ -314,7 +314,6 @@ function App() {
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
           isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={toggleSidebarCollapse}
           onOpenPlugins={() => openPanel('plugins')}
           onOpenSkills={() => openPanel('skills')}
         />

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { I18nextProvider } from 'react-i18next';
+import { render, screen, cleanup } from '@testing-library/react';
+import { I18nextProvider } from 'react-i18next'
 import Sidebar from './Sidebar';
 import i18n from '../i18n';
 
@@ -56,7 +56,7 @@ describe('Sidebar', () => {
     rerender(
       <I18nextProvider i18n={i18n}>
         <Sidebar
-          width={48}
+          width={0}
           onWidthChange={vi.fn()}
           isCollapsed={true}
         />
@@ -66,18 +66,18 @@ describe('Sidebar', () => {
     expect(screen.queryByTestId('sidebar-resize-handle')).not.toBeInTheDocument();
   });
 
-  it('renders only the sessions icon button when collapsed', () => {
+  it('hides all sidebar content when collapsed', () => {
     renderWithI18n(
       <Sidebar
-        width={48}
+        width={0}
         onWidthChange={vi.fn()}
         isCollapsed={true}
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Show sessions' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Show todos' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Show files' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sessions' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('session-list')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('sidebar-resize-handle')).not.toBeInTheDocument();
   });
 
   it('defaults to the Sessions tab active', () => {
@@ -90,20 +90,5 @@ describe('Sidebar', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Sessions' })).toHaveClass('border-b');
-  });
-
-  it('expands the sidebar when clicking the sessions icon in collapsed state', () => {
-    const toggleCollapse = vi.fn();
-    renderWithI18n(
-      <Sidebar
-        width={48}
-        onWidthChange={vi.fn()}
-        isCollapsed={true}
-        onToggleCollapse={toggleCollapse}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show sessions' }));
-    expect(toggleCollapse).toHaveBeenCalledTimes(1);
   });
 });

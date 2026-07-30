@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useResizableWidth } from './use-resizable-width'
 
-export const RAIL_WIDTH = 40
+export const COLLAPSED_WIDTH = 0
 const MIN_WIDTH = 200
 const MAX_WIDTH = 600
 const DEFAULT_WIDTH = 288
@@ -90,7 +90,7 @@ export function useSidebarWidth() {
   }, [expandedWidth, previousWidth, setExpandedWidth])
 
   return {
-    width: isCollapsed ? RAIL_WIDTH : expandedWidth,
+    width: isCollapsed ? COLLAPSED_WIDTH : expandedWidth,
     setWidth,
     isCollapsed,
     toggleCollapse,
