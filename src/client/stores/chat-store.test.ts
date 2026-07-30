@@ -575,6 +575,34 @@ describe('bot session guards', () => {
     }
   })
 
+  it('claims foreground activity immediately when sending during background work', () => {
+    const backgroundTasks = [{ id: 'bg-1', type: 'agent', description: 'Research' }]
+    useChatStore.setState({
+      sessions: { 'ws-1': [makeSession('gui')] },
+      serverNonce: { s1: 'nonce-1' },
+      isStreaming: { s1: true },
+      sessionActivity: {
+        s1: { phase: 'background', active: true, backgroundTasks },
+      },
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+
+    try {
+      useChatStore.getState().sendMessage('ws-1', 's1', 'follow up')
+
+      assert.deepStrictEqual(useChatStore.getState().sessionActivity.s1, {
+        phase: 'foreground',
+        active: true,
+        backgroundTasks,
+      })
+      assert.strictEqual(useChatStore.getState().isStreaming.s1, true)
+    } finally {
+      historySpy.mockRestore()
+      requestSpy.mockRestore()
+    }
+  })
+
   it('marks complete history ready when a draft sends its first message', () => {
     useChatStore.setState({
       sessions: { 'ws-1': [{ ...makeSession('gui'), isDraft: true }] },

@@ -139,6 +139,8 @@ export default function PromptInput({
   const activity = useChatStore((s) => s.sessionActivity[sessionId])
   const backgroundTasks = activity?.backgroundTasks ?? []
   const backgroundTaskCount = backgroundTasks.length
+  const isForegroundActive = isStreaming && activity?.phase !== 'background'
+  const isComposerLocked = isForegroundActive || isInterrupting
   const { suggest, train } = useNgramCompletion(workspaceId)
 
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
@@ -239,7 +241,7 @@ export default function PromptInput({
       flushUndoGroup()
     }, 500)
   }
-  const editableEnabled = !disabled && !isStreaming && !isRestarting
+  const editableEnabled = !disabled && !isComposerLocked && !isRestarting
   const contentEditableMode = supportsPlaintextOnly() ? 'plaintext-only' : 'true'
   const placeholder = t('placeholder')
   const placeholderVisible = !input && !isFocused
@@ -345,10 +347,9 @@ export default function PromptInput({
       }
     }
 
-    // Detect @ trigger only when no picker is open and input is not
-    // disabled by streaming/restarting.
+    // Detect @ trigger only while the composer is available.
     if (
-      !isStreaming &&
+      !isComposerLocked &&
       !isRestarting &&
       !filePickerOpen &&
       (!pickerOpen || pickerSource !== 'slash')
@@ -377,10 +378,9 @@ export default function PromptInput({
       }
     }
 
-    // Detect / trigger only when no workspace picker is open and input is not
-    // disabled by streaming/restarting.
+    // Detect / trigger only while the composer is available.
     if (
-      !isStreaming &&
+      !isComposerLocked &&
       !isRestarting &&
       !filePickerOpen &&
       (!pickerOpen || pickerSource !== 'slash')
@@ -421,7 +421,7 @@ export default function PromptInput({
 
   const handleSend = () => {
     const trimmed = input.trim()
-    if (!trimmed || disabled || isStreaming || isRestarting || !hasSession) return
+    if (!trimmed || disabled || isComposerLocked || isRestarting || !hasSession) return
     onSend(trimmed)
     train(trimmed)
     resetInput()
@@ -581,7 +581,7 @@ export default function PromptInput({
     if (
       e.altKey &&
       e.key.toLowerCase() === 'h' &&
-      !isStreaming &&
+      !isComposerLocked &&
       !isRestarting &&
       hasSession
     ) {
@@ -829,7 +829,7 @@ export default function PromptInput({
   const lockedBackendUnavailable =
     !!sessionBackend && backendAvailability(backends, sessionBackend)?.status === 'unavailable'
 
-  const canSend = input.trim().length > 0 && hasSession && !isStreaming && !isRestarting && !disabled && !lockedBackendUnavailable
+  const canSend = input.trim().length > 0 && hasSession && !isComposerLocked && !isRestarting && !disabled && !lockedBackendUnavailable
   const canClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
   const {
@@ -849,7 +849,7 @@ export default function PromptInput({
       pickerOpen ||
       filePickerOpen ||
       historyPickerOpen ||
-      isStreaming ||
+      isComposerLocked ||
       isRestarting ||
       showGhost
     ) {
@@ -867,15 +867,73 @@ export default function PromptInput({
     pickerOpen,
     filePickerOpen,
     historyPickerOpen,
-    isStreaming,
+    isComposerLocked,
     isRestarting,
     showGhost,
     suggest,
   ])
 
-  const commandsDisabled = disabled || isStreaming || isRestarting
-  const filesDisabled = disabled || isStreaming || isRestarting || !workspaceId
-  const historyDisabled = disabled || isStreaming || isRestarting || !hasSession
+  const commandsDisabled = disabled || isComposerLocked || isRestarting
+  const filesDisabled = disabled || isComposerLocked || isRestarting || !workspaceId
+  const historyDisabled = disabled || isComposerLocked || isRestarting || !hasSession
+
+  const stopControl = (isComposerLocked || isStreaming) ? (
+    <Popover open={stopPopoverOpen} onOpenChange={setStopPopoverOpen}>
+      <PopoverTrigger asChild>
+        <button
+          disabled={isInterrupting}
+          aria-label={isInterrupting ? t('stopPopover.stopping') : t('stop')}
+          className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
+        >
+          {isInterrupting ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <span className="relative w-4 h-4 flex items-center justify-center">
+              <Loader2 className="absolute inset-0 w-4 h-4 animate-spin opacity-60" />
+              <Square className="w-2 h-2 fill-current" />
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="center"
+        className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
+      >
+        <p className="text-text-primary mb-3">
+          {backgroundTaskCount > 0
+            ? t('stopPopover.titleWithTasks', { count: backgroundTaskCount })
+            : t('stopPopover.title')}
+        </p>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => setStopPopoverOpen(false)}
+            disabled={isInterrupting}
+            className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-chrome-hover transition-colors"
+          >
+            {t('stopPopover.cancel')}
+          </button>
+          <button
+            onClick={() => {
+              onStop()
+              setStopPopoverOpen(false)
+            }}
+            disabled={isInterrupting}
+            className="px-3 py-1.5 font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
+          >
+            {isInterrupting ? (
+              <span className="flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {t('stopPopover.stopping')}
+              </span>
+            ) : (
+              t('stopPopover.confirm')
+            )}
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  ) : null
 
   return (
     <div className={`max-w-3xl mx-auto px-4 ${isBotSession ? 'py-2' : 'py-4'}`}>
@@ -929,7 +987,7 @@ export default function PromptInput({
             <ProviderSelector
               workspaceId={workspaceId}
               sessionId={sessionId}
-              disabled={isStreaming || isRestarting}
+              disabled={isComposerLocked || isRestarting}
               hideNameBelowSm
             />
           </div>
@@ -977,7 +1035,7 @@ export default function PromptInput({
         <div ref={inputCardRef} data-testid="input-card" className="relative bg-work border border-border rounded-xl shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] focus-within:border-border-hover transition-colors">
           <>
             <div
-              className={`grid transition-[grid-template-rows] duration-300 ease-out ${isStreaming ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
+              className={`grid transition-[grid-template-rows] duration-300 ease-out ${isComposerLocked ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
             >
               <div className="overflow-hidden min-h-0">
                 <div className="relative">
@@ -1106,10 +1164,10 @@ export default function PromptInput({
               <div className="flex items-center gap-1">
                 {sessionId && !isBotSession && (
                   <>
-                    <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} hideNameBelowSm />
-                    {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} hideNameBelowSm />}
-                    {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />}
-                    {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isStreaming || isRestarting} />}
+                    <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />
+                    {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
+                    {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
+                    {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
                   </>
                 )}
                 {canClear && showClear && (
@@ -1122,62 +1180,8 @@ export default function PromptInput({
                     <X className="w-4 h-4" />
                   </button>
                 )}
-                {isStreaming ? (
-                  <Popover open={stopPopoverOpen} onOpenChange={setStopPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <button
-                        disabled={isInterrupting}
-                        aria-label={isInterrupting ? t('stopPopover.stopping') : t('stop')}
-                        className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
-                      >
-                        {isInterrupting ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <span className="relative w-4 h-4 flex items-center justify-center">
-                            <Loader2 className="absolute inset-0 w-4 h-4 animate-spin opacity-60" />
-                            <Square className="w-2 h-2 fill-current" />
-                          </span>
-                        )}
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      side="top"
-                      align="center"
-                      className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
-                    >
-                      <p className="text-text-primary mb-3">
-                        {backgroundTaskCount > 0
-                          ? t('stopPopover.titleWithTasks', { count: backgroundTaskCount })
-                          : t('stopPopover.title')}
-                      </p>
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => setStopPopoverOpen(false)}
-                          disabled={isInterrupting}
-                          className="px-3 py-1.5 font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-chrome-hover transition-colors"
-                        >
-                          {t('stopPopover.cancel')}
-                        </button>
-                        <button
-                          onClick={() => {
-                            onStop()
-                            setStopPopoverOpen(false)
-                          }}
-                          disabled={isInterrupting}
-                          className="px-3 py-1.5 font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
-                        >
-                          {isInterrupting ? (
-                            <span className="flex items-center gap-1">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                              {t('stopPopover.stopping')}
-                            </span>
-                          ) : (
-                            t('stopPopover.confirm')
-                          )}
-                        </button>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
+                {isComposerLocked ? (
+                  stopControl
                 ) : (
                   <>
                     {useModifierToSubmit && (
@@ -1185,6 +1189,7 @@ export default function PromptInput({
                         {/Mac|iPod|iPhone|iPad/.test(navigator.platform) ? 'Cmd+Enter' : 'Ctrl+Enter'}
                       </span>
                     )}
+                    {isStreaming && stopControl}
                     <button
                       onClick={handleSend}
                       disabled={!canSend}

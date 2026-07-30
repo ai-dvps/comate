@@ -581,7 +581,7 @@ describe('PromptInput browser', () => {
     expect(el).toHaveAttribute('tabindex', '-1')
   })
 
-  it('shows two live task details and keeps the composer locked', () => {
+  it('shows live task details while keeping the composer available', async () => {
     chatStoreMock.getState().sessionActivity[DEFAULT_PROPS.sessionId] = {
       phase: 'background',
       active: true,
@@ -590,6 +590,7 @@ describe('PromptInput browser', () => {
         { id: 'command-1', type: 'command', description: 'Run focused server tests' },
       ],
     }
+    chatStoreMock.setDraft(DEFAULT_PROPS.sessionId, 'Answer the main agent')
 
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
 
@@ -601,7 +602,18 @@ describe('PromptInput browser', () => {
     expect(screen.getByText('Review the runtime lifecycle')).toBeInTheDocument()
     expect(screen.getByText('Command')).toBeInTheDocument()
     expect(screen.getByText('Run focused server tests')).toBeInTheDocument()
-    expect(screen.getByRole('textbox')).toHaveAttribute('contenteditable', 'false')
+    expect(screen.getByRole('textbox')).not.toHaveAttribute('contenteditable', 'false')
+    expect(screen.getByRole('textbox')).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('button', { name: 'stop' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'stop' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm' }))
+
+    expect(DEFAULT_PROPS.onStop).toHaveBeenCalledOnce()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('Answer the main agent')
   })
 
   it('uses the generic label for an unknown background task type', () => {
