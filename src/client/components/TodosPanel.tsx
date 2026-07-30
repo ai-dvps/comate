@@ -397,6 +397,9 @@ export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
                                 onSelect={() => setSelectedId(todo.id)}
                                 onToggle={() => changeStatus(todo.id, todo.status === 'done' ? 'pending' : 'done')}
                                 onDelete={() => deleteTodo(todo.id)}
+                                onRename={(text) => {
+                                  void updateTodo(todo.id, { text })
+                                }}
                               />
                             ))}
                           </ul>
