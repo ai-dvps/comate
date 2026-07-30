@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
@@ -13,8 +13,6 @@ interface SidebarProps {
   onOpenSkills?: () => void
 }
 
-type SidebarTab = 'sessions'
-
 export default function Sidebar({
   width,
   onWidthChange,
@@ -23,7 +21,6 @@ export default function Sidebar({
   onOpenSkills,
 }: SidebarProps) {
   const { t } = useTranslation('common')
-  const [activeTab, setActiveTab] = useState<SidebarTab>('sessions')
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const dragRef = useRef<{ move: (e: MouseEvent) => void; up: () => void } | null>(null)
 
@@ -72,13 +69,6 @@ export default function Sidebar({
     }
   }, [isCollapsed, endDrag])
 
-  const tabs: { id: SidebarTab; label: string }[] = [
-    {
-      id: 'sessions',
-      label: t('sidebar.sessions'),
-    },
-  ]
-
   return (
     <aside
       className={cn(
@@ -94,30 +84,10 @@ export default function Sidebar({
           key="expanded"
           className="flex flex-col h-full animate-sidebar-content-reveal motion-reduce:animate-none"
         >
-          {/* Tab Switcher */}
-          <div className="flex flex-shrink-0">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={cn(
-                  'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
-                  activeTab === tab.id
-                    ? 'text-text-primary border-accent'
-                    : 'text-text-secondary hover:text-text-primary border-border/50',
-                )}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Tab Content */}
           <div className="flex-1 overflow-hidden flex flex-col">
-            {activeTab === 'sessions' && activeWorkspaceId && (
+            {activeWorkspaceId ? (
               <SessionList workspaceId={activeWorkspaceId} onOpenPlugins={onOpenPlugins} onOpenSkills={onOpenSkills} />
-            )}
-            {activeTab === 'sessions' && !activeWorkspaceId && (
+            ) : (
               <div className="flex-1 flex items-center justify-center p-4">
                 <p className="text-text-tertiary text-center">
                   {t('sidebar.noWorkspace')}

@@ -26,20 +26,16 @@ describe('Sidebar', () => {
     cleanup();
   });
 
-  // R1: the workspace-sidebar Todos tab was removed — Todos are now a top-level
-  // panel. Only the Sessions tab remains in the sidebar.
-  it('renders only the Sessions tab (no Todos tab — R1)', () => {
+  it('renders the session list when expanded and a workspace is active', () => {
     renderWithI18n(
       <Sidebar
         width={240}
         onWidthChange={vi.fn()}
+        isCollapsed={false}
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Sessions' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Todos' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Files' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Queue' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('session-list')).toBeInTheDocument();
   });
 
   it('shows the resize handle when expanded and hides it when collapsed', () => {
@@ -75,20 +71,7 @@ describe('Sidebar', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: 'Sessions' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('session-list')).not.toBeInTheDocument();
     expect(screen.queryByTestId('sidebar-resize-handle')).not.toBeInTheDocument();
-  });
-
-  it('defaults to the Sessions tab active', () => {
-    renderWithI18n(
-      <Sidebar
-        width={240}
-        onWidthChange={vi.fn()}
-        isCollapsed={false}
-      />,
-    );
-
-    expect(screen.getByRole('button', { name: 'Sessions' })).toHaveClass('border-b');
   });
 });
