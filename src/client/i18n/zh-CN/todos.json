@@ -3,6 +3,8 @@
   "addPlaceholder": "添加一个待办…",
   "add": "添加",
   "empty": "这里没有待办。",
+  "editTitle": "编辑标题",
+  "doubleClickToEdit": "双击编辑",
   "close": "关闭",
   "toggleDone": "切换完成",
   "delete": "删除",

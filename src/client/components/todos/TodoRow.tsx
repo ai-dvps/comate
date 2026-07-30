@@ -1,6 +1,7 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Github, X, Check } from 'lucide-react'
-import type { Todo } from '../../stores/todo-store'
+import { MAX_TODO_TEXT_LENGTH, type Todo } from '../../stores/todo-store'
 import { cn } from '../ui/utils'
 import { Badge } from '../ui/badge'
 
@@ -10,16 +11,72 @@ interface TodoRowProps {
   onSelect: () => void
   onToggle: () => void
   onDelete: () => void
+  /** Persist a renamed title. Called with the trimmed next text. */
+  onRename: (text: string) => void
 }
 
-export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete }: TodoRowProps) {
+export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete, onRename }: TodoRowProps) {
   const { t } = useTranslation('todos')
   const done = todo.status === 'done'
   const labelOverflow = todo.labels.length > 2 ? todo.labels.length - 2 : 0
 
+  const [isEditing, setIsEditing] = useState(false)
+  const [draft, setDraft] = useState(todo.text)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Guards against a double-commit when Enter/Escape unmounts the input and
+  // fires onBlur in the same gesture.
+  const committedRef = useRef(false)
+
+  // Focus and select-all the moment edit mode activates.
+  useEffect(() => {
+    if (!isEditing) return
+    const el = inputRef.current
+    if (el) {
+      el.focus()
+      el.select()
+    }
+  }, [isEditing])
+
+  const startEditing = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      committedRef.current = false
+      setDraft(todo.text)
+      setIsEditing(true)
+    },
+    [todo.text],
+  )
+
+  const commit = useCallback(() => {
+    if (committedRef.current) return
+    committedRef.current = true
+    setIsEditing(false)
+    const next = draft.trim()
+    // Empty/whitespace titles are not allowed — silently revert.
+    if (next && next !== todo.text) {
+      onRename(next)
+    }
+  }, [draft, todo.text, onRename])
+
+  const cancel = useCallback(() => {
+    committedRef.current = true
+    setIsEditing(false)
+  }, [])
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      // Plain Enter or Cmd/Ctrl+Enter both save.
+      e.preventDefault()
+      commit()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      cancel()
+    }
+  }
+
   return (
     <li
-      onClick={onSelect}
+      onClick={isEditing ? undefined : onSelect}
       className={cn(
         'group flex items-start gap-3 px-3 py-2 rounded-lg cursor-pointer border border-transparent transition-colors',
         selected ? 'bg-accent/10 border-accent/10' : 'hover:bg-surface-hover hover:border-border/50',
@@ -40,14 +97,35 @@ export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete }
       </button>
 
       <div className="flex-1 min-w-0 flex flex-col gap-1">
-        <span
-          className={cn(
-            'text-sm leading-tight',
-            done ? 'line-through text-text-tertiary' : 'text-text-primary',
-          )}
-        >
-          {todo.text}
-        </span>
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={draft}
+            maxLength={MAX_TODO_TEXT_LENGTH}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onBlur={commit}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label={t('editTitle')}
+            className={cn(
+              'w-full bg-bg text-sm leading-tight rounded-md border border-accent px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-accent',
+              done ? 'text-text-tertiary line-through' : 'text-text-primary',
+            )}
+          />
+        ) : (
+          <span
+            onDoubleClick={startEditing}
+            className={cn(
+              'text-sm leading-tight',
+              done ? 'line-through text-text-tertiary' : 'text-text-primary',
+            )}
+            title={t('doubleClickToEdit')}
+          >
+            {todo.text}
+          </span>
+        )}
 
         <div className="flex flex-wrap items-center gap-1.5">
           {todo.dueDate && (

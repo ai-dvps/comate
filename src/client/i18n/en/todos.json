@@ -3,6 +3,8 @@
   "addPlaceholder": "Add a todo…",
   "add": "Add",
   "empty": "No todos here.",
+  "editTitle": "Edit title",
+  "doubleClickToEdit": "Double-click to edit",
   "close": "Close",
   "toggleDone": "Toggle complete",
   "delete": "Delete",
