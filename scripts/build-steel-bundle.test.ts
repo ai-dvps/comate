@@ -3,7 +3,11 @@ import assert from 'node:assert';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { patchCdpServicePrimaryPage, pruneNonRuntimeDirs } from './build-steel-bundle.js';
+import {
+  patchCdpServicePrimaryPage,
+  patchLiveSessionViewerNativeScale,
+  pruneNonRuntimeDirs,
+} from './build-steel-bundle.js';
 
 /**
  * Vendored Steel pruning contract: we strip test/example/etc. trees to keep the
@@ -70,6 +74,104 @@ describe('patchCdpServicePrimaryPage', () => {
       assert.ok(
         patched.includes('(await this.browserInstance.pages())[0] ?? await this.browserInstance.newPage()'),
         'Steel must always publish a Puppeteer-managed page for live-details and the viewer',
+      );
+    } finally {
+      rmSync(apiDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('patchLiveSessionViewerNativeScale', () => {
+  it('renders browser frames at native size and lets the viewer scroll', () => {
+    const apiDir = mkdtempSync(join(tmpdir(), 'comate-steel-native-viewer-'));
+    const templateDir = join(apiDir, 'src', 'templates');
+    const templatePath = join(templateDir, 'live-session-streamer.ejs');
+    try {
+      mkdirSync(templateDir, { recursive: true });
+      writeFileSync(
+        templatePath,
+        `.content {
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .canvas-container {
+            position: absolute;
+            height: 100%;
+            width: 100%;
+        }
+        .canvas-container.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .canvas {
+            position: absolute;
+            height: 100%;
+            width: auto;
+            left: 50%;
+            transform: translateX(-50%);
+            object-fit: contain;
+        }
+        const parentHeight = container.clientHeight;
+
+        // Scale to height while maintaining aspect ratio
+        const targetHeight = parentHeight;
+        const targetWidth = targetHeight * (tabData.currentImageWidth / tabData.currentImageHeight);
+
+        canvas.width = targetWidth * dpr;
+        canvas.height = targetHeight * dpr;
+
+        canvas.style.height = '100%';
+        canvas.style.width = 'auto';`,
+      );
+
+      patchLiveSessionViewerNativeScale(apiDir);
+
+      const patched = readFileSync(templatePath, 'utf-8');
+      assert.match(patched, /overflow: auto;/);
+      assert.match(patched, /top: 0;/);
+      assert.match(patched, /left: 0;/);
+      assert.match(patched, /min-width: 100%;/);
+      assert.match(patched, /\.canvas-container\.active \{\s*display: block;/);
+      assert.match(patched, /\.canvas \{\s*position: relative;\s*display: block;/);
+      assert.match(patched, /canvas\.width = tabData\.currentImageWidth \* dpr;/);
+      assert.match(patched, /canvas\.height = tabData\.currentImageHeight \* dpr;/);
+      assert.match(patched, /canvas\.style\.width = tabData\.currentImageWidth \+ 'px';/);
+      assert.match(patched, /canvas\.style\.height = tabData\.currentImageHeight \+ 'px';/);
+      assert.doesNotMatch(patched, /Scale to height while maintaining aspect ratio/);
+      assert.doesNotMatch(patched, /transform: translateX\(-50%\)/);
+    } finally {
+      rmSync(apiDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when the required viewer template is missing', () => {
+    const apiDir = mkdtempSync(join(tmpdir(), 'comate-steel-missing-viewer-'));
+    try {
+      assert.throws(
+        () => patchLiveSessionViewerNativeScale(apiDir),
+        /native-scale viewer template not found/,
+      );
+    } finally {
+      rmSync(apiDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails loudly when the pinned viewer structure drifts', () => {
+    const apiDir = mkdtempSync(join(tmpdir(), 'comate-steel-drifted-viewer-'));
+    const templateDir = join(apiDir, 'src', 'templates');
+    try {
+      mkdirSync(templateDir, { recursive: true });
+      writeFileSync(
+        join(templateDir, 'live-session-streamer.ejs'),
+        '.content { overflow: visible; }',
+      );
+
+      assert.throws(
+        () => patchLiveSessionViewerNativeScale(apiDir),
+        /native-scale viewer patch drifted \(content overflow\)/,
       );
     } finally {
       rmSync(apiDir, { recursive: true, force: true });

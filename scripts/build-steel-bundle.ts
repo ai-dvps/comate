@@ -423,6 +423,65 @@ export function patchCdpServicePrimaryPage(apiDir: string): void {
   console.log(`patched ${cdpServicePath}: primary page is guaranteed`);
 }
 
+/**
+ * Steel's stock viewer scales every browser frame to the available height and
+ * hides overflow. That makes text and controls smaller inside Comate's narrow
+ * browser pane. Keep the streamed frame at its native CSS-pixel dimensions and
+ * let the viewer provide scrollbars instead.
+ */
+export function patchLiveSessionViewerNativeScale(apiDir: string): void {
+  const templatePath = join(apiDir, 'src', 'templates', 'live-session-streamer.ejs');
+  if (!existsSync(templatePath)) {
+    throw new Error(
+      `build-steel-bundle: native-scale viewer template not found: ${templatePath}`,
+    );
+  }
+
+  let template = readFileSync(templatePath, 'utf-8');
+  const replaceRequired = (label: string, pattern: RegExp, replacement: string): void => {
+    if (!pattern.test(template)) {
+      throw new Error(
+        `build-steel-bundle: native-scale viewer patch drifted (${label}) in ${templatePath}`,
+      );
+    }
+    template = template.replace(pattern, replacement);
+  };
+
+  replaceRequired(
+    'content overflow',
+    /(\.content\s*\{[\s\S]*?\boverflow:\s*)hidden;/,
+    '$1auto;',
+  );
+  replaceRequired(
+    'canvas container dimensions',
+    /(\.canvas-container\s*\{[\s\S]*?)height:\s*100%;\s*width:\s*100%;/,
+    '$1top: 0;\n              left: 0;\n              min-height: 100%;\n              min-width: 100%;',
+  );
+  replaceRequired(
+    'active canvas centering',
+    /(\.canvas-container\.active\s*\{\s*)display:\s*flex;\s*align-items:\s*center;\s*justify-content:\s*center;/,
+    '$1display: block;',
+  );
+  replaceRequired(
+    'canvas fit styling',
+    /(\.canvas\s*\{\s*)position:\s*absolute;\s*height:\s*100%;\s*width:\s*auto;\s*left:\s*50%;\s*transform:\s*translateX\(-50%\);\s*object-fit:\s*contain;/,
+    '$1position: relative;\n            display: block;',
+  );
+  replaceRequired(
+    'canvas backing dimensions',
+    /const parentHeight = container\.clientHeight;\s*\/\/ Scale to height while maintaining aspect ratio\s*const targetHeight = parentHeight;\s*const targetWidth = targetHeight \* \(tabData\.currentImageWidth \/ tabData\.currentImageHeight\);[\s\S]*?canvas\.width = targetWidth \* dpr;\s*canvas\.height = targetHeight \* dpr;/,
+    `// Preserve the browser's native CSS-pixel dimensions. The content\n              // container scrolls when the frame is larger than the viewer.\n              canvas.width = tabData.currentImageWidth * dpr;\n              canvas.height = tabData.currentImageHeight * dpr;`,
+  );
+  replaceRequired(
+    'canvas display dimensions',
+    /canvas\.style\.height = '100%';\s*canvas\.style\.width = 'auto';/,
+    `canvas.style.width = tabData.currentImageWidth + 'px';\n              canvas.style.height = tabData.currentImageHeight + 'px';`,
+  );
+
+  writeFileSync(templatePath, template);
+  console.log(`patched ${templatePath}: browser frames render at native scale`);
+}
+
 function buildSteelApi(checkout: string): void {
   // Install the api workspace incl. devDependencies (typescript for tsc),
   // honoring the upstream lockfile. Scripts disabled: they download jars and
@@ -445,6 +504,7 @@ function buildSteelApi(checkout: string): void {
   });
   patchCdpServiceArgs(apiDir);
   patchCdpServicePrimaryPage(apiDir);
+  patchLiveSessionViewerNativeScale(apiDir);
   // Mirror the api package's copy:templates / copy:fingerprint scripts with
   // platform-independent fs calls.
   mkdirSync(join(apiDir, 'build', 'templates'), { recursive: true });
