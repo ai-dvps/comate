@@ -93,6 +93,7 @@
   "approvalError": "审批错误",
   "approvalTimeout": "审批请求超时，已自动关闭。",
   "interruptError": "中断错误",
+  "taskStopError": "任务停止错误",
   "interrupted": "用户已中断",
   "requestFailed": "请求失败",
   "failedToUpdateApprovalMode": "更新审批模式失败",
