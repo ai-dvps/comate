@@ -222,7 +222,7 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
                   onKeyDown={handleSearchKeyDown}
                   placeholder={t('searchPlaceholder')}
                   aria-label={t('searchPlaceholder')}
-                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                  className="w-full h-[34px] pl-8 pr-7 py-1.5 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
                 />
                 {query && (
                   <button
