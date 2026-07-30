@@ -6,7 +6,6 @@ import { getComateThemeExtension } from '../lib/codemirror-theme'
 
 interface CodeMirrorEditorProps {
   value?: string
-  onChange?: (value: string) => void
   language: Extension | null
   readOnly: boolean
   className?: string
@@ -18,7 +17,6 @@ interface CodeMirrorEditorProps {
 
 export default function CodeMirrorEditor({
   value = '',
-  onChange,
   language,
   readOnly,
   className,
@@ -45,7 +43,6 @@ export default function CodeMirrorEditor({
   return (
     <CodeMirror
       value={value}
-      onChange={onChange ? (val) => onChange(val) : undefined}
       theme={themeExtension}
       editable={!readOnly}
       readOnly={readOnly}
