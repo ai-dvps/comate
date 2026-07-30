@@ -593,6 +593,9 @@ describe('PromptInput browser', () => {
 
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
 
+    const activitySurface = screen.getByTestId('session-activity-details')
+    expect(activitySurface).toHaveClass('mx-3', 'rounded-lg', 'shadow-[0_8px_24px_-14px_rgba(0,0,0,0.45)]')
+    expect(activitySurface.querySelector('svg')).toBeInTheDocument()
     expect(screen.getByText('2 background tasks running')).toBeInTheDocument()
     expect(screen.getByText('Agent')).toBeInTheDocument()
     expect(screen.getByText('Review the runtime lifecycle')).toBeInTheDocument()
@@ -645,7 +648,7 @@ describe('PromptInput browser', () => {
     )
 
     const region = screen.getByTestId('session-activity-details')
-    expect(region).toHaveClass('max-h-24', 'overflow-y-auto')
+    expect(region).toHaveClass('max-h-28', 'overflow-y-auto')
     expect(screen.getByText(longDescription)).toHaveClass('break-words')
     expect(region.scrollWidth).toBeLessThanOrEqual(region.clientWidth)
   })
