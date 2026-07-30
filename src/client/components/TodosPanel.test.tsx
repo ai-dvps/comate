@@ -19,6 +19,7 @@ function makeTodo(overrides: Partial<Todo> & { text: string }): Todo {
     id: overrides.id ?? `todo-${overrides.text}`,
     workspaceId: null,
     text: overrides.text,
+    content: null,
     status: overrides.status ?? 'pending',
     sessionId: null,
     createdAt: new Date().toISOString(),

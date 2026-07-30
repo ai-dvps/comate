@@ -12,6 +12,8 @@ export interface Todo {
   /** Global todos may carry no workspace; a workspace is an optional soft link. */
   workspaceId: string | null;
   text: string;
+  /** Optional long-form body / detail text. */
+  content: string | null;
   status: TodoStatus;
   sessionId: string | null;
   createdAt: string;
@@ -34,12 +36,14 @@ export interface Todo {
 
 export interface CreateTodoInput {
   text: string;
+  content?: string | null;
   workspaceId?: string | null;
   dueDate?: string | null;
 }
 
 export interface UpdateTodoInput {
   text?: string;
+  content?: string | null;
   status?: TodoStatus;
   sessionId?: string | null;
   workspaceId?: string | null;

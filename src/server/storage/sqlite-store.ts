@@ -341,6 +341,7 @@ export class SqliteStore {
         id TEXT PRIMARY KEY,
         workspace_id TEXT,
         text TEXT NOT NULL,
+        content TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         session_id TEXT,
         created_at TEXT NOT NULL,
@@ -489,6 +490,7 @@ export class SqliteStore {
     this.migrateToUnifiedSchema();
     this.migrateBrowserAuditSchema();
     this.migrateTodosGlobalSchema();
+    this.migrateTodoContentColumn();
   }
 
   /**
@@ -629,6 +631,34 @@ export class SqliteStore {
       console.log('[SqliteStore] Todos global schema migration completed');
     } catch (err) {
       console.error('[SqliteStore] Todos global schema migration failed:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Schema version 8 (U8): add a nullable content column to todos for long-form
+   * detail text. Existing rows keep a NULL content.
+   */
+  private migrateTodoContentColumn(): void {
+    const version = this.getMigrationVersion();
+    if (version !== null && version >= 8) {
+      return;
+    }
+
+    const cols = this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === 'content')) {
+      const prev = this.getMigrationState().snapshot;
+      this.setMigrationState(8, new Date().toISOString(), { ...prev, todo_content_column: 'already_present' });
+      return;
+    }
+
+    try {
+      this.db.exec(`ALTER TABLE todos ADD COLUMN content TEXT`);
+      const prev = this.getMigrationState().snapshot;
+      this.setMigrationState(8, new Date().toISOString(), { ...prev, todo_content_column: 'added' });
+      console.log('[SqliteStore] Added todos.content column');
+    } catch (err) {
+      console.error('[SqliteStore] Failed to add todos.content column:', err);
       throw err;
     }
   }
@@ -2143,6 +2173,7 @@ export class SqliteStore {
       id: uuidv4(),
       workspaceId: workspaceId ?? null,
       text: input.text.trim(),
+      content: input.content ?? null,
       status: 'pending',
       sessionId: null,
       createdAt: nowIso,
@@ -2161,11 +2192,11 @@ export class SqliteStore {
     this.db
       .prepare(
         `INSERT INTO todos (
-          id, workspace_id, text, status, session_id, created_at, updated_at,
+          id, workspace_id, text, content, status, session_id, created_at, updated_at,
           origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
           remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted
         ) VALUES (
-          @id, @workspace_id, @text, @status, @session_id, @created_at, @updated_at,
+          @id, @workspace_id, @text, @content, @status, @session_id, @created_at, @updated_at,
           @origin, @due_date, @repo_full_name, @issue_number, @remote_snapshot_json,
           @remote_updated_at, @last_synced_at, @assignee, @labels_json, @origin_deleted
         )`,
@@ -2174,6 +2205,7 @@ export class SqliteStore {
         id: todo.id,
         workspace_id: todo.workspaceId,
         text: todo.text,
+        content: todo.content,
         status: todo.status,
         session_id: todo.sessionId,
         created_at: todo.createdAt,
@@ -2387,6 +2419,10 @@ export class SqliteStore {
     if (input.text !== undefined) {
       sets.push('text = ?');
       values.push(input.text.trim());
+    }
+    if (input.content !== undefined) {
+      sets.push('content = ?');
+      values.push(input.content);
     }
     if (input.status !== undefined) {
       sets.push('status = ?');
@@ -3706,6 +3742,7 @@ interface RawTodoRow {
   id: string;
   workspace_id: string | null;
   text: string;
+  content: string | null;
   status: string;
   session_id: string | null;
   created_at: string;
@@ -3727,6 +3764,7 @@ function parseTodoRow(row: RawTodoRow): Todo {
     id: row.id,
     workspaceId: row.workspace_id ?? null,
     text: row.text,
+    content: row.content ?? null,
     status: row.status as TodoStatus,
     sessionId: row.session_id ?? null,
     createdAt: row.created_at,

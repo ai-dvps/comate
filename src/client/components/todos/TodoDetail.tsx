@@ -54,10 +54,10 @@ export default function TodoDetail({
     return () => window.clearTimeout(id)
   }, [todo?.id])
 
-  // Keep the local body draft in sync with the todo text.
+  // Keep the local body draft in sync with the todo content.
   useEffect(() => {
-    setBodyDraft(todo?.text ?? '')
-  }, [todo?.text, todo?.id])
+    setBodyDraft(todo?.content ?? '')
+  }, [todo?.content, todo?.id])
 
   const handleSpawn = async () => {
     if (!todo?.workspaceId) return
@@ -111,8 +111,8 @@ export default function TodoDetail({
 
   const saveBody = useCallback(
     (next: string) => {
-      if (!todo || next === todo.text) return
-      void onUpdateTodo(todo.id, { text: next })
+      if (!todo || next === (todo.content ?? '')) return
+      void onUpdateTodo(todo.id, { content: next })
     },
     [todo, onUpdateTodo],
   )
@@ -183,7 +183,7 @@ export default function TodoDetail({
               todo.status === 'done' ? 'line-through text-text-tertiary' : 'text-text-primary',
             )}
           >
-            {todo.text || t('noBody')}
+            {todo.text}
           </h2>
         </div>
 

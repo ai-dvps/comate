@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Todos panel top-bar layout** — the todos panel is now a top-bar task list: the left view rail is removed, smart views (Inbox / Today / Upcoming / All) live in a segmented header control with counts, search filters the active view, and the list spans the full width with information-rich rows showing due dates, labels, and origin. Group-by moved into the header, quick-add sits at the top of the list, and empty/no-results/load-failure states are split so sync errors are visible.
-- **Todo detail panel** — the detail pane is now wider by default and resizable via a left-edge drag handle. It animates when a todo is selected, shows the workspace name instead of its ID, and lets you reassign the workspace and edit the status directly. The todo body is editable in a tabbed markdown editor (edit/preview) with debounced auto-save.
+- **Todo detail panel** — the detail pane is now wider by default and resizable via a left-edge drag handle. It animates when a todo is selected, shows the workspace name instead of its ID, and lets you reassign the workspace and edit the status directly. Todos now keep a separate `content` field for long-form detail text; the detail editor edits this content (with edit/preview tabs and debounced auto-save) while the list row shows the short `text` title.
 
 ### Fixed
 

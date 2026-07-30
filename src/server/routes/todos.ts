@@ -56,7 +56,7 @@ router.post('/', async (req, res) => {
       return;
     }
     const workspaceId = workspaceIdFromReq(req);
-    const todo = store.createTodo(workspaceId, { text: input.text, dueDate: input.dueDate });
+    const todo = store.createTodo(workspaceId, { text: input.text, content: input.content, dueDate: input.dueDate });
     res.status(201).json({ todo });
   } catch (error) {
     diagLog('[todos] Failed to create todo: ' + (error instanceof Error ? error.message : String(error)));
@@ -76,6 +76,10 @@ router.put('/:todoId', async (req, res) => {
     }
     if (input.text && input.text.trim().length > 2000) {
       res.status(400).json({ error: 'text must be 2000 characters or less' });
+      return;
+    }
+    if (input.content && input.content.length > 20000) {
+      res.status(400).json({ error: 'content must be 20000 characters or less' });
       return;
     }
 

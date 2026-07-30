@@ -10,6 +10,7 @@ export interface Todo {
   id: string;
   workspaceId: string | null;
   text: string;
+  content: string | null;
   status: TodoStatus;
   sessionId: string | null;
   createdAt: string;
@@ -122,6 +123,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       id: `temp-${Date.now()}`,
       workspaceId: options?.workspaceId ?? null,
       text: trimmedText,
+      content: null,
       status: 'pending',
       sessionId: null,
       createdAt: new Date().toISOString(),
