@@ -141,8 +141,8 @@ describe('TodoDetail', () => {
         onChangeStatus={onChangeStatus}
       />,
     );
-    const select = screen.getByLabelText('Workspace');
-    await user.selectOptions(select, 'ws-2');
+    await user.click(screen.getByRole('combobox', { name: 'Workspace' }));
+    await user.click(screen.getByRole('option', { name: 'Beta Workspace' }));
     await waitFor(() => expect(onUpdateTodo).toHaveBeenCalledWith('todo-Task', { workspaceId: 'ws-2' }));
   });
 
@@ -158,8 +158,8 @@ describe('TodoDetail', () => {
         onChangeStatus={onChangeStatus}
       />,
     );
-    const select = screen.getByLabelText('Status');
-    await user.selectOptions(select, 'done');
+    await user.click(screen.getByRole('combobox', { name: 'Status' }));
+    await user.click(screen.getByRole('option', { name: 'Done' }));
     await waitFor(() => expect(onChangeStatus).toHaveBeenCalledWith('todo-Task', 'done'));
   });
 
