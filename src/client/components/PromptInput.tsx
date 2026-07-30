@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { ArrowUp, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
+import { Activity, ArrowUp, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
@@ -938,28 +938,40 @@ export default function PromptInput({
         <>
           {(backgroundTasks.length > 0 || activity?.phase === 'stopping') && (
             <div
-              className="mb-2 max-h-24 overflow-y-auto px-1 text-[11px] text-text-secondary"
+              className="relative z-10 mx-3 mb-2 max-h-28 overflow-y-auto rounded-lg border border-border/80 bg-surface/95 px-2.5 py-2 text-[11px] text-text-secondary shadow-[0_8px_24px_-14px_rgba(0,0,0,0.45)] backdrop-blur-sm"
               role="status"
               aria-live="polite"
               aria-atomic="true"
               data-testid="session-activity-details"
             >
-              <div className="flex items-center gap-1.5 font-medium text-text-primary">
-                {activity?.phase === 'stopping' && <Loader2 className="w-3 h-3 animate-spin" />}
-                <span>
-                  {activity?.phase === 'stopping'
-                    ? t('activity.stopping')
-                    : t('activity.backgroundRunning', { count: backgroundTasks.length })}
+              <div className="flex min-w-0 items-start gap-2">
+                <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
+                  {activity?.phase === 'stopping' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Activity className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
                 </span>
-              </div>
-              {backgroundTasks.map((task) => (
-                <div key={task.id} className="mt-1 flex min-w-0 items-start gap-1.5">
-                  <span className="flex-shrink-0 text-text-tertiary">
-                    {getBackgroundTaskTypeLabel(task.type, t)}
-                  </span>
-                  <span className="min-w-0 break-words">{task.description}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium leading-6 text-text-primary">
+                    {activity?.phase === 'stopping'
+                      ? t('activity.stopping')
+                      : t('activity.backgroundRunning', { count: backgroundTasks.length })}
+                  </div>
+                  {backgroundTasks.length > 0 && (
+                    <div className="mt-0.5 space-y-1">
+                      {backgroundTasks.map((task) => (
+                        <div key={task.id} className="flex min-w-0 items-start gap-1.5 leading-4">
+                          <span className="flex-shrink-0 text-text-tertiary">
+                            {getBackgroundTaskTypeLabel(task.type, t)}
+                          </span>
+                          <span className="min-w-0 break-words">{task.description}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
+              </div>
             </div>
           )}
         <div ref={inputCardRef} data-testid="input-card" className="relative bg-surface border border-border rounded-xl shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] focus-within:border-border-hover transition-colors">
