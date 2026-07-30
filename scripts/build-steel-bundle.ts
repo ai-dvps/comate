@@ -396,6 +396,33 @@ function patchCdpServiceArgs(apiDir: string): void {
   console.log(`patched ${cdpServicePath}: FILTER_CHROME_ARGS now applied before uniq()`);
 }
 
+/**
+ * Chrome may finish launching before it has published an initial page target.
+ * Steel previously stored `pages()[0]` without validating it, then reported a
+ * healthy browser whose live-details endpoint permanently returned no pages.
+ * Ensure the vendored runtime always owns a Puppeteer-managed primary page.
+ */
+export function patchCdpServicePrimaryPage(apiDir: string): void {
+  const cdpServicePath = join(apiDir, 'build', 'services', 'cdp', 'cdp.service.js');
+  if (!existsSync(cdpServicePath)) {
+    console.warn(`warning: ${cdpServicePath} not found; skipping primary-page patch`);
+    return;
+  }
+  const original = readFileSync(cdpServicePath, 'utf-8');
+  const needle = '(await this.browserInstance.pages())[0]';
+  if (!original.includes(needle)) {
+    console.warn(
+      `warning: primary-page patch needle not found in ${cdpServicePath}; ` +
+        "Steel's launch code may have drifted",
+    );
+    return;
+  }
+  const replacement =
+    '(await this.browserInstance.pages())[0] ?? await this.browserInstance.newPage()';
+  writeFileSync(cdpServicePath, original.replace(needle, replacement));
+  console.log(`patched ${cdpServicePath}: primary page is guaranteed`);
+}
+
 function buildSteelApi(checkout: string): void {
   // Install the api workspace incl. devDependencies (typescript for tsc),
   // honoring the upstream lockfile. Scripts disabled: they download jars and
@@ -417,6 +444,7 @@ function buildSteelApi(checkout: string): void {
     shell: process.platform === 'win32',
   });
   patchCdpServiceArgs(apiDir);
+  patchCdpServicePrimaryPage(apiDir);
   // Mirror the api package's copy:templates / copy:fingerprint scripts with
   // platform-independent fs calls.
   mkdirSync(join(apiDir, 'build', 'templates'), { recursive: true });
