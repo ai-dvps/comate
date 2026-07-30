@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Nothing yet.
+- **Claude SDK Sessions becoming idle while background agents still run** — Session activity now follows the SDK's complete background-task snapshot instead of ending with the main-agent result. Background work keeps the Session active, visible, retained, and input-locked; the Session list shows a task count and the open chat shows task details. Stop now fences the whole Session immediately, drains late tasks, and closes the SDK process when cancellation cannot be proven.
 
 ## [0.0.29] - 2026-07-28
 

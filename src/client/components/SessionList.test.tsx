@@ -6,6 +6,7 @@ import { I18nextProvider } from 'react-i18next'
 import SessionList from './SessionList'
 import i18n from '../i18n'
 import type { ChatSession } from '../stores/chat-store'
+import type { SessionActivitySnapshot } from '../types/message'
 
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
@@ -28,6 +29,7 @@ const mockStore = {
   activeSessionIds: {} as Record<string, string | undefined>,
   messages: {},
   sessionStatus: {},
+  sessionActivity: {} as Record<string, SessionActivitySnapshot>,
   isStreaming: {},
   unreadCompletions: {},
   lastActivityAt: {},
@@ -70,6 +72,7 @@ describe('SessionList', () => {
     mockStore.activeSessionIds = {}
     mockStore.messages = {}
     mockStore.sessionStatus = {}
+    mockStore.sessionActivity = {}
     mockStore.isStreaming = {}
     mockStore.unreadCompletions = {}
     mockStore.lastActivityAt = {}

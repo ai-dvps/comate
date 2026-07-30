@@ -7,7 +7,14 @@ import type { Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthrop
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import type { ChatMessage, SubagentState, TaskItem, SseEvent, WorkflowState } from '../types/message.js';
+import type {
+  ChatMessage,
+  SubagentState,
+  TaskItem,
+  SseEvent,
+  WorkflowState,
+  SessionActivitySnapshot,
+} from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
 import {
@@ -1230,16 +1237,16 @@ export class ChatService {
         options,
         this.sdkClient,
         botEventHandler,
-        () => this.cancelIdleClose(sessionId),
-        () => {},
-        () => this.scheduleIdleClose(sessionId),
+        () => this.reconcileIdleClose(sessionId),
+        () => this.reconcileIdleClose(sessionId),
+        () => this.reconcileIdleClose(sessionId),
         provider,
         driver,
       );
       diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - openStart}ms`);
       this.runtimes.set(sessionId, runtime);
       this.runtimeContexts.set(sessionId, runtimeContext);
-      this.scheduleIdleClose(sessionId);
+      this.reconcileIdleClose(sessionId);
 
       // Set initial approval mode from session data
       if (!isBotSession && session.approvalMode) {
@@ -1399,17 +1406,19 @@ export class ChatService {
   }
 
   private scheduleIdleClose(sessionId: string): void {
-    this.cancelIdleClose(sessionId);
+    if (this.idleTimeouts.has(sessionId)) return;
+    const scheduledRuntime = this.runtimes.get(sessionId);
+    if (!scheduledRuntime) return;
     const timeout = setTimeout(() => {
-      // Hold the runtime open while the session is processing: an in-flight
-      // turn, a pending approval, or running background tasks. Without this
-      // guard a silent in-flight turn is reclaimed before it completes, which
-      // would break the WeCom long-reply safeguard for long-pending-approval
-      // turns.
-      const runtime = this.getRuntimeIfExists(sessionId);
-      if (runtime?.isProcessingTurn()) {
-        sidecarLog(`[ChatService] idle close deferred for ${sessionId}: session still processing`);
-        this.scheduleIdleClose(sessionId);
+      this.idleTimeouts.delete(sessionId);
+      const runtime = this.runtimes.get(sessionId);
+      if (
+        runtime !== scheduledRuntime ||
+        runtime.isClosed() ||
+        this.runtimeActivity(runtime).active ||
+        this.runtimeHasSubscribers(runtime)
+      ) {
+        sidecarLog(`[ChatService] idle close skipped for ${sessionId}: runtime retained`);
         return;
       }
       sidecarLog(`[ChatService] idle close fired for ${sessionId}`);
@@ -1419,6 +1428,38 @@ export class ChatService {
     }, RUNTIME_IDLE_GRACE_PERIOD_MS);
     this.idleTimeouts.set(sessionId, timeout);
     sidecarLog(`[ChatService] idle close scheduled for ${sessionId} (${RUNTIME_IDLE_GRACE_PERIOD_MS}ms)`);
+  }
+
+  private reconcileIdleClose(sessionId: string): void {
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime || runtime.isClosed()) {
+      this.cancelIdleClose(sessionId);
+      return;
+    }
+    if (this.runtimeActivity(runtime).active || this.runtimeHasSubscribers(runtime)) {
+      this.cancelIdleClose(sessionId);
+      return;
+    }
+    this.scheduleIdleClose(sessionId);
+  }
+
+  private runtimeActivity(runtime: SessionRuntime): SessionActivitySnapshot {
+    const activity = (runtime as SessionRuntime & {
+      getActivitySnapshot?: () => SessionActivitySnapshot;
+    }).getActivitySnapshot?.();
+    if (activity) return activity;
+    const isProcessing = (runtime as SessionRuntime & {
+      isProcessingTurn?: () => boolean;
+    }).isProcessingTurn?.() ?? false;
+    return {
+      phase: isProcessing ? 'foreground' : 'idle',
+      active: isProcessing,
+      backgroundTasks: [],
+    };
+  }
+
+  private runtimeHasSubscribers(runtime: SessionRuntime): boolean {
+    return (runtime as SessionRuntime & { hasSubscribers?: () => boolean }).hasSubscribers?.() ?? false;
   }
 
   private cancelIdleClose(sessionId: string): void {
@@ -1535,14 +1576,21 @@ export class ChatService {
     runtime.pushMessage(message);
   }
 
-  getSessionsStatus(workspaceId: string): Record<string, { pendingCount: number; isProcessing: boolean }> {
-    const statuses: Record<string, { pendingCount: number; isProcessing: boolean }> = {};
+  getSessionsStatus(workspaceId: string): Record<
+    string,
+    { pendingCount: number; isProcessing: boolean; activity: SessionActivitySnapshot }
+  > {
+    const statuses: Record<
+      string,
+      { pendingCount: number; isProcessing: boolean; activity: SessionActivitySnapshot }
+    > = {};
     for (const [sessionId, runtime] of this.runtimes) {
       const status = runtime.getStatus();
       if (status.workspaceId === workspaceId) {
         statuses[sessionId] = {
           pendingCount: status.pendingCount,
           isProcessing: status.isProcessing,
+          activity: status.activity ?? this.runtimeActivity(runtime),
         };
       }
     }

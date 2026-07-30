@@ -212,6 +212,28 @@ export interface WorkflowState {
  * The server emits these via `event: <type>` + `data: <JSON>` SSE frames.
  * U4 owns the emitter rewrite; U5 owns the consumer.
  */
+export type SessionActivityPhase = 'idle' | 'foreground' | 'background' | 'stopping'
+
+export type SessionBackgroundTask = {
+  id: string
+  type: string
+  description: string
+}
+
+export type SessionActivityInterruption = {
+  reason: 'runtime_failure' | 'user_stop'
+  message: string
+  foregroundInterrupted: boolean
+  backgroundTasks: SessionBackgroundTask[]
+}
+
+export type SessionActivitySnapshot = {
+  phase: SessionActivityPhase
+  active: boolean
+  backgroundTasks: SessionBackgroundTask[]
+  interruption?: SessionActivityInterruption
+}
+
 export type SseEvent =
   | { type: 'system_init'; model: string; tools: string[]; sessionId: string; mcpServers?: { name: string; status: string }[] }
   | { type: 'assistant_start'; messageId: string }
@@ -347,6 +369,7 @@ export type SseEvent =
       state: 'completed' | 'error'
     }
   | { type: 'task_started'; taskId: string; description: string }
+  | ({ type: 'session_activity' } & SessionActivitySnapshot)
   | { type: 'session_processing'; processing: boolean; backgroundTaskCount: number }
   | {
       type: 'task_updated'
@@ -370,16 +393,3 @@ export type SseEvent =
   | { type: 'compact_boundary' }
   | { type: 'compact_status'; active: boolean }
   | { type: 'heartbeat' }
-
-/**
- * Directional signals from the SSE emitter to the SessionRuntime
- * background-task tracker. A task enters the confirmed set only through a
- * confirmed-background signal (asyncLaunched / bashBackgrounded /
- * backgroundedPatch); a bare `started` creates an unconfirmed candidate.
- */
-export type TaskSignal =
-  | { kind: 'started'; taskId: string; toolUseId?: string; skipTranscript?: boolean; subagentType?: string }
-  | { kind: 'asyncLaunched'; toolUseId: string; agentId?: string }
-  | { kind: 'bashBackgrounded'; toolUseId: string; taskId: string }
-  | { kind: 'backgroundedPatch'; taskId: string }
-  | { kind: 'terminal'; taskId: string }

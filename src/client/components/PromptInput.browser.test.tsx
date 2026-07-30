@@ -5,6 +5,7 @@ import { page, userEvent } from '@vitest/browser/context'
 import { I18nextProvider } from 'react-i18next'
 import PromptInput from './PromptInput'
 import i18n from '../i18n'
+import type { SessionActivitySnapshot } from '../types/message'
 
 function renderWithI18n(ui: React.ReactElement) {
   return render(
@@ -26,11 +27,12 @@ const chatStoreMock = vi.hoisted(() => {
   type Listener = () => void
   const listeners = new Set<Listener>()
   const state = {
+    sessions: {} as Record<string, { id: string; backend?: string }[]>,
     drafts: {} as Record<string, string>,
     messages: {} as Record<string, { id: string; role: 'user' | 'assistant' | 'system'; parts: { type: string; text?: string }[]; timestamp: number }[]>,
     promptHistory: {} as Record<string, string[]>,
     isRestartingRuntime: {} as Record<string, boolean>,
-    sessionBackgroundTaskCount: {} as Record<string, number>,
+    sessionActivity: {} as Record<string, SessionActivitySnapshot>,
     setDraft: vi.fn((sessionId: string, content: string) => {
       if (content === '') {
         delete state.drafts[sessionId]
@@ -137,11 +139,12 @@ describe('PromptInput browser', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     cleanup()
+    chatStoreMock.getState().sessions = {}
     chatStoreMock.getState().drafts = {}
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().promptHistory = {}
     chatStoreMock.getState().isRestartingRuntime = {}
-    chatStoreMock.getState().sessionBackgroundTaskCount = {}
+    chatStoreMock.getState().sessionActivity = {}
     filesMock.results = []
     filesMock.truncated = false
     appSettingsMock.useModifierToSubmit = false
@@ -576,6 +579,75 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(el.textContent).toBe('@'))
     expect(el).toHaveAttribute('contenteditable', 'false')
     expect(el).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('shows two live task details and keeps the composer locked', () => {
+    chatStoreMock.getState().sessionActivity[DEFAULT_PROPS.sessionId] = {
+      phase: 'background',
+      active: true,
+      backgroundTasks: [
+        { id: 'agent-1', type: 'agent', description: 'Review the runtime lifecycle' },
+        { id: 'command-1', type: 'command', description: 'Run focused server tests' },
+      ],
+    }
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+
+    expect(screen.getByText('2 background tasks running')).toBeInTheDocument()
+    expect(screen.getByText('Agent')).toBeInTheDocument()
+    expect(screen.getByText('Review the runtime lifecycle')).toBeInTheDocument()
+    expect(screen.getByText('Command')).toBeInTheDocument()
+    expect(screen.getByText('Run focused server tests')).toBeInTheDocument()
+    expect(screen.getByRole('textbox')).toHaveAttribute('contenteditable', 'false')
+  })
+
+  it('uses the generic label for an unknown background task type', () => {
+    chatStoreMock.getState().sessionActivity[DEFAULT_PROPS.sessionId] = {
+      phase: 'background',
+      active: true,
+      backgroundTasks: [
+        { id: 'future-1', type: 'future_sdk_task', description: 'Index the repository' },
+      ],
+    }
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+
+    expect(screen.getByText('Background task')).toBeInTheDocument()
+    expect(screen.getByText('Index the repository')).toBeInTheDocument()
+  })
+
+  it('shows immediate stopping feedback without an actionable Stop button', () => {
+    chatStoreMock.getState().sessionActivity[DEFAULT_PROPS.sessionId] = {
+      phase: 'stopping',
+      active: true,
+      backgroundTasks: [],
+    }
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming isInterrupting />)
+
+    expect(screen.getByText('Stopping all Session work...')).toBeInTheDocument()
+    expect(screen.getByTestId('session-activity-details')).toHaveAttribute('aria-live', 'polite')
+    expect(screen.getByRole('button', { name: 'Stopping...' })).toBeDisabled()
+  })
+
+  it('contains long task descriptions in the bounded scroll region', () => {
+    const longDescription = 'Inspect '.repeat(60).trim()
+    chatStoreMock.getState().sessionActivity[DEFAULT_PROPS.sessionId] = {
+      phase: 'background',
+      active: true,
+      backgroundTasks: [{ id: 'agent-1', type: 'agent', description: longDescription }],
+    }
+
+    renderWithI18n(
+      <div style={{ width: '230px' }}>
+        <PromptInput {...DEFAULT_PROPS} isStreaming />
+      </div>,
+    )
+
+    const region = screen.getByTestId('session-activity-details')
+    expect(region).toHaveClass('max-h-24', 'overflow-y-auto')
+    expect(screen.getByText(longDescription)).toHaveClass('break-words')
+    expect(region.scrollWidth).toBeLessThanOrEqual(region.clientWidth)
   })
 
   it('undoes typed text with Cmd+Z', async () => {

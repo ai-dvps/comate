@@ -34,6 +34,19 @@
     "confirm": "确认",
     "stopping": "正在停止..."
   },
+  "activity": {
+    "backgroundRunning_one": "{{count}} 个后台任务正在运行",
+    "backgroundRunning_other": "{{count}} 个后台任务正在运行",
+    "backgroundTaskCount_one": "{{count}} 个后台任务",
+    "backgroundTaskCount_other": "{{count}} 个后台任务",
+    "stopping": "正在停止 Session 的全部工作...",
+    "taskType": {
+      "agent": "Agent",
+      "command": "命令",
+      "workflow": "工作流",
+      "background": "后台任务"
+    }
+  },
   "approval": {
     "clarifyingQuestion": "澄清问题",
     "stop": "停止",

@@ -29,6 +29,7 @@ const baseProps = {
   displayName: 'Test Session',
   isActive: false,
   isStreaming: false,
+  backgroundTaskCount: 0,
   pendingCount: 0,
   unread: false,
   preview: '',
@@ -57,6 +58,21 @@ describe('SessionListItem', () => {
   it('does not render the Draft badge for non-draft sessions', () => {
     renderWithI18n(<SessionListItem session={makeSession({ isDraft: false })} {...baseProps} />)
     expect(screen.queryByText('Draft')).toBeNull()
+  })
+
+  it('shows the background task count without rendering task descriptions', () => {
+    renderWithI18n(
+      <SessionListItem {...baseProps} session={makeSession()} isStreaming backgroundTaskCount={3} />,
+    )
+    expect(screen.getByText('3')).toBeDefined()
+    expect(screen.queryByText('Research implementation')).toBeNull()
+  })
+
+  it('does not render a zero-task badge for foreground-only activity', () => {
+    renderWithI18n(
+      <SessionListItem {...baseProps} session={makeSession()} isStreaming backgroundTaskCount={0} />,
+    )
+    expect(screen.queryByLabelText(/background task/i)).toBeNull()
   })
 
   it('does not render an approval-mode badge for auto sessions', () => {
