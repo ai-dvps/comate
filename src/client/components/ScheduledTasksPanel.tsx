@@ -18,6 +18,7 @@ import { openSessionDirect } from '../lib/session-jump'
 import { describeCron } from '../lib/cron-presets'
 import type { TaskRun } from '@server/models/scheduled-task.js'
 import { ScheduledTaskForm } from './ScheduledTaskForm'
+import ModalPanel from './ModalPanel'
 
 interface ScheduledTasksPanelProps {
   onClose: () => void
@@ -112,11 +113,12 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div
-        className="w-[720px] max-w-[92vw] max-h-[82vh] flex flex-col rounded-lg border border-border bg-surface shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <ModalPanel
+      open
+      onClose={onClose}
+      className="w-[720px] max-w-[92vw] max-h-[82vh] rounded-lg shadow-xl"
+    >
+      <div className="flex flex-col h-full">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             {view.kind !== 'list' && (
@@ -240,7 +242,7 @@ export default function ScheduledTasksPanel({ onClose }: ScheduledTasksPanelProp
           )}
         </div>
       </div>
-    </div>
+    </ModalPanel>
   )
 }
 

@@ -18,6 +18,7 @@ import { BarChart3, RefreshCw, X } from 'lucide-react'
 import { AnalyticsEmptyState, GlobalStatsView, WorkspaceSelector, WorkspaceStatsView } from './analytics/index.js'
 import { useAnalyticsStore } from '../stores/analytics-store.js'
 import { useWorkspaceStore } from '../stores/workspace-store.js'
+import ModalPanel from './ModalPanel.js'
 
 const TAB_STORAGE_KEY = 'comate.analytics.activeTab'
 type AnalyticsTab = 'global' | 'workspace'
@@ -80,15 +81,6 @@ export default function AnalyticsPanel({ onClose }: AnalyticsPanelProps) {
     }
   }, [activeTab, activeWorkspaceId, activeWorkspaceIdFromStore, setActiveWorkspace])
 
-  // Esc closes the modal (matches SettingsPanel behavior).
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
   const handleRefresh = () => {
     if (activeTab === 'global') {
       void fetchGlobalSummary()
@@ -107,16 +99,11 @@ export default function AnalyticsPanel({ onClose }: AnalyticsPanelProps) {
     : null
 
   return (
-    <div className="fixed top-11 inset-x-0 bottom-0 z-50 flex flex-col">
-      {/* Modal area */}
-      <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
-        {/* Backdrop */}
-        <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onClose} />
-
-        {/* Card */}
-        <div className="relative w-full h-full max-h-[90vh] max-w-[90vw] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
+    <ModalPanel open onClose={onClose}>
+      {/* Card */}
+      <div className="relative w-full h-full flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
             <div className="flex items-center gap-2 min-w-0">
               <BarChart3 className="w-4 h-4 text-text-tertiary shrink-0" />
               <h2 className="text-sm font-medium text-text-primary truncate">{t('title')}</h2>
@@ -182,8 +169,7 @@ export default function AnalyticsPanel({ onClose }: AnalyticsPanelProps) {
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </ModalPanel>
   )
 }
 
