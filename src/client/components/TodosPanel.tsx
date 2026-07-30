@@ -7,6 +7,7 @@ import { cn } from './ui/utils'
 import TodoDetail from './todos/TodoDetail'
 import TodoRow from './todos/TodoRow'
 import GitHubConnect from './todos/GitHubConnect'
+import ModalPanel from './ModalPanel'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 export type SmartView = 'inbox' | 'today' | 'upcoming' | 'all'
@@ -38,7 +39,10 @@ function filterByView(todos: Todo[], view: SmartView): Todo[] {
 }
 
 function isTextInput(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
+  return (
+    target instanceof HTMLElement &&
+    (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
+  )
 }
 
 export default function TodosPanel({ onClose }: TodosPanelProps) {
@@ -85,14 +89,24 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Close on Escape — ignore events originating in text inputs (R12).
+  // AE4: Escape in the search input clears the query first, then blurs on a
+  // second press. The shell-level Escape listener skips text inputs so this
+  // panel can implement its own search behavior.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !isTextInput(e.target)) onClose()
+      if (e.key !== 'Escape' || !isTextInput(e.target)) return
+      const input = searchInputRef.current
+      if (!input || document.activeElement !== input) return
+      e.stopPropagation()
+      if (searchQuery) {
+        setSearchQuery('')
+      } else {
+        input.blur()
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  }, [searchQuery, setSearchQuery])
 
   const query = searchQuery.trim().toLowerCase()
 
@@ -158,15 +172,11 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
   const selected = todos.find((todo) => todo.id === selectedId) ?? null
 
   return (
-    <div className="fixed top-11 inset-x-0 bottom-0 z-50 flex flex-col">
-      {/* Modal area */}
-      <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
-        {/* Backdrop */}
-        <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onClose} />
-        {/* Card */}
-        <div className="relative w-full h-full max-h-[90vh] max-w-[90vw] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="flex-shrink-0 border-b border-border/50">
+    <ModalPanel open onClose={onClose}>
+      {/* Card */}
+      <div className="relative w-full h-full flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex-shrink-0 border-b border-border/50">
             <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 h-auto min-h-[3.5rem] py-2">
               {/* Segmented view control */}
               <div
@@ -408,7 +418,6 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
 
           {showConnect && <GitHubConnect onClose={() => setShowConnect(false)} />}
         </div>
-      </div>
-    </div>
+      </ModalPanel>
   )
 }

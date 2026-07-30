@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { useSkillsStore, type SkillScope, type InstalledSkill, type SearchSkill } from '../stores/skills-store'
 import SkillInstallModal from './SkillInstallModal'
+import ModalPanel from './ModalPanel'
 
 interface SkillsPageProps {
   workspaceId: string
@@ -169,12 +170,11 @@ export default function SkillsPage({ workspaceId, onClose }: SkillsPageProps) {
   ]
 
   return (
-    <div className="fixed top-11 inset-x-0 bottom-0 z-50 flex flex-col">
-      <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
-        <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onClose} />
-        <div className="relative w-full h-full max-h-[90vh] max-w-[90vw] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
+    <>
+    <ModalPanel open onClose={onClose}>
+      <div className="relative w-full h-full flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-accent" />
               <h2 className="text-sm font-medium text-text-primary">{t('skills.title')}</h2>
@@ -394,7 +394,7 @@ export default function SkillsPage({ workspaceId, onClose }: SkillsPageProps) {
             )}
           </div>
         </div>
-      </div>
+      </ModalPanel>
 
       {installModal.open && (
         <SkillInstallModal
@@ -404,7 +404,7 @@ export default function SkillsPage({ workspaceId, onClose }: SkillsPageProps) {
           onInstalled={handleInstalled}
         />
       )}
-    </div>
+    </>
   )
 }
 

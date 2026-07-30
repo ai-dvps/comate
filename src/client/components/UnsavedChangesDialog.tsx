@@ -62,7 +62,7 @@ export default function UnsavedChangesDialog({
   };
 
   return (
-    <div className="fixed top-11 inset-x-0 bottom-0 z-[60] flex items-center justify-center">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
       <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onKeepEditing} />
       <div
         ref={dialogRef}

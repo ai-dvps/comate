@@ -42,6 +42,8 @@ import UpdateRestartDialog from './components/UpdateRestartDialog'
 import { ToolRendererProvider } from './components/tool-renderers/ToolRendererContext'
 import { useMigrationNotice } from './hooks/use-migration-notice'
 
+type AppPanel = 'settings' | 'analytics' | 'scheduledTasks' | 'todos' | 'plugins' | 'skills'
+
 function App() {
   const { t } = useTranslation('common')
   useTheme()
@@ -59,12 +61,9 @@ function App() {
     activeWorkspaceId ? s.activeSessionIds[activeWorkspaceId] : undefined
   )
   const setActiveSession = useChatStore((s) => s.setActiveSession)
-  const [showSettings, setShowSettings] = useState(false)
-  const [showScheduledTasks, setShowScheduledTasks] = useState(false)
-  const [showAnalytics, setShowAnalytics] = useState(false)
-  const [showTodos, setShowTodos] = useState(false)
-  const [showPluginSettings, setShowPluginSettings] = useState(false)
-  const [showSkillsPage, setShowSkillsPage] = useState(false)
+  const [activePanel, setActivePanel] = useState<AppPanel>(null)
+  const openPanel = useCallback((panel: AppPanel) => setActivePanel(panel), [])
+  const closePanel = useCallback(() => setActivePanel(null), [])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false)
   const [isMac, setIsMac] = useState(false)
@@ -261,10 +260,10 @@ function App() {
         <div className="flex items-center flex-shrink-0 pl-4 pr-4">
           <HeaderToolbar
             onCreateWorkspace={() => setShowCreateModal(true)}
-            onOpenSettings={() => setShowSettings(true)}
-            onOpenAnalytics={() => setShowAnalytics(true)}
-            onOpenScheduledTasks={() => setShowScheduledTasks(true)}
-            onOpenTodos={() => setShowTodos(true)}
+            onOpenSettings={() => openPanel('settings')}
+            onOpenAnalytics={() => openPanel('analytics')}
+            onOpenScheduledTasks={() => openPanel('scheduledTasks')}
+            onOpenTodos={() => openPanel('todos')}
           />
         </div>
       </header>
@@ -316,8 +315,8 @@ function App() {
           onWidthChange={setSidebarWidth}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={toggleSidebarCollapse}
-          onOpenPlugins={() => setShowPluginSettings(true)}
-          onOpenSkills={() => setShowSkillsPage(true)}
+          onOpenPlugins={() => openPanel('plugins')}
+          onOpenSkills={() => openPanel('skills')}
         />
 
         {/* Main Area — keep all open workspace panels mounted */}
@@ -364,37 +363,33 @@ function App() {
         )}
       </div>
 
-      {showSettings && (
-        <SettingsPanel
-          onClose={() => setShowSettings(false)}
-        />
+      {activePanel === 'settings' && (
+        <SettingsPanel onClose={closePanel} />
       )}
 
-      {showAnalytics && (
-        <AnalyticsPanel
-          onClose={() => setShowAnalytics(false)}
-        />
+      {activePanel === 'analytics' && (
+        <AnalyticsPanel onClose={closePanel} />
       )}
 
-      {showScheduledTasks && (
-        <ScheduledTasksPanel onClose={() => setShowScheduledTasks(false)} />
+      {activePanel === 'scheduledTasks' && (
+        <ScheduledTasksPanel onClose={closePanel} />
       )}
 
-      {showTodos && (
-        <TodosPanel onClose={() => setShowTodos(false)} />
+      {activePanel === 'todos' && (
+        <TodosPanel onClose={closePanel} />
       )}
 
-      {activeWorkspaceId && showPluginSettings && (
+      {activePanel === 'plugins' && activeWorkspaceId && (
         <PluginSettingsPage
           workspaceId={activeWorkspaceId}
-          onClose={() => setShowPluginSettings(false)}
+          onClose={closePanel}
         />
       )}
 
-      {activeWorkspaceId && showSkillsPage && (
+      {activePanel === 'skills' && activeWorkspaceId && (
         <SkillsPage
           workspaceId={activeWorkspaceId}
-          onClose={() => setShowSkillsPage(false)}
+          onClose={closePanel}
         />
       )}
 

@@ -53,7 +53,7 @@ export default function DeleteWorkspaceDialog({
       aria-modal="true"
       aria-labelledby="delete-workspace-title"
       aria-describedby="delete-workspace-description"
-      className="fixed top-11 inset-x-0 bottom-0 z-50 flex items-start justify-center pt-16"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-16"
     >
       <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md flex flex-col">
