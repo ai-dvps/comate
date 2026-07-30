@@ -24,12 +24,13 @@ import {
 
 interface PluginSettingsPageProps {
   workspaceId: string
+  isOpen: boolean
   onClose: () => void
 }
 
 type PluginTab = 'installed' | 'marketplace'
 
-export default function PluginSettingsPage({ workspaceId, onClose }: PluginSettingsPageProps) {
+export default function PluginSettingsPage({ workspaceId, isOpen, onClose }: PluginSettingsPageProps) {
   const { t } = useTranslation('settings')
   const [activeTab, setActiveTab] = useState<PluginTab>('installed')
   const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null)
@@ -58,9 +59,10 @@ export default function PluginSettingsPage({ workspaceId, onClose }: PluginSetti
   } = usePluginStore()
 
   useEffect(() => {
+    if (!isOpen) return
     fetchInstalledPlugins(workspaceId)
     checkUpdates(workspaceId)
-  }, [fetchInstalledPlugins, checkUpdates, workspaceId])
+  }, [isOpen, fetchInstalledPlugins, checkUpdates, workspaceId])
 
   // Cleanup on unmount: clear any in-flight update state and pending success timeout
   useEffect(() => {
@@ -134,7 +136,7 @@ export default function PluginSettingsPage({ workspaceId, onClose }: PluginSetti
   }
 
   return (
-    <ModalPanel open onClose={onClose}>
+    <ModalPanel open={isOpen} onClose={onClose}>
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">

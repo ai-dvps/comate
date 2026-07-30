@@ -121,7 +121,7 @@ describe('TodosPanel — panel-open sync (AE5 regression)', () => {
 
   it('triggers POST /api/todos/sync on mount when connected (AE5)', async () => {
     stubFetch(true);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
     await waitFor(() => {
       expect(calls).toContain('POST /api/todos/sync');
     });
@@ -129,7 +129,7 @@ describe('TodosPanel — panel-open sync (AE5 regression)', () => {
 
   it('does not trigger sync on mount when not connected', async () => {
     stubFetch(false);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
     await waitFor(() => expect(calls).toContain('GET /api/todos'));
     await new Promise((r) => setTimeout(r, 50));
     expect(calls).not.toContain('POST /api/todos/sync');
@@ -147,7 +147,7 @@ describe('TodosPanel — full-screen overlay (U1 regression)', () => {
 
   it('renders the fixed overlay shell with a dimmed backdrop', () => {
     stubFetchEmpty();
-    const { container } = renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    const { container } = renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
     expect(container.querySelector('.fixed.z-50')).not.toBeNull();
     expect(container.querySelector('[class*="bg-overlay"]')).not.toBeNull();
   });
@@ -155,7 +155,7 @@ describe('TodosPanel — full-screen overlay (U1 regression)', () => {
   it('calls onClose when the backdrop is clicked', () => {
     stubFetchEmpty();
     const onClose = vi.fn();
-    const { container } = renderWithI18n(<TodosPanel onClose={onClose} />);
+    const { container } = renderWithI18n(<TodosPanel isOpen onClose={onClose} />);
     fireEvent.click(container.querySelector('[class*="bg-overlay"]')!);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -163,7 +163,7 @@ describe('TodosPanel — full-screen overlay (U1 regression)', () => {
   it('calls onClose when Escape is pressed outside text inputs', () => {
     stubFetchEmpty();
     const onClose = vi.fn();
-    renderWithI18n(<TodosPanel onClose={onClose} />);
+    renderWithI18n(<TodosPanel isOpen onClose={onClose} />);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -171,7 +171,7 @@ describe('TodosPanel — full-screen overlay (U1 regression)', () => {
   it('does not close when clicking inside the panel card (paint order)', () => {
     stubFetchEmpty();
     const onClose = vi.fn();
-    const { container } = renderWithI18n(<TodosPanel onClose={onClose} />);
+    const { container } = renderWithI18n(<TodosPanel isOpen onClose={onClose} />);
     fireEvent.click(container.querySelector('[class*="shadow-2xl"]')!);
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -192,7 +192,7 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
       makeTodo({ id: 'c', text: 'Gamma', dueDate: '2026-07-30T00:00:00Z' }),
     ];
     stubFetchWithTodos(todos);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument());
 
@@ -215,7 +215,7 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
   it('shows Today and Upcoming counts of 0 when no todos have due dates (AE2)', async () => {
     const todos = [makeTodo({ id: 'a', text: 'Alpha' })];
     stubFetchWithTodos(todos);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument());
 
@@ -228,7 +228,7 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
 
   it('retains sync, GitHub connect, and close buttons in the header', async () => {
     stubFetchEmpty();
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Sync now' })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'GitHub' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
@@ -240,7 +240,7 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
       makeTodo({ id: 'b', text: 'Beta', origin: 'github' }),
     ];
     stubFetchWithTodos(todos);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument());
 
@@ -267,7 +267,7 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
   it('filters the list by title within the active view', async () => {
     const todos = [makeTodo({ id: 'a', text: 'Fix bug' }), makeTodo({ id: 'b', text: 'Write docs' })];
     stubFetchWithTodos(todos);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
 
@@ -282,7 +282,7 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
 
   it('clears search on Escape first, blurs on second Escape (AE4)', async () => {
     stubFetchWithTodos([makeTodo({ id: 'a', text: 'Fix bug' })]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
 
@@ -301,7 +301,7 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
   it('does not close the panel when Escape is pressed inside the search input', async () => {
     stubFetchWithTodos([makeTodo({ id: 'a', text: 'Fix bug' })]);
     const onClose = vi.fn();
-    renderWithI18n(<TodosPanel onClose={onClose} />);
+    renderWithI18n(<TodosPanel isOpen onClose={onClose} />);
 
     await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
 
@@ -315,7 +315,7 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
   it('resets the search query on panel open and persists across view switches (AE5)', async () => {
     useTodoStore.setState({ searchQuery: 'saved' });
     stubFetchWithTodos([makeTodo({ id: 'a', text: 'Fix bug' }), makeTodo({ id: 'b', text: 'Write docs' })]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByPlaceholderText('Search todos…')).toHaveValue(''));
 
@@ -330,7 +330,7 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
 
   it('clears search when quick-add creates a todo that would be hidden (AE6)', async () => {
     stubFetchWithTodos([makeTodo({ id: 'a', text: 'Fix bug' })]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
 
@@ -367,7 +367,7 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
       labels: ['bug', 'urgent'],
     });
     stubFetchWithTodos([todo]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByRole('tab', { name: /All/ })).toBeInTheDocument());
     const allTab = screen.getByRole('tab', { name: /All/ });
@@ -385,7 +385,7 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
 
   it('renders no badges for a bare local todo (AE1 edge)', async () => {
     stubFetchWithTodos([makeTodo({ id: 'local', text: 'Simple task' })]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Simple task')).toBeInTheDocument());
 
@@ -398,7 +398,7 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
   it('caps labels at two chips and shows +n overflow', async () => {
     const todo = makeTodo({ id: 'labels', text: 'Labelled', labels: ['a', 'b', 'c', 'd'] });
     stubFetchWithTodos([todo]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Labelled')).toBeInTheDocument());
 
@@ -408,7 +408,7 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
   it('strikes through done titles and toggles status', async () => {
     const todo = makeTodo({ id: 'toggle', text: 'Toggle me' });
     stubFetchWithTodos([todo]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Toggle me')).toBeInTheDocument());
 
@@ -430,13 +430,13 @@ describe('TodosPanel — states, chrome, and i18n (U4)', () => {
 
   it('shows the view-empty state when there are no todos', async () => {
     stubFetchEmpty();
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByText('No todos here.')).toBeInTheDocument());
   });
 
   it('shows the no-results state with query echo and a clear action', async () => {
     stubFetchWithTodos([makeTodo({ id: 'a', text: 'Fix bug' })]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
 
@@ -450,7 +450,7 @@ describe('TodosPanel — states, chrome, and i18n (U4)', () => {
 
   it('shows the load-failure state from the store error field', async () => {
     stubFetchError('Server unreachable');
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Server unreachable')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
@@ -459,7 +459,7 @@ describe('TodosPanel — states, chrome, and i18n (U4)', () => {
   it('keeps the list rendered while refetching (R16)', async () => {
     const existing = makeTodo({ id: 'a', text: 'Existing' });
     stubFetchWithTodos([existing]);
-    renderWithI18n(<TodosPanel onClose={vi.fn()} />);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Existing')).toBeInTheDocument());
     useTodoStore.setState({ isLoading: true });

@@ -155,7 +155,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
@@ -170,7 +170,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
@@ -189,7 +189,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
@@ -224,7 +224,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
@@ -250,7 +250,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
@@ -272,7 +272,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
@@ -308,7 +308,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
@@ -338,7 +338,7 @@ describe('SettingsPanel workspace tab local footer', () => {
     const onClose = vi.fn();
 
     await act(async () => {
-      renderWithI18n(<SettingsPanel onClose={onClose} />);
+      renderWithI18n(<SettingsPanel isOpen onClose={onClose} />);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));

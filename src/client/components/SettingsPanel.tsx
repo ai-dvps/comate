@@ -97,6 +97,7 @@ function BrowserInsecureCertsToggle() {
 }
 
 interface SettingsPanelProps {
+  isOpen: boolean
   onClose: () => void
 }
 
@@ -133,7 +134,7 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
   }
 }
 
-export default function SettingsPanel({ onClose }: SettingsPanelProps) {
+export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const { t } = useTranslation('settings')
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -510,7 +511,7 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   return (
     <>
-    <ModalPanel open onClose={handleClose} ignoreBackdropClick={showUnsavedDialog}>
+    <ModalPanel open={isOpen} onClose={handleClose} ignoreBackdropClick={showUnsavedDialog}>
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}

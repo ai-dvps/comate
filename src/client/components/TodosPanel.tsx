@@ -14,6 +14,7 @@ export type SmartView = 'inbox' | 'today' | 'upcoming' | 'all'
 export type GroupBy = 'none' | 'workspace' | 'repo' | 'origin'
 
 interface TodosPanelProps {
+  isOpen: boolean
   onClose: () => void
 }
 
@@ -45,7 +46,7 @@ function isTextInput(target: EventTarget | null): boolean {
   )
 }
 
-export default function TodosPanel({ onClose }: TodosPanelProps) {
+export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
   const { t } = useTranslation('todos')
   const {
     todos,
@@ -73,21 +74,24 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    if (!isOpen) return
     fetchTodos()
     fetchGithubStatus()
-  }, [fetchTodos, fetchGithubStatus])
+  }, [isOpen, fetchTodos, fetchGithubStatus])
 
   // AE5: opening the panel triggers an on-demand sync when connected.
   useEffect(() => {
-    if (githubConnected) syncTodos()
+    if (!isOpen || !githubConnected) return
+    syncTodos()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [githubConnected])
+  }, [isOpen, githubConnected])
 
   // R13: reset search query when the panel opens.
   useEffect(() => {
+    if (!isOpen) return
     setSearchQuery('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [isOpen])
 
   // AE4: Escape in the search input clears the query first, then blurs on a
   // second press. The shell-level Escape listener skips text inputs so this
@@ -172,7 +176,7 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
   const selected = todos.find((todo) => todo.id === selectedId) ?? null
 
   return (
-    <ModalPanel open onClose={onClose}>
+    <ModalPanel open={isOpen} onClose={onClose}>
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
