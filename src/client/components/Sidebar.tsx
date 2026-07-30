@@ -12,6 +12,8 @@ interface SidebarProps {
   onWidthChange: (width: number) => void
   isCollapsed?: boolean
   onToggleCollapse?: () => void
+  onOpenPlugins?: () => void
+  onOpenSkills?: () => void
 }
 
 type SidebarTab = 'sessions'
@@ -21,6 +23,8 @@ export default function Sidebar({
   onWidthChange,
   isCollapsed = false,
   onToggleCollapse,
+  onOpenPlugins,
+  onOpenSkills,
 }: SidebarProps) {
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<SidebarTab>('sessions')
@@ -146,7 +150,7 @@ export default function Sidebar({
             {/* Tab Content */}
             <div className="flex-1 overflow-hidden flex flex-col">
               {activeTab === 'sessions' && activeWorkspaceId && (
-                <SessionList workspaceId={activeWorkspaceId} />
+                <SessionList workspaceId={activeWorkspaceId} onOpenPlugins={onOpenPlugins} onOpenSkills={onOpenSkills} />
               )}
               {activeTab === 'sessions' && !activeWorkspaceId && (
                 <div className="flex-1 flex items-center justify-center p-4">

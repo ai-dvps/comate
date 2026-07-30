@@ -14,6 +14,8 @@ import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
 import ScheduledTasksPanel from './components/ScheduledTasksPanel'
 import TodosPanel from './components/TodosPanel'
+import PluginSettingsPage from './components/PluginSettingsPage'
+import SkillsPage from './components/SkillsPage'
 import { initNotificationClickHandler } from './lib/notifications'
 import { openSessionDirect } from './lib/session-jump'
 import RightPanel from './components/RightPanel'
@@ -61,6 +63,8 @@ function App() {
   const [showScheduledTasks, setShowScheduledTasks] = useState(false)
   const [showAnalytics, setShowAnalytics] = useState(false)
   const [showTodos, setShowTodos] = useState(false)
+  const [showPluginSettings, setShowPluginSettings] = useState(false)
+  const [showSkillsPage, setShowSkillsPage] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false)
   const [isMac, setIsMac] = useState(false)
@@ -312,6 +316,8 @@ function App() {
           onWidthChange={setSidebarWidth}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={toggleSidebarCollapse}
+          onOpenPlugins={() => setShowPluginSettings(true)}
+          onOpenSkills={() => setShowSkillsPage(true)}
         />
 
         {/* Main Area — keep all open workspace panels mounted */}
@@ -376,6 +382,20 @@ function App() {
 
       {showTodos && (
         <TodosPanel onClose={() => setShowTodos(false)} />
+      )}
+
+      {activeWorkspaceId && showPluginSettings && (
+        <PluginSettingsPage
+          workspaceId={activeWorkspaceId}
+          onClose={() => setShowPluginSettings(false)}
+        />
+      )}
+
+      {activeWorkspaceId && showSkillsPage && (
+        <SkillsPage
+          workspaceId={activeWorkspaceId}
+          onClose={() => setShowSkillsPage(false)}
+        />
       )}
 
       {showCreateModal && (
