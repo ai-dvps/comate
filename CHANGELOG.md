@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Nothing yet.
+- **Todos panel top-bar layout** — the todos panel is now a top-bar task list: the left view rail is removed, smart views (Inbox / Today / Upcoming / All) live in a segmented header control with counts, search filters the active view, and the list spans the full width with information-rich rows showing due dates, labels, and origin. Group-by moved into the header, quick-add sits at the top of the list, and empty/no-results/load-failure states are split so sync errors are visible. The detail pane retains its current width and editing behavior.
 
 ### Fixed
 
