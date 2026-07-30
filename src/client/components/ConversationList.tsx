@@ -170,7 +170,7 @@ export default function ConversationList({
         data-testid="conversation-list-scroll"
         role="log"
       >
-        <div ref={contentRef}>
+        <div ref={contentRef} className="pt-4">
           {rows.length === 0 ? (
             <ConversationEmptyState
               icon={<Bot className="w-8 h-8" />}
