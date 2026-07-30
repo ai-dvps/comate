@@ -400,6 +400,7 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
               width={detailWidth}
               onWidthChange={setDetailWidth}
               onResolved={fetchTodos}
+              onClose={onClose}
               onUpdateTodo={updateTodo}
               onChangeStatus={changeStatus}
             />

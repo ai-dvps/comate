@@ -7,6 +7,7 @@ import TodoDetail from './TodoDetail';
 import { useWorkspaceStore } from '../../stores/workspace-store';
 import i18n from '../../i18n';
 import type { Todo } from '../../stores/todo-store';
+import { openSessionDirect } from '../../lib/session-jump';
 
 vi.mock('../CodeMirrorEditor', () => ({
   default: function CodeMirrorEditorMock({
@@ -35,6 +36,10 @@ vi.mock('../MarkdownPreview', () => ({
   },
 }));
 
+vi.mock('../../lib/session-jump', () => ({
+  openSessionDirect: vi.fn(),
+}));
+
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>);
 }
@@ -46,7 +51,7 @@ function makeTodo(overrides: Partial<Todo> & { text: string }): Todo {
     text: overrides.text,
     content: overrides.content ?? null,
     status: overrides.status ?? 'pending',
-    sessionId: null,
+    sessionId: overrides.sessionId ?? null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     origin: overrides.origin ?? 'local',
@@ -64,6 +69,7 @@ function makeTodo(overrides: Partial<Todo> & { text: string }): Todo {
 
 describe('TodoDetail', () => {
   const onResolved = vi.fn();
+  const onClose = vi.fn();
   const onUpdateTodo = vi.fn().mockResolvedValue(null);
   const onChangeStatus = vi.fn().mockResolvedValue(undefined);
   const onWidthChange = vi.fn();
@@ -93,6 +99,7 @@ describe('TodoDetail', () => {
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
+        onClose={onClose}
         onUpdateTodo={onUpdateTodo}
         onChangeStatus={onChangeStatus}
       />,
@@ -107,6 +114,7 @@ describe('TodoDetail', () => {
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
+        onClose={onClose}
         onUpdateTodo={onUpdateTodo}
         onChangeStatus={onChangeStatus}
       />,
@@ -123,6 +131,7 @@ describe('TodoDetail', () => {
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
+        onClose={onClose}
         onUpdateTodo={onUpdateTodo}
         onChangeStatus={onChangeStatus}
       />,
@@ -138,6 +147,7 @@ describe('TodoDetail', () => {
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
+        onClose={onClose}
         onUpdateTodo={onUpdateTodo}
         onChangeStatus={onChangeStatus}
       />,
@@ -155,6 +165,7 @@ describe('TodoDetail', () => {
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
+        onClose={onClose}
         onUpdateTodo={onUpdateTodo}
         onChangeStatus={onChangeStatus}
       />,
@@ -172,6 +183,7 @@ describe('TodoDetail', () => {
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
+        onClose={onClose}
         onUpdateTodo={onUpdateTodo}
         onChangeStatus={onChangeStatus}
       />,
@@ -191,6 +203,7 @@ describe('TodoDetail', () => {
         width={384}
         onWidthChange={onWidthChange}
         onResolved={onResolved}
+        onClose={onClose}
         onUpdateTodo={onUpdateTodo}
         onChangeStatus={onChangeStatus}
       />,
@@ -201,5 +214,23 @@ describe('TodoDetail', () => {
     await user.type(editor, 'Updated body');
     fireEvent.blur(editor);
     await waitFor(() => expect(onUpdateTodo).toHaveBeenCalledWith('todo-Task', { content: 'Updated body' }));
+  });
+
+  it('jumps to the linked session and closes the panel', async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({ text: 'Task', workspaceId: 'ws-1', sessionId: 'session-1' })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Linked to a session' }));
+    expect(openSessionDirect).toHaveBeenCalledWith('ws-1', 'session-1');
+    expect(onClose).toHaveBeenCalled();
   });
 });

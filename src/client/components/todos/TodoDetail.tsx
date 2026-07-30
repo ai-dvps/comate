@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Play } from 'lucide-react'
+import { Play, ExternalLink } from 'lucide-react'
 import type { Todo, TodoStatus } from '../../stores/todo-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { cn } from '../ui/utils'
@@ -10,12 +10,14 @@ import CodeMirrorEditor from '../CodeMirrorEditor'
 import MarkdownPreview from '../MarkdownPreview'
 import { getCodeMirrorLanguage } from '../../lib/codemirror-language'
 import { EditorView } from '@codemirror/view'
+import { openSessionDirect } from '../../lib/session-jump'
 
 interface TodoDetailProps {
   todo: Todo | null
   width: number
   onWidthChange: (width: number) => void
   onResolved: () => void
+  onClose: () => void
   onUpdateTodo: (todoId: string, patch: Partial<Todo>) => Promise<Todo | null>
   onChangeStatus: (todoId: string, status: TodoStatus) => Promise<void>
 }
@@ -35,6 +37,7 @@ export default function TodoDetail({
   width,
   onWidthChange,
   onResolved,
+  onClose,
   onUpdateTodo,
   onChangeStatus,
 }: TodoDetailProps) {
@@ -280,7 +283,19 @@ export default function TodoDetail({
 
             {/* U7 (R4): start a session from a todo. */}
             {todo.sessionId ? (
-              <p className="text-[11px] text-text-tertiary">{t('detailHasSession')}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (todo.workspaceId && todo.sessionId) {
+                    openSessionDirect(todo.workspaceId, todo.sessionId)
+                  }
+                  onClose()
+                }}
+                className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 rounded-md bg-surface text-text-primary hover:bg-surface-hover border border-border/50 text-xs transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                {t('detailHasSession')}
+              </button>
             ) : (
               <button
                 onClick={handleSpawn}
