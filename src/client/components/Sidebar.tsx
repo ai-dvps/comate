@@ -85,80 +85,87 @@ export default function Sidebar({
     <aside
       className={cn(
         'relative bg-surface border-r border-border flex flex-col h-full flex-shrink-0',
+        'transition-[width] duration-200 ease-in-out overflow-hidden',
+        'motion-reduce:transition-none',
       )}
       style={{ width: isCollapsed ? RAIL_WIDTH : width }}
     >
-      {isCollapsed ? (
-        <>
-          {/* Collapsed icon rail */}
-          <div className="flex flex-col items-center py-1.5 gap-0.5">
-            {tabs.map((tab) => (
-              <Tooltip key={tab.id}>
-                <TooltipTrigger asChild>
-                  <button
-                    className={cn(
-                      'p-1.5 rounded-md transition-colors',
-                      activeTab === tab.id
-                        ? 'text-text-primary bg-accent/10'
-                        : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-                    )}
-                    aria-label={tab.tooltip}
-                    onClick={() => {
-                      setActiveTab(tab.id)
-                      onToggleCollapse?.()
-                    }}
-                  >
-                    {tab.icon}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">{tab.tooltip}</TooltipContent>
-              </Tooltip>
-            ))}
-          </div>
+      <div
+        key={isCollapsed ? 'collapsed' : 'expanded'}
+        className="flex flex-col h-full animate-sidebar-content-reveal motion-reduce:animate-none"
+      >
+        {isCollapsed ? (
+          <>
+            {/* Collapsed icon rail */}
+            <div className="flex flex-col items-center py-1.5 gap-0.5">
+              {tabs.map((tab) => (
+                <Tooltip key={tab.id}>
+                  <TooltipTrigger asChild>
+                    <button
+                      className={cn(
+                        'p-1.5 rounded-md transition-colors',
+                        activeTab === tab.id
+                          ? 'text-text-primary bg-accent/10'
+                          : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
+                      )}
+                      aria-label={tab.tooltip}
+                      onClick={() => {
+                        setActiveTab(tab.id)
+                        onToggleCollapse?.()
+                      }}
+                    >
+                      {tab.icon}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">{tab.tooltip}</TooltipContent>
+                </Tooltip>
+              ))}
+            </div>
 
-        </>
-      ) : (
-        <>
-          {/* Tab Switcher */}
-          <div className="flex flex-shrink-0">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={cn(
-                  'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
-                  activeTab === tab.id
-                    ? 'text-text-primary border-accent'
-                    : 'text-text-secondary hover:text-text-primary border-border/50',
-                )}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          </>
+        ) : (
+          <>
+            {/* Tab Switcher */}
+            <div className="flex flex-shrink-0">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={cn(
+                    'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
+                    activeTab === tab.id
+                      ? 'text-text-primary border-accent'
+                      : 'text-text-secondary hover:text-text-primary border-border/50',
+                  )}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
 
-          {/* Tab Content */}
-          <div className="flex-1 overflow-hidden flex flex-col">
-            {activeTab === 'sessions' && activeWorkspaceId && (
-              <SessionList workspaceId={activeWorkspaceId} />
-            )}
-            {activeTab === 'sessions' && !activeWorkspaceId && (
-              <div className="flex-1 flex items-center justify-center p-4">
-                <p className="text-text-tertiary text-center">
-                  {t('sidebar.noWorkspace')}
-                </p>
-              </div>
-            )}
-          </div>
+            {/* Tab Content */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {activeTab === 'sessions' && activeWorkspaceId && (
+                <SessionList workspaceId={activeWorkspaceId} />
+              )}
+              {activeTab === 'sessions' && !activeWorkspaceId && (
+                <div className="flex-1 flex items-center justify-center p-4">
+                  <p className="text-text-tertiary text-center">
+                    {t('sidebar.noWorkspace')}
+                  </p>
+                </div>
+              )}
+            </div>
 
-          {/* Resize Handle */}
-          <div
-            data-testid="sidebar-resize-handle"
-            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
-            onMouseDown={handleMouseDown}
-          />
-        </>
-      )}
+            {/* Resize Handle */}
+            <div
+              data-testid="sidebar-resize-handle"
+              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
+              onMouseDown={handleMouseDown}
+            />
+          </>
+        )}
+      </div>
     </aside>
   )
 }

@@ -229,4 +229,14 @@
     from { transform: translateY(0.4rem); opacity: 0.4; }
     to { transform: translateY(0); opacity: 1; }
   }
+
+  /* Subtle content reveal for the sidebar collapse/expand transition. */
+  .animate-sidebar-content-reveal {
+    animation: sidebar-content-reveal 200ms ease-out forwards;
+  }
+
+  @keyframes sidebar-content-reveal {
+    from { opacity: 0; transform: translateX(-0.25rem); }
+    to { opacity: 1; transform: translateX(0); }
+  }
 }
