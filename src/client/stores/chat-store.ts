@@ -1,7 +1,18 @@
 import { create } from 'zustand'
 import i18next from 'i18next'
 
-import type { ChatMessage, MessagePart, PermissionSuggestion, QuestionPayload, SubagentMessage, SubagentPart, SubagentState, TaskItem, WorkflowState } from '../types/message'
+import type {
+  ChatMessage,
+  MessagePart,
+  PermissionSuggestion,
+  QuestionPayload,
+  SessionActivitySnapshot,
+  SubagentMessage,
+  SubagentPart,
+  SubagentState,
+  TaskItem,
+  WorkflowState,
+} from '../types/message'
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
@@ -26,6 +37,46 @@ interface WorkflowPollEntry {
 
 const workflowPollTimers = new Map<string, WorkflowPollEntry>()
 const historyLoadRequests = new Map<string, symbol>()
+
+function parseBackgroundTasks(value: unknown): SessionActivitySnapshot['backgroundTasks'] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((task) => {
+    if (!task || typeof task !== 'object') return []
+    const item = task as Record<string, unknown>
+    if (
+      typeof item.id !== 'string' ||
+      typeof item.type !== 'string' ||
+      typeof item.description !== 'string'
+    ) return []
+    return [{ id: item.id, type: item.type, description: item.description }]
+  })
+}
+
+function activitySnapshotsEqual(
+  left: SessionActivitySnapshot | undefined,
+  right: SessionActivitySnapshot,
+): boolean {
+  if (!left || left.phase !== right.phase || left.active !== right.active) return false
+  if (left.backgroundTasks.length !== right.backgroundTasks.length) return false
+  if (left.backgroundTasks.some((task, index) => {
+    const other = right.backgroundTasks[index]
+    return task.id !== other.id || task.type !== other.type || task.description !== other.description
+  })) return false
+
+  const leftInterruption = left.interruption
+  const rightInterruption = right.interruption
+  if (!leftInterruption || !rightInterruption) return leftInterruption === rightInterruption
+  return (
+    leftInterruption.reason === rightInterruption.reason &&
+    leftInterruption.message === rightInterruption.message &&
+    leftInterruption.foregroundInterrupted === rightInterruption.foregroundInterrupted &&
+    leftInterruption.backgroundTasks.length === rightInterruption.backgroundTasks.length &&
+    !leftInterruption.backgroundTasks.some((task, index) => {
+      const other = rightInterruption.backgroundTasks[index]
+      return task.id !== other.id || task.type !== other.type || task.description !== other.description
+    })
+  )
+}
 
 function closeWorkspaceSessionSubscriptions(workspaceId: string): void {
   for (const [sessionId, sub] of sessionSubscriptions) {
@@ -161,23 +212,26 @@ function startBackgroundPolling(
       .request('status', { workspaceId }, 5000)
       .then((data) => {
         const result = data as {
-          statuses?: Record<string, { pendingCount: number; isProcessing?: boolean }>
+          statuses?: Record<string, {
+            pendingCount: number
+            isProcessing?: boolean
+            activity: SessionActivitySnapshot
+          }>
         }
         const statuses = result.statuses ?? {}
         set((state) => {
           const next = { ...state.sessionStatus }
           const nextStreaming = { ...state.isStreaming }
           const nextLastActivityAt = { ...state.lastActivityAt }
-          const nextProcessing = { ...state.sessionProcessing }
-          const nextBackgroundTaskCount = { ...state.sessionBackgroundTaskCount }
+          const nextActivity = { ...state.sessionActivity }
+          const nextUnread = { ...state.unreadCompletions }
           for (const session of state.sessions[workspaceId] ?? []) {
             if (
               !sessionSubscriptions.has(session.id) &&
               !Object.prototype.hasOwnProperty.call(statuses, session.id)
             ) {
               delete next[session.id]
-              delete nextProcessing[session.id]
-              delete nextBackgroundTaskCount[session.id]
+              delete nextActivity[session.id]
               if (nextStreaming[session.id]) {
                 nextStreaming[session.id] = false
               }
@@ -187,23 +241,33 @@ function startBackgroundPolling(
             const prevPending = state.sessionStatus[sid]?.pendingCount ?? 0
             if (st.pendingCount === 0 && !st.isProcessing) {
               delete next[sid]
-              delete nextProcessing[sid]
-              delete nextBackgroundTaskCount[sid]
             } else {
-              next[sid] = st
+              next[sid] = { pendingCount: st.pendingCount, isProcessing: st.isProcessing }
             }
             if (st.pendingCount > 0 && prevPending === 0) {
               nextLastActivityAt[sid] = Date.now()
             }
             if (!sessionSubscriptions.has(sid)) {
-              if (st.isProcessing) {
-                nextStreaming[sid] = true
-              } else if (nextStreaming[sid]) {
-                nextStreaming[sid] = false
+              const previous = state.sessionActivity[sid]
+              nextActivity[sid] = st.activity
+              nextStreaming[sid] = st.activity.active
+              if (
+                previous?.active &&
+                !st.activity.active &&
+                !isSessionActive(state, sid) &&
+                !nextUnread[sid]
+              ) {
+                nextUnread[sid] = true
               }
             }
           }
-          return { sessionStatus: next, isStreaming: nextStreaming, lastActivityAt: nextLastActivityAt, sessionProcessing: nextProcessing, sessionBackgroundTaskCount: nextBackgroundTaskCount }
+          return {
+            sessionStatus: next,
+            sessionActivity: nextActivity,
+            isStreaming: nextStreaming,
+            lastActivityAt: nextLastActivityAt,
+            unreadCompletions: nextUnread,
+          }
         })
       })
       .catch((err) => {
@@ -333,8 +397,7 @@ export interface ChatState {
   drafts: Record<string, string>
   subagents: Record<string, SubagentState[]>
   sessionStatus: Record<string, { pendingCount: number; isProcessing?: boolean }>
-  sessionProcessing: Record<string, boolean>
-  sessionBackgroundTaskCount: Record<string, number>
+  sessionActivity: Record<string, SessionActivitySnapshot>
   unreadCompletions: Record<string, boolean>
   lastActivityAt: Record<string, number>
   tasks: Record<string, TaskItem[]>
@@ -1861,13 +1924,7 @@ export function handleSseEvent(
           i18next.t('common:interrupted', 'Interrupted by user'),
           'Interrupt',
         )
-        // Background tasks may still be running (sessionProcessing); keep the
-        // active/streaming state in that case, but always show the notice.
-        if (state.sessionProcessing[sessionId]) return withNotice
-        return {
-          ...withNotice,
-          isStreaming: { ...state.isStreaming, [sessionId]: false },
-        }
+        return withNotice
       })
       return
     }
@@ -1943,7 +2000,7 @@ export function handleSseEvent(
             ],
           },
         }
-        if (!state.sessionProcessing[sessionId]) {
+        if (!state.sessionActivity[sessionId]?.active) {
           updates.isStreaming = { ...state.isStreaming, [sessionId]: false }
         }
         return updates
@@ -2009,23 +2066,6 @@ export function handleSseEvent(
       set((state) => {
         const next: Partial<ChatState> = {
           ...applyActivityUpdate(state, workspaceId, sessionId),
-        }
-        // Keep the generating state while the server reports tracked
-        // background tasks still running; the final session_processing
-        // { processing: false } edge clears it.
-        if (!state.sessionProcessing[sessionId]) {
-          next.isStreaming = { ...state.isStreaming, [sessionId]: false }
-          // The unread completion marker must land together with the
-          // streaming clear: while background tasks still run, the session
-          // is not done, and deriveSessionState would otherwise prioritize
-          // 'finished-unread' over 'streaming' and hide the spinner. The
-          // final session_processing { processing: false } edge sets it.
-          if (!isSessionActive(state, sessionId)) {
-            next.unreadCompletions = {
-              ...state.unreadCompletions,
-              [sessionId]: true,
-            }
-          }
         }
 
         const usage = data.usage as Record<string, unknown> | undefined
@@ -2248,45 +2288,49 @@ export function handleSseEvent(
       })
       return
     }
-    case 'session_processing': {
-      // The server's processing verdict is authoritative for subscribed
-      // sessions: it hydrates a session subscribed mid background-only task
-      // and keeps isStreaming true through a foreground `result` while
-      // tracked background tasks still run.
-      const processing = data.processing === true
-      const backgroundTaskCount =
-        typeof data.backgroundTaskCount === 'number' ? data.backgroundTaskCount : 0
+    case 'session_activity': {
       if (!sessionId) return
+      const phase = data.phase
+      if (phase !== 'idle' && phase !== 'foreground' && phase !== 'background' && phase !== 'stopping') {
+        return
+      }
+      const backgroundTasks = parseBackgroundTasks(data.backgroundTasks)
+      const rawInterruption = data.interruption
+      const interruption: SessionActivitySnapshot['interruption'] = rawInterruption && typeof rawInterruption === 'object'
+        ? (() => {
+            const value = rawInterruption as Record<string, unknown>
+            if (value.reason !== 'runtime_failure' && value.reason !== 'user_stop') return undefined
+            return {
+              reason: value.reason as 'runtime_failure' | 'user_stop',
+              message: typeof value.message === 'string' ? value.message : '',
+              foregroundInterrupted: value.foregroundInterrupted === true,
+              backgroundTasks: parseBackgroundTasks(value.backgroundTasks),
+            }
+          })()
+        : undefined
+      const activity: SessionActivitySnapshot = {
+        phase,
+        active: data.active === true,
+        backgroundTasks,
+        ...(interruption ? { interruption } : {}),
+      }
       set((state) => {
-        // A { processing: false } edge after the session was processing is
-        // the final settle: streaming clears here (the foreground `result`
-        // left it set), so the unread completion marker for an inactive
-        // session lands here too, mirroring the pre-change foreground
-        // behavior. Requiring the prior verdict to be true keeps an idle
-        // (re)subscribe verdict from spuriously marking the session unread.
+        const previous = state.sessionActivity[sessionId]
         const completionPending =
-          !processing &&
-          state.sessionProcessing[sessionId] === true &&
+          previous?.active === true &&
+          !activity.active &&
           !isSessionActive(state, sessionId) &&
           !state.unreadCompletions[sessionId]
-        // The server force-emits this verdict on every (re)subscribe, so
-        // identical verdicts are common — skip the writes when nothing
-        // changed to avoid notifying the three slices' subscribers.
         if (
-          state.sessionProcessing[sessionId] === processing &&
-          (state.sessionBackgroundTaskCount[sessionId] ?? 0) === backgroundTaskCount &&
-          state.isStreaming[sessionId] === processing &&
+          activitySnapshotsEqual(previous, activity) &&
+          state.isStreaming[sessionId] === activity.active &&
           !completionPending
         ) {
-          return {}
+          return state
         }
         const next: Partial<ChatState> = {
-          sessionProcessing: { ...state.sessionProcessing, [sessionId]: processing },
-          sessionBackgroundTaskCount: {
-            ...state.sessionBackgroundTaskCount,
-            [sessionId]: backgroundTaskCount,
-          },
-          isStreaming: { ...state.isStreaming, [sessionId]: processing },
+          sessionActivity: { ...state.sessionActivity, [sessionId]: activity },
+          isStreaming: { ...state.isStreaming, [sessionId]: activity.active },
         }
         if (completionPending) {
           next.unreadCompletions = {
@@ -2294,10 +2338,27 @@ export function handleSseEvent(
             [sessionId]: true,
           }
         }
+        if (
+          interruption?.reason === 'runtime_failure' &&
+          previous?.interruption?.message !== interruption.message
+        ) {
+          Object.assign(
+            next,
+            addSystemMessage(
+              state,
+              sessionId,
+              `Session interrupted: ${interruption.message}`,
+              'Interrupt',
+            ),
+          )
+        }
         return next
       })
       return
     }
+    case 'session_processing':
+      // Retired edge event may still appear in replay buffers during rollout.
+      return
     case 'auto_approval': {
       const toolUseId = typeof data.toolUseId === 'string' ? data.toolUseId : ''
       const mode = data.mode === 'auto' || data.mode === 'readonly' ? data.mode : 'auto'
@@ -2519,8 +2580,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   drafts: {},
   subagents: {},
   sessionStatus: {},
-  sessionProcessing: {},
-  sessionBackgroundTaskCount: {},
+  sessionActivity: {},
   unreadCompletions: {},
   lastActivityAt: {},
   tasks: {},
@@ -2830,8 +2890,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           drafts: withoutSession(state.drafts),
           inFlightBrowserTools: withoutSession(state.inFlightBrowserTools),
           sessionStatus: withoutSession(state.sessionStatus),
-          sessionProcessing: withoutSession(state.sessionProcessing),
-          sessionBackgroundTaskCount: withoutSession(state.sessionBackgroundTaskCount),
+          sessionActivity: withoutSession(state.sessionActivity),
           unreadCompletions: withoutSession(state.unreadCompletions),
           lastActivityAt: withoutSession(state.lastActivityAt),
           isStreaming: withoutSession(state.isStreaming),

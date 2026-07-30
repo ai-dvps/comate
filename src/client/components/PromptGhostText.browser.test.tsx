@@ -6,6 +6,7 @@ import { I18nextProvider } from 'react-i18next'
 import '../index.css'
 import PromptInput from './PromptInput'
 import i18n from '../i18n'
+import type { SessionActivitySnapshot } from '../types/message'
 
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
@@ -23,11 +24,12 @@ const chatStoreMock = vi.hoisted(() => {
   type Listener = () => void
   const listeners = new Set<Listener>()
   const state = {
+    sessions: {} as Record<string, { id: string; backend?: string }[]>,
     drafts: {} as Record<string, string>,
     messages: {} as Record<string, { id: string; role: 'user' | 'assistant' | 'system'; parts: { type: string; text?: string }[]; timestamp: number }[]>,
     promptHistory: {} as Record<string, string[]>,
     isRestartingRuntime: {} as Record<string, boolean>,
-    sessionBackgroundTaskCount: {} as Record<string, number>,
+    sessionActivity: {} as Record<string, SessionActivitySnapshot>,
     setDraft: vi.fn((sessionId: string, content: string) => {
       if (content === '') {
         delete state.drafts[sessionId]
@@ -130,10 +132,11 @@ describe('PromptInput ghost text alignment', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     cleanup()
+    chatStoreMock.getState().sessions = {}
     chatStoreMock.getState().drafts = {}
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().promptHistory = {}
-    chatStoreMock.getState().sessionBackgroundTaskCount = {}
+    chatStoreMock.getState().sessionActivity = {}
     filesMock.results = []
     filesMock.truncated = false
     appSettingsMock.useModifierToSubmit = false

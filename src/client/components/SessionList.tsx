@@ -39,6 +39,7 @@ export default function SessionList({ workspaceId, onOpenPlugins, onOpenSkills }
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const messages = useChatStore((s) => s.messages)
   const sessionStatus = useChatStore((s) => s.sessionStatus)
+  const sessionActivity = useChatStore((s) => s.sessionActivity)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const unreadCompletions = useChatStore((s) => s.unreadCompletions)
   const lastActivityAt = useChatStore((s) => s.lastActivityAt)
@@ -332,6 +333,7 @@ export default function SessionList({ workspaceId, onOpenPlugins, onOpenSkills }
               displayName={getSessionDisplayName(session)}
               isActive={session.id === activeSessionId}
               isStreaming={!!isStreaming[session.id]}
+              backgroundTaskCount={sessionActivity[session.id]?.backgroundTasks.length ?? 0}
               pendingCount={sessionStatus[session.id]?.pendingCount ?? 0}
               unread={!!unreadCompletions[session.id]}
               preview={getPreview(session.id)}

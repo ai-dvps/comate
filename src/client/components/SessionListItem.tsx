@@ -33,6 +33,7 @@ export interface SessionListItemProps {
   displayName: string
   isActive: boolean
   isStreaming: boolean
+  backgroundTaskCount: number
   pendingCount: number
   unread: boolean
   preview: string
@@ -53,6 +54,7 @@ export default function SessionListItem({
   displayName,
   isActive,
   isStreaming,
+  backgroundTaskCount,
   pendingCount,
   unread,
   preview,
@@ -94,7 +96,17 @@ export default function SessionListItem({
             )}
           />
         ) : (
-          <StatusIndicator state={rowState} className="mt-0.5" />
+          <div className="flex flex-col items-center gap-0.5 mt-0.5 flex-shrink-0">
+            <StatusIndicator state={rowState} />
+            {backgroundTaskCount > 0 && (
+              <span
+                className="min-w-3 text-center text-[9px] leading-3 tabular-nums text-text-tertiary"
+                aria-label={t('activity.backgroundTaskCount', { count: backgroundTaskCount })}
+              >
+                {backgroundTaskCount}
+              </span>
+            )}
+          </div>
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">

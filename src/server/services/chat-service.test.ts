@@ -24,9 +24,9 @@ import type { Workspace, McpServer } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import type { SseEvent } from '../types/message.js';
-import type { Options, SDKSessionInfo, SessionMessage, PermissionResult, Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKSessionInfo, SessionMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { BotPersona, BotRole } from '../models/bot.js';
-import type { QuestionPayload, TaskSignal, PermissionSuggestion } from '../types/message.js';
+import type { QuestionPayload, PermissionSuggestion } from '../types/message.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -167,16 +167,30 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     } = {},
     options: { isProcessing?: () => boolean } = {},
   ): SessionRuntime {
+    let subscribed = false;
+    const activity = () => ({
+      phase: options.isProcessing?.() ? 'foreground' as const : 'idle' as const,
+      active: options.isProcessing?.() ?? false,
+      backgroundTasks: [],
+    });
     const mock = {
       isClosed: () => false,
       isProcessingTurn: () => options.isProcessing?.() ?? false,
-      getStatus: () => ({ pendingCount: 0, isProcessing: options.isProcessing?.() ?? false, workspaceId: 'ws-1' }),
+      getActivitySnapshot: activity,
+      hasSubscribers: () => subscribed,
+      getStatus: () => ({
+        pendingCount: 0,
+        isProcessing: options.isProcessing?.() ?? false,
+        workspaceId: 'ws-1',
+        activity: activity(),
+      }),
       close: () => Promise.resolve(),
       subscribe: () => {
+        subscribed = true;
         callbacks.onSubscribed?.();
-        callbacks.onActivity?.();
       },
       unsubscribe: () => {
+        subscribed = false;
         callbacks.onUnsubscribed?.();
       },
       pushMessage: () => {
@@ -253,7 +267,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     }
   });
 
-  it('onActivity resets the idle timer', async () => {
+  it('an identical idle activity callback does not churn the grace timer', async () => {
     setupStoreMocks();
 
     let capturedActivity: (() => void) | undefined;
@@ -271,7 +285,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     await new Promise((r) => setTimeout(r, 10));
     capturedActivity?.();
     const newTimeout = timeouts.get('s1');
-    assert.notStrictEqual(oldTimeout, newTimeout, 'onActivity should reschedule idle timer');
+    assert.strictEqual(oldTimeout, newTimeout, 'identical idle state keeps the existing grace timer');
   });
 
   it('unsubscribe does not trigger or affect idle timer', async () => {
@@ -304,7 +318,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     assert.strictEqual(service.getActiveSessionCount(), 0, 'runtime should be closed after idle timeout');
   });
 
-  it('idle-close defers while a turn is in flight', async () => {
+  it('does not schedule idle-close while a turn is in flight', async () => {
     setupStoreMocks();
     const processing = true;
     SessionRuntime.open = () => createMockRuntime({}, { isProcessing: () => processing });
@@ -316,20 +330,25 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     await new Promise((r) => setTimeout(r, 150));
     assert.strictEqual(service.getActiveSessionCount(), 1, 'runtime should stay open while a turn is in flight');
     const timeouts = (service as unknown as { idleTimeouts: Map<string, NodeJS.Timeout> }).idleTimeouts;
-    assert.ok(timeouts.has('s1'), 'idle timer should be re-armed (deferred)');
+    assert.ok(!timeouts.has('s1'), 'active work must not have an idle timer');
   });
 
   it('idle-close fires once the in-flight turn completes', async () => {
     setupStoreMocks();
     let processing = true;
-    SessionRuntime.open = () => createMockRuntime({}, { isProcessing: () => processing });
+    let capturedActivity: (() => void) | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedActivity = args[8] as (() => void) | undefined;
+      return createMockRuntime({}, { isProcessing: () => processing });
+    };
 
     await service.getOrCreateRuntime('s1', 'ws-1');
-    await new Promise((r) => setTimeout(r, 150)); // deferred while processing
+    await new Promise((r) => setTimeout(r, 150));
     assert.strictEqual(service.getActiveSessionCount(), 1);
 
-    processing = false; // turn completes
-    await new Promise((r) => setTimeout(r, 150)); // re-armed timer now fires and closes
+    processing = false;
+    capturedActivity?.();
+    await new Promise((r) => setTimeout(r, 150));
     assert.strictEqual(service.getActiveSessionCount(), 0, 'runtime should close after the turn completes');
   });
 
@@ -344,6 +363,27 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     // The pending timer fires; it must not throw and must not resurrect the runtime.
     await new Promise((r) => setTimeout(r, 150));
     assert.strictEqual(service.getActiveSessionCount(), 0, 'already-closed runtime should not be tracked');
+  });
+
+  it('recreates a hard-closed runtime on the next use', async () => {
+    setupStoreMocks();
+    let openCalls = 0;
+    let firstClosed = false;
+    SessionRuntime.open = () => {
+      openCalls++;
+      const runtime = createMockRuntime();
+      if (openCalls === 1) {
+        return { ...runtime, isClosed: () => firstClosed } as SessionRuntime;
+      }
+      return runtime;
+    };
+
+    const first = await service.getOrCreateRuntime('s1', 'ws-1');
+    firstClosed = true;
+    const replacement = await service.getOrCreateRuntime('s1', 'ws-1');
+
+    assert.notStrictEqual(replacement, first);
+    assert.strictEqual(openCalls, 2);
   });
 
   it('closeRuntime cancels pending idle timer before closing', async () => {
@@ -370,7 +410,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     assert.ok(!timeouts.has('s1'), 'idle timer should be cancelled');
   });
 
-  it('rapid successive onActivity calls do not leak timers', async () => {
+  it('rapid identical activity callbacks retain one timer', async () => {
     setupStoreMocks();
 
     let capturedActivity: (() => void) | undefined;
@@ -390,7 +430,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
       if (t) seen.add(t);
     }
 
-    assert.strictEqual(seen.size, 5, 'each onActivity should create a new timeout');
+    assert.strictEqual(seen.size, 1, 'identical activity must not replace the timeout');
     assert.strictEqual(timeouts.size, 1, 'only one timeout should be tracked in the map');
   });
 
@@ -403,6 +443,11 @@ describe('chat-service idle-close', { concurrency: false }, () => {
         pendingCount: 2,
         isProcessing: true,
         workspaceId: 'ws-1',
+        activity: {
+          phase: 'background' as const,
+          active: true,
+          backgroundTasks: [{ id: 'bg-1', type: 'agent', description: 'Research' }],
+        },
       }),
     } as unknown as SessionRuntime);
 
@@ -412,6 +457,11 @@ describe('chat-service idle-close', { concurrency: false }, () => {
       s1: {
         pendingCount: 2,
         isProcessing: true,
+        activity: {
+          phase: 'background',
+          active: true,
+          backgroundTasks: [{ id: 'bg-1', type: 'agent', description: 'Research' }],
+        },
       },
     });
     assert.deepStrictEqual(service.getSessionsStatus('other-ws'), {});
@@ -420,10 +470,13 @@ describe('chat-service idle-close', { concurrency: false }, () => {
   it('onSubscribed cancels idle timer', async () => {
     setupStoreMocks();
 
-    let capturedSubscribed: (() => void) | undefined;
+    let createdRuntime: SessionRuntime | undefined;
     SessionRuntime.open = (...args: unknown[]) => {
-      capturedSubscribed = args[6] as (() => void) | undefined;
-      return createMockRuntime();
+      createdRuntime = createMockRuntime({
+        onSubscribed: args[6] as (() => void) | undefined,
+        onUnsubscribed: args[7] as (() => void) | undefined,
+      });
+      return createdRuntime;
     };
 
     await service.getOrCreateRuntime('s1', 'ws-1');
@@ -431,60 +484,8 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     const timeouts = (service as unknown as { idleTimeouts: Map<string, NodeJS.Timeout> }).idleTimeouts;
     assert.ok(timeouts.has('s1'));
 
-    capturedSubscribed?.();
+    createdRuntime!.subscribe({} as import('express').Response);
     assert.ok(!timeouts.has('s1'), 'onSubscribed should cancel idle timer');
-  });
-
-  it('idle-close defers while a background task is running (R5)', async () => {
-    setupStoreMocks();
-
-    // Use a real SessionRuntime (with a mock SDK client) so the reaper guard
-    // exercises the extended isProcessingTurn() predicate end to end.
-    let realRuntime: SessionRuntime | undefined;
-    SessionRuntime.open = ((...args: unknown[]) => {
-      const mockQuery = {
-        interrupt: () => Promise.resolve(),
-        close: () => {},
-      } as unknown as Query;
-      const client = {
-        createStreamingQuery: () => ({
-          query: mockQuery,
-          messages: (async function* () {})(),
-        }),
-      } as unknown as SdkClient;
-      realRuntime = originalOpen(
-        args[0] as string,
-        args[1] as string,
-        args[2] as string,
-        {} as Options,
-        client,
-        undefined,
-        args[6] as (() => void) | undefined,
-        args[7] as (() => void) | undefined,
-        args[8] as (() => void) | undefined,
-      );
-      return realRuntime;
-    }) as typeof SessionRuntime.open;
-
-    await service.getOrCreateRuntime('s1', 'ws-1');
-    assert.ok(realRuntime);
-    assert.strictEqual(service.getActiveSessionCount(), 1);
-
-    const tracker = realRuntime as unknown as { handleTaskSignal: (signal: TaskSignal) => void };
-    tracker.handleTaskSignal({ kind: 'backgroundedPatch', taskId: 'bg-1' });
-    assert.strictEqual(realRuntime.isProcessingTurn(), true, 'confirmed background task extends processing');
-
-    // Grace period elapses, but the runtime stays open because the task runs.
-    await new Promise((r) => setTimeout(r, 150));
-    assert.strictEqual(service.getActiveSessionCount(), 1, 'runtime must survive the idle grace while a background task runs');
-    const timeouts = (service as unknown as { idleTimeouts: Map<string, NodeJS.Timeout> }).idleTimeouts;
-    assert.ok(timeouts.has('s1'), 'idle close should be rescheduled while the task runs');
-
-    // Once the task settles, the re-armed timer fires and closes the runtime.
-    tracker.handleTaskSignal({ kind: 'terminal', taskId: 'bg-1' });
-    assert.strictEqual(realRuntime.isProcessingTurn(), false);
-    await new Promise((r) => setTimeout(r, 150));
-    assert.strictEqual(service.getActiveSessionCount(), 0, 'runtime closes once the last background task settles');
   });
 
   it('notifies onRuntimeClose listener when runtime is closed', async () => {

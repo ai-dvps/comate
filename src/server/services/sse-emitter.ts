@@ -1,7 +1,12 @@
 import type { Response } from 'express';
 import type { SDKMessage, SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sdk';
 
-import type { SseEvent, QuestionPayload, WorkflowStatus, TaskSignal } from '../types/message.js';
+import type {
+  SseEvent,
+  QuestionPayload,
+  WorkflowStatus,
+  SessionActivitySnapshot,
+} from '../types/message.js';
 import type { PermissionSuggestion } from '../types/message.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 
@@ -17,12 +22,6 @@ interface BlockState {
   toolName?: string;
   inputBuffer?: string;
 }
-
-// Terminal task statuses, per message shape: task_updated patches report
-// 'killed' while task_notification messages report 'stopped' — the sets are
-// deliberately different.
-const TERMINAL_PATCH_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'killed']);
-const TERMINAL_NOTIFICATION_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'stopped']);
 
 /**
  * Per-stream stateful SSE emitter for the chat route.
@@ -57,16 +56,13 @@ export class SseEmitter {
   private eventIndex = 0;
   private nextPartIndex = 0;
   private onEvent?: (id: number, event: SseEvent) => void;
-  private onTaskSignal?: (signal: TaskSignal) => void;
 
   constructor(
     res: Response | null = null,
     onEvent?: (id: number, event: SseEvent) => void,
-    onTaskSignal?: (signal: TaskSignal) => void,
   ) {
     this.res = res;
     this.onEvent = onEvent;
-    this.onTaskSignal = onTaskSignal;
   }
 
   setResponse(res: Response | null): void {
@@ -135,17 +131,6 @@ export class SseEmitter {
           const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
           const description = typeof taskMsg.description === 'string' ? taskMsg.description : '';
           if (taskId) {
-            const toolUseId =
-              typeof taskMsg.tool_use_id === 'string' ? taskMsg.tool_use_id : undefined;
-            const subagentType =
-              typeof taskMsg.subagent_type === 'string' ? taskMsg.subagent_type : undefined;
-            this.onTaskSignal?.({
-              kind: 'started',
-              taskId,
-              skipTranscript: taskMsg.skip_transcript === true,
-              ...(toolUseId !== undefined && { toolUseId }),
-              ...(subagentType !== undefined && { subagentType }),
-            });
             this.send({ type: 'task_started', taskId, description });
             this.emitWorkflowTaskEvent(taskId, { status: 'running' });
           }
@@ -156,13 +141,6 @@ export class SseEmitter {
           const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
           const patch = taskMsg.patch as Record<string, unknown> | undefined;
           if (taskId) {
-            if (patch?.is_backgrounded === true) {
-              this.onTaskSignal?.({ kind: 'backgroundedPatch', taskId });
-            }
-            const rawStatus = patch?.status;
-            if (typeof rawStatus === 'string' && TERMINAL_PATCH_STATUSES.has(rawStatus)) {
-              this.onTaskSignal?.({ kind: 'terminal', taskId });
-            }
             const normalizedPatch = {
               status: typeof patch?.status === 'string' ? patch.status : undefined,
               description: typeof patch?.description === 'string' ? patch.description : undefined,
@@ -196,9 +174,6 @@ export class SseEmitter {
           const taskId = typeof taskMsg.task_id === 'string' ? taskMsg.task_id : '';
           const status = typeof taskMsg.status === 'string' ? taskMsg.status : '';
           if (taskId) {
-            if (TERMINAL_NOTIFICATION_STATUSES.has(status)) {
-              this.onTaskSignal?.({ kind: 'terminal', taskId });
-            }
             this.send({
               type: 'task_updated',
               taskId,
@@ -354,8 +329,8 @@ export class SseEmitter {
     this.onEvent?.(id, event);
   }
 
-  emitSessionProcessing(processing: boolean, backgroundTaskCount: number): void {
-    this.send({ type: 'session_processing', processing, backgroundTaskCount });
+  emitSessionActivity(activity: SessionActivitySnapshot): void {
+    this.send({ type: 'session_activity', ...activity });
   }
 
   emitPendingApproval(
@@ -845,27 +820,9 @@ export class SseEmitter {
             toolUseResult &&
             typeof toolUseResult === 'object' &&
             (toolUseResult as Record<string, unknown>).status === 'async_launched';
-          if (isAsyncLaunch) {
-            const result = toolUseResult as Record<string, unknown>;
-            const agentId = typeof result.agentId === 'string' ? result.agentId : undefined;
-            this.onTaskSignal?.({
-              kind: 'asyncLaunched',
-              toolUseId,
-              ...(agentId !== undefined && { agentId }),
-            });
-          } else {
+          if (!isAsyncLaunch) {
             this.finalizeSubagent(toolUseId, isError ? 'error' : 'completed');
           }
-        }
-
-        const backgroundTaskId =
-          toolUseResult &&
-          typeof toolUseResult === 'object' &&
-          typeof (toolUseResult as Record<string, unknown>).backgroundTaskId === 'string'
-            ? ((toolUseResult as Record<string, unknown>).backgroundTaskId as string)
-            : undefined;
-        if (toolUseId && backgroundTaskId) {
-          this.onTaskSignal?.({ kind: 'bashBackgrounded', toolUseId, taskId: backgroundTaskId });
         }
 
         const pendingWorkflow = this.pendingWorkflows.get(toolUseId);

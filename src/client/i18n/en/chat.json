@@ -34,6 +34,19 @@
     "confirm": "Confirm",
     "stopping": "Stopping..."
   },
+  "activity": {
+    "backgroundRunning_one": "{{count}} background task running",
+    "backgroundRunning_other": "{{count}} background tasks running",
+    "backgroundTaskCount_one": "{{count}} background task",
+    "backgroundTaskCount_other": "{{count}} background tasks",
+    "stopping": "Stopping all Session work...",
+    "taskType": {
+      "agent": "Agent",
+      "command": "Command",
+      "workflow": "Workflow",
+      "background": "Background task"
+    }
+  },
   "approval": {
     "clarifyingQuestion": "Clarifying question",
     "stop": "Stop",

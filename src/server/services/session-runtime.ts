@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import type {
   Options,
   SDKMessage,
@@ -8,7 +9,14 @@ import type {
   SDKRateLimitInfo,
   SDKControlGetContextUsageResponse,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { SseEvent, QuestionPayload, TaskSignal, PermissionSuggestion } from '../types/message.js';
+import type {
+  SseEvent,
+  QuestionPayload,
+  PermissionSuggestion,
+  SessionActivitySnapshot,
+  SessionActivityInterruption,
+  SessionBackgroundTask,
+} from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import { PushableIterator } from './pushable-iterator.js';
@@ -28,13 +36,39 @@ import { browserAuditService } from './browser-audit.js';
 
 
 const RING_BUFFER_CAP = 500;
-// Bounded FIFO tombstones: terminated task ids are remembered so a late
-// confirmation cannot resurrect a finished task as a ghost (Critical-Gap-2).
-const TERMINATED_TASK_IDS_CAP = 256;
-// Bounded FIFO record of ambient (skip_transcript) task ids so a later
-// backgrounded signal cannot confirm a task that must never be tracked (R3).
-const SKIPPED_TASK_IDS_CAP = 256;
+const STOP_DRAIN_TIMEOUT_MS = 2000;
 diagLog('[SessionRuntime] module loaded');
+
+function backgroundTasksEqual(
+  left: readonly SessionBackgroundTask[],
+  right: readonly SessionBackgroundTask[],
+): boolean {
+  return left.length === right.length && left.every((task, index) => {
+    const other = right[index];
+    return task.id === other.id && task.type === other.type && task.description === other.description;
+  });
+}
+
+function activitySnapshotsEqual(
+  left: SessionActivitySnapshot,
+  right: SessionActivitySnapshot,
+): boolean {
+  if (
+    left.phase !== right.phase ||
+    left.active !== right.active ||
+    !backgroundTasksEqual(left.backgroundTasks, right.backgroundTasks)
+  ) return false;
+
+  const leftInterruption = left.interruption;
+  const rightInterruption = right.interruption;
+  if (!leftInterruption || !rightInterruption) return leftInterruption === rightInterruption;
+  return (
+    leftInterruption.reason === rightInterruption.reason &&
+    leftInterruption.message === rightInterruption.message &&
+    leftInterruption.foregroundInterrupted === rightInterruption.foregroundInterrupted &&
+    backgroundTasksEqual(leftInterruption.backgroundTasks, rightInterruption.backgroundTasks)
+  );
+}
 
 const READONLY_TOOLS: readonly string[] = [
   'Read',
@@ -77,28 +111,29 @@ export class SessionRuntime {
   private closed = false;
   private messageLoopPromise: Promise<void> = Promise.resolve();
   private currentMessageStartId?: string;
-  // Background-task tracker (R1-R4). A bare task_started creates only a
-  // candidate; membership in confirmedBackgroundTasks requires a
-  // confirmed-background signal (asyncLaunched / bashBackgrounded /
-  // backgroundedPatch) or the single-candidate fallback.
-  private taskCandidates = new Map<string, { toolUseId?: string }>();
-  private confirmedBackgroundTasks = new Set<string>();
-  // tool_use_ids of asyncLaunched results that arrived before their task_started.
-  private pendingConfirmations = new Set<string>();
-  private terminatedTaskIds = new Set<string>();
-  private skippedTaskIds = new Set<string>();
-  // Baseline is idle: a fresh runtime never announces {processing: false}.
-  private lastEmittedProcessing = false;
-  // Count companion to lastEmittedProcessing: count-only changes (e.g. a
-  // second task confirmed while already processing) also ship an edge.
-  private lastEmittedBackgroundTaskCount = 0;
+  private foregroundMessageUuid?: string;
+  private backgroundTasks = new Map<string, SessionBackgroundTask>();
+  private stopping = false;
+  private stopFenceActive = false;
+  private stopOperation?: Promise<void>;
+  private resolveStopOperation?: () => void;
+  private stopDeadlineTimer?: NodeJS.Timeout;
+  private stopRequestedTaskIds = new Set<string>();
+  private stopForegroundInterrupted = false;
+  private activityInterruption?: SessionActivityInterruption;
+  private lastEmittedActivity: SessionActivitySnapshot = {
+    phase: 'idle',
+    active: false,
+    backgroundTasks: [],
+  };
+  private deliberateShutdown = false;
   private activeRes: Response | null = null;
   private heartbeatTimer?: NodeJS.Timeout;
   private botEventHandlers = new Set<(id: number, event: SseEvent) => void>();
   private webEventHandlers = new Set<(id: number, event: SseEvent) => void>();
   private onSubscribed?: () => void;
   private onUnsubscribed?: () => void;
-  private onActivity?: () => void;
+  private onActivity?: (activity: SessionActivitySnapshot) => void;
   private approvalMode: ApprovalMode = 'manual';
 
   static open(
@@ -110,7 +145,7 @@ export class SessionRuntime {
     botEventHandler?: (id: number, event: SseEvent) => void,
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
-    onActivity?: () => void,
+    onActivity?: (activity: SessionActivitySnapshot) => void,
     provider?: Provider,
     driver?: BackendDriver,
   ): SessionRuntime {
@@ -185,7 +220,7 @@ export class SessionRuntime {
     sdkClient: SdkClient,
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
-    onActivity?: () => void,
+    onActivity?: (activity: SessionActivitySnapshot) => void,
     provider?: Provider,
     driver?: BackendDriver,
   ) {
@@ -229,7 +264,7 @@ export class SessionRuntime {
       ) {
         this.emitContextUsage();
       }
-    }, (signal) => this.handleTaskSignal(signal));
+    });
   }
 
   private start(): void {
@@ -244,6 +279,8 @@ export class SessionRuntime {
       canUseTool,
       ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     };
+    this.backgroundTasks.clear();
+    this.evaluateActivity();
     const { query, messages } = this.driver.createStreamingQuery(
       this.input,
       optionsWithCallback,
@@ -255,11 +292,16 @@ export class SessionRuntime {
   private async runMessageLoop(
     messages: AsyncGenerator<SDKMessage>,
   ): Promise<void> {
+    let loopFailureMessage: string | undefined;
     try {
       for await (const msg of messages) {
         if (this.closed) break;
+        this.handleActivityMessage(msg);
         this.emitter.handle(msg);
-        this.evaluateProcessingEdge();
+        if (msg.type === 'result') {
+          this.foregroundMessageUuid = undefined;
+          this.evaluateActivity();
+        }
       }
     } catch (err) {
       const errDetail = err instanceof Error
@@ -270,6 +312,7 @@ export class SessionRuntime {
       console.error('SessionRuntime message loop error:', err);
 
       const message = extractErrorMessage(err);
+      loopFailureMessage = message;
       const isNoConversationError = message.includes('No conversation found');
       const isOverloadedError =
         isRateLimitLike(err) || /(overloaded|rate.limit|529)/i.test(message);
@@ -296,14 +339,53 @@ export class SessionRuntime {
         `Stream error: ${message}`,
       );
     } finally {
-      // The loop is permanently dead (error or stream end) — no further
-      // task signals can arrive, so tracked background tasks can never
-      // settle. Reconcile the tracker so the session can idle instead of
-      // pinning in the processing state forever. The edge guard suppresses
-      // the emission when nothing actually changed.
-      this.taskCandidates.clear();
-      this.confirmedBackgroundTasks.clear();
-      this.evaluateProcessingEdge();
+      if (this.stopping) {
+        this.hardCloseForStop(
+          loopFailureMessage
+            ? `SDK message stream failed during Stop: ${loopFailureMessage}`
+            : 'SDK message stream ended during Stop.',
+        );
+      } else {
+        const unfinishedForeground = this.foregroundMessageUuid !== undefined || this.pendingApprovals.size > 0;
+        const unfinishedTasks = [...this.backgroundTasks.values()];
+        const unexpectedlyInterrupted =
+          !this.deliberateShutdown && (unfinishedForeground || unfinishedTasks.length > 0);
+        this.foregroundMessageUuid = undefined;
+        this.backgroundTasks.clear();
+        this.activityInterruption = unexpectedlyInterrupted
+          ? {
+              reason: 'runtime_failure',
+              message: loopFailureMessage ?? 'SDK message stream ended unexpectedly',
+              foregroundInterrupted: unfinishedForeground,
+              backgroundTasks: unfinishedTasks,
+            }
+          : this.activityInterruption;
+        this.evaluateActivity();
+      }
+    }
+  }
+
+  private handleActivityMessage(message: SDKMessage): void {
+    if (message.type !== 'system' || message.subtype !== 'background_tasks_changed') return;
+
+    this.backgroundTasks = new Map(
+      message.tasks.map((task) => [
+        task.task_id,
+        { id: task.task_id, type: task.task_type, description: task.description },
+      ]),
+    );
+    if (this.stopFenceActive && !this.stopping && this.backgroundTasks.size > 0) {
+      this.stopping = true;
+      this.stopForegroundInterrupted = false;
+      this.evaluateActivity();
+      this.stopCurrentBackgroundTasks();
+      this.hardCloseForStop('SDK reported new background work after Stop completed.');
+      return;
+    }
+    this.evaluateActivity();
+    if (this.stopping) {
+      this.stopCurrentBackgroundTasks();
+      this.finishGracefulStopIfDrained();
     }
   }
 
@@ -549,7 +631,7 @@ export class SessionRuntime {
     this.emitter.emitApprovalTimeout(requestId);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
-    this.evaluateProcessingEdge();
+    this.evaluateActivity();
     pending.resolve({
       behavior: 'deny',
       message: 'Request timed out waiting for user response.',
@@ -575,6 +657,7 @@ export class SessionRuntime {
   }
 
   subscribe(res: Response, lastEventId?: string): void {
+    const hadSubscribers = this.hasSubscribers();
     diagLog(`[Runtime ${this.sessionId}] subscribe (pending=${this.pendingApprovals.size}, lastEventId=${lastEventId ?? 'none'}, currentMessageStartId=${this.currentMessageStartId ?? 'none'})`);
     this.activeRes = res;
     this.emitter.setResponse(res);
@@ -605,15 +688,13 @@ export class SessionRuntime {
         );
       }
     }
-    // Force-emit the current processing verdict after replay and the
-    // approval re-emit: a fresh subscriber mid background-only task has no
-    // currentMessageStartId-anchored replay to restore the spinner from.
-    this.forceEmitSessionProcessing();
-    this.onSubscribed?.();
-    this.onActivity?.();
+    // The current level snapshot must win over stale replayed activity.
+    this.forceEmitSessionActivity();
+    if (!hadSubscribers && this.hasSubscribers()) this.onSubscribed?.();
   }
 
   subscribeWebSocket(handler: (id: number, event: SseEvent) => void, lastEventId?: string): void {
+    const hadSubscribers = this.hasSubscribers();
     diagLog(`[Runtime ${this.sessionId}] subscribeWebSocket (pending=${this.pendingApprovals.size}, lastEventId=${lastEventId ?? 'none'}, currentMessageStartId=${this.currentMessageStartId ?? 'none'})`);
     this.addWebEventHandler(handler);
     this.emitter.emitWebEvent({ type: 'subscription_ack', serverNonce: this.serverNonce, sessionId: this.sessionId });
@@ -640,14 +721,13 @@ export class SessionRuntime {
         );
       }
     }
-    // Force-emit after replay so the current verdict wins over any stale
-    // session_processing event in the ring buffer.
-    this.forceEmitSessionProcessing();
-    this.onSubscribed?.();
-    this.onActivity?.();
+    // Force-emit after replay so the current level snapshot wins.
+    this.forceEmitSessionActivity();
+    if (!hadSubscribers && this.hasSubscribers()) this.onSubscribed?.();
   }
 
   unsubscribe(res?: Response): void {
+    const hadSubscribers = this.hasSubscribers();
     const hadRes = this.activeRes === res;
     if (!res || this.activeRes === res) {
       this.activeRes = null;
@@ -658,12 +738,11 @@ export class SessionRuntime {
       }
     }
     diagLog(`[Runtime ${this.sessionId}] unsubscribe (matched=${hadRes})`);
-    if (hadRes) {
-      this.onUnsubscribed?.();
-    }
+    if (hadSubscribers && !this.hasSubscribers()) this.onUnsubscribed?.();
   }
 
   unsubscribeWebSocket(handler: (id: number, event: SseEvent) => void): void {
+    const hadSubscribers = this.hasSubscribers();
     this.removeWebEventHandler(handler);
     // Only tear down SSE heartbeat/response state when no SSE response is
     // active and no web handlers remain. This keeps a runtime alive for a
@@ -671,14 +750,29 @@ export class SessionRuntime {
     if (this.activeRes || this.webEventHandlers.size > 0) {
       return;
     }
-    this.unsubscribe();
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+    if (hadSubscribers) this.onUnsubscribed?.();
   }
 
-  getStatus(): { pendingCount: number; isProcessing: boolean; workspaceId: string } {
+  hasSubscribers(): boolean {
+    return this.activeRes !== null || this.webEventHandlers.size > 0;
+  }
+
+  getStatus(): {
+    pendingCount: number;
+    isProcessing: boolean;
+    workspaceId: string;
+    activity: SessionActivitySnapshot;
+  } {
+    const activity = this.getActivitySnapshot();
     return {
       pendingCount: this.pendingApprovals.size,
-      isProcessing: this.isProcessingTurn(),
+      isProcessing: activity.active,
       workspaceId: this.workspaceId,
+      activity,
     };
   }
 
@@ -719,11 +813,7 @@ export class SessionRuntime {
    * use `isTurnActive()` for turn-only semantics (bot /stop gates).
    */
   isProcessingTurn(): boolean {
-    return (
-      this.currentMessageStartId !== undefined ||
-      this.pendingApprovals.size > 0 ||
-      this.confirmedBackgroundTasks.size > 0
-    );
+    return this.getActivitySnapshot().active;
   }
 
   /**
@@ -732,146 +822,38 @@ export class SessionRuntime {
    * their turn-scoped /stop semantics.
    */
   isTurnActive(): boolean {
-    return this.currentMessageStartId !== undefined || this.pendingApprovals.size > 0;
+    return this.foregroundMessageUuid !== undefined || this.pendingApprovals.size > 0;
   }
 
-  /**
-   * Fold a directional task signal from the emitter into the background-task
-   * tracker. Only confirmed-background signals (asyncLaunched /
-   * bashBackgrounded / backgroundedPatch) grant membership; a bare
-   * task_started creates an unconfirmed candidate (R2), and skip_transcript
-   * tasks never enter the tracker at all (R3).
-   */
-  private handleTaskSignal(signal: TaskSignal): void {
-    switch (signal.kind) {
-      case 'started': {
-        diagLog(
-          `[Runtime ${this.sessionId}] task_started taskId=${signal.taskId} toolUseId=${signal.toolUseId ?? 'none'} subagentType=${signal.subagentType ?? 'none'} skipTranscript=${signal.skipTranscript === true}`,
-        );
-        if (signal.skipTranscript) {
-          this.rememberSkippedTask(signal.taskId);
-          return;
-        }
-        if (this.terminatedTaskIds.has(signal.taskId)) return;
-        this.taskCandidates.set(signal.taskId, {
-          ...(signal.toolUseId !== undefined && { toolUseId: signal.toolUseId }),
-        });
-        if (signal.toolUseId && this.pendingConfirmations.has(signal.toolUseId)) {
-          this.pendingConfirmations.delete(signal.toolUseId);
-          this.confirmBackgroundTask(signal.taskId);
-          return;
-        }
-        // Reverse of the asyncLaunched single-candidate fallback: an unkeyed
-        // task_started can consume a parked confirmation only when the match
-        // is unambiguous — exactly one pending confirmation and this task is
-        // the sole candidate lacking a toolUseId.
-        if (signal.toolUseId === undefined && this.pendingConfirmations.size === 1) {
-          let unkeyedCandidates = 0;
-          for (const candidate of this.taskCandidates.values()) {
-            if (candidate.toolUseId === undefined) unkeyedCandidates++;
-          }
-          if (unkeyedCandidates === 1) {
-            const [toolUseId] = this.pendingConfirmations;
-            this.pendingConfirmations.delete(toolUseId);
-            this.confirmBackgroundTask(signal.taskId);
-          }
-        }
-        return;
-      }
-      case 'asyncLaunched': {
-        for (const [taskId, candidate] of this.taskCandidates) {
-          if (candidate.toolUseId === signal.toolUseId) {
-            this.confirmBackgroundTask(taskId);
-            return;
-          }
-        }
-        // Single-candidate fallback: an uncorrelated asyncLaunched confirms
-        // the sole candidate when it carries no toolUseId of its own. With
-        // two or more candidates there is no safe guess.
-        if (this.taskCandidates.size === 1) {
-          const [[taskId, candidate]] = this.taskCandidates;
-          if (candidate.toolUseId === undefined) {
-            this.confirmBackgroundTask(taskId);
-            return;
-          }
-        }
-        this.pendingConfirmations.add(signal.toolUseId);
-        return;
-      }
-      case 'bashBackgrounded':
-      case 'backgroundedPatch': {
-        this.confirmBackgroundTask(signal.taskId);
-        return;
-      }
-      case 'terminal': {
-        this.taskCandidates.delete(signal.taskId);
-        this.confirmedBackgroundTasks.delete(signal.taskId);
-        this.rememberTerminatedTask(signal.taskId);
-        this.evaluateProcessingEdge();
-        return;
-      }
-    }
+  getActivitySnapshot(): SessionActivitySnapshot {
+    const backgroundTasks = [...this.backgroundTasks.values()];
+    const phase = this.stopping
+      ? 'stopping'
+      : this.foregroundMessageUuid !== undefined || this.pendingApprovals.size > 0
+        ? 'foreground'
+        : backgroundTasks.length > 0
+          ? 'background'
+          : 'idle';
+    return {
+      phase,
+      active: phase !== 'idle',
+      backgroundTasks,
+      ...(this.activityInterruption ? { interruption: this.activityInterruption } : {}),
+    };
   }
 
-  private confirmBackgroundTask(taskId: string): void {
-    if (this.skippedTaskIds.has(taskId)) {
-      // R3: ambient (skip_transcript) tasks never enter the tracked set,
-      // even when a later backgrounded signal names them.
-      return;
-    }
-    if (this.terminatedTaskIds.has(taskId)) {
-      // Ghost guard: a confirmation arriving after the terminal signal must
-      // not resurrect a finished task and pin the session forever.
-      return;
-    }
-    this.taskCandidates.delete(taskId);
-    this.confirmedBackgroundTasks.add(taskId);
-    this.evaluateProcessingEdge();
+  private evaluateActivity(): void {
+    const next = this.getActivitySnapshot();
+    if (activitySnapshotsEqual(next, this.lastEmittedActivity)) return;
+    this.lastEmittedActivity = next;
+    this.emitter.emitSessionActivity(next);
+    this.onActivity?.(next);
   }
 
-  private rememberTerminatedTask(taskId: string): void {
-    this.terminatedTaskIds.add(taskId);
-    while (this.terminatedTaskIds.size > TERMINATED_TASK_IDS_CAP) {
-      const oldest = this.terminatedTaskIds.values().next().value;
-      if (oldest === undefined) break;
-      this.terminatedTaskIds.delete(oldest);
-    }
-  }
-
-  private rememberSkippedTask(taskId: string): void {
-    this.skippedTaskIds.add(taskId);
-    while (this.skippedTaskIds.size > SKIPPED_TASK_IDS_CAP) {
-      const oldest = this.skippedTaskIds.values().next().value;
-      if (oldest === undefined) break;
-      this.skippedTaskIds.delete(oldest);
-    }
-  }
-
-  /**
-   * Single emission path for the processing verdict: emit only on a flip.
-   * Every mutation site (message loop, approvals, interrupt, tracker) calls
-   * this after mutating so all edges share one code path.
-   */
-  private evaluateProcessingEdge(): void {
-    const next = this.isProcessingTurn();
-    const count = this.confirmedBackgroundTasks.size;
-    if (next !== this.lastEmittedProcessing || count !== this.lastEmittedBackgroundTaskCount) {
-      this.lastEmittedProcessing = next;
-      this.lastEmittedBackgroundTaskCount = count;
-      this.emitter.emitSessionProcessing(next, count);
-    }
-  }
-
-  /**
-   * Hydration path for fresh subscribers: emit the current verdict even when
-   * it has not flipped, and record it so future edges still fire on change.
-   */
-  private forceEmitSessionProcessing(): void {
-    const processing = this.isProcessingTurn();
-    const count = this.confirmedBackgroundTasks.size;
-    this.lastEmittedProcessing = processing;
-    this.lastEmittedBackgroundTaskCount = count;
-    this.emitter.emitSessionProcessing(processing, count);
+  private forceEmitSessionActivity(): void {
+    const activity = this.getActivitySnapshot();
+    this.lastEmittedActivity = activity;
+    this.emitter.emitSessionActivity(activity);
   }
 
   cancelIdleClose(): void {
@@ -881,14 +863,25 @@ export class SessionRuntime {
   }
 
   pushMessage(content: string): void {
+    if (this.stopping) {
+      throw new Error('Session is stopping and cannot accept new messages.');
+    }
+    if (this.closed) {
+      throw new Error('Session is closed and cannot accept new messages.');
+    }
+    this.stopFenceActive = false;
+    const uuid = randomUUID();
     const msg: SDKUserMessage = {
       type: 'user',
       message: { role: 'user', content },
       parent_tool_use_id: null,
+      uuid,
     };
+    this.foregroundMessageUuid = uuid;
+    this.activityInterruption = undefined;
+    this.evaluateActivity();
     this.input.push(msg);
     this.kimiLoopDetector?.reset();
-    this.onActivity?.();
   }
 
   resolveApproval(requestId: string, result: PermissionResult): void {
@@ -897,7 +890,7 @@ export class SessionRuntime {
     this.clearPendingTimer(pending);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
-    this.evaluateProcessingEdge();
+    this.evaluateActivity();
 
     // The SDK's Zod schema requires `updatedInput: Record<string, unknown>` on
     // every allow result, even though the TS type marks it optional. Callers
@@ -954,6 +947,9 @@ export class SessionRuntime {
       decisionReasonType?: string;
     } = {},
   ): Promise<PermissionResult> {
+    if (this.stopFenceActive) {
+      return Promise.resolve({ behavior: 'deny', message: 'Session stopped by user.' });
+    }
     const timerInfo = options.timeout ? this.startTimeoutTimer(requestId, options.timeout) : undefined;
     this.emitter.emitPendingApproval(
       requestId,
@@ -992,6 +988,9 @@ export class SessionRuntime {
       signal?: AbortSignal;
     } = {},
   ): Promise<PermissionResult> {
+    if (this.stopFenceActive) {
+      return Promise.resolve({ behavior: 'deny', message: 'Session stopped by user.' });
+    }
     const timerInfo = options.timeout ? this.startTimeoutTimer(requestId, options.timeout) : undefined;
     this.emitter.emitPendingQuestion(requestId, questions, timerInfo?.expiresAt);
     return this.waitForResolution(requestId, input, 'question', {
@@ -1032,7 +1031,7 @@ export class SessionRuntime {
         ...(data.expiresAt !== undefined && { expiresAt: data.expiresAt }),
         ...(data.timer !== undefined && { timer: data.timer }),
       });
-      this.evaluateProcessingEdge();
+      this.evaluateActivity();
 
       if (data.signal) {
         const onAbort = () => {
@@ -1044,7 +1043,7 @@ export class SessionRuntime {
             this.clearPendingTimer(pending);
             this.pendingApprovals.delete(requestId);
             this.emitter.emitApprovalResolved(requestId);
-            this.evaluateProcessingEdge();
+            this.evaluateActivity();
             resolve({
               behavior: 'deny',
               message: `Tool approval aborted by SDK: ${requestId}`,
@@ -1060,7 +1059,8 @@ export class SessionRuntime {
     try {
       await this.query.interrupt();
       this.emitter.emitInterrupted(null);
-      this.evaluateProcessingEdge();
+      this.foregroundMessageUuid = undefined;
+      this.evaluateActivity();
     } catch (err) {
       console.error('Interrupt failed:', err);
       this.emitter.emitErrorNote(
@@ -1070,47 +1070,112 @@ export class SessionRuntime {
     }
   }
 
-  /**
-   * One-click clear-all (R8, KTD-5): interrupt the in-flight turn if any,
-   * then stop every tracked background task. Failure-isolated and never
-   * throws: a throwing interrupt must not skip the task loop, and a rejected
-   * stopTask only logs and leaves its task tracked until its own terminal
-   * signal (or runtime close) arrives.
-   */
-  async stopAll(): Promise<void> {
-    // Snapshot: a task confirmed after this point is not stopped (accepted
-    // documented semantics).
-    const taskIds = [...this.confirmedBackgroundTasks];
+  stopAll(): Promise<void> {
+    if (this.stopOperation) return this.stopOperation;
+    if (!this.getActivitySnapshot().active) return Promise.resolve();
 
-    if (this.isTurnActive()) {
-      try {
-        await this.interrupt();
-      } catch (err) {
-        // interrupt() has already emitted its error note; swallow the rethrow
-        // so the task loop still runs.
-        diagLog(
-          `[Runtime ${this.sessionId}] stopAll: interrupt failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    this.stopping = true;
+    this.stopFenceActive = true;
+    this.stopForegroundInterrupted =
+      this.foregroundMessageUuid !== undefined || this.pendingApprovals.size > 0;
+    this.activityInterruption = undefined;
+    this.stopRequestedTaskIds.clear();
+    this.evaluateActivity();
+    this.stopOperation = new Promise<void>((resolve) => {
+      this.resolveStopOperation = resolve;
+    });
+    this.stopDeadlineTimer = setTimeout(() => {
+      this.hardCloseForStop('Stop deadline expired before SDK work reached zero.');
+    }, STOP_DRAIN_TIMEOUT_MS);
+
+    void this.beginStopDrain();
+    return this.stopOperation;
+  }
+
+  private async beginStopDrain(): Promise<void> {
+    let receipt: Awaited<ReturnType<Query['interrupt']>>;
+    try {
+      receipt = await this.query.interrupt();
+    } catch (error) {
+      this.hardCloseForStop(
+        `Interrupt failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
     }
 
-    const results = await Promise.allSettled(
-      taskIds.map((taskId) => this.query.stopTask(taskId)),
-    );
-    results.forEach((result, index) => {
-      const taskId = taskIds[index];
-      if (result.status === 'fulfilled') {
-        // The SDK documents a terminal `stopped` notification (the R9 path);
-        // untracking here through the same terminal path is an idempotent
-        // safety net in case that notification is ever dropped, and emits
-        // edges exactly the way the notification would.
-        this.handleTaskSignal({ kind: 'terminal', taskId });
-      } else {
-        const reason =
-          result.reason instanceof Error ? result.reason.message : String(result.reason);
-        diagLog(`[Runtime ${this.sessionId}] stopAll: stopTask(${taskId}) failed: ${reason}`);
-      }
-    });
+    if (!receipt || receipt.still_queued.length > 0) {
+      this.hardCloseForStop(
+        !receipt
+          ? 'Interrupt did not return a queue receipt.'
+          : `Interrupt left ${receipt.still_queued.length} queued message(s).`,
+      );
+      return;
+    }
+
+    this.foregroundMessageUuid = undefined;
+    this.cancelPendingApprovals('Session stopped by user.');
+    this.stopCurrentBackgroundTasks();
+    this.finishGracefulStopIfDrained();
+  }
+
+  private stopCurrentBackgroundTasks(): void {
+    for (const taskId of this.backgroundTasks.keys()) {
+      if (this.stopRequestedTaskIds.has(taskId)) continue;
+      this.stopRequestedTaskIds.add(taskId);
+      void this.query.stopTask(taskId).catch((error) => {
+        this.hardCloseForStop(
+          `stopTask(${taskId}) failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    }
+  }
+
+  private finishGracefulStopIfDrained(): void {
+    if (!this.stopping || this.foregroundMessageUuid !== undefined || this.backgroundTasks.size > 0) {
+      return;
+    }
+    this.finishStop(false, 'Session stopped by user.');
+  }
+
+  private hardCloseForStop(message: string): void {
+    if (!this.stopping) return;
+    diagLog(`[Runtime ${this.sessionId}] stopAll: ${message}`);
+    this.deliberateShutdown = true;
+    this.closed = true;
+    this.input.close();
+    try {
+      this.query.close();
+    } catch {
+      // State still settles locally when process close itself throws.
+    }
+    this.finishStop(true, message);
+  }
+
+  private finishStop(hardClosed: boolean, message: string): void {
+    if (!this.stopping) return;
+    const interruptedTasks = [...this.backgroundTasks.values()];
+    if (this.stopDeadlineTimer) {
+      clearTimeout(this.stopDeadlineTimer);
+      this.stopDeadlineTimer = undefined;
+    }
+    this.cancelPendingApprovals('Session stopped by user.');
+    this.foregroundMessageUuid = undefined;
+    this.backgroundTasks.clear();
+    this.stopping = false;
+    this.activityInterruption = {
+      reason: 'user_stop',
+      message: hardClosed ? message : 'Session stopped by user.',
+      foregroundInterrupted: this.stopForegroundInterrupted,
+      backgroundTasks: interruptedTasks,
+    };
+    this.emitter.emitInterrupted(null);
+    this.evaluateActivity();
+    const resolve = this.resolveStopOperation;
+    this.resolveStopOperation = undefined;
+    resolve?.();
+    this.stopOperation = undefined;
+    this.stopRequestedTaskIds.clear();
+    this.stopForegroundInterrupted = false;
   }
 
   /**
@@ -1125,7 +1190,7 @@ export class SessionRuntime {
       this.emitter.emitApprovalResolved(requestId);
       pending.resolve({ behavior: 'deny', message });
     }
-    this.evaluateProcessingEdge();
+    this.evaluateActivity();
   }
 
   private replayFrom(lastEventId: string, res: Response): void {
@@ -1178,6 +1243,7 @@ export class SessionRuntime {
 
   async close(): Promise<void> {
     if (this.closed) return;
+    this.deliberateShutdown = true;
     this.closed = true;
     this.input.close();
     try {
@@ -1201,13 +1267,13 @@ export class SessionRuntime {
       });
     }
     this.pendingApprovals.clear();
-    // The runtime is dead: reconcile the tracker one last time so attached
-    // subscribers receive a final {processing:false, backgroundTaskCount:0}
-    // verdict before they are detached. The edge guard suppresses the
-    // emission when the loop-death reconciliation already shipped it.
-    this.taskCandidates.clear();
-    this.confirmedBackgroundTasks.clear();
-    this.evaluateProcessingEdge();
+    // Publish one final idle snapshot before subscribers are detached. The
+    // structural guard suppresses a duplicate loop-death emission.
+    this.foregroundMessageUuid = undefined;
+    this.backgroundTasks.clear();
+    this.stopping = false;
+    this.activityInterruption = undefined;
+    this.evaluateActivity();
     this.unsubscribe();
   }
 }
