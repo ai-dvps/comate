@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useRightPanelWidth, RAIL_WIDTH } from './use-right-panel-width'
+import { useRightPanelWidth } from './use-right-panel-width'
 
 const storage = new Map<string, string>()
+const COLLAPSED_WIDTH = 0
 
 describe('useRightPanelWidth', () => {
   beforeEach(() => {
@@ -23,7 +24,7 @@ describe('useRightPanelWidth', () => {
     storage.set('right-panel-width', '500')
     const { result } = renderHook(() => useRightPanelWidth())
     expect(result.current.isCollapsed).toBe(true)
-    expect(result.current.width).toBe(RAIL_WIDTH)
+    expect(result.current.width).toBe(COLLAPSED_WIDTH)
     expect(result.current.expandedWidth).toBe(500)
   })
 
@@ -32,7 +33,7 @@ describe('useRightPanelWidth', () => {
     storage.set('right-panel-width', '500')
     const { result } = renderHook(() => useRightPanelWidth())
     expect(result.current.isCollapsed).toBe(true)
-    expect(result.current.width).toBe(RAIL_WIDTH)
+    expect(result.current.width).toBe(COLLAPSED_WIDTH)
   })
 
   it('toggles isCollapsed and persists the flag', () => {
@@ -57,7 +58,7 @@ describe('useRightPanelWidth', () => {
   it('expanding after collapse restores the width that existed before collapse', () => {
     storage.set('right-panel-width', '500')
     const { result } = renderHook(() => useRightPanelWidth())
-    expect(result.current.width).toBe(RAIL_WIDTH)
+    expect(result.current.width).toBe(COLLAPSED_WIDTH)
 
     act(() => {
       result.current.toggleCollapse()
@@ -69,7 +70,7 @@ describe('useRightPanelWidth', () => {
       result.current.toggleCollapse()
     })
 
-    expect(result.current.width).toBe(RAIL_WIDTH)
+    expect(result.current.width).toBe(COLLAPSED_WIDTH)
     expect(storage.get('right-panel-previous-width')).toBe('500')
   })
 
@@ -92,7 +93,7 @@ describe('useRightPanelWidth', () => {
     storage.set('right-panel-previous-width', 'also-not')
     const { result } = renderHook(() => useRightPanelWidth())
     expect(result.current.isCollapsed).toBe(true)
-    expect(result.current.width).toBe(RAIL_WIDTH)
+    expect(result.current.width).toBe(COLLAPSED_WIDTH)
   })
 
   it('clamps a restored previous width to the minimum bound', () => {
@@ -117,13 +118,13 @@ describe('useRightPanelWidth', () => {
       result.current.toggleCollapse()
     })
 
-    expect(result.current.width).toBe(RAIL_WIDTH)
+    expect(result.current.width).toBe(COLLAPSED_WIDTH)
 
     act(() => {
       result.current.setWidth(700)
     })
 
-    expect(result.current.width).toBe(RAIL_WIDTH)
+    expect(result.current.width).toBe(COLLAPSED_WIDTH)
     expect(storage.get('right-panel-previous-width')).toBe('700')
 
     act(() => {

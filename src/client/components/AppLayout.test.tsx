@@ -60,7 +60,6 @@ vi.mock('../hooks/use-right-panel-width', () => ({
     toggleCollapse: vi.fn(),
     expandedWidth: 640,
   }),
-  RAIL_WIDTH: 48,
 }))
 vi.mock('../hooks/use-sidebar-keyboard-shortcut', () => ({
   useSidebarKeyboardShortcut: () => {},
