@@ -9,6 +9,7 @@ import ConflictReview from './ConflictReview'
 import CodeMirrorEditor from '../CodeMirrorEditor'
 import MarkdownPreview from '../MarkdownPreview'
 import { getCodeMirrorLanguage } from '../../lib/codemirror-language'
+import { EditorView } from '@codemirror/view'
 
 interface TodoDetailProps {
   todo: Todo | null
@@ -249,13 +250,14 @@ export default function TodoDetail({
               </div>
             </div>
 
-            <div className="min-h-[120px] max-h-64 rounded-lg border border-border/50 bg-bg overflow-hidden">
+            <div className="min-h-[120px] max-h-64 rounded-lg border border-border/50 bg-bg overflow-y-auto overflow-x-hidden">
               {bodyMode === 'edit' ? (
                 <CodeMirrorEditor
                   value={bodyDraft}
                   language={language}
                   readOnly={false}
                   className="h-full min-h-[120px] text-xs"
+                  extensions={[EditorView.lineWrapping]}
                   onChange={handleBodyChange}
                   onBlur={handleBodyBlur}
                 />
