@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comate Panel Background — 方案 A/B 对比</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: light; }
+    .dark { color-scheme: dark; }
+
+    /* ===== 方案 A：最小改动（bg / surface 两层） ===== */
+    .scheme-a {
+      --a-bg: 220 14% 96%;
+      --a-surface: 0 0% 100%;
+      --a-surface-hover: 220 12% 94%;
+      --a-border: 220 10% 86%;
+      --a-text-primary: 220 20% 12%;
+      --a-text-secondary: 220 10% 42%;
+      --a-text-tertiary: 220 10% 58%;
+      --a-accent: 18 75% 55%;
+    }
+    .scheme-a.dark {
+      --a-bg: 220 18% 6%;
+      --a-surface: 220 16% 10%;
+      --a-surface-hover: 220 14% 14%;
+      --a-border: 220 12% 22%;
+      --a-text-primary: 220 15% 96%;
+      --a-text-secondary: 220 12% 65%;
+      --a-text-tertiary: 220 10% 45%;
+    }
+
+    /* ===== 方案 B：强分层（bg / surface-subtle / surface / surface-elevated） ===== */
+    .scheme-b {
+      --b-bg: 220 14% 96%;
+      --b-surface-subtle: 220 12% 97%;
+      --b-surface: 0 0% 100%;
+      --b-surface-hover: 220 12% 94%;
+      --b-surface-elevated: 0 0% 100%;
+      --b-border: 220 10% 86%;
+      --b-text-primary: 220 20% 12%;
+      --b-text-secondary: 220 10% 42%;
+      --b-text-tertiary: 220 10% 58%;
+      --b-accent: 18 75% 55%;
+      --b-shadow: 220 20% 12%;
+    }
+    .scheme-b.dark {
+      --b-bg: 220 18% 6%;
+      --b-surface-subtle: 220 17% 8%;
+      --b-surface: 220 16% 11%;
+      --b-surface-hover: 220 14% 15%;
+      --b-surface-elevated: 220 15% 13%;
+      --b-border: 220 12% 23%;
+      --b-text-primary: 220 15% 96%;
+      --b-text-secondary: 220 12% 65%;
+      --b-text-tertiary: 220 10% 45%;
+      --b-accent: 18 75% 55%;
+      --b-shadow: 220 40% 2%;
+    }
+
+    .a-bg { background: hsl(var(--a-bg)); color: hsl(var(--a-text-primary)); }
+    .a-surface { background: hsl(var(--a-surface)); color: hsl(var(--a-text-primary)); }
+    .a-border { border-color: hsl(var(--a-border)); }
+    .a-text-secondary { color: hsl(var(--a-text-secondary)); }
+    .a-text-tertiary { color: hsl(var(--a-text-tertiary)); }
+    .a-accent { color: hsl(var(--a-accent)); }
+
+    .b-bg { background: hsl(var(--b-bg)); color: hsl(var(--b-text-primary)); }
+    .b-surface-subtle { background: hsl(var(--b-surface-subtle)); color: hsl(var(--b-text-primary)); }
+    .b-surface { background: hsl(var(--b-surface)); color: hsl(var(--b-text-primary)); }
+    .b-surface-elevated { background: hsl(var(--b-surface-elevated)); color: hsl(var(--b-text-primary)); }
+    .b-border { border-color: hsl(var(--b-border)); }
+    .b-text-secondary { color: hsl(var(--b-text-secondary)); }
+    .b-text-tertiary { color: hsl(var(--b-text-tertiary)); }
+    .b-accent { color: hsl(var(--b-accent)); }
+    .b-shadow { box-shadow: 0 1px 3px 0 hsl(var(--b-shadow) / 0.15), 0 1px 2px -1px hsl(var(--b-shadow) / 0.15); }
+
+    .msg-user {
+      background: hsl(var(--a-surface-hover));
+      border: 1px solid hsl(var(--a-border) / 0.5);
+    }
+    .scheme-b.dark .msg-user {
+      background: hsl(var(--b-surface-hover));
+      border: 1px solid hsl(var(--b-border) / 0.5);
+    }
+  </style>
+</head>
+<body class="m-0 min-h-screen bg-neutral-100 p-6 font-sans text-neutral-800">
+
+  <div class="mx-auto max-w-7xl">
+    <div class="mb-6 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold">Panel 背景色方案对比</h1>
+        <p class="mt-1 text-neutral-600">A = 最小改动（bg / surface 两层）；B = 强分层（四级 surface）</p>
+      </div>
+      <button id="themeToggle" class="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-black dark:hover:bg-neutral-200">
+        切换 Dark/Light
+      </button>
+    </div>
+
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+
+      <!-- 方案 A -->
+      <div class="scheme-a rounded-xl border border-neutral-300 shadow-sm" id="schemeA">
+        <div class="a-bg flex h-[540px] flex-col overflow-hidden">
+          <header class="a-surface flex h-11 items-center justify-between border-b a-border px-3">
+            <div class="flex items-center gap-2">
+              <div class="h-6 w-6 rounded bg-orange-500"></div>
+              <span class="text-sm font-medium">Comate</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="rounded-md px-2 py-1 text-xs a-text-secondary hover:bg-black/5">Settings</div>
+            </div>
+          </header>
+
+          <div class="flex flex-1 overflow-hidden">
+            <aside class="a-surface flex w-52 flex-col border-r a-border">
+              <div class="flex border-b a-border">
+                <div class="flex-1 py-2.5 text-center text-xs font-medium a-text-secondary">Sessions</div>
+                <div class="flex-1 py-2.5 text-center text-xs font-medium a-accent border-b-2 border-orange-500">Files</div>
+              </div>
+              <div class="flex-1 space-y-1 p-2">
+                <div class="rounded-md p-2 text-xs a-text-secondary hover:bg-black/5">session-001</div>
+                <div class="rounded-md p-2 text-xs a-text-secondary hover:bg-black/5">session-002</div>
+              </div>
+              <div class="border-t a-border p-2 text-xs a-text-tertiary">User</div>
+            </aside>
+
+            <main class="flex flex-1 flex-col min-w-0">
+              <div class="a-surface flex h-10 items-center justify-center border-b a-border text-sm font-medium">
+                <span class="a-text-secondary">Current Session — <span class="a-text-primary">Claude Sonnet</span></span>
+              </div>
+
+              <div class="a-bg flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded bg-gradient-to-br from-orange-400 to-red-500"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed a-text-secondary">This is the message body area. In scheme A it uses <code class="rounded px-1 a-surface a-text-primary">bg</code>, same as the main canvas.</div>
+                  </div>
+                </div>
+                <div class="flex justify-end">
+                  <div class="msg-user max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm">User message bubble</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded bg-gradient-to-br from-orange-400 to-red-500"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed a-text-secondary">Notice how header, sidebar, and input all collapse into similar darkness.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="a-surface border-t a-border p-3">
+                <div class="rounded-xl border a-border p-3">
+                  <div class="text-sm a-text-tertiary">Ask Claude anything...</div>
+                  <div class="mt-2 flex justify-end gap-2">
+                    <div class="h-7 w-7 rounded-md a-bg border a-border"></div>
+                    <div class="h-7 w-7 rounded-md bg-orange-500"></div>
+                  </div>
+                </div>
+              </div>
+            </main>
+
+            <aside class="a-surface hidden w-56 border-l a-border lg:block">
+              <div class="border-b a-border p-2 text-xs font-medium a-text-secondary">Details</div>
+              <div class="p-3 text-xs a-text-tertiary space-y-2">
+                <div class="h-2 w-3/4 rounded a-bg"></div>
+                <div class="h-2 w-1/2 rounded a-bg"></div>
+                <div class="h-2 w-2/3 rounded a-bg"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="a-surface flex h-7 items-center border-t a-border px-3 text-xs a-text-tertiary">
+            Ready · Claude available
+          </div>
+        </div>
+
+        <div class="bg-white p-4 text-sm dark:bg-neutral-900 dark:text-neutral-200">
+          <h3 class="font-semibold">方案 A：最小改动</h3>
+          <ul class="mt-2 list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            <li>Token 只有 <code>bg</code> 和 <code>surface</code> 两层</li>
+            <li>App Header / Chat Header / Status Bar / Sidebar / Right Panel / Input 都复用 <code>surface</code></li>
+            <li>改动量最小，但 header 和 sidebar 的层级区分较弱</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 方案 B -->
+      <div class="scheme-b rounded-xl border border-neutral-300 shadow-sm" id="schemeB">
+        <div class="b-bg flex h-[540px] flex-col overflow-hidden">
+          <header class="b-surface-subtle flex h-11 items-center justify-between border-b b-border px-3">
+            <div class="flex items-center gap-2">
+              <div class="h-6 w-6 rounded bg-orange-500"></div>
+              <span class="text-sm font-medium">Comate</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="rounded-md px-2 py-1 text-xs b-text-secondary hover:bg-white/5">Settings</div>
+            </div>
+          </header>
+
+          <div class="flex flex-1 overflow-hidden">
+            <aside class="b-surface flex w-52 flex-col border-r b-border">
+              <div class="flex border-b b-border">
+                <div class="flex-1 py-2.5 text-center text-xs font-medium b-text-secondary">Sessions</div>
+                <div class="flex-1 py-2.5 text-center text-xs font-medium b-accent border-b-2 border-orange-500">Files</div>
+              </div>
+              <div class="flex-1 space-y-1 p-2">
+                <div class="rounded-md p-2 text-xs b-text-secondary hover:bg-white/5">session-001</div>
+                <div class="rounded-md p-2 text-xs b-text-secondary hover:bg-white/5">session-002</div>
+              </div>
+              <div class="border-t b-border p-2 text-xs b-text-tertiary">User</div>
+            </aside>
+
+            <main class="flex flex-1 flex-col min-w-0">
+              <div class="b-surface-subtle flex h-10 items-center justify-center border-b b-border text-sm font-medium">
+                <span class="b-text-secondary">Current Session — <span class="b-text-primary">Claude Sonnet</span></span>
+              </div>
+
+              <div class="b-bg flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded bg-gradient-to-br from-orange-400 to-red-500"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed b-text-secondary">This is the message body area. In scheme B it sits on the deepest <code class="rounded px-1 b-surface b-text-primary">bg</code> layer.</div>
+                  </div>
+                </div>
+                <div class="flex justify-end">
+                  <div class="msg-user max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm">User message bubble</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded bg-gradient-to-br from-orange-400 to-red-500"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed b-text-secondary">Sidebar, headers, and input now read as distinct planes.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="b-surface border-t b-border p-3">
+                <div class="b-surface-elevated rounded-xl border b-border p-3 b-shadow">
+                  <div class="text-sm b-text-tertiary">Ask Claude anything...</div>
+                  <div class="mt-2 flex justify-end gap-2">
+                    <div class="h-7 w-7 rounded-md b-bg border b-border"></div>
+                    <div class="h-7 w-7 rounded-md bg-orange-500"></div>
+                  </div>
+                </div>
+              </div>
+            </main>
+
+            <aside class="b-surface hidden w-56 border-l b-border lg:block">
+              <div class="border-b b-border p-2 text-xs font-medium b-text-secondary">Details</div>
+              <div class="p-3 text-xs b-text-tertiary space-y-2">
+                <div class="h-2 w-3/4 rounded b-bg"></div>
+                <div class="h-2 w-1/2 rounded b-bg"></div>
+                <div class="h-2 w-2/3 rounded b-bg"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="b-surface-subtle flex h-7 items-center border-t b-border px-3 text-xs b-text-tertiary">
+            Ready · Claude available
+          </div>
+        </div>
+
+        <div class="bg-white p-4 text-sm dark:bg-neutral-900 dark:text-neutral-200">
+          <h3 class="font-semibold">方案 B：强分层</h3>
+          <ul class="mt-2 list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            <li>新增 <code>surface-subtle</code> 和 <code>surface-elevated</code></li>
+            <li>Prompt Input 用 <code>surface-elevated</code> + 微阴影，更突出</li>
+            <li>面板之间的深度差异更明显，像原生桌面 App</li>
+            <li>改动量稍大，需要新增 token 和 Tailwind 颜色映射</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="mt-6 rounded-lg bg-white p-4 text-sm text-neutral-700 shadow-sm dark:bg-neutral-900 dark:text-neutral-300">
+      <strong>主要区别：</strong>
+      <ul class="mt-2 list-disc space-y-1 pl-5">
+        <li><strong>方案 A</strong> 只调整现有 token 的数值，把 header/status bar/sidebar 都放到 <code>surface</code> 上。看起来更像一个干净的网页版 Chat 界面。</li>
+        <li><strong>方案 B</strong> 给输入框单独加了一层 <code>surface-elevated</code>，并拉大 <code>bg</code> 与 <code>surface</code> 的对比。整体更像 VS Code / Slack 这类原生多面板桌面应用。</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('themeToggle');
+    let isDark = true;
+    function update() {
+      document.documentElement.classList.toggle('dark', isDark);
+      document.getElementById('schemeA').classList.toggle('dark', isDark);
+      document.getElementById('schemeB').classList.toggle('dark', isDark);
+    }
+    update();
+    btn.addEventListener('click', () => { isDark = !isDark; update(); });
+  </script>
+</body>
+</html>

@@ -390,15 +390,15 @@ export default function ChatPanel({
   const handleCloseDrawerPanel = useCallback(() => setDrawerStack([]), [])
 
   return (
-    <div className="flex flex-col h-full bg-bg">
+    <div className="flex flex-col h-full bg-work">
       {/* Chat Header — 3-part flex so the left/right button clusters stay in flow
           and the title can never slide under them. The center region's width is
           observed (titleAreaRef) to drop the model name when space gets tight. */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/50 flex-shrink-0">
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/50 flex-shrink-0 bg-work">
         {/* Left cluster */}
         {onToggleSidebarCollapse && (
           <button
-            className="flex-shrink-0 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+            className="flex-shrink-0 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-chrome-hover transition-colors"
             aria-label={
               isSidebarCollapsed
                 ? t('common:sidebar.expand')
@@ -582,7 +582,7 @@ export default function ChatPanel({
 function BotPendingBanner({ label }: { label: string }) {
   return (
     <div className="max-w-3xl mx-auto px-4 py-3">
-      <div className="bg-surface border border-border/50 rounded-lg px-4 py-3 flex items-center gap-3">
+      <div className="bg-chrome border border-border/50 rounded-lg px-4 py-3 flex items-center gap-3">
         <span className="relative flex h-3 w-3">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
           <span className="relative inline-flex rounded-full h-3 w-3 bg-accent" />

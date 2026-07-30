@@ -166,7 +166,7 @@ export default function ConversationList({
       <div
         key={displayMode}
         ref={scrollerRef}
-        className="min-h-0 flex-1 overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto bg-work"
         data-testid="conversation-list-scroll"
         role="log"
       >
@@ -200,10 +200,10 @@ export default function ConversationList({
           {isCompacting && <CompactingIndicator sessionId={sessionId} />}
         </div>
       </div>
-      {!follow.isFollowing && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-bg to-transparent" />}
+      {!follow.isFollowing && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-work to-transparent" />}
       {!follow.isFollowing && (
         <Button
-          className="absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full bg-bg hover:bg-surface-hover"
+          className="absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full bg-work hover:bg-chrome-hover"
           onClick={scrollToBottom}
           size="icon"
           type="button"

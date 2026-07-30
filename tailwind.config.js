@@ -8,6 +8,10 @@ export default {
   theme: {
     extend: {
       colors: {
+        chrome: 'hsl(var(--color-chrome) / <alpha-value>)',
+        'chrome-hover': 'hsl(var(--color-chrome-hover) / <alpha-value>)',
+        'chrome-active': 'hsl(var(--color-chrome-active) / <alpha-value>)',
+        work: 'hsl(var(--color-work) / <alpha-value>)',
         bg: 'hsl(var(--color-bg) / <alpha-value>)',
         surface: 'hsl(var(--color-surface) / <alpha-value>)',
         'surface-hover': 'hsl(var(--color-surface-hover) / <alpha-value>)',
