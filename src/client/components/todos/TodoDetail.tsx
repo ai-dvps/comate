@@ -44,7 +44,7 @@ export default function TodoDetail({ todo, onResolved }: TodoDetailProps) {
 
   if (!todo) {
     return (
-      <aside className="w-72 flex-shrink-0 border-l border-border bg-surface/30 flex items-center justify-center p-4">
+      <aside className="w-72 flex-shrink-0 border-l border-border/50 bg-surface/30 flex items-center justify-center p-4">
         <p className="text-text-tertiary text-sm text-center">{t('noSelection')}</p>
       </aside>
     )
@@ -58,8 +58,8 @@ export default function TodoDetail({ todo, onResolved }: TodoDetailProps) {
   }
 
   return (
-    <aside className="w-72 flex-shrink-0 border-l border-border bg-surface/30 flex flex-col">
-      <div className="px-4 py-3 border-b border-border">
+    <aside className="w-72 flex-shrink-0 border-l border-border/50 bg-surface/30 flex flex-col">
+      <div className="px-4 py-3 border-b border-border/50">
         <h2 className={cn('text-sm font-medium', todo.status === 'done' ? 'line-through text-text-tertiary' : 'text-text-primary')}>
           {todo.text}
         </h2>

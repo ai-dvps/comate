@@ -1,16 +1,27 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X, Plus, Loader2, Github, RefreshCw } from 'lucide-react'
+import { Search, X, Plus, Loader2, Github, RefreshCw } from 'lucide-react'
 import { useTodoStore, type Todo } from '../stores/todo-store'
 import { useGithubStore } from '../stores/github-store'
 import { cn } from './ui/utils'
-import TodosRail, { type SmartView, type GroupBy } from './todos/TodosRail'
 import TodoDetail from './todos/TodoDetail'
+import TodoRow from './todos/TodoRow'
 import GitHubConnect from './todos/GitHubConnect'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+
+export type SmartView = 'inbox' | 'today' | 'upcoming' | 'all'
+export type GroupBy = 'none' | 'workspace' | 'repo' | 'origin'
 
 interface TodosPanelProps {
   onClose: () => void
 }
+
+const VIEWS: { id: SmartView; labelKey: string }[] = [
+  { id: 'inbox', labelKey: 'viewInbox' },
+  { id: 'today', labelKey: 'viewToday' },
+  { id: 'upcoming', labelKey: 'viewUpcoming' },
+  { id: 'all', labelKey: 'viewAll' },
+]
 
 function filterByView(todos: Todo[], view: SmartView): Todo[] {
   const todayStr = new Date().toISOString().slice(0, 10)
@@ -26,9 +37,25 @@ function filterByView(todos: Todo[], view: SmartView): Todo[] {
   }
 }
 
+function isTextInput(target: EventTarget): boolean {
+  return target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
+}
+
 export default function TodosPanel({ onClose }: TodosPanelProps) {
   const { t } = useTranslation('todos')
-  const { todos, isLoading, isSyncing, fetchTodos, syncTodos, createTodo, changeStatus, deleteTodo } = useTodoStore()
+  const {
+    todos,
+    isLoading,
+    isSyncing,
+    error,
+    fetchTodos,
+    syncTodos,
+    createTodo,
+    changeStatus,
+    deleteTodo,
+    setSearchQuery,
+    searchQuery,
+  } = useTodoStore()
   const lastSyncErrors = useTodoStore((s) => s.lastSyncErrors)
   const githubConnected = useGithubStore((s) => s.connection?.connected ?? false)
   const fetchGithubStatus = useGithubStore((s) => s.fetchStatus)
@@ -37,6 +64,7 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
   const [groupBy, setGroupBy] = useState<GroupBy>('none')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showConnect, setShowConnect] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     fetchTodos()
@@ -49,17 +77,41 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [githubConnected])
 
-  const handleAdd = async () => {
-    if (!draft.trim()) return
-    await createTodo(draft)
-    setDraft('')
-  }
+  // R13: reset search query when the panel opens.
+  useEffect(() => {
+    setSearchQuery('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Close on Escape — ignore events originating in text inputs (R12).
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isTextInput(e.target)) onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  const query = searchQuery.trim().toLowerCase()
+
+  const visibleTodos = useMemo(() => {
+    const byView = filterByView(todos, view)
+    if (!query) return byView
+    return byView.filter((todo) => todo.text.toLowerCase().includes(query))
+  }, [todos, view, query])
+
+  const viewCounts = useMemo(() => {
+    const counts: Record<SmartView, number> = { inbox: 0, today: 0, upcoming: 0, all: 0 }
+    for (const v of VIEWS) {
+      counts[v.id] = filterByView(todos, v.id).length
+    }
+    return counts
+  }, [todos])
 
   const grouped = useMemo(() => {
-    const filtered = filterByView(todos, view)
-    if (groupBy === 'none') return [{ key: '', items: filtered }]
+    if (groupBy === 'none') return [{ key: '', items: visibleTodos }]
     const map = new Map<string, Todo[]>()
-    for (const todo of filtered) {
+    for (const todo of visibleTodos) {
       let key: string
       if (groupBy === 'workspace') {
         key = todo.workspaceId ? `${t('groupWorkspace')} · ${todo.workspaceId.slice(0, 8)}` : t('noWorkspace')
@@ -73,176 +125,280 @@ export default function TodosPanel({ onClose }: TodosPanelProps) {
       else map.set(key, [todo])
     }
     return [...map.entries()].map(([key, items]) => ({ key, items }))
-  }, [todos, view, groupBy, t])
+  }, [visibleTodos, groupBy, t])
+
+  const handleAdd = async () => {
+    const text = draft.trim()
+    if (!text) return
+    const todo = await createTodo(text)
+    setDraft('')
+    // R14: clear search if the new todo would be hidden by the active query.
+    if (todo && query && !todo.text.toLowerCase().includes(query)) {
+      setSearchQuery('')
+    }
+  }
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      if (searchQuery) {
+        setSearchQuery('')
+      } else {
+        searchInputRef.current?.blur()
+      }
+    }
+  }
+
+  const clearSearch = () => {
+    setSearchQuery('')
+    searchInputRef.current?.focus()
+  }
 
   const selected = todos.find((todo) => todo.id === selectedId) ?? null
 
   return (
-    <div className="flex flex-col h-full bg-bg">
-      <header className="flex items-center gap-2 px-4 h-12 border-b border-border flex-shrink-0">
-        <h1 className="text-sm font-semibold text-text-primary flex-1">{t('title')}</h1>
-        <button
-          onClick={() => syncTodos()}
-          disabled={isSyncing}
-          className="p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-surface-hover disabled:opacity-50"
-          aria-label={t('sync')}
-          title={t('sync')}
-        >
-          <RefreshCw className={cn('w-4 h-4', isSyncing && 'animate-spin')} />
-        </button>
-        <button
-          onClick={() => setShowConnect(true)}
-          className={cn(
-            'flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border',
-            githubConnected
-              ? 'border-green-500/40 text-green-600 dark:text-green-400 bg-green-500/10'
-              : 'border-border text-text-secondary hover:bg-surface-hover',
-          )}
-          aria-label={t('ghConnect')}
-          title={t('ghConnect')}
-        >
-          <Github className="w-3.5 h-3.5" />
-          {githubConnected ? t('ghConnected') : t('ghConnect')}
-        </button>
-        <button
-          onClick={onClose}
-          className="p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
-          aria-label={t('close')}
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </header>
+    <div className="fixed top-11 inset-x-0 bottom-0 z-50 flex flex-col">
+      {/* Modal area */}
+      <div className="flex-1 flex items-center justify-center p-2 sm:p-4 relative">
+        {/* Backdrop */}
+        <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onClose} />
+        {/* Card */}
+        <div className="relative w-full h-full max-h-[90vh] max-w-[90vw] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="flex-shrink-0 border-b border-border/50">
+            <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 h-auto min-h-[3.5rem] py-2">
+              {/* Segmented view control */}
+              <div
+                role="tablist"
+                aria-label={t('viewControl')}
+                className="flex items-center gap-1 p-1 rounded-lg bg-surface-hover/50 border border-border/50"
+              >
+                {VIEWS.map((v) => {
+                  const active = view === v.id
+                  const count = viewCounts[v.id]
+                  return (
+                    <button
+                      key={v.id}
+                      role="tab"
+                      aria-selected={active}
+                      tabIndex={active ? 0 : -1}
+                      onClick={() => setView(v.id)}
+                      className={cn(
+                        'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap',
+                        active
+                          ? 'bg-surface text-text-primary shadow-sm'
+                          : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
+                      )}
+                      aria-label={t('viewCountLabel', { view: t(v.labelKey), count })}
+                      title={t('viewCountLabel', { view: t(v.labelKey), count })}
+                    >
+                      <span>{t(v.labelKey)}</span>
+                      <span
+                        className={cn(
+                          'text-[10px] px-1 py-0 rounded-full min-w-[1rem] text-center',
+                          active ? 'bg-accent/10 text-accent' : 'bg-surface-hover text-text-tertiary',
+                        )}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
 
-      {lastSyncErrors && lastSyncErrors.length > 0 && (
-        <div className="flex items-start gap-2 px-4 py-1.5 border-b border-border bg-yellow-500/5 flex-shrink-0">
-          <span className="text-[11px] text-yellow-600 dark:text-yellow-400 flex-1">
-            {t('syncFailedRepos', { count: lastSyncErrors.length })}{' '}
-            <span className="text-text-tertiary">{lastSyncErrors[0].repo}: {lastSyncErrors[0].message}</span>
-          </span>
-          <button
-            onClick={() => useTodoStore.setState({ lastSyncErrors: null })}
-            className="text-text-tertiary hover:text-text-primary text-xs"
-            aria-label={t('close')}
-          >
-            ×
-          </button>
-        </div>
-      )}
+              <div className="flex-1" />
 
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleAdd()
-          }}
-          placeholder={t('addPlaceholder')}
-          className="flex-1 bg-surface text-text-primary text-sm rounded-md px-2.5 py-1.5 border border-border focus:outline-none focus:ring-1 focus:ring-accent"
-        />
-        <button
-          onClick={handleAdd}
-          className="p-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent-hover"
-          aria-label={t('add')}
-        >
-          <Plus className="w-4 h-4" />
-        </button>
-      </div>
+              {/* Search */}
+              <div className="relative w-full sm:w-56 lg:w-64 order-last sm:order-none">
+                <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <Search className="w-3.5 h-3.5 text-text-tertiary" />
+                </div>
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder={t('searchPlaceholder')}
+                  aria-label={t('searchPlaceholder')}
+                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={clearSearch}
+                    aria-label={t('searchClear')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
 
-      <div className="flex flex-1 overflow-hidden">
-        <TodosRail view={view} onViewChange={setView} groupBy={groupBy} onGroupByChange={setGroupBy} />
+              {/* Group by */}
+              <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupBy)}>
+                <SelectTrigger className="w-28 sm:w-32 h-9 text-xs px-2.5" aria-label={t('groupBy')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t('groupNone')}</SelectItem>
+                  <SelectItem value="workspace">{t('groupWorkspace')}</SelectItem>
+                  <SelectItem value="repo">{t('groupRepo')}</SelectItem>
+                  <SelectItem value="origin">{t('groupOrigin')}</SelectItem>
+                </SelectContent>
+              </Select>
 
-        <div className="flex-1 overflow-y-auto px-2 py-2">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full text-text-tertiary">
-              <Loader2 className="w-4 h-4 animate-spin" />
+              {/* Sync */}
+              <button
+                onClick={() => syncTodos()}
+                disabled={isSyncing}
+                className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover disabled:opacity-50"
+                aria-label={t('sync')}
+                title={t('sync')}
+              >
+                <RefreshCw className={cn('w-4 h-4', isSyncing && 'animate-spin')} />
+              </button>
+
+              {/* GitHub connect */}
+              <button
+                onClick={() => setShowConnect(true)}
+                className={cn(
+                  'flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border',
+                  githubConnected
+                    ? 'border-green-500/40 text-green-600 dark:text-green-400 bg-green-500/10'
+                    : 'border-border text-text-secondary hover:bg-surface-hover',
+                )}
+                aria-label={t('ghConnect')}
+                title={t('ghConnect')}
+              >
+                <Github className="w-3.5 h-3.5" />
+                {githubConnected ? t('ghConnected') : t('ghConnect')}
+              </button>
+
+              {/* Close */}
+              <button
+                onClick={onClose}
+                className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                aria-label={t('close')}
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          ) : grouped.length === 0 || grouped.every((g) => g.items.length === 0) ? (
-            <p className="text-center text-text-tertiary text-sm mt-8">{t('empty')}</p>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {grouped.map((group) => (
-                <section key={group.key || 'default'}>
-                  {group.key && (
-                    <h3 className="px-2 mb-1 text-[11px] font-medium uppercase tracking-wide text-text-tertiary">
-                      {group.key}
-                    </h3>
-                  )}
-                  <ul className="flex flex-col gap-0.5">
-                    {group.items.map((todo) => (
-                      <TodoRow
-                        key={todo.id}
-                        todo={todo}
-                        selected={todo.id === selectedId}
-                        onSelect={() => setSelectedId(todo.id)}
-                        onToggle={() => changeStatus(todo.id, todo.status === 'done' ? 'pending' : 'done')}
-                        onDelete={() => deleteTodo(todo.id)}
-                      />
-                    ))}
-                  </ul>
-                </section>
-              ))}
+          </div>
+
+          {/* Sync-error strip */}
+          {lastSyncErrors && lastSyncErrors.length > 0 && (
+            <div className="flex items-start gap-2 px-4 sm:px-6 py-1.5 border-b border-border/50 bg-yellow-500/5 flex-shrink-0">
+              <span className="text-[11px] text-yellow-600 dark:text-yellow-400 flex-1">
+                {t('syncFailedRepos', { count: lastSyncErrors.length })}{' '}
+                <span className="text-text-tertiary">{lastSyncErrors[0].repo}: {lastSyncErrors[0].message}</span>
+              </span>
+              <button
+                onClick={() => useTodoStore.setState({ lastSyncErrors: null })}
+                className="text-text-tertiary hover:text-text-primary text-xs"
+                aria-label={t('close')}
+              >
+                ×
+              </button>
             </div>
           )}
+
+          {/* Body */}
+          <div className="flex flex-1 overflow-hidden bg-surface/30">
+            {/* List */}
+            <div className="flex-1 overflow-y-auto min-w-0">
+              {/* Quick add */}
+              <div className="px-4 sm:px-6 py-3 border-b border-border/50">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleAdd}
+                    className="p-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent-hover"
+                    aria-label={t('add')}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <input
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAdd()
+                    }}
+                    placeholder={t('addPlaceholder')}
+                    className="flex-1 bg-transparent text-text-primary text-sm outline-none placeholder:text-text-tertiary"
+                  />
+                </div>
+              </div>
+
+              {/* List content */}
+              <div className="px-2 sm:px-4 py-2">
+                {isLoading && todos.length === 0 ? (
+                  <div className="flex items-center justify-center h-40 text-text-tertiary">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  </div>
+                ) : error && todos.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 px-4 text-center gap-3">
+                    <p className="text-sm text-destructive">{error}</p>
+                    <button
+                      onClick={() => fetchTodos()}
+                      className="px-3 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
+                    >
+                      {t('retry')}
+                    </button>
+                  </div>
+                ) : visibleTodos.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 px-4 text-center gap-2">
+                    {query ? (
+                      <>
+                        <p className="text-sm text-text-tertiary">
+                          {t('noResults', { query })}
+                        </p>
+                        <button
+                          onClick={clearSearch}
+                          className="text-xs text-accent hover:text-accent-hover underline underline-offset-2"
+                        >
+                          {t('clearSearch')}
+                        </button>
+                      </>
+                    ) : (
+                      <p className="text-sm text-text-tertiary">{t('empty')}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {grouped.map((group) =>
+                      group.items.length === 0 ? null : (
+                        <section key={group.key || 'default'}>
+                          {group.key && (
+                            <h3 className="px-2 mb-1.5 text-[11px] font-medium uppercase tracking-wide text-text-tertiary">
+                              {group.key}
+                            </h3>
+                          )}
+                          <ul className="flex flex-col">
+                            {group.items.map((todo) => (
+                              <TodoRow
+                                key={todo.id}
+                                todo={todo}
+                                selected={todo.id === selectedId}
+                                onSelect={() => setSelectedId(todo.id)}
+                                onToggle={() => changeStatus(todo.id, todo.status === 'done' ? 'pending' : 'done')}
+                                onDelete={() => deleteTodo(todo.id)}
+                              />
+                            ))}
+                          </ul>
+                        </section>
+                      ),
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Detail pane */}
+            <TodoDetail todo={selected} onResolved={fetchTodos} />
+          </div>
+
+          {showConnect && <GitHubConnect onClose={() => setShowConnect(false)} />}
         </div>
-
-        <TodoDetail todo={selected} onResolved={fetchTodos} />
       </div>
-
-      {showConnect && <GitHubConnect onClose={() => setShowConnect(false)} />}
     </div>
-  )
-}
-
-function TodoRow({
-  todo,
-  selected,
-  onSelect,
-  onToggle,
-  onDelete,
-}: {
-  todo: Todo
-  selected: boolean
-  onSelect: () => void
-  onToggle: () => void
-  onDelete: () => void
-}) {
-  const { t } = useTranslation('todos')
-  const done = todo.status === 'done'
-  return (
-    <li
-      onClick={onSelect}
-      className={cn(
-        'group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer',
-        selected ? 'bg-accent/10' : 'hover:bg-surface-hover',
-      )}
-    >
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          onToggle()
-        }}
-        className={cn(
-          'w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors',
-          done ? 'bg-accent border-accent' : 'border-border',
-        )}
-        aria-label={t('toggleDone')}
-      />
-      <span className={cn('flex-1 text-sm', done ? 'line-through text-text-tertiary' : 'text-text-primary')}>
-        {todo.text}
-      </span>
-      {todo.origin === 'github' && (
-        <span className="text-[10px] px-1 rounded bg-surface text-text-tertiary">GH</span>
-      )}
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          onDelete()
-        }}
-        className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-tertiary hover:text-destructive"
-        aria-label={t('delete')}
-      >
-        ×
-      </button>
-    </li>
   )
 }
