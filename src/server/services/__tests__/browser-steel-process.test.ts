@@ -177,6 +177,30 @@ describe('browser-steel-process', { concurrency: false }, () => {
     );
   });
 
+  it('stop() reaps a detached Chrome process group that holds the session profile lock', async () => {
+    const childPidfile = path.join(workDir, 'detached-chrome.pid');
+    const { proc } = await startFixture('detached-stop', {
+      env: {
+        FAKE_STEEL_CHILD_PIDFILE: childPidfile,
+        FAKE_STEEL_DETACHED_CHILD: '1',
+      },
+    });
+    const chromePid = parseInt(readFileSync(childPidfile, 'utf-8'), 10);
+    assert.ok(isPidAlive(chromePid));
+
+    try {
+      await proc.stop();
+      assert.ok(
+        await waitForPidDeath(chromePid),
+        'detached Chrome process group must be reaped after Steel stops',
+      );
+    } finally {
+      if (isPidAlive(chromePid)) {
+        process.kill(-chromePid, 'SIGKILL');
+      }
+    }
+  });
+
   it('start() fails loudly and cleans up when the child never becomes healthy', async () => {
     const port = await allocateLoopbackPort();
     const pidfilePath = path.join(runDir, 'hung.json');
@@ -200,6 +224,39 @@ describe('browser-steel-process', { concurrency: false }, () => {
       assert.ok(await waitForPidDeath(childPid), 'hung child must be killed after start failure');
     }
     assert.ok(!existsSync(pidfilePath), 'pidfile must be removed after start failure');
+  });
+
+  it('start() failure reaps a detached Chrome process group', async () => {
+    const port = await allocateLoopbackPort();
+    const pidfilePath = path.join(runDir, 'detached-failure.json');
+    const childPidfile = path.join(workDir, 'detached-failure-chrome.pid');
+    const proc = new SteelProcess(
+      {
+        sessionId: 'detached-failure',
+        port,
+        userDataDir: path.join(workDir, 'profiles', 'detached-failure'),
+        pidfilePath,
+        env: {
+          FAKE_STEEL_CHILD_PIDFILE: childPidfile,
+          FAKE_STEEL_DETACHED_CHILD: '1',
+          FAKE_STEEL_NEVER_HEALTHY: '1',
+        },
+      },
+      { spawnSpec: fixtureSpawnSpec, healthTimeoutMs: 250, healthIntervalMs: 25 },
+    );
+
+    await assert.rejects(proc.start(), SteelStartError);
+    const chromePid = parseInt(readFileSync(childPidfile, 'utf-8'), 10);
+    try {
+      assert.ok(
+        await waitForPidDeath(chromePid),
+        'detached Chrome process group must be reaped after startup failure',
+      );
+    } finally {
+      if (isPidAlive(chromePid)) {
+        process.kill(-chromePid, 'SIGKILL');
+      }
+    }
   });
 
   it('resolveSteelSpawnSpec re-execs the current runtime against the server entrypoint', () => {
