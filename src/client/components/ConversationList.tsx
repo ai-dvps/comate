@@ -203,7 +203,7 @@ export default function ConversationList({
       {!follow.isFollowing && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-work to-transparent" />}
       {!follow.isFollowing && (
         <Button
-          className="absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full bg-work hover:bg-chrome-hover"
+          className="absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full bg-chrome border border-border shadow-sm hover:bg-chrome-hover"
           onClick={scrollToBottom}
           size="icon"
           type="button"
