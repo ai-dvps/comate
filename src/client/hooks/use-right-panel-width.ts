@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useResizableWidth } from './use-resizable-width'
 
-export const RAIL_WIDTH = 40
+const COLLAPSED_WIDTH = 0
 const MIN_WIDTH = 360
 const DEFAULT_WIDTH = 640
 const WIDTH_KEY = 'right-panel-width'
@@ -95,7 +95,7 @@ export function useRightPanelWidth() {
   }, [expandedWidth, previousWidth, setExpandedWidth])
 
   return {
-    width: isCollapsed ? RAIL_WIDTH : expandedWidth,
+    width: isCollapsed ? COLLAPSED_WIDTH : expandedWidth,
     setWidth,
     isCollapsed,
     toggleCollapse,

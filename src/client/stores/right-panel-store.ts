@@ -47,11 +47,13 @@ interface GitCompareResponse {
   isDeleted?: boolean
 }
 
+export type RightPanelListTab = 'files' | 'git-changes' | 'browser'
+
 export interface RightPanelState {
-  activeListTab: 'files' | 'git-changes'
+  activeListTab: RightPanelListTab
   openTabs: ContentTab[]
   activeTabId: string | null
-  setActiveListTab: (tab: 'files' | 'git-changes') => void
+  setActiveListTab: (tab: RightPanelListTab) => void
   openFile: (workspaceId: string, path: string, name: string) => Promise<void>
   openDiff: (workspaceId: string, item: GitStatusItem, staged?: boolean) => Promise<void>
   closeTab: (id: string) => void
@@ -105,7 +107,7 @@ export const useRightPanelStore = create<RightPanelState>((set, get) => ({
   openTabs: [],
   activeTabId: null,
 
-  setActiveListTab: (tab: 'files' | 'git-changes') => {
+  setActiveListTab: (tab: RightPanelListTab) => {
     if (get().activeListTab === tab) return
     set({ activeListTab: tab })
   },

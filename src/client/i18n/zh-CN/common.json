@@ -143,8 +143,10 @@
   "rightPanel": {
     "files": "文件",
     "gitChanges": "Git 变更",
+    "browser": "浏览器",
     "showFiles": "显示文件",
     "showGitChanges": "显示 Git 变更",
+    "showBrowser": "显示浏览器",
     "collapse": "收起",
     "expand": "展开",
     "emptyState": "打开文件或变更以查看",
