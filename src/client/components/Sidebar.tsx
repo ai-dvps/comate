@@ -1,17 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
-import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
-import { RAIL_WIDTH } from '../hooks/use-sidebar-width'
+import { COLLAPSED_WIDTH } from '../hooks/use-sidebar-width'
 import SessionList from './SessionList'
 
 interface SidebarProps {
   width: number
   onWidthChange: (width: number) => void
   isCollapsed?: boolean
-  onToggleCollapse?: () => void
   onOpenPlugins?: () => void
   onOpenSkills?: () => void
 }
@@ -22,7 +19,6 @@ export default function Sidebar({
   width,
   onWidthChange,
   isCollapsed = false,
-  onToggleCollapse,
   onOpenPlugins,
   onOpenSkills,
 }: SidebarProps) {
@@ -76,100 +72,68 @@ export default function Sidebar({
     }
   }, [isCollapsed, endDrag])
 
-  const tabs: { id: SidebarTab; label: string; tooltip: string; icon: React.ReactNode }[] = [
+  const tabs: { id: SidebarTab; label: string }[] = [
     {
       id: 'sessions',
       label: t('sidebar.sessions'),
-      tooltip: t('sidebar.showSessions'),
-      icon: <MessageSquare className="w-4 h-4" />,
     },
   ]
 
   return (
     <aside
       className={cn(
-        'relative bg-surface border-r border-border flex flex-col h-full flex-shrink-0',
+        'relative bg-surface flex flex-col h-full flex-shrink-0',
         'transition-[width] duration-200 ease-in-out overflow-hidden',
         'motion-reduce:transition-none',
+        isCollapsed ? 'border-r-0 pointer-events-none' : 'border-r border-border',
       )}
-      style={{ width: isCollapsed ? RAIL_WIDTH : width }}
+      style={{ width: isCollapsed ? COLLAPSED_WIDTH : width }}
     >
-      <div
-        key={isCollapsed ? 'collapsed' : 'expanded'}
-        className="flex flex-col h-full animate-sidebar-content-reveal motion-reduce:animate-none"
-      >
-        {isCollapsed ? (
-          <>
-            {/* Collapsed icon rail */}
-            <div className="flex flex-col items-center py-1.5 gap-0.5">
-              {tabs.map((tab) => (
-                <Tooltip key={tab.id}>
-                  <TooltipTrigger asChild>
-                    <button
-                      className={cn(
-                        'p-1.5 rounded-md transition-colors',
-                        activeTab === tab.id
-                          ? 'text-text-primary bg-accent/10'
-                          : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-                      )}
-                      aria-label={tab.tooltip}
-                      onClick={() => {
-                        setActiveTab(tab.id)
-                        onToggleCollapse?.()
-                      }}
-                    >
-                      {tab.icon}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">{tab.tooltip}</TooltipContent>
-                </Tooltip>
-              ))}
-            </div>
+      {!isCollapsed && (
+        <div
+          key="expanded"
+          className="flex flex-col h-full animate-sidebar-content-reveal motion-reduce:animate-none"
+        >
+          {/* Tab Switcher */}
+          <div className="flex flex-shrink-0">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={cn(
+                  'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
+                  activeTab === tab.id
+                    ? 'text-text-primary border-accent'
+                    : 'text-text-secondary hover:text-text-primary border-border/50',
+                )}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-          </>
-        ) : (
-          <>
-            {/* Tab Switcher */}
-            <div className="flex flex-shrink-0">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  className={cn(
-                    'flex-1 py-2 text-xs font-medium text-center transition-all border-b',
-                    activeTab === tab.id
-                      ? 'text-text-primary border-accent'
-                      : 'text-text-secondary hover:text-text-primary border-border/50',
-                  )}
-                  onClick={() => setActiveTab(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
+          {/* Tab Content */}
+          <div className="flex-1 overflow-hidden flex flex-col">
+            {activeTab === 'sessions' && activeWorkspaceId && (
+              <SessionList workspaceId={activeWorkspaceId} onOpenPlugins={onOpenPlugins} onOpenSkills={onOpenSkills} />
+            )}
+            {activeTab === 'sessions' && !activeWorkspaceId && (
+              <div className="flex-1 flex items-center justify-center p-4">
+                <p className="text-text-tertiary text-center">
+                  {t('sidebar.noWorkspace')}
+                </p>
+              </div>
+            )}
+          </div>
 
-            {/* Tab Content */}
-            <div className="flex-1 overflow-hidden flex flex-col">
-              {activeTab === 'sessions' && activeWorkspaceId && (
-                <SessionList workspaceId={activeWorkspaceId} onOpenPlugins={onOpenPlugins} onOpenSkills={onOpenSkills} />
-              )}
-              {activeTab === 'sessions' && !activeWorkspaceId && (
-                <div className="flex-1 flex items-center justify-center p-4">
-                  <p className="text-text-tertiary text-center">
-                    {t('sidebar.noWorkspace')}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Resize Handle */}
-            <div
-              data-testid="sidebar-resize-handle"
-              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
-              onMouseDown={handleMouseDown}
-            />
-          </>
-        )}
-      </div>
+          {/* Resize Handle */}
+          <div
+            data-testid="sidebar-resize-handle"
+            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 transition-colors z-10"
+            onMouseDown={handleMouseDown}
+          />
+        </div>
+      )}
     </aside>
   )
 }
