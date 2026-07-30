@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comate Panel Background — App &gt; Workspace &gt; Session</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: light; }
+    .dark { color-scheme: dark; }
+
+    /* ===== 当前代码实际配色 ===== */
+    .scheme-current {
+      --bg: 40 20% 96%;
+      --surface: 40 15% 98%;
+      --surface-hover: 40 10% 94%;
+      --border: 40 10% 85%;
+      --text-primary: 40 10% 15%;
+      --text-secondary: 40 5% 40%;
+      --text-tertiary: 40 5% 55%;
+      --accent: 18 75% 55%;
+    }
+    .scheme-current.dark {
+      --bg: 0 0% 5%;
+      --surface: 0 0% 8%;
+      --surface-hover: 0 0% 10%;
+      --border: 0 0% 15%;
+      --text-primary: 0 0% 96%;
+      --text-secondary: 0 0% 64%;
+      --text-tertiary: 0 0% 45%;
+    }
+
+    /* ===== 新层级方案：App > Workspace > Session ===== */
+    .scheme-hierarchy {
+      --app:          0 0% 100%;
+      --workspace:    220 10% 98%;
+      --session:      220 14% 94%;
+      --session-card: 0 0% 100%;
+      --border:       220 10% 86%;
+      --text-primary: 220 20% 12%;
+      --text-secondary:220 10% 42%;
+      --text-tertiary:220 10% 58%;
+      --accent: 18 75% 55%;
+      --shadow: 220 20% 12%;
+    }
+    .scheme-hierarchy.dark {
+      --app:          220 14% 13%;
+      --workspace:    220 16% 10%;
+      --session:      220 18% 6%;
+      --session-card: 220 15% 8%;
+      --border:       220 12% 22%;
+      --text-primary: 220 15% 96%;
+      --text-secondary:220 12% 65%;
+      --text-tertiary:220 10% 45%;
+      --accent: 18 75% 55%;
+      --shadow: 220 40% 2%;
+    }
+
+    .c-bg { background: hsl(var(--bg)); color: hsl(var(--text-primary)); }
+    .c-surface { background: hsl(var(--surface)); color: hsl(var(--text-primary)); }
+    .c-border { border-color: hsl(var(--border)); }
+    .c-text-secondary { color: hsl(var(--text-secondary)); }
+    .c-text-tertiary { color: hsl(var(--text-tertiary)); }
+    .c-accent { color: hsl(var(--accent)); }
+    .c-msg-user { background: hsl(var(--surface-hover)); border: 1px solid hsl(var(--border) / 0.5); }
+
+    .h-app { background: hsl(var(--app)); color: hsl(var(--text-primary)); }
+    .h-workspace { background: hsl(var(--workspace)); color: hsl(var(--text-primary)); }
+    .h-session { background: hsl(var(--session)); color: hsl(var(--text-primary)); }
+    .h-session-card { background: hsl(var(--session-card)); color: hsl(var(--text-primary)); }
+    .h-border { border-color: hsl(var(--border)); }
+    .h-text-secondary { color: hsl(var(--text-secondary)); }
+    .h-text-tertiary { color: hsl(var(--text-tertiary)); }
+    .h-accent { color: hsl(var(--accent)); }
+    .h-shadow { box-shadow: 0 1px 3px 0 hsl(var(--shadow) / 0.12), 0 1px 2px -1px hsl(var(--shadow) / 0.12); }
+    .h-msg-user { background: hsl(var(--session-card)); border: 1px solid hsl(var(--border) / 0.5); }
+  </style>
+</head>
+<body class="m-0 min-h-screen bg-neutral-100 p-6 font-sans text-neutral-800">
+
+  <div class="mx-auto max-w-7xl">
+    <div class="mb-6 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold">App &gt; Workspace &gt; Session 配色方案</h1>
+        <p class="mt-1 text-neutral-600">左边 = 当前代码实际配色；右边 = 按层级重新设计的配色</p>
+      </div>
+      <button id="themeToggle" class="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-black dark:hover:bg-neutral-200">
+        切换 Dark/Light
+      </button>
+    </div>
+
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+
+      <!-- 当前代码实际配色 -->
+      <div class="scheme-current rounded-xl border border-neutral-300 shadow-sm" id="schemeCurrent">
+        <div class="c-bg flex h-[540px] flex-col overflow-hidden">
+          <header class="c-surface flex h-11 items-center justify-between border-b c-border px-3">
+            <div class="flex items-center gap-2">
+              <div class="h-6 w-6 rounded bg-orange-500"></div>
+              <span class="text-sm font-medium">Comate</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="rounded-md px-2 py-1 text-xs c-text-secondary hover:bg-black/5">Settings</div>
+            </div>
+          </header>
+
+          <div class="flex flex-1 overflow-hidden">
+            <aside class="c-surface flex w-52 flex-col border-r c-border">
+              <div class="flex border-b c-border">
+                <div class="flex-1 py-2.5 text-center text-xs font-medium c-text-secondary">Sessions</div>
+                <div class="flex-1 py-2.5 text-center text-xs font-medium c-accent border-b-2 border-orange-500">Files</div>
+              </div>
+              <div class="flex-1 space-y-1 p-2">
+                <div class="rounded-md p-2 text-xs c-text-secondary hover:bg-black/5">session-001</div>
+                <div class="rounded-md p-2 text-xs c-text-secondary hover:bg-black/5">session-002</div>
+              </div>
+              <div class="border-t c-border p-2 text-xs c-text-tertiary">User</div>
+            </aside>
+
+            <main class="flex flex-1 flex-col min-w-0">
+              <div class="c-surface flex h-10 items-center justify-center border-b c-border text-sm font-medium">
+                <span class="c-text-secondary">Current Session — <span class="c-text-primary">Claude Sonnet</span></span>
+              </div>
+
+              <div class="c-bg flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded bg-gradient-to-br from-orange-400 to-red-500"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed c-text-secondary">Current scheme: most panels reuse <code class="rounded px-1 c-surface c-text-primary">surface</code> or <code class="rounded px-1 c-surface c-text-primary">bg</code>.</div>
+                  </div>
+                </div>
+                <div class="flex justify-end">
+                  <div class="c-msg-user max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm">User message bubble</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded bg-gradient-to-br from-orange-400 to-red-500"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed c-text-secondary">App / Workspace / Session layers are not visually distinct.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="c-surface border-t c-border p-3">
+                <div class="rounded-xl border c-border p-3">
+                  <div class="text-sm c-text-tertiary">Ask Claude anything...</div>
+                  <div class="mt-2 flex justify-end gap-2">
+                    <div class="h-7 w-7 rounded-md c-bg border c-border"></div>
+                    <div class="h-7 w-7 rounded-md bg-orange-500"></div>
+                  </div>
+                </div>
+              </div>
+            </main>
+
+            <aside class="c-surface hidden w-56 border-l c-border lg:block">
+              <div class="border-b c-border p-2 text-xs font-medium c-text-secondary">Details</div>
+              <div class="p-3 text-xs c-text-tertiary space-y-2">
+                <div class="h-2 w-3/4 rounded c-bg"></div>
+                <div class="h-2 w-1/2 rounded c-bg"></div>
+                <div class="h-2 w-2/3 rounded c-bg"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="c-bg flex h-7 items-center border-t c-border px-3 text-xs c-text-tertiary">
+            Ready · Claude available
+          </div>
+        </div>
+
+        <div class="bg-white p-4 text-sm dark:bg-neutral-900 dark:text-neutral-200">
+          <h3 class="font-semibold">当前代码实际配色</h3>
+          <ul class="mt-2 list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            <li>App Header: <code>surface</code></li>
+            <li>Left Sidebar: <code>surface</code></li>
+            <li>Chat Header / Message Body / Status Bar / Right Panel: 多数继承 <code>bg</code></li>
+            <li>问题：App、Workspace、Session 之间没有明确的颜色深度区分</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 新层级方案 -->
+      <div class="scheme-hierarchy rounded-xl border border-neutral-300 shadow-sm" id="schemeHierarchy">
+        <div class="h-session flex h-[540px] flex-col overflow-hidden">
+          <header class="h-app flex h-11 items-center justify-between border-b h-border px-3">
+            <div class="flex items-center gap-2">
+              <div class="h-6 w-6 rounded bg-orange-500"></div>
+              <span class="text-sm font-medium">Comate</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="rounded-md px-2 py-1 text-xs h-text-secondary hover:bg-black/5 dark:hover:bg-white/5">Settings</div>
+            </div>
+          </header>
+
+          <div class="flex flex-1 overflow-hidden">
+            <aside class="h-workspace flex w-52 flex-col border-r h-border">
+              <div class="flex border-b h-border">
+                <div class="flex-1 py-2.5 text-center text-xs font-medium h-text-secondary">Sessions</div>
+                <div class="flex-1 py-2.5 text-center text-xs font-medium h-accent border-b-2 border-orange-500">Files</div>
+              </div>
+              <div class="flex-1 space-y-1 p-2">
+                <div class="rounded-md p-2 text-xs h-text-secondary hover:bg-black/5 dark:hover:bg-white/5">session-001</div>
+                <div class="rounded-md p-2 text-xs h-text-secondary hover:bg-black/5 dark:hover:bg-white/5">session-002</div>
+              </div>
+              <div class="border-t h-border p-2 text-xs h-text-tertiary">User</div>
+            </aside>
+
+            <main class="flex flex-1 flex-col min-w-0">
+              <div class="h-workspace flex h-10 items-center justify-center border-b h-border text-sm font-medium">
+                <span class="h-text-secondary">Current Session — <span class="h-text-primary">Claude Sonnet</span></span>
+              </div>
+
+              <div class="h-session flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded bg-gradient-to-br from-orange-400 to-red-500"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed h-text-secondary">Hierarchy scheme: message body sits on the deepest <code class="rounded px-1 h-session-card h-text-primary">session</code> layer.</div>
+                  </div>
+                </div>
+                <div class="flex justify-end">
+                  <div class="h-msg-user max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm">User message bubble</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded bg-gradient-to-br from-orange-400 to-red-500"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed h-text-secondary">App header floats above workspace, workspace frames the session.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="h-workspace border-t h-border p-3">
+                <div class="h-session-card rounded-xl border h-border p-3 h-shadow">
+                  <div class="text-sm h-text-tertiary">Ask Claude anything...</div>
+                  <div class="mt-2 flex justify-end gap-2">
+                    <div class="h-7 w-7 rounded-md h-session border h-border"></div>
+                    <div class="h-7 w-7 rounded-md bg-orange-500"></div>
+                  </div>
+                </div>
+              </div>
+            </main>
+
+            <aside class="h-workspace hidden w-56 border-l h-border lg:block">
+              <div class="border-b h-border p-2 text-xs font-medium h-text-secondary">Details</div>
+              <div class="p-3 text-xs h-text-tertiary space-y-2">
+                <div class="h-2 w-3/4 rounded h-session"></div>
+                <div class="h-2 w-1/2 rounded h-session"></div>
+                <div class="h-2 w-2/3 rounded h-session"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="h-app flex h-7 items-center border-t h-border px-3 text-xs h-text-tertiary">
+            Ready · Claude available
+          </div>
+        </div>
+
+        <div class="bg-white p-4 text-sm dark:bg-neutral-900 dark:text-neutral-200">
+          <h3 class="font-semibold">新层级方案</h3>
+          <ul class="mt-2 list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            <li><strong>App</strong>（最上层）：App Header + Status Bar</li>
+            <li><strong>Workspace</strong>（中间层）：Left Sidebar + Chat Header + Right Panel</li>
+            <li><strong>Session</strong>（最底层）：Message Body</li>
+            <li><strong>Session Card</strong>：Prompt Input 等需要浮起的卡片</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div class="rounded-lg bg-white p-4 text-sm text-neutral-700 shadow-sm dark:bg-neutral-900 dark:text-neutral-300">
+        <strong>当前 token（问题）</strong>
+        <pre class="mt-2 overflow-x-auto rounded bg-neutral-100 p-2 text-xs dark:bg-neutral-800"><code>--color-bg:      40 20% 96%  / 0 0% 5%
+--color-surface: 40 15% 98% / 0 0% 8%</code></pre>
+        <p class="mt-2">bg 与 surface 差距太小，且语义上无法表达 App/Workspace/Session 三层。</p>
+      </div>
+      <div class="rounded-lg bg-white p-4 text-sm text-neutral-700 shadow-sm dark:bg-neutral-900 dark:text-neutral-300">
+        <strong>建议 token</strong>
+        <pre class="mt-2 overflow-x-auto rounded bg-neutral-100 p-2 text-xs dark:bg-neutral-800"><code>/* Light */
+--color-app:          0 0% 100%;
+--color-workspace:    220 10% 98%;
+--color-session:      220 14% 94%;
+--color-session-card: 0 0% 100%;
+
+/* Dark */
+--color-app:          220 14% 13%;
+--color-workspace:    220 16% 10%;
+--color-session:      220 18% 6%;
+--color-session-card: 220 15% 8%;</code></pre>
+      </div>
+    </div>
+
+    <div class="mt-6 rounded-lg bg-white p-4 text-sm text-neutral-700 shadow-sm dark:bg-neutral-900 dark:text-neutral-300">
+      <strong>组件映射（按新层级）</strong>
+      <table class="mt-3 w-full text-left text-xs">
+        <thead class="border-b text-neutral-500 dark:text-neutral-400">
+          <tr><th class="py-2">区域</th><th class="py-2">层级</th><th class="py-2">推荐 token</th><th class="py-2">理由</th></tr>
+        </thead>
+        <tbody class="divide-y">
+          <tr><td class="py-2">App Header</td><td>App</td><td><code>--color-app</code></td><td>全局导航，最顶层</td></tr>
+          <tr><td class="py-2">Status Bar</td><td>App</td><td><code>--color-app</code></td><td>与 App Header 呼应，形成上下框架</td></tr>
+          <tr><td class="py-2">Left Sidebar</td><td>Workspace</td><td><code>--color-workspace</code></td><td>Workspace 级导航/文件树</td></tr>
+          <tr><td class="py-2">Chat Header</td><td>Workspace</td><td><code>--color-workspace</code></td><td>当前 Session 的元信息，属于 Workspace→Session 过渡</td></tr>
+          <tr><td class="py-2">Right Panel</td><td>Workspace</td><td><code>--color-workspace</code></td><td>当前 Session 的辅助面板，与 Sidebar 同级</td></tr>
+          <tr><td class="py-2">Message Body</td><td>Session</td><td><code>--color-session</code></td><td>主内容区，视觉上最"后"</td></tr>
+          <tr><td class="py-2">Prompt Input</td><td>Session Card</td><td><code>--color-session-card</code></td><td>在 Session 内需要浮起，便于定位</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('themeToggle');
+    let isDark = true;
+    function update() {
+      document.documentElement.classList.toggle('dark', isDark);
+      document.getElementById('schemeCurrent').classList.toggle('dark', isDark);
+      document.getElementById('schemeHierarchy').classList.toggle('dark', isDark);
+    }
+    update();
+    btn.addEventListener('click', () => { isDark = !isDark; update(); });
+  </script>
+</body>
+</html>

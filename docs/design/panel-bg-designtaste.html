@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comate 新配色方案 — 深炭灰 + 琥珀橙</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: light; }
+    .dark { color-scheme: dark; }
+
+    /* ===== 当前代码实际配色 ===== */
+    .scheme-current {
+      --bg: 40 20% 96%;
+      --surface: 40 15% 98%;
+      --surface-hover: 40 10% 94%;
+      --border: 40 10% 85%;
+      --text-primary: 40 10% 15%;
+      --text-secondary: 40 5% 40%;
+      --text-tertiary: 40 5% 55%;
+      --accent: 18 75% 55%;
+    }
+    .scheme-current.dark {
+      --bg: 0 0% 5%;
+      --surface: 0 0% 8%;
+      --surface-hover: 0 0% 10%;
+      --border: 0 0% 15%;
+      --text-primary: 0 0% 96%;
+      --text-secondary: 0 0% 64%;
+      --text-tertiary: 0 0% 45%;
+    }
+
+    /* ===== 新方案：深炭灰 + 冷灰层级 + 琥珀橙 ===== */
+    .scheme-new {
+      --app:          0 0% 100%;
+      --workspace:    220 10% 98%;
+      --session:      220 12% 95%;
+      --session-card: 0 0% 100%;
+      --border:       220 10% 88%;
+      --text-primary:   220 15% 12%;
+      --text-secondary: 220 10% 42%;
+      --text-tertiary:  220 10% 58%;
+      --accent:       24 90% 50%;
+      --accent-hover: 24 95% 55%;
+      --shadow:       220 20% 12%;
+    }
+    .scheme-new.dark {
+      --app:          220 10% 14%;
+      --workspace:    220 12% 10%;
+      --session:      220 14% 6%;
+      --session-card: 220 13% 8%;
+      --border:       220 10% 22%;
+      --text-primary:   220 10% 96%;
+      --text-secondary: 220 10% 62%;
+      --text-tertiary:  220 10% 45%;
+      --accent:       24 90% 58%;
+      --accent-hover: 24 95% 63%;
+      --shadow:       220 40% 2%;
+    }
+
+    .c-bg { background: hsl(var(--bg)); color: hsl(var(--text-primary)); }
+    .c-surface { background: hsl(var(--surface)); color: hsl(var(--text-primary)); }
+    .c-border { border-color: hsl(var(--border)); }
+    .c-text-secondary { color: hsl(var(--text-secondary)); }
+    .c-text-tertiary { color: hsl(var(--text-tertiary)); }
+    .c-accent { color: hsl(var(--accent)); }
+    .c-msg-user { background: hsl(var(--surface-hover)); border: 1px solid hsl(var(--border) / 0.5); }
+
+    .n-app { background: hsl(var(--app)); color: hsl(var(--text-primary)); }
+    .n-workspace { background: hsl(var(--workspace)); color: hsl(var(--text-primary)); }
+    .n-session { background: hsl(var(--session)); color: hsl(var(--text-primary)); }
+    .n-session-card { background: hsl(var(--session-card)); color: hsl(var(--text-primary)); }
+    .n-border { border-color: hsl(var(--border)); }
+    .n-text-secondary { color: hsl(var(--text-secondary)); }
+    .n-text-tertiary { color: hsl(var(--text-tertiary)); }
+    .n-accent { color: hsl(var(--accent)); }
+    .n-shadow { box-shadow: 0 1px 3px 0 hsl(var(--shadow) / 0.12), 0 1px 2px -1px hsl(var(--shadow) / 0.12); }
+    .n-msg-user { background: hsl(var(--session-card)); border: 1px solid hsl(var(--border) / 0.5); }
+  </style>
+</head>
+<body class="m-0 min-h-screen bg-neutral-100 p-6 font-sans text-neutral-800">
+
+  <div class="mx-auto max-w-7xl">
+    <div class="mb-6 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold">新配色方案：深炭灰 + 琥珀橙</h1>
+        <p class="mt-1 text-neutral-600">左边 = 当前代码实际配色；右边 = 新方案（冷灰层级 + 更亮的琥珀橙 accent）</p>
+      </div>
+      <button id="themeToggle" class="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-white dark:text-black dark:hover:bg-neutral-200">
+        切换 Dark/Light
+      </button>
+    </div>
+
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+
+      <!-- 当前代码实际配色 -->
+      <div class="scheme-current rounded-xl border border-neutral-300 shadow-sm" id="schemeCurrent">
+        <div class="c-bg flex h-[540px] flex-col overflow-hidden">
+          <header class="c-surface flex h-11 items-center justify-between border-b c-border px-3">
+            <div class="flex items-center gap-2">
+              <div class="h-6 w-6 rounded" style="background:hsl(18,75%,55%)"></div>
+              <span class="text-sm font-medium">Comate</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="rounded-md px-2 py-1 text-xs c-text-secondary hover:bg-black/5">Settings</div>
+            </div>
+          </header>
+
+          <div class="flex flex-1 overflow-hidden">
+            <aside class="c-surface flex w-52 flex-col border-r c-border">
+              <div class="flex border-b c-border">
+                <div class="flex-1 py-2.5 text-center text-xs font-medium c-text-secondary">Sessions</div>
+                <div class="flex-1 py-2.5 text-center text-xs font-medium c-accent border-b-2">Files</div>
+              </div>
+              <div class="flex-1 space-y-1 p-2">
+                <div class="rounded-md p-2 text-xs c-text-secondary hover:bg-black/5">session-001</div>
+                <div class="rounded-md p-2 text-xs c-text-secondary hover:bg-black/5">session-002</div>
+              </div>
+              <div class="border-t c-border p-2 text-xs c-text-tertiary">User</div>
+            </aside>
+
+            <main class="flex flex-1 flex-col min-w-0">
+              <div class="c-surface flex h-10 items-center justify-center border-b c-border text-sm font-medium">
+                <span class="c-text-secondary">Current Session — <span class="c-text-primary">Claude Sonnet</span></span>
+              </div>
+
+              <div class="c-bg flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded" style="background:linear-gradient(135deg,hsl(27,95%,65%),hsl(10,80%,55%))"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed c-text-secondary">Current scheme uses warm gray (40° hue) and a brick-orange accent.</div>
+                  </div>
+                </div>
+                <div class="flex justify-end">
+                  <div class="c-msg-user max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm">User message bubble</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded" style="background:linear-gradient(135deg,hsl(27,95%,65%),hsl(10,80%,55%))"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed c-text-secondary">Panels feel flat because bg and surface are very close.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="c-surface border-t c-border p-3">
+                <div class="rounded-xl border c-border p-3">
+                  <div class="text-sm c-text-tertiary">Ask Claude anything...</div>
+                  <div class="mt-2 flex justify-end gap-2">
+                    <div class="h-7 w-7 rounded-md c-bg border c-border"></div>
+                    <div class="h-7 w-7 rounded-md" style="background:hsl(18,75%,55%)"></div>
+                  </div>
+                </div>
+              </div>
+            </main>
+
+            <aside class="c-surface hidden w-56 border-l c-border lg:block">
+              <div class="border-b c-border p-2 text-xs font-medium c-text-secondary">Details</div>
+              <div class="p-3 text-xs c-text-tertiary space-y-2">
+                <div class="h-2 w-3/4 rounded c-bg"></div>
+                <div class="h-2 w-1/2 rounded c-bg"></div>
+                <div class="h-2 w-2/3 rounded c-bg"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="c-bg flex h-7 items-center border-t c-border px-3 text-xs c-text-tertiary">
+            Ready · Claude available
+          </div>
+        </div>
+
+        <div class="bg-white p-4 text-sm dark:bg-neutral-900 dark:text-neutral-200">
+          <h3 class="font-semibold">当前代码配色</h3>
+          <ul class="mt-2 list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            <li>暖灰基底（40° hue），偏旧纸张感</li>
+            <li>Accent 偏砖红 `#e57035`</li>
+            <li>暗色下 bg `#0d0d0d` 与 surface `#141414` 差距仅 3%</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 新方案 -->
+      <div class="scheme-new rounded-xl border border-neutral-300 shadow-sm" id="schemeNew">
+        <div class="n-session flex h-[540px] flex-col overflow-hidden">
+          <header class="n-app flex h-11 items-center justify-between border-b n-border px-3">
+            <div class="flex items-center gap-2">
+              <div class="h-6 w-6 rounded" style="background:hsl(24,90%,58%)"></div>
+              <span class="text-sm font-medium">Comate</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="rounded-md px-2 py-1 text-xs n-text-secondary hover:bg-black/5 dark:hover:bg-white/5">Settings</div>
+            </div>
+          </header>
+
+          <div class="flex flex-1 overflow-hidden">
+            <aside class="n-workspace flex w-52 flex-col border-r n-border">
+              <div class="flex border-b n-border">
+                <div class="flex-1 py-2.5 text-center text-xs font-medium n-text-secondary">Sessions</div>
+                <div class="flex-1 py-2.5 text-center text-xs font-medium n-accent border-b-2">Files</div>
+              </div>
+              <div class="flex-1 space-y-1 p-2">
+                <div class="rounded-md p-2 text-xs n-text-secondary hover:bg-black/5 dark:hover:bg-white/5">session-001</div>
+                <div class="rounded-md p-2 text-xs n-text-secondary hover:bg-black/5 dark:hover:bg-white/5">session-002</div>
+              </div>
+              <div class="border-t n-border p-2 text-xs n-text-tertiary">User</div>
+            </aside>
+
+            <main class="flex flex-1 flex-col min-w-0">
+              <div class="n-workspace flex h-10 items-center justify-center border-b n-border text-sm font-medium">
+                <span class="n-text-secondary">Current Session — <span class="n-text-primary">Claude Sonnet</span></span>
+              </div>
+
+              <div class="n-session flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded" style="background:linear-gradient(135deg,hsl(30,95%,65%),hsl(15,85%,58%))"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed n-text-secondary">New scheme: cool graphite base (220° hue) with amber-orange accent.</div>
+                  </div>
+                </div>
+                <div class="flex justify-end">
+                  <div class="n-msg-user max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm">User message bubble</div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="h-7 w-7 shrink-0 rounded" style="background:linear-gradient(135deg,hsl(30,95%,65%),hsl(15,85%,58%))"></div>
+                  <div class="max-w-[85%] space-y-1">
+                    <div class="text-xs font-medium">Claude</div>
+                    <div class="text-sm leading-relaxed n-text-secondary">App / Workspace / Session layers are now clearly separated.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="n-workspace border-t n-border p-3">
+                <div class="n-session-card rounded-xl border n-border p-3 n-shadow">
+                  <div class="text-sm n-text-tertiary">Ask Claude anything...</div>
+                  <div class="mt-2 flex justify-end gap-2">
+                    <div class="h-7 w-7 rounded-md n-session border n-border"></div>
+                    <div class="h-7 w-7 rounded-md" style="background:hsl(24,90%,58%)"></div>
+                  </div>
+                </div>
+              </div>
+            </main>
+
+            <aside class="n-session hidden w-56 border-l n-border lg:block">
+              <div class="border-b n-border p-2 text-xs font-medium n-text-secondary">Details</div>
+              <div class="p-3 text-xs n-text-tertiary space-y-2">
+                <div class="h-2 w-3/4 rounded n-session"></div>
+                <div class="h-2 w-1/2 rounded n-session"></div>
+                <div class="h-2 w-2/3 rounded n-session"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="n-app flex h-7 items-center border-t n-border px-3 text-xs n-text-tertiary">
+            Ready · Claude available
+          </div>
+        </div>
+
+        <div class="bg-white p-4 text-sm dark:bg-neutral-900 dark:text-neutral-200">
+          <h3 class="font-semibold">新方案：深炭灰 + 琥珀橙</h3>
+          <ul class="mt-2 list-disc space-y-1 pl-5 text-neutral-600 dark:text-neutral-400">
+            <li>冷灰基底（220° hue），更像现代 IDE</li>
+            <li>Accent 升级到更亮的琥珀橙 `#f08a2a`</li>
+            <li>App `#1c1e24` > Workspace `#15171c` > Session `#0c0d11`，每层差距 4%</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="mt-6 rounded-lg bg-white p-4 text-sm text-neutral-700 shadow-sm dark:bg-neutral-900 dark:text-neutral-300">
+      <strong>关键差异总结</strong>
+      <ul class="mt-2 list-disc space-y-1 pl-5">
+        <li><strong>色相</strong>：从暖灰 40° 转向冷灰 220°，长时间使用更不易疲劳</li>
+        <li><strong>Accent</strong>：从砖红 `#e57035` 升级到琥珀橙 `#f08a2d`，更有能量且避免 AI-purple cliché</li>
+        <li><strong>层级</strong>：App/Workspace/Session 三层的 lightness 差距从 3% 拉到 4%，边界清晰</li>
+        <li><strong>OLED</strong>：Session 底层用 `#0c0d11` 而非纯黑，减少 smear</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('themeToggle');
+    let isDark = true;
+    function update() {
+      document.documentElement.classList.toggle('dark', isDark);
+      document.getElementById('schemeCurrent').classList.toggle('dark', isDark);
+      document.getElementById('schemeNew').classList.toggle('dark', isDark);
+    }
+    update();
+    btn.addEventListener('click', () => { isDark = !isDark; update(); });
+  </script>
+</body>
+</html>

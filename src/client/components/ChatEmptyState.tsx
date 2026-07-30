@@ -22,7 +22,7 @@ export const ChatEmptyState: React.FC<ChatEmptyStateProps> = ({
   return (
     <div className="flex flex-col items-center justify-center h-full px-4">
       <div className="flex flex-col items-center max-w-sm w-full text-center">
-        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-surface mb-4">
+        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-chrome mb-4">
           <MessageSquare className="w-6 h-6 text-text-tertiary" />
         </div>
         <h2 className="text-lg font-semibold text-text-primary mb-2">
@@ -37,7 +37,7 @@ export const ChatEmptyState: React.FC<ChatEmptyStateProps> = ({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t('chatEmptyState.placeholder')}
-            className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent/40"
+            className="w-full rounded-md border border-border bg-work px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent/40"
           />
           <Button type="submit">
             {t('chatEmptyState.button')}
