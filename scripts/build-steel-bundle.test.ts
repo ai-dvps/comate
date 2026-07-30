@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { pruneNonRuntimeDirs } from './build-steel-bundle.js';
+import { patchCdpServicePrimaryPage, pruneNonRuntimeDirs } from './build-steel-bundle.js';
 
 /**
  * Vendored Steel pruning contract: we strip test/example/etc. trees to keep the
@@ -48,6 +48,31 @@ describe('pruneNonRuntimeDirs', () => {
       );
     } finally {
       rmSync(staging, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('patchCdpServicePrimaryPage', () => {
+  it('creates a primary page when Chrome starts without an initial Puppeteer page', () => {
+    const apiDir = mkdtempSync(join(tmpdir(), 'comate-steel-primary-page-'));
+    const serviceDir = join(apiDir, 'build', 'services', 'cdp');
+    const servicePath = join(serviceDir, 'cdp.service.js');
+    try {
+      mkdirSync(serviceDir, { recursive: true });
+      writeFileSync(
+        servicePath,
+        'this.primaryPage = await executeCritical(async () => (await this.browserInstance.pages())[0], onError);',
+      );
+
+      patchCdpServicePrimaryPage(apiDir);
+
+      const patched = readFileSync(servicePath, 'utf-8');
+      assert.ok(
+        patched.includes('(await this.browserInstance.pages())[0] ?? await this.browserInstance.newPage()'),
+        'Steel must always publish a Puppeteer-managed page for live-details and the viewer',
+      );
+    } finally {
+      rmSync(apiDir, { recursive: true, force: true });
     }
   });
 });

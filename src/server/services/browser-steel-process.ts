@@ -351,6 +351,7 @@ export class SteelProcess implements SteelProcessHandle {
       await this.waitForHealthy();
     } catch (err) {
       await this.killChild();
+      await this.reapChromeProcess();
       this.removePidfile();
       throw err;
     }
@@ -384,8 +385,26 @@ export class SteelProcess implements SteelProcessHandle {
     if (!this.exitInfo) {
       await this.killChild();
     }
+    await this.reapChromeProcess();
     this.removePidfile();
     this.child = null;
+  }
+
+  private async reapChromeProcess(): Promise<void> {
+    try {
+      const result = await reapStaleProfileLock(this.userDataDir);
+      if (result.cleared) {
+        diagLog(
+          `[steel] reaped Chrome for session ${this.sessionId} ` +
+            `(${result.reason}, pid=${result.holderPid ?? 'unknown'})`,
+        );
+      }
+    } catch (err) {
+      diagWarn(
+        `[steel] failed to reap Chrome for session ${this.sessionId}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   private async killChild(): Promise<void> {
