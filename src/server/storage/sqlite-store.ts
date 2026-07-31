@@ -3210,6 +3210,19 @@ export class SqliteStore {
     return rows.map(parseAuditLogRow);
   }
 
+  /**
+   * Bot-audit retention (U6, KTD-22): physically remove rows older than the
+   * retention cutoff (default 90 days). Age-based only — unlike browser_audit
+   * there is no row cap: decision-audit volume is bounded by gate activity,
+   * not browser automation. Called from server-main's periodic cleanup timer,
+   * mirroring the pruneBrowserAudit precedent.
+   */
+  pruneBotAuditLogs(options: { retentionDays?: number } = {}): number {
+    const retentionDays = options.retentionDays ?? 90;
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    return this.db.prepare('DELETE FROM bot_audit_logs WHERE created_at < ?').run(cutoff).changes;
+  }
+
   // -------------------------------------------------------------------------
   // session_capability_tokens (U12, KTD-28) — per-session loopback tokens.
   // -------------------------------------------------------------------------

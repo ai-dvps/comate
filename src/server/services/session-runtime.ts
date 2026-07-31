@@ -38,6 +38,13 @@ import { browserAuditService } from './browser-audit.js';
 const RING_BUFFER_CAP = 500;
 const STOP_DRAIN_TIMEOUT_MS = 2000;
 const BACKGROUND_TASK_STOP_TIMEOUT_MS = 10_000;
+
+/**
+ * Deny message produced when an approval TTL expires (timeoutDeny). Exported
+ * so the U6 audit layer distinguishes `sandbox_escape_expired` from a human
+ * denial without string-sniffing a magic literal at two sites.
+ */
+export const APPROVAL_TIMEOUT_DENY_MESSAGE = 'Request timed out waiting for user response.';
 diagLog('[SessionRuntime] module loaded');
 
 function backgroundTasksEqual(
@@ -650,7 +657,7 @@ export class SessionRuntime {
     this.evaluateActivity();
     pending.resolve({
       behavior: 'deny',
-      message: 'Request timed out waiting for user response.',
+      message: APPROVAL_TIMEOUT_DENY_MESSAGE,
     });
   }
 

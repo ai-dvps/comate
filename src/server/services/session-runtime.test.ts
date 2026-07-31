@@ -2305,3 +2305,113 @@ describe('session-runtime backend driver seam (KTD-1)', { concurrency: false }, 
     void runtime;
   });
 });
+
+describe('session-runtime pending approval fresh-subscription replay (U6, KTD-23)', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+    const messageGen = (async function* () {})();
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: messageGen,
+      }),
+    } as unknown as SdkClient;
+  }
+
+  /** A mock SSE response that parses written frames back into events. */
+  function createCapturingResponse(): { res: import('express').Response; events: SseEvent[] } {
+    const events: SseEvent[] = [];
+    const res = {
+      write: (chunk: unknown) => {
+        const dataLine = String(chunk)
+          .split('\n')
+          .find((line) => line.startsWith('data: '));
+        if (dataLine) {
+          try {
+            events.push(JSON.parse(dataLine.slice('data: '.length)) as SseEvent);
+          } catch {
+            // heartbeat frames carry no JSON payload
+          }
+        }
+        return true;
+      },
+    } as unknown as import('express').Response;
+    return { res, events };
+  }
+
+  it('re-emits pending_approval state to a fresh subscriber (reconnect without lastEventId)', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const approvalPromise = runtime.requestToolApproval(
+      'req-1',
+      'Bash',
+      'toolu-1',
+      { command: 'curl https://example.com' },
+      { timeout: 60_000 },
+    );
+
+    // Fresh subscription AFTER the approval was requested — the original
+    // pending_approval event was never seen by this client.
+    const { res, events } = createCapturingResponse();
+    runtime.subscribe(res);
+
+    const pending = events.filter(
+      (event) => (event as { type: string }).type === 'pending_approval',
+    ) as unknown as Array<Record<string, unknown>>;
+    assert.strictEqual(pending.length, 1, 'exactly one pending_approval replay');
+    assert.strictEqual(pending[0].requestId, 'req-1');
+    assert.strictEqual(pending[0].toolName, 'Bash');
+    assert.strictEqual(pending[0].toolUseId, 'toolu-1');
+    assert.deepStrictEqual(pending[0].input, { command: 'curl https://example.com' });
+    assert.strictEqual(typeof pending[0].expiresAt, 'number', 'TTL rides the replay');
+
+    runtime.resolveApproval('req-1', {
+      behavior: 'allow',
+      updatedInput: { command: 'curl https://example.com' },
+    });
+    await approvalPromise;
+  });
+
+  it('does not re-emit approvals that resolved before the subscription', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const approvalPromise = runtime.requestToolApproval('req-2', 'Bash', 'toolu-2', { command: 'ls' });
+    runtime.resolveApproval('req-2', { behavior: 'allow', updatedInput: { command: 'ls' } });
+    await approvalPromise;
+
+    const { res, events } = createCapturingResponse();
+    runtime.subscribe(res);
+    const pending = events.filter((event) => (event as { type: string }).type === 'pending_approval');
+    assert.strictEqual(pending.length, 0, 'resolved approvals must not replay as pending');
+  });
+
+  it('re-emits pending_question state on the same machinery', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const questionPromise = runtime.requestToolQuestion(
+      'req-3',
+      [{ question: 'Proceed?', options: [{ label: 'Yes' }], multiSelect: false }],
+      {},
+    );
+
+    const { res, events } = createCapturingResponse();
+    runtime.subscribe(res);
+    const pending = events.filter(
+      (event) => (event as { type: string }).type === 'pending_question',
+    ) as unknown as Array<Record<string, unknown>>;
+    assert.strictEqual(pending.length, 1);
+    assert.strictEqual(pending[0].requestId, 'req-3');
+
+    runtime.resolveApproval('req-3', { behavior: 'allow', updatedInput: {} });
+    await questionPromise;
+  });
+});

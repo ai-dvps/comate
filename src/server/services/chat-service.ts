@@ -23,7 +23,7 @@ import {
   type BackendId,
 } from './agent-backends.js';
 import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
-import { SessionRuntime } from './session-runtime.js';
+import { SessionRuntime, APPROVAL_TIMEOUT_DENY_MESSAGE } from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
 import { opencodeServerManager, opencodeFetch } from './opencode-server-manager.js';
 import {
@@ -43,14 +43,14 @@ import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.js';
 import { pluginSettingsService } from './plugin-settings-service.js';
 import { evaluateToolPermission, getToolPermissionDenialReason, resolveEffectivePolicy } from './tool-permission-policy.js';
-import { createPathPolicyContext, validateToolInput, verifyBotFileToolAccess } from './bot-path-policy.js';
+import { createPathPolicyContext, validateToolInput, verifyBotFileToolAccess, canonicalizeBotPath } from './bot-path-policy.js';
 import { evaluateSkill, evaluateSkillDisabled, compileSkillFilter, compileSkillDenyRules } from './bot-skill-policy.js';
 import { botService } from './bot-service.js';
 import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotPersona, BotRoleKey, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
-import { createDefaultBotRolePolicy, deriveBotAccess, validateUserDirName, type BotAccessDerivation } from './bot-access-policy.js';
+import { createDefaultBotRolePolicy, deriveBotAccess, validateUserDirName, capabilityDirForPath, type BotAccessDerivation } from './bot-access-policy.js';
 import { ensureSandboxProbe, isSandboxDegraded } from './sandbox-probe.js';
 import type { Provider } from '../models/provider.js';
 import {
@@ -75,6 +75,8 @@ import {
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
+/** Write-class file tools: capability-dir writes by these are audited (U6). */
+const CAPABILITY_WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
 
 /**
  * Explicit model fallback for bot sessions (U1, KTD-25). When the resolved
@@ -755,7 +757,18 @@ export class ChatService {
     }
 
     // U12: the session's loopback capability dies with the session.
-    sessionCapabilityService.revokeForSession(id);
+    const revokedOnDelete = sessionCapabilityService.revokeForSession(id);
+    // U6 (KTD-22): token lifecycle audit (before the row disappears).
+    if (revokedOnDelete > 0) {
+      const botId = workspaceStore.getLocalSession(id)?.botId;
+      if (botId) {
+        botAuditLogger.logCapabilityTokenRevoked(botId, { type: 'system' }, {
+          sessionId: id,
+          revokedCount: revokedOnDelete,
+          reason: 'session-delete',
+        });
+      }
+    }
     return workspaceStore.deleteLocalSession(id);
   }
 
@@ -1437,7 +1450,19 @@ export class ChatService {
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
     // U12: the session's loopback capability dies with its runtime (the
     // rebuild path immediately re-mints in buildSdkOptions = rotation).
-    sessionCapabilityService.revokeForSession(sessionId);
+    const revoked = sessionCapabilityService.revokeForSession(sessionId);
+    // U6 (KTD-22): token lifecycle audit. Rotation (rebuild) re-mints
+    // immediately, so a close-revoke followed by a mint reads as rotation.
+    if (revoked > 0) {
+      const botId = workspaceStore.getLocalSession(sessionId)?.botId;
+      if (botId) {
+        botAuditLogger.logCapabilityTokenRevoked(botId, { type: 'system' }, {
+          sessionId,
+          revokedCount: revoked,
+          reason: 'session-close',
+        });
+      }
+    }
     // Pre-close chained listeners (KTD-5): run BEFORE close() resolves the
     // session's pending cards, so listeners can classify their own pendings
     // (the browser handoff controller marks its cards runtime_closed here).
@@ -2209,6 +2234,13 @@ export class ChatService {
             });
             env[SESSION_TOKEN_ENV] = capability.token;
             options.env = env;
+            // U6 (KTD-22, U12 notes): token lifecycle audit. The token value
+            // itself is never logged (the 48-hex shape auto-redacts anyway).
+            botAuditLogger.logCapabilityTokenMinted(bot.id, { type: 'system' }, {
+              sessionId: session.id,
+              workspaceId: workspace.id,
+              expiresAt: capability.expiresAt,
+            });
           } catch (err) {
             diagLog(
               `[ChatService] capability token mint failed for session=${session.id}: ${err instanceof Error ? err.message : String(err)}`,
@@ -2306,6 +2338,19 @@ export class ChatService {
                 diagLog(
                   `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=bash-whitelist`,
                 );
+                // U6 (KTD-22): the kill switch is the canary rollback path —
+                // its bash denies need the audit trail most.
+                if (channel) {
+                  botAuditLogger.logBashDenied(
+                    bot.id,
+                    { type: channel, channelKey: channel, channelUserId },
+                    {
+                      sessionId: session.id,
+                      command: input.command,
+                      reason: 'bash-whitelist',
+                    },
+                  );
+                }
                 return {
                   behavior: 'deny' as const,
                   message: "I can't do that in this workspace.",
@@ -2606,8 +2651,58 @@ export class ChatService {
                   // (proven against the real CLI in sdk-rule-contract.test).
                   // What remains: owner/admin keep the ask flow; regular
                   // members deny until phase-2 remote approval lands.
+                  //
+                  // U6 (KTD-22): the escape-routing decision is an audit
+                  // decision point — requested fires for every escape request;
+                  // the resolution event depends on the route.
+                  const escapeActor = channel
+                    ? { type: channel, channelKey: channel, channelUserId } as const
+                    : null;
+                  if (escapeActor) {
+                    botAuditLogger.logSandboxEscapeRequested(bot.id, escapeActor, {
+                      sessionId: session.id,
+                      command: input.command,
+                      role: freshRole,
+                    });
+                  }
                   if (isOwnerOrAdmin(freshRole)) {
-                    return askHuman();
+                    const escapeResult = await askHuman();
+                    if (escapeActor) {
+                      const requester = { channel: escapeActor.channelKey, channelUserId, role: freshRole };
+                      if (escapeResult.behavior === 'allow') {
+                        // Phase 1: the approver IS the requester (self-ask).
+                        // U8/U11 replace this with the ledger's remote-approval
+                        // provenance (distinct approver actor).
+                        botAuditLogger.logSandboxEscapeApproved(bot.id, escapeActor, {
+                          sessionId: session.id,
+                          command: input.command,
+                          requester,
+                          source: 'self-approval',
+                        });
+                      } else if (escapeResult.message === APPROVAL_TIMEOUT_DENY_MESSAGE) {
+                        botAuditLogger.logSandboxEscapeExpired(bot.id, { type: 'system' }, {
+                          sessionId: session.id,
+                          command: input.command,
+                          requester,
+                        });
+                      } else {
+                        botAuditLogger.logSandboxEscapeDenied(bot.id, escapeActor, {
+                          sessionId: session.id,
+                          command: input.command,
+                          requester,
+                          reason: 'approver-denied',
+                        });
+                      }
+                    }
+                    return escapeResult;
+                  }
+                  if (escapeActor) {
+                    botAuditLogger.logSandboxEscapeDenied(bot.id, { type: 'system' }, {
+                      sessionId: session.id,
+                      command: input.command,
+                      requester: { channel: escapeActor.channelKey, channelUserId, role: freshRole },
+                      reason: 'out-of-sandbox-normal',
+                    });
                   }
                   return denyRouted('escalatable', 'out-of-sandbox-normal');
                 }
@@ -2619,6 +2714,18 @@ export class ChatService {
                 }
                 if (isOwnerOrAdmin(freshRole)) {
                   return askHuman();
+                }
+                if (channel) {
+                  botAuditLogger.logBashDenied(
+                    bot.id,
+                    { type: channel, channelKey: channel, channelUserId },
+                    {
+                      sessionId: session.id,
+                      command: input.command,
+                      reason: 'degraded-platform-bash',
+                      routingClass: 'sandbox-unavailable',
+                    },
+                  );
                 }
                 return denyRouted('sandbox-unavailable', 'degraded-platform-bash');
               }
@@ -2656,6 +2763,35 @@ export class ChatService {
                     );
                   }
                   return denyRouted('final', verdict.reason ?? 'path-denied');
+                }
+                // U6 (KTD-22/KTD-29): an ALLOWED write into a workspace
+                // capability dir (`.claude/skills`, `.claude/agents`) is a
+                // capability-surface change — audit it (the desktop banner
+                // surface rides this event; only admin/owner verdicts can
+                // reach this point inside `.claude`).
+                if (channel && channelUserId && CAPABILITY_WRITE_TOOLS.has(toolName)) {
+                  const rawPath = typeof input.file_path === 'string'
+                    ? input.file_path
+                    : typeof input.notebook_path === 'string'
+                      ? input.notebook_path
+                      : undefined;
+                  if (rawPath) {
+                    const canonical = canonicalizeBotPath(gatePathContext.workspaceFolder, rawPath);
+                    const capabilityDir = capabilityDirForPath(gatePathContext.workspaceFolder, canonical);
+                    if (capabilityDir) {
+                      botAuditLogger.logCapabilityDirWrite(
+                        bot.id,
+                        { type: channel, channelKey: channel, channelUserId },
+                        {
+                          sessionId: session.id,
+                          toolName,
+                          path: canonical,
+                          capabilityDir,
+                          role: freshRole,
+                        },
+                      );
+                    }
+                  }
                 }
               }
 

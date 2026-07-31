@@ -46,6 +46,26 @@ export interface SessionTokenResolution {
   botId: string | null;
 }
 
+/**
+ * U6 (KTD-22): rejection report for the audit layer. `botId`/`sessionId` are
+ * the resolved token binding when one exists (403 rejections); unattributable
+ * rejections (missing/invalid credential) carry nulls — the audit layer files
+ * those under its sentinel bucket. The path is the raw request path; the
+ * audit layer owns any truncation/redaction.
+ */
+export interface LoopbackAuthRejection {
+  botId: string | null;
+  sessionId?: string;
+  method: string;
+  path: string;
+  reason:
+    | 'missing-credential'
+    | 'invalid-token'
+    | 'route-not-enrolled'
+    | 'workspace-mismatch'
+    | 'session-mismatch';
+}
+
 export interface LoopbackAuthDeps {
   /** Resolve a presented session capability token; null when invalid/expired/revoked. */
   resolveSessionToken: (token: string) => SessionTokenResolution | null;
@@ -55,6 +75,8 @@ export interface LoopbackAuthDeps {
   exemptPaths?: readonly string[];
   /** Session-token-reachable templates. Defaults to SESSION_ROUTE_TEMPLATES. */
   sessionRoutes?: readonly string[];
+  /** U6: invoked on every auth rejection (diagLog promotion to bot audit). */
+  onAuthRejected?: (rejection: LoopbackAuthRejection) => void;
 }
 
 /** The complete unauthenticated `/api` surface (U12). Everything else requires a credential. */
@@ -191,6 +213,14 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
   const exemptPaths = new Set(deps.exemptPaths ?? EXEMPT_PATHS);
   const sessionRoutes = deps.sessionRoutes ?? SESSION_ROUTE_TEMPLATES;
 
+  const reportRejection = (rejection: LoopbackAuthRejection): void => {
+    try {
+      deps.onAuthRejected?.(rejection);
+    } catch {
+      // Audit must never break the auth path.
+    }
+  };
+
   return (req: Request, res: Response, next: NextFunction) => {
     const path = normalizePath(req.path);
 
@@ -210,6 +240,7 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
     const token = extractBearer(req);
     if (!token) {
       diagLog(`[loopback-auth] 401 ${req.method} ${path}: missing bearer credential`);
+      reportRejection({ botId: null, method: req.method, path, reason: 'missing-credential' });
       unauthorized(res);
       return;
     }
@@ -224,6 +255,7 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
     const session = deps.resolveSessionToken(token);
     if (!session) {
       diagLog(`[loopback-auth] 401 ${req.method} ${path}: invalid, expired, or revoked session token`);
+      reportRejection({ botId: null, method: req.method, path, reason: 'invalid-token' });
       unauthorized(res);
       return;
     }
@@ -233,6 +265,13 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
       diagLog(
         `[loopback-auth] 403 ${req.method} ${path}: session token outside the enrolled route set (session=${session.sessionId})`,
       );
+      reportRejection({
+        botId: session.botId,
+        sessionId: session.sessionId,
+        method: req.method,
+        path,
+        reason: 'route-not-enrolled',
+      });
       forbidden(res, 'Session capability tokens may only call the enrolled CLI route set.');
       return;
     }
@@ -240,6 +279,13 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
       diagLog(
         `[loopback-auth] 403 ${req.method} ${path}: token workspace mismatch (session=${session.sessionId})`,
       );
+      reportRejection({
+        botId: session.botId,
+        sessionId: session.sessionId,
+        method: req.method,
+        path,
+        reason: 'workspace-mismatch',
+      });
       forbidden(res, 'Token is not valid for this workspace.');
       return;
     }
@@ -247,6 +293,13 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
       diagLog(
         `[loopback-auth] 403 ${req.method} ${path}: token session mismatch (session=${session.sessionId})`,
       );
+      reportRejection({
+        botId: session.botId,
+        sessionId: session.sessionId,
+        method: req.method,
+        path,
+        reason: 'session-mismatch',
+      });
       forbidden(res, 'Token is not valid for this session.');
       return;
     }
