@@ -666,7 +666,7 @@ function QuestionView({
         onMouseEnter={() => handleOptionMouseEnter(qIdx, oIdx)}
         onKeyDown={(e) => handleOptionKey(e, qIdx, oIdx)}
         disabled={isResolving}
-        className={`w-full text-left px-3 py-2 rounded-md text-xs transition-colors ${
+        className={`w-full text-left px-2 py-2 rounded-md text-xs transition-colors ${
           selected
             ? 'bg-accent/20 text-accent'
             : 'bg-work text-text-secondary hover:bg-accent/10'
