@@ -44,7 +44,7 @@ import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.
 import { pluginSettingsService } from './plugin-settings-service.js';
 import { evaluateToolPermission, getToolPermissionDenialReason, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { createPathPolicyContext, validateToolInput, verifyBotFileToolAccess } from './bot-path-policy.js';
-import { evaluateSkill, evaluateSkillDisabled } from './bot-skill-policy.js';
+import { evaluateSkill, evaluateSkillDisabled, compileSkillFilter, compileSkillDenyRules } from './bot-skill-policy.js';
 import { botService } from './bot-service.js';
 import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isOwnerOrAdmin } from './bot-policy.js';
@@ -2423,8 +2423,32 @@ export class ChatService {
 
             // Inline settings object only — Options.sandbox and a settings
             // FILE PATH must not both be set (SDK throws; KTD-2).
+            //
+            // U5 (R8/KTD-14): bot-level disabled skills compile into explicit
+            // deny rules — deny evaluates before allow/canUseTool in the SDK
+            // permission pipeline, so a disabled skill stays blocked even when
+            // it is also mounted (deny takes precedence over mount). The
+            // gate's evaluateSkillDisabled is the in-gate backstop; both
+            // layers share the same normalization and the KTD-14 unrestricted
+            // set, so they cannot disagree.
+            const skillDenyRules = compileSkillDenyRules(rolePolicy.disabledSkills ?? []);
             (options.settings as { permissions?: BotAccessDerivation['permissionRules'] }).permissions =
-              derivation.permissionRules;
+              skillDenyRules.length > 0
+                ? { ...derivation.permissionRules, deny: [...skillDenyRules, ...derivation.permissionRules.deny] }
+                : derivation.permissionRules;
+
+            // U5 (R8/KTD-14): SDK skill context filter — unlisted skills are
+            // hidden from the model and rejected by the Skill tool (a context
+            // filter, not a sandbox). Three-state semantics: absent = every
+            // discovered skill mounts (zero-config default, AE4); an array =
+            // closed mounted set ([] hides everything). Bot-level: the filter
+            // binds every role equally — it is a capability surface, not a
+            // permission. compileSkillFilter unions the unrestricted
+            // send-capable wecom skills so the bot's reply path always stays
+            // mounted.
+            if (rolePolicy.skills !== undefined) {
+              options.skills = compileSkillFilter(rolePolicy.skills);
+            }
 
             // KTD-3: pin SDK isolation mode. Any user-writable settings
             // source (workspace .claude/settings.json, ~/.claude/settings.json)
@@ -2576,8 +2600,12 @@ export class ChatService {
                 }
               }
 
-              // ---- Skill: bot-level disabled list (R8/KTD-14); the ----
-              // ---- mounted-set context filter lands in U5.         ----
+              // ---- Skill: bot-level config (R8/KTD-14). The SDK context  ----
+              // ---- filter (U5) hides unmounted skills upstream; this     ----
+              // ---- gate check is the backstop for the explicit deny     ----
+              // ---- rules compiled at spawn. Unmounted-but-not-disabled  ----
+              // ---- skills are allowed here — hiding is the filter's job ----
+              // ---- (no double-negative between the layers).             ----
               if (toolName === 'Skill') {
                 const skillCheck = evaluateSkillDisabled(rolePolicyFresh?.disabledSkills ?? [], input);
                 if (!skillCheck.skillName) {
