@@ -1633,6 +1633,85 @@ describe('session-runtime authoritative activity', { concurrency: false }, () =>
     );
   });
 
+  it('restores foreground activity when the main agent resumes after background work', async () => {
+    const events: SseEvent[] = [];
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+      (_id, event) => events.push(event),
+    );
+    runtime.pushMessage('start');
+
+    sdk.pushMessage({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [{ task_id: 'agent-1', task_type: 'agent', description: 'Research' }],
+      uuid: 'snapshot-1',
+      session_id: 's1',
+    } as SDKMessage);
+    await tick();
+    sdk.pushMessage({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'waiting for background work',
+      parent_tool_use_id: null,
+    } as SDKMessage);
+    await tick();
+
+    sdk.pushMessage({
+      type: 'stream_event',
+      event: {
+        type: 'message_start',
+        message: { id: 'background-agent-message' },
+      },
+      parent_tool_use_id: 'agent-tool-use',
+      uuid: 'background-agent',
+      session_id: 's1',
+    } as unknown as SDKMessage);
+    await tick();
+    assert.deepStrictEqual(
+      runtime.getActivitySnapshot(),
+      {
+        phase: 'background',
+        active: true,
+        backgroundTasks: [{ id: 'agent-1', type: 'agent', description: 'Research' }],
+      },
+    );
+
+    sdk.pushMessage({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [],
+      uuid: 'snapshot-2',
+      session_id: 's1',
+    } as SDKMessage);
+    await tick();
+
+    sdk.pushMessage({
+      type: 'stream_event',
+      event: {
+        type: 'message_start',
+        message: { id: 'resumed-main-agent-message' },
+      },
+      parent_tool_use_id: null,
+      uuid: 'resumed-main-agent',
+      session_id: 's1',
+    } as unknown as SDKMessage);
+    await tick();
+
+    assert.deepStrictEqual(activityEvents(events).at(-1), {
+      type: 'session_activity',
+      phase: 'foreground',
+      active: true,
+      backgroundTasks: [],
+    });
+  });
+
   it('forces the current activity snapshot after WebSocket replay', async () => {
     const events: SseEvent[] = [];
     const sdk = createActivitySdkClient();

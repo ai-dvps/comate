@@ -300,6 +300,14 @@ export class SessionRuntime {
       for await (const msg of messages) {
         if (this.closed) break;
         this.handleActivityMessage(msg);
+        if (
+          (msg.type === 'stream_event' || msg.type === 'assistant') &&
+          msg.parent_tool_use_id === null &&
+          this.foregroundMessageUuid === undefined
+        ) {
+          this.foregroundMessageUuid = msg.uuid;
+          this.evaluateActivity();
+        }
         this.emitter.handle(msg);
         if (msg.type === 'result') {
           this.foregroundMessageUuid = undefined;
