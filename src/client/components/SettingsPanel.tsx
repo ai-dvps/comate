@@ -515,7 +515,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
+        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50 bg-surface">
             <h2 className="text-sm font-medium text-text-primary">{t('settings')}</h2>
             <button
               onClick={handleClose}
@@ -526,7 +526,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           </div>
 
           {/* Tabs */}
-          <div className="flex border-b border-border/50 flex-shrink-0 px-6">
+          <div className="flex border-b border-border/50 flex-shrink-0 px-6 bg-surface">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -543,7 +543,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto min-h-0">
+          <div className="flex-1 overflow-y-auto min-h-0 bg-bg">
             {activeTab === 'general' && (
               <GeneralTab
                 reopenLastWorkspace={appReopen}
@@ -784,7 +784,7 @@ export function GeneralTab({
                   onArchiveThresholdDaysCommit(archiveThresholdDays)
                 }
               }}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+              className="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
             />
             <p className="text-[10px] text-text-tertiary mt-1">
               {t('general.archiveThresholdDaysHint')}
@@ -935,7 +935,7 @@ export function GeneralTab({
                   {t('general.updaterNewVersionAvailable', { version: updateInfo.version })}
                 </p>
                 {updateInfo.body && (
-                  <div className="max-h-32 overflow-y-auto rounded-lg bg-bg border border-border p-3">
+                  <div className="max-h-32 overflow-y-auto rounded-lg bg-surface border border-border p-3">
                     <p className="text-xs text-text-secondary whitespace-pre-wrap">{updateInfo.body}</p>
                   </div>
                 )}
@@ -1078,7 +1078,7 @@ function AppearanceTab() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                 theme === 'light' && !isFollowingSystem
                   ? 'bg-accent text-accent-foreground border-accent'
-                  : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                  : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
               }`}
             >
               <Sun className="w-3.5 h-3.5" />
@@ -1089,7 +1089,7 @@ function AppearanceTab() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                 theme === 'dark' && !isFollowingSystem
                   ? 'bg-accent text-accent-foreground border-accent'
-                  : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                  : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
               }`}
             >
               <Moon className="w-3.5 h-3.5" />
@@ -1120,7 +1120,7 @@ function AppearanceTab() {
               className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                 language === 'en'
                   ? 'bg-accent text-accent-foreground border-accent'
-                  : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                  : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
               }`}
             >
               English
@@ -1130,7 +1130,7 @@ function AppearanceTab() {
               className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                 language === 'zh-CN'
                   ? 'bg-accent text-accent-foreground border-accent'
-                  : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                  : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
               }`}
             >
               简体中文
@@ -1148,7 +1148,7 @@ function AppearanceTab() {
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   chatFontSize === preset.value
                     ? 'bg-accent text-accent-foreground border-accent'
-                    : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                    : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
                 }`}
               >
                 {preset.label}
@@ -1167,7 +1167,7 @@ function AppearanceTab() {
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   uiFontSize === preset.value
                     ? 'bg-accent text-accent-foreground border-accent'
-                    : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                    : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
                 }`}
               >
                 {preset.label}
@@ -1186,7 +1186,7 @@ function AppearanceTab() {
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   displayMode === preset.value
                     ? 'bg-accent text-accent-foreground border-accent'
-                    : 'bg-bg text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
+                    : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
                 }`}
               >
                 {preset.label}
@@ -1304,7 +1304,7 @@ function PathConfigSection() {
             </button>
             {resolvedPathExpanded && (
               <>
-                <div className="bg-bg border border-border rounded-lg p-2 overflow-x-auto">
+                <div className="bg-surface border border-border rounded-lg p-2 overflow-x-auto">
                   <pre className="text-[11px] font-mono text-text-secondary whitespace-pre-wrap break-all">
                     {state.resolvedPath || '(empty)'}
                   </pre>
@@ -1342,7 +1342,7 @@ function PathConfigSection() {
                   if (e.key === 'Enter') handleAdd()
                 }}
                 placeholder={t('general.pathConfigPathPlaceholder')}
-                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                className="flex-1 px-3 py-2 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
               />
               <button
                 onClick={handleAdd}
@@ -1358,7 +1358,7 @@ function PathConfigSection() {
               {state.customPaths.map((p, i) => (
                 <div
                   key={`${p}-${i}`}
-                  className="flex items-center justify-between px-3 py-2 bg-bg rounded-lg border border-border/50"
+                  className="flex items-center justify-between px-3 py-2 bg-surface rounded-lg border border-border/50"
                 >
                   <code className="text-[11px] font-mono text-text-secondary truncate">{p}</code>
                   <button
@@ -1582,7 +1582,7 @@ function GeneralSection({
         <input
           value={state.name}
           onChange={(e) => onUpdate({ name: e.target.value })}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
+          className="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
         />
       </div>
       <div>
@@ -1591,12 +1591,12 @@ function GeneralSection({
           value={state.description}
           onChange={(e) => onUpdate({ description: e.target.value })}
           rows={3}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary resize-none"
+          className="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary resize-none"
         />
       </div>
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('workspace.folderPath')}</label>
-        <div className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-secondary overflow-x-auto">
+        <div className="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg text-text-secondary overflow-x-auto">
           <code className="font-mono text-[11px] whitespace-pre-wrap break-all">{state.folderPath}</code>
         </div>
         <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.folderPathHint')}</p>
@@ -1628,7 +1628,7 @@ function BotSection({
           onChange={(e) => onUpdate({ wecomFilePromptTemplate: e.target.value })}
           placeholder={t('wecom.filePromptTemplatePlaceholder')}
           rows={4}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
+          className="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
         />
         <p className="text-[10px] text-text-tertiary mt-1">{t('wecom.filePromptTemplateHint')}</p>
       </div>
@@ -1640,7 +1640,7 @@ function BotSection({
           value={state.promptHistoryRetentionDays}
           onChange={(e) => onUpdate({ promptHistoryRetentionDays: e.target.value })}
           placeholder={t('workspace.promptHistoryRetentionDaysPlaceholder')}
-          className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+          className="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
         />
         <p className="text-[10px] text-text-tertiary mt-1">{t('workspace.promptHistoryRetentionDaysHint')}</p>
       </div>
@@ -1742,7 +1742,7 @@ export function RememberedSitesCard({ workspaceId }: { workspaceId: string }) {
             : t('workspace.rememberedSitesEmpty')}
         </p>
       ) : (
-        <ul className="divide-y divide-border/50 border border-border rounded-lg" data-testid="remembered-sites-list">
+        <ul className="bg-surface divide-y divide-border/50 border border-border rounded-lg" data-testid="remembered-sites-list">
           {sites.map((site) => (
             <li key={site.key} className="flex items-center gap-2 px-3 py-2">
               <span className="text-sm text-text-primary font-mono text-[12px] truncate flex-1">
@@ -1819,7 +1819,7 @@ function SensitiveFileDenylistEditor({
         }}
         placeholder={t('workspace.sensitiveFileDenylistPlaceholder')}
         rows={6}
-        className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
+        className="w-full px-3 py-2 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
       />
     </div>
   )
@@ -1871,7 +1871,7 @@ function BoundBotCard({ workspaceId, onManageBots }: { workspaceId: string; onMa
   const activeWorkspace = workspaces.find((w) => w.id === bot?.activeWorkspaceId)
 
   return (
-    <div className="border border-border rounded-lg p-4 space-y-3">
+    <div className="bg-surface border border-border rounded-lg p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
           <Bot className="w-3.5 h-3.5" />

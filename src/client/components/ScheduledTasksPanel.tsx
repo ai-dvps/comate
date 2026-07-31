@@ -121,7 +121,7 @@ export default function ScheduledTasksPanel({ isOpen, onClose }: ScheduledTasksP
       className="w-[720px] max-w-[92vw] max-h-[82vh] rounded-lg shadow-xl"
     >
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface">
           <div className="flex items-center gap-2">
             {view.kind !== 'list' && (
               <button
@@ -155,7 +155,7 @@ export default function ScheduledTasksPanel({ isOpen, onClose }: ScheduledTasksP
           <div className="mx-4 mt-2 px-3 py-2 rounded-md bg-red-500/10 text-red-500 text-xs">{actionError}</div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-4 py-3">
+        <div className="flex-1 overflow-y-auto px-4 py-3 bg-bg">
           {view.kind === 'form' && (
             <ScheduledTaskForm
               task={view.task}

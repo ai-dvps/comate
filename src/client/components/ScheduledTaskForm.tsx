@@ -94,7 +94,7 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
   }
 
   const inputCls =
-    'w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary shadow-sm transition-colors focus:outline-none focus:border-accent'
+    'w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary shadow-sm transition-colors focus:outline-none focus:border-accent'
   const labelCls = 'block text-[11px] text-text-secondary mb-1'
 
   return (
