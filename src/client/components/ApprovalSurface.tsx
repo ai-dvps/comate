@@ -40,6 +40,29 @@ function formatRemainingMs(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
+function useCommandEnter(onSubmit: () => void, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.key !== 'Enter' ||
+        (!event.metaKey && !event.ctrlKey)
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      onSubmit()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [enabled, onSubmit])
+}
+
 function Countdown({ expiresAt }: { expiresAt?: number }) {
   const { t } = useTranslation('chat')
   const [remaining, setRemaining] = useState(() =>
@@ -317,6 +340,8 @@ function ApprovalView({
   const { t } = useTranslation('chat')
   const [showMore, setShowMore] = useState(false)
   const hasSuggestions = item.suggestions && item.suggestions.length > 0
+
+  useCommandEnter(onAllow, !isResolving)
 
   const renderer = getToolRenderer(item.toolName)
   const hasCustomRenderer = !!renderer
@@ -598,6 +623,8 @@ function QuestionView({
     onAnswerQuestion(answers)
   }
 
+  useCommandEnter(handleConfirm, canConfirm)
+
   const focusedPreview = useMemo(() => {
     if (!focused) return null
     const effectiveQIdx = isStepper ? stepIndex : focused.qIdx
@@ -670,7 +697,7 @@ function QuestionView({
           selected
             ? 'bg-accent/20 text-accent'
             : 'bg-work text-text-secondary hover:bg-accent/10'
-        } ${isFocused ? 'ring-1 ring-accent/30' : ''} disabled:opacity-50`}
+        } ${isFocused ? 'ring-1 ring-inset ring-accent/30' : ''} disabled:opacity-50`}
       >
         <div className="flex items-center gap-2">
           <span

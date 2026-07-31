@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import ApprovalSurface from './ApprovalSurface'
@@ -52,6 +52,101 @@ const baseProps = {
   onChatAbout: noop,
   onStop: noop,
 }
+
+describe('ApprovalSurface question option highlight', () => {
+  it('draws the focused option ring inside the scroll container', () => {
+    render(
+      <ApprovalSurface
+        {...baseProps}
+        pendingItem={{
+          requestId: 'req-question-1',
+          questions: [
+            {
+              question: 'Choose an option',
+              options: [{ label: 'Option A' }, { label: 'Option B' }],
+              multiSelect: false,
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('radio', { name: 'Option A' })).toHaveClass('ring-inset')
+  })
+
+  it('submits an answered question with Cmd/Ctrl+Enter', async () => {
+    const user = userEvent.setup()
+    const onAnswerQuestion = vi.fn()
+    render(
+      <ApprovalSurface
+        {...baseProps}
+        onAnswerQuestion={onAnswerQuestion}
+        pendingItem={{
+          requestId: 'req-question-shortcut',
+          questions: [
+            {
+              question: 'Choose an option',
+              options: [{ label: 'Option A' }, { label: 'Option B' }],
+              multiSelect: false,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await user.click(screen.getByRole('radio', { name: 'Option A' }))
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+
+    expect(onAnswerQuestion).toHaveBeenCalledWith({ 'Choose an option': 'Option A' })
+  })
+
+  it('does not submit an unanswered question with Cmd/Ctrl+Enter', () => {
+    const onAnswerQuestion = vi.fn()
+    render(
+      <ApprovalSurface
+        {...baseProps}
+        onAnswerQuestion={onAnswerQuestion}
+        pendingItem={{
+          requestId: 'req-question-shortcut-disabled',
+          questions: [
+            {
+              question: 'Choose an option',
+              options: [{ label: 'Option A' }],
+              multiSelect: false,
+            },
+          ],
+        }}
+      />,
+    )
+
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true })
+
+    expect(onAnswerQuestion).not.toHaveBeenCalled()
+  })
+})
+
+describe('ApprovalSurface submit shortcut', () => {
+  it.each([
+    ['Cmd+Enter', { metaKey: true }],
+    ['Ctrl+Enter', { ctrlKey: true }],
+  ])('allows the request with %s', (_label, modifiers) => {
+    const onAllow = vi.fn()
+    render(<ApprovalSurface {...baseProps} onAllow={onAllow} />)
+
+    fireEvent.keyDown(window, { key: 'Enter', ...modifiers })
+
+    expect(onAllow).toHaveBeenCalledOnce()
+  })
+
+  it('ignores the shortcut while the request is resolving', () => {
+    const onAllow = vi.fn()
+    render(<ApprovalSurface {...baseProps} onAllow={onAllow} isResolving />)
+
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+
+    expect(onAllow).not.toHaveBeenCalled()
+  })
+})
 
 describe('ApprovalSurface denial reason', () => {
   it('renders safetyCheck denial reason notice', () => {
