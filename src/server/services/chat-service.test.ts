@@ -2698,6 +2698,136 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   });
 });
 
+describe('chat-service bot session model pinning (U1)', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+
+  class MockSdkClient extends SdkClient {
+    override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+      return undefined;
+    }
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return [];
+    }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
+    override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
+  }
+
+  class TestChatService extends ChatService {
+    constructor() {
+      super(new MockSdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {}
+  }
+
+  function createMockRuntime(): SessionRuntime {
+    let closed = false;
+    return {
+      isClosed: () => closed,
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      close: () => {
+        closed = true;
+        return Promise.resolve();
+      },
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: () => {},
+      resolveApproval: () => {},
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+    } as unknown as SessionRuntime;
+  }
+
+  beforeEach(() => {
+    workspaceStore.resetData();
+    service = new TestChatService();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+    SessionRuntime.open = originalOpen;
+  });
+
+  async function setupModelSession(config: { source: 'wecom' | 'gui'; providerModel?: string }) {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-model-pin-'));
+    const workspace = await workspaceStore.create({
+      name: 'Model Pin Workspace',
+      folderPath,
+    });
+    const provider = workspaceStore.createProvider({
+      name: `Model Pin Provider ${crypto.randomUUID()}`,
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: config.providerModel,
+      isDefault: false,
+    });
+    let botId: string | undefined;
+    if (config.source === 'wecom') {
+      const bot = botService.createBot({
+        name: 'Model Pin Bot',
+        activeWorkspaceId: workspace.id,
+      });
+      botService.updateChannelSettings(bot.id, 'wecom', { enabled: true, botId: 'wecom-bot', botSecret: 'secret' });
+      botId = bot.id;
+    }
+    const session = workspaceStore.createLocalSession(
+      workspace.id,
+      'Model Pin Session',
+      undefined,
+      provider.id,
+      config.source,
+      undefined,
+      botId,
+    );
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime(
+      session.id,
+      workspace.id,
+      config.source === 'wecom' ? true : undefined,
+    );
+    assert.ok(capturedOptions, 'options must be captured');
+    return { options: capturedOptions };
+  }
+
+  it('pins the pre-upgrade default model for bot sessions when the provider model is empty', async () => {
+    const { options } = await setupModelSession({ source: 'wecom', providerModel: '' });
+    // CLI 2.1.219 changed the default Opus model; bot sessions must stay on the
+    // pre-upgrade default instead of drifting with the CLI.
+    assert.strictEqual(options.model, 'claude-opus-4-8');
+  });
+
+  it('keeps the configured provider model for bot sessions', async () => {
+    const { options } = await setupModelSession({ source: 'wecom', providerModel: 'test-model' });
+    assert.strictEqual(options.model, 'test-model');
+  });
+
+  it('GUI sessions still inherit the CLI default when the provider model is empty', async () => {
+    const { options } = await setupModelSession({ source: 'gui', providerModel: '' });
+    assert.strictEqual(options.model, undefined);
+  });
+});
+
 describe('chat-service deferred runtime rebuild', { concurrency: false }, () => {
   let service: ChatService;
   const originalOpen = SessionRuntime.open;
