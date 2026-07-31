@@ -108,7 +108,42 @@ describe('wecom-stream-reply', () => {
     assert.strictEqual(card.task_id, 'req-question-1');
   });
 
+  it('sends an expiry notice to the requester on approval_timeout for a card this stream sent (U8, AE9)', () => {
+    const sentMessages: Array<{ userId: string; body: { msgtype?: string; markdown?: { content: string } } }> = [];
+    conn.client.sendMessage = async (userId: string, body: { msgtype?: string; markdown?: { content: string } }) => {
+      sentMessages.push({ userId, body });
+    };
+    const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+
+    handler(1, {
+      type: 'pending_approval',
+      requestId: 'req-ttl-1',
+      toolName: 'Bash',
+      toolUseId: 'tu-1',
+      input: { command: 'curl https://example.com' },
+      inputSummary: 'curl',
+    } as SseEvent);
+    handler(2, { type: 'approval_timeout', requestId: 'req-ttl-1' } as SseEvent);
+
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].userId, 'user-1');
+    assert.strictEqual(sentMessages[0].body.msgtype, 'markdown');
+    assert.match(sentMessages[0].body.markdown?.content ?? '', /已按拒绝处理/);
+  });
+
+  it('ignores approval_timeout for requests this stream never carded', () => {
+    const sentMessages: unknown[] = [];
+    conn.client.sendMessage = async (...args: unknown[]) => {
+      sentMessages.push(args);
+    };
+    const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+
+    handler(1, { type: 'approval_timeout', requestId: 'req-unrelated' } as SseEvent);
+    assert.strictEqual(sentMessages.length, 0);
+  });
+
   it('does not send duplicate cards for the same requestId', () => {
+
     const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
 
     handler(1, {

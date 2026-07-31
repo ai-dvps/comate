@@ -794,7 +794,7 @@ describe('workspace delete cascade (KTD-8)', () => {
 describe('browser_audit table + service contract', () => {
   it('constructor migrates to the current schema version and resetData wipes the table', () => {
     const store = createIsolatedStore();
-    assert.strictEqual(store.getMigrationVersion(), 8);
+    assert.strictEqual(store.getMigrationVersion(), 9);
     const audit = new BrowserAuditService(store);
     audit.logControl({ workspaceId: 'ws', sessionId: 's', verb: 'takeover', outcome: 'ok' });
     assert.strictEqual(store.listBrowserAudit('ws').length, 1);

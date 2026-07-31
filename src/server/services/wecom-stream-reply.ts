@@ -505,6 +505,21 @@ export function createStreamReply(
             diagLog(`[WeComStreamReply ${sessionId}] send question-card FAIL requestId=${event.requestId} err=${err.message}`);
           },
         );
+      } else if (event.type === 'approval_timeout') {
+        // U8 (KTD-17, AE9): TTL expiry settles fail-closed — notify the
+        // requester (mirrors feishu-stream-reply). Only when this stream sent
+        // the card, so unrelated timeouts never spam the user.
+        if (!sentTemplateCards.has(event.requestId)) return;
+        diagLog(`[WeComStreamReply ${sessionId}] send expiry-notice requestId=${event.requestId}`);
+        conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '⏰ 请求已超时，已按拒绝处理。' },
+        }).then(
+          () => diagLog(`[WeComStreamReply ${sessionId}] send expiry-notice OK requestId=${event.requestId}`),
+          (err: Error) => {
+            diagLog(`[WeComStreamReply ${sessionId}] send expiry-notice FAIL requestId=${event.requestId} err=${err.message}`);
+          },
+        );
       }
     },
     {

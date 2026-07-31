@@ -230,7 +230,6 @@ function findChannelUserForSession(
 router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
   const sessionId = req.params.sessionId;
   const requestId = req.params.requestId;
-  const workspaceId = (req.params as unknown as { id: string }).id;
   const { behavior, updatedPermissions, answers } = req.body;
 
   if (!behavior || (behavior !== 'allow' && behavior !== 'deny')) {
@@ -239,7 +238,17 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
   }
 
   try {
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
+    // U8 (KTD-15): never spawn a runtime to resolve an approval — a pending
+    // approval cannot exist without a live runtime, so a missing runtime
+    // means the approval is already gone (timeout/stop/close). The desktop
+    // funnel shares the gate's provenance writer with the card flow: the
+    // resolution carries its source and the gate writes the same-shaped
+    // audit row either way.
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    if (!runtime) {
+      res.status(404).json({ error: 'No active approval for this session', code: 'APPROVAL_NOT_FOUND' });
+      return;
+    }
 
     let result: PermissionResult;
     if (behavior === 'allow') {
@@ -259,8 +268,8 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
       };
     }
 
-    diagLog(`[Route] resolveApproval ${requestId} behavior=${behavior}`);
-    runtime.resolveApproval(requestId, result);
+    diagLog(`[Route] resolveApproval ${requestId} behavior=${behavior} source=desktop`);
+    runtime.resolveApproval(requestId, result, { source: 'desktop', approver: { type: 'user' } });
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to resolve approval:', error);

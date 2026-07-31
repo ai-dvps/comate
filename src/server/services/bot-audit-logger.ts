@@ -325,6 +325,10 @@ export class BotAuditLogger {
       sessionId: string;
       command: string;
       requester: BotAuditRequester;
+      /** Expiry channel: `timeout` (TTL) or `boot-recovery` (U8). */
+      source?: string;
+      /** Ledger correlation id (U8, KTD-16). */
+      requestId?: string;
     },
   ): void {
     this.log(botId, actor, 'sandbox_escape_expired', details);

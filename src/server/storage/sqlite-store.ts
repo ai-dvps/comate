@@ -264,6 +264,33 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_browser_audit_workspace_created
         ON browser_audit (workspace_id, created_at DESC)
     `);
+    // bot_escalation_ledger (U8 phase-2, KTD-16): persistent approval ledger
+    // for out-of-sandbox escalation requests. One row per pending approval
+    // (id = the approval requestId); the row is the durable record a boot
+    // recovery pass can expire (fail-closed) when the process died with
+    // approvals still pending.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_escalation_ledger (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        audience TEXT NOT NULL,
+        requester_channel TEXT NOT NULL,
+        requester_channel_user_id TEXT NOT NULL,
+        requester_role TEXT,
+        recipients_json TEXT NOT NULL DEFAULT '[]',
+        rule_payload_json TEXT NOT NULL DEFAULT '{}',
+        state TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        resolution_json TEXT
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_bot_escalation_ledger_state
+        ON bot_escalation_ledger (state, bot_id)
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -531,6 +558,7 @@ export class SqliteStore {
     this.migrateBrowserAuditSchema();
     this.migrateTodosGlobalSchema();
     this.migrateTodoContentColumn();
+    this.migrateBotEscalationLedgerSchema();
   }
 
   /**
@@ -702,6 +730,24 @@ export class SqliteStore {
       console.error('[SqliteStore] Failed to add todos.content column:', err);
       throw err;
     }
+  }
+
+  /**
+   * Schema version 9 (U8 phase-2, KTD-16): the bot_escalation_ledger table.
+   * The CREATE TABLE above is idempotent and covers both fresh and existing
+   * databases; this step only records the version bump so the schema lineage
+   * is inspectable (mirrors migrateBrowserAuditSchema).
+   */
+  private migrateBotEscalationLedgerSchema(): void {
+    const version = this.getMigrationVersion();
+    if (version !== null && version >= 9) {
+      return;
+    }
+    const previous = this.getMigrationState().snapshot;
+    this.setMigrationState(9, new Date().toISOString(), {
+      ...previous,
+      bot_escalation_ledger_schema: true,
+    });
   }
 
   getAnalyticsCache(): AnalyticsCache {
@@ -3382,6 +3428,142 @@ export class SqliteStore {
     return deleted;
   }
 
+  // -------------------------------------------------------------------------
+  // bot_escalation_ledger (U8 phase-2, KTD-16): durable approval ledger for
+  // out-of-sandbox escalations. Rows are created when the gate registers a
+  // pending approval and transition exactly once (pending → approved/denied/
+  // expired); transitions are atomic first-writer-wins so a late or duplicate
+  // resolution can never flip a settled row.
+  // -------------------------------------------------------------------------
+
+  createBotEscalation(input: CreateBotEscalationInput): BotEscalationEntry {
+    const entry: BotEscalationEntry = {
+      id: input.id,
+      botId: input.botId,
+      sessionId: input.sessionId,
+      audience: input.audience,
+      requester: input.requester,
+      recipients: input.recipients ?? [],
+      rulePayload: input.rulePayload,
+      state: 'pending',
+      createdAt: input.createdAt,
+      expiresAt: input.expiresAt,
+      resolvedAt: null,
+      resolution: null,
+    };
+    this.db.prepare(`
+      INSERT INTO bot_escalation_ledger
+        (id, bot_id, session_id, audience, requester_channel, requester_channel_user_id,
+         requester_role, recipients_json, rule_payload_json, state, created_at, expires_at,
+         resolved_at, resolution_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+    `).run(
+      entry.id,
+      entry.botId,
+      entry.sessionId,
+      entry.audience,
+      entry.requester.channel,
+      entry.requester.channelUserId,
+      entry.requester.role,
+      JSON.stringify(entry.recipients),
+      JSON.stringify(entry.rulePayload),
+      entry.state,
+      entry.createdAt,
+      entry.expiresAt,
+    );
+    return entry;
+  }
+
+  getBotEscalation(id: string): BotEscalationEntry | null {
+    const row = this.db
+      .prepare('SELECT * FROM bot_escalation_ledger WHERE id = ?')
+      .get(id) as RawBotEscalationRow | undefined;
+    return row ? parseBotEscalationRow(row) : null;
+  }
+
+  /**
+   * Atomic pending → terminal-state transition (first writer wins). Returns
+   * the settled row, or null when the row was already settled (late/duplicate
+   * click, double expiry) or does not exist — callers must treat null as
+   * "someone else resolved it" and skip their side effects.
+   */
+  transitionBotEscalation(
+    id: string,
+    toState: BotEscalationTerminalState,
+    resolution: BotEscalationResolution,
+    resolvedAt: string,
+  ): BotEscalationEntry | null {
+    const result = this.db.prepare(`
+      UPDATE bot_escalation_ledger
+      SET state = ?, resolved_at = ?, resolution_json = ?
+      WHERE id = ? AND state = 'pending'
+    `).run(toState, resolvedAt, JSON.stringify(resolution), id);
+    if (result.changes === 0) return null;
+    return this.getBotEscalation(id);
+  }
+
+  listBotEscalations(
+    options: { botId?: string; state?: BotEscalationState; limit?: number } = {},
+  ): BotEscalationEntry[] {
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (options.botId) {
+      clauses.push('bot_id = ?');
+      params.push(options.botId);
+    }
+    if (options.state) {
+      clauses.push('state = ?');
+      params.push(options.state);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.db
+      .prepare(`SELECT * FROM bot_escalation_ledger ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(...params, limit) as RawBotEscalationRow[];
+    return rows.map(parseBotEscalationRow);
+  }
+
+  /**
+   * Boot recovery (KTD-16): every still-pending row belongs to a promise that
+   * died with the previous process — expire them all (fail-closed, never
+   * auto-allow) in one transaction and return the settled entries so the
+   * caller can queue requester notifications.
+   */
+  expireAllPendingBotEscalations(
+    resolution: BotEscalationResolution,
+    resolvedAt: string,
+  ): BotEscalationEntry[] {
+    const expire = this.db.transaction(() => {
+      const rows = this.db
+        .prepare("SELECT * FROM bot_escalation_ledger WHERE state = 'pending'")
+        .all() as RawBotEscalationRow[];
+      this.db.prepare(`
+        UPDATE bot_escalation_ledger
+        SET state = 'expired', resolved_at = ?, resolution_json = ?
+        WHERE state = 'pending'
+      `).run(resolvedAt, JSON.stringify(resolution));
+      return rows.map(parseBotEscalationRow).map((entry) => ({
+        ...entry,
+        state: 'expired' as const,
+        resolvedAt,
+        resolution,
+      }));
+    });
+    return expire();
+  }
+
+  /**
+   * Age-based retention for settled rows (mirrors bot_audit's 90-day default);
+   * pending rows are never pruned (boot recovery owns their lifecycle).
+   */
+  pruneBotEscalationLedger(options: { retentionDays?: number } = {}): number {
+    const retentionDays = options.retentionDays ?? 90;
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    return this.db
+      .prepare("DELETE FROM bot_escalation_ledger WHERE state != 'pending' AND created_at < ?")
+      .run(cutoff).changes;
+  }
+
   getMigrationVersion(): number | null {
     const row = this.db
       .prepare('SELECT version FROM bot_migration_state WHERE id = 1')
@@ -3796,6 +3978,121 @@ function parseBrowserAuditRow(row: RawBrowserAuditRow): BrowserAuditEntry {
     createdAt: row.created_at,
   };
 }
+
+// ---------------------------------------------------------------------------
+// bot_escalation_ledger row types (U8 phase-2, KTD-15/KTD-16). Positive-shape
+// parser: unknown audience/state values fail safe (audience → 'admins', and
+// terminal states round-trip only from the closed set).
+// ---------------------------------------------------------------------------
+
+export type BotEscalationAudience = 'self' | 'admins';
+export type BotEscalationTerminalState = 'approved' | 'denied' | 'expired';
+export type BotEscalationState = 'pending' | BotEscalationTerminalState;
+export type BotEscalationDecision = 'allow' | 'deny' | 'expired';
+
+/** A notified recipient of the escalation (U11: one per owner/admin card). */
+export interface BotEscalationRecipient {
+  userId: string;
+  taskId: string;
+}
+
+/** The channel user whose tool call triggered the escalation. */
+export interface BotEscalationRequester {
+  channel: string;
+  channelUserId: string;
+  role: string | null;
+}
+
+/**
+ * Who/how the escalation was settled. `approver` is the actor (system for
+ * TTL/boot expiries); `source` is the resolution channel (`self-approval`,
+ * `desktop`, `timeout`, `boot-recovery`; U11 adds remote-card sources).
+ */
+export interface BotEscalationResolution {
+  approver: { type: string; channelKey?: string; channelUserId?: string };
+  decision: BotEscalationDecision;
+  source: string;
+}
+
+/**
+ * The rule payload the approver was shown (and that "always allow" would
+ * persist, U11): tool + the exact command/input summary + routing context.
+ */
+export interface BotEscalationRulePayload {
+  toolName: string;
+  command?: string;
+  decisionReasonType?: string;
+}
+
+export interface CreateBotEscalationInput {
+  /** The approval requestId — also the pending-approval correlation key. */
+  id: string;
+  botId: string;
+  sessionId: string;
+  audience: BotEscalationAudience;
+  requester: BotEscalationRequester;
+  recipients?: BotEscalationRecipient[];
+  rulePayload: BotEscalationRulePayload;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface BotEscalationEntry {
+  id: string;
+  botId: string;
+  sessionId: string;
+  audience: BotEscalationAudience;
+  requester: BotEscalationRequester;
+  recipients: BotEscalationRecipient[];
+  rulePayload: BotEscalationRulePayload;
+  state: BotEscalationState;
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt: string | null;
+  resolution: BotEscalationResolution | null;
+}
+
+interface RawBotEscalationRow {
+  id: string;
+  bot_id: string;
+  session_id: string;
+  audience: string;
+  requester_channel: string;
+  requester_channel_user_id: string;
+  requester_role: string | null;
+  recipients_json: string;
+  rule_payload_json: string;
+  state: string;
+  created_at: string;
+  expires_at: string;
+  resolved_at: string | null;
+  resolution_json: string | null;
+}
+
+function parseBotEscalationRow(row: RawBotEscalationRow): BotEscalationEntry {
+  return {
+    id: row.id,
+    botId: row.bot_id,
+    sessionId: row.session_id,
+    // Fail-safe (KTD-15): an unreadable audience never becomes 'self'.
+    audience: row.audience === 'self' ? 'self' : 'admins',
+    requester: {
+      channel: row.requester_channel,
+      channelUserId: row.requester_channel_user_id,
+      role: row.requester_role,
+    },
+    recipients: safeJsonParse(row.recipients_json, []),
+    rulePayload: safeJsonParse(row.rule_payload_json, { toolName: 'unknown' }),
+    state: (['pending', 'approved', 'denied', 'expired'].includes(row.state)
+      ? row.state
+      : 'expired') as BotEscalationState,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    resolvedAt: row.resolved_at,
+    resolution: row.resolution_json ? safeJsonParse(row.resolution_json, null) : null,
+  };
+}
+
 
 interface RawTodoRow {
   id: string;
