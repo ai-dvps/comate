@@ -34,6 +34,7 @@ import skillRoutes from './routes/skills.js';
 import analyticsRoutes from './routes/analytics.js';
 import botRoutes from './routes/bots.js';
 import healthBrowserRoutes from './routes/health-browser.js';
+import healthSandboxRoutes from './routes/health-sandbox.js';
 import browserRoutes from './routes/browser.js';
 import settingsRoutes from './routes/settings.js';
 import { browserViewerProxy } from './routes/browser-proxy.js';
@@ -159,6 +160,7 @@ app.use('/api/skills', skillRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/bots', botRoutes);
 app.use('/api/health/browser', healthBrowserRoutes);
+app.use('/api/health/sandbox', healthSandboxRoutes);
 app.use('/api/browser', browserRoutes);
 app.use('/api/settings', settingsRoutes);
 
