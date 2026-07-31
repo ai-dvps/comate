@@ -39,6 +39,7 @@ import { cn } from './components/ui/utils'
 import { startPeriodicUpdateChecks, stopPeriodicUpdateChecks } from './lib/updater-api'
 import UpdateNotification from './components/UpdateNotification'
 import UpdateRestartDialog from './components/UpdateRestartDialog'
+import SandboxDegradedBanner from './components/SandboxDegradedBanner'
 import { ToolRendererProvider } from './components/tool-renderers/ToolRendererContext'
 import { useMigrationNotice } from './hooks/use-migration-notice'
 
@@ -292,6 +293,10 @@ function App() {
         )}
 
         <UpdateNotification />
+
+        {/* U3/KTD-24: persistent banner while the host sandbox probe fails —
+            no manual dismissal; clears only when a probe passes. */}
+        <SandboxDegradedBanner />
 
         {migrationNoticeVisible && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 bg-surface border border-border rounded-lg shadow-lg px-3 py-2 flex items-center gap-2 max-w-md">

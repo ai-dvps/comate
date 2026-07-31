@@ -28,6 +28,25 @@ function extractSkillName(input: Record<string, unknown>): string | undefined {
   );
 }
 
+/**
+ * Bot-level disabled-skill check for the sandbox permission model (U3,
+ * R8/KTD-14): per-role allowlists are gone; the mounted skill set is a
+ * bot-level capability (context filtering lands in U5) and individual
+ * disables go through the explicit `disabledSkills` deny list. Returns the
+ * normalized skill name so the caller can audit.
+ */
+export function evaluateSkillDisabled(
+  disabledSkills: string[],
+  input: Record<string, unknown>,
+): { disabled: boolean; skillName?: string } {
+  const skillName = extractSkillName(input);
+  if (!skillName) return { disabled: false };
+  const disabled = new Set(
+    disabledSkills.map(normalizeSkillName).filter((n): n is string => n !== undefined),
+  );
+  return { disabled: disabled.has(skillName), skillName };
+}
+
 export function evaluateSkill(
   ctx: SkillPolicyContext,
   toolName: string,
