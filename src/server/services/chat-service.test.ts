@@ -2463,7 +2463,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     input: Record<string, unknown>;
   }
 
-  function createMockRuntime(approvalCalls: ApprovalCall[]): SessionRuntime {
+  function createMockRuntime(approvalCalls: ApprovalCall[], approvalResult?: PermissionResult): SessionRuntime {
     let closed = false;
     return {
       isClosed: () => closed,
@@ -2478,7 +2478,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
       resolveApproval: () => {},
       requestToolApproval: (_id: string, toolName: string, _toolUseId: string, input: Record<string, unknown>) => {
         approvalCalls.push({ toolName, input });
-        return Promise.resolve({ behavior: 'allow' as const });
+        return Promise.resolve(approvalResult ?? { behavior: 'allow' as const });
       },
       requestToolQuestion: () => Promise.resolve({ behavior: 'allow' as const }),
       interrupt: () => Promise.resolve(),
@@ -2509,6 +2509,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     skills?: string[];
     persona?: BotPersona;
     killSwitch?: boolean;
+    approvalResult?: PermissionResult;
   } = {}): Promise<BotSandboxSession> {
     workspaceStore.resetData();
     const role = config.role ?? 'normal';
@@ -2568,7 +2569,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     SessionRuntime.open = (...args: unknown[]) => {
       const captured = args[3] as Options;
       openCalls.push(captured);
-      return createMockRuntime(approvalCalls);
+      return createMockRuntime(approvalCalls, config.approvalResult);
     };
 
     await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, channelUserId);
@@ -3158,6 +3159,177 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     // Legacy: skill allowlist semantics (empty allowlist → deny).
     const skill = await canUseTool('Skill', { skill_name: 'any-skill' });
     assert.strictEqual(skill.behavior, 'deny');
+  });
+
+  // ------------------------------------------------- U6 audit emission (KTD-22)
+
+  it('U6: capability token mint is audited at session creation, revoke at runtime close', async () => {
+    const { sessionId, workspaceId, botId } = await setupBotSession();
+    const minted = workspaceStore
+      .listAuditLogs(botId)
+      .find((l) => l.eventType === 'capability_token_minted');
+    assert.ok(minted, 'mint event must be recorded');
+    assert.strictEqual(minted.actorType, 'system');
+    assert.strictEqual(minted.details.sessionId, sessionId);
+    assert.strictEqual(minted.details.workspaceId, workspaceId);
+    assert.strictEqual(typeof minted.details.expiresAt, 'string');
+    assert.ok(
+      !/[0-9a-f]{48}/.test(JSON.stringify(minted.details)),
+      'token material must never reach the audit row',
+    );
+
+    await service.closeRuntime(sessionId);
+    const revoked = workspaceStore
+      .listAuditLogs(botId)
+      .find((l) => l.eventType === 'capability_token_revoked');
+    assert.ok(revoked, 'revoke event must be recorded on close');
+    assert.strictEqual(revoked.details.sessionId, sessionId);
+    assert.strictEqual(revoked.details.reason, 'session-close');
+  });
+
+  it('U6: normal escape retry audits requested + denied (requester in details)', async () => {
+    const { canUseTool, botId } = await setupBotSession({ role: 'normal' });
+    const command = 'curl https://example.com/some/very/long/path/that-exceeds-32-chars';
+    const result = await canUseTool('Bash', { command, dangerouslyDisableSandbox: true });
+    assert.strictEqual(result.behavior, 'deny');
+
+    const logs = workspaceStore.listAuditLogs(botId);
+    const requested = logs.find((l) => l.eventType === 'sandbox_escape_requested');
+    const denied = logs.find((l) => l.eventType === 'sandbox_escape_denied');
+    assert.ok(requested, 'requested event must fire at the routing decision');
+    assert.ok(denied, 'denied event must fire at the routing decision');
+    assert.strictEqual(requested.actorType, 'wecom');
+    assert.strictEqual(requested.actorId, 'user-1');
+    // >32-char command persists in full with an integrity hash (KTD-22 exemption).
+    assert.strictEqual(requested.details.command, command);
+    assert.strictEqual(typeof requested.details.commandSha256, 'string');
+    assert.strictEqual(denied.actorType, 'system', 'a policy denial has no human approver');
+    assert.strictEqual(denied.details.reason, 'out-of-sandbox-normal');
+    const requester = denied.details.requester as Record<string, unknown>;
+    assert.strictEqual(requester.channelUserId, 'user-1');
+    assert.strictEqual(requester.role, 'normal');
+  });
+
+  it('U6: owner escape self-ask approval audits requested + approved', async () => {
+    const { canUseTool, botId } = await setupBotSession({ role: 'owner' });
+    const sdkOptions = { toolUseID: 'toolu_u6_1', signal: new AbortController().signal };
+    const result = await canUseTool(
+      'Bash',
+      { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true },
+      sdkOptions,
+    );
+    assert.strictEqual(result.behavior, 'allow');
+
+    const logs = workspaceStore.listAuditLogs(botId);
+    const requested = logs.find((l) => l.eventType === 'sandbox_escape_requested');
+    const approved = logs.find((l) => l.eventType === 'sandbox_escape_approved');
+    assert.ok(requested && approved);
+    assert.strictEqual(approved.actorId, 'owner-1', 'phase-1 self-approval: requester is the approver');
+    assert.strictEqual(approved.details.source, 'self-approval');
+    const requester = approved.details.requester as Record<string, unknown>;
+    assert.strictEqual(requester.channelUserId, 'owner-1');
+  });
+
+  it('U6: owner escape self-ask denial audits denied with the approver as actor', async () => {
+    const { canUseTool, botId } = await setupBotSession({
+      role: 'owner',
+      approvalResult: { behavior: 'deny', message: 'Denied by user.' },
+    });
+    const sdkOptions = { toolUseID: 'toolu_u6_2', signal: new AbortController().signal };
+    const result = await canUseTool(
+      'Bash',
+      { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true },
+      sdkOptions,
+    );
+    assert.strictEqual(result.behavior, 'deny');
+
+    const denied = workspaceStore
+      .listAuditLogs(botId)
+      .find((l) => l.eventType === 'sandbox_escape_denied');
+    assert.ok(denied);
+    assert.strictEqual(denied.actorId, 'owner-1');
+    assert.strictEqual(denied.details.reason, 'approver-denied');
+  });
+
+  it('U6: owner escape ask timeout audits expired, not denied', async () => {
+    const { APPROVAL_TIMEOUT_DENY_MESSAGE } = await import('./session-runtime.js');
+    const { canUseTool, botId } = await setupBotSession({
+      role: 'owner',
+      approvalResult: { behavior: 'deny', message: APPROVAL_TIMEOUT_DENY_MESSAGE },
+    });
+    const sdkOptions = { toolUseID: 'toolu_u6_3', signal: new AbortController().signal };
+    const result = await canUseTool(
+      'Bash',
+      { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true },
+      sdkOptions,
+    );
+    assert.strictEqual(result.behavior, 'deny');
+
+    const logs = workspaceStore.listAuditLogs(botId);
+    const expired = logs.find((l) => l.eventType === 'sandbox_escape_expired');
+    assert.ok(expired, 'timeout must file as expired');
+    assert.strictEqual(expired.actorType, 'system');
+    assert.ok(
+      !logs.some((l) => l.eventType === 'sandbox_escape_denied'),
+      'a timeout must not double-file as denied',
+    );
+  });
+
+  it('U6: degraded-platform bash deny audits bash_denied with the routing class', async () => {
+    const { canUseTool, botId } = await setupBotSession({ role: 'normal' });
+    probeOk = false;
+    await ensureSandboxProbe({ forceRefresh: true });
+
+    const result = await canUseTool('Bash', { command: 'ls -la' });
+    assert.strictEqual(result.behavior, 'deny');
+    const denied = workspaceStore.listAuditLogs(botId).find((l) => l.eventType === 'bash_denied');
+    assert.ok(denied);
+    assert.strictEqual(denied.actorId, 'user-1');
+    assert.strictEqual(denied.details.command, 'ls -la');
+    assert.strictEqual(denied.details.reason, 'degraded-platform-bash');
+    assert.strictEqual(denied.details.routingClass, 'sandbox-unavailable');
+  });
+
+  it('U6: legacy kill-switch whitelist deny audits bash_denied', async () => {
+    const { canUseTool, botId } = await setupBotSession({ role: 'normal', killSwitch: true });
+    const result = await canUseTool('Bash', { command: 'rm -rf /' });
+    assert.strictEqual(result.behavior, 'deny');
+    const denied = workspaceStore.listAuditLogs(botId).find((l) => l.eventType === 'bash_denied');
+    assert.ok(denied);
+    assert.strictEqual(denied.details.reason, 'bash-whitelist');
+  });
+
+  it('U6: admin capability-dir write audits capability_dir_write', async () => {
+    const { canUseTool, folderPath, botId } = await setupBotSession({ role: 'admin' });
+    const skillPath = path.join(folderPath, '.claude', 'skills', 'report', 'SKILL.md');
+    const result = await canUseTool('Write', { file_path: skillPath });
+    assert.strictEqual(result.behavior, 'allow');
+
+    const write = workspaceStore
+      .listAuditLogs(botId)
+      .find((l) => l.eventType === 'capability_dir_write');
+    assert.ok(write);
+    assert.strictEqual(write.actorId, 'admin-1');
+    assert.strictEqual(write.details.capabilityDir, 'skills');
+    assert.strictEqual(write.details.toolName, 'Write');
+    assert.strictEqual(write.details.role, 'admin');
+  });
+
+  it('U6: ordinary data-dir writes and denied .claude writes do not audit capability_dir_write', async () => {
+    const normal = await setupBotSession({ role: 'normal' });
+    const own = await normal.canUseTool('Write', {
+      file_path: path.join(normal.folderPath, 'data', 'user-1', 'out.txt'),
+    });
+    assert.strictEqual(own.behavior, 'allow');
+    // Normal writing .claude/skills denies at the verification layer — no
+    // capability_dir_write (the deny files file_access_denied instead).
+    const planted = await normal.canUseTool('Write', {
+      file_path: path.join(normal.folderPath, '.claude', 'skills', 'evil', 'SKILL.md'),
+    });
+    assert.strictEqual(planted.behavior, 'deny');
+    assert.ok(
+      !workspaceStore.listAuditLogs(normal.botId).some((l) => l.eventType === 'capability_dir_write'),
+    );
   });
 });
 

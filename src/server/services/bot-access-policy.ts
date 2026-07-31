@@ -53,6 +53,24 @@ import { diagLog } from '../utils/diag-logger.js';
  */
 export const PUBLIC_CAPABILITY_DIRS = ['skills', 'agents'] as const;
 
+/**
+ * U6 (KTD-22/KTD-29): which capability dir a canonical path falls inside —
+ * `<workspace>/.claude/skills/…` or `<workspace>/.claude/agents/…` — or null.
+ * Both arguments must be canonicalized against the SAME workspace anchor (the
+ * gate uses bot-path-policy's `canonicalizeBotPath`, whose root is the
+ * realpath-deepest spelling, matching the derivation's anchor).
+ */
+export function capabilityDirForPath(
+  canonicalWorkspaceFolder: string,
+  canonicalPath: string,
+): (typeof PUBLIC_CAPABILITY_DIRS)[number] | null {
+  for (const dir of PUBLIC_CAPABILITY_DIRS) {
+    const root = path.join(canonicalWorkspaceFolder, '.claude', dir) + path.sep;
+    if (canonicalPath.startsWith(root)) return dir;
+  }
+  return null;
+}
+
 /** WeCom API endpoints pre-allowed so the bundled wecom skills work out of the box (R2). */
 export const WECOM_API_DOMAINS = ['qyapi.weixin.qq.com'] as const;
 

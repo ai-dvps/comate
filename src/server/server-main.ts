@@ -60,6 +60,7 @@ import { ComateWebSocketServer } from './websocket/server.js';
 import { teardownServices } from './service-teardown.js';
 import { sessionCapabilityService } from './services/session-capability-service.js';
 import { createLoopbackAuthMiddleware } from './services/security/loopback-auth.js';
+import { botAuditLogger, LOOPBACK_AUDIT_BOT_ID } from './services/bot-audit-logger.js';
 import {
   createCorsOriginCallback,
   hostHeaderGuard,
@@ -90,6 +91,18 @@ function pruneBrowserAudit(): void {
     }
   } catch (err) {
     diagLog(`[browser-audit] prune failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** bot_audit retention (U6, KTD-22): 90-day default, mirrors pruneBrowserAudit. */
+function pruneBotAuditLogs(): void {
+  try {
+    const deleted = workspaceStore.pruneBotAuditLogs();
+    if (deleted > 0) {
+      diagLog(`[bot-audit] pruned ${deleted} expired audit rows`);
+    }
+  } catch (err) {
+    diagLog(`[bot-audit] prune failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -151,6 +164,21 @@ app.use(
   createLoopbackAuthMiddleware({
     resolveSessionToken: (token) => sessionCapabilityService.resolve(token),
     getDesktopToken: () => sessionCapabilityService.getDesktopToken(),
+    // U6 (KTD-22): promote auth rejections from diagLog to the bot audit
+    // trail. Attributable rejections (resolved token, 403 class) file under
+    // the token's bot; unattributable ones under the sentinel bucket.
+    onAuthRejected: (rejection) => {
+      botAuditLogger.logLoopbackAuthRejected(
+        rejection.botId ?? LOOPBACK_AUDIT_BOT_ID,
+        { type: 'system' },
+        {
+          method: rejection.method,
+          path: rejection.path,
+          reason: rejection.reason,
+          ...(rejection.sessionId ? { sessionId: rejection.sessionId } : {}),
+        },
+      );
+    },
   }),
 );
 
@@ -364,12 +392,15 @@ const server = app.listen(PORT, () => {
   });
 
   // Initialize log cleanup — run once at startup, then periodically. The same
-  // timer bounds the append-only browser_audit table (age + row cap).
+  // timer bounds the append-only browser_audit table (age + row cap) and the
+  // bot_audit table (U6: 90-day age retention).
   runLogCleanup();
   pruneBrowserAudit();
+  pruneBotAuditLogs();
   logCleanupTimer = setInterval(() => {
     runLogCleanup();
     pruneBrowserAudit();
+    pruneBotAuditLogs();
   }, 6 * 60 * 60 * 1000); // 6 hours
   logCleanupTimer.unref();
 

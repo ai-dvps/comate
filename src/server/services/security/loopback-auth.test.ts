@@ -8,6 +8,7 @@ import {
   createLoopbackAuthMiddleware,
   getLoopbackAuth,
   SESSION_ROUTE_TEMPLATES,
+  type LoopbackAuthRejection,
   type SessionTokenResolution,
 } from './loopback-auth.js';
 
@@ -67,6 +68,13 @@ function makeApp(): express.Express {
   // token 403, desktop 200).
   app.get('/api/workspaces/:id/future-feature', (_req, res) =>
     res.json({ ok: true, route: 'future-feature', auth: getLoopbackAuth(_req) ?? null }),
+  );
+
+  // U6 (KTD-22): the bot audit surface is desktop-only by construction — a
+  // stand-in for the future audit-view routes. Session capability tokens
+  // must NEVER reach it, regardless of the bot the token is bound to.
+  app.get('/api/bots/:id/audit-logs', (_req, res) =>
+    res.json({ ok: true, route: 'audit-logs', auth: getLoopbackAuth(_req) ?? null }),
   );
 
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
@@ -233,5 +241,89 @@ describe('loopback-auth middleware (route matrix)', { concurrency: false }, () =
       'POST /api/workspaces/:workspaceId/wecom/send-file',
       'POST /api/workspaces/:workspaceId/wecom/smartsheet-export',
     ]);
+  });
+
+  it('U6 (KTD-22): the bot audit surface is unreachable for session capability tokens', async () => {
+    // A sandboxed bot session must never read the audit trail — even its own
+    // bot's. The desktop credential retains full access (the future audit
+    // view rides that channel).
+    const asSession = await request(port, 'GET', '/api/bots/bot-1/audit-logs', { token: SESSION_TOKEN });
+    assert.strictEqual(asSession.status, 403);
+    const asDesktop = await request(port, 'GET', '/api/bots/bot-1/audit-logs', { token: DESKTOP_TOKEN });
+    assert.strictEqual(asDesktop.status, 200);
+  });
+});
+
+describe('loopback-auth rejection audit hook (U6, KTD-22)', { concurrency: false }, () => {
+  let server: http.Server;
+  let port: number;
+  let rejections: LoopbackAuthRejection[];
+
+  before(async () => {
+    rejections = [];
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createLoopbackAuthMiddleware({
+        getDesktopToken: () => DESKTOP_TOKEN,
+        resolveSessionToken: (token) => (token === SESSION_TOKEN ? SESSION : null),
+        onAuthRejected: (rejection) => {
+          rejections.push(rejection);
+        },
+      }),
+    );
+    app.get('/api/workspaces/:id/files/content', (_req, res) => res.json({ ok: true }));
+    app.post('/api/workspaces/:workspaceId/wecom/send', (_req, res) => res.json({ ok: true }));
+    app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+    server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+
+  after(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('reports missing-credential rejections without bot attribution', async () => {
+    const res = await request(port, 'GET', '/api/workspaces/ws-1/files/content?path=x');
+    assert.strictEqual(res.status, 401);
+    const r = rejections.find((x) => x.reason === 'missing-credential');
+    assert.ok(r);
+    assert.strictEqual(r.botId, null);
+    assert.strictEqual(r.method, 'GET');
+    assert.strictEqual(r.path, '/api/workspaces/ws-1/files/content');
+  });
+
+  it('reports invalid-token rejections without bot attribution', async () => {
+    const res = await request(port, 'POST', '/api/workspaces/ws-1/wecom/send', { token: EXPIRED_TOKEN, body: {} });
+    assert.strictEqual(res.status, 401);
+    const r = rejections.find((x) => x.reason === 'invalid-token');
+    assert.ok(r);
+    assert.strictEqual(r.botId, null);
+  });
+
+  it('reports non-enrolled-route rejections with the resolved bot and session', async () => {
+    const res = await request(port, 'GET', '/api/workspaces/ws-1/files/content?path=x', { token: SESSION_TOKEN });
+    assert.strictEqual(res.status, 403);
+    const r = rejections.find((x) => x.reason === 'route-not-enrolled');
+    assert.ok(r);
+    assert.strictEqual(r.botId, 'bot-1');
+    assert.strictEqual(r.sessionId, 'sess-1');
+  });
+
+  it('reports workspace-mismatch rejections with the token binding', async () => {
+    const res = await request(port, 'POST', '/api/workspaces/ws-2/wecom/send', { token: SESSION_TOKEN, body: {} });
+    assert.strictEqual(res.status, 403);
+    const r = rejections.find((x) => x.reason === 'workspace-mismatch');
+    assert.ok(r);
+    assert.strictEqual(r.botId, 'bot-1');
+    assert.strictEqual(r.sessionId, 'sess-1');
+  });
+
+  it('does not report accepted requests', async () => {
+    const before = rejections.length;
+    const res = await request(port, 'POST', '/api/workspaces/ws-1/wecom/send', { token: SESSION_TOKEN, body: {} });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(rejections.length, before);
   });
 });

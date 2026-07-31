@@ -208,6 +208,21 @@ export class BotService {
       throw new BotValidationError('Normal role not found');
     }
     this.store.updateBotRole(normalRole.id, permissions);
+
+    // U6 (KTD-22): audit every rule that newly enters the passlist. Wiring at
+    // the service layer means both emission paths — the U4 desktop editor and
+    // the future U11 "always allow" accumulation — share this single point.
+    const previousRules = new Set((normalRole.permissions.passlistRules ?? []).map((r) => r.rule));
+    const seen = new Set<string>();
+    for (const rule of permissions.passlistRules ?? []) {
+      if (previousRules.has(rule.rule) || seen.has(rule.rule)) continue;
+      seen.add(rule.rule);
+      this.auditLogger.logPasslistRuleAdded(botId, actor, {
+        rule: rule.rule,
+        source: rule.provenance?.source ?? 'manual',
+        addedBy: rule.provenance?.addedBy ?? actor.channelUserId ?? actor.type,
+      });
+    }
   }
 
   updateRolePersonas(

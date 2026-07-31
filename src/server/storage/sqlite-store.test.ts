@@ -816,6 +816,32 @@ describe('SqliteStore bot management (unified schema)', { concurrency: false }, 
     assert.strictEqual(logs[0].actorType, 'user');
   });
 
+  it('pruneBotAuditLogs deletes rows older than the retention cutoff and keeps newer rows (U6, KTD-22)', () => {
+    const bot = store.createBot({ name: 'Audit Bot' });
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'fresh' });
+    // Negative retention pushes the cutoff into the future so every row is
+    // "expired" — the same deterministic stand-in pruneBrowserAudit uses.
+    const deletedAll = store.pruneBotAuditLogs({ retentionDays: -1 });
+    assert.strictEqual(deletedAll, 1);
+    assert.deepStrictEqual(store.listAuditLogs(bot.id), []);
+
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'fresh' });
+    // Default retention (90 days) keeps rows written now.
+    assert.strictEqual(store.pruneBotAuditLogs(), 0);
+    assert.strictEqual(store.listAuditLogs(bot.id).length, 1);
+  });
+
+  it('pruneBotAuditLogs scopes deletion by age across bots', () => {
+    const a = store.createBot({ name: 'A' });
+    const b = store.createBot({ name: 'B' });
+    store.recordAuditLog({ botId: a.id, actorType: 'system', actorId: 'x', eventType: 'old' });
+    store.recordAuditLog({ botId: b.id, actorType: 'system', actorId: 'x', eventType: 'old' });
+    const deleted = store.pruneBotAuditLogs({ retentionDays: -1 });
+    assert.strictEqual(deleted, 2);
+    assert.deepStrictEqual(store.listAuditLogs(a.id), []);
+    assert.deepStrictEqual(store.listAuditLogs(b.id), []);
+  });
+
   it('migration state stores and retrieves version and snapshot', () => {
     assert.strictEqual(store.getMigrationVersion(), null);
 
