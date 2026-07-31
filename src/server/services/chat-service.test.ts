@@ -2339,6 +2339,73 @@ describe('chat-service bot-level dynamic policy', { concurrency: false }, () => 
     const allowed = await canUseTool('Write', { file_path: sharedFile });
     assert.strictEqual(allowed.behavior, 'allow');
   });
+
+  it('dangling botId fails closed: every tool call is denied and logged (AE7)', async () => {
+    const { logs, restore } = collectDiagLogs();
+    try {
+      workspaceStore.resetData();
+      const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-bot-policy-'));
+      tmpFolders.push(folderPath);
+      const workspace = await workspaceStore.create({
+        name: 'Dangling Bot Workspace',
+        folderPath,
+        settings: {},
+      });
+      const provider = workspaceStore.createProvider({
+        name: 'Test Provider',
+        baseUrl: 'http://test',
+        authToken: 'test',
+        model: 'test-model',
+        isDefault: true,
+      });
+      const bot = botService.createBot({
+        name: 'Doomed Bot',
+        activeWorkspaceId: workspace.id,
+      });
+      botService.updateChannelSettings(bot.id, 'wecom', { enabled: true, botId: 'bot-wecom', botSecret: 'secret' });
+      botService.addMember(bot.id, { channelKey: 'wecom', channelUserId: 'user-1', roleKey: 'normal' });
+      const session = workspaceStore.createLocalSession(
+        workspace.id,
+        'Dangling Bot Session',
+        undefined,
+        provider.id,
+        'wecom',
+        undefined,
+        bot.id,
+      );
+
+      // Delete the bot row AFTER binding the session: botId now dangles (AE7).
+      botService.deleteBot(bot.id);
+
+      let capturedOptions: Options | undefined;
+      SessionRuntime.open = (...args: unknown[]) => {
+        capturedOptions = args[3] as Options;
+        return createMockRuntime();
+      };
+
+      await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, 'user-1');
+      assert.ok(capturedOptions?.canUseTool, 'canUseTool must be installed for dangling-bot sessions');
+      const canUseTool = capturedOptions.canUseTool;
+
+      const calls: Array<[string, Record<string, unknown>]> = [
+        ['Read', { file_path: path.join(folderPath, 'data', 'user-1', 'x.txt') }],
+        ['Bash', { command: 'ls' }],
+        ['Skill', { skill_name: 'allowed-skill' }],
+      ];
+      for (const [toolName, input] of calls) {
+        const result = await canUseTool(toolName, input);
+        assert.strictEqual(result.behavior, 'deny', `${toolName} must be denied when the bot row is gone`);
+        assert.strictEqual(result.message, "I can't do that in this workspace.");
+      }
+
+      assert.ok(
+        logs.some((l) => l.includes('[ChatService.botDeny]') && l.includes('reason=dangling-bot-id')),
+        'dangling-bot-id denial must be logged',
+      );
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe('chat-service buildSdkOptions persona injection', { concurrency: false }, () => {
