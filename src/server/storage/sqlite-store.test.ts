@@ -872,11 +872,32 @@ describe('SqliteStore bot management (unified schema)', { concurrency: false }, 
       },
       skillAllowlist: ['skill-a'],
       bashWhitelist: ['ls'],
-    };
+    } as import('../models/bot.js').BotRolePolicy;
 
     store.updateBotRole(role!.id, newPerms);
     const updated = store.getBotRole(role!.id);
-    assert.deepStrictEqual(updated!.permissions, newPerms);
+    // The read path sanitizes (U2): missing categories backfill fail-closed
+    // (browser: 'deny') and the new fields backfill to safe defaults.
+    assert.deepStrictEqual(updated!.permissions, {
+      normalToolPolicy: {
+        posture: 'allow-all',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+          browser: 'deny',
+        },
+        overrides: undefined,
+      },
+      skillAllowlist: ['skill-a'],
+      bashWhitelist: ['ls'],
+      disabledSkills: [],
+      passlistRules: [],
+      networkAllowlist: [],
+    });
   });
 
   it('bot role persona round-trip', () => {
