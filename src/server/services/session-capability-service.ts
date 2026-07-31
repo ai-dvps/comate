@@ -35,12 +35,13 @@
  * the CLI that needs it).
  */
 
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import { getStorageDir } from '../storage/data-dir.js';
 import { validateUserDirName } from './bot-access-policy.js';
+import { sha256Hex } from '../utils/sha256.js';
 import { diagLog } from '../utils/diag-logger.js';
 
 /** Env var carrying the per-session capability token into the sandbox. */
@@ -67,10 +68,6 @@ export interface ResolvedSessionToken {
   sessionId: string;
   workspaceId: string;
   botId: string | null;
-}
-
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
 }
 
 export class SessionCapabilityService {
@@ -106,7 +103,7 @@ export class SessionCapabilityService {
     const token = randomBytes(24).toString('hex');
     const expiresAt = new Date(now.getTime() + (input.ttlMs ?? CAPABILITY_TOKEN_TTL_MS)).toISOString();
     this.store.insertCapabilityToken({
-      tokenHash: hashToken(token),
+      tokenHash: sha256Hex(token),
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
       botId: input.botId,
@@ -123,7 +120,7 @@ export class SessionCapabilityService {
    */
   resolve(token: string, now?: Date): ResolvedSessionToken | null {
     if (typeof token !== 'string' || token.length === 0 || token.length > 256) return null;
-    const row = this.store.getCapabilityToken(hashToken(token));
+    const row = this.store.getCapabilityToken(sha256Hex(token));
     if (!row) return null;
     if (row.revokedAt !== null) return null;
     const expiry = Date.parse(row.expiresAt);

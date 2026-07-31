@@ -14,6 +14,7 @@ import type {
   SseEvent,
   WorkflowState,
   SessionActivitySnapshot,
+  QuestionPayload,
 } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
@@ -199,7 +200,7 @@ function legacyBashWhitelistPrefixMatch(
   if (isOwnerOrAdmin(role)) {
     return true;
   }
-  const whitelist = bashWhitelist ?? [];
+  const whitelist = bashWhitelist;
   if (whitelist.length === 0) {
     return false;
   }
@@ -216,6 +217,42 @@ function summarizeToolInput(input: unknown): string {
   } catch {
     return '[unserializable]';
   }
+}
+
+/** First string among the common tool-input path fields (audit rendering). */
+function auditPathFromToolInput(input: Record<string, unknown>): string | undefined {
+  for (const key of ['file_path', 'notebook_path', 'pattern', 'path'] as const) {
+    const value = input[key];
+    if (typeof value === 'string') return value;
+  }
+  return undefined;
+}
+
+/** Normalize an AskUserQuestion tool input into question payloads. */
+function mapAskUserQuestionInput(input: Record<string, unknown>): QuestionPayload[] {
+  return (input.questions as unknown[] ?? []).map((q: unknown) => {
+    const qx = q as Record<string, unknown>;
+    return {
+      question: typeof qx.question === 'string' ? qx.question : '',
+      header: typeof qx.header === 'string' ? qx.header : undefined,
+      options: Array.isArray(qx.options)
+        ? qx.options.map((o: unknown) => {
+            const ox = o as Record<string, unknown>;
+            return {
+              label: typeof ox.label === 'string' ? ox.label : '',
+              description: typeof ox.description === 'string' ? ox.description : undefined,
+              preview: typeof ox.preview === 'string' ? ox.preview : undefined,
+            };
+          })
+        : [],
+      multiSelect: qx.multiSelect === true,
+    };
+  });
+}
+
+/** Positive finite tool-input timeout, or undefined. */
+function extractToolTimeout(input: Record<string, unknown>): number | undefined {
+  return typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
 }
 
 /**
@@ -1435,6 +1472,13 @@ export class ChatService {
       return await promise;
     } finally {
       this.creatingRuntimes.delete(sessionId);
+      // A failed creation never registered a runtime, so closeRuntime
+      // early-returns and would never clear the bot-gate bookkeeping
+      // (sessionSpawnRoles is set inside buildSdkOptions) — drop it here.
+      if (!this.runtimes.has(sessionId)) {
+        this.sessionSpawnRoles.delete(sessionId);
+        this.demotionRebuilds.delete(sessionId);
+      }
     }
   }
 
@@ -2184,6 +2228,10 @@ export class ChatService {
         // the runtime. See plan KTD3.
         const bot = botService.getBot(session.botId);
         if (bot) {
+          // Channel settings are a pure read — fetch once per spawn (both the
+          // wecom context write and the sandbox derivation below need them).
+          const channelSettings = botService.getChannelSettings(bot.id);
+
           // Resolve the member role ONCE at spawn (reused by the persona seam,
           // the path context, and the U3 derivation — never re-resolved here).
           const spawnRole: BotRoleKey | null = channel && channelUserId
@@ -2198,22 +2246,15 @@ export class ChatService {
 
           const isAdminOrOwnerForContext = isOwnerOrAdmin(spawnRole);
 
-          const knownUserDirNames: string[] = [];
-          if (channel === 'wecom') {
-            for (const u of botService.listChannelUsersForWorkspace(workspace.id, 'wecom')) {
-              knownUserDirNames.push(u.plaintextUserId ?? u.channelUserId);
-            }
-          } else if (channel === 'feishu') {
-            for (const u of botService.listChannelUsersForWorkspace(workspace.id, 'feishu')) {
-              knownUserDirNames.push(u.plaintextUserId ?? u.channelUserId);
-            }
-          }
-
           const userDirName = channelUserId ?? 'anonymous';
+          // The sandbox-model gate never consults knownUserDirNames (KTD-6: it
+          // denies the data/ parent instead), so the user-dir enumeration is
+          // skipped here — the legacy kill-switch branch below rebuilds the
+          // context WITH it (its validateToolInput cross-user check needs it).
           pathContext = createPathPolicyContext(
             workspace,
             userDirName,
-            knownUserDirNames,
+            [],
             isAdminOrOwnerForContext,
             workspace.settings.sensitiveFileDenylist ?? [],
           );
@@ -2233,7 +2274,6 @@ export class ChatService {
               botId: bot.id,
             });
             env[SESSION_TOKEN_ENV] = capability.token;
-            options.env = env;
             // U6 (KTD-22, U12 notes): token lifecycle audit. The token value
             // itself is never logged (the 48-hex shape auto-redacts anyway).
             botAuditLogger.logCapabilityTokenMinted(bot.id, { type: 'system' }, {
@@ -2253,7 +2293,6 @@ export class ChatService {
           // planted `.claude/wecom-context.json` cannot win.
           if (channel === 'wecom' && channelUserId) {
             try {
-              const channelSettings = botService.getChannelSettings(bot.id);
               const identity = validateUserDirName(channelUserId);
               if (channelSettings.wecom?.enabled && identity.ok) {
                 const contextPath = writeSessionWecomContext({
@@ -2264,7 +2303,6 @@ export class ChatService {
                   serverUrl: getSidecarBaseUrl(),
                 });
                 env[WECOM_CONTEXT_FILE_ENV] = contextPath;
-                options.env = env;
               }
             } catch (err) {
               diagLog(
@@ -2278,6 +2316,27 @@ export class ChatService {
             // LEGACY permission model (runtime kill switch, U3 Operational
             // Notes): prior behavior preserved verbatim for canary rollback.
             // ==============================================================
+            // The legacy cross-user read check enumerates the workspace's
+            // known user dirs — rebuild the path context with them (the
+            // sandbox model never runs these queries).
+            const knownUserDirNames: string[] = [];
+            if (channel === 'wecom') {
+              for (const u of botService.listChannelUsersForWorkspace(workspace.id, 'wecom')) {
+                knownUserDirNames.push(u.plaintextUserId ?? u.channelUserId);
+              }
+            } else if (channel === 'feishu') {
+              for (const u of botService.listChannelUsersForWorkspace(workspace.id, 'feishu')) {
+                knownUserDirNames.push(u.plaintextUserId ?? u.channelUserId);
+              }
+            }
+            pathContext = createPathPolicyContext(
+              workspace,
+              userDirName,
+              knownUserDirNames,
+              isAdminOrOwnerForContext,
+              workspace.settings.sensitiveFileDenylist ?? [],
+            );
+
             if (persona) {
               if (persona.mode === 'append') {
                 options.systemPrompt = {
@@ -2392,15 +2451,7 @@ export class ChatService {
                         sessionId: session.id,
                         toolName,
                         reason: r.reason ?? 'path-denied',
-                        path: typeof input.file_path === 'string'
-                          ? input.file_path
-                          : typeof input.notebook_path === 'string'
-                            ? input.notebook_path
-                            : typeof input.pattern === 'string'
-                              ? input.pattern
-                              : typeof input.path === 'string'
-                                ? input.path
-                                : undefined,
+                        path: auditPathFromToolInput(input),
                       },
                     );
                   }
@@ -2436,25 +2487,8 @@ export class ChatService {
                     message: "I can't do that in this workspace.",
                   };
                 }
-                const questions = (input.questions as unknown[] ?? []).map((q: unknown) => {
-                  const qx = q as Record<string, unknown>;
-                  return {
-                    question: typeof qx.question === 'string' ? qx.question : '',
-                    header: typeof qx.header === 'string' ? qx.header : undefined,
-                    options: Array.isArray(qx.options)
-                      ? qx.options.map((o: unknown) => {
-                          const ox = o as Record<string, unknown>;
-                          return {
-                            label: typeof ox.label === 'string' ? ox.label : '',
-                            description: typeof ox.description === 'string' ? ox.description : undefined,
-                            preview: typeof ox.preview === 'string' ? ox.preview : undefined,
-                          };
-                        })
-                      : [],
-                    multiSelect: qx.multiSelect === true,
-                  };
-                });
-                const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+                const questions = mapAskUserQuestionInput(input);
+                const timeout = extractToolTimeout(input);
                 return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
                   timeout,
                   signal: sdkOptions.signal,
@@ -2472,7 +2506,7 @@ export class ChatService {
                     message: "I can't do that in this workspace.",
                   };
                 }
-                const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+                const timeout = extractToolTimeout(input);
                 return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
                   title: sdkOptions.title,
                   description: sdkOptions.description,
@@ -2498,7 +2532,6 @@ export class ChatService {
             this.sessionSpawnRoles.set(session.id, spawnRole);
 
             const rolePolicy = botService.getRolePolicy(bot.id) ?? createDefaultBotRolePolicy('normal');
-            const channelSettings = botService.getChannelSettings(bot.id);
             const derivation: BotAccessDerivation = deriveBotAccess(
               bot,
               { roleKey: spawnRole ?? 'normal', channelUserId: channelUserId ?? null },
@@ -2608,7 +2641,7 @@ export class ChatService {
                 if (!runtime) {
                   return Promise.resolve(denyRouted('final', 'missing-runtime'));
                 }
-                const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+                const timeout = extractToolTimeout(input);
                 return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
                   title: sdkOptions.title,
                   description: sdkOptions.description,
@@ -2750,15 +2783,7 @@ export class ChatService {
                         sessionId: session.id,
                         toolName,
                         reason: verdict.reason ?? 'path-denied',
-                        path: typeof input.file_path === 'string'
-                          ? input.file_path
-                          : typeof input.notebook_path === 'string'
-                            ? input.notebook_path
-                            : typeof input.pattern === 'string'
-                              ? input.pattern
-                              : typeof input.path === 'string'
-                                ? input.path
-                                : undefined,
+                        path: auditPathFromToolInput(input),
                       },
                     );
                   }
@@ -2776,7 +2801,7 @@ export class ChatService {
                       ? input.notebook_path
                       : undefined;
                   if (rawPath) {
-                    const canonical = canonicalizeBotPath(gatePathContext.workspaceFolder, rawPath);
+                    const canonical = verdict.canonical ?? canonicalizeBotPath(gatePathContext.workspaceFolder, rawPath);
                     const capabilityDir = capabilityDirForPath(gatePathContext.workspaceFolder, canonical);
                     if (capabilityDir) {
                       botAuditLogger.logCapabilityDirWrite(
@@ -2817,25 +2842,8 @@ export class ChatService {
                 if (!runtime) {
                   return denyRouted('final', 'missing-runtime');
                 }
-                const questions = (input.questions as unknown[] ?? []).map((q: unknown) => {
-                  const qx = q as Record<string, unknown>;
-                  return {
-                    question: typeof qx.question === 'string' ? qx.question : '',
-                    header: typeof qx.header === 'string' ? qx.header : undefined,
-                    options: Array.isArray(qx.options)
-                      ? qx.options.map((o: unknown) => {
-                          const ox = o as Record<string, unknown>;
-                          return {
-                            label: typeof ox.label === 'string' ? ox.label : '',
-                            description: typeof ox.description === 'string' ? ox.description : undefined,
-                            preview: typeof ox.preview === 'string' ? ox.preview : undefined,
-                          };
-                        })
-                      : [],
-                    multiSelect: qx.multiSelect === true,
-                  };
-                });
-                const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+                const questions = mapAskUserQuestionInput(input);
+                const timeout = extractToolTimeout(input);
                 return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
                   timeout,
                   signal: sdkOptions.signal,
@@ -2979,15 +2987,7 @@ export class ChatService {
                     sessionId: session.id,
                     toolName,
                     reason: r.reason ?? 'path-denied',
-                    path: typeof input.file_path === 'string'
-                      ? input.file_path
-                      : typeof input.notebook_path === 'string'
-                        ? input.notebook_path
-                        : typeof input.pattern === 'string'
-                          ? input.pattern
-                          : typeof input.path === 'string'
-                            ? input.path
-                            : undefined,
+                    path: auditPathFromToolInput(input),
                   },
                 );
               }
@@ -3022,25 +3022,8 @@ export class ChatService {
                 message: "I can't do that in this workspace.",
               };
             }
-            const questions = (input.questions as unknown[] ?? []).map((q: unknown) => {
-              const qx = q as Record<string, unknown>;
-              return {
-                question: typeof qx.question === 'string' ? qx.question : '',
-                header: typeof qx.header === 'string' ? qx.header : undefined,
-                options: Array.isArray(qx.options)
-                  ? qx.options.map((o: unknown) => {
-                      const ox = o as Record<string, unknown>;
-                      return {
-                        label: typeof ox.label === 'string' ? ox.label : '',
-                        description: typeof ox.description === 'string' ? ox.description : undefined,
-                        preview: typeof ox.preview === 'string' ? ox.preview : undefined,
-                      };
-                    })
-                  : [],
-                multiSelect: qx.multiSelect === true,
-              };
-            });
-            const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+            const questions = mapAskUserQuestionInput(input);
+            const timeout = extractToolTimeout(input);
             return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
               timeout,
               signal: sdkOptions.signal,
@@ -3058,7 +3041,7 @@ export class ChatService {
                 message: "I can't do that in this workspace.",
               };
             }
-            const timeout = typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+            const timeout = extractToolTimeout(input);
             return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
               title: sdkOptions.title,
               description: sdkOptions.description,
