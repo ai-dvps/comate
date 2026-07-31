@@ -1018,7 +1018,7 @@ export default function PromptInput({
         <>
           {(backgroundTasks.length > 0 || activity?.phase === 'stopping') && (
             <div
-              className="relative z-10 mx-3 mb-2 max-h-28 overflow-y-auto rounded-lg border border-border/80 bg-surface/95 px-2.5 py-2 text-[11px] text-text-secondary shadow-[0_8px_24px_-14px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+              className="relative z-10 mx-auto mb-2 w-fit max-w-full max-h-28 overflow-y-auto rounded-lg border border-border/80 bg-surface/95 px-2.5 py-2 text-[11px] text-text-secondary shadow-[0_8px_24px_-14px_rgba(0,0,0,0.45)] backdrop-blur-sm"
               role="status"
               aria-live="polite"
               aria-atomic="true"
@@ -1032,7 +1032,7 @@ export default function PromptInput({
                     <Activity className="h-3.5 w-3.5" aria-hidden="true" />
                   )}
                 </span>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0">
                   <div className="font-medium leading-6 text-text-primary">
                     {activity?.phase === 'stopping'
                       ? t('activity.stopping')

@@ -7,6 +7,12 @@ import PromptInput from './PromptInput'
 import i18n from '../i18n'
 import type { SessionActivitySnapshot } from '../types/message'
 
+const ACTIVITY_LAYOUT_STYLES = `
+  .mx-auto { margin-inline: auto; }
+  .w-fit { width: fit-content; }
+  .max-w-full { max-width: 100%; }
+`
+
 function renderWithI18n(ui: React.ReactElement) {
   return render(
     <I18nextProvider i18n={i18n}>
@@ -593,10 +599,27 @@ describe('PromptInput browser', () => {
     }
     chatStoreMock.setDraft(DEFAULT_PROPS.sessionId, 'Answer the main agent')
 
-    renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+    renderWithI18n(
+      <>
+        <style>{ACTIVITY_LAYOUT_STYLES}</style>
+        <PromptInput {...DEFAULT_PROPS} isStreaming />
+      </>,
+    )
 
     const activitySurface = screen.getByTestId('session-activity-details')
-    expect(activitySurface).toHaveClass('mx-3', 'rounded-lg', 'shadow-[0_8px_24px_-14px_rgba(0,0,0,0.45)]')
+    expect(activitySurface).toHaveClass(
+      'mx-auto',
+      'w-fit',
+      'max-w-full',
+      'rounded-lg',
+      'shadow-[0_8px_24px_-14px_rgba(0,0,0,0.45)]',
+    )
+    const activityRect = activitySurface.getBoundingClientRect()
+    const inputRect = inputCardElement().getBoundingClientRect()
+    expect(activityRect.width).toBeLessThan(inputRect.width)
+    expect(Math.abs(
+      activityRect.left + activityRect.width / 2 - (inputRect.left + inputRect.width / 2),
+    )).toBeLessThan(1)
     expect(activitySurface.querySelector('svg')).toBeInTheDocument()
     expect(screen.getByText('2 background tasks running')).toBeInTheDocument()
     expect(screen.getByText('Agent')).toBeInTheDocument()
@@ -725,13 +748,18 @@ describe('PromptInput browser', () => {
 
     renderWithI18n(
       <div style={{ width: '230px' }}>
+        <style>{ACTIVITY_LAYOUT_STYLES}</style>
         <PromptInput {...DEFAULT_PROPS} isStreaming />
       </div>,
     )
 
     const region = screen.getByTestId('session-activity-details')
+    const regionRect = region.getBoundingClientRect()
+    const inputRect = inputCardElement().getBoundingClientRect()
     expect(region).toHaveClass('max-h-28', 'overflow-y-auto')
     expect(screen.getByText(longDescription)).toHaveClass('break-words')
+    expect(regionRect.left).toBeGreaterThanOrEqual(inputRect.left)
+    expect(regionRect.right).toBeLessThanOrEqual(inputRect.right)
     expect(region.scrollWidth).toBeLessThanOrEqual(region.clientWidth)
   })
 
