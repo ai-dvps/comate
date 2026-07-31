@@ -61,7 +61,7 @@ function App() {
     activeWorkspaceId ? s.activeSessionIds[activeWorkspaceId] : undefined
   )
   const setActiveSession = useChatStore((s) => s.setActiveSession)
-  const [activePanel, setActivePanel] = useState<AppPanel>(null)
+  const [activePanel, setActivePanel] = useState<AppPanel | null>(null)
   const openPanel = useCallback((panel: AppPanel) => setActivePanel(panel), [])
   const closePanel = useCallback(() => setActivePanel(null), [])
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -276,7 +276,7 @@ function App() {
             <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />
             <span className="text-xs text-text-primary flex-1">{providerCheck.error}</span>
             <button
-              onClick={() => setShowSettings(true)}
+              onClick={() => openPanel('settings')}
               className="px-2 py-1 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors flex-shrink-0"
             >
               {t('provider.configure')}
