@@ -54,6 +54,8 @@
     "stop": "Stop",
     "showLess": "Show less",
     "showMore": "Show more",
+    "collapsePanel": "Collapse panel",
+    "expandPanel": "Expand panel",
     "allow": "Allow",
     "allowAlways": "Allow always",
     "deny": "Deny",

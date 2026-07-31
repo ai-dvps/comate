@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import ApprovalSurface from './ApprovalSurface'
 
@@ -16,6 +17,8 @@ vi.mock('react-i18next', () => ({
     if (key === 'approval.allow') return 'Allow'
     if (key === 'approval.deny') return 'Deny'
     if (key === 'approval.stop') return 'Stop'
+    if (key === 'approval.collapsePanel') return 'Collapse panel'
+    if (key === 'approval.expandPanel') return 'Expand panel'
     return key
   } }),
   initReactI18next: { type: '3rdParty', init: () => {} },
@@ -134,5 +137,62 @@ describe('ApprovalSurface browser submit manifest (U4)', () => {
       />,
     )
     expect(screen.queryByText('approval.browserSubmit.destination')).not.toBeInTheDocument()
+  })
+})
+
+describe('ApprovalSurface collapsible panel', () => {
+  it('renders expanded by default', () => {
+    render(<ApprovalSurface {...baseProps} />)
+    expect(screen.getByRole('button', { name: 'Collapse panel' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument()
+  })
+
+  it('toggles body visibility when collapse/expand button is clicked', async () => {
+    const user = userEvent.setup()
+    render(<ApprovalSurface {...baseProps} />)
+
+    const toggle = screen.getByRole('button', { name: 'Collapse panel' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+    await user.click(toggle)
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: 'Expand panel' })).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(screen.getByRole('button', { name: 'Expand panel' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: 'Collapse panel' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('resets to expanded when pendingItem.requestId changes', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<ApprovalSurface {...baseProps} />)
+
+    await user.click(screen.getByRole('button', { name: 'Collapse panel' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument())
+
+    rerender(
+      <ApprovalSurface
+        {...baseProps}
+        pendingItem={{ ...baseProps.pendingItem, requestId: 'req-2' }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: 'Collapse panel' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('exposes aria-expanded and title on the toggle button', () => {
+    render(<ApprovalSurface {...baseProps} />)
+    const toggle = screen.getByRole('button', { name: 'Collapse panel' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle).toHaveAttribute('title', 'Collapse panel')
   })
 })

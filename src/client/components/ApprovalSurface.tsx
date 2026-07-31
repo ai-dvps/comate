@@ -7,7 +7,7 @@ import {
   useId,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Square, SlashSquare, Paperclip } from 'lucide-react'
+import { Loader2, Square, SlashSquare, Paperclip, ChevronDown, ChevronUp } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import type { QuestionPayload, PermissionSuggestion } from '../types/message'
 import type { SlashCommandDto } from '../stores/commands-store'
@@ -17,6 +17,12 @@ import {
   PopoverTrigger,
   PopoverContent,
 } from './ui/popover'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from './ui/collapsible'
+import { cn } from './ui/utils'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import PreviewPane from './PreviewPane'
@@ -108,6 +114,13 @@ export default function ApprovalSurface({
 }: ApprovalSurfaceProps) {
   const { t } = useTranslation('chat')
   const titleId = useId()
+  const [isExpanded, setIsExpanded] = useState(true)
+
+  // Reset to expanded when a new pending item arrives so the user notices it.
+  useEffect(() => {
+    setIsExpanded(true)
+  }, [pendingItem.requestId])
+
   const isQuestion = 'questions' in pendingItem
   const headerTitle = isQuestion
     ? t('approval.clarifyingQuestion')
@@ -134,60 +147,97 @@ export default function ApprovalSurface({
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-3">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-live="polite"
-        className="bg-surface border border-border/50 rounded-lg shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] px-4 py-3"
-      >
-        <header className="flex items-start justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <h2
-              id={titleId}
-              className="text-sm font-semibold text-text-primary truncate"
-            >
-              {headerTitle}
-            </h2>
-            {headerDescription && (
-              <span className="text-xs text-text-secondary truncate">
-                {headerDescription}
-              </span>
+      <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-live="polite"
+          className="bg-surface border border-border/50 rounded-lg shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] px-4 py-3"
+        >
+          <header
+            className={cn(
+              'flex items-start justify-between gap-3',
+              isExpanded && 'mb-3',
             )}
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {pendingItem.expiresAt != null && (
-              <Countdown expiresAt={pendingItem.expiresAt} />
-            )}
-            {positionLabel && (
-              <span className="text-xs text-text-tertiary">
-                {positionLabel}
-              </span>
-            )}
-            <StopButton onStop={onStop} isResolving={isResolving} />
-          </div>
-        </header>
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <h2
+                id={titleId}
+                className="text-sm font-semibold text-text-primary truncate"
+              >
+                {headerTitle}
+              </h2>
+              {headerDescription && (
+                <span className="text-xs text-text-secondary truncate">
+                  {headerDescription}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {pendingItem.expiresAt != null && (
+                <Countdown expiresAt={pendingItem.expiresAt} />
+              )}
+              {positionLabel && (
+                <span className="text-xs text-text-tertiary">
+                  {positionLabel}
+                </span>
+              )}
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={
+                    isExpanded
+                      ? t('approval.collapsePanel')
+                      : t('approval.expandPanel')
+                  }
+                  title={
+                    isExpanded
+                      ? t('approval.collapsePanel')
+                      : t('approval.expandPanel')
+                  }
+                  aria-expanded={isExpanded}
+                  className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="w-4 h-4" />
+                  ) : (
+                    <ChevronUp className="w-4 h-4" />
+                  )}
+                </button>
+              </CollapsibleTrigger>
+              <StopButton onStop={onStop} isResolving={isResolving} />
+            </div>
+          </header>
 
-        {isQuestion ? (
-          <QuestionView
-            workspaceId={workspaceId}
-            item={pendingItem as PendingQuestion}
-            isResolving={isResolving}
-            stepIndex={stepIndex}
-            onStepChange={setStepIndex}
-            onAnswerQuestion={onAnswerQuestion}
-            onChatAbout={onChatAbout}
-          />
-        ) : (
-          <ApprovalView
-            item={pendingItem as PendingApproval}
-            isResolving={isResolving}
-            onAllow={onAllow}
-            onAllowAlways={onAllowAlways}
-            onDeny={onDeny}
-          />
-        )}
-      </div>
+          <CollapsibleContent
+            className={cn(
+              'data-[state=open]:animate-in data-[state=open]:slide-in-from-top-2',
+              'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2',
+            )}
+          >
+            {isQuestion ? (
+              <QuestionView
+                workspaceId={workspaceId}
+                item={pendingItem as PendingQuestion}
+                isResolving={isResolving}
+                stepIndex={stepIndex}
+                onStepChange={setStepIndex}
+                onAnswerQuestion={onAnswerQuestion}
+                onChatAbout={onChatAbout}
+              />
+            ) : (
+              <ApprovalView
+                item={pendingItem as PendingApproval}
+                isResolving={isResolving}
+                onAllow={onAllow}
+                onAllowAlways={onAllowAlways}
+                onDeny={onDeny}
+              />
+            )}
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
     </div>
   )
 }
