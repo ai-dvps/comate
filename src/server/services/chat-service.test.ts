@@ -2748,17 +2748,34 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(approvalCalls[0].toolName, 'Bash');
   });
 
-  it('F2 phase-1: passlist hit allows the unsandboxed run (exact match)', async () => {
+  it('F2 phase-1: passlist rules compile into inline allow rules for the SDK engine (U4)', async () => {
+    const { options } = await setupBotSession({
+      role: 'normal',
+      passlistRules: ['Bash(git status)'],
+    });
+    // Structural matching happens UPSTREAM of the gate: the passlist rides in
+    // settings.permissions.allow and the SDK rule engine auto-allows hits
+    // (including dangerouslyDisableSandbox requests) before canUseTool fires.
+    // The end-to-end structural contract (AE1 compound blocking, exact match,
+    // wrapper stripping, the F2 escape channel) is pinned against the real CLI
+    // in sdk-rule-contract.test.ts.
+    const settings = options.settings as { permissions?: { allow: string[] } };
+    assert.ok(settings.permissions?.allow.includes('Bash(git status)'));
+  });
+
+  it('F2 phase-1: the gate itself has no passlist branch — normal escape attempts deny (U4)', async () => {
+    // By construction the gate only sees escape requests that did NOT match
+    // the passlist (the SDK engine auto-allowed those upstream). A direct
+    // gate call with a passlisted command therefore still denies for normal —
+    // in production this call never happens for a true passlist hit.
     const { canUseTool, approvalCalls } = await setupBotSession({
       role: 'normal',
       passlistRules: ['Bash(git status)'],
     });
-    const allowed = await canUseTool('Bash', { command: 'git status', dangerouslyDisableSandbox: true });
-    assert.strictEqual(allowed.behavior, 'allow');
-    assert.strictEqual(approvalCalls.length, 0);
-    // Different arguments do not match (exact-match semantics).
-    const denied = await canUseTool('Bash', { command: 'git status --short', dangerouslyDisableSandbox: true });
+    const denied = await canUseTool('Bash', { command: 'git status', dangerouslyDisableSandbox: true });
     assert.strictEqual(denied.behavior, 'deny');
+    assert.match(denied.message ?? '', /routing: escalatable/);
+    assert.strictEqual(approvalCalls.length, 0);
   });
 
   // ------------------------------------------- sandboxed bash default posture

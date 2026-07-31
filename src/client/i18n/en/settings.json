@@ -274,7 +274,27 @@
       "skillAllowlistHint": "One skill name per line. Only these skills can be invoked by Normal members.",
       "bashWhitelist": "Bash whitelist",
       "bashWhitelistPlaceholder": "e.g. npm run",
-      "bashWhitelistHint": "One command prefix per line. Normal members can only run commands that start with one of these prefixes."
+      "bashWhitelistHint": "One command prefix per line. Normal members can only run commands that start with one of these prefixes.",
+      "passlist": "Out-of-sandbox passlist",
+      "passlistHint": "Commands on this list may run outside the sandbox without an approval round. Stored as structural rules and evaluated per subcommand, so compound commands cannot sneak past. Everything else that leaves the sandbox goes to approval or is denied.",
+      "passlistEmpty": "Empty is the correct default — nothing to configure. Everyday commands run inside the sandbox; out-of-sandbox requests go to approval or are denied.",
+      "passlistAddPlaceholder": "e.g. git status",
+      "passlistAdd": "Add rule",
+      "passlistSemanticsExact": "Exact match",
+      "passlistSemanticsPrefix": "Match commands starting with this",
+      "passlistPreviewExact": "Matches only this exact command",
+      "passlistPreviewPrefix": "Matches any command starting with this prefix",
+      "passlistCompositeRejected": "Composite commands are not allowed here (|, &&, ;, $(), backticks). The rule engine already evaluates compound commands per subcommand — add only the single subcommand you want to allow.",
+      "passlistDuplicate": "This rule is already in the list.",
+      "passlistRemove": "Remove",
+      "passlistProvenanceManual": "Added by {{actor}} · {{date}}",
+      "passlistProvenanceApproval": "Approved by {{actor}} · {{date}}",
+      "passlistProvenanceUnknown": "Added before provenance tracking",
+      "upgradeBanner": {
+        "title": "Legacy whitelists are disabled",
+        "body": "This bot still has data in the old skill allowlist / bash whitelist fields. Under the new permission model those lists no longer take effect: everyday commands run inside the sandbox with no configuration, and only out-of-sandbox requests need approval. The passlist below starts empty — re-add commands that must run outside the sandbox without approval. Saving this form clears the old data.",
+        "dismiss": "Dismiss"
+      }
     },
     "persona": {
       "tab": "Persona",

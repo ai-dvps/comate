@@ -7,10 +7,11 @@ import {
   useRef,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Shield, UserCog, User, AlertTriangle } from 'lucide-react';
-import type { Bot, BotRole, BotRolePolicy } from '../stores/bot-store';
+import { Shield, UserCog, User, AlertTriangle, Plus, X } from 'lucide-react';
+import type { Bot, BotRole, BotRolePolicy, PasslistRule } from '../stores/bot-store';
 import { PermissionsSubTab } from './PermissionsSubTab';
 import { SAFE_PRESET, type ToolPermissionPolicy } from '../types/wecom-permissions';
+import { useBotPasslistUpgradeBanner } from '../hooks/use-bot-passlist-upgrade-banner';
 import { cn } from './ui/utils';
 
 export interface BotRolePermissionsHandle {
@@ -41,17 +42,53 @@ function normalizeToolPolicy(value: unknown): ToolPermissionPolicy {
   return SAFE_PRESET;
 }
 
-function parseLines(value: string): string[] {
-  return value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+function normalizePasslistRules(value: unknown): PasslistRule[] {
+  if (!Array.isArray(value)) return [];
+  const out: PasslistRule[] = [];
+  for (const entry of value) {
+    if (typeof entry === 'string' && entry.trim() !== '') {
+      out.push({ rule: entry });
+      continue;
+    }
+    if (entry && typeof entry === 'object' && typeof (entry as PasslistRule).rule === 'string') {
+      const rule = (entry as PasslistRule).rule;
+      if (rule.trim() === '') continue;
+      const provenance = (entry as PasslistRule).provenance;
+      out.push(
+        provenance &&
+          typeof provenance.addedBy === 'string' &&
+          (provenance.source === 'manual' || provenance.source === 'approval') &&
+          typeof provenance.createdAt === 'string'
+          ? { rule, provenance }
+          : { rule },
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * Composite-command detector (KTD-18): the passlist holds single literal
+ * subcommands because the SDK rule engine evaluates compound commands
+ * per-subcommand — a passlist entry must never itself be a composition.
+ */
+const COMPOSITE_PATTERN = /\|\||&&|[;|`]|\$\(/;
+
+type MatchSemantics = 'exact' | 'prefix';
+
+/** Wrap a validated single command into an SDK structural rule (KTD-13). */
+function compilePasslistRule(command: string, semantics: MatchSemantics): string {
+  return semantics === 'exact' ? `Bash(${command})` : `Bash(${command} *)`;
+}
+
+/** Provenance stamped on GUI additions. */
+function manualProvenance(): NonNullable<PasslistRule['provenance']> {
+  return { addedBy: 'desktop-admin', source: 'manual', createdAt: new Date().toISOString() };
 }
 
 interface SavedRolePolicy {
   normalToolPolicy: ToolPermissionPolicy;
-  skillAllowlist: string[];
-  bashWhitelist: string[];
+  passlistRules: PasslistRule[];
 }
 
 const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissionsProps>(
@@ -62,14 +99,23 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
     const { t } = useTranslation('settings');
     const [selectedRole, setSelectedRole] = useState<BotRole>('normal');
     const [normalToolPolicy, setNormalToolPolicy] = useState<ToolPermissionPolicy>(SAFE_PRESET);
-    const [skillAllowlist, setSkillAllowlist] = useState('');
-    const [bashWhitelist, setBashWhitelist] = useState('');
+    const [passlistRules, setPasslistRules] = useState<PasslistRule[]>([]);
     const [saved, setSaved] = useState<SavedRolePolicy>({
       normalToolPolicy: SAFE_PRESET,
-      skillAllowlist: [],
-      bashWhitelist: [],
+      passlistRules: [],
     });
     const [saveError, setSaveError] = useState<string | null>(null);
+
+    // Add-form state
+    const [newCommand, setNewCommand] = useState('');
+    const [newSemantics, setNewSemantics] = useState<MatchSemantics>('exact');
+    const [duplicateRejected, setDuplicateRejected] = useState(false);
+
+    const hasLegacyData =
+      (bot.rolePolicy?.skillAllowlist?.length ?? 0) > 0 ||
+      (bot.rolePolicy?.bashWhitelist?.length ?? 0) > 0;
+    const { shouldShow: showUpgradeBanner, dismiss: dismissUpgradeBanner } =
+      useBotPasslistUpgradeBanner({ botId: bot.id, hasLegacyData: hasLegacyData });
 
     const lastBotIdRef = useRef<string | null>(null);
 
@@ -80,28 +126,22 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
       if (lastBotIdRef.current === bot.id) return;
       lastBotIdRef.current = bot.id;
       const policy = normalizeToolPolicy(bot.rolePolicy?.normalToolPolicy);
-      const skills = bot.rolePolicy?.skillAllowlist ?? [];
-      const bash = bot.rolePolicy?.bashWhitelist ?? [];
+      const rules = normalizePasslistRules(bot.rolePolicy?.passlistRules);
       setNormalToolPolicy(policy);
-      setSkillAllowlist(skills.join('\n'));
-      setBashWhitelist(bash.join('\n'));
-      setSaved({
-        normalToolPolicy: policy,
-        skillAllowlist: skills,
-        bashWhitelist: bash,
-      });
+      setPasslistRules(rules);
+      setSaved({ normalToolPolicy: policy, passlistRules: rules });
       setSaveError(null);
+      setNewCommand('');
+      setNewSemantics('exact');
+      setDuplicateRejected(false);
     }, [bot]);
 
     const isDirty = useMemo(() => {
-      const currentSkills = parseLines(skillAllowlist);
-      const currentBash = parseLines(bashWhitelist);
       return (
         JSON.stringify(normalToolPolicy) !== JSON.stringify(saved.normalToolPolicy) ||
-        JSON.stringify(currentSkills) !== JSON.stringify(saved.skillAllowlist) ||
-        JSON.stringify(currentBash) !== JSON.stringify(saved.bashWhitelist)
+        JSON.stringify(passlistRules) !== JSON.stringify(saved.passlistRules)
       );
-    }, [normalToolPolicy, saved, skillAllowlist, bashWhitelist]);
+    }, [normalToolPolicy, passlistRules, saved]);
 
     const onDirtyChangeRef = useRef(onDirtyChange);
     onDirtyChangeRef.current = onDirtyChange;
@@ -116,18 +156,22 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
         isDirty: () => isDirty,
         save: async () => {
           setSaveError(null);
+          // Round-trip fields this editor does not own (U5 skill config,
+          // network allowlist) so a role-permission save never wipes them.
+          // The deprecated legacy whitelist fields are deliberately cleared:
+          // saving adopts the new model and retires the upgrade banner.
           const rolePolicy: BotRolePolicy = {
             normalToolPolicy: normalToolPolicy as unknown as Record<string, unknown>,
-            skillAllowlist: parseLines(skillAllowlist),
-            bashWhitelist: parseLines(bashWhitelist),
+            skillAllowlist: [],
+            bashWhitelist: [],
+            ...(bot.rolePolicy?.skills !== undefined ? { skills: bot.rolePolicy.skills } : {}),
+            disabledSkills: bot.rolePolicy?.disabledSkills ?? [],
+            passlistRules,
+            networkAllowlist: bot.rolePolicy?.networkAllowlist ?? [],
           };
           try {
             await onSave(rolePolicy);
-            setSaved({
-              normalToolPolicy,
-              skillAllowlist: parseLines(skillAllowlist),
-              bashWhitelist: parseLines(bashWhitelist),
-            });
+            setSaved({ normalToolPolicy, passlistRules });
           } catch (err) {
             setSaveError(err instanceof Error ? err.message : String(err));
             throw err;
@@ -135,13 +179,38 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
         },
         discard: () => {
           setNormalToolPolicy(saved.normalToolPolicy);
-          setSkillAllowlist(saved.skillAllowlist.join('\n'));
-          setBashWhitelist(saved.bashWhitelist.join('\n'));
+          setPasslistRules(saved.passlistRules);
           setSaveError(null);
+          setNewCommand('');
+          setNewSemantics('exact');
+          setDuplicateRejected(false);
         },
       }),
-      [isDirty, normalToolPolicy, skillAllowlist, bashWhitelist, saved, onSave],
+      [isDirty, normalToolPolicy, passlistRules, saved, onSave, bot.rolePolicy],
     );
+
+    const trimmedCommand = newCommand.trim();
+    const compositeDetected = COMPOSITE_PATTERN.test(trimmedCommand);
+    const candidateRule = trimmedCommand !== '' && !compositeDetected
+      ? compilePasslistRule(trimmedCommand, newSemantics)
+      : null;
+    const duplicateRule = candidateRule !== null && passlistRules.some((entry) => entry.rule === candidateRule);
+
+    const handleAddRule = () => {
+      setDuplicateRejected(false);
+      if (trimmedCommand === '' || compositeDetected || !candidateRule) return;
+      if (duplicateRule) {
+        setDuplicateRejected(true);
+        return;
+      }
+      setPasslistRules((prev) => [...prev, { rule: candidateRule, provenance: manualProvenance() }]);
+      setNewCommand('');
+      setNewSemantics('exact');
+    };
+
+    const handleRemoveRule = (index: number) => {
+      setPasslistRules((prev) => prev.filter((_, i) => i !== index));
+    };
 
     const roleIcons: Record<BotRole, React.ReactNode> = {
       owner: <Shield className="w-3.5 h-3.5" />,
@@ -172,6 +241,31 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
             <p className="text-xs text-destructive">{saveError || error}</p>
+          </div>
+        )}
+
+        {showUpgradeBanner && (
+          <div className="border border-yellow-500/40 bg-yellow-500/10 rounded p-3 space-y-2" role="status">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-text-primary">
+                  {t('bots.rolePermissions.upgradeBanner.title')}
+                </div>
+                <div className="text-[11px] text-text-secondary mt-1">
+                  {t('bots.rolePermissions.upgradeBanner.body')}
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={dismissUpgradeBanner}
+                    className="px-3 py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary"
+                  >
+                    {t('bots.rolePermissions.upgradeBanner.dismiss')}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -219,34 +313,123 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
 
             <div>
               <label className="block text-[11px] font-medium text-text-tertiary mb-1">
-                {t('bots.rolePermissions.skillAllowlist')}
+                {t('bots.rolePermissions.passlist')}
               </label>
-              <textarea
-                value={skillAllowlist}
-                onChange={(e) => setSkillAllowlist(e.target.value)}
-                placeholder={t('bots.rolePermissions.skillAllowlistPlaceholder')}
-                rows={3}
-                className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
-              />
-              <p className="text-[10px] text-text-tertiary mt-1">
-                {t('bots.rolePermissions.skillAllowlistHint')}
+              <p className="text-[10px] text-text-tertiary mb-2">
+                {t('bots.rolePermissions.passlistHint')}
               </p>
-            </div>
 
-            <div>
-              <label className="block text-[11px] font-medium text-text-tertiary mb-1">
-                {t('bots.rolePermissions.bashWhitelist')}
-              </label>
-              <textarea
-                value={bashWhitelist}
-                onChange={(e) => setBashWhitelist(e.target.value)}
-                placeholder={t('bots.rolePermissions.bashWhitelistPlaceholder')}
-                rows={3}
-                className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary resize-y font-mono text-[12px]"
-              />
-              <p className="text-[10px] text-text-tertiary mt-1">
-                {t('bots.rolePermissions.bashWhitelistHint')}
-              </p>
+              {passlistRules.length === 0 ? (
+                <p className="text-[11px] text-text-secondary border border-dashed border-border rounded-lg px-3 py-2">
+                  {t('bots.rolePermissions.passlistEmpty')}
+                </p>
+              ) : (
+                <ul className="space-y-1.5 mb-2">
+                  {passlistRules.map((entry, index) => (
+                    <li
+                      key={`${entry.rule}-${index}`}
+                      className="flex items-start justify-between gap-2 border border-border rounded-lg px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <code className="block text-[12px] font-mono text-text-primary break-all">
+                          {entry.rule}
+                        </code>
+                        <span className="block text-[10px] text-text-tertiary mt-0.5">
+                          {entry.provenance
+                            ? t(
+                                entry.provenance.source === 'approval'
+                                  ? 'bots.rolePermissions.passlistProvenanceApproval'
+                                  : 'bots.rolePermissions.passlistProvenanceManual',
+                                {
+                                  actor: entry.provenance.addedBy,
+                                  date: entry.provenance.createdAt.slice(0, 10),
+                                },
+                              )
+                            : t('bots.rolePermissions.passlistProvenanceUnknown')}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRule(index)}
+                        aria-label={t('bots.rolePermissions.passlistRemove')}
+                        className="p-1 text-text-tertiary hover:text-destructive flex-shrink-0"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="border border-border rounded-lg p-3 space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newCommand}
+                    onChange={(e) => {
+                      setNewCommand(e.target.value);
+                      setDuplicateRejected(false);
+                    }}
+                    placeholder={t('bots.rolePermissions.passlistAddPlaceholder')}
+                    className="flex-1 px-3 py-1.5 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary font-mono text-[12px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddRule}
+                    disabled={trimmedCommand === ''}
+                    className="flex items-center gap-1 px-3 py-1.5 text-[11px] font-medium bg-accent text-accent-foreground rounded-lg hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    {t('bots.rolePermissions.passlistAdd')}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-1.5 text-[11px] text-text-secondary cursor-pointer">
+                    <input
+                      type="radio"
+                      name="passlist-semantics"
+                      checked={newSemantics === 'exact'}
+                      onChange={() => setNewSemantics('exact')}
+                      className="accent-accent"
+                    />
+                    {t('bots.rolePermissions.passlistSemanticsExact')}
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[11px] text-text-secondary cursor-pointer">
+                    <input
+                      type="radio"
+                      name="passlist-semantics"
+                      checked={newSemantics === 'prefix'}
+                      onChange={() => setNewSemantics('prefix')}
+                      className="accent-accent"
+                    />
+                    {t('bots.rolePermissions.passlistSemanticsPrefix')}
+                  </label>
+                </div>
+
+                {compositeDetected && (
+                  <p className="text-[11px] text-destructive" role="alert">
+                    {t('bots.rolePermissions.passlistCompositeRejected')}
+                  </p>
+                )}
+                {duplicateRejected && !compositeDetected && (
+                  <p className="text-[11px] text-destructive" role="alert">
+                    {t('bots.rolePermissions.passlistDuplicate')}
+                  </p>
+                )}
+
+                {candidateRule && (
+                  <p className="text-[10px] text-text-tertiary">
+                    {t(
+                      newSemantics === 'exact'
+                        ? 'bots.rolePermissions.passlistPreviewExact'
+                        : 'bots.rolePermissions.passlistPreviewPrefix',
+                    )}
+                    {' · '}
+                    <code className="font-mono">{candidateRule}</code>
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         )}

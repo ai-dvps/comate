@@ -29,10 +29,46 @@ export interface BotChannelSettings {
   feishu?: FeishuChannelConfig;
 }
 
+/**
+ * Provenance for a passlist rule (KTD-18): who added it and where it came
+ * from. `approval` entries accumulate from "always allow" decisions;
+ * `manual` entries are added by a desktop admin in the GUI.
+ */
+export interface PasslistRuleProvenance {
+  addedBy: string;
+  source: 'manual' | 'approval';
+  createdAt: string;
+}
+
+/**
+ * One out-of-sandbox passlist entry. Stored as an SDK structural rule
+ * (e.g. `Bash(git status)`), never a bare prefix string (KTD-13).
+ */
+export interface PasslistRule {
+  rule: string;
+  provenance?: PasslistRuleProvenance;
+}
+
 export interface BotRolePolicy {
   normalToolPolicy: Record<string, unknown>;
+  /**
+   * @deprecated Legacy per-role skill allowlist — disabled under the sandbox
+   * permission model (KTD-27, not migrated). Kept so old blobs parse.
+   */
   skillAllowlist: string[];
+  /**
+   * @deprecated Legacy bash whitelist (string prefix matching) — disabled
+   * under the sandbox permission model (KTD-27). Superseded by passlistRules.
+   */
   bashWhitelist: string[];
+  /** Bot-level mounted skill set (R8/KTD-14). Absent = all installed skills. */
+  skills?: string[];
+  /** Bot-level explicit skill deny list (KTD-14 backstop). */
+  disabledSkills?: string[];
+  /** Out-of-sandbox passlist (R7/KTD-13). Default empty — the correct default. */
+  passlistRules?: PasslistRule[];
+  /** Bot-level network domain allowlist merged over built-in defaults (R2/KTD-9). */
+  networkAllowlist?: string[];
 }
 
 export type BotPersonaMode = 'append' | 'replace';

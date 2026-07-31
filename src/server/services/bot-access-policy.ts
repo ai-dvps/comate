@@ -589,6 +589,18 @@ interface RoleDerivationContext {
   sensitiveFileDenylist?: string[];
 }
 
+/**
+ * Passlist → SDK structural rule strings (KTD-13). Compiled into
+ * `settings.permissions.allow` (U4): the SDK rule engine evaluates compound
+ * commands per-subcommand upstream of the gate, so a passlist hit auto-allows
+ * — including `dangerouslyDisableSandbox` escape requests — and only
+ * non-matching commands ever reach canUseTool (AE1, sdk-rule-contract.test).
+ * The separate `passlistRules` output is retained for audit/display (U6/U11).
+ */
+function passlistRuleStrings(policy: BotRolePolicy): string[] {
+  return policy.passlistRules.map((entry) => entry.rule);
+}
+
 function ownerDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
   const sandbox: SandboxSettings = {
     ...baseSandbox('owner'),
@@ -609,12 +621,14 @@ function ownerDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
   return {
     sandbox,
     permissionRules: {
-      allow: [],
+      // Passlist compiles into inline allow rules (U4): the SDK structural
+      // rule engine evaluates it upstream of the gate (KTD-2/KTD-13).
+      allow: passlistRuleStrings(ctx.policy),
       ask: [],
       deny: systemDenyRules(ctx.comateDataDir),
     },
     preamble: ownerPreamble(),
-    passlistRules: ctx.policy.passlistRules.map((entry) => entry.rule),
+    passlistRules: passlistRuleStrings(ctx.policy),
     plugins: ctx.plugins,
   };
 }
@@ -651,6 +665,7 @@ function adminDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
       allow: [
         absRule('Read', ws),
         ...capabilityDirs.map((dir) => absRule('Edit', dir)),
+        ...passlistRuleStrings(ctx.policy),
       ],
       ask: [],
       deny: credentialDenyRules({
@@ -660,7 +675,7 @@ function adminDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
       }),
     },
     preamble: adminPreamble(ws),
-    passlistRules: ctx.policy.passlistRules.map((entry) => entry.rule),
+    passlistRules: passlistRuleStrings(ctx.policy),
     plugins: ctx.plugins,
   };
 }
@@ -700,8 +715,10 @@ function normalDerivation(userDirName: string, ctx: RoleDerivationContext): BotA
       // fall through to the gate, where the retained realpath path-policy
       // (KTD-5) enforces cross-user and sensitive-file checks — a blanket
       // workspace allow here would short-circuit that check (deny rules
-      // cannot carve own-dir back open).
-      allow: [absRule('Read', userDir), absRule('Edit', userDir)],
+      // cannot carve own-dir back open). Passlist rules are appended for the
+      // SDK structural engine (U4, KTD-13) — they are Bash() rules and do not
+      // intersect the file-tool surface.
+      allow: [absRule('Read', userDir), absRule('Edit', userDir), ...passlistRuleStrings(ctx.policy)],
       ask: [],
       deny: credentialDenyRules({
         includeClaudeDirGlob: true,
@@ -710,7 +727,7 @@ function normalDerivation(userDirName: string, ctx: RoleDerivationContext): BotA
       }),
     },
     preamble: normalPreamble(userDir),
-    passlistRules: ctx.policy.passlistRules.map((entry) => entry.rule),
+    passlistRules: passlistRuleStrings(ctx.policy),
     plugins: ctx.plugins,
   };
 }

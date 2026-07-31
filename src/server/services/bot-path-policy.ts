@@ -265,6 +265,13 @@ function checkGrepPath(
   return { allowed: true };
 }
 
+/**
+ * Legacy per-call path validator (string-based, pre-realpath-canonicalization
+ * era semantics). Retained ONLY for the legacy permission-model branches in
+ * chat-service (the workspace kill switch and the pre-migration fallback);
+ * the sandbox permission model uses `verifyBotFileToolAccess` instead. U4
+ * pruned the dead `resolveAndCheckPath`/`checkUserPath` exports.
+ */
 export function validateToolInput(
   ctx: PathPolicyContext,
   toolName: string,
@@ -293,18 +300,6 @@ export function validateToolInput(
     default:
       return { allowed: true };
   }
-}
-
-/**
- * Low-level helper to resolve and check a single raw path. Used by the Bash
- * whitelist engine to re-validate path arguments.
- */
-export function resolveAndCheckPath(
-  ctx: PathPolicyContext,
-  rawPath: string,
-  opts: { write: boolean },
-): PathValidationResult {
-  return checkFilePath(ctx, rawPath, opts);
 }
 
 // ---------------------------------------------------------------------------
@@ -469,22 +464,4 @@ export function verifyBotFileToolAccess(
     default:
       return { allowed: true };
   }
-}
-
-/**
- * Low-level helper to validate that a path argument is inside the caller's user
- * directory (used by Bash whitelist for {{user_path}} placeholders).
- */
-export function checkUserPath(
-  ctx: PathPolicyContext,
-  rawPath: string,
-): PathValidationResult {
-  if (typeof rawPath !== 'string' || rawPath === '') {
-    return { allowed: false, reason: 'invalid-path' };
-  }
-  const resolved = resolveRealPath(ctx, rawPath);
-  const escape = checkWorkspaceEscape(ctx, resolved);
-  if (!escape.allowed) return escape;
-  if (ctx.isAdminOrOwner || isWithinUserDir(ctx, resolved)) return { allowed: true };
-  return { allowed: false, reason: 'outside-user-dir-write' };
 }

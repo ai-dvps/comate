@@ -240,7 +240,7 @@ describe('deriveBotAccess role matrix', () => {
     ]);
   });
 
-  it('passlist rules project to structural rule strings', () => {
+  it('passlist rules project to structural rule strings and compile into inline allow rules', () => {
     const policy = createDefaultBotRolePolicy('normal');
     policy.passlistRules = [
       {
@@ -251,6 +251,22 @@ describe('deriveBotAccess role matrix', () => {
     ];
     const out = derive(makeMember('normal'), policy);
     assert.deepStrictEqual(out.passlistRules, ['Bash(git status)', 'Bash(ls)']);
+    // U4 (KTD-2/KTD-13): the passlist is evaluated by the SDK structural rule
+    // engine, so the derivation compiles it into settings.permissions.allow
+    // (appended after the role's file-tool allows; deny rules still win).
+    assert.deepStrictEqual(out.permissionRules.allow.slice(-2), ['Bash(git status)', 'Bash(ls)']);
+  });
+
+  it('passlist compiles into allow rules for every role', () => {
+    for (const role of ['owner', 'admin', 'normal'] as const) {
+      const policy = createDefaultBotRolePolicy(role);
+      policy.passlistRules = [{ rule: 'Bash(git status)' }];
+      const out = derive(makeMember(role), policy);
+      assert.ok(
+        out.permissionRules.allow.includes('Bash(git status)'),
+        `${role} derivation must compile the passlist into allow rules`,
+      );
+    }
   });
 });
 
