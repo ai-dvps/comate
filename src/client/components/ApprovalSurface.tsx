@@ -153,14 +153,9 @@ export default function ApprovalSurface({
           aria-modal="true"
           aria-labelledby={titleId}
           aria-live="polite"
-          className="bg-surface border border-border/50 rounded-lg shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] px-4 py-3"
+          className="bg-chrome border border-border/50 rounded-lg shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] overflow-hidden"
         >
-          <header
-            className={cn(
-              'flex items-start justify-between gap-3',
-              isExpanded && 'mb-3',
-            )}
-          >
+          <header className="flex items-start justify-between gap-3 px-4 py-3">
             <div className="flex items-center gap-2 min-w-0">
               <h2
                 id={titleId}
@@ -216,25 +211,27 @@ export default function ApprovalSurface({
               'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2',
             )}
           >
-            {isQuestion ? (
-              <QuestionView
-                workspaceId={workspaceId}
-                item={pendingItem as PendingQuestion}
-                isResolving={isResolving}
-                stepIndex={stepIndex}
-                onStepChange={setStepIndex}
-                onAnswerQuestion={onAnswerQuestion}
-                onChatAbout={onChatAbout}
-              />
-            ) : (
-              <ApprovalView
-                item={pendingItem as PendingApproval}
-                isResolving={isResolving}
-                onAllow={onAllow}
-                onAllowAlways={onAllowAlways}
-                onDeny={onDeny}
-              />
-            )}
+            <div className="bg-work px-4 py-3 border-t border-border/50">
+              {isQuestion ? (
+                <QuestionView
+                  workspaceId={workspaceId}
+                  item={pendingItem as PendingQuestion}
+                  isResolving={isResolving}
+                  stepIndex={stepIndex}
+                  onStepChange={setStepIndex}
+                  onAnswerQuestion={onAnswerQuestion}
+                  onChatAbout={onChatAbout}
+                />
+              ) : (
+                <ApprovalView
+                  item={pendingItem as PendingApproval}
+                  isResolving={isResolving}
+                  onAllow={onAllow}
+                  onAllowAlways={onAllowAlways}
+                  onDeny={onDeny}
+                />
+              )}
+            </div>
           </CollapsibleContent>
         </div>
       </Collapsible>
@@ -1062,7 +1059,7 @@ function OtherInput({
   }
 
   return (
-    <div className="mt-2 ml-5 relative bg-surface border border-border/60 rounded-md">
+    <div className="mt-2 ml-5 relative bg-work border border-border/60 rounded-md">
       <div className="flex items-center px-2 pt-1.5 gap-1">
         <CommandPicker
           ref={commandHandleRef}
