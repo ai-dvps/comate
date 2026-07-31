@@ -153,7 +153,7 @@ export default function ApprovalSurface({
           aria-modal="true"
           aria-labelledby={titleId}
           aria-live="polite"
-          className="bg-chrome border border-border/50 rounded-lg shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] overflow-hidden"
+          className="bg-chrome border border-border/50 rounded-lg shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)]"
         >
           <header className="flex items-start justify-between gap-3 px-4 py-3">
             <div className="flex items-center gap-2 min-w-0">
@@ -211,7 +211,7 @@ export default function ApprovalSurface({
               'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2',
             )}
           >
-            <div className="bg-work px-4 py-3 border-t border-border/50">
+            <div className="bg-work px-4 py-3 border-t border-border/50 rounded-b-lg">
               {isQuestion ? (
                 <QuestionView
                   workspaceId={workspaceId}
