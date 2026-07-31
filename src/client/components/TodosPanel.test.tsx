@@ -188,8 +188,8 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
   it('renders four view segments with counts and switching updates the list', async () => {
     const todos = [
       makeTodo({ id: 'a', text: 'Alpha' }),
-      makeTodo({ id: 'b', text: 'Beta', dueDate: '2026-07-31T00:00:00Z' }),
-      makeTodo({ id: 'c', text: 'Gamma', dueDate: '2026-07-30T00:00:00Z' }),
+      makeTodo({ id: 'b', text: 'Beta', dueDate: new Date(Date.now() + 86400000).toISOString() }),
+      makeTodo({ id: 'c', text: 'Gamma', dueDate: new Date().toISOString() }),
     ];
     stubFetchWithTodos(todos);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
