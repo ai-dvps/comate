@@ -2191,6 +2191,27 @@ export class ChatService {
 
             return { behavior: 'allow' as const, updatedInput: input };
           };
+        } else {
+          // Fail-closed (R16/AE7): the session is bound to a bot that no longer
+          // exists. Deny every tool call instead of falling through to the
+          // legacy workspace-scoped fallback, which would leave the session
+          // unrestricted. Generic denial message, same as other bot denials.
+          diagLog(
+            `[ChatService.botDeny] session=${session.id} botId=${session.botId} reason=dangling-bot-id`,
+          );
+          options.canUseTool = async (
+            toolName: string,
+            _input: Record<string, unknown>,
+            sdkOptions?: { toolUseID?: string },
+          ) => {
+            diagLog(
+              `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=dangling-bot-id`,
+            );
+            return {
+              behavior: 'deny' as const,
+              message: "I can't do that in this workspace.",
+            };
+          };
         }
       }
 
