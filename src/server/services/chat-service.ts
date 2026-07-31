@@ -50,7 +50,7 @@ import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotPersona, BotRoleKey, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
-import { createDefaultBotRolePolicy, deriveBotAccess, type BotAccessDerivation } from './bot-access-policy.js';
+import { createDefaultBotRolePolicy, deriveBotAccess, validateUserDirName, type BotAccessDerivation } from './bot-access-policy.js';
 import { ensureSandboxProbe, isSandboxDegraded } from './sandbox-probe.js';
 import type { Provider } from '../models/provider.js';
 import {
@@ -66,6 +66,12 @@ import { getSidecarBaseUrl } from '../utils/self-port.js';
 import { getBrowserMcpToken } from './browser-mcp-http.js';
 import { SCHEDULED_TASKS_MCP_KEY, getScheduledTasksMcpToken } from './scheduled-tasks-mcp.js';
 import { makeScheduledRunStopHook } from './goal-stop-hook.js';
+import {
+  SESSION_TOKEN_ENV,
+  WECOM_CONTEXT_FILE_ENV,
+  sessionCapabilityService,
+  writeSessionWecomContext,
+} from './session-capability-service.js';
 
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
@@ -748,6 +754,8 @@ export class ChatService {
       // Still delete from local DB even if SDK deletion fails
     }
 
+    // U12: the session's loopback capability dies with the session.
+    sessionCapabilityService.revokeForSession(id);
     return workspaceStore.deleteLocalSession(id);
   }
 
@@ -1427,6 +1435,9 @@ export class ChatService {
     this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
+    // U12: the session's loopback capability dies with its runtime (the
+    // rebuild path immediately re-mints in buildSdkOptions = rotation).
+    sessionCapabilityService.revokeForSession(sessionId);
     // Pre-close chained listeners (KTD-5): run BEFORE close() resolves the
     // session's pending cards, so listeners can classify their own pendings
     // (the browser handoff controller marks its cards runtime_closed here).
@@ -2181,6 +2192,54 @@ export class ChatService {
             isAdminOrOwnerForContext,
             workspace.settings.sensitiveFileDenylist ?? [],
           );
+
+          // U12 (KTD-28): per-session capability material. Minted per runtime
+          // creation (rotation on rebuild — the prior token is revoked by the
+          // mint), revoked on close/demote/boot. Injected AFTER env
+          // sanitization AND after the access derivation so the token is
+          // never swept into the sandbox credentials.envVars deny set — the
+          // sandboxed wecom CLI must be able to read its own credential.
+          // Fail-soft: a mint/context failure degrades the CLI surface, never
+          // the session itself.
+          try {
+            const capability = sessionCapabilityService.mintForSession({
+              sessionId: session.id,
+              workspaceId: workspace.id,
+              botId: bot.id,
+            });
+            env[SESSION_TOKEN_ENV] = capability.token;
+            options.env = env;
+          } catch (err) {
+            diagLog(
+              `[ChatService] capability token mint failed for session=${session.id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+
+          // Context relocation (U12): the wecom CLI context now lives in the
+          // session user's `.runtime/` dir, passed via env — the legacy
+          // workspace-root file and upward-walk discovery are gone, so a
+          // planted `.claude/wecom-context.json` cannot win.
+          if (channel === 'wecom' && channelUserId) {
+            try {
+              const channelSettings = botService.getChannelSettings(bot.id);
+              const identity = validateUserDirName(channelUserId);
+              if (channelSettings.wecom?.enabled && identity.ok) {
+                const contextPath = writeSessionWecomContext({
+                  workspaceFolder: workspace.folderPath,
+                  userDirName: identity.userDirName,
+                  workspaceId: workspace.id,
+                  botId: bot.id,
+                  serverUrl: getSidecarBaseUrl(),
+                });
+                env[WECOM_CONTEXT_FILE_ENV] = contextPath;
+                options.env = env;
+              }
+            } catch (err) {
+              diagLog(
+                `[ChatService] wecom session context write failed for session=${session.id}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
 
           if (workspace.settings.botPermissionSandboxDisabled === true) {
             // ==============================================================

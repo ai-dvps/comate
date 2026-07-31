@@ -2389,3 +2389,62 @@ describe('auto-add bot members on first inbound message', { concurrency: false }
     assert.strictEqual(botService.getMemberRole(bot.id, 'wecom', 'first-sender'), 'normal');
   });
 });
+
+describe('WeComBotService context relocation (U12)', { concurrency: false }, () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    workspaceStore.resetData();
+  });
+
+  afterEach(async () => {
+    if (tempDir) {
+      await fsPromises.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('boot sweep removes the legacy workspace-root context file and per-session runtime context files', async () => {
+    tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'wecom-context-sweep-'));
+    const folderPath = tempDir;
+    await workspaceStore.create({ name: 'Sweep WS', folderPath, settings: {} });
+
+    // Legacy pre-upgrade location.
+    const legacyDir = path.join(folderPath, '.claude');
+    await fsPromises.mkdir(legacyDir, { recursive: true });
+    const legacyPath = path.join(legacyDir, 'wecom-context.json');
+    await fsPromises.writeFile(legacyPath, JSON.stringify({ botId: 'b', serverUrl: 'http://localhost:1', workspaceId: 'w' }));
+
+    // Per-session runtime locations (their tokens are boot-invalidated).
+    const runtimeDir = path.join(folderPath, 'data', 'alice', '.runtime');
+    await fsPromises.mkdir(runtimeDir, { recursive: true });
+    const sessionContextPath = path.join(runtimeDir, 'wecom-context.json');
+    await fsPromises.writeFile(sessionContextPath, JSON.stringify({ botId: 'b', serverUrl: 'http://localhost:1', workspaceId: 'w' }));
+    // A decoy that must survive the sweep.
+    const decoyPath = path.join(runtimeDir, 'keep.txt');
+    await fsPromises.writeFile(decoyPath, 'keep');
+
+    const service = new WeComBotService();
+    await service.initialize();
+
+    const exists = async (p: string) => fsPromises.access(p).then(() => true).catch(() => false);
+    assert.strictEqual(await exists(legacyPath), false, 'legacy workspace-root context must be swept at boot');
+    assert.strictEqual(await exists(sessionContextPath), false, 'per-session runtime context must be swept at boot');
+    assert.strictEqual(await exists(decoyPath), true, 'unrelated .runtime files must survive');
+  });
+
+  it('connect lifecycle never recreates the workspace-root context file', async () => {
+    tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'wecom-context-connect-'));
+    const folderPath = tempDir;
+    const ws = await workspaceStore.create({ name: 'Connect WS', folderPath, settings: {} });
+
+    const service = new WeComBotService();
+    // disconnect is the only lifecycle reachable without a live vendor
+    // connection; it must only ever REMOVE the legacy file.
+    await (service as unknown as { removeContextFile(id: string): Promise<void> }).removeContextFile(ws.id);
+    const exists = await fsPromises
+      .access(path.join(folderPath, '.claude', 'wecom-context.json'))
+      .then(() => true)
+      .catch(() => false);
+    assert.strictEqual(exists, false);
+  });
+});

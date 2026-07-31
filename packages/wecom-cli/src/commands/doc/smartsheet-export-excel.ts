@@ -48,7 +48,7 @@ export default class SmartsheetExportExcel extends BaseCommand {
     const endpointUrl = `${context.serverUrl}/api/workspaces/${context.workspaceId}/wecom/smartsheet-export`;
 
     try {
-      const response = await postForBinary(endpointUrl, { docid: flags.docid });
+      const response = await postForBinary(endpointUrl, { docid: flags.docid }, this.authHeaders());
       if (response.status !== 200) {
         let errorMessage: string;
         try {

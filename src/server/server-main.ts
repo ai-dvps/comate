@@ -58,6 +58,8 @@ import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketpla
 import { addExtraKnownMarketplace } from './utils/claude-settings.js';
 import { ComateWebSocketServer } from './websocket/server.js';
 import { teardownServices } from './service-teardown.js';
+import { sessionCapabilityService } from './services/session-capability-service.js';
+import { createLoopbackAuthMiddleware } from './services/security/loopback-auth.js';
 import {
   createCorsOriginCallback,
   hostHeaderGuard,
@@ -114,6 +116,12 @@ function ensureComateBuiltInMarketplace(): void {
 
 ensureComateBuiltInMarketplace();
 
+// U12 (KTD-28): mint the per-boot desktop GUI credential before any request
+// can arrive. Delivered to the local client out-of-band: the sidecar ready
+// message (Tauri shell) and a 0600 file in the data dir (dev Vite proxy).
+// Never injected into any session environment.
+const desktopToken = sessionCapabilityService.mintDesktopToken();
+
 // Remote-surface hardening (plan U9): Host whitelist (anti-DNS-rebinding) →
 // CORS app-origin matrix → state-changing source check. Header-only checks,
 // so they run before body parsing and change no functional semantics.
@@ -133,6 +141,18 @@ app.use('/mcp/scheduled-tasks', createScheduledTasksMcpHttpRouter((sessionId) =>
 app.use(cors({ origin: createCorsOriginCallback({ getSelfPort }) }));
 app.use(stateChangingRequestGuard({ getSelfPort }));
 app.use(express.json());
+
+// U12 (KTD-28): default-deny authentication for the entire /api surface at
+// the registration layer. Every present AND future /api route requires a
+// Bearer credential — the desktop GUI credential (full surface) or a
+// per-session capability token (closed enrolled route set, enforced inside
+// the middleware). Exemptions are the explicit list in loopback-auth.ts.
+app.use(
+  createLoopbackAuthMiddleware({
+    resolveSessionToken: (token) => sessionCapabilityService.resolve(token),
+    getDesktopToken: () => sessionCapabilityService.getDesktopToken(),
+  }),
+);
 
 // API routes
 app.use('/api/workspaces', workspaceRoutes);
@@ -265,9 +285,12 @@ const server = app.listen(PORT, () => {
   // Attach WebSocket server to the same HTTP listener.
   new ComateWebSocketServer().attach(server, { getSelfPort });
 
-  // Emit ready message for Tauri sidecar discovery when PORT=0
+  // Emit ready message for Tauri sidecar discovery when PORT=0. The
+  // desktopToken field hands the GUI credential to the Tauri shell, which
+  // injects it into the webview's request layer (U12); the shell must not
+  // log this line.
   if (process.env.COMATE_SIDECAR === '1') {
-    console.log(JSON.stringify({ type: 'ready', port: actualPort }));
+    console.log(JSON.stringify({ type: 'ready', port: actualPort, desktopToken }));
   }
 
   // Run bot migration before initializing channel connections so legacy
@@ -305,8 +328,9 @@ const server = app.listen(PORT, () => {
       console.error('[Startup] unexpected error during wecom plugin backfill:', err);
     }
 
-    // Initialize WeCom bot connections for enabled bots/workspaces
-    wecomBotService.setServerUrl(serverUrl);
+    // Initialize WeCom bot connections for enabled bots/workspaces.
+    // (U12: setServerUrl is gone — per-session CLI context files derive the
+    // loopback URL from the bound port via self-port at session creation.)
     wecomBotService.initialize().catch((err) => {
       console.error('Failed to initialize WeCom bot service:', err);
     });

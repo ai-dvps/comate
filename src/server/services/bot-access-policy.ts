@@ -128,6 +128,15 @@ const BENIGN_ENV_VARS: ReadonlySet<string> = new Set([
   'NODE_ENV',
   'WECOM_CLI_PATH',
   'CLAUDE_CODE_DISABLE_CRON',
+  // U12 (KTD-28): the session's OWN capability token and wecom context path
+  // must stay visible to its own sandboxed commands — the wecom CLI reads
+  // them to authenticate against the loopback routes. They are injected
+  // post-derivation, so they never appear here in practice; listing them is
+  // the belt-and-braces against a future ordering change hiding the CLI's
+  // own credential from it. (The token name intentionally matches
+  // SECRET_ENV_NAME_PATTERN: secret to everyone EXCEPT its own session.)
+  'COMATE_SESSION_TOKEN',
+  'COMATE_WECOM_CONTEXT_FILE',
 ]);
 
 const SECRET_ENV_NAME_PATTERN = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|CERT|PRIVATE)/i;

@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+
+- **Loopback API authentication (bot sandbox hardening, U12)** — the entire `/api` surface is now default-deny authenticated at the route-registration layer: every present and future route requires a Bearer credential, with exemptions declared explicitly. Bot sessions receive a per-session capability token (24h TTL, rotated on runtime rebuild, revoked on session close/demotion/boot, stored as SHA-256 hashes) that reaches only the closed set of wecom CLI routes, with identity and admin rights derived from the token-bound session — a self-asserted `sessionId` is no longer trusted. The desktop client authenticates with a per-boot GUI credential delivered via the sidecar ready message (Tauri) or a `0600` credential file (dev proxy). The wecom CLI context moved from the workspace-root `.claude/wecom-context.json` (discovered by walking up directories) to a per-session `data/<user>/.runtime/wecom-context.json` passed explicitly via `COMATE_WECOM_CONTEXT_FILE`, so a context planted in a user-writable directory can no longer redirect the CLI; the CLI also routes its loopback calls through the sandbox HTTP proxy when one is present (required for egress from sandboxed sessions).
 
 ### Changed
 - Nothing yet.

@@ -6,6 +6,7 @@ import { botService } from '../services/bot-service.js';
 import { browserService } from '../services/browser-service.js';
 import { clearBrowserGateSession } from '../services/browser-gate-state.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { getLoopbackAuth } from '../services/security/loopback-auth.js';
 import type { BotUser } from '../models/bot-user.js';
 import { loadWorkflowState, listWorkflowRunIds } from '../services/workflow-loader.js';
 
@@ -158,6 +159,14 @@ router.get('/sessions/:sessionId/wecom-user', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
+    // U12 (KTD-28): the middleware already enforces token↔session binding for
+    // session capability tokens; this is the in-handler backstop. Desktop
+    // credential callers (ChatPanel) may query any session.
+    const auth = getLoopbackAuth(req);
+    if (auth?.kind === 'session' && auth.sessionId !== sessionId) {
+      res.status(403).json({ error: 'session_mismatch', message: 'Token is not valid for this session.' });
+      return;
+    }
     const user = findChannelUserForSession(workspaceId, 'wecom', sessionId);
     if (!user) {
       res.status(404).json({ error: 'Session not found' });

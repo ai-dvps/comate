@@ -46,7 +46,7 @@ export default class SendFile extends BaseCommand {
       sessionId,
       toUser: flags['to-user'],
       filePath: flags['file-path'],
-    });
+    }, this.authHeaders());
 
     if (response.status === 200) {
       this.log('File sent');
