@@ -54,6 +54,8 @@
     "stop": "停止",
     "showLess": "收起",
     "showMore": "展开",
+    "collapsePanel": "收起面板",
+    "expandPanel": "展开面板",
     "allow": "允许",
     "allowAlways": "始终允许",
     "deny": "拒绝",
