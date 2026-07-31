@@ -668,7 +668,7 @@ function QuestionView({
         disabled={isResolving}
         className={`w-full text-left px-3 py-2 rounded-md text-xs transition-colors ${
           selected
-            ? 'bg-accent/10 text-accent'
+            ? 'bg-accent/20 text-accent'
             : 'bg-surface text-text-secondary hover:bg-surface-hover'
         } ${isFocused ? 'ring-1 ring-accent/30' : ''} disabled:opacity-50`}
       >
