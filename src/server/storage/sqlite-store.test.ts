@@ -993,8 +993,8 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
 
   it('fresh database initializes to the latest schema version with new tables', () => {
     const freshStore = new SqliteStore(':memory:');
-    // v6: browser_audit (U8); v7: global todos (U1).
-    assert.strictEqual(freshStore.getMigrationVersion(), 7);
+    // v6: browser_audit (U8); v7: global todos (U1); v8: todos.content.
+    assert.strictEqual(freshStore.getMigrationVersion(), 8);
 
     // Old tables should not exist
     const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
@@ -1023,11 +1023,11 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     firstStore.createBot({ name: 'Pre-migration Bot' });
 
     const version = firstStore.getMigrationVersion();
-    assert.strictEqual(version, 7);
+    assert.strictEqual(version, 8);
 
-    // Re-opening should not throw and version should stay 7
+    // Re-opening should not throw and version should stay 8
     const secondStore = new SqliteStore(migrationDbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 7);
+    assert.strictEqual(secondStore.getMigrationVersion(), 8);
     assert.strictEqual(secondStore.listBots().length, 1);
   });
 });
