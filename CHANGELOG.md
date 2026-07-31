@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Nothing yet.
+
+### Changed
+- Nothing yet.
+
+### Fixed
+- Nothing yet.
+
+## [0.0.30] - 2026-07-31
+
+### Added
 
 - **Inline todo title editing** — a todo title in the list can now be renamed in place: single-click still opens the detail pane, double-clicking the title enters edit mode, Enter or Cmd/Ctrl+Enter saves, Escape cancels, and blur saves. Empty titles are rejected (silently reverted). The same 2000-character cap applies.
 
