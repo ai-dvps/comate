@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { botService } from '../services/bot-service.js';
+import { requireSessionAuth } from '../services/security/loopback-auth.js';
 import type { BotUser } from '../models/bot-user.js';
 
 const router = Router({ mergeParams: true });
@@ -9,16 +10,25 @@ const router = Router({ mergeParams: true });
 // POST /api/workspaces/:workspaceId/wecom/send
 router.post('/', async (req, res) => {
   try {
+    // U12 (KTD-28): identity comes from the session capability token, never
+    // from a self-asserted sessionId. The loopback-auth middleware has
+    // already bound the token to this workspace.
+    const auth = requireSessionAuth(req, res);
+    if (!auth) return;
+    const sessionId = auth.sessionId;
+
     const workspaceId = (req.params as { workspaceId: string }).workspaceId;
-    const { sessionId, toUser, message } = req.body as {
+    const { sessionId: assertedSessionId, toUser, message } = req.body as {
       sessionId?: string;
       toUser?: string;
       message?: string;
       msgType?: 'text' | 'markdown';
     };
 
-    if (!sessionId || typeof sessionId !== 'string') {
-      res.status(400).json({ error: 'sessionId is required' });
+    // A mismatched self-asserted sessionId is rejected loudly (a confused or
+    // malicious caller must not silently act as the bound session).
+    if (assertedSessionId !== undefined && assertedSessionId !== sessionId) {
+      res.status(403).json({ error: 'session_mismatch', message: 'sessionId does not match the authenticated session.' });
       return;
     }
     if (!toUser || typeof toUser !== 'string' || toUser.trim().length === 0) {

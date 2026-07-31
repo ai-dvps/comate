@@ -36,6 +36,11 @@ import { botService } from './bot-service.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 import { createDefaultBotRolePolicy } from './bot-access-policy.js';
 import { __setSandboxProbeForTesting, ensureSandboxProbe } from './sandbox-probe.js';
+import {
+  SESSION_TOKEN_ENV,
+  WECOM_CONTEXT_FILE_ENV,
+  sessionCapabilityService,
+} from './session-capability-service.js';
 
 function createMockWorkspace(id: string): Workspace {
   return {
@@ -2660,6 +2665,78 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(options.sandbox?.allowUnsandboxedCommands, true);
     const fsx = options.sandbox?.filesystem as { allowWrite: string[] };
     assert.deepStrictEqual(fsx.allowWrite, ['/']);
+  });
+
+  // ------------------------------------------------------- U12 capability
+
+  it('injects the per-session capability token and wecom context into the bot session env (U12)', async () => {
+    const { options, folderPath, sessionId, workspaceId, botId } = await setupBotSession();
+    const env = options.env as Record<string, string>;
+
+    // Capability token: 48-hex, resolvable, bound to this session/workspace/bot.
+    const token = env[SESSION_TOKEN_ENV];
+    assert.ok(token, 'COMATE_SESSION_TOKEN must be injected into the bot session env');
+    assert.match(token, /^[0-9a-f]{48}$/);
+    const resolved = sessionCapabilityService.resolve(token);
+    assert.deepStrictEqual(resolved, { sessionId, workspaceId, botId });
+
+    // The token must stay visible to the session's own sandboxed commands —
+    // it must NOT be swept into the sandbox credentials.envVars deny set.
+    const envVars = (options.sandbox?.credentials as { envVars: Array<{ name: string; mode: string }> }).envVars;
+    assert.ok(
+      !envVars.some((entry) => entry.name === SESSION_TOKEN_ENV && entry.mode === 'deny'),
+      'session token must not be denied inside its own sandbox',
+    );
+
+    // Context relocation: per-session file under data/<user>/.runtime, env-passed.
+    const contextPath = env[WECOM_CONTEXT_FILE_ENV];
+    assert.ok(contextPath, 'COMATE_WECOM_CONTEXT_FILE must be injected for wecom sessions');
+    assert.strictEqual(contextPath, path.join(folderPath, 'data', 'user-1', '.runtime', 'wecom-context.json'));
+    const parsed = JSON.parse(fs.readFileSync(contextPath, 'utf-8')) as Record<string, string>;
+    assert.strictEqual(parsed.workspaceId, workspaceId);
+    assert.strictEqual(parsed.botId, botId);
+    assert.match(parsed.serverUrl, /^http:\/\/127\.0\.0\.1:\d+$/);
+    const stat = fs.statSync(contextPath);
+    assert.strictEqual(stat.mode & 0o777, 0o600, 'context file must be owner-only');
+
+    // Legacy workspace-root discovery file must NOT be (re)created.
+    assert.ok(!fs.existsSync(path.join(folderPath, '.claude', 'wecom-context.json')));
+  });
+
+  it('mints a capability token for kill-switch (legacy model) bot sessions too (U12)', async () => {
+    const { options, sessionId } = await setupBotSession({ killSwitch: true });
+    const env = options.env as Record<string, string>;
+    const token = env[SESSION_TOKEN_ENV];
+    assert.ok(token, 'legacy-model bot sessions still need their loopback credential');
+    assert.strictEqual(sessionCapabilityService.resolve(token)?.sessionId, sessionId);
+  });
+
+  it('revokes the capability token when the runtime closes (U12)', async () => {
+    const { options, sessionId } = await setupBotSession();
+    const token = (options.env as Record<string, string>)[SESSION_TOKEN_ENV];
+    assert.ok(sessionCapabilityService.resolve(token), 'token must be live while the runtime is');
+    await service.closeRuntime(sessionId);
+    assert.strictEqual(sessionCapabilityService.resolve(token), null, 'close must revoke the token');
+  });
+
+  it('rotates the capability token on runtime rebuild (U12)', async () => {
+    const { options, sessionId, workspaceId, openCalls } = await setupBotSession();
+    const firstToken = (options.env as Record<string, string>)[SESSION_TOKEN_ENV];
+
+    // Rebuild = close + recreate (performRebuild's shape).
+    await service.closeRuntime(sessionId);
+    await service.getOrCreateRuntime(sessionId, workspaceId, true, undefined, 'user-1');
+
+    assert.strictEqual(openCalls.length, 2, 'a fresh runtime must have been created');
+    const rebuiltToken = ((openCalls[1].env ?? {}) as Record<string, string>)[SESSION_TOKEN_ENV];
+    assert.ok(rebuiltToken, 'the rebuilt runtime must carry a token');
+    assert.notStrictEqual(rebuiltToken, firstToken, 'rebuild must rotate the token');
+    assert.strictEqual(sessionCapabilityService.resolve(firstToken), null, 'rotated-out token must die');
+    assert.strictEqual(
+      sessionCapabilityService.resolve(rebuiltToken)?.sessionId,
+      sessionId,
+      'rotated token must be live and bound to the same session',
+    );
   });
 
   it('admin sessions keep allowUnsandboxedCommands and get capability dirs', async () => {

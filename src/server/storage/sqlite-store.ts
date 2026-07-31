@@ -494,6 +494,26 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_task_runs_task_created
         ON task_runs (task_id, created_at DESC)
     `);
+    // Loopback capability tokens (U12, KTD-28): per-session Bearer tokens for
+    // the sandbox-reachable API surface. Only the SHA-256 hash of the token is
+    // stored — a database dump never leaks a usable credential. Tokens are
+    // boot-invalidated by the session-capability service, so rows here are
+    // per-boot runtime artifacts, not durable state.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS session_capability_tokens (
+        token_hash TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        bot_id TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_capability_tokens_session
+        ON session_capability_tokens (session_id, revoked_at)
+    `);
 
     ensureAnalyticsCacheSchema(this.db);
 
@@ -3188,6 +3208,77 @@ export class SqliteStore {
       .prepare('SELECT * FROM bot_audit_logs WHERE bot_id = ? ORDER BY created_at DESC, rowid DESC')
       .all(botId) as RawAuditLogRow[];
     return rows.map(parseAuditLogRow);
+  }
+
+  // -------------------------------------------------------------------------
+  // session_capability_tokens (U12, KTD-28) — per-session loopback tokens.
+  // -------------------------------------------------------------------------
+
+  insertCapabilityToken(row: {
+    tokenHash: string;
+    sessionId: string;
+    workspaceId: string;
+    botId: string | null;
+    createdAt: string;
+    expiresAt: string;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO session_capability_tokens
+        (token_hash, session_id, workspace_id, bot_id, created_at, expires_at, revoked_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL)
+    `).run(row.tokenHash, row.sessionId, row.workspaceId, row.botId, row.createdAt, row.expiresAt);
+  }
+
+  getCapabilityToken(tokenHash: string): {
+    tokenHash: string;
+    sessionId: string;
+    workspaceId: string;
+    botId: string | null;
+    createdAt: string;
+    expiresAt: string;
+    revokedAt: string | null;
+  } | null {
+    const row = this.db.prepare(`
+      SELECT token_hash, session_id, workspace_id, bot_id, created_at, expires_at, revoked_at
+      FROM session_capability_tokens WHERE token_hash = ?
+    `).get(tokenHash) as
+      | {
+          token_hash: string;
+          session_id: string;
+          workspace_id: string;
+          bot_id: string | null;
+          created_at: string;
+          expires_at: string;
+          revoked_at: string | null;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      tokenHash: row.token_hash,
+      sessionId: row.session_id,
+      workspaceId: row.workspace_id,
+      botId: row.bot_id,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      revokedAt: row.revoked_at,
+    };
+  }
+
+  /** Revoke every live token for a session (rotation and session teardown). */
+  revokeCapabilityTokensForSession(sessionId: string, revokedAt: string): number {
+    const result = this.db.prepare(`
+      UPDATE session_capability_tokens SET revoked_at = ?
+      WHERE session_id = ? AND revoked_at IS NULL
+    `).run(revokedAt, sessionId);
+    return result.changes;
+  }
+
+  /** Boot invalidation: every token from a prior process lifetime dies. */
+  revokeAllCapabilityTokens(revokedAt: string): number {
+    const result = this.db.prepare(`
+      UPDATE session_capability_tokens SET revoked_at = ? WHERE revoked_at IS NULL
+    `).run(revokedAt);
+    return result.changes;
   }
 
   // -------------------------------------------------------------------------

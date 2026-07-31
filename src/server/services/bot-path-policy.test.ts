@@ -24,12 +24,16 @@ function createWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 }
 
 describe('createPathPolicyContext', () => {
-  it('resolves workspace folder and user directory', () => {
+  it('resolves workspace folder and user directory to the canonical anchor', () => {
     const workspace = createWorkspace({ folderPath: '/tmp/test' });
     const ctx = createPathPolicyContext(workspace, 'user-a', ['user-b']);
-    assert.equal(ctx.workspaceFolder, path.resolve('/tmp/test'));
+    // U12: the anchor is the realpath of the deepest existing ancestor, so
+    // context paths and canonicalizeBotPath outputs share one spelling on
+    // symlinked roots (macOS /tmp → /private/tmp).
+    const canonicalRoot = path.join(fs.realpathSync('/tmp'), 'test');
+    assert.equal(ctx.workspaceFolder, canonicalRoot);
     assert.equal(ctx.userDirName, 'user-a');
-    assert.equal(ctx.userDir, path.join(path.resolve('/tmp/test'), 'data', 'user-a'));
+    assert.equal(ctx.userDir, path.join(canonicalRoot, 'data', 'user-a'));
     assert.deepEqual(ctx.knownUserDirNames, ['user-b']);
   });
 

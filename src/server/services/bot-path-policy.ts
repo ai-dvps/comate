@@ -37,6 +37,47 @@ const DEFAULT_DENY_GLOBS = [
  * @param isAdminOrOwner - whether the user bypasses the denylist and cross-user restrictions
  * @param workspaceDenyGlobs - additional workspace-specific globs that Normal users cannot read
  */
+/**
+ * Realpath the deepest existing ancestor of `resolved` and re-append the
+ * non-existent remainder. Canonicalizes as much of the path as exists, so
+ * the result is stable regardless of which suffix of the tree exists yet
+ * (the previous one-level parent fallback flipped between literal and
+ * canonical spellings as directories came into existence — e.g. when U12's
+ * context-file creation makes `data/<user>` exist at session creation).
+ */
+function realpathDeepest(resolved: string): string {
+  const suffix: string[] = [];
+  let current = resolved;
+  for (;;) {
+    try {
+      const real = fs.realpathSync(current);
+      return suffix.length === 0 ? real : path.join(real, ...suffix.reverse());
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return resolved;
+      }
+      suffix.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+/**
+ * Canonical workspace anchor: realpath of the deepest existing ancestor (the
+ * workspace root itself normally exists; tests use mock roots that do not).
+ * Both the policy context and canonicalizeBotPath must anchor at the SAME
+ * spelling — otherwise a workspace living under a symlinked path (macOS
+ * tmpdirs, /tmp → /private/tmp, user-created symlinks) flips between literal
+ * and realpath canonicalization depending on which directories happen to
+ * exist, and the prefix checks fail closed on legitimate paths (surfaced by
+ * U12's context-file creation, which makes `data/<user>` exist at session
+ * creation).
+ */
+function canonicalWorkspaceRoot(workspaceFolder: string): string {
+  return realpathDeepest(path.resolve(workspaceFolder));
+}
+
 export function createPathPolicyContext(
   workspace: Workspace,
   userDirName: string,
@@ -44,7 +85,7 @@ export function createPathPolicyContext(
   isAdminOrOwner = false,
   workspaceDenyGlobs: string[] = [],
 ): PathPolicyContext {
-  const workspaceFolder = path.resolve(workspace.folderPath);
+  const workspaceFolder = canonicalWorkspaceRoot(workspace.folderPath);
   const userDir = path.join(workspaceFolder, 'data', userDirName);
   const globs = [...DEFAULT_DENY_GLOBS, ...(workspaceDenyGlobs ?? [])];
   const denyMatchers = globs.map((g) => picomatch(g));
@@ -75,28 +116,18 @@ function resolveRealPath(ctx: PathPolicyContext, rawPath: string): string {
 /**
  * Realpath canonicalization retained as the bot gate's verification layer
  * (U3, KTD-5): resolves a tool-input path against the workspace and follows
- * symlinks (parent-dir fallback for non-existent targets) so the gate checks
- * the canonical destination, never the spelled path. The sandbox/permission
- * rules are the enforcement layer; this is the in-gate double-check.
+ * symlinks (deepest-existing-ancestor fallback for non-existent targets) so
+ * the gate checks the canonical destination, never the spelled path. The
+ * sandbox/permission rules are the enforcement layer; this is the in-gate
+ * double-check.
  */
 export function canonicalizeBotPath(workspaceFolder: string, rawPath: string): string {
+  const canonicalRoot = canonicalWorkspaceRoot(workspaceFolder);
   const normalized = normalizePath(rawPath);
   const resolved = path.isAbsolute(normalized)
     ? normalized
-    : path.resolve(workspaceFolder, normalized);
-  try {
-    return fs.realpathSync(resolved);
-  } catch {
-    // Path does not exist; resolve the parent to follow symlinks.
-    const parent = path.dirname(resolved);
-    const base = path.basename(resolved);
-    try {
-      const realParent = fs.realpathSync(parent);
-      return path.join(realParent, base);
-    } catch {
-      return resolved;
-    }
-  }
+    : path.resolve(canonicalRoot, normalized);
+  return realpathDeepest(resolved);
 }
 
 function startsWithDir(resolved: string, dir: string): boolean {

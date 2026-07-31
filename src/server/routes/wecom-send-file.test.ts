@@ -51,6 +51,15 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     return res;
   }
 
+
+  /**
+   * U12: handlers derive identity from the session capability token stamped
+   * by the loopback-auth middleware - tests stamp it directly.
+   */
+  function sessionAuth(sessionId: string, workspaceId: string) {
+    return { loopbackAuth: { kind: 'session' as const, sessionId, workspaceId, botId: null } };
+  }
+
   async function importRouteHandlers() {
     const mod = await import('./wecom-send-file.js');
     const router = mod.default;
@@ -127,6 +136,7 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
+      ...sessionAuth(session.id, workspace.id),
       params: { workspaceId: workspace.id },
       body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
@@ -160,6 +170,7 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
+      ...sessionAuth(session.id, workspace.id),
       params: { workspaceId: workspace.id },
       body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
@@ -192,6 +203,7 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
+      ...sessionAuth(session.id, workspace.id),
       params: { workspaceId: workspace.id },
       body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
@@ -203,26 +215,57 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     assert.strictEqual(capturedIsAdmin, false);
   });
 
-  it('returns 400 when sessionId is missing', async () => {
+  it('body sessionId is optional — identity comes from the token (U12)', async () => {
     const workspace = await createWorkspace();
     const handlers = await importRouteHandlers();
 
-    const req1 = { params: { workspaceId: workspace.id }, body: { toUser: 'bob', filePath: 'docs/report.pdf' } };
+    // No body sessionId at all: passes input validation, then fails at
+    // unknown_session for the token-bound (unmapped) session.
+    const req1 = {
+      ...sessionAuth('sid-unknown', workspace.id),
+      params: { workspaceId: workspace.id },
+      body: { toUser: 'bob', filePath: 'docs/report.pdf' },
+    };
     const res1 = createMockRes();
     await handlers['/'].post(req1, res1);
     assert.strictEqual(res1.statusCode, 400);
+    assert.strictEqual((res1.jsonBody as { error: string }).error, 'unknown_session');
 
-    const req2 = { params: { workspaceId: workspace.id }, body: { sessionId: '', toUser: 'bob', filePath: 'docs/report.pdf' } };
+    // A self-asserted sessionId that disagrees with the token is rejected loudly.
+    const req2 = {
+      ...sessionAuth('sid-real', workspace.id),
+      params: { workspaceId: workspace.id },
+      body: { sessionId: 'sid-foreign', toUser: 'bob', filePath: 'docs/report.pdf' },
+    };
     const res2 = createMockRes();
     await handlers['/'].post(req2, res2);
-    assert.strictEqual(res2.statusCode, 400);
+    assert.strictEqual(res2.statusCode, 403);
+    assert.strictEqual((res2.jsonBody as { error: string }).error, 'session_mismatch');
+  });
+
+  it('rejects callers without a session capability token', async () => {
+    const workspace = await createWorkspace();
+    const handlers = await importRouteHandlers();
+
+    const req = {
+      params: { workspaceId: workspace.id },
+      body: { toUser: 'bob', filePath: 'docs/report.pdf' },
+    };
+    const res = createMockRes();
+    await handlers['/'].post(req, res);
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual((res.jsonBody as { error: string }).error, 'forbidden');
   });
 
   it('returns 400 when toUser is missing', async () => {
     const workspace = await createWorkspace();
     const handlers = await importRouteHandlers();
 
-    const req = { params: { workspaceId: workspace.id }, body: { sessionId: 'sid-1', filePath: 'docs/report.pdf' } };
+    const req = {
+      ...sessionAuth('sid-1', workspace.id),
+      params: { workspaceId: workspace.id },
+      body: { sessionId: 'sid-1', filePath: 'docs/report.pdf' },
+    };
     const res = createMockRes();
     await handlers['/'].post(req, res);
     assert.strictEqual(res.statusCode, 400);
@@ -232,7 +275,11 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     const workspace = await createWorkspace();
     const handlers = await importRouteHandlers();
 
-    const req = { params: { workspaceId: workspace.id }, body: { sessionId: 'sid-1', toUser: 'bob' } };
+    const req = {
+      ...sessionAuth('sid-1', workspace.id),
+      params: { workspaceId: workspace.id },
+      body: { sessionId: 'sid-1', toUser: 'bob' },
+    };
     const res = createMockRes();
     await handlers['/'].post(req, res);
     assert.strictEqual(res.statusCode, 400);
@@ -245,6 +292,7 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     const handlers = await importRouteHandlers();
 
     const req = {
+      ...sessionAuth('sid-1', workspace.id),
       params: { workspaceId: workspace.id },
       body: { sessionId: 'sid-1', toUser: 'bob', filePath: 'docs/report.pdf' },
     };
@@ -270,6 +318,7 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
+      ...sessionAuth(session.id, workspace.id),
       params: { workspaceId: workspace.id },
       body: { sessionId: session.id, toUser: 'bob', filePath: 'data/ZhangWei/private.pdf' },
     };
@@ -296,6 +345,7 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
+      ...sessionAuth(session.id, workspace.id),
       params: { workspaceId: workspace.id },
       body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };
@@ -321,6 +371,7 @@ describe('wecom-send-file routes', { concurrency: false }, () => {
     };
 
     const req = {
+      ...sessionAuth(session.id, workspace.id),
       params: { workspaceId: workspace.id },
       body: { sessionId: session.id, toUser: 'bob', filePath: 'docs/report.pdf' },
     };

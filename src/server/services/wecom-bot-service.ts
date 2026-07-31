@@ -173,13 +173,8 @@ export class WeComBotService {
   private connections = new Map<string, BotConnection>();
   private botIdToWorkspaceId = new Map<string, string>();
   private workspaceIdToBotId = new Map<string, string>();
-  private serverUrl: string | null = null;
   private cardClickRateLimit = new Map<string, number>();
   private activeStreamReplies = new Map<string, StreamReplyResult>();
-
-  setServerUrl(url: string): void {
-    this.serverUrl = url;
-  }
 
   async initialize(): Promise<void> {
     await this.cleanupStaleContextFiles();
@@ -251,8 +246,11 @@ export class WeComBotService {
       }
       const ws = activeWorkspaceId ? await workspaceStore.get(activeWorkspaceId) : null;
       if (ws) {
-        this.writeContextFile(ws, wecomBotId).catch((err) => {
-          console.warn(`Failed to write WeCom context file for workspace ${activeWorkspaceId}:`, err);
+        // U12: the CLI context moved to per-session `.runtime/` dirs (written
+        // by chat-service at session creation); remove any legacy
+        // workspace-root file so stale/pre-upgrade copies cannot be used.
+        this.removeContextFile(ws.id).catch((err) => {
+          console.warn(`Failed to remove legacy WeCom context file for workspace ${activeWorkspaceId}:`, err);
         });
       }
     });
@@ -959,8 +957,10 @@ export class WeComBotService {
 
     const workspace = await workspaceStore.get(workspaceId);
     if (workspace) {
-      this.writeContextFile(workspace, conn.botId).catch((err) => {
-        console.warn(`Failed to write WeCom context file for workspace ${workspaceId}:`, err);
+      // U12: per-session `.runtime/` context files replace the workspace-root
+      // file; clear any legacy copy on workspace switch.
+      this.removeContextFile(workspaceId).catch((err) => {
+        console.warn(`Failed to remove legacy WeCom context file for workspace ${workspaceId}:`, err);
       });
     }
 
@@ -1203,8 +1203,10 @@ export class WeComBotService {
 
     const workspace = await workspaceStore.get(workspaceId);
     if (workspace) {
-      this.writeContextFile(workspace, conn.botId).catch((err) => {
-        console.warn(`Failed to write WeCom context file for workspace ${workspaceId}:`, err);
+      // U12: per-session `.runtime/` context files replace the workspace-root
+      // file; clear any legacy copy on workspace switch.
+      this.removeContextFile(workspaceId).catch((err) => {
+        console.warn(`Failed to remove legacy WeCom context file for workspace ${workspaceId}:`, err);
       });
     }
   }
@@ -1587,32 +1589,20 @@ export class WeComBotService {
     }
   }
 
-  private getContextFilePath(workspace: Workspace): string {
+  /**
+   * U12: the LEGACY workspace-root context location. The per-session CLI
+   * context now lives in `data/<userDir>/.runtime/wecom-context.json` and is
+   * written by chat-service at session creation; this path remains only for
+   * cleanup of pre-upgrade files.
+   */
+  private getLegacyContextFilePath(workspace: Workspace): string {
     return path.join(workspace.folderPath, '.claude', 'wecom-context.json');
-  }
-
-  private async writeContextFile(workspace: Workspace, botId: string): Promise<void> {
-    if (!this.serverUrl) return;
-    const filePath = this.getContextFilePath(workspace);
-    const dir = path.dirname(filePath);
-    const resolvedDir = path.resolve(dir);
-    const resolvedBase = path.resolve(workspace.folderPath);
-    if (!resolvedDir.startsWith(resolvedBase)) {
-      throw new Error('Context file path is outside workspace directory');
-    }
-    try {
-      await fsPromises.mkdir(dir, { recursive: true });
-    } catch {
-      // ignore
-    }
-    const content = JSON.stringify({ workspaceId: workspace.id, botId, serverUrl: this.serverUrl }, null, 2);
-    await fsPromises.writeFile(filePath, content, 'utf-8');
   }
 
   private async removeContextFile(workspaceId: string): Promise<void> {
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) return;
-    const filePath = this.getContextFilePath(workspace);
+    const filePath = this.getLegacyContextFilePath(workspace);
     const resolvedFile = path.resolve(filePath);
     const resolvedBase = path.resolve(workspace.folderPath);
     if (!resolvedFile.startsWith(resolvedBase)) {
@@ -1625,30 +1615,43 @@ export class WeComBotService {
     }
   }
 
+  /**
+   * U12 boot sweep: remove every legacy workspace-root context file (they are
+   * no longer the source of truth — the new CLI never reads them) and every
+   * per-session `.runtime/` context file (their tokens are boot-invalidated,
+   * so the files are inert; fresh ones are written at session creation).
+   */
   private async cleanupStaleContextFiles(): Promise<void> {
     const workspaces = await workspaceStore.list();
     for (const ws of workspaces) {
-      const filePath = this.getContextFilePath(ws);
-      const resolvedFile = path.resolve(filePath);
+      // Legacy workspace-root file: always removed now.
+      const legacyPath = this.getLegacyContextFilePath(ws);
+      const resolvedLegacy = path.resolve(legacyPath);
       const resolvedBase = path.resolve(ws.folderPath);
-      if (!resolvedFile.startsWith(resolvedBase)) {
-        continue;
+      if (resolvedLegacy.startsWith(resolvedBase)) {
+        try {
+          await fsPromises.unlink(resolvedLegacy);
+          console.log(`Removed legacy WeCom context file for workspace ${ws.id}`);
+        } catch {
+          // absent or unreadable — nothing to do
+        }
       }
-      let exists = false;
+      // Per-session runtime context files: sweep data/*/.runtime/wecom-context.json.
+      const dataDir = path.join(ws.folderPath, 'data');
+      let userDirs: string[] = [];
       try {
-        await fsPromises.access(filePath);
-        exists = true;
+        userDirs = (await fsPromises.readdir(dataDir, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
       } catch {
         continue;
       }
-      if (!exists) continue;
-      const botId = ws.settings.wecomBotId;
-      if (!botId || !this.botIdToWorkspaceId.has(botId)) {
+      for (const userDir of userDirs) {
+        const contextPath = path.join(dataDir, userDir, '.runtime', 'wecom-context.json');
         try {
-          await fsPromises.unlink(filePath);
-          console.log(`Cleaned up stale WeCom context file for workspace ${ws.id}`);
-        } catch (err) {
-          console.warn(`Failed to clean up stale context file for workspace ${ws.id}:`, err);
+          await fsPromises.unlink(contextPath);
+        } catch {
+          // absent — nothing to sweep
         }
       }
     }
