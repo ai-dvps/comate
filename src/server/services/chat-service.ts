@@ -50,6 +50,7 @@ import { botAuditLogger } from './bot-audit-logger.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
+import { createDefaultBotRolePolicy } from './bot-access-policy.js';
 import type { Provider } from '../models/provider.js';
 import {
   BROWSER_MCP_SERVER_KEY,
@@ -2118,7 +2119,7 @@ export class ChatService {
             }
 
             if (toolName === 'Skill') {
-              const r = evaluateBotSkill(rolePolicy ?? { normalToolPolicy: SAFE_PRESET, skillAllowlist: [], bashWhitelist: [] }, role, toolName, input);
+              const r = evaluateBotSkill(rolePolicy ?? createDefaultBotRolePolicy('normal'), role, toolName, input);
               if (!r.allowed) {
                 diagLog(
                   `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${r.reason ?? 'skill-denied'}`,
@@ -2245,9 +2246,8 @@ export class ChatService {
             isAdminOrOwner: isAdmin,
           };
           const skillPolicy: BotRolePolicy = {
-            normalToolPolicy: SAFE_PRESET,
+            ...createDefaultBotRolePolicy('normal'),
             skillAllowlist: isolation?.defaultAllowedSkills ?? [],
-            bashWhitelist: [],
           };
           skillContext = { policy: skillPolicy, isAdminOrOwner: isAdmin };
         }

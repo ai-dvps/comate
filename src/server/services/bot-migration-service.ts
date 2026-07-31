@@ -2,6 +2,7 @@ import type { BotChannelSettings, BotRolePolicy, CreateBotInput } from '../model
 import type { Workspace } from '../models/workspace.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { ALLOW_ALL_PRESET } from './tool-permission-policy.js';
+import { createDefaultBotRolePolicy } from './bot-access-policy.js';
 import { BuiltinPluginService, builtinPluginService as defaultBuiltinPluginService } from './builtin-plugin-service.js';
 
 export interface MigrationResult {
@@ -234,12 +235,12 @@ export class BotMigrationService {
     }
 
     const rolePolicy: BotRolePolicy = {
+      ...createDefaultBotRolePolicy('normal'),
       normalToolPolicy: workspace.settings.wecomToolPermissions ?? ALLOW_ALL_PRESET,
       skillAllowlist: [
         ...(isolation?.defaultAllowedSkills ?? []),
         ...(isolation?.adminAllowedSkills ?? []),
       ],
-      bashWhitelist: [],
     };
 
     const botName =

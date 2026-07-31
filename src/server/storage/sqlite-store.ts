@@ -24,6 +24,7 @@ import type {
   UpdateBotUserInput,
 } from '../models/bot-user.js';
 import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
+import { sanitizeBotRolePolicy, createDefaultBotRolePolicy } from '../services/bot-access-policy.js';
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin, TodoComment, TodoConflict } from '../models/todo.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import { providerSupportsFastMode } from '../utils/provider-capability.js';
@@ -1198,43 +1199,15 @@ export class SqliteStore {
       }
 
       for (const bot of oldBots) {
-        const policy = safeJsonParse(bot.role_policy_json, {
-          normalToolPolicy: {
-            posture: 'safe',
-            categoryDefaults: {
-              fileRead: 'allow',
-              fileWrite: 'deny',
-              shell: 'deny',
-              network: 'deny',
-              subagents: 'deny',
-              reply: 'allow',
-              browser: 'deny',
-            },
-          },
-          skillAllowlist: [],
-          bashWhitelist: [],
-        } as BotRolePolicy);
+        const policy = sanitizeBotRolePolicy(
+          safeJsonParse(bot.role_policy_json, createDefaultBotRolePolicy('normal')),
+        );
         const rolePersonas = safeJsonParse(bot.role_personas_json ?? '{}', {} as Partial<Record<BotRoleKey, BotPersona>>);
         for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
           const roleId = uuidv4();
           const permissions: BotRolePolicy = roleKey === 'normal'
             ? policy
-            : {
-                normalToolPolicy: {
-                  posture: 'allow-all',
-                  categoryDefaults: {
-                    fileRead: 'allow',
-                    fileWrite: 'allow',
-                    shell: 'allow',
-                    network: 'allow',
-                    subagents: 'allow',
-                    reply: 'allow',
-                    browser: 'deny',
-                  },
-                },
-                skillAllowlist: [],
-                bashWhitelist: [],
-              };
+            : createDefaultBotRolePolicy(roleKey);
           const persona = rolePersonas[roleKey];
           this.db.prepare(`
             INSERT OR IGNORE INTO bot_roles (id, bot_id, role_key, permissions_json, persona_json, created_at, updated_at)
@@ -1360,39 +1333,7 @@ export class SqliteStore {
           `).run(feishuChannelId, feishuBotId, 'feishu', 'Feishu', '{}', now, now);
           for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
             const roleId = uuidv4();
-            const permissions: BotRolePolicy = roleKey === 'normal'
-              ? {
-                  normalToolPolicy: {
-                    posture: 'safe',
-                    categoryDefaults: {
-                      fileRead: 'allow',
-                      fileWrite: 'deny',
-                      shell: 'deny',
-                      network: 'deny',
-                      subagents: 'deny',
-                      reply: 'allow',
-                      browser: 'deny',
-                    },
-                  },
-                  skillAllowlist: [],
-                  bashWhitelist: [],
-                }
-              : {
-                  normalToolPolicy: {
-                    posture: 'allow-all',
-                    categoryDefaults: {
-                      fileRead: 'allow',
-                      fileWrite: 'allow',
-                      shell: 'allow',
-                      network: 'allow',
-                      subagents: 'allow',
-                      reply: 'allow',
-                      browser: 'deny',
-                    },
-                  },
-                  skillAllowlist: [],
-                  bashWhitelist: [],
-                };
+            const permissions: BotRolePolicy = createDefaultBotRolePolicy(roleKey);
             this.db.prepare(`
               INSERT INTO bot_roles (id, bot_id, role_key, permissions_json, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?)
@@ -2964,39 +2905,10 @@ export class SqliteStore {
     }
     for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
       const roleId = uuidv4();
-      const permissions: BotRolePolicy = roleKey === 'normal'
-        ? {
-            normalToolPolicy: {
-              posture: 'safe',
-              categoryDefaults: {
-                fileRead: 'allow',
-                fileWrite: 'deny',
-                shell: 'deny',
-                network: 'deny',
-                subagents: 'deny',
-                reply: 'allow',
-                browser: 'deny',
-              },
-            },
-            skillAllowlist: [],
-            bashWhitelist: [],
-          }
-        : {
-            normalToolPolicy: {
-              posture: 'allow-all',
-              categoryDefaults: {
-                fileRead: 'allow',
-                fileWrite: 'allow',
-                shell: 'allow',
-                network: 'allow',
-                subagents: 'allow',
-                reply: 'allow',
-                browser: 'deny',
-              },
-            },
-            skillAllowlist: [],
-            bashWhitelist: [],
-          };
+      // New bots default to the new permission model (R14): sandboxed normal
+      // posture, empty passlist, empty domain list (derivation merges the
+      // WeCom/loopback defaults).
+      const permissions: BotRolePolicy = createDefaultBotRolePolicy(roleKey);
       this.db.prepare(`
         INSERT INTO bot_roles (id, bot_id, role_key, permissions_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -3640,26 +3552,15 @@ interface RawBotRoleRow {
 }
 
 function parseBotRoleRow(row: RawBotRoleRow): BotRole {
+  // Field-level fail-closed sanitizer on the read path (U2): old-shape blobs
+  // get the new fields backfilled to safe defaults; a corrupt blob collapses
+  // to the full default. Never returns an unsanitized shape.
+  const parsed = safeJsonParse(row.permissions_json, {});
   return {
     id: row.id,
     botId: row.bot_id,
     roleKey: row.role_key as BotRoleKey,
-    permissions: safeJsonParse(row.permissions_json, {
-      normalToolPolicy: {
-        posture: 'safe',
-        categoryDefaults: {
-          fileRead: 'allow',
-          fileWrite: 'deny',
-          shell: 'deny',
-          network: 'deny',
-          subagents: 'deny',
-          reply: 'allow',
-          browser: 'deny',
-        },
-      },
-      skillAllowlist: [],
-      bashWhitelist: [],
-    } as BotRolePolicy),
+    permissions: sanitizeBotRolePolicy(parsed),
     persona: row.persona_json ? safeJsonParse(row.persona_json, undefined as unknown as BotPersona) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

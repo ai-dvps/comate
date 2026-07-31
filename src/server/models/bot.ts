@@ -27,13 +27,63 @@ export interface BotChannelSettings {
   feishu?: FeishuChannelConfig;
 }
 
+/**
+ * Provenance for a passlist rule (KTD-18): who added it and where it came
+ * from. `approval` entries are accumulated from "always allow" decisions;
+ * `manual` entries are added by a desktop admin.
+ */
+export interface PasslistRuleProvenance {
+  addedBy: string;
+  source: 'manual' | 'approval';
+  createdAt: string;
+}
+
+/**
+ * One out-of-sandbox passlist entry (出沙箱直通名单). Stored as an SDK
+ * structural rule (e.g. `Bash(git status)`), never a bare prefix string
+ * (KTD-13). Exact-match semantics unless a desktop admin edits the rule.
+ */
+export interface PasslistRule {
+  rule: string;
+  provenance?: PasslistRuleProvenance;
+}
+
 export interface BotRolePolicy {
   /** Tool permission policy applied to Normal users. Owner/Admin bypass this. */
   normalToolPolicy: ToolPermissionPolicy;
-  /** Skill allowlist for Normal users. Owner/Admin bypass this. */
+  /**
+   * @deprecated Legacy per-role skill allowlist. NOT migrated into the new
+   * model (KTD-27): the data is kept so old blobs parse, but the new model
+   * ignores it. Replaced by bot-level `skills`/`disabledSkills` (R8).
+   */
   skillAllowlist: string[];
-  /** Bash command whitelist for Normal users. Owner/Admin bypass this. */
+  /**
+   * @deprecated Legacy bash whitelist (string prefix matching). NOT migrated
+   * (KTD-27); superseded by `passlistRules` (R7/KTD-13). Kept so old blobs
+   * parse.
+   */
   bashWhitelist: string[];
+  /**
+   * Bot-level mounted skill set (R8/KTD-14): the capability surface this bot
+   * offers, identical for every role. Absent = all installed skills mounted
+   * (the zero-config default); an explicit array = closed mounted set.
+   * Individual disables go through `disabledSkills`.
+   */
+  skills?: string[];
+  /** Bot-level explicit skill deny list (KTD-14 backstop). Fail-closed default []. */
+  disabledSkills: string[];
+  /**
+   * Out-of-sandbox passlist (R7/KTD-13): structural rules for commands that
+   * may run outside the sandbox without an approval round. Default empty —
+   * empty is the correct default (R14).
+   */
+  passlistRules: PasslistRule[];
+  /**
+   * Bot-level network domain allowlist (R2/KTD-9), merged over the built-in
+   * defaults (WeCom API endpoints + sidecar loopback) at derivation time.
+   * Default empty.
+   */
+  networkAllowlist: string[];
 }
 
 export type BotPersonaMode = 'append' | 'replace';
