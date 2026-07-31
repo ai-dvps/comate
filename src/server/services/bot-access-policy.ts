@@ -28,7 +28,8 @@
  * is imported by storage/sqlite-store.ts for the BotRolePolicy read-path
  * sanitizer, so it must NEVER import the store singleton or any module that
  * resolves storage at load. Keep imports limited to node builtins, models
- * (types), utils, and tool-permission-policy.
+ * (types), utils, tool-permission-policy, and bot-path-policy (a leaf module:
+ * node builtins + picomatch only).
  */
 
 import os from 'node:os';
@@ -37,9 +38,11 @@ import type { SandboxSettings, SdkPluginConfig } from '@anthropic-ai/claude-agen
 import type { Bot, BotRoleKey, BotRolePolicy, PasslistRule, PasslistRuleProvenance } from '../models/bot.js';
 import { SAFE_PRESET, ALLOW_ALL_PRESET, sanitizePolicy, type ToolPermissionPolicy } from './tool-permission-policy.js';
 import { BROWSER_TOOL_PREFIX } from './browser-tool-names.js';
+import { DEFAULT_DENY_GLOBS } from './bot-path-policy.js';
 import { getStorageDir } from '../storage/data-dir.js';
 import { resolveBuiltInMarketplacePath } from '../utils/resolve-builtin-marketplace-path.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
+import { isPlainObject } from '../utils/plain-object.js';
 import { diagLog } from '../utils/diag-logger.js';
 
 // ---------------------------------------------------------------------------
@@ -83,22 +86,12 @@ export const WECOM_API_DOMAINS = ['qyapi.weixin.qq.com'] as const;
 export const LOOPBACK_DOMAINS = ['localhost', '127.0.0.1'] as const;
 
 /**
- * Workspace-anchored credential/sensitive deny globs: the union of
- * bot-path-policy's DEFAULT_DENY_GLOBS and the R4 credential list
- * (.credentials.json, *.pem, *.key, *id_rsa*), deduped. Mirrored here because
- * bot-path-policy does not export its copy; U4 prunes the legacy module.
+ * Workspace-anchored credential/sensitive deny globs: bot-path-policy's
+ * DEFAULT_DENY_GLOBS (which already covers the R4 *.pem / *.key / *id_rsa*
+ * credential entries) plus the R4 `.credentials.json` addition. Composed from
+ * the exported source of truth so the two lists cannot drift.
  */
-const WORKSPACE_CREDENTIAL_DENY_GLOBS = [
-  '.claude/**',
-  '.env*',
-  '*id_rsa*',
-  '*.pem',
-  '*.key',
-  '*.db',
-  '*.sqlite*',
-  '*.log',
-  '.credentials.json',
-];
+const WORKSPACE_CREDENTIAL_DENY_GLOBS = [...DEFAULT_DENY_GLOBS, '.credentials.json'];
 
 /** Home-relative credential denies compiled into rules for non-owner roles (R4). */
 const CREDENTIAL_HOME_DENY_PATTERNS = ['~/.aws/**', '~/.ssh/**'];
@@ -187,10 +180,6 @@ export function createDefaultBotRolePolicy(roleKey: BotRoleKey = 'normal'): BotR
   };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function sanitizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
@@ -203,13 +192,6 @@ function sanitizeToolPolicyField(value: unknown): ToolPermissionPolicy {
     return sanitizePolicy(SAFE_PRESET);
   }
   return sanitizePolicy(value as unknown as ToolPermissionPolicy);
-}
-
-function sanitizeSkillsField(value: unknown): string[] {
-  // Invalid non-absent values fail closed to "no skills mounted". Absent is
-  // handled by the caller (undefined = all installed skills).
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
 }
 
 function sanitizeProvenance(value: unknown): PasslistRuleProvenance | undefined {
@@ -268,7 +250,10 @@ export function sanitizeBotRolePolicy(raw: unknown): BotRolePolicy {
     networkAllowlist: sanitizeDomainList(raw.networkAllowlist),
   };
   if (raw.skills !== undefined) {
-    sanitized.skills = sanitizeSkillsField(raw.skills);
+    // Invalid non-absent values fail closed to "no skills mounted". Absent
+    // (undefined) means all installed skills stay mounted — handled by the
+    // guard above, which skips the field entirely.
+    sanitized.skills = sanitizeStringArray(raw.skills);
   }
   return sanitized;
 }
@@ -594,17 +579,21 @@ export function deriveBotAccess(
   }
 
   return ownerDerivation({
+    // Owner ignores workspaceFolder/sensitiveFileDenylist — the role has no
+    // workspace-anchored rules — but the context shape is shared.
+    workspaceFolder,
     comateDataDir,
     claudeProjects,
     envVars,
     network,
     plugins,
     policy: sanitizedPolicy,
+    sensitiveFileDenylist: options.sensitiveFileDenylist ?? [],
   });
 }
 
 interface RoleDerivationContext {
-  workspaceFolder?: string;
+  workspaceFolder: string;
   comateDataDir: string;
   claudeProjects: string;
   pluginCache?: string;
@@ -613,7 +602,7 @@ interface RoleDerivationContext {
   network: NonNullable<SandboxSettings['network']>;
   plugins: SdkPluginConfig[];
   policy: BotRolePolicy;
-  sensitiveFileDenylist?: string[];
+  sensitiveFileDenylist: string[];
 }
 
 /**
@@ -629,6 +618,7 @@ function passlistRuleStrings(policy: BotRolePolicy): string[] {
 }
 
 function ownerDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
+  const passlist = passlistRuleStrings(ctx.policy);
   const sandbox: SandboxSettings = {
     ...baseSandbox('owner'),
     filesystem: {
@@ -650,19 +640,20 @@ function ownerDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
     permissionRules: {
       // Passlist compiles into inline allow rules (U4): the SDK structural
       // rule engine evaluates it upstream of the gate (KTD-2/KTD-13).
-      allow: passlistRuleStrings(ctx.policy),
+      allow: passlist,
       ask: [],
       deny: systemDenyRules(ctx.comateDataDir),
     },
     preamble: ownerPreamble(),
-    passlistRules: passlistRuleStrings(ctx.policy),
+    passlistRules: passlist,
     plugins: ctx.plugins,
   };
 }
 
 function adminDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
-  const ws = ctx.workspaceFolder as string;
-  const sensitive = ctx.sensitiveFileDenylist ?? [];
+  const ws = ctx.workspaceFolder;
+  const sensitive = ctx.sensitiveFileDenylist;
+  const passlist = passlistRuleStrings(ctx.policy);
   const capabilityDirs = PUBLIC_CAPABILITY_DIRS.map((dir) => path.join(ws, '.claude', dir));
   const allowRead = [ws, ctx.pluginCache, ctx.cliDir].filter((p): p is string => typeof p === 'string');
 
@@ -692,7 +683,7 @@ function adminDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
       allow: [
         absRule('Read', ws),
         ...capabilityDirs.map((dir) => absRule('Edit', dir)),
-        ...passlistRuleStrings(ctx.policy),
+        ...passlist,
       ],
       ask: [],
       deny: credentialDenyRules({
@@ -702,14 +693,15 @@ function adminDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
       }),
     },
     preamble: adminPreamble(ws),
-    passlistRules: passlistRuleStrings(ctx.policy),
+    passlistRules: passlist,
     plugins: ctx.plugins,
   };
 }
 
 function normalDerivation(userDirName: string, ctx: RoleDerivationContext): BotAccessDerivation {
-  const ws = ctx.workspaceFolder as string;
-  const sensitive = ctx.sensitiveFileDenylist ?? [];
+  const ws = ctx.workspaceFolder;
+  const sensitive = ctx.sensitiveFileDenylist;
+  const passlist = passlistRuleStrings(ctx.policy);
   const userDir = path.join(ws, 'data', userDirName);
   const runtimeDir = path.join(userDir, '.runtime');
   const allowRead = [ws, userDir, ctx.pluginCache, ctx.cliDir].filter(
@@ -745,7 +737,7 @@ function normalDerivation(userDirName: string, ctx: RoleDerivationContext): BotA
       // cannot carve own-dir back open). Passlist rules are appended for the
       // SDK structural engine (U4, KTD-13) — they are Bash() rules and do not
       // intersect the file-tool surface.
-      allow: [absRule('Read', userDir), absRule('Edit', userDir), ...passlistRuleStrings(ctx.policy)],
+      allow: [absRule('Read', userDir), absRule('Edit', userDir), ...passlist],
       ask: [],
       deny: credentialDenyRules({
         includeClaudeDirGlob: true,
@@ -754,7 +746,7 @@ function normalDerivation(userDirName: string, ctx: RoleDerivationContext): BotA
       }),
     },
     preamble: normalPreamble(userDir),
-    passlistRules: passlistRuleStrings(ctx.policy),
+    passlistRules: passlist,
     plugins: ctx.plugins,
   };
 }

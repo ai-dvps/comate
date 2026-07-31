@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
 import type { BotActor } from './bot-service.js';
 import type { BotChannelKey } from '../models/bot.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
+import { sha256Hex } from '../utils/sha256.js';
 import { diagLog } from '../utils/diag-logger.js';
 
 export type BotAuditEventType =
@@ -87,10 +87,6 @@ function looksSecret(value: string): boolean {
   return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value));
 }
 
-function sha256Hex(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
 function sanitizeString(key: string, value: string, out: Record<string, unknown>): string {
   if (looksSecret(value)) {
     return '<redacted>';
@@ -111,6 +107,22 @@ function sanitizeString(key: string, value: string, out: Record<string, unknown>
 }
 
 /**
+ * Sanitize one array element of an audit-details field: objects recurse into
+ * sanitizeDetails (nested arrays included, keyed by index — same as the
+ * object branch), strings redact on secret-shape or length, everything else
+ * passes through verbatim.
+ */
+function sanitizeArrayItem(item: unknown): unknown {
+  if (typeof item === 'object' && item !== null) {
+    return sanitizeDetails(item as Record<string, unknown>);
+  }
+  if (typeof item === 'string') {
+    return looksSecret(item) || item.length > 32 ? '<redacted>' : item;
+  }
+  return item;
+}
+
+/**
  * Sanitize audit details so sensitive values are never persisted or logged.
  * Any nested strings that look like credential material are replaced with
  * `<redacted>` markers; the structure is otherwise preserved. Designated
@@ -123,15 +135,7 @@ function sanitizeDetails(details: Record<string, unknown>): Record<string, unkno
     if (typeof value === 'string') {
       sanitized[key] = sanitizeString(key, value, sanitized);
     } else if (Array.isArray(value)) {
-      sanitized[key] = value.map((item) =>
-        typeof item === 'object' && item !== null
-          ? sanitizeDetails(item as Record<string, unknown>)
-          : typeof item === 'string'
-            ? looksSecret(item) || item.length > 32
-              ? '<redacted>'
-              : item
-            : item,
-      );
+      sanitized[key] = value.map(sanitizeArrayItem);
     } else if (typeof value === 'object' && value !== null) {
       sanitized[key] = sanitizeDetails(value as Record<string, unknown>);
     } else {

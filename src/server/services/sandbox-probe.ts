@@ -152,22 +152,26 @@ async function assertDarwin(ctx: AssertionContext, failures: string[]): Promise<
     return;
   }
 
-  // FS negative assertion: a denied path must be unreadable.
-  const fsDeny = await ctx.runner(
-    seatbelt,
-    ['-p', `${allowAll}(deny file-read* (subpath "${ctx.canaryDirReal}"))`, '/bin/cat', ctx.canaryFile],
-    PROBE_TIMEOUT_MS,
-  );
+  // The FS and NET negative assertions are independent — run them
+  // concurrently, then evaluate in fixed order (fs first, then net): the
+  // failures array order is asserted in tests.
+  const [fsDeny, netDeny] = await Promise.all([
+    // FS negative assertion: a denied path must be unreadable.
+    ctx.runner(
+      seatbelt,
+      ['-p', `${allowAll}(deny file-read* (subpath "${ctx.canaryDirReal}"))`, '/bin/cat', ctx.canaryFile],
+      PROBE_TIMEOUT_MS,
+    ),
+    // NET negative assertion: with outbound denied the canary host must be unreachable.
+    ctx.runner(
+      seatbelt,
+      ['-p', `${allowAll}(deny network-outbound)`, ctx.nodePath, '-e', NET_ASSERT_SCRIPT, CANARY_HOST, String(CANARY_PORT)],
+      PROBE_TIMEOUT_MS,
+    ),
+  ]);
   if (!fsDeny.error && fsDeny.code === 0 && fsDeny.stdout.includes(CANARY_CONTENT)) {
     failures.push('filesystem-deny-not-enforced');
   }
-
-  // NET negative assertion: with outbound denied the canary host must be unreachable.
-  const netDeny = await ctx.runner(
-    seatbelt,
-    ['-p', `${allowAll}(deny network-outbound)`, ctx.nodePath, '-e', NET_ASSERT_SCRIPT, CANARY_HOST, String(CANARY_PORT)],
-    PROBE_TIMEOUT_MS,
-  );
   if (!netDeny.error && netDeny.code === 0) {
     failures.push('network-deny-not-enforced');
   }
@@ -191,22 +195,26 @@ async function assertLinux(ctx: AssertionContext, failures: string[]): Promise<v
     return;
   }
 
-  // FS negative assertion: masking the canary dir must make it unreadable.
-  const fsDeny = await ctx.runner(
-    'bwrap',
-    ['--die-with-parent', '--ro-bind', '/', '/', '--tmpfs', ctx.canaryDirReal, '/bin/cat', ctx.canaryFile],
-    PROBE_TIMEOUT_MS,
-  );
+  // The FS and NET negative assertions are independent — run them
+  // concurrently, then evaluate in fixed order (fs first, then net): the
+  // failures array order is asserted in tests.
+  const [fsDeny, netDeny] = await Promise.all([
+    // FS negative assertion: masking the canary dir must make it unreadable.
+    ctx.runner(
+      'bwrap',
+      ['--die-with-parent', '--ro-bind', '/', '/', '--tmpfs', ctx.canaryDirReal, '/bin/cat', ctx.canaryFile],
+      PROBE_TIMEOUT_MS,
+    ),
+    // NET negative assertion: no network namespace → canary host unreachable.
+    ctx.runner(
+      'bwrap',
+      ['--die-with-parent', '--unshare-net', '--ro-bind', '/', '/', ctx.nodePath, '-e', NET_ASSERT_SCRIPT, CANARY_HOST, String(CANARY_PORT)],
+      PROBE_TIMEOUT_MS,
+    ),
+  ]);
   if (!fsDeny.error && fsDeny.code === 0 && fsDeny.stdout.includes(CANARY_CONTENT)) {
     failures.push('filesystem-deny-not-enforced');
   }
-
-  // NET negative assertion: no network namespace → canary host unreachable.
-  const netDeny = await ctx.runner(
-    'bwrap',
-    ['--die-with-parent', '--unshare-net', '--ro-bind', '/', '/', ctx.nodePath, '-e', NET_ASSERT_SCRIPT, CANARY_HOST, String(CANARY_PORT)],
-    PROBE_TIMEOUT_MS,
-  );
   if (!netDeny.error && netDeny.code === 0) {
     failures.push('network-deny-not-enforced');
   }

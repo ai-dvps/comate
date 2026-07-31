@@ -151,7 +151,7 @@ function safeTokenEqual(presented: string, expected: string): boolean {
 }
 
 /**
- * Match a request against the enrolled session-route templates. Returns the
+ * Match a request against the compiled session-route templates. Returns the
  * captured params on match, null otherwise. Capture names are semantic
  * anchors (`:workspaceId`, `:sessionId`), independent of the router's own
  * param names.
@@ -159,11 +159,10 @@ function safeTokenEqual(presented: string, expected: string): boolean {
 function matchSessionRoute(
   method: string,
   path: string,
-  templates: readonly string[],
+  templates: readonly CompiledTemplate[],
 ): Record<string, string> | null {
   const segments = path.split('/').filter((seg) => seg.length > 0);
-  for (const template of templates) {
-    const compiled = compileTemplate(template);
+  for (const compiled of templates) {
     if (compiled.method !== method.toUpperCase()) continue;
     if (compiled.segments.length !== segments.length) continue;
     const captures: Record<string, string> = {};
@@ -212,6 +211,8 @@ function extractBearer(req: Request): string | null {
 export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHandler {
   const exemptPaths = new Set(deps.exemptPaths ?? EXEMPT_PATHS);
   const sessionRoutes = deps.sessionRoutes ?? SESSION_ROUTE_TEMPLATES;
+  // Templates compile once at middleware creation, not per request.
+  const compiledSessionRoutes = sessionRoutes.map(compileTemplate);
 
   const reportRejection = (rejection: LoopbackAuthRejection): void => {
     try {
@@ -260,7 +261,7 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
       return;
     }
 
-    const captures = matchSessionRoute(req.method, path, sessionRoutes);
+    const captures = matchSessionRoute(req.method, path, compiledSessionRoutes);
     if (!captures) {
       diagLog(
         `[loopback-auth] 403 ${req.method} ${path}: session token outside the enrolled route set (session=${session.sessionId})`,

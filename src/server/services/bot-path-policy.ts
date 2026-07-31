@@ -15,9 +15,15 @@ export interface PathPolicyContext {
 export interface PathValidationResult {
   allowed: boolean;
   reason?: string;
+  /**
+   * Canonical (realpath-resolved) target, populated by checkVerifiedFilePath
+   * from the canonicalization the verdict was computed on — an audit consumer
+   * reuses it instead of canonicalizing the same raw path a second time.
+   */
+  canonical?: string;
 }
 
-const DEFAULT_DENY_GLOBS = [
+export const DEFAULT_DENY_GLOBS = [
   '.claude/**',
   '.env*',
   '*id_rsa*',
@@ -105,12 +111,13 @@ function normalizePath(raw: string): string {
 }
 
 /**
- * Resolve a path, following symlinks where possible. For paths that do not exist,
- * resolve the parent directory's realpath and append the basename to avoid
- * escaping via symlinks.
+ * Resolve a path against the workspace, following symlinks where possible.
+ * Non-existent suffixes are canonicalized through the deepest existing
+ * ancestor (delegates to `canonicalizeBotPath`), so a symlink anywhere in the
+ * existing prefix cannot be escaped by spelling.
  */
 function resolveRealPath(ctx: PathPolicyContext, rawPath: string): string {
-  return canonicalizeBotPath(ctx.workspaceFolder, rawPath);
+  return canonicalizeFromCanonicalRoot(ctx.workspaceFolder, rawPath);
 }
 
 /**
@@ -123,6 +130,20 @@ function resolveRealPath(ctx: PathPolicyContext, rawPath: string): string {
  */
 export function canonicalizeBotPath(workspaceFolder: string, rawPath: string): string {
   const canonicalRoot = canonicalWorkspaceRoot(workspaceFolder);
+  const normalized = normalizePath(rawPath);
+  const resolved = path.isAbsolute(normalized)
+    ? normalized
+    : path.resolve(canonicalRoot, normalized);
+  return realpathDeepest(resolved);
+}
+
+/**
+ * Canonicalize against an ALREADY-canonical workspace root: a policy
+ * context's workspaceFolder was canonicalized by createPathPolicyContext, so
+ * the root re-realpath canonicalizeBotPath performs for arbitrary roots is
+ * skipped (a canonical root realpaths to itself — identical output strings).
+ */
+function canonicalizeFromCanonicalRoot(canonicalRoot: string, rawPath: string): string {
   const normalized = normalizePath(rawPath);
   const resolved = path.isAbsolute(normalized)
     ? normalized
@@ -297,11 +318,13 @@ function checkGrepPath(
 }
 
 /**
- * Legacy per-call path validator (string-based, pre-realpath-canonicalization
- * era semantics). Retained ONLY for the legacy permission-model branches in
- * chat-service (the workspace kill switch and the pre-migration fallback);
- * the sandbox permission model uses `verifyBotFileToolAccess` instead. U4
- * pruned the dead `resolveAndCheckPath`/`checkUserPath` exports.
+ * Legacy per-call path validator. Retained ONLY for the legacy
+ * permission-model branches in chat-service (the workspace kill switch and
+ * the pre-migration fallback); the sandbox permission model uses
+ * `verifyBotFileToolAccess` instead. Paths are canonicalized through
+ * `canonicalizeBotPath` (deepest-existing-ancestor realpath) before the
+ * checks run. U4 pruned the dead `resolveAndCheckPath`/`checkUserPath`
+ * exports.
  */
 export function validateToolInput(
   ctx: PathPolicyContext,
@@ -393,10 +416,11 @@ function checkVerifiedFilePath(
   if (typeof rawPath !== 'string' || rawPath === '') {
     return { allowed: false, reason: 'invalid-path' };
   }
-  const canonical = canonicalizeBotPath(ctx.workspaceFolder, rawPath);
-  return opts.write
+  const canonical = canonicalizeFromCanonicalRoot(ctx.workspaceFolder, rawPath);
+  const result = opts.write
     ? checkVerifiedWrite(ctx, canonical, privileged)
     : checkVerifiedRead(ctx, canonical, privileged);
+  return { ...result, canonical };
 }
 
 function checkVerifiedGlobPattern(
@@ -412,7 +436,7 @@ function checkVerifiedGlobPattern(
   }
 
   if (path.isAbsolute(normalized)) {
-    return checkVerifiedRead(ctx, canonicalizeBotPath(ctx.workspaceFolder, normalized), privileged);
+    return checkVerifiedRead(ctx, canonicalizeFromCanonicalRoot(ctx.workspaceFolder, normalized), privileged);
   }
 
   if (!privileged) {
@@ -435,7 +459,7 @@ function checkVerifiedGlobPattern(
   }
 
   if (basePath) {
-    return checkVerifiedRead(ctx, canonicalizeBotPath(ctx.workspaceFolder, basePath), privileged);
+    return checkVerifiedRead(ctx, canonicalizeFromCanonicalRoot(ctx.workspaceFolder, basePath), privileged);
   }
 
   return { allowed: true };
@@ -482,7 +506,7 @@ export function verifyBotFileToolAccess(
         }
         const readResult = checkVerifiedRead(
           ctx,
-          canonicalizeBotPath(ctx.workspaceFolder, rawPath),
+          canonicalizeFromCanonicalRoot(ctx.workspaceFolder, rawPath),
           privileged,
         );
         if (!readResult.allowed) return readResult;
