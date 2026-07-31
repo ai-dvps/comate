@@ -139,7 +139,7 @@ export default function PluginSettingsPage({ workspaceId, isOpen, onClose }: Plu
     <ModalPanel open={isOpen} onClose={onClose}>
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
+        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50 bg-surface">
             <h2 className="text-sm font-medium text-text-primary">{t('plugins.title')}</h2>
             <button
               onClick={onClose}
@@ -150,7 +150,7 @@ export default function PluginSettingsPage({ workspaceId, isOpen, onClose }: Plu
           </div>
 
           {/* Tabs */}
-          <div className="flex items-center justify-between border-b border-border/50 flex-shrink-0 px-6 py-2">
+          <div className="flex items-center justify-between border-b border-border/50 flex-shrink-0 px-6 py-2 bg-surface">
             <div className="flex gap-1">
               {tabs.map((tab) => {
                 const Icon = tab.icon
@@ -184,7 +184,7 @@ export default function PluginSettingsPage({ workspaceId, isOpen, onClose }: Plu
           )}
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-6 bg-bg">
             {activeTab === 'installed' && (
               <div className="space-y-3">
                 {installedPlugins.length === 0 ? (
@@ -208,7 +208,7 @@ export default function PluginSettingsPage({ workspaceId, isOpen, onClose }: Plu
                     return (
                       <div
                         key={`${plugin.id}-${plugin.scope}`}
-                        className="bg-bg border border-border rounded-xl overflow-hidden"
+                        className="bg-surface border border-border rounded-xl overflow-hidden"
                       >
                         <div className="flex items-center gap-3 px-4 py-3">
                           <div className="flex-1 min-w-0">

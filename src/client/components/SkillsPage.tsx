@@ -176,7 +176,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
     <ModalPanel open={isOpen} onClose={onClose}>
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
+        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50 bg-surface">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-accent" />
               <h2 className="text-sm font-medium text-text-primary">{t('skills.title')}</h2>
@@ -191,7 +191,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
           </div>
 
           {/* Tabs + actions */}
-          <div className="flex items-center justify-between border-b border-border/50 flex-shrink-0 px-6 py-2">
+          <div className="flex items-center justify-between border-b border-border/50 flex-shrink-0 px-6 py-2 bg-surface">
             <div className="flex gap-1">
               {tabs.map((tab) => {
                 const Icon = tab.icon
@@ -269,7 +269,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
           )}
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-6 bg-bg">
             {/* Installed tab */}
             {activeTab === 'installed' && (
               <div className="space-y-3">
@@ -324,7 +324,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                     value={searchInput}
                     onChange={(e) => handleSearchChange(e.target.value)}
                     placeholder={t('skills.searchPlaceholder')}
-                    className="w-full pl-9 pr-8 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                    className="w-full pl-9 pr-8 py-2 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
                   />
                   {searchInput && (
                     <button
@@ -364,7 +364,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                       return (
                         <div
                           key={skill.id}
-                          className="bg-bg border border-border rounded-xl p-4 hover:border-accent/30 transition-colors"
+                          className="bg-surface border border-border rounded-xl p-4 hover:border-accent/30 transition-colors"
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 flex-1">
@@ -461,7 +461,7 @@ function InstalledSkillCard({
   const ScopeIcon = scope.icon
 
   return (
-    <div className="bg-bg border border-border rounded-xl overflow-hidden">
+    <div className="bg-surface border border-border rounded-xl overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">

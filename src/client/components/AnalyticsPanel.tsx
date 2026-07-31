@@ -105,7 +105,7 @@ export default function AnalyticsPanel({ isOpen, onClose }: AnalyticsPanelProps)
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50">
+        <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50 bg-surface">
             <div className="flex items-center gap-2 min-w-0">
               <BarChart3 className="w-4 h-4 text-text-tertiary shrink-0" />
               <h2 className="text-sm font-medium text-text-primary truncate">{t('title')}</h2>
@@ -129,7 +129,7 @@ export default function AnalyticsPanel({ isOpen, onClose }: AnalyticsPanelProps)
           </div>
 
           {/* Tabs */}
-          <div className="flex border-b border-border/50 flex-shrink-0 px-6">
+          <div className="flex border-b border-border/50 flex-shrink-0 px-6 bg-surface">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -146,7 +146,7 @@ export default function AnalyticsPanel({ isOpen, onClose }: AnalyticsPanelProps)
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto min-h-0 flex flex-col">
+          <div className="flex-1 overflow-y-auto min-h-0 flex flex-col bg-bg">
             {activeTab === 'global' && (
               <GlobalTabContent
                 summary={globalSummary}

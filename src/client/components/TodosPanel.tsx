@@ -180,7 +180,7 @@ export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex-shrink-0 border-b border-border/50">
+        <div className="flex-shrink-0 border-b border-border/50 bg-surface">
             <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 h-auto min-h-[3.5rem] py-2">
               {/* Segmented view control */}
               <div
@@ -319,7 +319,7 @@ export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
           )}
 
           {/* Body */}
-          <div className="flex flex-1 overflow-hidden bg-surface/30">
+          <div className="flex flex-1 overflow-hidden bg-bg">
             {/* List */}
             <div className="flex-1 overflow-y-auto min-w-0">
               {/* Quick add */}
