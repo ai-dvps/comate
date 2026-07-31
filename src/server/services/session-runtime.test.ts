@@ -798,6 +798,114 @@ describe('session-runtime timeout handling', { concurrency: false }, () => {
   });
 });
 
+describe('session-runtime U8 audience + resolution provenance', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(messages: SDKMessage[] = []): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+
+    const messageGen = (async function* () {
+      for (const msg of messages) {
+        yield msg;
+      }
+    })();
+
+    return {
+      createStreamingQuery: () => ({
+        query: mockQuery,
+        messages: messageGen,
+      }),
+    } as unknown as SdkClient;
+  }
+
+  it('stores the audience on the pending and exposes it via getPendingCardState', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const promise = runtime.requestToolApproval('req-aud', 'Bash', 'req-aud', { command: 'curl x' }, {
+      timeout: 5000,
+      audience: 'self',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const state = runtime.getPendingCardState('req-aud');
+    assert.ok(state && state.type === 'approval');
+    assert.strictEqual(state.audience, 'self');
+
+    runtime.resolveApproval('req-aud', { behavior: 'allow' });
+    await promise;
+    assert.strictEqual(runtime.getPendingCardState('req-aud'), undefined);
+  });
+
+  it('pendings without an audience report undefined (non-escalation flow unchanged)', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const promise = runtime.requestToolApproval('req-plain', 'Bash', 'req-plain', { command: 'ls' }, {
+      timeout: 5000,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const state = runtime.getPendingCardState('req-plain');
+    assert.ok(state && state.type === 'approval');
+    assert.strictEqual(state.audience, undefined);
+
+    runtime.resolveApproval('req-plain', { behavior: 'allow' });
+    await promise;
+  });
+
+  it('resolveApproval provenance is consumed exactly once', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const promise = runtime.requestToolApproval('req-prov', 'Bash', 'req-prov', { command: 'curl x' }, {
+      timeout: 5000,
+      audience: 'self',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    runtime.resolveApproval('req-prov', { behavior: 'allow' }, {
+      source: 'desktop',
+      approver: { type: 'user' },
+    });
+    await promise;
+
+    assert.deepStrictEqual(runtime.consumeResolutionProvenance('req-prov'), {
+      source: 'desktop',
+      approver: { type: 'user' },
+    });
+    assert.strictEqual(runtime.consumeResolutionProvenance('req-prov'), undefined);
+  });
+
+  it('timeoutDeny records provenance source=timeout', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const promise = runtime.requestToolApproval('req-ttl', 'Bash', 'req-ttl', { command: 'curl x' }, {
+      timeout: 30,
+      audience: 'self',
+    });
+
+    const result = await promise;
+    assert.strictEqual(result.behavior, 'deny');
+    assert.deepStrictEqual(runtime.consumeResolutionProvenance('req-ttl'), { source: 'timeout' });
+  });
+
+  it('a resolve without provenance consumes as undefined (legacy callers)', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const promise = runtime.requestToolApproval('req-legacy', 'Bash', 'req-legacy', { command: 'ls' }, {
+      timeout: 5000,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    runtime.resolveApproval('req-legacy', { behavior: 'allow' });
+    await promise;
+    assert.strictEqual(runtime.consumeResolutionProvenance('req-legacy'), undefined);
+  });
+});
+
 describe('session-runtime reconnect warning', { concurrency: false }, () => {
   let runtime: SessionRuntime | undefined;
 

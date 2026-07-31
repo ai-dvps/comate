@@ -18,7 +18,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Workspace } from '../models/workspace.js';
 import type { Bot, BotChannelKey } from '../models/bot.js';
-import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { store as workspaceStore, type BotEscalationEntry } from '../storage/sqlite-store.js';
 import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
 import { wecomUserResolver } from './wecom-user-resolver.js';
@@ -175,6 +175,14 @@ export class WeComBotService {
   private workspaceIdToBotId = new Map<string, string>();
   private cardClickRateLimit = new Map<string, number>();
   private activeStreamReplies = new Map<string, StreamReplyResult>();
+  /**
+   * Boot-recovery expiry notifications (U8, KTD-16), queued per bot. The boot
+   * sequence expires every pending ledger row BEFORE connections come up (it
+   * must not await them); entries wait here until the bot's WeCom connection
+   * reports `authenticated`, then flush. Delivery failures are explicitly
+   * logged and dropped — the audit row is the durable record.
+   */
+  private escalationExpiryQueue = new Map<string, BotEscalationEntry[]>();
 
   async initialize(): Promise<void> {
     await this.cleanupStaleContextFiles();
@@ -253,6 +261,9 @@ export class WeComBotService {
           console.warn(`Failed to remove legacy WeCom context file for workspace ${activeWorkspaceId}:`, err);
         });
       }
+      // U8 (KTD-16): the connection just became ready — flush any queued
+      // boot-recovery expiry notifications for this bot.
+      this.flushEscalationExpiryNotifications(bot.id);
     });
 
     client.on('disconnected', (reason) => {
@@ -1226,6 +1237,69 @@ export class WeComBotService {
     });
   }
 
+  /**
+   * Queue boot-recovery expiry notifications (U8, KTD-16): one message per
+   * expired ledger entry, destined for the entry's requester. Entries whose
+   * requester is not a WeCom channel user cannot be delivered here — they are
+   * explicitly logged and dropped (Feishu delivery is U11 scope). Bots that
+   * are already connected flush immediately; the rest flush from the
+   * `authenticated` handler.
+   */
+  enqueueEscalationExpiryNotifications(entries: readonly BotEscalationEntry[]): void {
+    for (const entry of entries) {
+      if (entry.requester.channel !== 'wecom') {
+        diagLog(
+          `[WeComBotService] escalation expiry notification skipped: requestId=${entry.id} ` +
+            `bot=${entry.botId} channel=${entry.requester.channel} (non-wecom requester; audit row is the record)`,
+        );
+        continue;
+      }
+      const queue = this.escalationExpiryQueue.get(entry.botId) ?? [];
+      queue.push(entry);
+      this.escalationExpiryQueue.set(entry.botId, queue);
+    }
+    for (const botId of [...this.escalationExpiryQueue.keys()]) {
+      this.flushEscalationExpiryNotifications(botId);
+    }
+  }
+
+  /**
+   * Deliver queued expiry notifications for one bot when its connection is
+   * ready. No-op while disconnected (the queue waits for `authenticated`).
+   * Delivery failures are explicitly logged and the entry dropped.
+   */
+  flushEscalationExpiryNotifications(botId: string): void {
+    const queue = this.escalationExpiryQueue.get(botId);
+    if (!queue || queue.length === 0) return;
+    const conn = this.connections.get(botId);
+    if (!conn || conn.status !== 'connected') return;
+    this.escalationExpiryQueue.delete(botId);
+    for (const entry of queue) {
+      const commandSummary = entry.rulePayload.command
+        ? entry.rulePayload.command.length > 80
+          ? `${entry.rulePayload.command.slice(0, 80)}…`
+          : entry.rulePayload.command
+        : entry.rulePayload.toolName;
+      const content = `⏰ 你有一条出沙箱审批请求已过期（服务重启），已按拒绝处理。\n> ${commandSummary}`;
+      conn.client
+        .sendMessage(entry.requester.channelUserId, {
+          msgtype: 'markdown',
+          markdown: { content },
+        })
+        .then(
+          () =>
+            diagLog(
+              `[WeComBotService] escalation expiry notification delivered bot=${botId} requestId=${entry.id} user=${entry.requester.channelUserId}`,
+            ),
+          (err: unknown) =>
+            diagLog(
+              `[WeComBotService] escalation expiry notification DELIVERY FAILED bot=${botId} requestId=${entry.id} ` +
+                `user=${entry.requester.channelUserId}: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+        );
+    }
+  }
+
   async sendDirectMessage(
     workspaceId: string,
     toUser: string,
@@ -1392,12 +1466,22 @@ export class WeComBotService {
         runtime.resolveApproval(parsed.requestId, {
           behavior: 'deny',
           message: 'User denied this tool call.',
+        }, {
+          // U8 (KTD-15): phase-1 self-approval provenance — the clicker is
+          // the requester (ownership-checked above). The gate's provenance
+          // writer records this actor + source; U11's remote cards pass
+          // their own source.
+          source: 'self-approval',
+          approver: { type: 'wecom', channelKey: 'wecom', channelUserId: parsed.wecomUserId },
         });
         await this.updateCardToTerminal(workspaceId, frame, parsed, '已拒绝');
       } else {
         runtime.resolveApproval(parsed.requestId, {
           behavior: 'allow',
           updatedPermissions: parsed.action === 'always_allow' ? pending.suggestions : undefined,
+        }, {
+          source: 'self-approval',
+          approver: { type: 'wecom', channelKey: 'wecom', channelUserId: parsed.wecomUserId },
         });
         await this.updateCardToTerminal(workspaceId, frame, parsed, parsed.action === 'always_allow' ? '已始终允许' : '已允许');
       }

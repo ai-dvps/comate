@@ -59,6 +59,7 @@ import { addExtraKnownMarketplace } from './utils/claude-settings.js';
 import { ComateWebSocketServer } from './websocket/server.js';
 import { teardownServices } from './service-teardown.js';
 import { sessionCapabilityService } from './services/session-capability-service.js';
+import { botEscalationLedger } from './services/bot-escalation-ledger.js';
 import { createLoopbackAuthMiddleware } from './services/security/loopback-auth.js';
 import { botAuditLogger, LOOPBACK_AUDIT_BOT_ID } from './services/bot-audit-logger.js';
 import {
@@ -103,6 +104,18 @@ function pruneBotAuditLogs(): void {
     }
   } catch (err) {
     diagLog(`[bot-audit] prune failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Escalation-ledger retention (U8): settled rows older than 90 days. */
+function pruneBotEscalationLedger(): void {
+  try {
+    const deleted = workspaceStore.pruneBotEscalationLedger();
+    if (deleted > 0) {
+      diagLog(`[escalation-ledger] pruned ${deleted} settled rows`);
+    }
+  } catch (err) {
+    diagLog(`[escalation-ledger] prune failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -338,6 +351,22 @@ const server = app.listen(PORT, () => {
       console.error('[BotMigration] unexpected error:', err);
     }
 
+    // U8 (KTD-16): escalation ledger boot recovery. Every still-pending
+    // approval belongs to a Promise that died with the previous process —
+    // expire them all (fail-closed, never auto-allow) with an audit row per
+    // entry, and queue requester notifications per bot. The queue flushes
+    // when each bot's WeCom connection reports ready (this sequence must NOT
+    // await connections), so this runs BEFORE wecomBotService.initialize().
+    try {
+      const expiredEscalations = botEscalationLedger.expireAllPendingForBoot();
+      if (expiredEscalations.length > 0) {
+        diagLog(`[Startup] boot recovery expired ${expiredEscalations.length} pending bot escalation(s)`);
+        wecomBotService.enqueueEscalationExpiryNotifications(expiredEscalations);
+      }
+    } catch (err) {
+      console.error('[Startup] escalation ledger boot recovery failed:', err);
+    }
+
     // Backfill the built-in wecom plugin for any existing WeCom-enabled bots.
     // This repairs workspaces that were created after the skill-to-plugin refactor
     // but before auto-install was added.
@@ -397,10 +426,12 @@ const server = app.listen(PORT, () => {
   runLogCleanup();
   pruneBrowserAudit();
   pruneBotAuditLogs();
+  pruneBotEscalationLedger();
   logCleanupTimer = setInterval(() => {
     runLogCleanup();
     pruneBrowserAudit();
     pruneBotAuditLogs();
+    pruneBotEscalationLedger();
   }, 6 * 60 * 60 * 1000); // 6 hours
   logCleanupTimer.unref();
 

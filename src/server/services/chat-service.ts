@@ -24,7 +24,7 @@ import {
   type BackendId,
 } from './agent-backends.js';
 import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
-import { SessionRuntime, APPROVAL_TIMEOUT_DENY_MESSAGE } from './session-runtime.js';
+import { SessionRuntime, APPROVAL_TIMEOUT_DENY_MESSAGE, type ApprovalResolutionProvenance } from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
 import { opencodeServerManager, opencodeFetch } from './opencode-server-manager.js';
 import {
@@ -48,6 +48,8 @@ import { createPathPolicyContext, validateToolInput, verifyBotFileToolAccess, ca
 import { evaluateSkill, evaluateSkillDisabled, compileSkillFilter, compileSkillDenyRules } from './bot-skill-policy.js';
 import { botService } from './bot-service.js';
 import { botAuditLogger } from './bot-audit-logger.js';
+import { botEscalationLedger, escalationApprovalTtlMs } from './bot-escalation-ledger.js';
+import type { BotActor } from './bot-service.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotPersona, BotRoleKey, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
@@ -253,6 +255,28 @@ function mapAskUserQuestionInput(input: Record<string, unknown>): QuestionPayloa
 /** Positive finite tool-input timeout, or undefined. */
 function extractToolTimeout(input: Record<string, unknown>): number | undefined {
   return typeof input.timeout === 'number' && Number.isFinite(input.timeout) && input.timeout > 0 ? input.timeout : undefined;
+}
+
+/**
+ * Map a resolution-provenance approver (structural, from the runtime) onto a
+ * BotActor for the audit trail (U8). Unknown actor types fail closed to
+ * 'system'; absent provenance keeps the caller's fallback (phase-1: the
+ * requester — self-approval).
+ */
+function provenanceApprover(
+  provenance: ApprovalResolutionProvenance | undefined,
+  fallback: BotActor,
+): BotActor {
+  const candidate = provenance?.approver;
+  if (!candidate) return fallback;
+  const type = (['system', 'user', 'wecom', 'feishu'] as const).includes(candidate.type as 'system')
+    ? (candidate.type as BotActor['type'])
+    : 'system';
+  return {
+    type,
+    ...(candidate.channelKey !== undefined && { channelKey: candidate.channelKey as BotActor['channelKey'] }),
+    ...(candidate.channelUserId !== undefined && { channelUserId: candidate.channelUserId }),
+  };
 }
 
 /**
@@ -2636,12 +2660,12 @@ export class ChatService {
                 return { behavior: 'deny' as const, message: botDenialMessage(routingClass) };
               };
 
-              const askHuman = () => {
+              const askHuman = (overrides?: { timeout?: number; audience?: 'self' | 'admins' }) => {
                 const runtime = this.runtimes.get(session.id);
                 if (!runtime) {
                   return Promise.resolve(denyRouted('final', 'missing-runtime'));
                 }
-                const timeout = extractToolTimeout(input);
+                const timeout = overrides?.timeout ?? extractToolTimeout(input);
                 return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
                   title: sdkOptions.title,
                   description: sdkOptions.description,
@@ -2649,6 +2673,7 @@ export class ChatService {
                   timeout,
                   signal: sdkOptions.signal,
                   decisionReasonType: sdkOptions.decisionReasonType,
+                  ...(overrides?.audience !== undefined && { audience: overrides.audience }),
                 });
               };
 
@@ -2699,32 +2724,97 @@ export class ChatService {
                     });
                   }
                   if (isOwnerOrAdmin(freshRole)) {
-                    const escapeResult = await askHuman();
+                    const runtime = this.runtimes.get(session.id);
+                    if (!runtime) {
+                      return denyRouted('final', 'missing-runtime');
+                    }
+                    // U8 (KTD-15/KTD-16): register the escalation in the
+                    // ledger BEFORE the ask — the row is the durable record
+                    // boot recovery expires when the process dies
+                    // mid-approval. Phase-1 audience is 'self' (the requester
+                    // is owner/admin here; the ledger re-asserts the
+                    // invariant fail-safe). The ask carries the ledger TTL
+                    // when the tool input has no timeout of its own, so the
+                    // pending Promise is always bounded (KTD-17).
+                    const toolTimeout = extractToolTimeout(input);
+                    const escalationEntry = escapeActor
+                      ? botEscalationLedger.createPending({
+                          requestId: sdkOptions.toolUseID,
+                          botId: bot.id,
+                          sessionId: session.id,
+                          audience: 'self',
+                          requester: {
+                            channel: escapeActor.channelKey ?? 'unknown',
+                            channelUserId,
+                            role: freshRole,
+                          },
+                          recipients: [{ userId: channelUserId, taskId: sdkOptions.toolUseID }],
+                          rulePayload: {
+                            toolName,
+                            command: input.command,
+                            ...(sdkOptions.decisionReasonType !== undefined && {
+                              decisionReasonType: sdkOptions.decisionReasonType,
+                            }),
+                          },
+                          ...(toolTimeout !== undefined && { ttlMs: toolTimeout }),
+                        })
+                      : null;
+                    const escapeResult = await askHuman({
+                      timeout: toolTimeout ?? escalationApprovalTtlMs(),
+                      audience: 'self',
+                    });
                     if (escapeActor) {
                       const requester = { channel: escapeActor.channelKey, channelUserId, role: freshRole };
+                      // `?.`: partial runtime test doubles may not implement
+                      // the provenance channel; absence = phase-1 default.
+                      const provenance = runtime.consumeResolutionProvenance?.(sdkOptions.toolUseID);
                       if (escapeResult.behavior === 'allow') {
-                        // Phase 1: the approver IS the requester (self-ask).
-                        // U8/U11 replace this with the ledger's remote-approval
-                        // provenance (distinct approver actor).
-                        botAuditLogger.logSandboxEscapeApproved(bot.id, escapeActor, {
+                        const approver = provenanceApprover(provenance, escapeActor);
+                        const source = provenance?.source ?? 'self-approval';
+                        botAuditLogger.logSandboxEscapeApproved(bot.id, approver, {
                           sessionId: session.id,
                           command: input.command,
                           requester,
-                          source: 'self-approval',
+                          source,
                         });
+                        if (escalationEntry) {
+                          botEscalationLedger.settle(escalationEntry.id, 'approved', {
+                            approver: provenance?.approver ?? escapeActor,
+                            decision: 'allow',
+                            source,
+                          });
+                        }
                       } else if (escapeResult.message === APPROVAL_TIMEOUT_DENY_MESSAGE) {
                         botAuditLogger.logSandboxEscapeExpired(bot.id, { type: 'system' }, {
                           sessionId: session.id,
                           command: input.command,
                           requester,
+                          source: 'timeout',
+                          requestId: sdkOptions.toolUseID,
                         });
+                        if (escalationEntry) {
+                          botEscalationLedger.expire(escalationEntry.id, {
+                            approver: { type: 'system' },
+                            decision: 'expired',
+                            source: 'timeout',
+                          });
+                        }
                       } else {
-                        botAuditLogger.logSandboxEscapeDenied(bot.id, escapeActor, {
+                        const approver = provenanceApprover(provenance, escapeActor);
+                        const source = provenance?.source ?? 'self-approval';
+                        botAuditLogger.logSandboxEscapeDenied(bot.id, approver, {
                           sessionId: session.id,
                           command: input.command,
                           requester,
                           reason: 'approver-denied',
                         });
+                        if (escalationEntry) {
+                          botEscalationLedger.settle(escalationEntry.id, 'denied', {
+                            approver: provenance?.approver ?? escapeActor,
+                            decision: 'deny',
+                            source,
+                          });
+                        }
                       }
                     }
                     return escapeResult;

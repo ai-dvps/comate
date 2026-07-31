@@ -12,7 +12,7 @@ import {
   __setOpencodeFetchForTesting,
 } from './chat-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
-import { SessionRuntime } from './session-runtime.js';
+import { SessionRuntime, APPROVAL_TIMEOUT_DENY_MESSAGE } from './session-runtime.js';
 import {
   registerBackendRuntime,
   resetBackendRegistryForTests,
@@ -2461,9 +2461,14 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
   interface ApprovalCall {
     toolName: string;
     input: Record<string, unknown>;
+    options?: { timeout?: number; audience?: string };
   }
 
-  function createMockRuntime(approvalCalls: ApprovalCall[], approvalResult?: PermissionResult): SessionRuntime {
+  function createMockRuntime(
+    approvalCalls: ApprovalCall[],
+    approvalResult?: PermissionResult,
+    provenance?: { source: string; approver?: { type: string; channelKey?: string; channelUserId?: string } },
+  ): SessionRuntime {
     let closed = false;
     return {
       isClosed: () => closed,
@@ -2476,11 +2481,12 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
       unsubscribe: () => {},
       pushMessage: () => {},
       resolveApproval: () => {},
-      requestToolApproval: (_id: string, toolName: string, _toolUseId: string, input: Record<string, unknown>) => {
-        approvalCalls.push({ toolName, input });
+      requestToolApproval: (_id: string, toolName: string, _toolUseId: string, input: Record<string, unknown>, options?: { timeout?: number; audience?: string }) => {
+        approvalCalls.push({ toolName, input, options });
         return Promise.resolve(approvalResult ?? { behavior: 'allow' as const });
       },
       requestToolQuestion: () => Promise.resolve({ behavior: 'allow' as const }),
+      consumeResolutionProvenance: () => provenance,
       interrupt: () => Promise.resolve(),
       addBotEventHandler: () => {},
       clearBotEventHandlers: () => {},
@@ -2499,6 +2505,9 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     workspaceId: string;
     approvalCalls: ApprovalCall[];
     openCalls: Options[];
+    /** Resolve a deferred approval (only when config.deferApprovals is set). */
+    settleApproval: (result: PermissionResult) => void;
+    pendingApprovalCount: () => number;
   }
 
   async function setupBotSession(config: {
@@ -2510,6 +2519,9 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     persona?: BotPersona;
     killSwitch?: boolean;
     approvalResult?: PermissionResult;
+    provenance?: { source: string; approver?: { type: string; channelKey?: string; channelUserId?: string } };
+    /** When true, requestToolApproval stays pending until settleApproval. */
+    deferApprovals?: boolean;
   } = {}): Promise<BotSandboxSession> {
     workspaceStore.resetData();
     const role = config.role ?? 'normal';
@@ -2566,10 +2578,29 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
 
     const approvalCalls: ApprovalCall[] = [];
     const openCalls: Options[] = [];
+    const deferredResolvers: Array<(result: PermissionResult) => void> = [];
+    let livePendingCount = 0;
     SessionRuntime.open = (...args: unknown[]) => {
       const captured = args[3] as Options;
       openCalls.push(captured);
-      return createMockRuntime(approvalCalls, config.approvalResult);
+      const base = createMockRuntime(approvalCalls, config.approvalResult, config.provenance);
+      if (!config.deferApprovals) {
+        return base;
+      }
+      return {
+        ...base,
+        getStatus: () => ({ pendingCount: livePendingCount, isProcessing: livePendingCount > 0, workspaceId: workspace.id }),
+        requestToolApproval: (_id: string, toolName: string, _toolUseId: string, input: Record<string, unknown>, options?: { timeout?: number; audience?: string }) => {
+          approvalCalls.push({ toolName, input, options });
+          livePendingCount += 1;
+          return new Promise<PermissionResult>((resolve) => {
+            deferredResolvers.push((result) => {
+              livePendingCount -= 1;
+              resolve(result);
+            });
+          });
+        },
+      } as unknown as SessionRuntime;
     };
 
     await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, channelUserId);
@@ -2584,6 +2615,12 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
       workspaceId: workspace.id,
       approvalCalls,
       openCalls,
+      settleApproval: (result) => {
+        const resolve = deferredResolvers.shift();
+        assert.ok(resolve, 'no deferred approval to settle');
+        resolve(result);
+      },
+      pendingApprovalCount: () => livePendingCount,
     };
   }
 
@@ -2856,6 +2893,189 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(denied.behavior, 'deny');
     assert.match(denied.message ?? '', /routing: escalatable/);
     assert.strictEqual(approvalCalls.length, 0);
+  });
+
+  // ------------------------------------------- U8 escalation ledger wiring
+
+  it('U8: owner escape registers a ledger pending (audience=self) and settles approved', async () => {
+    const { canUseTool, botId, sessionId } = await setupBotSession({ role: 'owner' });
+    const sdkOptions = { toolUseID: 'toolu_u8_1', signal: new AbortController().signal };
+    const result = await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
+    assert.strictEqual(result.behavior, 'allow');
+
+    const rows = workspaceStore.listBotEscalations({ botId });
+    assert.strictEqual(rows.length, 1);
+    const row = rows[0];
+    assert.strictEqual(row.id, 'toolu_u8_1');
+    assert.strictEqual(row.sessionId, sessionId);
+    assert.strictEqual(row.audience, 'self', 'owner/admin requester gets the self audience (KTD-15)');
+    assert.deepStrictEqual(row.requester, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
+    assert.deepStrictEqual(row.recipients, [{ userId: 'owner-1', taskId: 'toolu_u8_1' }]);
+    assert.strictEqual(row.rulePayload.command, 'curl https://example.com/x');
+    assert.strictEqual(row.state, 'approved');
+    assert.strictEqual(row.resolution?.decision, 'allow');
+    assert.strictEqual(row.resolution?.source, 'self-approval');
+
+    const logs = workspaceStore.listAuditLogs(botId);
+    const approved = logs.find((l) => l.eventType === 'sandbox_escape_approved');
+    assert.ok(approved);
+    assert.strictEqual(approved.actorType, 'wecom', 'phase-1: approver is the requester (self-ask)');
+    assert.strictEqual(approved.details.source, 'self-approval');
+  });
+
+  it('U8: admin escape pending is audience=self; a normal requester can never get self (invariant)', async () => {
+    const admin = await setupBotSession({ role: 'admin' });
+    const sdkOptions = { toolUseID: 'toolu_u8_admin', signal: new AbortController().signal };
+    await admin.canUseTool('Bash', { command: 'curl https://a.com', dangerouslyDisableSandbox: true }, sdkOptions);
+    const adminRow = workspaceStore.listBotEscalations({ botId: admin.botId })[0];
+    assert.strictEqual(adminRow.audience, 'self');
+    assert.strictEqual(adminRow.requester.role, 'admin');
+
+    // Normal requesters deny before any ask in phase 1 — no ledger row at all.
+    const normal = await setupBotSession({ role: 'normal' });
+    const denied = await normal.canUseTool('Bash', { command: 'curl https://a.com', dangerouslyDisableSandbox: true });
+    assert.strictEqual(denied.behavior, 'deny');
+    assert.strictEqual(
+      workspaceStore.listBotEscalations({ botId: normal.botId }).length,
+      0,
+      'normal phase-1 deny creates no ledger row',
+    );
+  });
+
+  it('U8: TTL expiry (AE9) — deny resolves in bounded time, ledger expires, audit records expired', async () => {
+    const { canUseTool, botId } = await setupBotSession({
+      role: 'owner',
+      approvalResult: { behavior: 'deny', message: APPROVAL_TIMEOUT_DENY_MESSAGE },
+    });
+    const sdkOptions = { toolUseID: 'toolu_u8_ttl', signal: new AbortController().signal };
+    const result = await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
+    assert.strictEqual(result.behavior, 'deny');
+    assert.strictEqual(result.message, APPROVAL_TIMEOUT_DENY_MESSAGE);
+
+    const row = workspaceStore.listBotEscalations({ botId })[0];
+    assert.strictEqual(row.state, 'expired');
+    assert.strictEqual(row.resolution?.source, 'timeout');
+    assert.strictEqual(row.resolution?.approver.type, 'system');
+
+    const logs = workspaceStore.listAuditLogs(botId);
+    const expired = logs.find((l) => l.eventType === 'sandbox_escape_expired');
+    assert.ok(expired, 'expired audit row written');
+    assert.strictEqual(expired.actorType, 'system');
+    assert.strictEqual(expired.details.source, 'timeout');
+    assert.strictEqual(expired.details.requestId, 'toolu_u8_ttl');
+  });
+
+  it('U8: denial settles the ledger denied with the approver provenance', async () => {
+    const { canUseTool, botId } = await setupBotSession({
+      role: 'owner',
+      approvalResult: { behavior: 'deny', message: 'User denied this tool call.' },
+    });
+    const sdkOptions = { toolUseID: 'toolu_u8_deny', signal: new AbortController().signal };
+    const result = await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
+    assert.strictEqual(result.behavior, 'deny');
+
+    const row = workspaceStore.listBotEscalations({ botId })[0];
+    assert.strictEqual(row.state, 'denied');
+    assert.strictEqual(row.resolution?.decision, 'deny');
+    assert.strictEqual(row.resolution?.source, 'self-approval');
+
+    const deniedLog = workspaceStore.listAuditLogs(botId).find((l) => l.eventType === 'sandbox_escape_denied');
+    assert.ok(deniedLog);
+    assert.strictEqual(deniedLog.details.reason, 'approver-denied');
+  });
+
+  it('U8: desktop provenance yields the same audit row shape with a desktop actor (shared writer)', async () => {
+    const desktop = await setupBotSession({
+      role: 'owner',
+      provenance: { source: 'desktop', approver: { type: 'user' } },
+    });
+    const sdkOptions = { toolUseID: 'toolu_u8_desktop', signal: new AbortController().signal };
+    const result = await desktop.canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
+    assert.strictEqual(result.behavior, 'allow');
+
+    const desktopLog = workspaceStore
+      .listAuditLogs(desktop.botId)
+      .find((l) => l.eventType === 'sandbox_escape_approved');
+    assert.ok(desktopLog);
+    assert.strictEqual(desktopLog.actorType, 'user', 'desktop admin is the approver actor');
+    assert.strictEqual(desktopLog.details.source, 'desktop');
+
+    const desktopRow = workspaceStore.listBotEscalations({ botId: desktop.botId })[0];
+    assert.strictEqual(desktopRow.state, 'approved');
+    assert.strictEqual(desktopRow.resolution?.approver.type, 'user');
+    assert.strictEqual(desktopRow.resolution?.source, 'desktop');
+
+    // Identical shape to a card-flow resolution (only values differ).
+    const card = await setupBotSession({ role: 'owner' });
+    await card.canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
+    const cardLog = workspaceStore
+      .listAuditLogs(card.botId)
+      .find((l) => l.eventType === 'sandbox_escape_approved');
+    assert.ok(cardLog);
+    assert.deepStrictEqual(
+      Object.keys(desktopLog.details).sort(),
+      Object.keys(cardLog.details).sort(),
+      'desktop and card resolutions write identically-shaped audit details',
+    );
+  });
+
+  it('U8: the escape ask carries the ledger TTL when the tool input has no timeout (KTD-17)', async () => {
+    const { canUseTool, approvalCalls } = await setupBotSession({ role: 'owner' });
+    const sdkOptions = { toolUseID: 'toolu_u8_ttl_default', signal: new AbortController().signal };
+    await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
+    assert.strictEqual(approvalCalls.length, 1);
+    assert.strictEqual(
+      approvalCalls[0].options?.timeout,
+      30 * 60 * 1000,
+      'pending Promise is bounded by the 30-minute ledger TTL when input.timeout is absent',
+    );
+    assert.strictEqual(approvalCalls[0].options?.audience, 'self');
+
+    const row = workspaceStore.listBotEscalations({})[0];
+    assert.ok(
+      Date.parse(row.expiresAt) - Date.parse(row.createdAt) === 30 * 60 * 1000,
+      'ledger expiry matches the TTL',
+    );
+  });
+
+  it('U8: an explicit tool-input timeout wins over the ledger TTL', async () => {
+    const { canUseTool, approvalCalls } = await setupBotSession({ role: 'owner' });
+    const sdkOptions = { toolUseID: 'toolu_u8_ttl_explicit', signal: new AbortController().signal };
+    await canUseTool(
+      'Bash',
+      { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true, timeout: 45_000 },
+      sdkOptions,
+    );
+    assert.strictEqual(approvalCalls[0].options?.timeout, 45_000);
+    const row = workspaceStore.listBotEscalations({})[0];
+    assert.strictEqual(Date.parse(row.expiresAt) - Date.parse(row.createdAt), 45_000);
+  });
+
+  it('U8: bot session pending approval surfaces in getSessionsStatus and clears on resolution (desktop indicator)', async () => {
+    const { canUseTool, sessionId, workspaceId, settleApproval } = await setupBotSession({
+      role: 'owner',
+      deferApprovals: true,
+    });
+    const sdkOptions = { toolUseID: 'toolu_u8_badge', signal: new AbortController().signal };
+    const pendingCountFor = (n: number): boolean =>
+      service.getSessionsStatus(workspaceId)[sessionId]?.pendingCount === n;
+    const pending = canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
+    await waitForCondition(() => pendingCountFor(1));
+
+    // The desktop session-list pending indicator reads exactly this surface:
+    // the bot session shows a pending approval (needs-me badge).
+    const status = service.getSessionsStatus(workspaceId);
+    assert.strictEqual(status[sessionId]?.pendingCount, 1, 'pending approval is visible for the bot session');
+
+    settleApproval({ behavior: 'allow' });
+    const result = await pending;
+    assert.strictEqual(result.behavior, 'allow');
+    await waitForCondition(() => pendingCountFor(0));
+    assert.strictEqual(
+      service.getSessionsStatus(workspaceId)[sessionId]?.pendingCount ?? 0,
+      0,
+      'indicator clears once the approval is handled',
+    );
   });
 
   // ------------------------------------------- sandboxed bash default posture
@@ -3252,7 +3472,6 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
   });
 
   it('U6: owner escape ask timeout audits expired, not denied', async () => {
-    const { APPROVAL_TIMEOUT_DENY_MESSAGE } = await import('./session-runtime.js');
     const { canUseTool, botId } = await setupBotSession({
       role: 'owner',
       approvalResult: { behavior: 'deny', message: APPROVAL_TIMEOUT_DENY_MESSAGE },

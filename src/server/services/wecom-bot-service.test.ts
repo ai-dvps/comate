@@ -886,6 +886,178 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.strictEqual(resolvedApprovals.length, 1);
     assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
   });
+
+  it('card approval resolution carries self-approval provenance (U8, KTD-15)', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const provenanceCalls: unknown[] = [];
+    const priorRuntime = chatService.getRuntimeIfExists;
+    chatService.getRuntimeIfExists = () =>
+      ({
+        getPendingCardState: () => pendingCardState,
+        resolveApproval: (_requestId: string, _result: unknown, provenance?: unknown) => {
+          provenanceCalls.push(provenance);
+        },
+      }) as never;
+    try {
+      const key = encodeButtonKey('req-prov', 'allow', testSessionId);
+      await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
+      assert.strictEqual(provenanceCalls.length, 1);
+      assert.deepStrictEqual(provenanceCalls[0], {
+        source: 'self-approval',
+        approver: { type: 'wecom', channelKey: 'wecom', channelUserId: 'owner-1' },
+      });
+    } finally {
+      chatService.getRuntimeIfExists = priorRuntime;
+    }
+  });
+});
+
+describe('WeComBotService escalation expiry queue (U8, KTD-16)', { concurrency: false }, () => {
+  let service: WeComBotService;
+  let tempDir: string;
+  let botId: string;
+  let sentMessages: Array<{ userId: string; body: unknown }>;
+
+  function expiredEntry(id: string, overrides: Record<string, unknown> = {}) {
+    return {
+      id,
+      botId,
+      sessionId: 'sess-1',
+      audience: 'self' as const,
+      requester: { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' },
+      recipients: [{ userId: 'owner-1', taskId: id }],
+      rulePayload: { toolName: 'Bash', command: `curl https://example.com/${id}` },
+      state: 'expired' as const,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date().toISOString(),
+      resolvedAt: new Date().toISOString(),
+      resolution: { approver: { type: 'system' }, decision: 'expired' as const, source: 'boot-recovery' },
+      ...overrides,
+    };
+  }
+
+  beforeEach(async () => {
+    service = new WeComBotService();
+    tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'wecom-esc-queue-'));
+    sentMessages = [];
+    const ws = await workspaceStore.create({ name: 'Esc Queue', folderPath: tempDir });
+    const bot = workspaceStore.createBot({ name: 'Queue Bot', activeWorkspaceId: ws.id });
+    botId = bot.id;
+    (service as never as { connections: Map<string, unknown> }).connections.set(botId, {
+      client: {
+        sendMessage: async (userId: string, body: unknown) => {
+          sentMessages.push({ userId, body });
+        },
+      },
+      workspaceId: ws.id,
+      botId,
+      folderPath: tempDir,
+      status: 'disconnected',
+      connectionId: 'conn-1',
+    });
+    (service as never as { botIdToWorkspaceId: Map<string, string> }).botIdToWorkspaceId.set(botId, ws.id);
+  });
+
+  afterEach(async () => {
+    workspaceStore.resetData();
+    await fsPromises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  function setConnected(connected: boolean): void {
+    const conn = (service as never as { connections: Map<string, { status: string }> }).connections.get(botId)!;
+    conn.status = connected ? 'connected' : 'disconnected';
+  }
+
+  it('queues while disconnected and flushes on connection-ready', () => {
+    service.enqueueEscalationExpiryNotifications([expiredEntry('req-1'), expiredEntry('req-2')]);
+    assert.strictEqual(sentMessages.length, 0, 'no delivery before the connection is ready');
+
+    setConnected(true);
+    service.flushEscalationExpiryNotifications(botId);
+    assert.strictEqual(sentMessages.length, 2);
+    assert.strictEqual(sentMessages[0].userId, 'owner-1');
+    const body = sentMessages[0].body as { msgtype: string; markdown: { content: string } };
+    assert.strictEqual(body.msgtype, 'markdown');
+    assert.match(body.markdown.content, /已按拒绝处理/);
+    assert.match(body.markdown.content, /curl https:\/\/example\.com\/req-1/);
+
+    // Queue drained: a second flush sends nothing.
+    service.flushEscalationExpiryNotifications(botId);
+    assert.strictEqual(sentMessages.length, 2);
+  });
+
+  it('flushes immediately when the bot is already connected', () => {
+    setConnected(true);
+    service.enqueueEscalationExpiryNotifications([expiredEntry('req-now')]);
+    assert.strictEqual(sentMessages.length, 1);
+  });
+
+  it('skips non-wecom requesters with an explicit log (Feishu delivery is U11 scope)', () => {
+    setConnected(true);
+    service.enqueueEscalationExpiryNotifications([
+      expiredEntry('req-feishu', {
+        requester: { channel: 'feishu', channelUserId: 'ou_1', role: 'owner' },
+      }),
+    ]);
+    assert.strictEqual(sentMessages.length, 0);
+    // Nothing left queued for the bot either.
+    const queue = (service as never as { escalationExpiryQueue: Map<string, unknown[]> }).escalationExpiryQueue;
+    assert.strictEqual(queue.size, 0);
+  });
+
+  it('delivery failures are logged and dropped, never thrown', async () => {
+    setConnected(true);
+    const conn = (service as never as { connections: Map<string, { client: { sendMessage: unknown } }> }).connections.get(botId)!;
+    conn.client.sendMessage = async () => {
+      throw new Error('wecom down');
+    };
+    service.enqueueEscalationExpiryNotifications([expiredEntry('req-fail')]);
+    // Delivery is fire-and-forget; let the rejection settle.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const queue = (service as never as { escalationExpiryQueue: Map<string, unknown[]> }).escalationExpiryQueue;
+    assert.strictEqual(queue.size, 0, 'failed entries are dropped (audit row is the durable record)');
+  });
+
+  it('boot wiring (server-main order): seeded pendings expire, queue, then flush on connection-ready', async () => {
+    const { botEscalationLedger } = await import('./bot-escalation-ledger.js');
+    // Seed two live pendings as a crashed process would have left them.
+    const seeded = botEscalationLedger.createPending({
+      requestId: 'req-boot-1',
+      botId,
+      sessionId: 'sess-boot',
+      audience: 'self',
+      requester: { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' },
+      recipients: [{ userId: 'owner-1', taskId: 'req-boot-1' }],
+      rulePayload: { toolName: 'Bash', command: 'curl https://example.com/boot' },
+    });
+    assert.ok(seeded);
+
+    // --- server-main boot sequence ---
+    const expired = botEscalationLedger.expireAllPendingForBoot();
+    assert.strictEqual(expired.length, 1);
+    assert.strictEqual(expired[0].state, 'expired', 'never auto-allowed after a crash');
+    service.enqueueEscalationExpiryNotifications(expired);
+
+    // Connection is down at boot: nothing delivered yet.
+    assert.strictEqual(sentMessages.length, 0);
+
+    // The bot's WeCom connection reports ready → queued notification flushes.
+    setConnected(true);
+    service.flushEscalationExpiryNotifications(botId);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].userId, 'owner-1');
+
+    // Ledger and audit reflect the terminal state.
+    const row = botEscalationLedger.get('req-boot-1')!;
+    assert.strictEqual(row.state, 'expired');
+    assert.strictEqual(row.resolution?.source, 'boot-recovery');
+    const audit = workspaceStore
+      .listAuditLogs(botId)
+      .find((l) => l.eventType === 'sandbox_escape_expired');
+    assert.ok(audit);
+    assert.strictEqual(audit.details.requestId, 'req-boot-1');
+    assert.strictEqual(audit.details.source, 'boot-recovery');
+  });
 });
 
 describe('parseWecomNewSessionCommand', () => {
