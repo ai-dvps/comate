@@ -669,7 +669,7 @@ function QuestionView({
         className={`w-full text-left px-3 py-2 rounded-md text-xs transition-colors ${
           selected
             ? 'bg-accent/20 text-accent'
-            : 'bg-surface text-text-secondary hover:bg-accent/10'
+            : 'bg-work text-text-secondary hover:bg-accent/10'
         } ${isFocused ? 'ring-1 ring-accent/30' : ''} disabled:opacity-50`}
       >
         <div className="flex items-center gap-2">
