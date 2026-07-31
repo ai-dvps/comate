@@ -415,7 +415,14 @@ describe('BotManagementPage', () => {
 
   it('marks role permissions dirty and saves them through the page-level footer', async () => {
     const updateBot = vi.fn().mockResolvedValue(
-      makeBot({ rolePolicy: { normalToolPolicy: { posture: 'safe', categoryDefaults: {} }, skillAllowlist: ['skill-a'], bashWhitelist: [] } }),
+      makeBot({
+        rolePolicy: {
+          normalToolPolicy: { posture: 'safe', categoryDefaults: {} },
+          skillAllowlist: [],
+          bashWhitelist: [],
+          passlistRules: [{ rule: 'Bash(git status)' }],
+        },
+      }),
     );
     (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       ...mockState,
@@ -429,7 +436,8 @@ describe('BotManagementPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Roles/i }));
     await waitFor(() => expect(screen.getByText('Role Permissions')).toBeInTheDocument());
 
-    fireEvent.change(screen.getByPlaceholderText('e.g. my-skill'), { target: { value: 'skill-a' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. git status'), { target: { value: 'git status' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add rule/ }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
@@ -439,7 +447,9 @@ describe('BotManagementPage', () => {
         'bot-1',
         expect.objectContaining({
           rolePolicy: expect.objectContaining({
-            skillAllowlist: ['skill-a'],
+            passlistRules: expect.arrayContaining([
+              expect.objectContaining({ rule: 'Bash(git status)' }),
+            ]),
           }),
         }),
       );
@@ -463,7 +473,8 @@ describe('BotManagementPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Roles/i }));
     await waitFor(() => expect(screen.getByText('Role Permissions')).toBeInTheDocument());
 
-    fireEvent.change(screen.getByPlaceholderText('e.g. my-skill'), { target: { value: 'skill-a' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. git status'), { target: { value: 'git status' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add rule/ }));
 
     fireEvent.click(screen.getByText('DevOps Bot'));
 
@@ -491,7 +502,8 @@ describe('BotManagementPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Roles/i }));
     await waitFor(() => expect(screen.getByText('Role Permissions')).toBeInTheDocument());
 
-    fireEvent.change(screen.getByPlaceholderText('e.g. my-skill'), { target: { value: 'skill-a' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. git status'), { target: { value: 'git status' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add rule/ }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
@@ -505,7 +517,11 @@ describe('BotManagementPage', () => {
       2,
       'bot-1',
       expect.objectContaining({
-        rolePolicy: expect.objectContaining({ skillAllowlist: ['skill-a'] }),
+        rolePolicy: expect.objectContaining({
+          passlistRules: expect.arrayContaining([
+            expect.objectContaining({ rule: 'Bash(git status)' }),
+          ]),
+        }),
       }),
     );
 

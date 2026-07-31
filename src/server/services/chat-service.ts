@@ -47,7 +47,7 @@ import { createPathPolicyContext, validateToolInput, verifyBotFileToolAccess } f
 import { evaluateSkill, evaluateSkillDisabled } from './bot-skill-policy.js';
 import { botService } from './bot-service.js';
 import { botAuditLogger } from './bot-audit-logger.js';
-import { evaluateBotToolPermission, evaluateBotSkill, isBashCommandAllowed, isOwnerOrAdmin } from './bot-policy.js';
+import { evaluateBotToolPermission, evaluateBotSkill, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotPersona, BotRoleKey, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 import { createDefaultBotRolePolicy, deriveBotAccess, type BotAccessDerivation } from './bot-access-policy.js';
@@ -176,20 +176,27 @@ function composeBotSystemPrompt(
 }
 
 /**
- * Phase-1 out-of-sandbox passlist match (KTD-10/KTD-18): exact match of the
- * full command against the literal inside a `Bash(...)` structural rule. No
- * prefix or wildcard matching — the SDK structural rule engine takes over
- * matching in U4; rules without the Bash(...) shape never match here.
+ * Legacy bash-whitelist prefix matcher (string-prefix semantics). Retained
+ * ONLY for the workspace kill switch (botPermissionSandboxDisabled), whose
+ * purpose is to reproduce the pre-sandbox permission model verbatim for
+ * canary rollback — including its prefix semantics. The sandbox permission
+ * model never uses this: passlist matching is the SDK structural rule
+ * engine's job (U4, KTD-13).
  */
-function isPasslistHit(passlistRules: string[], command: string): boolean {
-  const trimmed = command.trim();
-  if (trimmed === '') return false;
-  for (const rule of passlistRules) {
-    const match = /^Bash\((.*)\)$/.exec(rule.trim());
-    if (!match) continue;
-    if (match[1].trim() === trimmed) return true;
+function legacyBashWhitelistPrefixMatch(
+  bashWhitelist: string[],
+  role: BotRoleKey | null | undefined,
+  command: string,
+): boolean {
+  if (isOwnerOrAdmin(role)) {
+    return true;
   }
-  return false;
+  const whitelist = bashWhitelist ?? [];
+  if (whitelist.length === 0) {
+    return false;
+  }
+  const trimmed = command.trim();
+  return whitelist.some((allowed) => allowed !== '' && (trimmed === allowed || trimmed.startsWith(`${allowed} `)));
 }
 
 /** Compact tool-input rendering for the audit hook (never throws). */
@@ -2231,9 +2238,10 @@ export class ChatService {
               }
 
               // Bash whitelist overrides the Shell category for Normal users; Owner/Admin
-              // bypass the whitelist entirely.
+              // bypass the whitelist entirely. Legacy prefix matcher kept verbatim for
+              // the kill switch (U4: the sandbox model uses the SDK rule engine instead).
               if (toolName === 'Bash' && typeof input.command === 'string' && channelUserId) {
-                if (isBashCommandAllowed(rolePolicy?.bashWhitelist ?? [], role, input.command)) {
+                if (legacyBashWhitelistPrefixMatch(rolePolicy?.bashWhitelist ?? [], role, input.command)) {
                   return { behavior: 'allow' as const, updatedInput: input };
                 }
                 diagLog(
@@ -2443,7 +2451,6 @@ export class ChatService {
               ],
             };
 
-            const passlistRules = derivation.passlistRules;
             const gatePathContext = pathContext;
 
             options.canUseTool = async (
@@ -2509,15 +2516,13 @@ export class ChatService {
               // ---- Bash: sandbox default-allow + escape routing (KTD-10) ----
               if (toolName === 'Bash' && typeof input.command === 'string' && channelUserId) {
                 if (input.dangerouslyDisableSandbox === true) {
-                  // Out-of-sandbox request (F2 phase-1 branch): passlist hit
-                  // runs unsandboxed; owner/admin keep the ask flow; regular
+                  // Out-of-sandbox request (F2 phase-1 branch). Passlist hits
+                  // never reach this branch: the passlist is compiled into
+                  // settings.permissions.allow (U4) and the SDK structural
+                  // rule engine auto-allows matching escape requests upstream
+                  // (proven against the real CLI in sdk-rule-contract.test).
+                  // What remains: owner/admin keep the ask flow; regular
                   // members deny until phase-2 remote approval lands.
-                  if (isPasslistHit(passlistRules, input.command)) {
-                    diagLog(
-                      `[ChatService.botAllow] session=${session.id} tool=Bash toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=passlist-hit`,
-                    );
-                    return { behavior: 'allow' as const, updatedInput: input };
-                  }
                   if (isOwnerOrAdmin(freshRole)) {
                     return askHuman();
                   }
