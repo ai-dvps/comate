@@ -68,6 +68,20 @@ import { makeScheduledRunStopHook } from './goal-stop-hook.js';
 const FILE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']);
 const IDENTITY_SENSITIVE_TOOLS = new Set([...FILE_TOOLS, 'Bash', 'Skill']);
 
+/**
+ * Explicit model fallback for bot sessions (U1, KTD-25). When the resolved
+ * provider has no model configured, bot sessions must NOT inherit the CLI's
+ * default model: CLI 2.1.219 changed the default Opus from Opus 4.8 to Opus 5,
+ * which would silently drift bot behavior (cost, latency, policy-relevant
+ * capability) on upgrade. Pinned to the pre-upgrade default, verified two ways
+ * against CLI 2.1.217 (the version shipped with SDK 0.3.217, our pre-upgrade
+ * pin): the bundled binary labels "Opus 4.8 - best for everyday, complex
+ * tasks" as its default-tier model and contains no `claude-opus-5` reference;
+ * the 2.1.219 release notes name Opus 4.8 as the superseded default. GUI
+ * sessions intentionally keep inheriting the CLI default (undefined).
+ */
+export const BOT_SESSION_PINNED_MODEL = 'claude-opus-4-8';
+
 function sanitizeBotEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
   return sanitizeSubprocessEnv(env);
 }
@@ -1913,7 +1927,7 @@ export class ChatService {
       env,
       settings: { env: settingsEnv, fastMode },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-      model: resolvedProvider.model || undefined,
+      model: resolvedProvider.model || (isBotSession ? BOT_SESSION_PINNED_MODEL : undefined),
       includePartialMessages: false,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {
