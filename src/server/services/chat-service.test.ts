@@ -2501,6 +2501,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     workspaceDenyGlobs?: string[];
     passlistRules?: string[];
     disabledSkills?: string[];
+    skills?: string[];
     persona?: BotPersona;
     killSwitch?: boolean;
   } = {}): Promise<BotSandboxSession> {
@@ -2531,6 +2532,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     botService.updateChannelSettings(bot.id, 'wecom', { enabled: true, botId: 'bot-wecom', botSecret: 'secret' });
     botService.updateRolePolicy(bot.id, {
       ...createDefaultBotRolePolicy('normal'),
+      ...(config.skills !== undefined ? { skills: config.skills } : {}),
       passlistRules: (config.passlistRules ?? []).map((rule) => ({ rule })),
       disabledSkills: config.disabledSkills ?? [],
     });
@@ -2887,6 +2889,87 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(blocked.behavior, 'deny');
     const mounted = await canUseTool('Skill', { skill_name: 'any-other-skill' });
     assert.strictEqual(mounted.behavior, 'allow');
+  });
+
+  // ---------------------------------------------------- U5 bot-level skills
+
+  it('U5: skills absent leaves the SDK context filter unset (zero-config mounts all installed, AE4)', async () => {
+    const { options } = await setupBotSession();
+    assert.strictEqual(options.skills, undefined);
+  });
+
+  it('U5: a closed mounted set becomes the SDK context filter plus the unrestricted send skills (KTD-14)', async () => {
+    const { options } = await setupBotSession({ skills: ['pdf', 'docx'] });
+    assert.ok(Array.isArray(options.skills), 'context filter must be a string array');
+    const filter = options.skills as string[];
+    assert.ok(filter.includes('pdf'));
+    assert.ok(filter.includes('docx'));
+    // Send-capable wecom skills stay mounted in both plain and
+    // plugin-qualified form — they are the bot's reply path.
+    for (const name of [
+      'send-wecom-msg',
+      'wecom:send-wecom-msg',
+      'send-wecom-file',
+      'wecom:send-wecom-file',
+      'wecom-doc',
+      'wecom:wecom-doc',
+    ]) {
+      assert.ok(filter.includes(name), `filter must keep ${name} mounted, got ${JSON.stringify(filter)}`);
+    }
+  });
+
+  it('U5: skills: [] hides everything except the unrestricted send path', async () => {
+    const { options } = await setupBotSession({ skills: [] });
+    assert.ok(Array.isArray(options.skills));
+    const filter = options.skills as string[];
+    assert.ok(filter.length > 0, 'the send path must stay mounted even with an empty mounted set');
+    assert.ok(
+      filter.every((name) => name.includes('wecom')),
+      `only wecom send skills may remain, got ${JSON.stringify(filter)}`,
+    );
+  });
+
+  it('U5: disabledSkills compiles into normalized Skill() deny rules — deny takes precedence over mount', async () => {
+    const { options } = await setupBotSession({
+      skills: ['Blocked Skill', 'pdf'],
+      disabledSkills: ['Blocked Skill'],
+    });
+    const settings = options.settings as { permissions?: { deny: string[] } };
+    assert.ok(
+      settings.permissions?.deny.includes('Skill(blocked-skill)'),
+      `expected Skill(blocked-skill) in deny rules, got ${JSON.stringify(settings.permissions?.deny)}`,
+    );
+    // The skill stays in the mounted filter — the explicit deny rule (and the
+    // gate backstop) is what blocks it, proving deny precedence over mount.
+    assert.ok((options.skills as string[]).includes('Blocked Skill'));
+    assert.ok(!settings.permissions?.deny.includes('Skill(pdf)'));
+  });
+
+  it('U5 gate coherence: the gate denies disabled skills and allows unmounted-but-not-disabled skills', async () => {
+    const { canUseTool } = await setupBotSession({ skills: ['pdf'], disabledSkills: ['pdf'] });
+    const disabled = await canUseTool('Skill', { skill_name: 'pdf' });
+    assert.strictEqual(disabled.behavior, 'deny');
+    // Not in the closed set, but not disabled: the SDK context filter hides it
+    // upstream — the gate does not double-deny (no double-negative between
+    // the filter layer and the gate layer).
+    const unmounted = await canUseTool('Skill', { skill_name: 'not-in-the-set' });
+    assert.strictEqual(unmounted.behavior, 'allow');
+  });
+
+  it('U5: send-capable wecom skills are never restricted — no deny rule, gate allows even when listed (KTD-14)', async () => {
+    const { options, canUseTool } = await setupBotSession({
+      skills: [],
+      disabledSkills: ['send-wecom-msg', 'wecom:send-wecom-file'],
+    });
+    const settings = options.settings as { permissions?: { deny: string[] } };
+    assert.ok(
+      !settings.permissions?.deny.some((rule) => rule.startsWith('Skill(')),
+      `send skills must never compile into deny rules, got ${JSON.stringify(settings.permissions?.deny)}`,
+    );
+    const plain = await canUseTool('Skill', { skill_name: 'send-wecom-msg' });
+    assert.strictEqual(plain.behavior, 'allow');
+    const qualified = await canUseTool('Skill', { skill_name: 'wecom:send-wecom-file' });
+    assert.strictEqual(qualified.behavior, 'allow');
   });
 
   // ------------------------------------------------------------- audit hook

@@ -9,6 +9,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { Shield, UserCog, User, AlertTriangle, Plus, X } from 'lucide-react';
 import type { Bot, BotRole, BotRolePolicy, PasslistRule } from '../stores/bot-store';
+import { useSkillsStore } from '../stores/skills-store';
 import { PermissionsSubTab } from './PermissionsSubTab';
 import { SAFE_PRESET, type ToolPermissionPolicy } from '../types/wecom-permissions';
 import { useBotPasslistUpgradeBanner } from '../hooks/use-bot-passlist-upgrade-banner';
@@ -89,6 +90,13 @@ function manualProvenance(): NonNullable<PasslistRule['provenance']> {
 interface SavedRolePolicy {
   normalToolPolicy: ToolPermissionPolicy;
   passlistRules: PasslistRule[];
+  skills: string[] | undefined;
+  disabledSkills: string[];
+}
+
+/** Order-insensitive comparison key for the skill config arrays (three-state aware). */
+function sortedSkillKey(value: string[] | undefined): string {
+  return JSON.stringify(value === undefined ? null : [...value].sort());
 }
 
 const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissionsProps>(
@@ -100,9 +108,16 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
     const [selectedRole, setSelectedRole] = useState<BotRole>('normal');
     const [normalToolPolicy, setNormalToolPolicy] = useState<ToolPermissionPolicy>(SAFE_PRESET);
     const [passlistRules, setPasslistRules] = useState<PasslistRule[]>([]);
+    // Bot-level skill config (U5, R8/KTD-14): three-state mounted set
+    // (undefined = mount all installed) plus the explicit disabled list.
+    const [skillsMounted, setSkillsMounted] = useState<string[] | undefined>(undefined);
+    const [disabledSkills, setDisabledSkills] = useState<string[]>([]);
+    const [disableSelection, setDisableSelection] = useState('');
     const [saved, setSaved] = useState<SavedRolePolicy>({
       normalToolPolicy: SAFE_PRESET,
       passlistRules: [],
+      skills: undefined,
+      disabledSkills: [],
     });
     const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -110,6 +125,29 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
     const [newCommand, setNewCommand] = useState('');
     const [newSemantics, setNewSemantics] = useState<MatchSemantics>('exact');
     const [duplicateRejected, setDuplicateRejected] = useState(false);
+
+    // Installed skills for the picker (existing endpoint + skills store).
+    const installedSkills = useSkillsStore((s) => s.installed);
+    const skillsLoading = useSkillsStore((s) => s.isFetchingInstalled);
+    const skillsFetchError = useSkillsStore((s) => s.error);
+    const fetchInstalledSkills = useSkillsStore((s) => s.fetchInstalled);
+
+    useEffect(() => {
+      void fetchInstalledSkills(bot.activeWorkspaceId ?? undefined);
+    }, [bot.activeWorkspaceId, fetchInstalledSkills]);
+
+    // One row per skill name (project scope shadows global), sorted for a
+    // stable picker.
+    const installedByName = useMemo(() => {
+      const byName = new Map<string, (typeof installedSkills)[number]>();
+      for (const skill of installedSkills) {
+        const existing = byName.get(skill.name);
+        if (!existing || (existing.scope !== 'project' && skill.scope === 'project')) {
+          byName.set(skill.name, skill);
+        }
+      }
+      return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+    }, [installedSkills]);
 
     const hasLegacyData =
       (bot.rolePolicy?.skillAllowlist?.length ?? 0) > 0 ||
@@ -127,21 +165,28 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
       lastBotIdRef.current = bot.id;
       const policy = normalizeToolPolicy(bot.rolePolicy?.normalToolPolicy);
       const rules = normalizePasslistRules(bot.rolePolicy?.passlistRules);
+      const skills = bot.rolePolicy?.skills !== undefined ? [...bot.rolePolicy.skills] : undefined;
+      const disabled = [...(bot.rolePolicy?.disabledSkills ?? [])];
       setNormalToolPolicy(policy);
       setPasslistRules(rules);
-      setSaved({ normalToolPolicy: policy, passlistRules: rules });
+      setSkillsMounted(skills !== undefined ? [...skills] : undefined);
+      setDisabledSkills([...disabled]);
+      setSaved({ normalToolPolicy: policy, passlistRules: rules, skills, disabledSkills: disabled });
       setSaveError(null);
       setNewCommand('');
       setNewSemantics('exact');
       setDuplicateRejected(false);
+      setDisableSelection('');
     }, [bot]);
 
     const isDirty = useMemo(() => {
       return (
         JSON.stringify(normalToolPolicy) !== JSON.stringify(saved.normalToolPolicy) ||
-        JSON.stringify(passlistRules) !== JSON.stringify(saved.passlistRules)
+        JSON.stringify(passlistRules) !== JSON.stringify(saved.passlistRules) ||
+        sortedSkillKey(skillsMounted) !== sortedSkillKey(saved.skills) ||
+        sortedSkillKey(disabledSkills) !== sortedSkillKey(saved.disabledSkills)
       );
-    }, [normalToolPolicy, passlistRules, saved]);
+    }, [normalToolPolicy, passlistRules, skillsMounted, disabledSkills, saved]);
 
     const onDirtyChangeRef = useRef(onDirtyChange);
     onDirtyChangeRef.current = onDirtyChange;
@@ -156,22 +201,29 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
         isDirty: () => isDirty,
         save: async () => {
           setSaveError(null);
-          // Round-trip fields this editor does not own (U5 skill config,
-          // network allowlist) so a role-permission save never wipes them.
-          // The deprecated legacy whitelist fields are deliberately cleared:
-          // saving adopts the new model and retires the upgrade banner.
+          // Round-trip fields this editor does not own (network allowlist) so
+          // a role-permission save never wipes them. The deprecated legacy
+          // whitelist fields are deliberately cleared: saving adopts the new
+          // model and retires the upgrade banner. The bot-level skill config
+          // (U5) is owned by this editor and saved from local state; the
+          // skills key stays absent in mount-all mode (three-state).
           const rolePolicy: BotRolePolicy = {
             normalToolPolicy: normalToolPolicy as unknown as Record<string, unknown>,
             skillAllowlist: [],
             bashWhitelist: [],
-            ...(bot.rolePolicy?.skills !== undefined ? { skills: bot.rolePolicy.skills } : {}),
-            disabledSkills: bot.rolePolicy?.disabledSkills ?? [],
+            ...(skillsMounted !== undefined ? { skills: [...skillsMounted] } : {}),
+            disabledSkills: [...disabledSkills],
             passlistRules,
             networkAllowlist: bot.rolePolicy?.networkAllowlist ?? [],
           };
           try {
             await onSave(rolePolicy);
-            setSaved({ normalToolPolicy, passlistRules });
+            setSaved({
+              normalToolPolicy,
+              passlistRules,
+              skills: skillsMounted !== undefined ? [...skillsMounted] : undefined,
+              disabledSkills: [...disabledSkills],
+            });
           } catch (err) {
             setSaveError(err instanceof Error ? err.message : String(err));
             throw err;
@@ -180,13 +232,16 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
         discard: () => {
           setNormalToolPolicy(saved.normalToolPolicy);
           setPasslistRules(saved.passlistRules);
+          setSkillsMounted(saved.skills !== undefined ? [...saved.skills] : undefined);
+          setDisabledSkills([...saved.disabledSkills]);
           setSaveError(null);
           setNewCommand('');
           setNewSemantics('exact');
           setDuplicateRejected(false);
+          setDisableSelection('');
         },
       }),
-      [isDirty, normalToolPolicy, passlistRules, saved, onSave, bot.rolePolicy],
+      [isDirty, normalToolPolicy, passlistRules, skillsMounted, disabledSkills, saved, onSave, bot.rolePolicy],
     );
 
     const trimmedCommand = newCommand.trim();
@@ -210,6 +265,40 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
 
     const handleRemoveRule = (index: number) => {
       setPasslistRules((prev) => prev.filter((_, i) => i !== index));
+    };
+
+    // ---- bot-level skill picker (U5) ----
+    const mountMode: 'all' | 'selected' = skillsMounted === undefined ? 'all' : 'selected';
+
+    const handleMountModeChange = (mode: 'all' | 'selected') => {
+      if (mode === 'all') {
+        setSkillsMounted(undefined);
+      } else {
+        // Start from every installed skill mounted; the admin unchecks what
+        // the bot should not offer.
+        setSkillsMounted(installedByName.map((skill) => skill.name));
+      }
+    };
+
+    const handleToggleMount = (name: string, mounted: boolean) => {
+      setSkillsMounted((prev) => {
+        if (prev === undefined) return prev;
+        return mounted ? [...prev, name] : prev.filter((entry) => entry !== name);
+      });
+    };
+
+    const disableCandidates = installedByName
+      .map((skill) => skill.name)
+      .filter((name) => !disabledSkills.includes(name));
+
+    const handleAddDisabled = () => {
+      if (disableSelection === '' || disabledSkills.includes(disableSelection)) return;
+      setDisabledSkills((prev) => [...prev, disableSelection]);
+      setDisableSelection('');
+    };
+
+    const handleRemoveDisabled = (name: string) => {
+      setDisabledSkills((prev) => prev.filter((entry) => entry !== name));
     };
 
     const roleIcons: Record<BotRole, React.ReactNode> = {
@@ -433,6 +522,171 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
             </div>
           </div>
         )}
+
+        {/*
+          Bot-level skill config (U5, R8/KTD-14): which skills this bot
+          offers. This is a capability surface, not a permission — it binds
+          every role equally, so it lives outside the role tabs. Unmounted
+          skills are hidden from the model (SDK context filter); disabled
+          skills are blocked by an explicit deny rule even when mounted.
+        */}
+        <div className="border-t border-border pt-4 space-y-3">
+          <div>
+            <label className="block text-[11px] font-medium text-text-tertiary mb-1">
+              {t('bots.rolePermissions.skillsTitle')}
+            </label>
+            <p className="text-[10px] text-text-tertiary">
+              {t('bots.rolePermissions.skillsHint')}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-1.5 text-[11px] text-text-secondary cursor-pointer">
+              <input
+                type="radio"
+                name="skill-mount-mode"
+                checked={mountMode === 'all'}
+                onChange={() => handleMountModeChange('all')}
+                className="accent-accent"
+              />
+              {t('bots.rolePermissions.skillsMountAll')}
+            </label>
+            <label
+              className={cn(
+                'flex items-center gap-1.5 text-[11px] text-text-secondary',
+                installedByName.length === 0 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+              )}
+            >
+              <input
+                type="radio"
+                name="skill-mount-mode"
+                checked={mountMode === 'selected'}
+                disabled={installedByName.length === 0}
+                onChange={() => handleMountModeChange('selected')}
+                className="accent-accent"
+              />
+              {t('bots.rolePermissions.skillsMountSelected')}
+            </label>
+          </div>
+
+          {skillsLoading ? (
+            <p className="text-[11px] text-text-secondary border border-dashed border-border rounded-lg px-3 py-2">
+              {t('bots.rolePermissions.skillsLoading')}
+            </p>
+          ) : installedByName.length === 0 ? (
+            <p className="text-[11px] text-text-secondary border border-dashed border-border rounded-lg px-3 py-2">
+              {t('bots.rolePermissions.skillsEmpty')}
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {installedByName.map((skill) => {
+                const isMounted = mountMode === 'all' || (skillsMounted?.includes(skill.name) ?? false);
+                const isDisabled = disabledSkills.includes(skill.name);
+                return (
+                  <li
+                    key={skill.name}
+                    className="flex items-center justify-between gap-2 border border-border rounded-lg px-3 py-2"
+                  >
+                    <label className="flex items-center gap-2 min-w-0 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isMounted}
+                        disabled={mountMode === 'all'}
+                        onChange={(e) => handleToggleMount(skill.name, e.target.checked)}
+                        className="accent-accent"
+                      />
+                      <code className="text-[12px] font-mono text-text-primary truncate">
+                        {skill.name}
+                      </code>
+                    </label>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {isDisabled && (
+                        <span className="text-[10px] text-destructive">
+                          {t('bots.rolePermissions.skillsDisabledBadge')}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-text-tertiary">
+                        {t(
+                          skill.scope === 'project'
+                            ? 'bots.rolePermissions.skillsScopeProject'
+                            : 'bots.rolePermissions.skillsScopeGlobal',
+                        )}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {skillsFetchError && !skillsLoading && (
+            <p className="text-[11px] text-destructive">{skillsFetchError}</p>
+          )}
+
+          <div>
+            <label className="block text-[11px] font-medium text-text-tertiary mb-1">
+              {t('bots.rolePermissions.skillsDisabledTitle')}
+            </label>
+            <p className="text-[10px] text-text-tertiary mb-2">
+              {t('bots.rolePermissions.skillsDisabledHint')}
+            </p>
+
+            {disabledSkills.length === 0 ? (
+              <p className="text-[11px] text-text-secondary border border-dashed border-border rounded-lg px-3 py-2">
+                {t('bots.rolePermissions.skillsDisabledEmpty')}
+              </p>
+            ) : (
+              <ul
+                aria-label={t('bots.rolePermissions.skillsDisabledTitle')}
+                className="space-y-1.5 mb-2"
+              >
+                {disabledSkills.map((name) => (
+                  <li
+                    key={name}
+                    className="flex items-center justify-between gap-2 border border-border rounded-lg px-3 py-2"
+                  >
+                    <code className="text-[12px] font-mono text-text-primary truncate">{name}</code>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveDisabled(name)}
+                      aria-label={t('bots.rolePermissions.skillsEnable')}
+                      className="p-1 text-text-tertiary hover:text-destructive flex-shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {disableCandidates.length > 0 && (
+              <div className="flex gap-2">
+                <select
+                  value={disableSelection}
+                  onChange={(e) => setDisableSelection(e.target.value)}
+                  aria-label={t('bots.rolePermissions.skillsDisablePlaceholder')}
+                  className="flex-1 px-3 py-1.5 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
+                >
+                  <option value="">{t('bots.rolePermissions.skillsDisablePlaceholder')}</option>
+                  {disableCandidates.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleAddDisabled}
+                  disabled={disableSelection === ''}
+                  className="flex items-center gap-1 px-3 py-1.5 text-[11px] font-medium bg-accent text-accent-foreground rounded-lg hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {t('bots.rolePermissions.skillsDisableAdd')}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   },

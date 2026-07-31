@@ -1,14 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../i18n';
 import BotRolePermissions, { type BotRolePermissionsHandle } from './BotRolePermissions';
+import { useSkillsStore, type InstalledSkill } from '../stores/skills-store';
 import type { Bot } from '../stores/bot-store';
 
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>);
+}
+
+const INSTALLED_SKILLS: InstalledSkill[] = [
+  { name: 'pdf', scope: 'project', source: 'skills.sh/pdf', installPath: '/ws/.claude/skills/pdf', isLegacySymlink: false },
+  { name: 'docx', scope: 'global', source: 'skills.sh/docx', installPath: '/home/.claude/skills/docx', isLegacySymlink: false },
+];
+
+function mockSkillsFetch(skills: InstalledSkill[] = INSTALLED_SKILLS) {
+  global.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ skills }),
+  } as Response);
 }
 
 function makeBot(overrides?: Partial<Bot>): Bot {
@@ -45,6 +58,8 @@ describe('BotRolePermissions', () => {
   beforeEach(() => {
     cleanup();
     localStorage.clear();
+    useSkillsStore.setState({ installed: [], isFetchingInstalled: false, error: null });
+    mockSkillsFetch([]);
   });
 
   afterEach(() => {
@@ -313,5 +328,138 @@ describe('BotRolePermissions', () => {
     // Re-render: dismissal persists via localStorage.
     renderWithI18n(<BotRolePermissions bot={bot} onSave={vi.fn()} />);
     expect(screen.queryByText('Legacy whitelists are disabled')).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------- skill picker (U5)
+
+  it('renders the installed skill list from the endpoint with every skill mounted by default', async () => {
+    mockSkillsFetch();
+    renderWithI18n(<BotRolePermissions bot={makeBot()} onSave={vi.fn()} />);
+
+    expect(await screen.findByRole('checkbox', { name: 'pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'docx' })).toBeInTheDocument();
+
+    // Mount-all mode: the radio is checked and per-skill checkboxes are
+    // checked but locked (everything mounts — zero-config default).
+    expect(screen.getByRole('radio', { name: /Mount all installed skills/ })).toBeChecked();
+    const pdfCheckbox = screen.getByRole('checkbox', { name: 'pdf' });
+    expect(pdfCheckbox).toBeChecked();
+    expect(pdfCheckbox).toBeDisabled();
+  });
+
+  it('shows a loading state while installed skills are being fetched', async () => {
+    global.fetch = vi.fn().mockReturnValue(new Promise(() => {}) as Promise<Response>);
+    renderWithI18n(<BotRolePermissions bot={makeBot()} onSave={vi.fn()} />);
+
+    expect(await screen.findByText('Loading skills…')).toBeInTheDocument();
+  });
+
+  it('shows an empty state when no skills are installed', async () => {
+    mockSkillsFetch([]);
+    renderWithI18n(<BotRolePermissions bot={makeBot()} onSave={vi.fn()} />);
+
+    expect(await screen.findByText(/No skills installed yet/)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Mount selected skills only/ })).toBeDisabled();
+  });
+
+  it('mount/unmount round-trips through save as a closed mounted set', async () => {
+    mockSkillsFetch();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const ref = createRef<BotRolePermissionsHandle>();
+    renderWithI18n(<BotRolePermissions bot={makeBot()} onSave={onSave} ref={ref} />);
+    await screen.findByRole('checkbox', { name: 'pdf' });
+
+    // Switch to the closed set — every installed skill starts mounted…
+    await userEvent.click(screen.getByRole('radio', { name: /Mount selected skills only/ }));
+    expect(screen.getByRole('checkbox', { name: 'pdf' })).toBeEnabled();
+
+    // …then unmount docx.
+    await userEvent.click(screen.getByRole('checkbox', { name: 'docx' }));
+    await waitFor(() => expect(ref.current?.isDirty()).toBe(true));
+
+    await act(async () => {
+      await ref.current?.save();
+    });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const submitted = onSave.mock.calls[0][0];
+    expect(submitted.skills).toEqual(['pdf']);
+    expect(ref.current?.isDirty()).toBe(false);
+  });
+
+  it('omits the skills key on save in mount-all mode (three-state round-trip)', async () => {
+    mockSkillsFetch();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const ref = createRef<BotRolePermissionsHandle>();
+    renderWithI18n(<BotRolePermissions bot={makeBot()} onSave={onSave} ref={ref} />);
+    await screen.findByRole('checkbox', { name: 'pdf' });
+
+    await act(async () => {
+      await ref.current?.save();
+    });
+
+    const submitted = onSave.mock.calls[0][0];
+    expect('skills' in submitted).toBe(false);
+    expect(submitted.disabledSkills).toEqual([]);
+  });
+
+  it('disable list: adds via the picker, removes via the list, and round-trips through save', async () => {
+    mockSkillsFetch();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const ref = createRef<BotRolePermissionsHandle>();
+    renderWithI18n(<BotRolePermissions bot={makeBot()} onSave={onSave} ref={ref} />);
+    await screen.findByRole('checkbox', { name: 'pdf' });
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Select a skill to disable' }), 'pdf');
+    await userEvent.click(screen.getByRole('button', { name: /^Disable$/ }));
+
+    const disabledList = screen.getByRole('list', { name: 'Disabled skills' });
+    expect(within(disabledList).getByText('pdf')).toBeInTheDocument();
+    // The skill row shows the disabled badge next to the (still mounted) skill.
+    expect(screen.getByText('Disabled', { selector: 'span' })).toBeInTheDocument();
+    await waitFor(() => expect(ref.current?.isDirty()).toBe(true));
+
+    await act(async () => {
+      await ref.current?.save();
+    });
+    expect(onSave.mock.calls[0][0].disabledSkills).toEqual(['pdf']);
+
+    // Re-enable removes the entry from the list.
+    await userEvent.click(within(disabledList).getByRole('button', { name: 'Enable' }));
+    expect(screen.queryByRole('list', { name: 'Disabled skills' })).not.toBeInTheDocument();
+  });
+
+  it('restores a saved closed set and disabled list from the bot', async () => {
+    mockSkillsFetch();
+    const bot = makeBot();
+    bot.rolePolicy.skills = ['pdf'];
+    bot.rolePolicy.disabledSkills = ['docx'];
+    renderWithI18n(<BotRolePermissions bot={bot} onSave={vi.fn()} />);
+    await screen.findByRole('checkbox', { name: 'pdf' });
+
+    expect(screen.getByRole('radio', { name: /Mount selected skills only/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'pdf' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'docx' })).not.toBeChecked();
+    const disabledList = screen.getByRole('list', { name: 'Disabled skills' });
+    expect(within(disabledList).getByText('docx')).toBeInTheDocument();
+  });
+
+  it('resets skill editor state when the bot changes', async () => {
+    mockSkillsFetch();
+    const ref = createRef<BotRolePermissionsHandle>();
+    const botA = makeBot({ id: 'bot-a' });
+    botA.rolePolicy.skills = ['pdf'];
+    const botB = makeBot({ id: 'bot-b' });
+
+    const { rerender } = renderWithI18n(<BotRolePermissions bot={botA} onSave={vi.fn()} ref={ref} />);
+    await screen.findByRole('checkbox', { name: 'pdf' });
+    expect(screen.getByRole('radio', { name: /Mount selected skills only/ })).toBeChecked();
+
+    rerender(<I18nextProvider i18n={i18n}><BotRolePermissions bot={botB} onSave={vi.fn()} ref={ref} /></I18nextProvider>);
+
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: /Mount all installed skills/ })).toBeChecked();
+      expect(ref.current?.isDirty()).toBe(false);
+    });
   });
 });
