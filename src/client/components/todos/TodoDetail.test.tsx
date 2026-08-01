@@ -267,7 +267,10 @@ describe('TodoDetail', () => {
       />,
     );
 
-    expect(await screen.findByText('Run history')).toBeInTheDocument();
+    const historyTab = await screen.findByRole('tab', { name: /Run history/ });
+    expect(historyTab).toHaveAttribute('aria-selected', 'false');
+    await user.click(historyTab);
+    expect(historyTab).toHaveAttribute('aria-selected', 'true');
     await user.click(screen.getByRole('button', { name: /Succeeded/ }));
     expect(openSessionDirect).toHaveBeenCalledWith('ws-1', 'session-2');
   });
