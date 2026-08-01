@@ -340,6 +340,79 @@ describe('BotService', { concurrency: false }, () => {
     });
   });
 
+  describe('updateRolePolicy passlist audit (U6, KTD-22)', () => {
+    it('emits passlist_rule_added for each newly added rule with provenance', async () => {
+      const { createDefaultBotRolePolicy } = await import('./bot-access-policy.js');
+      const bot = createBotWithDefaults(service);
+      service.updateRolePolicy(bot.id, {
+        ...createDefaultBotRolePolicy('normal'),
+        passlistRules: [
+          {
+            rule: 'Bash(git status)',
+            provenance: { addedBy: 'desktop-admin', source: 'manual', createdAt: new Date().toISOString() },
+          },
+          {
+            rule: 'Bash(curl https://example.com/health)',
+            provenance: { addedBy: 'owner-1', source: 'approval', createdAt: new Date().toISOString() },
+          },
+        ],
+      });
+
+      const events = store.listAuditLogs(bot.id).filter((l) => l.eventType === 'passlist_rule_added');
+      assert.strictEqual(events.length, 2);
+      const byRule = new Map(events.map((e) => [e.details.rule, e]));
+      const manual = byRule.get('Bash(git status)');
+      const approval = byRule.get('Bash(curl https://example.com/health)');
+      assert.ok(manual && approval);
+      assert.strictEqual(manual.details.source, 'manual');
+      assert.strictEqual(manual.details.addedBy, 'desktop-admin');
+      assert.strictEqual(approval.details.source, 'approval');
+      assert.strictEqual(approval.details.addedBy, 'owner-1');
+      // Long rule values persist in full with an integrity hash (KTD-22 exemption).
+      const longRule = 'Bash(curl https://example.com/health)';
+      assert.strictEqual(approval.details.rule, longRule);
+      assert.strictEqual(typeof approval.details.ruleSha256, 'string');
+    });
+
+    it('does not emit for unchanged rules on a subsequent save', async () => {
+      const { createDefaultBotRolePolicy } = await import('./bot-access-policy.js');
+      const bot = createBotWithDefaults(service);
+      const policy = {
+        ...createDefaultBotRolePolicy('normal'),
+        passlistRules: [
+          {
+            rule: 'Bash(git status)',
+            provenance: { addedBy: 'desktop-admin', source: 'manual' as const, createdAt: new Date().toISOString() },
+          },
+        ],
+      };
+      service.updateRolePolicy(bot.id, policy);
+      assert.strictEqual(
+        store.listAuditLogs(bot.id).filter((l) => l.eventType === 'passlist_rule_added').length,
+        1,
+      );
+      // Same rule saved again (editor round-trip) — no new event.
+      service.updateRolePolicy(bot.id, policy);
+      assert.strictEqual(
+        store.listAuditLogs(bot.id).filter((l) => l.eventType === 'passlist_rule_added').length,
+        1,
+      );
+    });
+
+    it('defaults source to manual when provenance is absent', async () => {
+      const { createDefaultBotRolePolicy } = await import('./bot-access-policy.js');
+      const bot = createBotWithDefaults(service);
+      service.updateRolePolicy(bot.id, {
+        ...createDefaultBotRolePolicy('normal'),
+        passlistRules: [{ rule: 'Bash(ls)' }],
+      });
+      const [event] = store.listAuditLogs(bot.id).filter((l) => l.eventType === 'passlist_rule_added');
+      assert.ok(event);
+      assert.strictEqual(event.details.source, 'manual');
+      assert.strictEqual(event.details.addedBy, 'system', 'falls back to the acting identity');
+    });
+  });
+
   describe('deleteBot', () => {
     it('deletes an existing bot', () => {
       const bot = createBotWithDefaults(service);

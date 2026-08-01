@@ -14,8 +14,12 @@ export abstract class BaseDocCommand extends BaseCommand {
 
     const endpointUrl = `${context.serverUrl}/api/workspaces/${context.workspaceId}/wecom/doc/${toolName}`;
 
+    // Resolved outside the try: a missing capability token is an environment
+    // error (exit 2), never a network failure (exit 4).
+    const headers = this.authHeaders();
+
     try {
-      const response = await postJson(endpointUrl, params);
+      const response = await postJson(endpointUrl, params, headers);
       if (response.status === 200) {
         this.log(response.body);
         return;

@@ -13,6 +13,9 @@ const TRAY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 struct AppState {
     api_port: Mutex<Option<u16>>,
+    // U12 (KTD-28): the per-boot desktop GUI credential, captured from the
+    // sidecar ready message and served to the webview's request layer.
+    api_token: Mutex<Option<String>>,
     sidecar_child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     is_shutting_down: AtomicBool,
     is_updating: AtomicBool,
@@ -28,6 +31,15 @@ struct AppState {
 fn get_api_port(state: State<'_, AppState>) -> Result<u16, String> {
     let port = state.api_port.lock().map_err(|e| e.to_string())?;
     port.ok_or_else(|| "API port not yet discovered".to_string())
+}
+
+/// U12 (KTD-28): the desktop GUI credential for the webview request layer.
+#[tauri::command]
+fn get_api_token(state: State<'_, AppState>) -> Result<String, String> {
+    let token = state.api_token.lock().map_err(|e| e.to_string())?;
+    token
+        .clone()
+        .ok_or_else(|| "API token not yet discovered".to_string())
 }
 
 #[tauri::command]
@@ -322,6 +334,7 @@ pub fn run() {
     builder
         .manage(AppState {
             api_port: Mutex::new(None),
+            api_token: Mutex::new(None),
             sidecar_child: Mutex::new(None),
             is_shutting_down: AtomicBool::new(false),
             is_updating: AtomicBool::new(false),
@@ -339,6 +352,7 @@ pub fn run() {
         }))
         .invoke_handler(tauri::generate_handler![
             get_api_port,
+            get_api_token,
             prepare_updater_relaunch,
             update_badge_state,
             reveal_in_file_manager,
@@ -514,14 +528,24 @@ pub fn run() {
                             let trimmed = line.trim();
                             if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
                                 if msg.get("type").and_then(|t| t.as_str()) == Some("ready") {
+                                    // The ready line carries the desktop GUI
+                                    // credential (U12) — never log it.
                                     if let Some(port) = msg.get("port").and_then(|p| p.as_u64()) {
                                         let state = app_handle.state::<AppState>();
                                         if let Ok(mut port_lock) = state.api_port.lock() {
                                             *port_lock = Some(port as u16);
                                         }
                                         log::info!("Sidecar ready on port {}", port);
-                                        continue;
                                     }
+                                    if let Some(token) =
+                                        msg.get("desktopToken").and_then(|t| t.as_str())
+                                    {
+                                        let state = app_handle.state::<AppState>();
+                                        if let Ok(mut token_lock) = state.api_token.lock() {
+                                            *token_lock = Some(token.to_string());
+                                        };
+                                    }
+                                    continue;
                                 }
                             }
                             if cfg!(debug_assertions) {

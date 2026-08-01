@@ -5,7 +5,7 @@ import { wecomBotService } from '../services/wecom-bot-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { BotMigrationService } from '../services/bot-migration-service.js';
 import { builtinPluginService } from '../services/builtin-plugin-service.js';
-import { SAFE_PRESET } from '../services/tool-permission-policy.js';
+import { createDefaultBotRolePolicy } from '../services/bot-access-policy.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { ENCRYPTED_CHANNEL_KEYS } from '../models/bot.js';
 import type { BotChannelSettings, CreateBotInput, UpdateBotInput, BotChannelKey } from '../models/bot.js';
@@ -68,11 +68,7 @@ function redactBot(bot: import('../models/bot.js').Bot) {
   return {
     ...bot,
     channelSettings: redactChannelSettings(channelSettings),
-    rolePolicy: rolePolicy ?? {
-      normalToolPolicy: SAFE_PRESET,
-      skillAllowlist: [],
-      bashWhitelist: [],
-    },
+    rolePolicy: rolePolicy ?? createDefaultBotRolePolicy('normal'),
     rolePersonas,
   };
 }

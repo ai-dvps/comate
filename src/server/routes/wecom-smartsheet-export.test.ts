@@ -58,6 +58,12 @@ describe('wecom-smartsheet-export routes', { concurrency: false }, () => {
     return res;
   }
 
+  function sessionAuth(sessionId = 'sess-1', workspaceId = 'ws-1') {
+    // U12: the loopback-auth middleware stamps the token-bound identity;
+    // handlers require it (covered directly here, matrix in loopback-auth.test).
+    return { loopbackAuth: { kind: 'session' as const, sessionId, workspaceId, botId: null } };
+  }
+
   async function getPostHandler() {
     const mod = await import('./wecom-smartsheet-export.js');
     const router = mod.default as unknown as {
@@ -80,7 +86,7 @@ describe('wecom-smartsheet-export routes', { concurrency: false }, () => {
     const fakeBuffer = Buffer.from('PK-fake-xlsx');
     wecomDocService.exportSmartsheetWorkbook = async () => fakeBuffer;
 
-    const req = { params: { workspaceId: 'ws-1' }, body: { docid: 'DOC1' } };
+    const req = { ...sessionAuth(), params: { workspaceId: 'ws-1' }, body: { docid: 'DOC1' } };
     const res = createMockRes();
     await handler(req, res);
 
@@ -96,7 +102,7 @@ describe('wecom-smartsheet-export routes', { concurrency: false }, () => {
     const handler = await getPostHandler();
     workspaceStore.get = (async () => makeWorkspace()) as typeof workspaceStore.get;
 
-    const req = { params: { workspaceId: 'ws-1' }, body: {} };
+    const req = { ...sessionAuth(), params: { workspaceId: 'ws-1' }, body: {} };
     const res = createMockRes();
     await handler(req, res);
 
@@ -108,7 +114,7 @@ describe('wecom-smartsheet-export routes', { concurrency: false }, () => {
     const handler = await getPostHandler();
     workspaceStore.get = (async () => undefined) as typeof workspaceStore.get;
 
-    const req = { params: { workspaceId: 'ws-x' }, body: { docid: 'DOC1' } };
+    const req = { ...sessionAuth('sess-1', 'ws-x'), params: { workspaceId: 'ws-x' }, body: { docid: 'DOC1' } };
     const res = createMockRes();
     await handler(req, res);
 
@@ -123,12 +129,21 @@ describe('wecom-smartsheet-export routes', { concurrency: false }, () => {
       throw new Error('mcp boom');
     };
 
-    const req = { params: { workspaceId: 'ws-1' }, body: { docid: 'DOC1' } };
+    const req = { ...sessionAuth(), params: { workspaceId: 'ws-1' }, body: { docid: 'DOC1' } };
     const res = createMockRes();
     await handler(req, res);
 
     assert.strictEqual(res.statusCode, 500);
     assert.strictEqual((res.jsonBody as { error: string }).error, 'smartsheet_export_failed');
     assert.ok(((res.jsonBody as { message: string }).message).includes('mcp boom'));
+  });
+  it('rejects callers without a session capability token (U12)', async () => {
+    const handler = await getPostHandler();
+    const req = { params: { workspaceId: 'ws-1' }, body: { docid: 'DOC1' } };
+    const res = createMockRes();
+    await handler(req, res);
+
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual((res.jsonBody as { error: string }).error, 'forbidden');
   });
 });

@@ -816,6 +816,32 @@ describe('SqliteStore bot management (unified schema)', { concurrency: false }, 
     assert.strictEqual(logs[0].actorType, 'user');
   });
 
+  it('pruneBotAuditLogs deletes rows older than the retention cutoff and keeps newer rows (U6, KTD-22)', () => {
+    const bot = store.createBot({ name: 'Audit Bot' });
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'fresh' });
+    // Negative retention pushes the cutoff into the future so every row is
+    // "expired" — the same deterministic stand-in pruneBrowserAudit uses.
+    const deletedAll = store.pruneBotAuditLogs({ retentionDays: -1 });
+    assert.strictEqual(deletedAll, 1);
+    assert.deepStrictEqual(store.listAuditLogs(bot.id), []);
+
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'fresh' });
+    // Default retention (90 days) keeps rows written now.
+    assert.strictEqual(store.pruneBotAuditLogs(), 0);
+    assert.strictEqual(store.listAuditLogs(bot.id).length, 1);
+  });
+
+  it('pruneBotAuditLogs scopes deletion by age across bots', () => {
+    const a = store.createBot({ name: 'A' });
+    const b = store.createBot({ name: 'B' });
+    store.recordAuditLog({ botId: a.id, actorType: 'system', actorId: 'x', eventType: 'old' });
+    store.recordAuditLog({ botId: b.id, actorType: 'system', actorId: 'x', eventType: 'old' });
+    const deleted = store.pruneBotAuditLogs({ retentionDays: -1 });
+    assert.strictEqual(deleted, 2);
+    assert.deepStrictEqual(store.listAuditLogs(a.id), []);
+    assert.deepStrictEqual(store.listAuditLogs(b.id), []);
+  });
+
   it('migration state stores and retrieves version and snapshot', () => {
     assert.strictEqual(store.getMigrationVersion(), null);
 
@@ -872,11 +898,32 @@ describe('SqliteStore bot management (unified schema)', { concurrency: false }, 
       },
       skillAllowlist: ['skill-a'],
       bashWhitelist: ['ls'],
-    };
+    } as import('../models/bot.js').BotRolePolicy;
 
     store.updateBotRole(role!.id, newPerms);
     const updated = store.getBotRole(role!.id);
-    assert.deepStrictEqual(updated!.permissions, newPerms);
+    // The read path sanitizes (U2): missing categories backfill fail-closed
+    // (browser: 'deny') and the new fields backfill to safe defaults.
+    assert.deepStrictEqual(updated!.permissions, {
+      normalToolPolicy: {
+        posture: 'allow-all',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+          browser: 'deny',
+        },
+        overrides: undefined,
+      },
+      skillAllowlist: ['skill-a'],
+      bashWhitelist: ['ls'],
+      disabledSkills: [],
+      passlistRules: [],
+      networkAllowlist: [],
+    });
   });
 
   it('bot role persona round-trip', () => {
@@ -993,8 +1040,9 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
 
   it('fresh database initializes to the latest schema version with new tables', () => {
     const freshStore = new SqliteStore(':memory:');
-    // v6: browser_audit (U8); v7: global todos (U1).
-    assert.strictEqual(freshStore.getMigrationVersion(), 7);
+    // v6: browser_audit (U8); v7: global todos (U1); v8: todos.content;
+    // v9: Todo execution; v10: bot_escalation_ledger (U8 phase-2).
+    assert.strictEqual(freshStore.getMigrationVersion(), 10);
 
     // Old tables should not exist
     const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
@@ -1016,6 +1064,7 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     assert.ok(tableNames.includes('bot_users'));
     assert.ok(tableNames.includes('user_sessions'));
     assert.ok(tableNames.includes('browser_audit'));
+    assert.ok(tableNames.includes('bot_escalation_ledger'));
   });
 
   it('re-running migration on already-migrated database does nothing', () => {
@@ -1023,11 +1072,11 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     firstStore.createBot({ name: 'Pre-migration Bot' });
 
     const version = firstStore.getMigrationVersion();
-    assert.strictEqual(version, 7);
+    assert.strictEqual(version, 10);
 
-    // Re-opening should not throw and version should stay 7
+    // Re-opening should not throw and version should stay 10
     const secondStore = new SqliteStore(migrationDbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 7);
+    assert.strictEqual(secondStore.getMigrationVersion(), 10);
     assert.strictEqual(secondStore.listBots().length, 1);
   });
 });
@@ -1081,8 +1130,108 @@ describe('SqliteStore browser_audit pruning (F18)', { concurrency: false }, () =
   });
 });
 
+describe('SqliteStore bot_escalation_ledger (U8, KTD-16)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  function createInput(id: string, overrides: Record<string, unknown> = {}) {
+    return {
+      id,
+      botId: 'bot-1',
+      sessionId: 'sess-1',
+      audience: 'self' as const,
+      requester: { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' },
+      recipients: [{ userId: 'owner-1', taskId: id }],
+      rulePayload: { toolName: 'Bash', command: `echo ${id}` },
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      ...overrides,
+    };
+  }
+
+  const RESOLUTION = {
+    approver: { type: 'wecom', channelKey: 'wecom', channelUserId: 'owner-1' },
+    decision: 'allow' as const,
+    source: 'self-approval',
+  };
+
+  it('create + get round-trips every field', () => {
+    const entry = store.createBotEscalation(createInput('req-1'));
+    assert.strictEqual(entry.state, 'pending');
+    const fetched = store.getBotEscalation('req-1');
+    assert.deepStrictEqual(fetched, entry);
+  });
+
+  it('transitionBotEscalation is first-writer-wins (atomic pending guard)', () => {
+    store.createBotEscalation(createInput('req-1'));
+    const first = store.transitionBotEscalation('req-1', 'approved', RESOLUTION, new Date().toISOString());
+    assert.ok(first);
+    assert.strictEqual(first.state, 'approved');
+    const second = store.transitionBotEscalation(
+      'req-1',
+      'denied',
+      { approver: { type: 'user' }, decision: 'deny', source: 'desktop' },
+      new Date().toISOString(),
+    );
+    assert.strictEqual(second, null);
+    assert.strictEqual(store.getBotEscalation('req-1')!.state, 'approved');
+  });
+
+  it('listBotEscalations filters by bot and state', () => {
+    store.createBotEscalation(createInput('req-1'));
+    store.createBotEscalation(createInput('req-2', { botId: 'bot-2' }));
+    store.transitionBotEscalation('req-2', 'expired', { approver: { type: 'system' }, decision: 'expired', source: 'timeout' }, new Date().toISOString());
+
+    assert.strictEqual(store.listBotEscalations({ botId: 'bot-1' }).length, 1);
+    assert.strictEqual(store.listBotEscalations({ state: 'pending' }).length, 1);
+    assert.strictEqual(store.listBotEscalations({ state: 'expired' }).length, 1);
+    assert.strictEqual(store.listBotEscalations({}).length, 2);
+  });
+
+  it('expireAllPendingBotEscalations settles only pending rows, in one transaction', () => {
+    store.createBotEscalation(createInput('req-1'));
+    store.createBotEscalation(createInput('req-2'));
+    store.createBotEscalation(createInput('req-3'));
+    store.transitionBotEscalation('req-3', 'approved', RESOLUTION, new Date().toISOString());
+
+    const resolution = { approver: { type: 'system' }, decision: 'expired' as const, source: 'boot-recovery' };
+    const expired = store.expireAllPendingBotEscalations(resolution, new Date().toISOString());
+    assert.deepStrictEqual(expired.map((e) => e.id).sort(), ['req-1', 'req-2']);
+    assert.ok(expired.every((e) => e.state === 'expired' && e.resolution?.source === 'boot-recovery'));
+    assert.strictEqual(store.getBotEscalation('req-3')!.state, 'approved');
+    assert.strictEqual(store.listBotEscalations({ state: 'pending' }).length, 0);
+  });
+
+  it('row parser fails safe on unknown audience/state values', () => {
+    store.createBotEscalation(createInput('req-1'));
+    const raw = store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
+    raw.db.prepare("UPDATE bot_escalation_ledger SET audience = 'bogus', state = 'bogus' WHERE id = ?").run('req-1');
+    const parsed = store.getBotEscalation('req-1')!;
+    assert.strictEqual(parsed.audience, 'admins', 'unknown audience must never parse as self');
+    assert.strictEqual(parsed.state, 'expired', 'unknown state must parse fail-closed');
+  });
+
+  it('pruneBotEscalationLedger removes only settled rows past retention', () => {
+    store.createBotEscalation(createInput('req-pending'));
+    store.createBotEscalation(createInput('req-settled'));
+    store.transitionBotEscalation('req-settled', 'approved', RESOLUTION, new Date().toISOString());
+
+    // Negative retention pushes the cutoff into the future (deterministic
+    // stand-in for backdated rows — created_at is stamped at insert).
+    const deleted = store.pruneBotEscalationLedger({ retentionDays: -1 });
+    assert.strictEqual(deleted, 1, 'settled row pruned');
+    assert.strictEqual(store.getBotEscalation('req-settled'), null);
+    assert.ok(store.getBotEscalation('req-pending'), 'pending rows are never pruned');
+  });
+});
+
 describe('SqliteStore session backend column (KTD-9)', { concurrency: false }, () => {
   let store: SqliteStore;
+
 
   beforeEach(() => {
     store = new SqliteStore(testDbPath);

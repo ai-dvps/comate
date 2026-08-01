@@ -201,13 +201,33 @@ export class BotService {
     if (!bot) {
       throw new BotNotFoundError(botId);
     }
-    this.requireSystemOrUserActor(actor);
+    // Actors: system/user (desktop editor, internal writers) and wecom/feishu
+    // channel actors (U11 remote approval "always allow" accumulation — the
+    // role check happened at the click handler; the channel actor is carried
+    // here so the passlist_rule_added audit records the real approver, KTD-22).
+    // Authorization for policy writes lives at the call sites, not in this
+    // guard — no route constructs a channel actor from request data.
 
     const normalRole = this.store.getBotRoleByKey(botId, 'normal');
     if (!normalRole) {
       throw new BotValidationError('Normal role not found');
     }
     this.store.updateBotRole(normalRole.id, permissions);
+
+    // U6 (KTD-22): audit every rule that newly enters the passlist. Wiring at
+    // the service layer means both emission paths — the U4 desktop editor and
+    // the future U11 "always allow" accumulation — share this single point.
+    const previousRules = new Set((normalRole.permissions.passlistRules ?? []).map((r) => r.rule));
+    const seen = new Set<string>();
+    for (const rule of permissions.passlistRules ?? []) {
+      if (previousRules.has(rule.rule) || seen.has(rule.rule)) continue;
+      seen.add(rule.rule);
+      this.auditLogger.logPasslistRuleAdded(botId, actor, {
+        rule: rule.rule,
+        source: rule.provenance?.source ?? 'manual',
+        addedBy: rule.provenance?.addedBy ?? actor.channelUserId ?? actor.type,
+      });
+    }
   }
 
   updateRolePersonas(

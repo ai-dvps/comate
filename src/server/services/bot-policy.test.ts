@@ -4,7 +4,6 @@ import assert from 'node:assert';
 import {
   evaluateBotToolPermission,
   evaluateBotSkill,
-  isBashCommandAllowed,
   isOwnerOrAdmin,
 } from './bot-policy.js';
 import type { BotRolePolicy } from '../models/bot.js';
@@ -90,29 +89,10 @@ describe('bot-policy', () => {
       assert.strictEqual(result.reason, 'skill-not-allowed');
     });
   });
-
-  describe('isBashCommandAllowed', () => {
-    it('allows any command for owner/admin', () => {
-      const policy = createPolicy();
-      assert.strictEqual(isBashCommandAllowed(policy.bashWhitelist, 'owner', 'rm -rf /'), true);
-      assert.strictEqual(isBashCommandAllowed(policy.bashWhitelist, 'admin', 'curl example.com'), true);
-    });
-
-    it('allows exact whitelisted commands for normal users', () => {
-      const policy = createPolicy();
-      assert.strictEqual(isBashCommandAllowed(policy.bashWhitelist, 'normal', 'ls'), true);
-      assert.strictEqual(isBashCommandAllowed(policy.bashWhitelist, 'normal', 'cat file.txt'), true);
-    });
-
-    it('denies non-whitelisted commands for normal users', () => {
-      const policy = createPolicy();
-      assert.strictEqual(isBashCommandAllowed(policy.bashWhitelist, 'normal', 'rm -rf /'), false);
-      assert.strictEqual(isBashCommandAllowed(policy.bashWhitelist, 'normal', 'curl example.com'), false);
-    });
-
-    it('denies all commands when whitelist is empty', () => {
-      const policy = createPolicy({ bashWhitelist: [] });
-      assert.strictEqual(isBashCommandAllowed(policy.bashWhitelist, 'normal', 'ls'), false);
-    });
-  });
 });
+
+// U4: `isBashCommandAllowed` (string-prefix whitelist matcher) is retired.
+// The sandbox permission model evaluates passlist rules through the SDK
+// structural rule engine (settings.permissions inline rules — see
+// sdk-rule-contract.test.ts); the kill-switch legacy branch keeps a private
+// copy of the prefix matcher inside chat-service.ts.
