@@ -90,6 +90,7 @@ describe('TodoDetail', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('renders the no-selection placeholder', () => {
@@ -232,5 +233,42 @@ describe('TodoDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Linked to a session' }));
     expect(openSessionDirect).toHaveBeenCalledWith('ws-1', 'session-1');
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('presents run history as a session timeline', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        runs: [{
+          id: 'run-1',
+          todoId: 'todo-Task',
+          sessionId: 'session-2',
+          status: 'succeeded',
+          fireAt: '2026-08-01T09:00:00.000Z',
+          startedAt: '2026-08-01T09:00:01.000Z',
+          endedAt: '2026-08-01T09:05:00.000Z',
+          reason: null,
+          instructionSnapshot: 'Do the task',
+          createdAt: '2026-08-01T09:00:00.000Z',
+        }],
+      }),
+    }));
+
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({ text: 'Task', workspaceId: 'ws-1' })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    expect(await screen.findByText('Run history')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Succeeded/ }));
+    expect(openSessionDirect).toHaveBeenCalledWith('ws-1', 'session-2');
   });
 });

@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Play } from 'lucide-react'
+import {
+  CalendarClock,
+  CheckCircle2,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  ListTodo,
+  Moon,
+  Play,
+  RotateCcw,
+  TimerReset,
+  XCircle,
+} from 'lucide-react'
 import type { Todo, TodoRun, TodoStatus, TodoExecutionType } from '../../stores/todo-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { cn } from '../ui/utils'
@@ -26,6 +38,14 @@ interface TodoDetailProps {
 const MIN_WIDTH = 280
 const MAX_WIDTH = 520
 const SAVE_DEBOUNCE_MS = 800
+
+function RunStatusIcon({ status }: { status: TodoRun['status'] }) {
+  const className = 'h-3.5 w-3.5'
+  if (status === 'succeeded') return <CheckCircle2 className={`${className} text-success`} />
+  if (status === 'failed') return <XCircle className={`${className} text-destructive`} />
+  if (status === 'running') return <Clock3 className={`${className} text-warning animate-pulse`} />
+  return <CircleAlert className={`${className} text-text-tertiary`} />
+}
 
 /**
  * Detail pane for the selected todo (U3). Renders local fields plus sync/origin
@@ -182,6 +202,24 @@ export default function TodoDetail({
     discard: t('statusDiscard'),
   }
   const executionType = todo.executionType ?? 'manual'
+  const executionTypeLabel: Record<TodoExecutionType, string> = {
+    manual: t('executionManual'),
+    once: t('executionOnce'),
+    recurring: t('executionRecurring'),
+    idle: t('executionIdle'),
+  }
+  const runStatusLabel: Record<TodoRun['status'], string> = {
+    running: t('runStatusRunning'),
+    succeeded: t('runStatusSucceeded'),
+    failed: t('runStatusFailed'),
+    missed: t('runStatusMissed'),
+    skipped: t('runStatusSkipped'),
+  }
+  const executionStatusLabel = todo.executionStatus === 'paused'
+    ? t('executionPaused')
+    : todo.executionStatus === 'disabled'
+      ? t('executionDisabled')
+      : t('executionActive')
 
   return (
     <aside
@@ -200,20 +238,50 @@ export default function TodoDetail({
           contentVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-2',
         )}
       >
-        <div className="px-4 py-3 border-b border-border/50 flex-shrink-0">
-          <h2
-            className={cn(
-              'text-sm font-medium',
-              todo.status === 'done' ? 'line-through text-text-tertiary' : 'text-text-primary',
+        <header className="border-b border-border/50 px-4 py-4 flex-shrink-0">
+          <div className="flex items-start gap-2.5">
+            <span className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
+              <ListTodo className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2
+                className={cn(
+                  'text-sm font-medium leading-5',
+                  todo.status === 'done' ? 'line-through text-text-tertiary' : 'text-text-primary',
+                )}
+              >
+                {todo.text}
+              </h2>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+                <span className="rounded-full bg-surface-hover px-2 py-0.5 font-medium text-text-secondary">{statusLabel[todo.status]}</span>
+                <span className="rounded-full border border-border/60 px-2 py-0.5 text-text-tertiary">{executionTypeLabel[executionType]}</span>
+                {executionType !== 'manual' && (
+                  <span className="rounded-full border border-border/60 px-2 py-0.5 text-text-tertiary">{executionStatusLabel}</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-col gap-2">
+            <button onClick={handleSpawn} disabled={!canSpawn || spawning}
+              className="flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent-hover active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50">
+              {runs.length ? <RotateCcw className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              {runs.length ? t('runAgain') : t('spawnSession')}
+            </button>
+            {todo.sessionId && todo.workspaceId && (
+              <button type="button" onClick={() => { openSessionDirect(todo.workspaceId!, todo.sessionId!); onClose() }}
+                className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary active:translate-y-px">
+                {t('detailHasSession')} <ChevronRight className="h-3.5 w-3.5" />
+              </button>
             )}
-          >
-            {todo.text}
-          </h2>
-        </div>
+          </div>
+        </header>
 
         <div className="flex-1 overflow-y-auto">
-          <dl className="flex flex-col gap-3 p-4 text-xs">
-            <Field label={t('detailStatus')}>
+          <section className="border-b border-border/50 px-4 py-4">
+            <SectionTitle icon={<CalendarClock className="h-3.5 w-3.5" />} title={t('detailExecution')} />
+            <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+              <Field label={t('detailStatus')}>
               <Select value={todo.status} onValueChange={handleStatusChange}>
                 <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label={t('detailStatus')}>
                   <SelectValue />
@@ -225,11 +293,91 @@ export default function TodoDetail({
                   <SelectItem value="discard">{statusLabel.discard}</SelectItem>
                 </SelectContent>
               </Select>
-            </Field>
-            <Field label={t('detailOrigin')} value={todo.origin === 'github' ? t('originGithub') : t('originLocal')} />
-            <Field label={t('detailWorkspace')}>
-              <Select value={todo.workspaceId ?? ''} onValueChange={handleWorkspaceChange}>
-                <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label={t('detailWorkspace')}>
+              </Field>
+              <Field label={t('executionType')}>
+                <Select value={executionType} onValueChange={handleExecutionTypeChange}>
+                  <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label={t('executionType')}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual">{t('executionManual')}</SelectItem>
+                    <SelectItem value="once">{t('executionOnce')}</SelectItem>
+                    <SelectItem value="recurring">{t('executionRecurring')}</SelectItem>
+                    <SelectItem value="idle">{t('executionIdle')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              {executionType === 'once' && (
+                <Field label={t('executionAt')} className="col-span-2">
+                  <input type="datetime-local" value={todo.scheduleTime?.slice(0, 16) ?? ''}
+                    onChange={(e) => void onUpdateTodo(todo.id, { scheduleTime: e.target.value ? new Date(e.target.value).toISOString() : null })}
+                    aria-label={t('executionAt')}
+                    className="h-8 w-full rounded-md border border-border bg-bg px-2 text-xs" />
+                </Field>
+              )}
+              {executionType === 'recurring' && (
+                <Field label={t('executionCron')} className="col-span-2">
+                  <input value={todo.cronExpr ?? ''} onChange={(e) => void onUpdateTodo(todo.id, { cronExpr: e.target.value })}
+                    placeholder="0 9 * * *" aria-label={t('executionCron')}
+                    className="h-8 w-full rounded-md border border-border bg-bg px-2 text-xs" />
+                </Field>
+              )}
+              {executionType === 'idle' && (
+                <div className="col-span-2 flex items-center gap-2 rounded-md bg-surface-hover/50 px-3 py-2 text-[11px] text-text-secondary">
+                  <Moon className="h-3.5 w-3.5 flex-shrink-0 text-text-tertiary" />
+                  {t('executionIdleHint')}
+                </div>
+              )}
+              {todo.nextFireAt && executionType !== 'manual' && (
+                <div className="col-span-2 flex items-center gap-2 text-[11px] text-text-tertiary">
+                  <TimerReset className="h-3.5 w-3.5" />
+                  {t('executionNextRun', { time: new Date(todo.nextFireAt).toLocaleString() })}
+                </div>
+              )}
+            </dl>
+          </section>
+
+          <section className="border-b border-border/50 px-4 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <SectionTitle icon={<Clock3 className="h-3.5 w-3.5" />} title={t('executionHistory')} />
+              {runs.length > 0 && <span className="text-[10px] text-text-tertiary">{t('executionHistoryCount', { count: runs.length })}</span>}
+            </div>
+            {runs.length === 0 ? (
+              <div className="mt-3 rounded-md bg-surface-hover/50 px-3 py-3 text-xs leading-5 text-text-tertiary">
+                {t('executionHistoryEmpty')}
+              </div>
+            ) : (
+              <div className="mt-3 ml-1 border-l border-border/70 pl-3">
+                {runs.map((run, index) => {
+                  const canOpenSession = !!run.sessionId && !!todo.workspaceId
+                  return <button key={run.id} type="button" disabled={!canOpenSession}
+                    onClick={() => run.sessionId && todo.workspaceId && openSessionDirect(todo.workspaceId, run.sessionId)}
+                    className={cn(
+                      'group relative -ml-[13px] flex w-[calc(100%+13px)] items-start gap-2.5 rounded-md py-2 pl-3 pr-2 text-left transition-colors',
+                      canOpenSession ? 'hover:bg-surface-hover active:translate-y-px' : 'cursor-default',
+                      index === 0 ? 'pt-0' : '',
+                    )}>
+                    <span className="absolute left-[-7px] top-[13px] flex h-3.5 w-3.5 items-center justify-center rounded-full bg-surface">
+                      <RunStatusIcon status={run.status} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-medium text-text-primary">{runStatusLabel[run.status]}</span>
+                        <time className="flex-shrink-0 text-[10px] text-text-tertiary">{new Date(run.fireAt).toLocaleString()}</time>
+                      </div>
+                      {run.reason && <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-text-secondary">{run.reason}</p>}
+                    </div>
+                    {canOpenSession && <ChevronRight className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5" />}
+                  </button>
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="border-b border-border/50 px-4 py-4">
+            <SectionTitle icon={<ListTodo className="h-3.5 w-3.5" />} title={t('detailContext')} />
+            <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+              <Field label={t('detailWorkspace')} className="col-span-2">
+                <Select value={todo.workspaceId ?? ''} onValueChange={handleWorkspaceChange}>
+                  <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label={t('detailWorkspace')}>
                   <SelectValue placeholder={t('noWorkspace')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -241,39 +389,17 @@ export default function TodoDetail({
                   ))}
                 </SelectContent>
               </Select>
-            </Field>
-            <Field label={t('detailDue')} value={todo.dueDate ?? '—'} />
-            <Field label="执行方式">
-              <Select value={executionType} onValueChange={handleExecutionTypeChange}>
-                <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label="执行方式"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="manual">手动执行</SelectItem>
-                  <SelectItem value="once">一次定时</SelectItem>
-                  <SelectItem value="recurring">重复定时</SelectItem>
-                  <SelectItem value="idle">夜间空闲执行</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            {executionType === 'once' && (
-              <Field label="执行时间">
-                <input type="datetime-local" value={todo.scheduleTime?.slice(0, 16) ?? ''}
-                  onChange={(e) => void onUpdateTodo(todo.id, { scheduleTime: e.target.value ? new Date(e.target.value).toISOString() : null })}
-                  className="h-8 rounded border border-border bg-bg px-2 text-xs" />
               </Field>
-            )}
-            {executionType === 'recurring' && (
-              <Field label="Cron 规则">
-                <input value={todo.cronExpr ?? ''} onChange={(e) => void onUpdateTodo(todo.id, { cronExpr: e.target.value })}
-                  placeholder="0 9 * * *" className="h-8 rounded border border-border bg-bg px-2 text-xs" />
-              </Field>
-            )}
-            {todo.repoFullName && <Field label={t('groupRepo')} value={`${todo.repoFullName}#${todo.issueNumber ?? ''}`} />}
-            <Field label={t('detailSynced')} value={todo.lastSyncedAt ? t('detailSynced') : t('detailNotSynced')} />
-          </dl>
+              <Field label={t('detailOrigin')} value={todo.origin === 'github' ? t('originGithub') : t('originLocal')} />
+              <Field label={t('detailDue')} value={todo.dueDate ?? '-'} />
+              {todo.repoFullName && <Field label={t('groupRepo')} value={`${todo.repoFullName}#${todo.issueNumber ?? ''}`} />}
+              <Field label={t('detailSynced')} value={todo.lastSyncedAt ? t('detailSynced') : t('detailNotSynced')} />
+            </dl>
+          </section>
 
-          <div className="px-4 pb-4">
+          <section className="px-4 py-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-text-tertiary">{t('detailBody')}</span>
+              <SectionTitle title={t('detailBody')} />
               <div className="flex items-center gap-1 rounded-md bg-surface-hover/50 p-0.5 border border-border/50">
                 <button
                   type="button"
@@ -321,39 +447,21 @@ export default function TodoDetail({
                 <MarkdownPreview content={bodyDraft} className="text-xs px-3 py-2" />
               )}
             </div>
-          </div>
-
-          <div className="px-4 pb-4">
             <ConflictReview todoId={todo.id} onResolved={onResolved} />
-
-            <button onClick={handleSpawn} disabled={!canSpawn || spawning}
-              className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent-hover disabled:opacity-50 text-xs">
-              <Play className="w-3.5 h-3.5" /> {runs.length ? '再次执行' : t('spawnSession')}
-            </button>
-            {todo.sessionId && todo.workspaceId && (
-              <button type="button" onClick={() => { openSessionDirect(todo.workspaceId!, todo.sessionId!); onClose() }}
-                className="mt-2 flex w-full items-center justify-center rounded border border-border/50 px-2 py-1.5 text-xs hover:bg-surface-hover">
-                {t('detailHasSession')}
-              </button>
-            )}
-            {runs.length > 0 && <div className="mt-3 space-y-1.5">
-              <p className="text-xs text-text-tertiary">执行历史</p>
-              {runs.map((run) => <button key={run.id} type="button" disabled={!run.sessionId || !todo.workspaceId}
-                onClick={() => run.sessionId && todo.workspaceId && openSessionDirect(todo.workspaceId, run.sessionId)}
-                className="flex w-full items-center justify-between rounded border border-border/50 px-2 py-1.5 text-left text-[11px] hover:bg-surface-hover disabled:cursor-default">
-                <span>{run.status}</span><span className="text-text-tertiary">{new Date(run.fireAt).toLocaleString()}</span>
-              </button>)}
-            </div>}
-          </div>
+          </section>
         </div>
       </div>
     </aside>
   )
 }
 
-function Field({ label, value, children }: { label: string; value?: string; children?: React.ReactNode }) {
+function SectionTitle({ icon, title }: { icon?: React.ReactNode; title: string }) {
+  return <h3 className="flex items-center gap-1.5 text-xs font-medium text-text-primary">{icon && <span className="text-text-tertiary">{icon}</span>}{title}</h3>
+}
+
+function Field({ label, value, children, className }: { label: string; value?: string; children?: React.ReactNode; className?: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className={cn('flex min-w-0 flex-col gap-0.5', className)}>
       <dt className="text-text-tertiary">{label}</dt>
       {children ?? <dd className="text-text-primary break-words">{value}</dd>}
     </div>
