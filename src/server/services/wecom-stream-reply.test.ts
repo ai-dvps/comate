@@ -142,6 +142,81 @@ describe('wecom-stream-reply', () => {
     assert.strictEqual(sentMessages.length, 0);
   });
 
+  it('sends a READ-ONLY notice card (no actionable buttons) for admins-audience pendings (U11, KTD-15)', async () => {
+    const { botEscalationLedger } = await import('./bot-escalation-ledger.js');
+    const { store: workspaceStore } = await import('../storage/sqlite-store.js');
+    try {
+      botEscalationLedger.createPending({
+        requestId: 'req-esc-notice',
+        botId: 'bot-1',
+        sessionId: 'sess-1',
+        audience: 'admins',
+        requester: { channel: 'wecom', channelUserId: 'user-1', role: 'normal' },
+        recipients: [{ userId: 'owner-1', taskId: 'req-esc-notice' }],
+        rulePayload: { toolName: 'Bash', command: 'curl https://a.com/x', dedupeSignature: 'escape(Bash:curl)' },
+      });
+      const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+
+      handler(1, {
+        type: 'pending_approval',
+        requestId: 'req-esc-notice',
+        toolName: 'Bash',
+        toolUseId: 'tu-1',
+        input: { command: 'curl https://a.com/x' },
+        inputSummary: 'curl https://a.com/x',
+        audience: 'admins',
+        expiresAt: Date.now() + 30 * 60 * 1000,
+      } as SseEvent);
+
+      assert.strictEqual(sentCards.length, 1);
+      const card = sentCards[0];
+      assert.strictEqual(card.card_type, 'text_notice', 'requester gets a read-only notice, never an actionable card');
+      assert.strictEqual(card.button_list, undefined);
+      assert.match(card.main_title.desc, /curl https:\/\/a\.com\/x/);
+      assert.match(card.main_title.desc, /渠道 owner 或 admin/);
+      assert.match(card.main_title.desc, /分钟/);
+    } finally {
+      workspaceStore.resetData();
+    }
+  });
+
+  it('suppresses the markdown expiry notice for admins-audience pendings (the notifier owns terminal cards)', async () => {
+    const { botEscalationLedger } = await import('./bot-escalation-ledger.js');
+    const { store: workspaceStore } = await import('../storage/sqlite-store.js');
+    try {
+      botEscalationLedger.createPending({
+        requestId: 'req-esc-ttl',
+        botId: 'bot-1',
+        sessionId: 'sess-1',
+        audience: 'admins',
+        requester: { channel: 'wecom', channelUserId: 'user-1', role: 'normal' },
+        recipients: [{ userId: 'owner-1', taskId: 'req-esc-ttl' }],
+        rulePayload: { toolName: 'Bash', command: 'curl https://a.com/x', dedupeSignature: 'escape(Bash:curl)' },
+      });
+      const sentMessages: Array<{ userId: string; body: unknown }> = [];
+      conn.client.sendMessage = async (userId: string, body: unknown) => {
+        sentMessages.push({ userId, body });
+      };
+      const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+
+      handler(1, {
+        type: 'pending_approval',
+        requestId: 'req-esc-ttl',
+        toolName: 'Bash',
+        toolUseId: 'tu-1',
+        input: { command: 'curl https://a.com/x' },
+        inputSummary: 'curl https://a.com/x',
+        audience: 'admins',
+        expiresAt: Date.now() + 30 * 60 * 1000,
+      } as SseEvent);
+      handler(2, { type: 'approval_timeout', requestId: 'req-esc-ttl' } as SseEvent);
+
+      assert.strictEqual(sentMessages.length, 0, 'no markdown expiry notice — the notifier delivers the expiry card');
+    } finally {
+      workspaceStore.resetData();
+    }
+  });
+
   it('does not send duplicate cards for the same requestId', () => {
 
     const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');

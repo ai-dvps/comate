@@ -31,8 +31,11 @@ import { diagLog } from '../utils/diag-logger.js';
 import {
   buildWecomSessionListCard,
   buildWecomWorkspaceListCard,
+  buildEscalationApprovalCard,
+  buildEscalationResultCard,
   buildTerminalCard,
   decodeButtonKey,
+  isEscalationAction,
   parseTemplateCardEvent,
   verifySessionOwner,
   formatQuestionFold,
@@ -40,8 +43,16 @@ import {
   type NormalizedSelectedItem,
   type PermissionFoldAction,
 } from './wecom-template-card.js';
+import { botEscalationLedger } from './bot-escalation-ledger.js';
+import { exactSessionUpdatedPermissions } from './bot-escalation-guard.js';
+import { subscribeEscalationPending, subscribeEscalationResolved } from './bot-escalation-notifier.js';
 
 const MAX_SEND_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+
+/** Truncate a command/rule summary for card display with an ellipsis. */
+function truncateSummary(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
 
 /**
  * Resolve the stream-reply handler for an inbound WeCom message, honoring the
@@ -183,6 +194,14 @@ export class WeComBotService {
    * logged and dropped — the audit row is the durable record.
    */
   private escalationExpiryQueue = new Map<string, BotEscalationEntry[]>();
+  /**
+   * U11 card queues (same lifecycle as the U8 expiry queue above): admins-
+   * audience escalation cards created while the bot's WeCom connection is
+   * down wait here and flush on `authenticated`. Pending cards rebuild at
+   * flush time (fresh TTL); resolution cards read the already-settled row.
+   */
+  private escalationPendingCardQueue = new Map<string, BotEscalationEntry[]>();
+  private escalationResolutionCardQueue = new Map<string, BotEscalationEntry[]>();
 
   async initialize(): Promise<void> {
     await this.cleanupStaleContextFiles();
@@ -264,6 +283,8 @@ export class WeComBotService {
       // U8 (KTD-16): the connection just became ready — flush any queued
       // boot-recovery expiry notifications for this bot.
       this.flushEscalationExpiryNotifications(bot.id);
+      // U11: same for queued admins-audience escalation cards.
+      this.flushEscalationCardQueues(bot.id);
     });
 
     client.on('disconnected', (reason) => {
@@ -1422,6 +1443,15 @@ export class WeComBotService {
       return;
     }
 
+    // U11 (KTD-15/KTD-21): admins-audience escalation cards. Must branch
+    // before the session-ownership check — the clicking owner/admin does NOT
+    // own the requester's session. Authorization is the ledger row's botId +
+    // a FRESH role check; settlement is the ledger's atomic first-click-wins.
+    if (isEscalationAction(parsed.action)) {
+      await this.handleEscalationSubmit(workspaceId, frame, parsed);
+      return;
+    }
+
     // Verify the clicking user owns the session.
     const ownerWecomUserId = this.getChannelUserIdBySession(parsed.sessionId);
     if (ownerWecomUserId !== parsed.wecomUserId) {
@@ -1607,6 +1637,330 @@ export class WeComBotService {
     await this.switchActiveWorkspace(botId, targetWorkspaceId, parsed.wecomUserId);
   }
 
+  // -------------------------------------------------------------------------
+  // U11 remote escalation approval (KTD-15/KTD-18/KTD-21)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Handle a click on an admins-audience escalation card (`escalate_*`
+   * actions). Authorization: the ledger row's botId + a FRESH
+   * `botService.getMemberRole` — never the session-ownership check (the
+   * approver does not own the requester's session) and never a cached role
+   * (a demoted admin must lose approval power immediately). Settlement is
+   * the ledger's atomic first-click-wins transition: late/replayed clicks
+   * are no-ops with a terminal card.
+   */
+  private async handleEscalationSubmit(
+    workspaceId: string,
+    frame: WsFrame<EventMessageWith<TemplateCardEventData>>,
+    parsed: {
+      requestId: string;
+      action: import('../types/wecom-template-card.js').ToolApprovalAction;
+      wecomUserId: string;
+      cardType?: string;
+      taskId?: string;
+    },
+  ): Promise<void> {
+    const entry = botEscalationLedger.get(parsed.requestId);
+    if (!entry) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '该请求已过期或已处理');
+      return;
+    }
+    // An escalate action on a self-audience pending is never valid: those
+    // cards belong to the requester's own self-ask flow (an admin must not
+    // approve an owner's self-audience card through this branch).
+    if (entry.audience !== 'admins') {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '无法操作该审批');
+      return;
+    }
+    // Fresh role check on the LEDGER row's bot — a cross-bot admin or a
+    // demoted admin has no authority here even when the workspace matches.
+    const clickerRole = botService.getMemberRole(entry.botId, 'wecom', parsed.wecomUserId);
+    if (clickerRole !== 'owner' && clickerRole !== 'admin') {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '你没有权限处理该审批');
+      return;
+    }
+    // KTD-21: an admin requester's escalation routes owner-only.
+    if (entry.requester.role === 'admin' && clickerRole !== 'owner') {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '该审批需要渠道 owner 处理');
+      return;
+    }
+    if (entry.state !== 'pending') {
+      const settledText =
+        entry.state === 'approved'
+          ? '该请求已被批准'
+          : entry.state === 'denied'
+            ? '该请求已被拒绝'
+            : '该请求已过期，已按拒绝处理';
+      await this.updateCardToTerminal(workspaceId, frame, parsed, settledText);
+      return;
+    }
+
+    const runtime = chatService.getRuntimeIfExists(entry.sessionId);
+    const pending = runtime?.getPendingCardState(parsed.requestId);
+    if (!runtime || !pending) {
+      // The tool call is already gone (session closed/stopped). Do NOT settle
+      // — the gate continuation or the TTL owns the terminal transition.
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '该请求已过期或已处理');
+      return;
+    }
+
+    const alwaysAllowRules = entry.rulePayload.alwaysAllowRules ?? [];
+    if (parsed.action === 'escalate_always_allow' && alwaysAllowRules.length === 0) {
+      // Forged/replayed always-allow click on a card that never offered it.
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '该请求不支持始终允许');
+      return;
+    }
+
+    const approver = { type: 'wecom' as const, channelKey: 'wecom' as const, channelUserId: parsed.wecomUserId };
+    const outcome = parsed.action === 'escalate_deny' ? 'denied' : 'approved';
+
+    // Transactional first-click-wins: the atomic ledger transition decides
+    // who settles; a null return means a race was lost (double-click,
+    // cross-click, or a TTL beat us) and this click becomes a no-op.
+    const settled = botEscalationLedger.settle(entry.id, outcome, {
+      approver,
+      decision: parsed.action === 'escalate_deny' ? 'deny' : 'allow',
+      source: 'wecom-card',
+    });
+    if (!settled) {
+      await this.updateCardToTerminal(workspaceId, frame, parsed, '该请求已被处理');
+      return;
+    }
+
+    let terminalText: string;
+    if (parsed.action === 'escalate_deny') {
+      terminalText = '已拒绝';
+      this.foldIntoActiveStream(entry.sessionId, formatPermissionFold(entry.rulePayload.toolName, 'deny'));
+      runtime.resolveApproval(parsed.requestId, {
+        behavior: 'deny',
+        message: 'Out-of-sandbox request denied by a channel owner/admin.',
+      }, { source: 'wecom-card', approver });
+    } else if (parsed.action === 'escalate_always_allow') {
+      // KTD-18: persist the exact-match rules into the passlist via
+      // updateRolePolicy so passlist_rule_added fires with the approver
+      // provenance; the SDK gets addRules+allow+session only (never a
+      // settings file). A persistence failure downgrades to allow-once —
+      // the human's approval still stands.
+      let sessionPermissions: ReturnType<typeof exactSessionUpdatedPermissions> = [];
+      try {
+        const policy = botService.getRolePolicy(entry.botId);
+        if (!policy) throw new Error(`role policy missing for bot ${entry.botId}`);
+        const existing = new Set((policy.passlistRules ?? []).map((r) => r.rule));
+        const additions = alwaysAllowRules
+          .filter((rule) => !existing.has(rule))
+          .map((rule) => ({
+            rule,
+            provenance: {
+              addedBy: parsed.wecomUserId,
+              source: 'approval' as const,
+              createdAt: new Date().toISOString(),
+            },
+          }));
+        if (additions.length > 0) {
+          botService.updateRolePolicy(
+            entry.botId,
+            { ...policy, passlistRules: [...(policy.passlistRules ?? []), ...additions] },
+            approver,
+          );
+        }
+        sessionPermissions = exactSessionUpdatedPermissions(alwaysAllowRules);
+        terminalText = '已始终允许';
+      } catch (err) {
+        diagLog(
+          `[WeComBotService] always-allow persistence failed requestId=${parsed.requestId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        terminalText = '已允许';
+      }
+      this.foldIntoActiveStream(
+        entry.sessionId,
+        formatPermissionFold(entry.rulePayload.toolName, terminalText === '已始终允许' ? 'always_allow' : 'allow'),
+      );
+      runtime.resolveApproval(parsed.requestId, {
+        behavior: 'allow',
+        ...(sessionPermissions.length > 0 ? { updatedPermissions: sessionPermissions } : {}),
+      }, { source: 'wecom-card', approver });
+    } else {
+      terminalText = '已允许';
+      this.foldIntoActiveStream(entry.sessionId, formatPermissionFold(entry.rulePayload.toolName, 'allow'));
+      runtime.resolveApproval(parsed.requestId, { behavior: 'allow' }, { source: 'wecom-card', approver });
+    }
+
+    // Terminal update within the 5s click-response window; the requester and
+    // the non-clicking recipients are notified by the gate continuation via
+    // the escalation notifier (their cards cannot be server-terminated).
+    await this.updateCardToTerminal(workspaceId, frame, parsed, terminalText);
+  }
+
+  /**
+   * U11 pending listener: deliver the actionable escalation card to every
+   * recipient on the ledger row (owner/admin for a normal requester, owner
+   * only for an admin requester). The requester is NOT carded here — their
+   * read-only notice rides the stream-reply pending_approval handler.
+   * Fire-and-forget per recipient: a delivery failure is logged, never
+   * thrown into the gate.
+   */
+  async deliverEscalationCards(entry: BotEscalationEntry): Promise<void> {
+    if (entry.audience !== 'admins') return;
+    // Queue while the connection is down — the card is delivered on
+    // `authenticated` (rebuilt then with a fresh TTL), never silently lost.
+    const conn = this.connections.get(entry.botId);
+    if (!conn || conn.status !== 'connected') {
+      const queue = this.escalationPendingCardQueue.get(entry.botId) ?? [];
+      queue.push(entry);
+      this.escalationPendingCardQueue.set(entry.botId, queue);
+      diagLog(
+        `[WeComBotService] escalation card queued requestId=${entry.id} bot=${entry.botId} (connection not ready)`,
+      );
+      return;
+    }
+    const workspaceId = this.botIdToWorkspaceId.get(entry.botId);
+    if (!workspaceId) {
+      diagLog(
+        `[WeComBotService] escalation card delivery skipped requestId=${entry.id} bot=${entry.botId}: no workspace routing`,
+      );
+      return;
+    }
+    const commandSummary = truncateSummary(entry.rulePayload.command ?? entry.rulePayload.toolName, 120);
+    const ttlMinutes = Math.max(1, Math.round((Date.parse(entry.expiresAt) - Date.now()) / 60000));
+    const requesterRoleLabel =
+      entry.requester.role === 'owner' ? '渠道 owner' : entry.requester.role === 'admin' ? '管理员' : '普通成员';
+    const card = buildEscalationApprovalCard({
+      requestId: entry.id,
+      sessionId: entry.sessionId,
+      toolName: entry.rulePayload.toolName,
+      commandSummary,
+      requesterLabel: entry.requester.channelUserId,
+      requesterRoleLabel,
+      alwaysAllowRules: entry.rulePayload.alwaysAllowRules ?? [],
+      ttlMinutes,
+      taskId: entry.id,
+    });
+    for (const recipient of entry.recipients) {
+      try {
+        await this.sendTemplateCard(workspaceId, recipient.userId, card);
+        diagLog(
+          `[WeComBotService] escalation card delivered requestId=${entry.id} to=${recipient.userId}`,
+        );
+      } catch (err) {
+        diagLog(
+          `[WeComBotService] escalation card DELIVERY FAILED requestId=${entry.id} to=${recipient.userId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Flush queued admins-audience escalation cards for one bot when its
+   * connection becomes ready (U11). Queued actionable cards whose pending
+   * already settled while offline are dropped — the queued terminal
+   * notification covers the outcome; sending an approvable card for a dead
+   * pending would invite a click that can only fail.
+   */
+  flushEscalationCardQueues(botId: string): void {
+    const conn = this.connections.get(botId);
+    if (!conn || conn.status !== 'connected') return;
+    const pendings = this.escalationPendingCardQueue.get(botId) ?? [];
+    this.escalationPendingCardQueue.delete(botId);
+    for (const entry of pendings) {
+      const fresh = botEscalationLedger.get(entry.id);
+      if (!fresh || fresh.state !== 'pending') {
+        diagLog(
+          `[WeComBotService] queued escalation card dropped requestId=${entry.id} (state=${fresh?.state ?? 'missing'} while offline)`,
+        );
+        continue;
+      }
+      this.deliverEscalationCards(fresh).catch((err: unknown) => {
+        diagLog(
+          `[WeComBotService] queued escalation card delivery failed requestId=${entry.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+    const resolved = this.escalationResolutionCardQueue.get(botId) ?? [];
+    this.escalationResolutionCardQueue.delete(botId);
+    for (const entry of resolved) {
+      this.deliverEscalationResolved(entry).catch((err: unknown) => {
+        diagLog(
+          `[WeComBotService] queued escalation resolution delivery failed requestId=${entry.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+  }
+
+  /**
+   * U11 resolved listener: terminal notification cards on ANY resolution
+   * (approve/deny/expiry; card click, desktop funnel, or TTL). The requester
+   * always gets one (their read-only notice card cannot be server-terminated);
+   * recipients get one EXCEPT the clicker, whose card already flipped terminal
+   * in the click-response window.
+   */
+  async deliverEscalationResolved(entry: BotEscalationEntry): Promise<void> {
+    if (entry.audience !== 'admins') return;
+    const resolution = entry.resolution;
+    if (!resolution) return;
+    // Queue while the connection is down — terminal notifications flush on
+    // `authenticated` (the requester must learn the outcome on ANY resolution).
+    const conn = this.connections.get(entry.botId);
+    if (!conn || conn.status !== 'connected') {
+      const queue = this.escalationResolutionCardQueue.get(entry.botId) ?? [];
+      queue.push(entry);
+      this.escalationResolutionCardQueue.set(entry.botId, queue);
+      diagLog(
+        `[WeComBotService] escalation resolution card queued requestId=${entry.id} bot=${entry.botId} (connection not ready)`,
+      );
+      return;
+    }
+    const workspaceId = this.botIdToWorkspaceId.get(entry.botId);
+    if (!workspaceId) {
+      diagLog(
+        `[WeComBotService] escalation resolution delivery skipped requestId=${entry.id} bot=${entry.botId}: no workspace routing`,
+      );
+      return;
+    }
+    const outcomeText =
+      entry.state === 'approved' ? '已批准' : entry.state === 'denied' ? '已拒绝' : '已过期，按拒绝处理';
+    const actorLabel =
+      resolution.approver.channelUserId ?? (resolution.approver.type === 'system' ? '系统' : resolution.approver.type);
+    const clickerId = resolution.source === 'wecom-card' ? resolution.approver.channelUserId : undefined;
+    const commandSummary = truncateSummary(entry.rulePayload.command ?? entry.rulePayload.toolName, 80);
+
+    const sends: Array<{ toUser: string; card: ReturnType<typeof buildEscalationResultCard> }> = [];
+    if (entry.requester.channel === 'wecom') {
+      sends.push({
+        toUser: entry.requester.channelUserId,
+        card: buildEscalationResultCard({
+          title: `出沙箱审批${outcomeText}`,
+          desc: `命令:${commandSummary}\n处理人:${actorLabel}`,
+          taskId: entry.id,
+        }),
+      });
+    } else {
+      diagLog(
+        `[WeComBotService] escalation resolution requester notification skipped requestId=${entry.id} channel=${entry.requester.channel} (non-wecom requester)`,
+      );
+    }
+    for (const recipient of entry.recipients) {
+      if (clickerId && recipient.userId === clickerId) continue;
+      sends.push({
+        toUser: recipient.userId,
+        card: buildEscalationResultCard({
+          title: `出沙箱审批${outcomeText}`,
+          desc: `命令:${commandSummary}\n请求人:${entry.requester.channelUserId}\n处理人:${actorLabel}`,
+          taskId: entry.id,
+        }),
+      });
+    }
+    for (const send of sends) {
+      try {
+        await this.sendTemplateCard(workspaceId, send.toUser, send.card);
+      } catch (err) {
+        diagLog(
+          `[WeComBotService] escalation resolution card DELIVERY FAILED requestId=${entry.id} to=${send.toUser}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
   /**
    * Fold a resolved card receipt (question answer or permission outcome) into
    * the session's active streaming reply so the receipt and the agent's
@@ -1771,3 +2125,10 @@ export class WeComBotService {
 }
 
 export const wecomBotService = new WeComBotService();
+
+// U11: the singleton is the card layer for admins-audience escalations. The
+// gate publishes through bot-escalation-notifier (no circular import);
+// delivery methods are public so tests can drive them on fresh instances
+// without the global subscription.
+subscribeEscalationPending((entry) => wecomBotService.deliverEscalationCards(entry));
+subscribeEscalationResolved((entry) => wecomBotService.deliverEscalationResolved(entry));

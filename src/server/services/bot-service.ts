@@ -201,7 +201,12 @@ export class BotService {
     if (!bot) {
       throw new BotNotFoundError(botId);
     }
-    this.requireSystemOrUserActor(actor);
+    // Actors: system/user (desktop editor, internal writers) and wecom/feishu
+    // channel actors (U11 remote approval "always allow" accumulation — the
+    // role check happened at the click handler; the channel actor is carried
+    // here so the passlist_rule_added audit records the real approver, KTD-22).
+    // Authorization for policy writes lives at the call sites, not in this
+    // guard — no route constructs a channel actor from request data.
 
     const normalRole = this.store.getBotRoleByKey(botId, 'normal');
     if (!normalRole) {
