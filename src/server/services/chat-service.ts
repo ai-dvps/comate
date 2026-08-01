@@ -64,6 +64,12 @@ import { evaluateBotToolPermission, evaluateBotSkill, isOwnerOrAdmin } from './b
 import type { BotPersona, BotRoleKey, BotRolePolicy } from '../models/bot.js';
 import { SAFE_PRESET } from './tool-permission-policy.js';
 import { createDefaultBotRolePolicy, deriveBotAccess, validateUserDirName, capabilityDirForPath, type BotAccessDerivation } from './bot-access-policy.js';
+import {
+  classifyMcpTool,
+  parseMcpToolName,
+  type McpToolAnnotations,
+  type McpToolAnnotationMap,
+} from './mcp-tool-classification.js';
 import { ensureSandboxProbe, isSandboxDegraded } from './sandbox-probe.js';
 import type { Provider } from '../models/provider.js';
 import {
@@ -391,6 +397,15 @@ export class ChatService {
    * explicit stop-retry instruction — the breaker for model retry loops.
    */
   private sessionOverrideDenies = new Map<string, number>();
+  /**
+   * U9 (KTD-20): per-runtime MCP tool annotation fetch, cached as a Promise
+   * so concurrent first calls dedupe. Keyed by sessionId; cleared wherever
+   * the other per-runtime gate bookkeeping is cleared (annotations are
+   * static per server connection, so a runtime rebuild re-fetches). Fetch
+   * failures cache an EMPTY map — missing annotations classify unknown
+   * (fail-closed ask), never allow.
+   */
+  private sessionMcpToolAnnotations = new Map<string, Promise<McpToolAnnotationMap>>();
   private onRuntimeClose?: (sessionId: string) => void;
   private historyTimestampBases = new Map<string, number>();
   /**
@@ -1521,6 +1536,7 @@ export class ChatService {
         this.sessionSpawnRoles.delete(sessionId);
         this.demotionRebuilds.delete(sessionId);
         this.sessionOverrideDenies.delete(sessionId);
+        this.sessionMcpToolAnnotations.delete(sessionId);
       }
     }
   }
@@ -1533,6 +1549,7 @@ export class ChatService {
     this.sessionSpawnRoles.delete(sessionId);
     this.demotionRebuilds.delete(sessionId);
     this.sessionOverrideDenies.delete(sessionId);
+    this.sessionMcpToolAnnotations.delete(sessionId);
     this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
@@ -1607,6 +1624,31 @@ export class ChatService {
     } else {
       this.demotionRebuilds.delete(sessionId);
     }
+  }
+
+  /**
+   * U9 (KTD-20): per-session MCP tool annotations, fetched lazily from the
+   * SDK control channel on the first MCP-tool gate call and cached for the
+   * runtime's lifetime. Fail-soft: any error resolves to an empty map —
+   * missing annotations classify as unknown (fail-closed ask), never allow.
+   * The `?.` chain tolerates partial runtime test doubles that do not
+   * implement the annotation channel (same contract as
+   * consumeResolutionProvenance).
+   */
+  private getSessionMcpToolAnnotations(sessionId: string): Promise<McpToolAnnotationMap> {
+    let cached = this.sessionMcpToolAnnotations.get(sessionId);
+    if (!cached) {
+      const runtime = this.runtimes.get(sessionId);
+      const empty: McpToolAnnotationMap = new Map<string, McpToolAnnotations>();
+      cached = (runtime?.getMcpToolAnnotations?.() ?? Promise.resolve(empty)).catch((err) => {
+        diagLog(
+          `[ChatService] session=${sessionId} MCP annotation fetch failed: ${err instanceof Error ? err.message : String(err)} — MCP tools classify unknown`,
+        );
+        return new Map<string, McpToolAnnotations>();
+      });
+      this.sessionMcpToolAnnotations.set(sessionId, cached);
+    }
+    return cached;
   }
 
   scheduleRebuildsForBot(botId: string): void {
@@ -2661,6 +2703,11 @@ export class ChatService {
 
             const gatePathContext = pathContext;
 
+            // U9 (KTD-20): the session's configured MCP server names
+            // disambiguate `mcp__<server>__<tool>` splits (server names may
+            // contain single underscores).
+            const mcpServerNames = Object.keys(mcpServers);
+
             options.canUseTool = async (
               toolName: string,
               input: Record<string, unknown>,
@@ -2748,7 +2795,11 @@ export class ChatService {
                 escalationEntry: BotEscalationEntry | null,
                 command: string,
               ): void => {
-                const requester = { channel: escapeActor.channelKey, channelUserId: escapeActor.channelUserId, role: freshRole };
+                const requester = {
+                  channel: escapeActor.channelKey ?? 'unknown',
+                  channelUserId: escapeActor.channelUserId ?? '',
+                  role: freshRole,
+                };
                 // `?.`: partial runtime test doubles may not implement the
                 // provenance channel; absence = phase-1 default.
                 const provenance = this.runtimes.get(session.id)?.consumeResolutionProvenance?.(toolRequestId);
@@ -2813,12 +2864,16 @@ export class ChatService {
               };
 
               /**
-               * Owner self-ask route (phase-1, KTD-15 self audience): the
-               * requester is the owner, so their own approval IS supervision.
+               * Self-ask route (KTD-15 self audience): the requester is an
+               * owner or admin, so their own approval IS supervision. Used by
+               * the Bash escape branch (owner everywhere; admin on non-WeCom
+               * channels) and by U9's MCP write/unknown classification for
+               * owner/admin requesters. `command` is absent for non-Bash
+               * tools (MCP calls carry no shell command).
                */
-              const askOwnerSelf = async (
+              const askSelfRoute = async (
                 escapeActor: BotActor,
-                command: string,
+                command?: string,
               ): Promise<PermissionResult> => {
                 const runtime = this.runtimes.get(session.id);
                 if (!runtime) {
@@ -2844,7 +2899,7 @@ export class ChatService {
                   recipients: [{ userId: escapeActor.channelUserId ?? '', taskId: toolRequestId }],
                   rulePayload: {
                     toolName,
-                    command,
+                    ...(command !== undefined && { command }),
                     ...(sdkOptions?.decisionReasonType !== undefined && {
                       decisionReasonType: sdkOptions.decisionReasonType,
                     }),
@@ -2855,7 +2910,7 @@ export class ChatService {
                   timeout: toolTimeout ?? escalationApprovalTtlMs(),
                   audience: 'self',
                 });
-                settleEscapeAfterAsk(escapeActor, escapeResult, escalationEntry, command);
+                settleEscapeAfterAsk(escapeActor, escapeResult, escalationEntry, command ?? '');
                 return escapeResult;
               };
 
@@ -3028,14 +3083,14 @@ export class ChatService {
                     };
                   }
                   if (freshRole === 'owner') {
-                    return askOwnerSelf(escapeActor as BotActor, input.command);
+                    return askSelfRoute(escapeActor as BotActor, input.command);
                   }
                   if (freshRole === 'admin') {
                     // KTD-21: an admin's out-of-sandbox retry routes
                     // owner-only; no owner → deny with explanation. Feishu
                     // card alignment is deferred — keep the self-ask there.
                     if (channel !== 'wecom') {
-                      return askOwnerSelf(escapeActor as BotActor, input.command);
+                      return askSelfRoute(escapeActor as BotActor, input.command);
                     }
                     const hasOwner = botService
                       .listMembers(bot.id)
@@ -3131,12 +3186,16 @@ export class ChatService {
                   }
                   return denyRouted('final', verdict.reason ?? 'path-denied');
                 }
-                // U6 (KTD-22/KTD-29): an ALLOWED write into a workspace
-                // capability dir (`.claude/skills`, `.claude/agents`) is a
-                // capability-surface change — audit it (the desktop banner
-                // surface rides this event; only admin/owner verdicts can
-                // reach this point inside `.claude`).
-                if (channel && channelUserId && CAPABILITY_WRITE_TOOLS.has(toolName)) {
+                // U9 (R11/KTD-29): the admin write boundary inside `.claude`
+                // is the CLOSED capability-dir set (skills/, agents/). The
+                // derived sandbox enforces it for bash, but the Edit/Write
+                // tools run in the CLI process — the gate itself must deny
+                // admin `.claude` writes outside the closed set (plugins/,
+                // hooks, .mcp.json, settings files). The owner stays
+                // unrestricted; normal members never reach here (the
+                // verification layer denies their .claude writes upstream).
+                // Reads are unaffected — the closed set bounds writes only.
+                if (CAPABILITY_WRITE_TOOLS.has(toolName)) {
                   const rawPath = typeof input.file_path === 'string'
                     ? input.file_path
                     : typeof input.notebook_path === 'string'
@@ -3145,7 +3204,28 @@ export class ChatService {
                   if (rawPath) {
                     const canonical = verdict.canonical ?? canonicalizeBotPath(gatePathContext.workspaceFolder, rawPath);
                     const capabilityDir = capabilityDirForPath(gatePathContext.workspaceFolder, canonical);
-                    if (capabilityDir) {
+                    const claudeRoot = path.join(gatePathContext.workspaceFolder, '.claude') + path.sep;
+                    if (freshRole === 'admin' && canonical.startsWith(claudeRoot) && !capabilityDir) {
+                      if (channel && channelUserId) {
+                        botAuditLogger.logFileAccessDenied(
+                          bot.id,
+                          { type: channel, channelKey: channel, channelUserId },
+                          {
+                            sessionId: session.id,
+                            toolName,
+                            reason: 'admin-capability-dir-closed',
+                            path: canonical,
+                          },
+                        );
+                      }
+                      return denyRouted('final', 'admin-capability-dir-closed');
+                    }
+                    // U6 (KTD-22/KTD-29): an ALLOWED write into a workspace
+                    // capability dir (`.claude/skills`, `.claude/agents`) is a
+                    // capability-surface change — audit it (the desktop banner
+                    // surface rides this event; only admin/owner verdicts can
+                    // reach this point inside `.claude`).
+                    if (channel && channelUserId && capabilityDir) {
                       botAuditLogger.logCapabilityDirWrite(
                         bot.id,
                         { type: channel, channelKey: channel, channelUserId },
@@ -3192,8 +3272,62 @@ export class ChatService {
                 });
               }
 
+              // ---- MCP tools: classification gating (U9, R10/KTD-20). ------
+              // MCP server processes run OUTSIDE the session sandbox, so this
+              // gate is the only boundary. Read-class tools fall through to
+              // the category policy below; write-class and unknown-class
+              // enter the escalation path (unknown is never allow-all — the
+              // pre-U9 fall-through is gone). Routing mirrors KTD-15: normal
+              // → admins-audience cards (WeCom); owner/admin → self-ask;
+              // Feishu keeps the phase-1 deny until its card flow is aligned
+              // (Scope Boundaries deferral).
+              const mcpTool = parseMcpToolName(toolName, mcpServerNames);
+              if (mcpTool) {
+                const annotations = await this.getSessionMcpToolAnnotations(session.id);
+                const mcpClass = classifyMcpTool({
+                  tool: mcpTool.tool,
+                  annotations: annotations.get(toolName),
+                  override: rolePolicyFresh?.mcpClassification?.[mcpTool.server],
+                });
+                if (mcpClass !== 'read') {
+                  const mcpActor = channel && channelUserId
+                    ? { type: channel, channelKey: channel, channelUserId } as const
+                    : null;
+                  if (mcpActor) {
+                    botAuditLogger.logSandboxEscapeRequested(bot.id, mcpActor, {
+                      sessionId: session.id,
+                      command: toolName,
+                      role: freshRole,
+                    });
+                  }
+                  if (freshRole === 'owner' || freshRole === 'admin') {
+                    // freshRole requires channel + channelUserId, so the actor
+                    // is non-null here (KTD-15 self-audience invariant).
+                    return askSelfRoute(mcpActor as BotActor, undefined);
+                  }
+                  if (!mcpActor) {
+                    return denyRouted('final', 'missing-identity');
+                  }
+                  if (channel !== 'wecom') {
+                    botAuditLogger.logSandboxEscapeDenied(bot.id, { type: 'system' }, {
+                      sessionId: session.id,
+                      command: toolName,
+                      requester: { channel: mcpActor.channelKey ?? 'unknown', channelUserId: mcpActor.channelUserId ?? '', role: freshRole },
+                      reason: 'mcp-write-channel-deferred',
+                    });
+                    return denyRouted('escalatable', 'mcp-write-channel-deferred');
+                  }
+                  return escalateRemotely(mcpActor as BotActor, {
+                    reason: 'mcp-write',
+                    recipientRoles: new Set<BotRoleKey>(['owner', 'admin']),
+                  });
+                }
+                // read-class: fall through to the category policy tail below.
+              }
+
               // Category policy still governs non-Bash, non-file tools
-              // (network / subagents / unknown MCP — U9 refines MCP classes).
+              // (network / subagents / read-class MCP — U9 routes write and
+              // unknown MCP classes above).
               // File tools are owned by the derived rules + verification
               // layer above: the legacy category defaults (e.g. SAFE's
               // fileWrite deny) must not re-deny what the derived surface

@@ -1,4 +1,5 @@
 import type { ToolPermissionPolicy } from '../services/tool-permission-policy.js';
+import type { McpServerClassificationOverride } from '../services/mcp-tool-classification.js';
 
 export type BotChannelKey = 'wecom' | 'feishu';
 
@@ -84,6 +85,13 @@ export interface BotRolePolicy {
    * Default empty.
    */
   networkAllowlist: string[];
+  /**
+   * Per-MCP-server classification overrides (U9, KTD-20), keyed by MCP
+   * server name: wins over the server's own annotations. Absent = every
+   * server classifies by its annotations (unknown → ask). The gate reads
+   * this fresh on every call, so edits apply without a runtime rebuild.
+   */
+  mcpClassification?: Record<string, McpServerClassificationOverride>;
 }
 
 export type BotPersonaMode = 'append' | 'replace';

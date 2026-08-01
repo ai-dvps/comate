@@ -57,6 +57,13 @@ interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, z.ZodTypeAny>;
+  /**
+   * U9 (KTD-20): MCP-spec annotations advertised on tools/list. The bot
+   * permission gate classifies first-party tools by these hints
+   * (readOnlyHint → read-class, otherwise write-class) instead of the
+   * fail-closed unknown class.
+   */
+  annotations: { readOnlyHint: boolean };
   handler: (args: never) => Promise<CallToolResult>;
 }
 
@@ -68,8 +75,11 @@ interface ToolDef {
  * Tasks are active at creation — every surface uses the same unified path.
  */
 export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): ToolDef[] {
+  // Write-class (U9): creates a persistent scheduled task — the bot gate
+  // routes it through approval for regular members.
   const createTool: ToolDef = {
     name: 'create_scheduled_task',
+    annotations: { readOnlyHint: false },
     description:
       '创建一个定时任务（创建后立即生效并进入调度）。' +
       'instruction 必须是自包含提示词：不要写"这个/如上/刚才"等依赖当前聊天上下文的指代，写清工作区相对路径与完成标准——执行时是一个全新会话，看不到本次对话。',
@@ -103,6 +113,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
 
   const listTool: ToolDef = {
     name: 'list_scheduled_tasks',
+    annotations: { readOnlyHint: true },
     description: '列出当前工作区的定时任务（含状态、下次触发时间、最近一次执行状态）。',
     inputSchema: {},
     handler: (async () => {
@@ -122,6 +133,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
 
   const pauseTool: ToolDef = {
     name: 'pause_scheduled_task',
+    annotations: { readOnlyHint: false },
     description: '暂停一个定时任务（不再按调度触发，可随时恢复）。',
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
@@ -138,6 +150,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
 
   const resumeTool: ToolDef = {
     name: 'resume_scheduled_task',
+    annotations: { readOnlyHint: false },
     description: '恢复一个已暂停的定时任务。',
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
@@ -152,6 +165,7 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
 
   const runNowTool: ToolDef = {
     name: 'run_scheduled_task_now',
+    annotations: { readOnlyHint: false },
     description: '立即执行一个定时任务。',
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
@@ -186,7 +200,7 @@ export function createScheduledTasksMcpHttpRouter(
       for (const def of buildScheduledTaskToolDefinitions(deps)) {
         server.registerTool(
           def.name,
-          { description: def.description, inputSchema: def.inputSchema },
+          { description: def.description, inputSchema: def.inputSchema, annotations: def.annotations },
           def.handler as never,
         );
       }

@@ -20,6 +20,7 @@ import type {
 import type { ApprovalMode } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
 import type { BotEscalationAudience } from '../storage/sqlite-store.js';
+import type { McpToolAnnotations } from './mcp-tool-classification.js';
 import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
@@ -851,6 +852,34 @@ export class SessionRuntime {
 
   async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {
     return this.query.getContextUsage();
+  }
+
+  /**
+   * U9 (KTD-20): annotations for every MCP tool this session exposes, keyed
+   * by the full `mcp__<server>__<tool>` name (the SDK normalizes MCP-spec
+   * `readOnlyHint`/`destructiveHint` to `readOnly`/`destructive` on
+   * McpServerStatus). Fail-soft: any control-channel error yields an empty
+   * map — the bot gate classifies missing annotations as the unknown class
+   * (fail-closed ask), never allow.
+   */
+  async getMcpToolAnnotations(): Promise<Map<string, McpToolAnnotations>> {
+    const annotations: Map<string, McpToolAnnotations> = new Map();
+    try {
+      const statuses = await this.query.mcpServerStatus();
+      for (const server of statuses) {
+        for (const tool of server.tools ?? []) {
+          annotations.set(`mcp__${server.name}__${tool.name}`, {
+            ...(tool.annotations?.readOnly !== undefined && { readOnly: tool.annotations.readOnly }),
+            ...(tool.annotations?.destructive !== undefined && { destructive: tool.annotations.destructive }),
+          });
+        }
+      }
+    } catch (err) {
+      diagLog(
+        `[Runtime ${this.sessionId}] mcpServerStatus failed: ${err instanceof Error ? err.message : String(err)} — MCP tools classify unknown`,
+      );
+    }
+    return annotations;
   }
 
   private emitContextUsage(): void {
