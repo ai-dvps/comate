@@ -69,18 +69,10 @@ export default function TodoDetail({
   const [bodyDraft, setBodyDraft] = useState('')
   const saveTimeoutRef = useRef<number | null>(null)
   const asideRef = useRef<HTMLElement>(null)
-  const [contentVisible, setContentVisible] = useState(false)
   const [runs, setRuns] = useState<TodoRun[]>([])
   const [runsLoading, setRunsLoading] = useState(false)
   const [runsError, setRunsError] = useState(false)
   const [activeTab, setActiveTab] = useState<'details' | 'history'>('details')
-
-  // Animate content when the selected todo changes.
-  useEffect(() => {
-    setContentVisible(false)
-    const id = window.setTimeout(() => setContentVisible(true), 25)
-    return () => window.clearTimeout(id)
-  }, [todo?.id])
 
   // Keep the local body draft in sync with the todo content.
   useEffect(() => {
@@ -249,12 +241,7 @@ export default function TodoDetail({
         onMouseDown={handleResizeMouseDown}
       />
 
-      <div
-        className={cn(
-          'flex flex-col min-h-0 flex-1 transition-all duration-200 ease-out',
-          contentVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-2',
-        )}
-      >
+      <div className="flex min-h-0 flex-1 flex-col">
         <header className="border-b border-border/50 px-4 py-4 flex-shrink-0">
           <div className="flex items-start gap-2.5">
             <span className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">

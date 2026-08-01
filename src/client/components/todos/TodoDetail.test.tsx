@@ -125,6 +125,37 @@ describe('TodoDetail', () => {
     expect(aside.querySelector('[class*="cursor-col-resize"]')).toBeInTheDocument();
   });
 
+  it('updates the selected Todo without a transient hidden detail state', () => {
+    const { rerender } = renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({ text: 'First Todo' })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TodoDetail
+          todo={makeTodo({ text: 'Second Todo' })}
+          width={384}
+          onWidthChange={onWidthChange}
+          onResolved={onResolved}
+          onClose={onClose}
+          onUpdateTodo={onUpdateTodo}
+          onChangeStatus={onChangeStatus}
+        />
+      </I18nextProvider>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Second Todo' })).toBeVisible();
+    expect(screen.getByRole('complementary').querySelector('[class*="opacity-0"]')).toBeNull();
+  });
+
   it('shows the workspace name instead of the raw id', () => {
     renderWithI18n(
       <TodoDetail
