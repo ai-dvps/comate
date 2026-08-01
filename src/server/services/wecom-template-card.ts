@@ -16,6 +16,9 @@ import type {
   QuestionCardOptions,
   SessionListCardOptions,
   WorkspaceListCardOptions,
+  EscalationApprovalCardOptions,
+  EscalationNoticeCardOptions,
+  EscalationResultCardOptions,
 } from '../types/wecom-template-card.js';
 
 const KEY_PREFIX = 'comate:1:';
@@ -155,8 +158,16 @@ function isValidAction(a: unknown): a is ToolApprovalAction {
     a === 'always_allow' ||
     a === 'deny' ||
     a === 'resume' ||
-    a === 'select_workspace'
+    a === 'select_workspace' ||
+    a === 'escalate_approve' ||
+    a === 'escalate_always_allow' ||
+    a === 'escalate_deny'
   );
+}
+
+/** True for the U11 admins-audience escalation action family (KTD-15). */
+export function isEscalationAction(a: ToolApprovalAction): boolean {
+  return a === 'escalate_approve' || a === 'escalate_always_allow' || a === 'escalate_deny';
 }
 
 /**
@@ -282,6 +293,103 @@ export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
       text: '提交',
       key: encodeButtonKey(requestId, 'allow', sessionId),
     },
+  };
+}
+
+/**
+ * Build the admins-audience escalation approval card (U11, KTD-15/KTD-18).
+ * Sent to owner/admin recipients; clicks carry the `escalate_*` action family
+ * and authorize against the escalation ledger + a fresh role check.
+ *
+ * KTD-18 content contract: the card shows the EXACT rule that "始终允许"
+ * would persist plus its match-semantics prose — what you see is what
+ * accumulates. The always-allow button is omitted when there is nothing
+ * persistable (no addRules-allow suggestions, suppressed suggestion types, or
+ * a composite command that exact-match rules cannot express).
+ */
+export function buildEscalationApprovalCard(options: EscalationApprovalCardOptions): TemplateCard {
+  const {
+    requestId,
+    sessionId,
+    toolName,
+    commandSummary,
+    requesterLabel,
+    requesterRoleLabel,
+    alwaysAllowRules,
+    ttlMinutes,
+    taskId,
+  } = options;
+
+  const descLines = [
+    `请求人:${requesterLabel}(${requesterRoleLabel})`,
+    `命令:${commandSummary}`,
+  ];
+  if (alwaysAllowRules.length > 0) {
+    for (const rule of alwaysAllowRules) {
+      descLines.push(`始终允许将写入直通名单:${rule}`);
+    }
+    descLines.push('匹配语义:仅精确匹配此命令,同工具不同参数不会命中');
+  }
+  descLines.push(`审批有效期:${ttlMinutes} 分钟`);
+
+  const buttonList: Array<{ text: string; style: number; key: string }> = [
+    { text: '允许一次', style: 1, key: encodeButtonKey(requestId, 'escalate_approve', sessionId) },
+  ];
+  if (alwaysAllowRules.length > 0) {
+    buttonList.push({
+      text: '始终允许',
+      style: 2,
+      key: encodeButtonKey(requestId, 'escalate_always_allow', sessionId),
+    });
+  }
+  buttonList.push({ text: '拒绝', style: 4, key: encodeButtonKey(requestId, 'escalate_deny', sessionId) });
+
+  return {
+    card_type: 'button_interaction',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: {
+      title: `出沙箱审批:${toolName}`,
+      desc: descLines.join('\n'),
+    },
+    task_id: taskId,
+    button_list: buttonList,
+  };
+}
+
+/**
+ * Build the requester's READ-ONLY escalation notice card (U11, KTD-15): the
+ * requester learns their request is waiting on an owner/admin but gets no
+ * buttons — self-approval is not supervision. Pinned content: command
+ * summary, routing context, approver audience, TTL.
+ */
+export function buildEscalationNoticeCard(options: EscalationNoticeCardOptions): TemplateCard {
+  const { commandSummary, toolName, audienceLabel, ttlMinutes, taskId } = options;
+  return {
+    card_type: 'text_notice',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: {
+      title: '出沙箱审批已发送',
+      desc: `命令:${commandSummary}\n该 ${toolName} 操作超出沙箱边界,需要${audienceLabel}审批\n审批有效期:${ttlMinutes} 分钟,结果将另行通知`,
+    },
+    task_id: taskId,
+    sub_title_text: '请等待审批结果,无需重复操作',
+  };
+}
+
+/**
+ * Build a terminal notification card (U11): requester + non-clicking
+ * recipients learn the resolution (approve/deny/expiry). The vendor API
+ * cannot terminate cards server-side for non-clickers, so notification cards
+ * are the terminal surface for everyone except the clicker (whose card is
+ * updated to a terminal state in the 5s click-response window).
+ */
+export function buildEscalationResultCard(options: EscalationResultCardOptions): TemplateCard {
+  const { title, desc, taskId } = options;
+  return {
+    card_type: 'text_notice',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: { title, desc },
+    task_id: taskId,
   };
 }
 

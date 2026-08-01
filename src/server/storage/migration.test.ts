@@ -314,7 +314,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const store = triggerMigration(seedDb, dbPath);
     const db = openRawDb(store);
 
-    assert.strictEqual(store.getMigrationVersion(), 8);
+    assert.strictEqual(store.getMigrationVersion(), 10);
 
     const tables = tableNames(db);
     assert.ok(tables.includes('bot_channels'));
@@ -429,7 +429,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const firstStore = triggerMigration(seedDb, dbPath);
 
     const secondStore = new SqliteStore(dbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 8);
+    assert.strictEqual(secondStore.getMigrationVersion(), 10);
 
     const db = openRawDb(secondStore);
     assert.strictEqual(tableNames(db).includes('bot_members'), false);
@@ -507,7 +507,7 @@ describe('unified schema migration', { concurrency: false }, () => {
 
     // Must not throw (previously: UNIQUE constraint failed: user_sessions.user_id).
     const store = new SqliteStore(dbPath);
-    assert.strictEqual(store.getMigrationVersion(), 8);
+    assert.strictEqual(store.getMigrationVersion(), 10);
     const db = openRawDb(store);
 
     // No row was lost to the multi-active collisions: wecom-u1 has 2 sessions,
@@ -642,7 +642,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     seedDb.close();
 
     const store = new SqliteStore(dbPath);
-    assert.strictEqual(store.getMigrationVersion(), 8);
+    assert.strictEqual(store.getMigrationVersion(), 10);
 
     const db = openRawDb(store);
     const cols = todoColumns(db);
@@ -658,7 +658,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     const t3 = store.getTodoById('t3');
     assert.ok(t3);
     assert.strictEqual(t3!.text, '多字节 unicode 文本');
-    assert.strictEqual(t3!.status, 'did-but-need-verify');
+    assert.strictEqual(t3!.status, 'pending');
     assert.strictEqual(t3!.workspaceId, 'ws-b');
     assert.strictEqual(t3!.origin, 'local');
     assert.deepStrictEqual(t3!.labels, []);
@@ -667,7 +667,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
 
   it('a fresh db lands on the new shape without a rebuild (shape-keyed gate)', () => {
     const store = new SqliteStore(dbPath); // file does not exist yet -> fresh construction
-    assert.strictEqual(store.getMigrationVersion(), 8);
+    assert.strictEqual(store.getMigrationVersion(), 10);
     const db = openRawDb(store);
     const cols = todoColumns(db);
     assert.strictEqual(cols.find((c) => c.name === 'workspace_id')!.notnull, 0);
@@ -677,7 +677,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     assert.strictEqual(store.getAllTodos().length, 1);
   });
 
-  it('is idempotent: a second construction leaves new rows intact and the version at 8', () => {
+  it('is idempotent: a second construction leaves new rows intact and the version at 10', () => {
     const ts = now();
     const seedDb = seedOldTodosDb(dbPath, [
       { id: 't1', workspace_id: 'ws-a', text: 'legacy', status: 'pending', session_id: null, created_at: ts, updated_at: ts },
@@ -686,7 +686,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     const first = new SqliteStore(dbPath);
     first.createTodo(null, { text: 'new global todo' });
     const second = new SqliteStore(dbPath);
-    assert.strictEqual(second.getMigrationVersion(), 8);
+    assert.strictEqual(second.getMigrationVersion(), 10);
     const all = second.getAllTodos();
     assert.strictEqual(all.length, 2);
     assert.ok(all.some((t) => t.text === 'new global todo' && t.workspaceId === null));

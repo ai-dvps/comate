@@ -19,6 +19,8 @@ import type {
 } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
+import type { BotEscalationAudience } from '../storage/sqlite-store.js';
+import type { McpToolAnnotations } from './mcp-tool-classification.js';
 import { PushableIterator } from './pushable-iterator.js';
 import { SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
@@ -38,7 +40,27 @@ import { browserAuditService } from './browser-audit.js';
 const RING_BUFFER_CAP = 500;
 const STOP_DRAIN_TIMEOUT_MS = 2000;
 const BACKGROUND_TASK_STOP_TIMEOUT_MS = 10_000;
+
+/**
+ * Deny message produced when an approval TTL expires (timeoutDeny). Exported
+ * so the U6 audit layer distinguishes `sandbox_escape_expired` from a human
+ * denial without string-sniffing a magic literal at two sites.
+ */
+export const APPROVAL_TIMEOUT_DENY_MESSAGE = 'Request timed out waiting for user response.';
 diagLog('[SessionRuntime] module loaded');
+
+/**
+ * Who/what settled a pending approval (U8, KTD-15): the resolving channel
+ * (`self-approval` card click, `desktop` GUI route, `timeout` TTL deny; U11
+ * adds remote-card sources) and, for human resolutions, the approver actor.
+ * Set by resolveApproval/timeoutDeny and consumed by the bot gate's audit
+ * writer so the desktop funnel and the card flow produce audit rows of
+ * identical shape through the SAME provenance writer.
+ */
+export interface ApprovalResolutionProvenance {
+  source: string;
+  approver?: { type: string; channelKey?: string; channelUserId?: string };
+}
 
 function backgroundTasksEqual(
   left: readonly SessionBackgroundTask[],
@@ -107,8 +129,18 @@ export class SessionRuntime {
       questions?: QuestionPayload[];
       expiresAt?: number;
       timer?: NodeJS.Timeout;
+      /** U8 (KTD-15): approval audience; undefined for non-escalation pendings. */
+      audience?: BotEscalationAudience;
     }
   >();
+  /**
+   * Resolution provenance by requestId (U8): set at resolveApproval/
+   * timeoutDeny time, consumed by the gate continuation after the pending's
+   * Promise settles. Bounded FIFO — pendings without a provenance consumer
+   * (plain GUI approvals) would otherwise leak entries.
+   */
+  private resolutionProvenance = new Map<string, ApprovalResolutionProvenance>();
+  private static readonly RESOLUTION_PROVENANCE_CAP = 64;
   private closed = false;
   private messageLoopPromise: Promise<void> = Promise.resolve();
   private currentMessageStartId?: string;
@@ -644,14 +676,36 @@ export class SessionRuntime {
     const toolName = pending.toolName ?? 'unknown';
     const toolUseId = pending.toolUseId ?? 'none';
     diagLog(`[Runtime ${this.sessionId}] ask deny requestId=${requestId} tool=${toolName} toolUseId=${toolUseId} reason=timeout`);
+    this.rememberResolutionProvenance(requestId, { source: 'timeout' });
     this.emitter.emitApprovalTimeout(requestId);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
     this.evaluateActivity();
     pending.resolve({
       behavior: 'deny',
-      message: 'Request timed out waiting for user response.',
+      message: APPROVAL_TIMEOUT_DENY_MESSAGE,
     });
+  }
+
+  private rememberResolutionProvenance(requestId: string, provenance: ApprovalResolutionProvenance): void {
+    if (this.resolutionProvenance.size >= SessionRuntime.RESOLUTION_PROVENANCE_CAP) {
+      const oldest = this.resolutionProvenance.keys().next().value;
+      if (oldest !== undefined) this.resolutionProvenance.delete(oldest);
+    }
+    this.resolutionProvenance.set(requestId, provenance);
+  }
+
+  /**
+   * Read-and-clear the resolution provenance for a settled pending (U8).
+   * Called by the bot gate's audit writer after the approval Promise resolves;
+   * undefined when the resolution carried no provenance (legacy callers).
+   */
+  consumeResolutionProvenance(requestId: string): ApprovalResolutionProvenance | undefined {
+    const provenance = this.resolutionProvenance.get(requestId);
+    if (provenance !== undefined) {
+      this.resolutionProvenance.delete(requestId);
+    }
+    return provenance;
   }
 
   /**
@@ -701,6 +755,8 @@ export class SessionRuntime {
           pending.description,
           pending.suggestions,
           pending.expiresAt,
+          undefined,
+          pending.audience,
         );
       }
     }
@@ -734,6 +790,8 @@ export class SessionRuntime {
           pending.description,
           pending.suggestions,
           pending.expiresAt,
+          undefined,
+          pending.audience,
         );
       }
     }
@@ -794,6 +852,34 @@ export class SessionRuntime {
 
   async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {
     return this.query.getContextUsage();
+  }
+
+  /**
+   * U9 (KTD-20): annotations for every MCP tool this session exposes, keyed
+   * by the full `mcp__<server>__<tool>` name (the SDK normalizes MCP-spec
+   * `readOnlyHint`/`destructiveHint` to `readOnly`/`destructive` on
+   * McpServerStatus). Fail-soft: any control-channel error yields an empty
+   * map — the bot gate classifies missing annotations as the unknown class
+   * (fail-closed ask), never allow.
+   */
+  async getMcpToolAnnotations(): Promise<Map<string, McpToolAnnotations>> {
+    const annotations: Map<string, McpToolAnnotations> = new Map();
+    try {
+      const statuses = await this.query.mcpServerStatus();
+      for (const server of statuses) {
+        for (const tool of server.tools ?? []) {
+          annotations.set(`mcp__${server.name}__${tool.name}`, {
+            ...(tool.annotations?.readOnly !== undefined && { readOnly: tool.annotations.readOnly }),
+            ...(tool.annotations?.destructive !== undefined && { destructive: tool.annotations.destructive }),
+          });
+        }
+      }
+    } catch (err) {
+      diagLog(
+        `[Runtime ${this.sessionId}] mcpServerStatus failed: ${err instanceof Error ? err.message : String(err)} — MCP tools classify unknown`,
+      );
+    }
+    return annotations;
   }
 
   private emitContextUsage(): void {
@@ -900,9 +986,12 @@ export class SessionRuntime {
     this.kimiLoopDetector?.reset();
   }
 
-  resolveApproval(requestId: string, result: PermissionResult): void {
+  resolveApproval(requestId: string, result: PermissionResult, provenance?: ApprovalResolutionProvenance): void {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) return;
+    if (provenance) {
+      this.rememberResolutionProvenance(requestId, provenance);
+    }
     this.clearPendingTimer(pending);
     this.pendingApprovals.delete(requestId);
     this.emitter.emitApprovalResolved(requestId);
@@ -928,7 +1017,7 @@ export class SessionRuntime {
   getPendingCardState(
     requestId: string,
   ):
-    | { type: 'approval'; toolName?: string; toolUseId?: string; suggestions?: PermissionSuggestion[] }
+    | { type: 'approval'; toolName?: string; toolUseId?: string; suggestions?: PermissionSuggestion[]; audience?: BotEscalationAudience }
     | { type: 'question'; questions: QuestionPayload[] }
     | undefined {
     const pending = this.pendingApprovals.get(requestId);
@@ -941,6 +1030,7 @@ export class SessionRuntime {
       toolName: pending.toolName,
       toolUseId: pending.toolUseId,
       suggestions: pending.suggestions,
+      audience: pending.audience,
     };
   }
 
@@ -961,6 +1051,8 @@ export class SessionRuntime {
       timeout?: number;
       signal?: AbortSignal;
       decisionReasonType?: string;
+      /** U8 (KTD-15): escalation audience for this pending. */
+      audience?: BotEscalationAudience;
     } = {},
   ): Promise<PermissionResult> {
     if (this.stopFenceActive) {
@@ -977,6 +1069,7 @@ export class SessionRuntime {
       options.suggestions,
       timerInfo?.expiresAt,
       options.decisionReasonType,
+      options.audience,
     );
     return this.waitForResolution(requestId, input, 'approval', {
       toolName,
@@ -987,6 +1080,7 @@ export class SessionRuntime {
       expiresAt: timerInfo?.expiresAt,
       timer: timerInfo?.timer,
       signal: options.signal,
+      audience: options.audience,
     });
   }
 
@@ -1031,6 +1125,7 @@ export class SessionRuntime {
       expiresAt?: number;
       timer?: NodeJS.Timeout;
       signal?: AbortSignal;
+      audience?: BotEscalationAudience;
     },
   ): Promise<PermissionResult> {
     return new Promise<PermissionResult>((resolve) => {
@@ -1046,6 +1141,7 @@ export class SessionRuntime {
         ...(data.questions !== undefined && { questions: data.questions }),
         ...(data.expiresAt !== undefined && { expiresAt: data.expiresAt }),
         ...(data.timer !== undefined && { timer: data.timer }),
+        ...(data.audience !== undefined && { audience: data.audience }),
       });
       this.evaluateActivity();
 
@@ -1056,6 +1152,7 @@ export class SessionRuntime {
             const toolName = pending.toolName ?? 'unknown';
             const toolUseId = pending.toolUseId ?? 'none';
             diagLog(`[Runtime ${this.sessionId}] ask deny requestId=${requestId} tool=${toolName} toolUseId=${toolUseId} reason=abort`);
+            this.rememberResolutionProvenance(requestId, { source: 'aborted' });
             this.clearPendingTimer(pending);
             this.pendingApprovals.delete(requestId);
             this.emitter.emitApprovalResolved(requestId);
@@ -1248,6 +1345,7 @@ export class SessionRuntime {
    */
   cancelPendingApprovals(message = 'Turn interrupted by user.'): void {
     for (const [requestId, pending] of this.pendingApprovals) {
+      this.rememberResolutionProvenance(requestId, { source: 'stopped' });
       this.clearPendingTimer(pending);
       this.pendingApprovals.delete(requestId);
       this.emitter.emitApprovalResolved(requestId);
@@ -1323,6 +1421,7 @@ export class SessionRuntime {
     // Resolve any dangling pending approvals so their Promises don't leak
     // (ahead of the final verdict so it reflects a fully idle session).
     for (const [requestId, pending] of this.pendingApprovals) {
+      this.rememberResolutionProvenance(requestId, { source: 'session-closed' });
       this.clearPendingTimer(pending);
       pending.resolve({
         behavior: 'deny',

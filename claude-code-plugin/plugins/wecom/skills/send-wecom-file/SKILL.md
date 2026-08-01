@@ -65,7 +65,7 @@ If `wecom` is not in PATH, use `npx wecom` or the full path from `WECOM_CLI_PATH
    ```bash
    wecom send-file --to-user <USERID> --file-path "<WORKSPACE_RELATIVE_PATH>" --session-id ${CLAUDE_SESSION_ID}
    ```
-   The `--file-path` value must be relative to the workspace root (the directory containing `.claude/wecom-context.json`).
+   The `--file-path` value must be relative to the workspace root (the current working directory of this session).
    If `wecom` is not available in PATH, try:
    - `npx wecom current-user ...` and `npx wecom send-file ...`
    - `${WECOM_CLI_PATH} current-user ...` and `${WECOM_CLI_PATH} send-file ...`
@@ -149,7 +149,7 @@ Never guess a user ID. If the recipient is unclear or `current-user` returns no 
 </pitfall>
 
 <pitfall name="absolute_paths">
-`--file-path` must be relative to the workspace root, not an absolute path. Resolve the file path relative to the directory containing `.claude/wecom-context.json`.
+`--file-path` must be relative to the workspace root, not an absolute path. Resolve the file path relative to the session working directory.
 </pitfall>
 
 <pitfall name="skipping_confirmation">

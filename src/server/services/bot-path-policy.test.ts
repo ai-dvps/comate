@@ -4,12 +4,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  createPathPolicyContext,
-  validateToolInput,
-  resolveAndCheckPath,
-  checkUserPath,
-} from './bot-path-policy.js';
+import { createPathPolicyContext, validateToolInput } from './bot-path-policy.js';
 import type { Workspace } from '../models/workspace.js';
 
 function createWorkspace(overrides: Partial<Workspace> = {}): Workspace {
@@ -29,12 +24,16 @@ function createWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 }
 
 describe('createPathPolicyContext', () => {
-  it('resolves workspace folder and user directory', () => {
+  it('resolves workspace folder and user directory to the canonical anchor', () => {
     const workspace = createWorkspace({ folderPath: '/tmp/test' });
     const ctx = createPathPolicyContext(workspace, 'user-a', ['user-b']);
-    assert.equal(ctx.workspaceFolder, path.resolve('/tmp/test'));
+    // U12: the anchor is the realpath of the deepest existing ancestor, so
+    // context paths and canonicalizeBotPath outputs share one spelling on
+    // symlinked roots (macOS /tmp → /private/tmp).
+    const canonicalRoot = path.join(fs.realpathSync('/tmp'), 'test');
+    assert.equal(ctx.workspaceFolder, canonicalRoot);
     assert.equal(ctx.userDirName, 'user-a');
-    assert.equal(ctx.userDir, path.join(path.resolve('/tmp/test'), 'data', 'user-a'));
+    assert.equal(ctx.userDir, path.join(canonicalRoot, 'data', 'user-a'));
     assert.deepEqual(ctx.knownUserDirNames, ['user-b']);
   });
 
@@ -266,46 +265,5 @@ describe('validateToolInput admin bypass', () => {
       pattern: 'x',
     });
     assert.equal(result.allowed, true);
-  });
-});
-
-describe('resolveAndCheckPath', () => {
-  it('allows reading a shared file and denies writing it', () => {
-    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-resolve-')));
-    fs.mkdirSync(path.join(tmpDir, 'data', 'user-a'), { recursive: true });
-    fs.writeFileSync(path.join(tmpDir, 'shared.txt'), 'shared');
-    const workspace = createWorkspace({ folderPath: tmpDir });
-    const ctx = createPathPolicyContext(workspace, 'user-a');
-
-    const readResult = resolveAndCheckPath(ctx, path.join(tmpDir, 'shared.txt'), { write: false });
-    assert.equal(readResult.allowed, true);
-
-    const writeResult = resolveAndCheckPath(ctx, path.join(tmpDir, 'shared.txt'), { write: true });
-    assert.equal(writeResult.allowed, false);
-    assert.equal(writeResult.reason, 'outside-user-dir-write');
-  });
-});
-
-describe('checkUserPath', () => {
-  it('allows paths inside the user directory', () => {
-    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-user-')));
-    fs.mkdirSync(path.join(tmpDir, 'data', 'user-a'), { recursive: true });
-    const workspace = createWorkspace({ folderPath: tmpDir });
-    const ctx = createPathPolicyContext(workspace, 'user-a');
-
-    const result = checkUserPath(ctx, path.join(tmpDir, 'data', 'user-a', 'file.txt'));
-    assert.equal(result.allowed, true);
-  });
-
-  it('denies paths outside the user directory', () => {
-    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bot-user-')));
-    fs.mkdirSync(path.join(tmpDir, 'data', 'user-a'), { recursive: true });
-    fs.writeFileSync(path.join(tmpDir, 'shared.txt'), 'shared');
-    const workspace = createWorkspace({ folderPath: tmpDir });
-    const ctx = createPathPolicyContext(workspace, 'user-a');
-
-    const result = checkUserPath(ctx, path.join(tmpDir, 'shared.txt'));
-    assert.equal(result.allowed, false);
-    assert.equal(result.reason, 'outside-user-dir-write');
   });
 });

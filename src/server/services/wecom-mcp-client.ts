@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { sha256Hex } from '../utils/sha256.js';
 
 const DEFAULT_MCP_CONFIG_ENDPOINT =
   'https://qyapi.weixin.qq.com/cgi-bin/aibot/cli/get_mcp_config';
@@ -209,7 +210,7 @@ export class WeComMcpClient {
  */
 export function sign(secret: string, botId: string, time: number, nonce: string): string {
   const input = `${secret}${botId}${time}${nonce}`;
-  return crypto.createHash('sha256').update(input).digest('hex');
+  return sha256Hex(input);
 }
 
 /** Generate a request ID in the format `{prefix}_{timestamp_ms}_{random_hex}`. */

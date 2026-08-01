@@ -3,11 +3,30 @@ import type { SseEvent } from '../types/message.js';
 import { debounce } from '../utils/debounce.js';
 import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { splitWecomMessage } from '../utils/wecom-message-split.js';
-import { buildToolApprovalCard, buildQuestionCard } from './wecom-template-card.js';
+import { buildToolApprovalCard, buildQuestionCard, buildEscalationNoticeCard } from './wecom-template-card.js';
+import { botEscalationLedger } from './bot-escalation-ledger.js';
 import { diagLog } from '../utils/diag-logger.js';
 
 const THINKING_PLACEHOLDER = '\n\n收到，正在处理中.';
 const THINKING_PLACEHOLDER_PREFIX = '\n\n收到，正在处理中';
+
+/** Cap for command summaries rendered into escalation cards. */
+const ESCALATION_COMMAND_SUMMARY_MAX = 120;
+
+/**
+ * Command summary for the requester's read-only escalation notice (U11):
+ * prefer the literal `command` field of the tool input, fall back to the
+ * emitter's inputSummary, truncate to the card budget.
+ */
+function summarizeCommand(input: unknown, inputSummary: string | undefined): string {
+  const command =
+    input && typeof input === 'object' && typeof (input as Record<string, unknown>).command === 'string'
+      ? ((input as Record<string, unknown>).command as string)
+      : (inputSummary ?? '');
+  return command.length > ESCALATION_COMMAND_SUMMARY_MAX
+    ? `${command.slice(0, ESCALATION_COMMAND_SUMMARY_MAX)}…`
+    : command;
+}
 
 /**
  * WeCom auto-ends a streaming passive reply 10 minutes after it starts. To
@@ -472,6 +491,35 @@ export function createStreamReply(
       } else if (event.type === 'pending_approval') {
         if (sentTemplateCards.has(event.requestId)) return;
         sentTemplateCards.add(event.requestId);
+        // U11 (KTD-15): an admins-audience escalation must NOT give the
+        // requester an actionable card (self-approval is not supervision).
+        // The requester gets a READ-ONLY notice card; owner/admin recipients
+        // get the actionable card via the escalation notifier.
+        if (event.audience === 'admins') {
+          const entry = botEscalationLedger.get(event.requestId);
+          const expiresAtMs = event.expiresAt ?? (entry ? Date.parse(entry.expiresAt) : Number.NaN);
+          const ttlMinutes = Math.max(
+            1,
+            Math.round(((Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now()) - Date.now()) / 60000),
+          );
+          const commandSummary = summarizeCommand(event.input, event.inputSummary);
+          const card = buildEscalationNoticeCard({
+            commandSummary,
+            toolName: event.toolName,
+            audienceLabel: '渠道 owner 或 admin',
+            ttlMinutes,
+            taskId: event.requestId,
+          });
+          diagLog(`[WeComStreamReply ${sessionId}] send escalation-notice-card requestId=${event.requestId} tool=${event.toolName}`);
+          conn.sendTemplateCard?.(card).then(
+            () => diagLog(`[WeComStreamReply ${sessionId}] send escalation-notice-card OK requestId=${event.requestId}`),
+            (err: Error) => {
+              console.error('Failed to send WeCom escalation notice card:', err);
+              diagLog(`[WeComStreamReply ${sessionId}] send escalation-notice-card FAIL requestId=${event.requestId} err=${err.message}`);
+            },
+          );
+          return;
+        }
         const card = buildToolApprovalCard({
           requestId: event.requestId,
           sessionId,
@@ -503,6 +551,29 @@ export function createStreamReply(
           (err: Error) => {
             console.error('Failed to send WeCom question card:', err);
             diagLog(`[WeComStreamReply ${sessionId}] send question-card FAIL requestId=${event.requestId} err=${err.message}`);
+          },
+        );
+      } else if (event.type === 'approval_timeout') {
+        // U8 (KTD-17, AE9): TTL expiry settles fail-closed — notify the
+        // requester (mirrors feishu-stream-reply). Only when this stream sent
+        // the card, so unrelated timeouts never spam the user.
+        if (!sentTemplateCards.has(event.requestId)) return;
+        // U11: for admins-audience escalations the notifier owns ALL terminal
+        // notifications (requester + recipients) — the expiry card reaches
+        // the requester even after this stream is gone, so the markdown
+        // notice here would duplicate it.
+        if (botEscalationLedger.get(event.requestId)?.audience === 'admins') {
+          diagLog(`[WeComStreamReply ${sessionId}] skip expiry-notice requestId=${event.requestId} (notifier owns admins-audience terminal cards)`);
+          return;
+        }
+        diagLog(`[WeComStreamReply ${sessionId}] send expiry-notice requestId=${event.requestId}`);
+        conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: { content: '⏰ 请求已超时，已按拒绝处理。' },
+        }).then(
+          () => diagLog(`[WeComStreamReply ${sessionId}] send expiry-notice OK requestId=${event.requestId}`),
+          (err: Error) => {
+            diagLog(`[WeComStreamReply ${sessionId}] send expiry-notice FAIL requestId=${event.requestId} err=${err.message}`);
           },
         );
       }

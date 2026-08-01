@@ -57,6 +57,15 @@ describe('wecom-send routes', { concurrency: false }, () => {
     return res;
   }
 
+  /**
+   * U12: handlers derive identity from the session capability token stamped
+   * by the loopback-auth middleware — tests stamp it directly (the
+   * middleware matrix itself is covered in services/security/loopback-auth.test.ts).
+   */
+  function sessionAuth(sessionId: string, workspaceId = 'ws-1') {
+    return { loopbackAuth: { kind: 'session' as const, sessionId, workspaceId, botId: null } };
+  }
+
   async function importRouteHandlers() {
     const mod = await import('./wecom-send.js');
     const router = mod.default;
@@ -117,6 +126,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
 
     const handlers = await importRouteHandlers();
     const req = {
+      ...sessionAuth(session.id),
       params: { workspaceId },
       body: { sessionId: session.id, toUser: 'alice', message: 'hello', msgType: 'text' },
     };
@@ -144,6 +154,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
 
     const handlers = await importRouteHandlers();
     const req = {
+      ...sessionAuth(callerSession.id),
       params: { workspaceId },
       body: { sessionId: callerSession.id, toUser: 'bob', message: 'hello' },
     };
@@ -166,6 +177,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
 
     const handlers = await importRouteHandlers();
     const req = {
+      ...sessionAuth('sid-unknown'),
       params: { workspaceId },
       body: { sessionId: 'sid-unknown', toUser: 'bob', message: 'hello' },
     };
@@ -190,6 +202,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
 
     const handlers = await importRouteHandlers();
     const req = {
+      ...sessionAuth(session.id),
       params: { workspaceId },
       body: { sessionId: session.id, toUser: 'alice', message: 'hello' },
     };
@@ -215,6 +228,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
 
     const handlers = await importRouteHandlers();
     const req = {
+      ...sessionAuth(session.id),
       params: { workspaceId },
       body: { sessionId: session.id, toUser: 'alice', message: 'hello' },
     };
@@ -235,6 +249,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
 
     const handlers = await importRouteHandlers();
     const req = {
+      ...sessionAuth(session.id),
       params: { workspaceId },
       body: { sessionId: session.id, toUser: 'bob', message: 'hello' },
     };
@@ -257,6 +272,7 @@ describe('wecom-send routes', { concurrency: false }, () => {
 
     const handlers = await importRouteHandlers();
     const req = {
+      ...sessionAuth(session.id),
       params: { workspaceId },
       body: { sessionId: session.id, toUser: 'bob', message: 'hello' },
     };
@@ -268,20 +284,73 @@ describe('wecom-send routes', { concurrency: false }, () => {
     assert.strictEqual((res.jsonBody as { error: string }).error, 'recipient_no_session');
   });
 
+  it('rejects a self-asserted foreign sessionId (token-bound identity wins)', async () => {
+    const workspaceId = 'ws-1';
+    const bot = createWecomBot(workspaceId);
+    const caller = addWecomUser(bot.id, 'enc-alice', 'alice');
+    const session = await createWecomSession(workspaceId, caller.id);
+
+    const handlers = await importRouteHandlers();
+    const req = {
+      ...sessionAuth(session.id),
+      params: { workspaceId },
+      body: { sessionId: 'someone-elses-session', toUser: 'alice', message: 'hello' },
+    };
+    const res = createMockRes();
+
+    await handlers['/'].post(req, res);
+
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual((res.jsonBody as { error: string }).error, 'session_mismatch');
+  });
+
+  it('rejects callers without a session capability token (e.g. desktop credential)', async () => {
+    const workspaceId = 'ws-1';
+    const handlers = await importRouteHandlers();
+    const req = {
+      loopbackAuth: { kind: 'desktop' as const },
+      params: { workspaceId },
+      body: { sessionId: 'any', toUser: 'alice', message: 'hello' },
+    };
+    const res = createMockRes();
+
+    await handlers['/'].post(req, res);
+
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual((res.jsonBody as { error: string }).error, 'forbidden');
+  });
+
+  it('rejects unauthenticated callers (no auth context at all)', async () => {
+    const workspaceId = 'ws-1';
+    const handlers = await importRouteHandlers();
+    const req = {
+      params: { workspaceId },
+      body: { sessionId: 'any', toUser: 'alice', message: 'hello' },
+    };
+    const res = createMockRes();
+
+    await handlers['/'].post(req, res);
+
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual((res.jsonBody as { error: string }).error, 'forbidden');
+  });
+
   it('returns 400 when required fields are missing', async () => {
     const handlers = await importRouteHandlers();
 
-    const req1 = { params: { workspaceId: 'ws-1' }, body: { toUser: 'bob', message: 'hello' } };
+    const req1 = { ...sessionAuth('sid-1'), params: { workspaceId: 'ws-1' }, body: { toUser: 'bob', message: 'hello' } };
     const res1 = createMockRes();
     await handlers['/'].post(req1, res1);
+    // body sessionId is optional now (token binds identity); toUser+message present → passes validation,
+    // then fails at recipient resolution
     assert.strictEqual(res1.statusCode, 400);
 
-    const req2 = { params: { workspaceId: 'ws-1' }, body: { sessionId: 'sid-1', message: 'hello' } };
+    const req2 = { ...sessionAuth('sid-1'), params: { workspaceId: 'ws-1' }, body: { sessionId: 'sid-1', message: 'hello' } };
     const res2 = createMockRes();
     await handlers['/'].post(req2, res2);
     assert.strictEqual(res2.statusCode, 400);
 
-    const req3 = { params: { workspaceId: 'ws-1' }, body: { sessionId: 'sid-1', toUser: 'bob' } };
+    const req3 = { ...sessionAuth('sid-1'), params: { workspaceId: 'ws-1' }, body: { sessionId: 'sid-1', toUser: 'bob' } };
     const res3 = createMockRes();
     await handlers['/'].post(req3, res3);
     assert.strictEqual(res3.statusCode, 400);
