@@ -110,6 +110,7 @@
   "runStatusFailed": "Failed",
   "runStatusMissed": "Missed",
   "runStatusSkipped": "Skipped",
+  "latestRunStatus": "Latest run: {{status}} at {{time}}",
   "detailContext": "Context",
   "titlePlaceholder": "Title",
   "detailContent": "Content",

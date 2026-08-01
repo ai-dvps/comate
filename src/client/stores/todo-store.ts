@@ -23,6 +23,9 @@ export interface TodoRun {
   createdAt: string;
 }
 
+/** Small run summary included with Todo list responses for status visibility. */
+export type TodoLatestRun = Pick<TodoRun, 'status' | 'fireAt'>;
+
 export interface Todo {
   id: string;
   workspaceId: string | null;
@@ -36,6 +39,7 @@ export interface Todo {
   cronExpr?: string | null;
   executionStatus?: TodoExecutionStatus;
   nextFireAt?: string | null;
+  latestRun?: TodoLatestRun | null;
   notifyDesktop?: boolean;
   notifyInApp?: boolean;
   notifyWecom?: boolean;

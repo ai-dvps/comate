@@ -93,6 +93,32 @@ describe('global todo routes (U2)', () => {
     assert.strictEqual((res.jsonBody as { todos: unknown[] }).todos.length, 2);
   });
 
+  it('GET / includes each todo\'s latest execution summary', async () => {
+    const todo = store.createTodo(workspaceId, { text: 'scheduled work', executionType: 'recurring' });
+    store.createTodoRun({
+      todoId: todo.id,
+      status: 'failed',
+      fireAt: '2026-08-01T00:00:00.000Z',
+      instructionSnapshot: 'first attempt',
+    });
+    store.createTodoRun({
+      todoId: todo.id,
+      status: 'succeeded',
+      fireAt: '2026-08-02T00:00:00.000Z',
+      instructionSnapshot: 'retry',
+    });
+
+    const res = await call('get', '/', { params: {} });
+    assert.strictEqual(res.statusCode, 200);
+    const listed = (res.jsonBody as {
+      todos: Array<{ id: string; latestRun: { status: string; fireAt: string } | null }>;
+    }).todos.find((item) => item.id === todo.id);
+    assert.deepStrictEqual(listed?.latestRun, {
+      status: 'succeeded',
+      fireAt: '2026-08-02T00:00:00.000Z',
+    });
+  });
+
   it('GET / is workspace-scoped when the nested :id param is present', async () => {
     store.createTodo(workspaceId, { text: 'in ws' });
     store.createTodo(null, { text: 'global' });

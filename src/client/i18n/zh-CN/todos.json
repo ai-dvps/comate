@@ -110,6 +110,7 @@
   "runStatusFailed": "执行失败",
   "runStatusMissed": "错过执行",
   "runStatusSkipped": "已跳过",
+  "latestRunStatus": "最近一次执行：{{status}}，{{time}}",
   "detailContext": "关联信息",
   "titlePlaceholder": "标题",
   "detailContent": "内容",

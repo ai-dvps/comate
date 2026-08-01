@@ -7,7 +7,7 @@ import { todoSchedulerService } from '../services/todo-scheduler-service.js';
 import { todoSyncService, SyncError } from '../services/todo-sync.js';
 import { redactGithubError } from '../services/github-types.js';
 import { diagLog } from '../utils/diag-logger.js';
-import type { CreateTodoInput, UpdateTodoInput } from '../models/todo.js';
+import type { CreateTodoInput, Todo, UpdateTodoInput } from '../models/todo.js';
 
 const router = Router({ mergeParams: true });
 
@@ -46,6 +46,14 @@ function validateExecutionInput(input: Partial<CreateTodoInput | UpdateTodoInput
   return null;
 }
 
+/** Include list-only run information without changing the persisted Todo model. */
+function withLatestRuns(todos: Todo[]): Array<Todo & { latestRun: { status: string; fireAt: string } | null }> {
+  const latestRuns = new Map(
+    store.latestRunsPerTodo().map((run) => [run.todoId, { status: run.status, fireAt: run.fireAt }]),
+  );
+  return todos.map((todo) => ({ ...todo, latestRun: latestRuns.get(todo.id) ?? null }));
+}
+
 /** Redact any GitHub-derived error before it reaches a logger or response (R13). */
 function handleSyncError(res: Response, err: unknown, fallback: string): void {
   if (err instanceof SyncError) {
@@ -62,7 +70,7 @@ router.get('/', async (req, res) => {
   try {
     const id = (req.params as { id?: string }).id;
     const todos = id ? store.getTodosByWorkspace(id) : store.getAllTodos();
-    res.json({ todos });
+    res.json({ todos: withLatestRuns(todos) });
   } catch (error) {
     diagLog('[todos] Failed to list todos: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to list todos' });
