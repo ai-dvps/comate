@@ -4,6 +4,7 @@ import {
   getBrowserAllowInsecureCerts,
   setBrowserAllowInsecureCerts,
 } from '../services/browser-app-settings.js';
+import { getNightWindow, setNightWindow } from '../services/todo-app-settings.js';
 
 /**
  * App-global settings surface. Currently exposes the embedded-browser
@@ -54,6 +55,31 @@ export function createSettingsRouter(overrides?: Partial<SettingsRouteDeps>): Ro
     } catch (err) {
       diagWarn('[settings] failed to save browser settings:', err);
       res.status(500).json({ error: 'Failed to save browser settings' });
+    }
+  });
+
+  router.get('/todo-night-window', async (_req, res) => {
+    try {
+      res.json({ nightWindow: await getNightWindow() });
+    } catch (err) {
+      diagWarn('[settings] failed to read todo night window:', err);
+      res.status(500).json({ error: 'Failed to read todo night window' });
+    }
+  });
+
+  router.put('/todo-night-window', async (req, res) => {
+    const value = req.body?.nightWindow;
+    const validTime = (time: unknown): time is string => typeof time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(time);
+    if (!value || typeof value.enabled !== 'boolean' || !validTime(value.start) || !validTime(value.end)) {
+      res.status(400).json({ error: 'nightWindow requires enabled, start, and end (HH:mm)' });
+      return;
+    }
+    try {
+      await setNightWindow(value);
+      res.json({ nightWindow: value });
+    } catch (err) {
+      diagWarn('[settings] failed to save todo night window:', err);
+      res.status(500).json({ error: 'Failed to save todo night window' });
     }
   });
 

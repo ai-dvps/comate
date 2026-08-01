@@ -12,7 +12,6 @@ import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
-import ScheduledTasksPanel from './components/ScheduledTasksPanel'
 import TodosPanel from './components/TodosPanel'
 import PluginSettingsPage from './components/PluginSettingsPage'
 import SkillsPage from './components/SkillsPage'
@@ -42,7 +41,7 @@ import UpdateRestartDialog from './components/UpdateRestartDialog'
 import { ToolRendererProvider } from './components/tool-renderers/ToolRendererContext'
 import { useMigrationNotice } from './hooks/use-migration-notice'
 
-type AppPanel = 'settings' | 'analytics' | 'scheduledTasks' | 'todos' | 'plugins' | 'skills'
+type AppPanel = 'settings' | 'analytics' | 'todos' | 'plugins' | 'skills'
 
 function App() {
   const { t } = useTranslation('common')
@@ -262,7 +261,6 @@ function App() {
             onCreateWorkspace={() => setShowCreateModal(true)}
             onOpenSettings={() => openPanel('settings')}
             onOpenAnalytics={() => openPanel('analytics')}
-            onOpenScheduledTasks={() => openPanel('scheduledTasks')}
             onOpenTodos={() => openPanel('todos')}
           />
         </div>
@@ -365,8 +363,6 @@ function App() {
       <SettingsPanel isOpen={activePanel === 'settings'} onClose={closePanel} />
 
       <AnalyticsPanel isOpen={activePanel === 'analytics'} onClose={closePanel} />
-
-      <ScheduledTasksPanel isOpen={activePanel === 'scheduledTasks'} onClose={closePanel} />
 
       <TodosPanel isOpen={activePanel === 'todos'} onClose={closePanel} />
 

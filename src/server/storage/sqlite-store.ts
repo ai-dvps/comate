@@ -24,7 +24,8 @@ import type {
   UpdateBotUserInput,
 } from '../models/bot-user.js';
 import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
-import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin, TodoComment, TodoConflict } from '../models/todo.js';
+import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin, TodoComment, TodoConflict, TodoExecutionStatus } from '../models/todo.js';
+import type { TodoRun, CreateTodoRunInput, UpdateTodoRunInput, TodoRunStatus } from '../models/todo-run.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import { providerSupportsFastMode } from '../utils/provider-capability.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
@@ -366,7 +367,20 @@ export class SqliteStore {
         last_synced_at TEXT,
         assignee TEXT,
         labels_json TEXT NOT NULL DEFAULT '[]',
-        origin_deleted INTEGER NOT NULL DEFAULT 0
+        origin_deleted INTEGER NOT NULL DEFAULT 0,
+        execution_type TEXT NOT NULL DEFAULT 'manual',
+        instruction TEXT,
+        schedule_time TEXT,
+        cron_expr TEXT,
+        execution_status TEXT NOT NULL DEFAULT 'active',
+        next_fire_at TEXT,
+        notify_desktop INTEGER NOT NULL DEFAULT 1,
+        notify_in_app INTEGER NOT NULL DEFAULT 1,
+        notify_wecom INTEGER NOT NULL DEFAULT 0,
+        wecom_recipient TEXT,
+        confirmed_snapshot TEXT,
+        deleted_at TEXT,
+        legacy_scheduled_task_id TEXT UNIQUE
       )
     `);
     // KTD4: additive `content` column (nullable markdown body). Idempotent on
@@ -510,6 +524,125 @@ export class SqliteStore {
     this.migrateBrowserAuditSchema();
     this.migrateTodosGlobalSchema();
     this.migrateTodoContentColumn();
+    this.migrateTodoExecutionSchema();
+  }
+
+  private migrateTodoExecutionSchema(): void {
+    const columns = this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>;
+    const add = (name: string, sql: string): void => {
+      if (!columns.some((column) => column.name === name)) this.db.exec(sql);
+    };
+    add('execution_type', "ALTER TABLE todos ADD COLUMN execution_type TEXT NOT NULL DEFAULT 'manual'");
+    add('instruction', 'ALTER TABLE todos ADD COLUMN instruction TEXT');
+    add('schedule_time', 'ALTER TABLE todos ADD COLUMN schedule_time TEXT');
+    add('cron_expr', 'ALTER TABLE todos ADD COLUMN cron_expr TEXT');
+    add('execution_status', "ALTER TABLE todos ADD COLUMN execution_status TEXT NOT NULL DEFAULT 'active'");
+    add('next_fire_at', 'ALTER TABLE todos ADD COLUMN next_fire_at TEXT');
+    add('notify_desktop', 'ALTER TABLE todos ADD COLUMN notify_desktop INTEGER NOT NULL DEFAULT 1');
+    add('notify_in_app', 'ALTER TABLE todos ADD COLUMN notify_in_app INTEGER NOT NULL DEFAULT 1');
+    add('notify_wecom', 'ALTER TABLE todos ADD COLUMN notify_wecom INTEGER NOT NULL DEFAULT 0');
+    add('wecom_recipient', 'ALTER TABLE todos ADD COLUMN wecom_recipient TEXT');
+    add('confirmed_snapshot', 'ALTER TABLE todos ADD COLUMN confirmed_snapshot TEXT');
+    add('deleted_at', 'ALTER TABLE todos ADD COLUMN deleted_at TEXT');
+    add('legacy_scheduled_task_id', 'ALTER TABLE todos ADD COLUMN legacy_scheduled_task_id TEXT');
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_legacy_scheduled_task ON todos (legacy_scheduled_task_id) WHERE legacy_scheduled_task_id IS NOT NULL');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS todo_runs (
+      id TEXT PRIMARY KEY, todo_id TEXT NOT NULL, session_id TEXT, status TEXT NOT NULL,
+      fire_at TEXT NOT NULL, started_at TEXT, ended_at TEXT, reason TEXT,
+      instruction_snapshot TEXT NOT NULL, created_at TEXT NOT NULL,
+      legacy_source_key TEXT UNIQUE
+    )`);
+    const runColumns = this.db.prepare('PRAGMA table_info(todo_runs)').all() as Array<{ name: string }>;
+    if (!runColumns.some((column) => column.name === 'legacy_source_key')) {
+      this.db.exec('ALTER TABLE todo_runs ADD COLUMN legacy_source_key TEXT');
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_todo_runs_legacy_source ON todo_runs (legacy_source_key) WHERE legacy_source_key IS NOT NULL');
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_todo_runs_todo_created ON todo_runs (todo_id, created_at DESC)');
+    this.db.transaction(() => this.copyLegacyScheduledTasksToTodos())();
+    const previous = this.getMigrationState().snapshot;
+    this.setMigrationState(Math.max(this.getMigrationVersion() ?? 0, 9), new Date().toISOString(), {
+      ...previous,
+      todo_execution_schema: true,
+    });
+  }
+
+  /**
+   * Copy-only compatibility migration. `scheduled_tasks` and `task_runs` stay
+   * intact so a pre-unification database can always be inspected or recovered.
+   * The source-key columns make a repeated app start a no-op.
+   */
+  private copyLegacyScheduledTasksToTodos(): void {
+    this.db.prepare("UPDATE todos SET status = 'pending' WHERE status = 'did-but-need-verify'").run();
+    const scheduledRows = this.db.prepare('SELECT * FROM scheduled_tasks').all() as RawScheduledTaskRow[];
+    const findTodo = this.db.prepare('SELECT id FROM todos WHERE legacy_scheduled_task_id = ?');
+    const idExists = this.db.prepare('SELECT 1 FROM todos WHERE id = ?');
+    const insertTodo = this.db.prepare(`
+      INSERT INTO todos (
+        id, workspace_id, text, content, status, session_id, created_at, updated_at,
+        origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
+        remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted,
+        execution_type, instruction, schedule_time, cron_expr, execution_status,
+        next_fire_at, notify_desktop, notify_in_app, notify_wecom, wecom_recipient,
+        confirmed_snapshot, deleted_at, legacy_scheduled_task_id
+      ) VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const task of scheduledRows) {
+      if (findTodo.get(task.id)) continue;
+      // Preserve source IDs whenever possible. In the practically impossible
+      // collision case, retain the legacy ID in `legacy_scheduled_task_id` and
+      // use a fresh Todo ID rather than overwriting an unrelated Todo.
+      const todoId = idExists.get(task.id) ? uuidv4() : task.id;
+      insertTodo.run(
+        todoId, task.workspace_id, task.name,
+        task.deleted_at ? 'discard' : 'pending', task.created_at, task.updated_at,
+        task.schedule_type, task.instruction, task.schedule_time, task.cron_expr,
+        task.status, task.next_fire_at, task.notify_desktop, task.notify_in_app,
+        task.notify_wecom, task.wecom_recipient, task.confirmed_snapshot,
+        task.deleted_at, task.id,
+      );
+    }
+
+    const taskTodoId = this.db.prepare('SELECT id FROM todos WHERE legacy_scheduled_task_id = ?');
+    const legacyRuns = this.db.prepare('SELECT * FROM task_runs').all() as RawTaskRunRow[];
+    const existingRun = this.db.prepare('SELECT 1 FROM todo_runs WHERE legacy_source_key = ?');
+    const runIdExists = this.db.prepare('SELECT 1 FROM todo_runs WHERE id = ?');
+    const insertRun = this.db.prepare(`
+      INSERT INTO todo_runs (
+        id, todo_id, session_id, status, fire_at, started_at, ended_at, reason,
+        instruction_snapshot, created_at, legacy_source_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const run of legacyRuns) {
+      const sourceKey = `scheduled-run:${run.id}`;
+      if (existingRun.get(sourceKey)) continue;
+      const parent = taskTodoId.get(run.task_id) as { id: string } | undefined;
+      if (!parent) throw new Error(`Cannot migrate task run ${run.id}: scheduled task ${run.task_id} has no mapped Todo`);
+      insertRun.run(
+        runIdExists.get(run.id) ? uuidv4() : run.id, parent.id, run.session_id, run.status,
+        run.fire_at, run.started_at, run.ended_at, run.reason, run.instruction_snapshot,
+        run.created_at, sourceKey,
+      );
+    }
+
+    const legacyTodoSessions = this.db.prepare('SELECT * FROM todos WHERE session_id IS NOT NULL').all() as RawTodoRow[];
+    for (const todo of legacyTodoSessions) {
+      const sourceKey = `todo-session:${todo.id}:${todo.session_id}`;
+      if (existingRun.get(sourceKey)) continue;
+      insertRun.run(
+        uuidv4(), todo.id, todo.session_id, 'succeeded', todo.updated_at,
+        todo.created_at, todo.updated_at, null,
+        todo.instruction ?? todo.content ?? todo.text, todo.updated_at, sourceKey,
+      );
+    }
+
+    const copiedTaskCount = (this.db.prepare('SELECT COUNT(*) AS count FROM todos WHERE legacy_scheduled_task_id IS NOT NULL').get() as { count: number }).count;
+    if (copiedTaskCount !== scheduledRows.length) {
+      throw new Error(`Scheduled task migration validation failed: expected ${scheduledRows.length} Todos, found ${copiedTaskCount}`);
+    }
+    const copiedRunCount = (this.db.prepare("SELECT COUNT(*) AS count FROM todo_runs WHERE legacy_source_key LIKE 'scheduled-run:%'").get() as { count: number }).count;
+    if (copiedRunCount !== legacyRuns.length) {
+      throw new Error(`Task run migration validation failed: expected ${legacyRuns.length} Runs, found ${copiedRunCount}`);
+    }
   }
 
   /**
@@ -2196,6 +2329,18 @@ export class SqliteStore {
       text: input.text.trim(),
       content: input.content ?? null,
       status: 'pending',
+      executionType: input.executionType ?? 'manual',
+      instruction: input.instruction ?? null,
+      scheduleTime: input.scheduleTime ?? null,
+      cronExpr: input.cronExpr ?? null,
+      executionStatus: input.executionStatus ?? 'active',
+      nextFireAt: input.nextFireAt ?? null,
+      notifyDesktop: input.notifyDesktop ?? true,
+      notifyInApp: input.notifyInApp ?? true,
+      notifyWecom: input.notifyWecom ?? false,
+      wecomRecipient: input.wecomRecipient ?? null,
+      confirmedSnapshot: input.confirmedSnapshot ?? null,
+      deletedAt: null,
       sessionId: null,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -2215,11 +2360,15 @@ export class SqliteStore {
         `INSERT INTO todos (
           id, workspace_id, text, content, status, session_id, created_at, updated_at,
           origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
-          remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted
+          remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted,
+          execution_type, instruction, schedule_time, cron_expr, execution_status, next_fire_at,
+          notify_desktop, notify_in_app, notify_wecom, wecom_recipient, confirmed_snapshot, deleted_at
         ) VALUES (
           @id, @workspace_id, @text, @content, @status, @session_id, @created_at, @updated_at,
           @origin, @due_date, @repo_full_name, @issue_number, @remote_snapshot_json,
-          @remote_updated_at, @last_synced_at, @assignee, @labels_json, @origin_deleted
+          @remote_updated_at, @last_synced_at, @assignee, @labels_json, @origin_deleted,
+          @execution_type, @instruction, @schedule_time, @cron_expr, @execution_status, @next_fire_at,
+          @notify_desktop, @notify_in_app, @notify_wecom, @wecom_recipient, @confirmed_snapshot, @deleted_at
         )`,
       )
       .run({
@@ -2241,6 +2390,18 @@ export class SqliteStore {
         assignee: todo.assignee,
         labels_json: JSON.stringify(todo.labels),
         origin_deleted: todo.originDeleted ? 1 : 0,
+        execution_type: todo.executionType,
+        instruction: todo.instruction,
+        schedule_time: todo.scheduleTime,
+        cron_expr: todo.cronExpr,
+        execution_status: todo.executionStatus,
+        next_fire_at: todo.nextFireAt,
+        notify_desktop: todo.notifyDesktop ? 1 : 0,
+        notify_in_app: todo.notifyInApp ? 1 : 0,
+        notify_wecom: todo.notifyWecom ? 1 : 0,
+        wecom_recipient: todo.wecomRecipient,
+        confirmed_snapshot: todo.confirmedSnapshot === null ? null : JSON.stringify(todo.confirmedSnapshot),
+        deleted_at: todo.deletedAt,
       });
     return todo;
   }
@@ -2455,6 +2616,17 @@ export class SqliteStore {
     }
     if (input.workspaceId !== undefined) { sets.push('workspace_id = ?'); values.push(input.workspaceId); }
     if (input.dueDate !== undefined) { sets.push('due_date = ?'); values.push(input.dueDate); }
+    if (input.executionType !== undefined) { sets.push('execution_type = ?'); values.push(input.executionType); }
+    if (input.instruction !== undefined) { sets.push('instruction = ?'); values.push(input.instruction); }
+    if (input.scheduleTime !== undefined) { sets.push('schedule_time = ?'); values.push(input.scheduleTime); }
+    if (input.cronExpr !== undefined) { sets.push('cron_expr = ?'); values.push(input.cronExpr); }
+    if (input.executionStatus !== undefined) { sets.push('execution_status = ?'); values.push(input.executionStatus); }
+    if (input.nextFireAt !== undefined) { sets.push('next_fire_at = ?'); values.push(input.nextFireAt); }
+    if (input.notifyDesktop !== undefined) { sets.push('notify_desktop = ?'); values.push(input.notifyDesktop ? 1 : 0); }
+    if (input.notifyInApp !== undefined) { sets.push('notify_in_app = ?'); values.push(input.notifyInApp ? 1 : 0); }
+    if (input.notifyWecom !== undefined) { sets.push('notify_wecom = ?'); values.push(input.notifyWecom ? 1 : 0); }
+    if (input.wecomRecipient !== undefined) { sets.push('wecom_recipient = ?'); values.push(input.wecomRecipient); }
+    if (input.confirmedSnapshot !== undefined) { sets.push('confirmed_snapshot = ?'); values.push(input.confirmedSnapshot === null ? null : JSON.stringify(input.confirmedSnapshot)); }
     if (input.origin !== undefined) { sets.push('origin = ?'); values.push(input.origin); }
     if (input.repoFullName !== undefined) { sets.push('repo_full_name = ?'); values.push(input.repoFullName); }
     if (input.issueNumber !== undefined) { sets.push('issue_number = ?'); values.push(input.issueNumber); }
@@ -2475,6 +2647,7 @@ export class SqliteStore {
   deleteTodo(id: string): boolean {
     const result = this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
     if (result.changes > 0) {
+      this.db.prepare('DELETE FROM todo_runs WHERE todo_id = ?').run(id);
       this.db.prepare('DELETE FROM todo_comments WHERE todo_id = ?').run(id);
       this.db.prepare('DELETE FROM todo_conflicts WHERE todo_id = ?').run(id);
     }
@@ -2742,6 +2915,85 @@ export class SqliteStore {
     const now = new Date().toISOString();
     this.db.prepare('UPDATE scheduled_tasks SET deleted_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
     return this.getScheduledTask(id);
+  }
+
+  createTodoRun(input: CreateTodoRunInput): TodoRun {
+    const run: TodoRun = {
+      id: uuidv4(),
+      todoId: input.todoId,
+      sessionId: input.sessionId ?? null,
+      status: input.status,
+      fireAt: input.fireAt,
+      startedAt: input.startedAt ?? null,
+      endedAt: input.endedAt ?? null,
+      reason: input.reason ?? null,
+      instructionSnapshot: input.instructionSnapshot,
+      createdAt: new Date().toISOString(),
+    };
+    this.db.prepare(`
+      INSERT INTO todo_runs (
+        id, todo_id, session_id, status, fire_at, started_at, ended_at, reason, instruction_snapshot, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      run.id, run.todoId, run.sessionId, run.status, run.fireAt, run.startedAt,
+      run.endedAt, run.reason, run.instructionSnapshot, run.createdAt,
+    );
+    return run;
+  }
+
+  getTodoRun(id: string): TodoRun | null {
+    const row = this.db.prepare('SELECT * FROM todo_runs WHERE id = ?').get(id) as RawTodoRunRow | undefined;
+    return row ? parseTodoRunRow(row) : null;
+  }
+
+  updateTodoRun(id: string, input: UpdateTodoRunInput): TodoRun | null {
+    const existing = this.getTodoRun(id);
+    if (!existing) return null;
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (input.sessionId !== undefined) { sets.push('session_id = ?'); values.push(input.sessionId); }
+    if (input.status !== undefined) { sets.push('status = ?'); values.push(input.status); }
+    if (input.startedAt !== undefined) { sets.push('started_at = ?'); values.push(input.startedAt); }
+    if (input.endedAt !== undefined) { sets.push('ended_at = ?'); values.push(input.endedAt); }
+    if (input.reason !== undefined) { sets.push('reason = ?'); values.push(input.reason); }
+    if (sets.length === 0) return existing;
+    values.push(id);
+    this.db.prepare(`UPDATE todo_runs SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return this.getTodoRun(id);
+  }
+
+  listTodoRuns(todoId: string): TodoRun[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM todo_runs WHERE todo_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 200',
+    ).all(todoId) as RawTodoRunRow[];
+    return rows.map(parseTodoRunRow);
+  }
+
+  getLatestTodoRun(todoId: string): TodoRun | null {
+    const row = this.db.prepare(
+      'SELECT * FROM todo_runs WHERE todo_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+    ).get(todoId) as RawTodoRunRow | undefined;
+    return row ? parseTodoRunRow(row) : null;
+  }
+
+  listStaleRunningTodoRuns(cutoffIso: string): TodoRun[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM todo_runs WHERE status = 'running' AND started_at < ?",
+    ).all(cutoffIso) as RawTodoRunRow[];
+    return rows.map(parseTodoRunRow);
+  }
+
+  latestRunsPerTodo(): TodoRun[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM todo_runs
+      WHERE rowid IN (SELECT MAX(rowid) FROM todo_runs GROUP BY todo_id)
+      ORDER BY created_at DESC
+    `).all() as RawTodoRunRow[];
+    return rows.map(parseTodoRunRow);
+  }
+
+  pruneTodoRunsOlderThan(cutoffIso: string): number {
+    return this.db.prepare('DELETE FROM todo_runs WHERE created_at < ?').run(cutoffIso).changes;
   }
 
   createTaskRun(input: CreateTaskRunInput): TaskRun {
@@ -3811,6 +4063,19 @@ interface RawTodoRow {
   assignee: string | null;
   labels_json: string;
   origin_deleted: number;
+  execution_type: string;
+  instruction: string | null;
+  schedule_time: string | null;
+  cron_expr: string | null;
+  execution_status: string;
+  next_fire_at: string | null;
+  notify_desktop: number;
+  notify_in_app: number;
+  notify_wecom: number;
+  wecom_recipient: string | null;
+  confirmed_snapshot: string | null;
+  deleted_at: string | null;
+  legacy_scheduled_task_id: string | null;
 }
 
 function parseTodoRow(row: RawTodoRow): Todo {
@@ -3820,6 +4085,18 @@ function parseTodoRow(row: RawTodoRow): Todo {
     text: row.text,
     content: row.content ?? null,
     status: row.status as TodoStatus,
+    executionType: (row.execution_type as Todo['executionType'] | undefined) ?? 'manual',
+    instruction: row.instruction ?? null,
+    scheduleTime: row.schedule_time ?? null,
+    cronExpr: row.cron_expr ?? null,
+    executionStatus: (row.execution_status as TodoExecutionStatus | undefined) ?? 'active',
+    nextFireAt: row.next_fire_at ?? null,
+    notifyDesktop: row.notify_desktop !== 0,
+    notifyInApp: row.notify_in_app !== 0,
+    notifyWecom: row.notify_wecom === 1,
+    wecomRecipient: row.wecom_recipient ?? null,
+    confirmedSnapshot: row.confirmed_snapshot ? JSON.parse(row.confirmed_snapshot) : null,
+    deletedAt: row.deleted_at ?? null,
     sessionId: row.session_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -3980,6 +4257,34 @@ interface RawTaskRunRow {
   reason: string | null;
   instruction_snapshot: string;
   created_at: string;
+}
+
+interface RawTodoRunRow {
+  id: string;
+  todo_id: string;
+  session_id: string | null;
+  status: string;
+  fire_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+  reason: string | null;
+  instruction_snapshot: string;
+  created_at: string;
+}
+
+function parseTodoRunRow(row: RawTodoRunRow): TodoRun {
+  return {
+    id: row.id,
+    todoId: row.todo_id,
+    sessionId: row.session_id ?? null,
+    status: row.status as TodoRunStatus,
+    fireAt: row.fire_at,
+    startedAt: row.started_at ?? null,
+    endedAt: row.ended_at ?? null,
+    reason: row.reason ?? null,
+    instructionSnapshot: row.instruction_snapshot,
+    createdAt: row.created_at,
+  };
 }
 
 function parseTaskRunRow(row: RawTaskRunRow): TaskRun {
