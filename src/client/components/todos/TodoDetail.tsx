@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Play, ExternalLink } from 'lucide-react'
-import type { Todo, TodoStatus } from '../../stores/todo-store'
+import { Play } from 'lucide-react'
+import type { Todo, TodoRun, TodoStatus, TodoExecutionType } from '../../stores/todo-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { cn } from '../ui/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
@@ -17,6 +17,7 @@ interface TodoDetailProps {
   width: number
   onWidthChange: (width: number) => void
   onResolved: () => void
+  /** Kept while older panel callers migrate; runs now open independently. */
   onClose: () => void
   onUpdateTodo: (todoId: string, patch: Partial<Todo>) => Promise<Todo | null>
   onChangeStatus: (todoId: string, status: TodoStatus) => Promise<void>
@@ -49,6 +50,7 @@ export default function TodoDetail({
   const saveTimeoutRef = useRef<number | null>(null)
   const asideRef = useRef<HTMLElement>(null)
   const [contentVisible, setContentVisible] = useState(false)
+  const [runs, setRuns] = useState<TodoRun[]>([])
 
   // Animate content when the selected todo changes.
   useEffect(() => {
@@ -62,11 +64,18 @@ export default function TodoDetail({
     setBodyDraft(todo?.content ?? '')
   }, [todo?.content, todo?.id])
 
+  useEffect(() => {
+    if (!todo) { setRuns([]); return }
+    void fetch(`/api/todos/${todo.id}/runs`).then(async (res) => {
+      if (res.ok) setRuns((await res.json()).runs ?? [])
+    }).catch(() => undefined)
+  }, [todo?.id, todo?.updatedAt])
+
   const handleSpawn = async () => {
     if (!todo?.workspaceId) return
     setSpawning(true)
     try {
-      const res = await fetch(`/api/todos/${todo.id}/session`, {
+      const res = await fetch(`/api/todos/${todo.id}/runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspaceId: todo.workspaceId }),
@@ -77,7 +86,7 @@ export default function TodoDetail({
     }
   }
 
-  const canSpawn = !!todo && todo.status === 'pending' && !todo.sessionId && !!todo.workspaceId
+  const canSpawn = !!todo && todo.status === 'pending' && !!todo.workspaceId
 
   const handleResizeMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -110,6 +119,17 @@ export default function TodoDetail({
   const handleStatusChange = (status: string) => {
     if (!todo) return
     void onChangeStatus(todo.id, status as TodoStatus)
+  }
+
+  const handleExecutionTypeChange = (executionType: string) => {
+    if (!todo) return
+    const type = executionType as TodoExecutionType
+    void onUpdateTodo(todo.id, {
+      executionType: type,
+      executionStatus: type === 'manual' ? 'disabled' : 'active',
+      scheduleTime: type === 'once' ? todo.scheduleTime : null,
+      cronExpr: type === 'recurring' ? todo.cronExpr : null,
+    })
   }
 
   const saveBody = useCallback(
@@ -161,6 +181,7 @@ export default function TodoDetail({
     'did-but-need-verify': t('statusVerify'),
     discard: t('statusDiscard'),
   }
+  const executionType = todo.executionType ?? 'manual'
 
   return (
     <aside
@@ -222,6 +243,30 @@ export default function TodoDetail({
               </Select>
             </Field>
             <Field label={t('detailDue')} value={todo.dueDate ?? '—'} />
+            <Field label="执行方式">
+              <Select value={executionType} onValueChange={handleExecutionTypeChange}>
+                <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label="执行方式"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manual">手动执行</SelectItem>
+                  <SelectItem value="once">一次定时</SelectItem>
+                  <SelectItem value="recurring">重复定时</SelectItem>
+                  <SelectItem value="idle">夜间空闲执行</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {executionType === 'once' && (
+              <Field label="执行时间">
+                <input type="datetime-local" value={todo.scheduleTime?.slice(0, 16) ?? ''}
+                  onChange={(e) => void onUpdateTodo(todo.id, { scheduleTime: e.target.value ? new Date(e.target.value).toISOString() : null })}
+                  className="h-8 rounded border border-border bg-bg px-2 text-xs" />
+              </Field>
+            )}
+            {executionType === 'recurring' && (
+              <Field label="Cron 规则">
+                <input value={todo.cronExpr ?? ''} onChange={(e) => void onUpdateTodo(todo.id, { cronExpr: e.target.value })}
+                  placeholder="0 9 * * *" className="h-8 rounded border border-border bg-bg px-2 text-xs" />
+              </Field>
+            )}
             {todo.repoFullName && <Field label={t('groupRepo')} value={`${todo.repoFullName}#${todo.issueNumber ?? ''}`} />}
             <Field label={t('detailSynced')} value={todo.lastSyncedAt ? t('detailSynced') : t('detailNotSynced')} />
           </dl>
@@ -281,31 +326,24 @@ export default function TodoDetail({
           <div className="px-4 pb-4">
             <ConflictReview todoId={todo.id} onResolved={onResolved} />
 
-            {/* U7 (R4): start a session from a todo. */}
-            {todo.sessionId ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (todo.workspaceId && todo.sessionId) {
-                    openSessionDirect(todo.workspaceId, todo.sessionId)
-                  }
-                  onClose()
-                }}
-                className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 rounded-md bg-surface text-text-primary hover:bg-surface-hover border border-border/50 text-xs transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
+            <button onClick={handleSpawn} disabled={!canSpawn || spawning}
+              className="flex items-center justify-center gap-1.5 w-full px-2 py-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent-hover disabled:opacity-50 text-xs">
+              <Play className="w-3.5 h-3.5" /> {runs.length ? '再次执行' : t('spawnSession')}
+            </button>
+            {todo.sessionId && todo.workspaceId && (
+              <button type="button" onClick={() => { openSessionDirect(todo.workspaceId!, todo.sessionId!); onClose() }}
+                className="mt-2 flex w-full items-center justify-center rounded border border-border/50 px-2 py-1.5 text-xs hover:bg-surface-hover">
                 {t('detailHasSession')}
               </button>
-            ) : (
-              <button
-                onClick={handleSpawn}
-                disabled={!canSpawn || spawning}
-                className="flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent-hover disabled:opacity-50 text-xs"
-              >
-                <Play className="w-3.5 h-3.5" />
-                {t('spawnSession')}
-              </button>
             )}
+            {runs.length > 0 && <div className="mt-3 space-y-1.5">
+              <p className="text-xs text-text-tertiary">执行历史</p>
+              {runs.map((run) => <button key={run.id} type="button" disabled={!run.sessionId || !todo.workspaceId}
+                onClick={() => run.sessionId && todo.workspaceId && openSessionDirect(todo.workspaceId, run.sessionId)}
+                className="flex w-full items-center justify-between rounded border border-border/50 px-2 py-1.5 text-left text-[11px] hover:bg-surface-hover disabled:cursor-default">
+                <span>{run.status}</span><span className="text-text-tertiary">{new Date(run.fireAt).toLocaleString()}</span>
+              </button>)}
+            </div>}
           </div>
         </div>
       </div>

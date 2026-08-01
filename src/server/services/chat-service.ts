@@ -274,6 +274,16 @@ export class ChatService {
     return this.runtimes.size;
   }
 
+  /** Server-side idleness seam for the Todo night queue. A selected tab or an
+   * open-but-idle runtime must not block the queue; an executing turn does. */
+  hasExecutingRuntime(): boolean {
+    for (const runtime of this.runtimes.values()) {
+      const status = runtime.getStatus();
+      if (status.isProcessing || this.runtimeActivity(runtime).active) return true;
+    }
+    return false;
+  }
+
   /** Diagnostic: test-run the Claude binary in the workspace cwd to capture stderr. */
   protected async testClaudeBinary(claudePath: string | undefined, cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
     if (!claudePath) {

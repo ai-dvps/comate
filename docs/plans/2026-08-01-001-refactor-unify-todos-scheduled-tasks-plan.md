@@ -414,3 +414,4 @@ Run state is separate from the parent lifecycle. A scheduled Todo remains pendin
 - Night-idle dispatch is serial, honors the configured window and runtime-idle gate, and pauses after interactive work resumes.
 - Agent, REST, WebSocket, and UI paths use the same Todo/Run vocabulary and permission boundaries.
 - The final diff contains no abandoned compatibility experiments or unsupported Scheduled Task UI surface.
+

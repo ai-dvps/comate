@@ -96,6 +96,52 @@ function BrowserInsecureCertsToggle() {
   )
 }
 
+/** App-global gate for night-idle Todos. This persists independently from the
+ * local settings form because the scheduler must read it server-side. */
+function TodoNightWindowSetting() {
+  const [enabled, setEnabled] = useState(true)
+  const [start, setStart] = useState('00:00')
+  const [end, setEnd] = useState('08:00')
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    fetch('/api/settings/todo-night-window').then((r) => r.ok ? r.json() : null).then((data) => {
+      const value = data?.nightWindow
+      if (alive && value) {
+        setEnabled(value.enabled !== false)
+        if (typeof value.start === 'string') setStart(value.start)
+        if (typeof value.end === 'string') setEnd(value.end)
+      }
+    }).catch(() => {}).finally(() => { if (alive) setLoaded(true) })
+    return () => { alive = false }
+  }, [])
+
+  const save = async (next = { enabled, start, end }) => {
+    if (!loaded) return
+    const res = await fetch('/api/settings/todo-night-window', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nightWindow: next }),
+    })
+    if (!res.ok) throw new Error('save failed')
+  }
+
+  return <div className="py-3 border-t border-border/50">
+    <div className="flex items-center justify-between gap-4">
+      <div><label className="block text-xs font-medium text-text-secondary">夜间空闲 Todo</label>
+        <p className="text-[10px] text-text-tertiary mt-0.5">仅在此窗口且应用没有执行会话时，按队列执行。</p></div>
+      <button disabled={!loaded} onClick={() => { const next = !enabled; setEnabled(next); void save({ enabled: next, start, end }).catch(() => setEnabled(!next)) }}
+        className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? 'bg-accent' : 'bg-border'}`}>
+        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0'}`} />
+      </button>
+    </div>
+    <div className={`mt-2 flex items-center gap-2 text-xs ${enabled ? '' : 'opacity-50 pointer-events-none'}`}>
+      <input aria-label="夜间窗口开始" type="time" value={start} onChange={(e) => setStart(e.target.value)} onBlur={() => void save().catch(() => undefined)} className="h-8 rounded border border-border bg-bg px-2" />
+      <span className="text-text-tertiary">至</span>
+      <input aria-label="夜间窗口结束" type="time" value={end} onChange={(e) => setEnd(e.target.value)} onBlur={() => void save().catch(() => undefined)} className="h-8 rounded border border-border bg-bg px-2" />
+    </div>
+  </div>
+}
+
 interface SettingsPanelProps {
   isOpen: boolean
   onClose: () => void
@@ -815,6 +861,7 @@ export function GeneralTab({
           </div>
 
           <BrowserInsecureCertsToggle />
+          <TodoNightWindowSetting />
 
           <div className="flex items-center justify-between py-3 border-t border-border/50">
             <div>
@@ -1918,5 +1965,4 @@ function BoundBotCard({ workspaceId, onManageBots }: { workspaceId: string; onMa
     </div>
   )
 }
-
 

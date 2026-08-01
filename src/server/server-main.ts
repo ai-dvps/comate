@@ -40,7 +40,7 @@ import { browserViewerProxy } from './routes/browser-proxy.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
-import { schedulerService } from './services/scheduler-service.js';
+import { todoSchedulerService } from './services/todo-scheduler-service.js';
 import { runNotifier } from './services/run-notifier.js';
 import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
@@ -326,8 +326,8 @@ const server = app.listen(PORT, () => {
   // Initialize WeCom proactive message queue worker
   wecomQueueWorker.initialize();
 
-  // Initialize the scheduled-task scheduler (tick + startup reconciliation)
-  schedulerService.initialize();
+  // Initialize the unified Todo scheduler (tick + startup reconciliation).
+  todoSchedulerService.initialize();
 
   // Fan out run results (WeCom summary push; WS relay lives in the ws server)
   runNotifier.initialize();
