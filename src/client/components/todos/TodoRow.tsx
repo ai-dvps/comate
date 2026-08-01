@@ -141,13 +141,15 @@ export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete, 
 
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="flex items-start gap-1.5 min-w-0">
-          <span
-            className="mt-0.5 text-text-tertiary flex-shrink-0"
-            aria-label={executionTypeLabels[executionType]}
-            title={executionTypeLabels[executionType]}
-          >
-            <ExecutionTypeIcon type={executionType} />
-          </span>
+          {executionType !== 'manual' ? (
+            <span
+              className="mt-0.5 text-text-tertiary flex-shrink-0"
+              aria-label={executionTypeLabels[executionType]}
+              title={executionTypeLabels[executionType]}
+            >
+              <ExecutionTypeIcon type={executionType} />
+            </span>
+          ) : null}
           {isEditing ? (
             <input
               ref={inputRef}

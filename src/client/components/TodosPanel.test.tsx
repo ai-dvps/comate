@@ -422,6 +422,7 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
     const rowScope = within(row);
     expect(rowScope.queryByText(/\d{4}-/)).not.toBeInTheDocument();
     expect(rowScope.queryByText('GitHub')).not.toBeInTheDocument();
+    expect(rowScope.queryByLabelText('Manual')).not.toBeInTheDocument();
   });
 
   it('shows the execution type and latest execution status (AE1)', async () => {
