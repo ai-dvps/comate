@@ -205,6 +205,54 @@ describe('SqliteStore scheduled tasks', { concurrency: false }, () => {
     assert.strictEqual(found.name, 'Nightly report');
   });
 
+  it('copy-migrates legacy scheduled definitions and every Run into the unified Todo history exactly once', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'todo-unification-migration-'));
+    const dbPath = join(dir, 'data.db');
+    const legacy = new SqliteStore(dbPath);
+    const task = legacy.createScheduledTask(createTaskInput({
+      workspaceId: 'ws-legacy', name: 'Legacy recurring', instruction: 'keep all history',
+    }));
+    const succeeded = legacy.createTaskRun(createRunInput(task.id, { status: 'succeeded', sessionId: 'session-ok' }));
+    const failed = legacy.createTaskRun(createRunInput(task.id, { status: 'failed', sessionId: 'session-failed', reason: 'provider down' }));
+
+    const migrated = new SqliteStore(dbPath);
+    const todo = migrated.getTodoById(task.id);
+    assert.ok(todo);
+    assert.strictEqual(todo.executionType, 'recurring');
+    assert.strictEqual(todo.instruction, 'keep all history');
+    assert.strictEqual(todo.workspaceId, 'ws-legacy');
+    const runs = migrated.listTodoRuns(todo.id);
+    assert.strictEqual(runs.length, 2);
+    assert.deepStrictEqual(new Set(runs.map((run) => run.id)), new Set([succeeded.id, failed.id]));
+    assert.deepStrictEqual(new Set(runs.map((run) => run.sessionId)), new Set(['session-ok', 'session-failed']));
+
+    const reopened = new SqliteStore(dbPath);
+    assert.strictEqual(reopened.getAllTodos().filter((item) => item.id === task.id).length, 1);
+    assert.strictEqual(reopened.listTodoRuns(task.id).length, 2);
+    // The source rows are deliberately retained for one compatibility release.
+    assert.ok(reopened.getScheduledTask(task.id));
+    assert.strictEqual(reopened.listTaskRuns(task.id).length, 2);
+  });
+
+  it('migrates a legacy single-session Todo to one manual Todo Run without changing its Todo id', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'todo-session-migration-'));
+    const dbPath = join(dir, 'data.db');
+    const legacy = new SqliteStore(dbPath);
+    const todo = legacy.createTodo('ws-legacy', { text: 'old one-session todo' });
+    legacy.linkTodoToSession(todo.id, 'legacy-session');
+
+    const migrated = new SqliteStore(dbPath);
+    const sameTodo = migrated.getTodoById(todo.id);
+    assert.ok(sameTodo);
+    assert.strictEqual(sameTodo.executionType, 'manual');
+    const runs = migrated.listTodoRuns(todo.id);
+    assert.strictEqual(runs.length, 1);
+    assert.strictEqual(runs[0].sessionId, 'legacy-session');
+
+    const reopened = new SqliteStore(dbPath);
+    assert.strictEqual(reopened.listTodoRuns(todo.id).length, 1);
+  });
+
   it('deleting a workspace cascades to its scheduled tasks and runs', async () => {
     const ws = await store.create({ name: 'Cascade WS', folderPath: '/tmp/cascade-ws' });
     const task = store.createScheduledTask(createTaskInput({ workspaceId: ws.id }));
