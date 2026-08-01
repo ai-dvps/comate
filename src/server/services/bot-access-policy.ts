@@ -37,6 +37,7 @@ import path from 'node:path';
 import type { SandboxSettings, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Bot, BotRoleKey, BotRolePolicy, PasslistRule, PasslistRuleProvenance } from '../models/bot.js';
 import { SAFE_PRESET, ALLOW_ALL_PRESET, sanitizePolicy, type ToolPermissionPolicy } from './tool-permission-policy.js';
+import { sanitizeMcpClassificationOverrides } from './mcp-tool-classification.js';
 import { BROWSER_TOOL_PREFIX } from './browser-tool-names.js';
 import { DEFAULT_DENY_GLOBS } from './bot-path-policy.js';
 import { getStorageDir } from '../storage/data-dir.js';
@@ -254,6 +255,12 @@ export function sanitizeBotRolePolicy(raw: unknown): BotRolePolicy {
     // (undefined) means all installed skills stay mounted — handled by the
     // guard above, which skips the field entirely.
     sanitized.skills = sanitizeStringArray(raw.skills);
+  }
+  if (raw.mcpClassification !== undefined) {
+    // U9 (KTD-20): invalid entries drop out fail-closed; a wholly invalid
+    // map collapses to absent (= classify by annotations, unknown → ask).
+    const overrides = sanitizeMcpClassificationOverrides(raw.mcpClassification);
+    if (overrides) sanitized.mcpClassification = overrides;
   }
   return sanitized;
 }

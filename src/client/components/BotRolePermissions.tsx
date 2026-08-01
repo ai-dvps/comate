@@ -201,12 +201,13 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
         isDirty: () => isDirty,
         save: async () => {
           setSaveError(null);
-          // Round-trip fields this editor does not own (network allowlist) so
-          // a role-permission save never wipes them. The deprecated legacy
-          // whitelist fields are deliberately cleared: saving adopts the new
-          // model and retires the upgrade banner. The bot-level skill config
-          // (U5) is owned by this editor and saved from local state; the
-          // skills key stays absent in mount-all mode (three-state).
+          // Round-trip fields this editor does not own (network allowlist,
+          // MCP classification overrides) so a role-permission save never
+          // wipes them. The deprecated legacy whitelist fields are
+          // deliberately cleared: saving adopts the new model and retires
+          // the upgrade banner. The bot-level skill config (U5) is owned by
+          // this editor and saved from local state; the skills key stays
+          // absent in mount-all mode (three-state).
           const rolePolicy: BotRolePolicy = {
             normalToolPolicy: normalToolPolicy as unknown as Record<string, unknown>,
             skillAllowlist: [],
@@ -215,6 +216,9 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
             disabledSkills: [...disabledSkills],
             passlistRules,
             networkAllowlist: bot.rolePolicy?.networkAllowlist ?? [],
+            ...(bot.rolePolicy?.mcpClassification !== undefined
+              ? { mcpClassification: bot.rolePolicy.mcpClassification }
+              : {}),
           };
           try {
             await onSave(rolePolicy);

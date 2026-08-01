@@ -303,6 +303,28 @@ describe('closed public capability-dir set', () => {
       }
     }
   });
+
+  it('U9 (R11, Success Criteria): admin filesystem reach EQUALS workspace + skills/ + agents/ exactly', () => {
+    const out = derive(makeMember('admin'));
+    const fsx = out.sandbox.filesystem!;
+    // Write reach: the workspace stays writable by default; the ONLY write
+    // lockdown is `.claude`, re-opened by EXACTLY the closed capability set
+    // (plugins/, hooks, .mcp.json and settings files stay unwritable).
+    assert.deepStrictEqual(fsx.denyWrite, [`${WS}/.claude`]);
+    assert.deepStrictEqual(fsx.allowWrite, [`${WS}/.claude/skills`, `${WS}/.claude/agents`]);
+    // Read reach: the workspace plus the closed reviewed home-relative set —
+    // home itself, other users' roots, the transcript library, and the
+    // Comate data dir stay denied.
+    assert.deepStrictEqual(fsx.denyRead, ['~/', '/home', '/Users', COMATE_DATA, CLAUDE_PROJECTS]);
+    assert.deepStrictEqual(fsx.allowRead, [WS, PLUGIN_CACHE, CLI_DIR]);
+    // Rule layer mirrors the same equality: workspace read + capability-dir
+    // edits only (no blanket workspace Edit allow, no plugins/ hole).
+    assert.deepStrictEqual(out.permissionRules.allow, [
+      `Read(/${WS}/**)`,
+      `Edit(/${WS}/.claude/skills/**)`,
+      `Edit(/${WS}/.claude/agents/**)`,
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -381,6 +403,32 @@ describe('sanitizeBotRolePolicy', () => {
     assert.deepStrictEqual(sanitizeBotRolePolicy({ skills: ['a', 1, 'b'] }).skills, ['a', 'b']);
     assert.deepStrictEqual(sanitizeBotRolePolicy({ skills: [] }).skills, []);
     assert.deepStrictEqual(sanitizeBotRolePolicy({ skills: 'all' }).skills, []);
+  });
+
+  it('mcpClassification (U9): absent stays absent, valid passes, invalid collapses fail-closed', () => {
+    assert.strictEqual(sanitizeBotRolePolicy({}).mcpClassification, undefined);
+    assert.deepStrictEqual(
+      sanitizeBotRolePolicy({
+        mcpClassification: { docs: { default: 'read', tools: { purge: 'write' } } },
+      }).mcpClassification,
+      { docs: { default: 'read', tools: { purge: 'write' } } },
+    );
+    // Invalid entries drop out; a wholly invalid map collapses to absent
+    // (never a widening default — unknown stays on the ask route).
+    assert.strictEqual(
+      sanitizeBotRolePolicy({ mcpClassification: 'read' }).mcpClassification,
+      undefined,
+    );
+    assert.strictEqual(
+      sanitizeBotRolePolicy({ mcpClassification: { docs: { default: 'unknown' } } }).mcpClassification,
+      undefined,
+    );
+    assert.deepStrictEqual(
+      sanitizeBotRolePolicy({
+        mcpClassification: { docs: { default: 'read' }, bad: { default: 'allow' } },
+      }).mcpClassification,
+      { docs: { default: 'read' } },
+    );
   });
 
   it('passlist rules keep valid entries, accept bare strings, drop the rest', () => {

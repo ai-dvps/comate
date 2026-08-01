@@ -2468,6 +2468,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     approvalCalls: ApprovalCall[],
     approvalResult?: PermissionResult,
     provenance?: { source: string; approver?: { type: string; channelKey?: string; channelUserId?: string } },
+    mcpAnnotations?: Record<string, { readOnly?: boolean; destructive?: boolean }>,
   ): SessionRuntime {
     let closed = false;
     return {
@@ -2487,6 +2488,9 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
       },
       requestToolQuestion: () => Promise.resolve({ behavior: 'allow' as const }),
       consumeResolutionProvenance: () => provenance,
+      // U9: the MCP classification gate reads annotations through this
+      // channel; absent (undefined map) classifies every tool unknown.
+      getMcpToolAnnotations: () => Promise.resolve(new Map(Object.entries(mcpAnnotations ?? {}))),
       interrupt: () => Promise.resolve(),
       addBotEventHandler: () => {},
       clearBotEventHandlers: () => {},
@@ -2524,6 +2528,10 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     deferApprovals?: boolean;
     /** Channel binding for the session (default wecom). */
     source?: 'wecom' | 'feishu';
+    /** U9: annotations the session's MCP servers advertise (full tool name → hints). */
+    mcpAnnotations?: Record<string, { readOnly?: boolean; destructive?: boolean }>;
+    /** U9: per-server classification overrides stored in the bot policy. */
+    mcpClassification?: Record<string, { default?: 'read' | 'write'; tools?: Record<string, 'read' | 'write'> }>;
   } = {}): Promise<BotSandboxSession> {
     workspaceStore.resetData();
     const role = config.role ?? 'normal';
@@ -2557,6 +2565,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     botService.updateRolePolicy(bot.id, {
       ...createDefaultBotRolePolicy('normal'),
       ...(config.skills !== undefined ? { skills: config.skills } : {}),
+      ...(config.mcpClassification !== undefined ? { mcpClassification: config.mcpClassification } : {}),
       passlistRules: (config.passlistRules ?? []).map((rule) => ({ rule })),
       disabledSkills: config.disabledSkills ?? [],
     });
@@ -2592,7 +2601,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     SessionRuntime.open = (...args: unknown[]) => {
       const captured = args[3] as Options;
       openCalls.push(captured);
-      const base = createMockRuntime(approvalCalls, config.approvalResult, config.provenance);
+      const base = createMockRuntime(approvalCalls, config.approvalResult, config.provenance, config.mcpAnnotations);
       if (!config.deferApprovals) {
         return base;
       }
@@ -3889,6 +3898,177 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.ok(
       !workspaceStore.listAuditLogs(normal.botId).some((l) => l.eventType === 'capability_dir_write'),
     );
+  });
+
+  // ---------------------------------------------------- U9 MCP classification
+
+  it('U9 (R10/KTD-20): an annotated read-only MCP tool passes for normal — no approval card', async () => {
+    const { canUseTool, approvalCalls } = await setupBotSession({
+      role: 'normal',
+      mcpAnnotations: { 'mcp__docs__search': { readOnly: true } },
+    });
+    const result = await canUseTool('mcp__docs__search', { query: 'refund policy' });
+    assert.strictEqual(result.behavior, 'allow');
+    assert.strictEqual(approvalCalls.length, 0, 'read-class MCP follows the category policy, never a card');
+  });
+
+  it('U9: an annotated destructive MCP tool enters the admins-audience escalation for normal', async () => {
+    const { canUseTool, approvalCalls, botId, sessionId } = await setupBotSession({
+      role: 'normal',
+      mcpAnnotations: { 'mcp__docs__purge': { destructive: true } },
+    });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'admin-1', roleKey: 'admin' });
+
+    const sdkOptions = { toolUseID: 'toolu_u9_write', signal: new AbortController().signal };
+    const result = await canUseTool('mcp__docs__purge', { id: 'doc-1' }, sdkOptions);
+    assert.strictEqual(result.behavior, 'allow', 'mock approver approves the card');
+
+    assert.strictEqual(approvalCalls.length, 1);
+    assert.strictEqual(approvalCalls[0].options?.audience, 'admins');
+    const rows = workspaceStore.listBotEscalations({ botId });
+    assert.strictEqual(rows.length, 1);
+    const row = rows[0];
+    assert.strictEqual(row.sessionId, sessionId);
+    assert.strictEqual(row.audience, 'admins');
+    assert.deepStrictEqual(row.requester, { channel: 'wecom', channelUserId: 'user-1', role: 'normal' });
+    assert.deepStrictEqual(row.recipients.map((r) => r.userId).sort(), ['admin-1', 'owner-1']);
+    assert.strictEqual(row.rulePayload.toolName, 'mcp__docs__purge');
+    // KTD-19 dedupe signature carries the mcp-write reason; one pending per tool.
+    assert.strictEqual(row.rulePayload.dedupeSignature, 'mcp-write(mcp__docs__purge)');
+    // Always-allow is auto-suppressed for non-Bash tools (no-exact-rule-form).
+    assert.deepStrictEqual(row.rulePayload.alwaysAllowRules, []);
+    assert.strictEqual(row.state, 'approved');
+  });
+
+  it('U9: an unknown-annotation MCP tool asks (never allow-all) — normal routes admins', async () => {
+    // No annotations at all: the runtime advertises nothing for this tool.
+    const { canUseTool, approvalCalls, botId } = await setupBotSession({ role: 'normal' });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
+
+    const result = await canUseTool('mcp__docs__search', { query: 'x' });
+    assert.strictEqual(result.behavior, 'allow', 'approved through the card');
+    assert.strictEqual(approvalCalls.length, 1, 'unknown class must ask — the pre-U9 fall-through would have allowed silently');
+    assert.strictEqual(approvalCalls[0].options?.audience, 'admins');
+    const row = workspaceStore.listBotEscalations({ botId })[0];
+    assert.strictEqual(row.rulePayload.dedupeSignature, 'mcp-write(mcp__docs__search)');
+  });
+
+  it('U9: an unknown-annotation MCP tool with no approvers denies with an explanation (no-owner deny pinned for the MCP path)', async () => {
+    const { canUseTool, approvalCalls, botId } = await setupBotSession({ role: 'normal' });
+    const result = await canUseTool('mcp__docs__search', { query: 'x' });
+    assert.strictEqual(result.behavior, 'deny');
+    assert.match(result.message ?? '', /needs a channel owner or admin to approve it, but this channel has none/);
+    assert.strictEqual(approvalCalls.length, 0, 'no ask when nobody can approve');
+    assert.strictEqual(workspaceStore.listBotEscalations({ botId }).length, 0, 'no ledger row on the no-approver deny');
+    const deniedLog = workspaceStore
+      .listAuditLogs(botId)
+      .find((l) => l.eventType === 'sandbox_escape_denied' && l.details.reason === 'escalation-no-approvers');
+    assert.ok(deniedLog, 'the no-approver denial is audited');
+  });
+
+  it('U9: the per-server override beats the annotation — in both directions', async () => {
+    const { canUseTool, approvalCalls, botId } = await setupBotSession({
+      role: 'normal',
+      mcpAnnotations: {
+        'mcp__docs__purge': { destructive: true },
+        'mcp__files__read': { readOnly: true },
+      },
+      mcpClassification: {
+        docs: { default: 'read' },
+        files: { tools: { read: 'write' } },
+      },
+    });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
+
+    // Server default override tames a destructive annotation → no card.
+    const tamed = await canUseTool('mcp__docs__purge', { id: 'doc-1' });
+    assert.strictEqual(tamed.behavior, 'allow');
+    assert.strictEqual(approvalCalls.length, 0, 'override read must not escalate');
+
+    // Per-tool override flags a read-only annotation as write → card.
+    const flagged = await canUseTool('mcp__files__read', { path: '/x' });
+    assert.strictEqual(flagged.behavior, 'allow', 'approved through the card');
+    assert.strictEqual(approvalCalls.length, 1, 'override write must escalate');
+    assert.strictEqual(approvalCalls[0].options?.audience, 'admins');
+  });
+
+  it('U9 (KTD-15): admin and owner MCP write/unknown calls self-ask (self audience, owner-only click not needed)', async () => {
+    const admin = await setupBotSession({
+      role: 'admin',
+      mcpAnnotations: { 'mcp__docs__purge': { destructive: true } },
+    });
+    const adminResult = await admin.canUseTool('mcp__docs__purge', { id: 'doc-1' });
+    assert.strictEqual(adminResult.behavior, 'allow');
+    assert.strictEqual(admin.approvalCalls.length, 1);
+    assert.strictEqual(admin.approvalCalls[0].options?.audience, 'self');
+    const adminRow = workspaceStore.listBotEscalations({ botId: admin.botId })[0];
+    assert.strictEqual(adminRow.audience, 'self');
+    assert.strictEqual(adminRow.requester.role, 'admin');
+
+    const owner = await setupBotSession({ role: 'owner' });
+    const ownerResult = await owner.canUseTool('mcp__docs__anything', { q: 1 });
+    assert.strictEqual(ownerResult.behavior, 'allow');
+    assert.strictEqual(owner.approvalCalls.length, 1);
+    assert.strictEqual(owner.approvalCalls[0].options?.audience, 'self');
+    const ownerRow = workspaceStore.listBotEscalations({ botId: owner.botId })[0];
+    assert.strictEqual(ownerRow.audience, 'self');
+  });
+
+  it('U9: feishu normal MCP write keeps the phase-1 deny (card flow alignment deferred)', async () => {
+    const { canUseTool, approvalCalls, botId } = await setupBotSession({
+      role: 'normal',
+      source: 'feishu',
+      mcpAnnotations: { 'mcp__docs__purge': { destructive: true } },
+    });
+    const result = await canUseTool('mcp__docs__purge', { id: 'doc-1' });
+    assert.strictEqual(result.behavior, 'deny');
+    assert.match(result.message ?? '', /routing: escalatable/);
+    assert.strictEqual(approvalCalls.length, 0, 'feishu stays phase-1 until the card flow is aligned');
+    assert.strictEqual(workspaceStore.listBotEscalations({ botId }).length, 0);
+  });
+
+  // ---------------------------------------------------- U9 admin boundary
+
+  it('U9 (R11/KTD-29, Success Criteria): admin write reach = workspace + skills/ + agents/ exactly', async () => {
+    const { canUseTool, folderPath, botId } = await setupBotSession({ role: 'admin' });
+    // Ordinary workspace file → allowed.
+    const wsFile = await canUseTool('Write', { file_path: path.join(folderPath, 'src', 'index.ts') });
+    assert.strictEqual(wsFile.behavior, 'allow');
+    // The closed capability set → allowed.
+    const skill = await canUseTool('Write', { file_path: path.join(folderPath, '.claude', 'skills', 'report', 'SKILL.md') });
+    assert.strictEqual(skill.behavior, 'allow');
+    const agent = await canUseTool('Write', { file_path: path.join(folderPath, '.claude', 'agents', 'reviewer.md') });
+    assert.strictEqual(agent.behavior, 'allow');
+    // plugins/ is a cross-session unsandboxed code-execution surface → denied
+    // AT THE GATE (the sandbox only constrains bash; Edit/Write run in the
+    // CLI process, so the gate itself must hold the closed set).
+    const plugin = await canUseTool('Write', { file_path: path.join(folderPath, '.claude', 'plugins', 'evil', 'plugin.json') });
+    assert.strictEqual(plugin.behavior, 'deny');
+    const pluginEdit = await canUseTool('Edit', { file_path: path.join(folderPath, '.claude', 'plugins', 'evil', 'plugin.json') });
+    assert.strictEqual(pluginEdit.behavior, 'deny');
+    // Settings/hooks inside .claude are equally outside the closed set.
+    const settings = await canUseTool('Write', { file_path: path.join(folderPath, '.claude', 'settings.json') });
+    assert.strictEqual(settings.behavior, 'deny');
+    // Credential material outside the workspace → denied.
+    const ssh = await canUseTool('Write', { file_path: path.join(os.homedir(), '.ssh', 'config') });
+    assert.strictEqual(ssh.behavior, 'deny');
+    const deniedLog = workspaceStore
+      .listAuditLogs(botId)
+      .find((l) => l.eventType === 'file_access_denied' && l.details.reason === 'admin-capability-dir-closed');
+    assert.ok(deniedLog, 'the closed-set denial is audited');
+  });
+
+  it('U9: admin can still READ .claude (the closed set bounds writes, not reads)', async () => {
+    const { canUseTool, folderPath } = await setupBotSession({ role: 'admin' });
+    const read = await canUseTool('Read', { file_path: path.join(folderPath, '.claude', 'settings.json') });
+    assert.strictEqual(read.behavior, 'allow');
+  });
+
+  it('U9: the owner stays unrestricted inside the workspace (plugins write allowed)', async () => {
+    const { canUseTool, folderPath } = await setupBotSession({ role: 'owner' });
+    const plugin = await canUseTool('Write', { file_path: path.join(folderPath, '.claude', 'plugins', 'x', 'plugin.json') });
+    assert.strictEqual(plugin.behavior, 'allow');
   });
 });
 

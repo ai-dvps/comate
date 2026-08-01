@@ -69,6 +69,12 @@ export interface BotRolePolicy {
   passlistRules?: PasslistRule[];
   /** Bot-level network domain allowlist merged over built-in defaults (R2/KTD-9). */
   networkAllowlist?: string[];
+  /**
+   * Per-MCP-server classification overrides (U9/KTD-20), keyed by server
+   * name. Not editable in the desktop UI yet — round-tripped on save so an
+   * API-set override is never wiped.
+   */
+  mcpClassification?: Record<string, unknown>;
 }
 
 export type BotPersonaMode = 'append' | 'replace';

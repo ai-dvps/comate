@@ -221,6 +221,7 @@ describe('BotRolePermissions', () => {
     bot.rolePolicy.disabledSkills = ['blocked-skill'];
     bot.rolePolicy.networkAllowlist = ['example.com'];
     bot.rolePolicy.skills = ['mounted-skill'];
+    bot.rolePolicy.mcpClassification = { docs: { default: 'read' } };
     renderWithI18n(<BotRolePermissions bot={bot} onSave={onSave} ref={ref} />);
 
     await userEvent.type(screen.getByPlaceholderText('e.g. git status'), 'git status');
@@ -242,6 +243,7 @@ describe('BotRolePermissions', () => {
     expect(submitted.disabledSkills).toEqual(['blocked-skill']);
     expect(submitted.networkAllowlist).toEqual(['example.com']);
     expect(submitted.skills).toEqual(['mounted-skill']);
+    expect(submitted.mcpClassification).toEqual({ docs: { default: 'read' } });
     expect(submitted.normalToolPolicy.posture).toBe('safe');
     expect(ref.current?.isDirty()).toBe(false);
   });
