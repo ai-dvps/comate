@@ -3,10 +3,10 @@ import { randomUUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
-import type { HookCallback, Query, SDKMessage, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { HookCallback, Query, SDKMessage, SDKSessionInfo, SessionMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
-import { store as workspaceStore } from '../storage/sqlite-store.js';
+import { store as workspaceStore, type BotEscalationEntry } from '../storage/sqlite-store.js';
 import type {
   ChatMessage,
   SubagentState,
@@ -49,6 +49,16 @@ import { evaluateSkill, evaluateSkillDisabled, compileSkillFilter, compileSkillD
 import { botService } from './bot-service.js';
 import { botAuditLogger } from './bot-audit-logger.js';
 import { botEscalationLedger, escalationApprovalTtlMs } from './bot-escalation-ledger.js';
+import { notifyEscalationPending, notifyEscalationResolved } from './bot-escalation-notifier.js';
+import {
+  ESCALATION_GLOBAL_PENDING_CAP,
+  ESCALATION_PER_USER_HOURLY_CAP,
+  ESCALATION_USER_CAP_WINDOW_MS,
+  OVERRIDE_DENY_CAP_PER_TURN,
+  computeAlwaysAllowRules,
+  generalizedEscalationSignature,
+  type BotEscalationReason,
+} from './bot-escalation-guard.js';
 import type { BotActor } from './bot-service.js';
 import { evaluateBotToolPermission, evaluateBotSkill, isOwnerOrAdmin } from './bot-policy.js';
 import type { BotPersona, BotRoleKey, BotRolePolicy } from '../models/bot.js';
@@ -373,6 +383,14 @@ export class ChatService {
   private sessionSpawnRoles = new Map<string, BotRoleKey | null>();
   /** Sessions with a demotion-triggered immediate rebuild in flight (dedupe). */
   private demotionRebuilds = new Set<string>();
+  /**
+   * Per-turn out-of-sandbox deny counter (U11, KTD-19): reset on every
+   * pushMessage, incremented on each deny outcome of the escape branch
+   * (immediate dedupe/cap denies AND resolved approver-denies/expiries).
+   * Reaching OVERRIDE_DENY_CAP_PER_TURN short-circuits the branch with an
+   * explicit stop-retry instruction — the breaker for model retry loops.
+   */
+  private sessionOverrideDenies = new Map<string, number>();
   private onRuntimeClose?: (sessionId: string) => void;
   private historyTimestampBases = new Map<string, number>();
   /**
@@ -1502,6 +1520,7 @@ export class ChatService {
       if (!this.runtimes.has(sessionId)) {
         this.sessionSpawnRoles.delete(sessionId);
         this.demotionRebuilds.delete(sessionId);
+        this.sessionOverrideDenies.delete(sessionId);
       }
     }
   }
@@ -1513,6 +1532,7 @@ export class ChatService {
     this.runtimeContexts.delete(sessionId);
     this.sessionSpawnRoles.delete(sessionId);
     this.demotionRebuilds.delete(sessionId);
+    this.sessionOverrideDenies.delete(sessionId);
     this.cancelIdleClose(sessionId);
     this.runtimes.delete(sessionId);
     sidecarLog(`[ChatService] closing runtime ${sessionId}`);
@@ -1856,6 +1876,9 @@ export class ChatService {
     botUserId?: string,
   ): Promise<void> {
     const runtime = await this.getOrCreateRuntime(sessionId, workspaceId, isBotSession, botEventHandler, botUserId);
+
+    // U11 (KTD-19): a new turn resets the per-turn override-deny cap.
+    this.sessionOverrideDenies.delete(sessionId);
 
     // Promote a draft session to a real SDK session on first message. The SDK
     // creates the persistent session when this message is pushed, so clear the
@@ -2660,19 +2683,23 @@ export class ChatService {
                 return { behavior: 'deny' as const, message: botDenialMessage(routingClass) };
               };
 
+              // The SDK always supplies toolUseID in production; the fallback
+              // keeps direct/test invocations of the closure well-formed.
+              const toolRequestId = sdkOptions?.toolUseID ?? randomUUID();
+
               const askHuman = (overrides?: { timeout?: number; audience?: 'self' | 'admins' }) => {
                 const runtime = this.runtimes.get(session.id);
                 if (!runtime) {
                   return Promise.resolve(denyRouted('final', 'missing-runtime'));
                 }
                 const timeout = overrides?.timeout ?? extractToolTimeout(input);
-                return runtime.requestToolApproval(sdkOptions.toolUseID, toolName, sdkOptions.toolUseID, input, {
-                  title: sdkOptions.title,
-                  description: sdkOptions.description,
-                  suggestions: sdkOptions.suggestions,
+                return runtime.requestToolApproval(toolRequestId, toolName, toolRequestId, input, {
+                  title: sdkOptions?.title,
+                  description: sdkOptions?.description,
+                  suggestions: sdkOptions?.suggestions,
                   timeout,
-                  signal: sdkOptions.signal,
-                  decisionReasonType: sdkOptions.decisionReasonType,
+                  signal: sdkOptions?.signal,
+                  decisionReasonType: sdkOptions?.decisionReasonType,
                   ...(overrides?.audience !== undefined && { audience: overrides.audience }),
                 });
               };
@@ -2699,16 +2726,271 @@ export class ChatService {
                 return denyRouted('final', 'missing-identity');
               }
 
+              // ---- Escalation helpers (U11, KTD-15/KTD-18/KTD-19/KTD-21) ----
+              // Shared by the Bash escape branch now; U9's network/MCP-write
+              // classification calls the same route (reason plumbed through).
+
+              /** Per-turn override-deny counter (KTD-19 retry-loop breaker). */
+              const recordOverrideDeny = (): void => {
+                this.sessionOverrideDenies.set(session.id, (this.sessionOverrideDenies.get(session.id) ?? 0) + 1);
+              };
+
+              /**
+               * Post-resolution bookkeeping for an escalation ask (shared by
+               * the self-ask and remote-approval routes): decision audit, the
+               * ledger's terminal transition (first-writer-wins — a card click
+               * may already have settled), and the U11 terminal notification
+               * fan-out for admins-audience rows.
+               */
+              const settleEscapeAfterAsk = (
+                escapeActor: BotActor,
+                escapeResult: PermissionResult,
+                escalationEntry: BotEscalationEntry | null,
+                command: string,
+              ): void => {
+                const requester = { channel: escapeActor.channelKey, channelUserId: escapeActor.channelUserId, role: freshRole };
+                // `?.`: partial runtime test doubles may not implement the
+                // provenance channel; absence = phase-1 default.
+                const provenance = this.runtimes.get(session.id)?.consumeResolutionProvenance?.(toolRequestId);
+                if (escapeResult.behavior === 'allow') {
+                  const approver = provenanceApprover(provenance, escapeActor);
+                  const source = provenance?.source ?? 'self-approval';
+                  botAuditLogger.logSandboxEscapeApproved(bot.id, approver, {
+                    sessionId: session.id,
+                    command,
+                    requester,
+                    source,
+                  });
+                  if (escalationEntry) {
+                    botEscalationLedger.settle(escalationEntry.id, 'approved', {
+                      approver: provenance?.approver ?? escapeActor,
+                      decision: 'allow',
+                      source,
+                    });
+                  }
+                } else if (escapeResult.message === APPROVAL_TIMEOUT_DENY_MESSAGE) {
+                  recordOverrideDeny();
+                  botAuditLogger.logSandboxEscapeExpired(bot.id, { type: 'system' }, {
+                    sessionId: session.id,
+                    command,
+                    requester,
+                    source: 'timeout',
+                    requestId: toolRequestId,
+                  });
+                  if (escalationEntry) {
+                    botEscalationLedger.expire(escalationEntry.id, {
+                      approver: { type: 'system' },
+                      decision: 'expired',
+                      source: 'timeout',
+                    });
+                  }
+                } else {
+                  recordOverrideDeny();
+                  const approver = provenanceApprover(provenance, escapeActor);
+                  const source = provenance?.source ?? 'self-approval';
+                  botAuditLogger.logSandboxEscapeDenied(bot.id, approver, {
+                    sessionId: session.id,
+                    command,
+                    requester,
+                    reason: 'approver-denied',
+                  });
+                  if (escalationEntry) {
+                    botEscalationLedger.settle(escalationEntry.id, 'denied', {
+                      approver: provenance?.approver ?? escapeActor,
+                      decision: 'deny',
+                      source,
+                    });
+                  }
+                }
+                // U11 (KTD-15): admins-audience resolutions fan out terminal
+                // notification cards (requester + non-clicking recipients).
+                if (escalationEntry?.audience === 'admins') {
+                  const settledEntry = botEscalationLedger.get(escalationEntry.id);
+                  if (settledEntry && settledEntry.state !== 'pending') {
+                    notifyEscalationResolved(settledEntry);
+                  }
+                }
+              };
+
+              /**
+               * Owner self-ask route (phase-1, KTD-15 self audience): the
+               * requester is the owner, so their own approval IS supervision.
+               */
+              const askOwnerSelf = async (
+                escapeActor: BotActor,
+                command: string,
+              ): Promise<PermissionResult> => {
+                const runtime = this.runtimes.get(session.id);
+                if (!runtime) {
+                  return denyRouted('final', 'missing-runtime');
+                }
+                // U8 (KTD-15/KTD-16): register the escalation in the ledger
+                // BEFORE the ask — the row is the durable record boot recovery
+                // expires when the process dies mid-approval. Self audience
+                // (the ledger re-asserts the invariant fail-safe). The ask
+                // carries the ledger TTL when the tool input has no timeout of
+                // its own, so the pending Promise is always bounded (KTD-17).
+                const toolTimeout = extractToolTimeout(input);
+                const escalationEntry = botEscalationLedger.createPending({
+                  requestId: toolRequestId,
+                  botId: bot.id,
+                  sessionId: session.id,
+                  audience: 'self',
+                  requester: {
+                    channel: escapeActor.channelKey ?? 'unknown',
+                    channelUserId: escapeActor.channelUserId ?? '',
+                    role: freshRole,
+                  },
+                  recipients: [{ userId: escapeActor.channelUserId ?? '', taskId: toolRequestId }],
+                  rulePayload: {
+                    toolName,
+                    command,
+                    ...(sdkOptions?.decisionReasonType !== undefined && {
+                      decisionReasonType: sdkOptions.decisionReasonType,
+                    }),
+                  },
+                  ...(toolTimeout !== undefined && { ttlMs: toolTimeout }),
+                });
+                const escapeResult = await askHuman({
+                  timeout: toolTimeout ?? escalationApprovalTtlMs(),
+                  audience: 'self',
+                });
+                settleEscapeAfterAsk(escapeActor, escapeResult, escalationEntry, command);
+                return escapeResult;
+              };
+
+              /**
+               * Remote-approval route (U11, KTD-15): register an admins-audience
+               * pending with anti-spam bounds (KTD-19), card the approvers, and
+               * await the decision. `reason` is 'escape' today; U9 routes
+               * 'network'/'mcp-write' through the same path.
+               */
+              const escalateRemotely = async (
+                escapeActor: BotActor,
+                escalation: { reason: BotEscalationReason; recipientRoles: ReadonlySet<BotRoleKey> },
+              ): Promise<PermissionResult> => {
+                const runtime = this.runtimes.get(session.id);
+                if (!runtime) {
+                  return denyRouted('final', 'missing-runtime');
+                }
+                const command = typeof input.command === 'string' ? input.command : undefined;
+                const requester = {
+                  channel: escapeActor.channelKey ?? 'unknown',
+                  channelUserId: escapeActor.channelUserId ?? '',
+                  role: freshRole,
+                };
+                const denyImmediate = (reason: string, message: string): PermissionResult => {
+                  recordOverrideDeny();
+                  botAuditLogger.logSandboxEscapeDenied(bot.id, { type: 'system' }, {
+                    sessionId: session.id,
+                    command: command ?? '',
+                    requester,
+                    reason,
+                  });
+                  diagLog(
+                    `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=${reason} class=escalatable`,
+                  );
+                  return { behavior: 'deny', message };
+                };
+
+                // KTD-19 anti-spam, in order: generalized-signature dedupe →
+                // per-user hourly cap → per-bot global pending cap → approvers.
+                const signature = generalizedEscalationSignature({ reason: escalation.reason, toolName, command });
+                if (botEscalationLedger.findPendingBySignature(bot.id, signature)) {
+                  return denyImmediate(
+                    'escalation-dedupe-pending',
+                    'Denied (routing: escalatable). An approval request for this kind of command is already pending with a channel owner or admin. Do not retry; tell the user the request is awaiting approval.',
+                  );
+                }
+                const hourly = botEscalationLedger.countCreatedSince(
+                  bot.id,
+                  escapeActor.channelUserId ?? '',
+                  new Date(Date.now() - ESCALATION_USER_CAP_WINDOW_MS).toISOString(),
+                );
+                if (hourly >= ESCALATION_PER_USER_HOURLY_CAP) {
+                  return denyImmediate(
+                    'escalation-user-cap',
+                    'Denied (routing: escalatable). Too many approval requests were sent for this user recently. Do not retry; tell the user to wait for the pending approvals or try again later.',
+                  );
+                }
+                if (botEscalationLedger.countPending(bot.id) >= ESCALATION_GLOBAL_PENDING_CAP) {
+                  return denyImmediate(
+                    'escalation-global-cap',
+                    'Denied (routing: escalatable). Too many approval requests are pending for this bot right now. Do not retry; tell the user to wait for the pending approvals.',
+                  );
+                }
+                const recipients = botService
+                  .listMembers(bot.id)
+                  .filter((m) => m.channelKey === channel && escalation.recipientRoles.has(m.roleKey))
+                  .map((m) => ({ userId: m.channelUserId, taskId: toolRequestId }));
+                if (recipients.length === 0) {
+                  return denyImmediate(
+                    'escalation-no-approvers',
+                    'Denied (routing: escalatable). This action needs a channel owner or admin to approve it, but this channel has none. Tell the user a desktop administrator must appoint one first.',
+                  );
+                }
+
+                // KTD-18: exact-match always-allow rules, computed once and
+                // pinned into the ledger payload — the card shows exactly
+                // what "始终允许" would persist. Suppressed suggestion types
+                // (setMode/addDirectories/replaceRules) hide the button and
+                // are logged (they are dropped, never applied).
+                const alwaysAllow = computeAlwaysAllowRules({
+                  toolName,
+                  command,
+                  suggestions: sdkOptions?.suggestions,
+                });
+                if (alwaysAllow.suppressedReason) {
+                  diagLog(
+                    `[ChatService] always-allow suppressed session=${session.id} requestId=${toolRequestId} reason=${alwaysAllow.suppressedReason}`,
+                  );
+                }
+                const toolTimeout = extractToolTimeout(input);
+                // No durable ledger row → no remote approval (fail closed):
+                // boot recovery could not expire a card-less approval.
+                const escalationEntry = botEscalationLedger.createPending({
+                  requestId: toolRequestId,
+                  botId: bot.id,
+                  sessionId: session.id,
+                  audience: 'admins',
+                  requester,
+                  recipients,
+                  rulePayload: {
+                    toolName,
+                    ...(command !== undefined && { command }),
+                    ...(sdkOptions?.decisionReasonType !== undefined && {
+                      decisionReasonType: sdkOptions.decisionReasonType,
+                    }),
+                    dedupeSignature: signature,
+                    alwaysAllowRules: alwaysAllow.rules,
+                  },
+                  ...(toolTimeout !== undefined && { ttlMs: toolTimeout }),
+                });
+                if (!escalationEntry) {
+                  return denyImmediate('escalation-ledger-write-failed', botDenialMessage('final'));
+                }
+                // Cards to the approvers (fire-and-forget; the ask is the authority).
+                notifyEscalationPending(escalationEntry);
+                const escapeResult = await askHuman({
+                  timeout: toolTimeout ?? escalationApprovalTtlMs(),
+                  audience: 'admins',
+                });
+                settleEscapeAfterAsk(escapeActor, escapeResult, escalationEntry, command ?? '');
+                return escapeResult;
+              };
+
               // ---- Bash: sandbox default-allow + escape routing (KTD-10) ----
               if (toolName === 'Bash' && typeof input.command === 'string' && channelUserId) {
                 if (input.dangerouslyDisableSandbox === true) {
-                  // Out-of-sandbox request (F2 phase-1 branch). Passlist hits
-                  // never reach this branch: the passlist is compiled into
+                  // Out-of-sandbox request (F2). Passlist hits never reach
+                  // this branch: the passlist is compiled into
                   // settings.permissions.allow (U4) and the SDK structural
                   // rule engine auto-allows matching escape requests upstream
                   // (proven against the real CLI in sdk-rule-contract.test).
-                  // What remains: owner/admin keep the ask flow; regular
-                  // members deny until phase-2 remote approval lands.
+                  // Routing (U11): owner self-ask; admin routes owner-only
+                  // (KTD-21); regular members escalate to the channel's
+                  // owner/admin cards. Feishu stays on phase-1 behavior until
+                  // the card flow is aligned (Scope Boundaries).
                   //
                   // U6 (KTD-22): the escape-routing decision is an audit
                   // decision point — requested fires for every escape request;
@@ -2723,111 +3005,81 @@ export class ChatService {
                       role: freshRole,
                     });
                   }
-                  if (isOwnerOrAdmin(freshRole)) {
-                    const runtime = this.runtimes.get(session.id);
-                    if (!runtime) {
-                      return denyRouted('final', 'missing-runtime');
-                    }
-                    // U8 (KTD-15/KTD-16): register the escalation in the
-                    // ledger BEFORE the ask — the row is the durable record
-                    // boot recovery expires when the process dies
-                    // mid-approval. Phase-1 audience is 'self' (the requester
-                    // is owner/admin here; the ledger re-asserts the
-                    // invariant fail-safe). The ask carries the ledger TTL
-                    // when the tool input has no timeout of its own, so the
-                    // pending Promise is always bounded (KTD-17).
-                    const toolTimeout = extractToolTimeout(input);
-                    const escalationEntry = escapeActor
-                      ? botEscalationLedger.createPending({
-                          requestId: sdkOptions.toolUseID,
-                          botId: bot.id,
-                          sessionId: session.id,
-                          audience: 'self',
-                          requester: {
-                            channel: escapeActor.channelKey ?? 'unknown',
-                            channelUserId,
-                            role: freshRole,
-                          },
-                          recipients: [{ userId: channelUserId, taskId: sdkOptions.toolUseID }],
-                          rulePayload: {
-                            toolName,
-                            command: input.command,
-                            ...(sdkOptions.decisionReasonType !== undefined && {
-                              decisionReasonType: sdkOptions.decisionReasonType,
-                            }),
-                          },
-                          ...(toolTimeout !== undefined && { ttlMs: toolTimeout }),
-                        })
-                      : null;
-                    const escapeResult = await askHuman({
-                      timeout: toolTimeout ?? escalationApprovalTtlMs(),
-                      audience: 'self',
-                    });
+                  // KTD-19: the per-turn override-deny cap short-circuits
+                  // BEFORE any new pending/ask — the model gets an explicit
+                  // stop-retry instruction.
+                  if ((this.sessionOverrideDenies.get(session.id) ?? 0) >= OVERRIDE_DENY_CAP_PER_TURN) {
+                    recordOverrideDeny();
                     if (escapeActor) {
-                      const requester = { channel: escapeActor.channelKey, channelUserId, role: freshRole };
-                      // `?.`: partial runtime test doubles may not implement
-                      // the provenance channel; absence = phase-1 default.
-                      const provenance = runtime.consumeResolutionProvenance?.(sdkOptions.toolUseID);
-                      if (escapeResult.behavior === 'allow') {
-                        const approver = provenanceApprover(provenance, escapeActor);
-                        const source = provenance?.source ?? 'self-approval';
-                        botAuditLogger.logSandboxEscapeApproved(bot.id, approver, {
-                          sessionId: session.id,
-                          command: input.command,
-                          requester,
-                          source,
-                        });
-                        if (escalationEntry) {
-                          botEscalationLedger.settle(escalationEntry.id, 'approved', {
-                            approver: provenance?.approver ?? escapeActor,
-                            decision: 'allow',
-                            source,
-                          });
-                        }
-                      } else if (escapeResult.message === APPROVAL_TIMEOUT_DENY_MESSAGE) {
-                        botAuditLogger.logSandboxEscapeExpired(bot.id, { type: 'system' }, {
-                          sessionId: session.id,
-                          command: input.command,
-                          requester,
-                          source: 'timeout',
-                          requestId: sdkOptions.toolUseID,
-                        });
-                        if (escalationEntry) {
-                          botEscalationLedger.expire(escalationEntry.id, {
-                            approver: { type: 'system' },
-                            decision: 'expired',
-                            source: 'timeout',
-                          });
-                        }
-                      } else {
-                        const approver = provenanceApprover(provenance, escapeActor);
-                        const source = provenance?.source ?? 'self-approval';
-                        botAuditLogger.logSandboxEscapeDenied(bot.id, approver, {
-                          sessionId: session.id,
-                          command: input.command,
-                          requester,
-                          reason: 'approver-denied',
-                        });
-                        if (escalationEntry) {
-                          botEscalationLedger.settle(escalationEntry.id, 'denied', {
-                            approver: provenance?.approver ?? escapeActor,
-                            decision: 'deny',
-                            source,
-                          });
-                        }
-                      }
+                      botAuditLogger.logBashDenied(bot.id, escapeActor, {
+                        sessionId: session.id,
+                        command: input.command,
+                        reason: 'override-deny-cap',
+                        routingClass: 'escalatable',
+                      });
                     }
-                    return escapeResult;
+                    diagLog(
+                      `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=override-deny-cap class=escalatable`,
+                    );
+                    return {
+                      behavior: 'deny' as const,
+                      message:
+                        'STOP. This turn has reached the limit of out-of-sandbox requests. Do NOT retry this command or any variant of it with a sandbox override. Tell the user which actions still need owner/admin approval and wait for their decision.',
+                    };
                   }
-                  if (escapeActor) {
-                    botAuditLogger.logSandboxEscapeDenied(bot.id, { type: 'system' }, {
-                      sessionId: session.id,
-                      command: input.command,
-                      requester: { channel: escapeActor.channelKey, channelUserId, role: freshRole },
-                      reason: 'out-of-sandbox-normal',
+                  if (freshRole === 'owner') {
+                    return askOwnerSelf(escapeActor as BotActor, input.command);
+                  }
+                  if (freshRole === 'admin') {
+                    // KTD-21: an admin's out-of-sandbox retry routes
+                    // owner-only; no owner → deny with explanation. Feishu
+                    // card alignment is deferred — keep the self-ask there.
+                    if (channel !== 'wecom') {
+                      return askOwnerSelf(escapeActor as BotActor, input.command);
+                    }
+                    const hasOwner = botService
+                      .listMembers(bot.id)
+                      .some((m) => m.channelKey === 'wecom' && m.roleKey === 'owner');
+                    if (!hasOwner) {
+                      recordOverrideDeny();
+                      botAuditLogger.logSandboxEscapeDenied(bot.id, { type: 'system' }, {
+                        sessionId: session.id,
+                        command: input.command,
+                        requester: { channel: escapeActor?.channelKey ?? 'unknown', channelUserId, role: freshRole },
+                        reason: 'admin-escalation-no-owner',
+                      });
+                      diagLog(
+                        `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=admin-escalation-no-owner class=escalatable`,
+                      );
+                      return {
+                        behavior: 'deny' as const,
+                        message:
+                          'Denied (routing: escalatable). This action requires approval by the channel owner, but this channel has no owner. Tell the user a desktop administrator must appoint a channel owner first.',
+                      };
+                    }
+                    return escalateRemotely(escapeActor as BotActor, {
+                      reason: 'escape',
+                      recipientRoles: new Set<BotRoleKey>(['owner']),
                     });
                   }
-                  return denyRouted('escalatable', 'out-of-sandbox-normal');
+                  // Regular members (and unknown roles): escalate to the
+                  // channel's owner/admin on WeCom; other channels keep the
+                  // phase-1 deny until their card flow is aligned.
+                  if (channel !== 'wecom') {
+                    if (escapeActor) {
+                      botAuditLogger.logSandboxEscapeDenied(bot.id, { type: 'system' }, {
+                        sessionId: session.id,
+                        command: input.command,
+                        requester: { channel: escapeActor.channelKey, channelUserId, role: freshRole },
+                        reason: 'out-of-sandbox-normal',
+                      });
+                    }
+                    return denyRouted('escalatable', 'out-of-sandbox-normal');
+                  }
+                  return escalateRemotely(escapeActor as BotActor, {
+                    reason: 'escape',
+                    recipientRoles: new Set<BotRoleKey>(['owner', 'admin']),
+                  });
                 }
                 // Sandboxed bash: default-allow when the probe passed (the
                 // sandbox is the containment, R2); on a degraded host the

@@ -754,6 +754,8 @@ export class SessionRuntime {
           pending.description,
           pending.suggestions,
           pending.expiresAt,
+          undefined,
+          pending.audience,
         );
       }
     }
@@ -787,6 +789,8 @@ export class SessionRuntime {
           pending.description,
           pending.suggestions,
           pending.expiresAt,
+          undefined,
+          pending.audience,
         );
       }
     }
@@ -1036,6 +1040,7 @@ export class SessionRuntime {
       options.suggestions,
       timerInfo?.expiresAt,
       options.decisionReasonType,
+      options.audience,
     );
     return this.waitForResolution(requestId, input, 'approval', {
       toolName,

@@ -198,4 +198,88 @@ describe('bot-escalation-ledger (U8)', { concurrency: false }, () => {
     assert.ok(ledger.createPending(pendingInput()));
     assert.strictEqual(ledger.createPending(pendingInput()), null);
   });
+
+  // -------------------------------------------------------------------------
+  // U11 anti-spam queries (KTD-19)
+  // -------------------------------------------------------------------------
+
+  it('findPendingBySignature matches only pending rows with the same generalized signature', () => {
+    ledger.createPending(
+      pendingInput({
+        requestId: 'req-sig-1',
+        rulePayload: { toolName: 'Bash', command: 'curl https://a.com/1', dedupeSignature: 'escape(Bash:curl)' },
+      }),
+    );
+    // Variant command, same signature → the pending is found (dedupe hit).
+    const hit = ledger.findPendingBySignature('bot-1', 'escape(Bash:curl)');
+    assert.ok(hit);
+    assert.strictEqual(hit.id, 'req-sig-1');
+
+    // Settled rows no longer dedupe.
+    ledger.settle('req-sig-1', 'approved', {
+      approver: { type: 'wecom', channelKey: 'wecom', channelUserId: 'owner-1' },
+      decision: 'allow',
+      source: 'wecom-card',
+    });
+    assert.strictEqual(ledger.findPendingBySignature('bot-1', 'escape(Bash:curl)'), null);
+
+    // Different signature / different bot → no hit.
+    ledger.createPending(
+      pendingInput({
+        requestId: 'req-sig-2',
+        rulePayload: { toolName: 'Bash', command: 'wget https://a.com', dedupeSignature: 'escape(Bash:wget)' },
+      }),
+    );
+    assert.strictEqual(ledger.findPendingBySignature('bot-1', 'escape(Bash:curl)'), null);
+    assert.strictEqual(ledger.findPendingBySignature('bot-other', 'escape(Bash:wget)'), null);
+
+    // U8 rows without a signature never dedupe.
+    ledger.createPending(pendingInput({ requestId: 'req-sig-3' }));
+    assert.strictEqual(ledger.findPendingBySignature('bot-1', 'escape(Bash:git)'), null);
+  });
+
+  it('countCreatedSince counts the requester inside the window only', () => {
+    const now = Date.parse('2026-08-01T12:00:00Z');
+    const hourAgo = new Date(now - 60 * 60 * 1000).toISOString();
+    // Inside the window, same requester.
+    ledger.createPending(pendingInput({ requestId: 'req-w1', now: now - 10 * 60 * 1000 }));
+    ledger.createPending(pendingInput({ requestId: 'req-w2', now: now - 20 * 60 * 1000 }));
+    // Inside the window, different requester.
+    ledger.createPending(
+      pendingInput({
+        requestId: 'req-w3',
+        now: now - 5 * 60 * 1000,
+        requester: { channel: 'wecom', channelUserId: 'user-2', role: 'normal' },
+      }),
+    );
+    // Older than the window, same requester.
+    ledger.createPending(pendingInput({ requestId: 'req-w4', now: now - 2 * 60 * 60 * 1000 }));
+
+    assert.strictEqual(ledger.countCreatedSince('bot-1', 'owner-1', hourAgo), 2);
+    assert.strictEqual(ledger.countCreatedSince('bot-1', 'user-2', hourAgo), 1);
+    assert.strictEqual(ledger.countCreatedSince('bot-1', 'nobody', hourAgo), 0);
+    // Settled rows still count (the cap bounds request VOLUME, not open cards).
+    ledger.settle('req-w1', 'denied', {
+      approver: { type: 'system' },
+      decision: 'deny',
+      source: 'timeout',
+    });
+    assert.strictEqual(ledger.countCreatedSince('bot-1', 'owner-1', hourAgo), 2);
+  });
+
+  it('countPending counts outstanding rows for the bot', () => {
+    assert.strictEqual(ledger.countPending('bot-1'), 0);
+    ledger.createPending(pendingInput({ requestId: 'req-p1' }));
+    ledger.createPending(pendingInput({ requestId: 'req-p2' }));
+    assert.strictEqual(ledger.countPending('bot-1'), 2);
+    ledger.settle('req-p1', 'denied', {
+      approver: { type: 'system' },
+      decision: 'deny',
+      source: 'timeout',
+    });
+    assert.strictEqual(ledger.countPending('bot-1'), 1);
+    // Other bots' pendings don't count.
+    ledger.createPending(pendingInput({ requestId: 'req-p3', botId: 'bot-2' }));
+    assert.strictEqual(ledger.countPending('bot-1'), 1);
+  });
 });

@@ -3503,7 +3503,7 @@ export class SqliteStore {
   }
 
   listBotEscalations(
-    options: { botId?: string; state?: BotEscalationState; limit?: number } = {},
+    options: { botId?: string; state?: BotEscalationState; limit?: number; since?: string } = {},
   ): BotEscalationEntry[] {
     const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
     const clauses: string[] = [];
@@ -3515,6 +3515,10 @@ export class SqliteStore {
     if (options.state) {
       clauses.push('state = ?');
       params.push(options.state);
+    }
+    if (options.since) {
+      clauses.push('created_at >= ?');
+      params.push(options.since);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.db
@@ -4022,6 +4026,16 @@ export interface BotEscalationRulePayload {
   toolName: string;
   command?: string;
   decisionReasonType?: string;
+  /**
+   * U11 (KTD-19): generalized dedupe signature (parameter variants collapse
+   * into one pending). Computed at creation; absent on U8 rows.
+   */
+  dedupeSignature?: string;
+  /**
+   * U11 (KTD-18): the exact-match rules "always allow" would persist. Empty
+   * or absent ⇒ the always-allow button is suppressed on the approval card.
+   */
+  alwaysAllowRules?: string[];
 }
 
 export interface CreateBotEscalationInput {

@@ -451,15 +451,17 @@ function credentialDenyRules(options: {
   return rules;
 }
 
-function baseSandbox(role: BotRoleKey): SandboxSettings {
+function baseSandbox(): SandboxSettings {
   return {
     enabled: true,
     // Explicit per R4 — never rely on the channel default.
     failIfUnavailable: true,
     // canUseTool stays the single permission authority (KTD-1).
     autoAllowBashIfSandboxed: false,
-    // Phase-1 normal sessions get no unsandboxed escape hatch (KTD-10).
-    allowUnsandboxedCommands: role !== 'normal',
+    // U11: every role may request unsandboxed execution — a regular member's
+    // escape retry routes to the channel's owner/admin approval cards (the
+    // phase-1 blanket deny is retired now that remote approval exists).
+    allowUnsandboxedCommands: true,
     allowAppleEvents: false,
     enableWeakerNetworkIsolation: false,
     // Keep empty: excludedCommands is an unmanaged widening hatch.
@@ -620,7 +622,7 @@ function passlistRuleStrings(policy: BotRolePolicy): string[] {
 function ownerDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
   const passlist = passlistRuleStrings(ctx.policy);
   const sandbox: SandboxSettings = {
-    ...baseSandbox('owner'),
+    ...baseSandbox(),
     filesystem: {
       // R1: unrestricted filesystem EXCEPT the transcript library and the
       // Comate data dir, which stay denied.
@@ -658,7 +660,7 @@ function adminDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
   const allowRead = [ws, ctx.pluginCache, ctx.cliDir].filter((p): p is string => typeof p === 'string');
 
   const sandbox: SandboxSettings = {
-    ...baseSandbox('admin'),
+    ...baseSandbox(),
     filesystem: {
       // Home read lockdown (KTD-6): deny ~/ + multi-user host roots; the
       // workspace and the closed reviewed set of home-relative paths
@@ -709,7 +711,7 @@ function normalDerivation(userDirName: string, ctx: RoleDerivationContext): BotA
   );
 
   const sandbox: SandboxSettings = {
-    ...baseSandbox('normal'),
+    ...baseSandbox(),
     filesystem: {
       // Read lockdown (KTD-6): home + multi-user roots denied; data isolation
       // = deny the data/ parent + allow own dir (more-specific-wins).
@@ -757,7 +759,7 @@ function closedDerivation(
   plugins: SdkPluginConfig[],
 ): BotAccessDerivation {
   const sandbox: SandboxSettings = {
-    ...baseSandbox('normal'),
+    ...baseSandbox(),
     filesystem: {
       denyRead: ['/'],
       allowRead: [],

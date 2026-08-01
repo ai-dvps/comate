@@ -173,7 +173,9 @@ describe('deriveBotAccess role matrix', () => {
       enabled: true,
       failIfUnavailable: true,
       autoAllowBashIfSandboxed: false,
-      allowUnsandboxedCommands: false,
+      // U11: normal escapes route to owner/admin approval cards — the
+      // phase-1 blanket deny is retired.
+      allowUnsandboxedCommands: true,
       allowAppleEvents: false,
       enableWeakerNetworkIsolation: false,
       excludedCommands: [],
@@ -491,7 +493,8 @@ describe('new-bot zero-config derivation', () => {
       `${WS}/data/alice`,
       `${WS}/data/alice/.runtime`,
     ]);
-    assert.strictEqual(out.sandbox.allowUnsandboxedCommands, false);
+    // U11: normal escape requests reach the owner/admin approval card flow.
+    assert.strictEqual(out.sandbox.allowUnsandboxedCommands, true);
   });
 });
 

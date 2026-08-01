@@ -126,6 +126,63 @@ export class BotEscalationLedgerService {
     return this.store.getBotEscalation(requestId);
   }
 
+  // -------------------------------------------------------------------------
+  // U11 anti-spam queries (KTD-19). All read-only; failures fail CLOSED to
+  // "cap reached" — a broken ledger must never let the card channel be
+  // flooded — except dedupe, which fails OPEN (a missed dedupe sends one
+  // extra card; a false dedupe would silently drop a legitimate escalation).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Find a still-pending escalation for this bot with the same generalized
+   * signature (parameter variants collapse, KTD-19). Null when none — or
+   * when the query fails (fail-open: see above).
+   */
+  findPendingBySignature(botId: string, signature: string): BotEscalationEntry | null {
+    try {
+      const pendings = this.store.listBotEscalations({ botId, state: 'pending' });
+      return pendings.find((entry) => entry.rulePayload.dedupeSignature === signature) ?? null;
+    } catch (err) {
+      diagLog(
+        `[BotEscalationLedger] findPendingBySignature failed bot=${botId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Count escalations this requester created since `sinceIso` (the hourly
+   * window for the per-user cap, KTD-19). On failure returns Number.MAX_SAFE_INTEGER
+   * (fail-closed: the cap engages).
+   */
+  countCreatedSince(botId: string, requesterChannelUserId: string, sinceIso: string): number {
+    try {
+      return this.store
+        .listBotEscalations({ botId, since: sinceIso, limit: 1000 })
+        .filter((entry) => entry.requester.channelUserId === requesterChannelUserId).length;
+    } catch (err) {
+      diagLog(
+        `[BotEscalationLedger] countCreatedSince failed bot=${botId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return Number.MAX_SAFE_INTEGER;
+    }
+  }
+
+  /**
+   * Count outstanding (pending) escalations for the bot (the global cap,
+   * KTD-19). On failure returns Number.MAX_SAFE_INTEGER (fail-closed).
+   */
+  countPending(botId: string): number {
+    try {
+      return this.store.listBotEscalations({ botId, state: 'pending', limit: 1000 }).length;
+    } catch (err) {
+      diagLog(
+        `[BotEscalationLedger] countPending failed bot=${botId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return Number.MAX_SAFE_INTEGER;
+    }
+  }
+
   /**
    * Settle a pending row as approved/denied. First writer wins — null means
    * the row was already settled (skip side effects; late clicks are no-ops).
