@@ -230,6 +230,15 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
     });
   });
 
+  it('keeps quick add outside the scrolling Todo list', async () => {
+    stubFetchWithTodos([makeTodo({ id: 'first', text: 'First Todo' })]);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
+
+    await waitFor(() => expect(within(todoList()).getByText('First Todo')).toBeInTheDocument());
+    expect(todoList()).not.toContainElement(screen.getByPlaceholderText('Add a todo…'));
+    expect(todoList()).toHaveClass('overflow-y-auto');
+  });
+
   it('shows Today and Upcoming counts of 0 when no todos have due dates (AE2)', async () => {
     const todos = [makeTodo({ id: 'a', text: 'Alpha' })];
     stubFetchWithTodos(todos);
