@@ -25,6 +25,8 @@ function makeTodo(overrides: Partial<Todo> & { text: string }): Todo {
     text: overrides.text,
     content: null,
     status: overrides.status ?? 'pending',
+    executionType: overrides.executionType ?? 'manual',
+    latestRun: overrides.latestRun ?? null,
     sessionId: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -420,6 +422,25 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
     const rowScope = within(row);
     expect(rowScope.queryByText(/\d{4}-/)).not.toBeInTheDocument();
     expect(rowScope.queryByText('GitHub')).not.toBeInTheDocument();
+  });
+
+  it('shows the execution type and latest execution status (AE1)', async () => {
+    const todo = makeTodo({
+      id: 'recurring-failed',
+      text: 'Refresh reports',
+      executionType: 'recurring',
+      latestRun: { status: 'failed', fireAt: '2026-08-01T01:30:00.000Z' },
+    });
+    stubFetchWithTodos([todo]);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
+
+    await waitFor(() => expect(within(todoList()).getByText('Refresh reports')).toBeInTheDocument());
+
+    const row = within(todoList()).getByText('Refresh reports').closest('li') as HTMLElement;
+    const rowScope = within(row);
+    expect(rowScope.getByLabelText('Recurring')).toBeInTheDocument();
+    expect(rowScope.getByText('Failed')).toBeInTheDocument();
+    expect(rowScope.getByTitle(/^Latest run: Failed at /)).toBeInTheDocument();
   });
 
   it('caps labels at two chips and shows +n overflow', async () => {
