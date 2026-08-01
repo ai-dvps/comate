@@ -2,6 +2,8 @@ import { Router } from 'express';
 import type { Response } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
+import { todoExecutionService, TodoExecutionError } from '../services/todo-execution-service.js';
+import { todoSchedulerService } from '../services/todo-scheduler-service.js';
 import { todoSyncService, SyncError } from '../services/todo-sync.js';
 import { redactGithubError } from '../services/github-types.js';
 import { diagLog } from '../utils/diag-logger.js';
@@ -32,6 +34,15 @@ function validateTodoContent(content: unknown): string | null {
   if (content === undefined || content === null) return null;
   if (typeof content !== 'string') return 'content must be a string';
   if (content.length > 50000) return 'content must be 50000 characters or less';
+  return null;
+}
+
+function validateExecutionInput(input: Partial<CreateTodoInput | UpdateTodoInput>): string | null {
+  const type = input.executionType;
+  if (type !== undefined && !['manual', 'once', 'recurring', 'idle'].includes(type)) return 'executionType is invalid';
+  if (input.executionType === 'once' && !input.scheduleTime) return 'scheduleTime is required for once todos';
+  if (input.executionType === 'recurring' && !input.cronExpr) return 'cronExpr is required for recurring todos';
+  if (input.scheduleTime !== undefined && input.scheduleTime !== null && Number.isNaN(new Date(input.scheduleTime).getTime())) return 'scheduleTime is invalid';
   return null;
 }
 
@@ -72,12 +83,30 @@ router.post('/', async (req, res) => {
       res.status(400).json({ error: contentErr });
       return;
     }
+    const executionErr = validateExecutionInput(input);
+    if (executionErr) {
+      res.status(400).json({ error: executionErr });
+      return;
+    }
     const workspaceId = workspaceIdFromReq(req);
-    const todo = store.createTodo(workspaceId, {
+    const created = store.createTodo(workspaceId, {
       text: input.text,
       content: input.content,
       dueDate: input.dueDate,
+      executionType: input.executionType,
+      instruction: input.instruction,
+      scheduleTime: input.scheduleTime,
+      cronExpr: input.cronExpr,
+      executionStatus: input.executionStatus,
+      nextFireAt: input.nextFireAt,
+      notifyDesktop: input.notifyDesktop,
+      notifyInApp: input.notifyInApp,
+      notifyWecom: input.notifyWecom,
+      wecomRecipient: input.wecomRecipient,
     });
+    const todo = created.executionType === 'once' || created.executionType === 'recurring'
+      ? store.updateTodo(created.id, { nextFireAt: todoSchedulerService.recomputeNextFire(created) })!
+      : created;
     res.status(201).json({ todo });
   } catch (error) {
     diagLog('[todos] Failed to create todo: ' + (error instanceof Error ? error.message : String(error)));
@@ -104,16 +133,53 @@ router.put('/:todoId', async (req, res) => {
       res.status(400).json({ error: contentErr });
       return;
     }
+    const executionErr = validateExecutionInput(input);
+    if (executionErr) {
+      res.status(400).json({ error: executionErr });
+      return;
+    }
 
-    const todo = store.updateTodo(todoId, input);
+    let todo = store.updateTodo(todoId, input);
     if (!todo) {
       res.status(404).json({ error: 'Todo not found' });
       return;
+    }
+    if (todo.executionType === 'once' || todo.executionType === 'recurring') {
+      const scheduleChanged = input.executionType !== undefined || input.scheduleTime !== undefined || input.cronExpr !== undefined || input.executionStatus === 'active';
+      if (scheduleChanged) todo = store.updateTodo(todoId, { nextFireAt: todoSchedulerService.recomputeNextFire(todo) })!;
     }
     res.json({ todo });
   } catch (error) {
     diagLog('[todos] Failed to update todo: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to update todo' });
+  }
+});
+
+// GET /api/todos/:todoId/runs — all execution history is scoped to the Todo.
+router.get('/:todoId/runs', (req, res) => {
+  const todo = store.getTodoById(req.params.todoId);
+  if (!todo) return res.status(404).json({ error: 'Todo not found' });
+  return res.json({ runs: store.listTodoRuns(todo.id) });
+});
+
+// POST /api/todos/:todoId/runs — user-initiated execution, including retries.
+router.post('/:todoId/runs', async (req, res) => {
+  try {
+    const todo = store.getTodoById(req.params.todoId);
+    if (!todo) return res.status(404).json({ error: 'Todo not found' });
+    const requestedWorkspaceId = workspaceIdFromReq(req);
+    if (requestedWorkspaceId && todo.workspaceId && requestedWorkspaceId !== todo.workspaceId) {
+      return res.status(404).json({ error: 'Todo not found in this workspace' });
+    }
+    if (!todo.workspaceId && requestedWorkspaceId) {
+      store.updateTodo(todo.id, { workspaceId: requestedWorkspaceId });
+    }
+    const run = await todoExecutionService.runNow(todo.id);
+    return res.status(201).json({ run });
+  } catch (error) {
+    if (error instanceof TodoExecutionError) return res.status(error.code === 'NOT_FOUND' ? 404 : error.code === 'CONFLICT' ? 409 : 400).json({ error: error.message });
+    diagLog('[todos] Failed to start todo run: ' + (error instanceof Error ? error.message : String(error)));
+    return res.status(500).json({ error: 'Failed to start todo run' });
   }
 });
 
@@ -267,11 +333,21 @@ router.post('/:todoId/session', async (req, res) => {
       res.status(409).json({ error: 'Todo is already linked to a session' });
       return;
     }
-
+    // Legacy endpoint compatibility. New callers use POST /runs, which starts
+    // execution through TodoExecutionService and supports repeated Runs.
     const session = await chatService.createSession({ workspaceId: targetWorkspaceId, name: todo.text });
+    if (!todo.workspaceId) store.updateTodo(todoId, { workspaceId: targetWorkspaceId });
     store.linkTodoToSession(todoId, session.id);
+    store.createTodoRun({
+      todoId, sessionId: session.id, status: 'running', fireAt: new Date().toISOString(), startedAt: new Date().toISOString(),
+      instructionSnapshot: todo.instruction ?? todo.content ?? todo.text,
+    });
     res.status(201).json(session);
   } catch (error) {
+    if (error instanceof TodoExecutionError) {
+      res.status(error.code === 'NOT_FOUND' ? 404 : error.code === 'CONFLICT' ? 409 : 400).json({ error: error.message });
+      return;
+    }
     diagLog('[todos] Failed to create session from todo: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to create session from todo' });
   }

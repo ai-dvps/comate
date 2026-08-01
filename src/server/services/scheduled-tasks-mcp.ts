@@ -3,8 +3,8 @@ import { Router } from 'express';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { store } from '../storage/sqlite-store.js';
-import { scheduledTasksService } from './scheduled-tasks-service.js';
-import { SchedulerError } from './scheduler-service.js';
+import { todoExecutionService } from './todo-execution-service.js';
+import { todoSchedulerService } from './todo-scheduler-service.js';
 import { createStatelessMcpHttpRouter } from './mcp-http-router.js';
 
 export const SCHEDULED_TASKS_MCP_KEY = 'comate-scheduled-tasks';
@@ -49,8 +49,8 @@ function textResult(text: string, isError = false): CallToolResult {
   return { content: [{ type: 'text', text }], isError };
 }
 
-function describeSchedule(task: { scheduleType: string; scheduleTime: string | null; cronExpr: string | null }): string {
-  return task.scheduleType === 'once' ? `一次性 ${task.scheduleTime}` : `周期 ${task.cronExpr}`;
+function describeSchedule(task: { executionType: string; scheduleTime: string | null; cronExpr: string | null }): string {
+  return task.executionType === 'once' ? `一次性 ${task.scheduleTime}` : `周期 ${task.cronExpr}`;
 }
 
 interface ToolDef {
@@ -86,15 +86,12 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
       cronExpr?: string;
     }) => {
       try {
-        const task = await scheduledTasksService.createTask(deps.workspaceId, {
-          workspaceId: deps.workspaceId,
-          name: args.name,
-          instruction: args.instruction,
-          scheduleType: args.scheduleType,
-          scheduleTime: args.scheduleTime ?? null,
-          cronExpr: args.cronExpr ?? null,
+        const task = store.createTodo(deps.workspaceId, {
+          text: args.name, instruction: args.instruction, executionType: args.scheduleType,
+          scheduleTime: args.scheduleTime ?? null, cronExpr: args.cronExpr ?? null,
         });
-        return textResult(`定时任务已创建并生效（id: ${task.id}），将按调度执行。可在 Comate 的定时任务面板中查看和管理。`);
+        const configured = store.updateTodo(task.id, { nextFireAt: todoSchedulerService.recomputeNextFire(task) })!;
+        return textResult(`Todo 已创建并生效（id: ${configured.id}），将按调度执行。可在 Comate 的 Todo 面板中查看和管理。`);
       } catch (err) {
         return textResult(`创建任务失败：${err instanceof Error ? err.message : String(err)}`, true);
       }
@@ -106,11 +103,11 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
     description: '列出当前工作区的定时任务（含状态、下次触发时间、最近一次执行状态）。',
     inputSchema: {},
     handler: (async () => {
-      const tasks = scheduledTasksService
-        .listTasks(deps.workspaceId)
+      const tasks = store.getAllTodos({ workspaceId: deps.workspaceId })
+        .filter((todo) => todo.executionType === 'once' || todo.executionType === 'recurring')
         .map(
           (t) =>
-            `- [${t.status}] ${t.name}（${describeSchedule(t)}）下次触发: ${t.nextFireAt ?? '—'}；最近执行: ${t.latestRun?.status ?? '无'}（id: ${t.id}）`,
+            `- [${t.executionStatus}] ${t.text}（${describeSchedule(t)}）下次触发: ${t.nextFireAt ?? '—'}；最近执行: ${store.getLatestTodoRun(t.id)?.status ?? '无'}（id: ${t.id}）`,
         );
       return textResult(tasks.length > 0 ? tasks.join('\n') : '当前工作区没有定时任务。');
     }),
@@ -128,7 +125,9 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
       try {
         // Scope to the session's workspace: an agent must not mutate tasks
         // belonging to another workspace by guessing their ids.
-        scheduledTasksService.updateTask(args.taskId, { status: 'paused' }, deps.workspaceId);
+        const task = store.getTodoById(args.taskId);
+        if (!task || task.workspaceId !== deps.workspaceId) throw new Error('Todo 不存在');
+        store.updateTodo(task.id, { executionStatus: 'paused', nextFireAt: null });
         return textResult('任务已暂停。');
       } catch (err) {
         return textResult(`暂停失败：${err instanceof Error ? err.message : String(err)}`, true);
@@ -142,7 +141,9 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
       try {
-        scheduledTasksService.updateTask(args.taskId, { status: 'active' }, deps.workspaceId);
+        const task = store.getTodoById(args.taskId);
+        if (!task || task.workspaceId !== deps.workspaceId) throw new Error('Todo 不存在');
+        store.updateTodo(task.id, { executionStatus: 'active', nextFireAt: todoSchedulerService.recomputeNextFire(task) });
         return textResult('任务已恢复，将按调度继续触发。');
       } catch (err) {
         return textResult(`恢复失败：${err instanceof Error ? err.message : String(err)}`, true);
@@ -156,10 +157,11 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
     inputSchema: { taskId: z.string().min(1) },
     handler: (async (args: { taskId: string }) => {
       try {
-        const run = await scheduledTasksService.runNow(args.taskId, deps.workspaceId);
+        const task = store.getTodoById(args.taskId);
+        if (!task || task.workspaceId !== deps.workspaceId) throw new Error('Todo 不存在');
+        const run = await todoExecutionService.runNow(args.taskId);
         return textResult(`已触发执行（run id: ${run.id}），执行过程可在任务执行历史或对应会话中查看。`);
       } catch (err) {
-        if (err instanceof SchedulerError) return textResult(`无法执行：${err.message}`, true);
         return textResult(`无法执行：${err instanceof Error ? err.message : String(err)}`, true);
       }
     }),
