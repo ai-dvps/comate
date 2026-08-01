@@ -71,6 +71,9 @@ export default function TodoDetail({
   const asideRef = useRef<HTMLElement>(null)
   const [contentVisible, setContentVisible] = useState(false)
   const [runs, setRuns] = useState<TodoRun[]>([])
+  const [runsLoading, setRunsLoading] = useState(false)
+  const [runsError, setRunsError] = useState(false)
+  const [activeTab, setActiveTab] = useState<'details' | 'history'>('details')
 
   // Animate content when the selected todo changes.
   useEffect(() => {
@@ -85,10 +88,24 @@ export default function TodoDetail({
   }, [todo?.content, todo?.id])
 
   useEffect(() => {
-    if (!todo) { setRuns([]); return }
+    setActiveTab('details')
+  }, [todo?.id])
+
+  useEffect(() => {
+    if (!todo) { setRuns([]); setRunsLoading(false); setRunsError(false); return }
+    let cancelled = false
+    setRunsLoading(true)
+    setRunsError(false)
     void fetch(`/api/todos/${todo.id}/runs`).then(async (res) => {
-      if (res.ok) setRuns((await res.json()).runs ?? [])
-    }).catch(() => undefined)
+      if (!res.ok) throw new Error('Failed to fetch Todo runs')
+      const data = await res.json()
+      if (!cancelled) setRuns(data.runs ?? [])
+    }).catch(() => {
+      if (!cancelled) setRunsError(true)
+    }).finally(() => {
+      if (!cancelled) setRunsLoading(false)
+    })
+    return () => { cancelled = true }
   }, [todo?.id, todo?.updatedAt])
 
   const handleSpawn = async () => {
@@ -262,23 +279,44 @@ export default function TodoDetail({
             </div>
           </div>
 
-          <div className="mt-3 flex flex-col gap-2">
-            <button onClick={handleSpawn} disabled={!canSpawn || spawning}
-              className="flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent-hover active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50">
-              {runs.length ? <RotateCcw className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-              {runs.length ? t('runAgain') : t('spawnSession')}
+          <div className="mt-4 -mb-4 flex" role="tablist" aria-label={t('detailTabs')}>
+            <button type="button" role="tab" id="todo-detail-tab" aria-selected={activeTab === 'details'} aria-controls="todo-detail-panel"
+              onClick={() => setActiveTab('details')}
+              className={cn(
+                'border-b-2 px-2.5 py-2 text-xs font-medium transition-colors',
+                activeTab === 'details' ? 'border-accent text-text-primary' : 'border-transparent text-text-tertiary hover:text-text-secondary',
+              )}>
+              {t('detailTab')}
             </button>
-            {todo.sessionId && todo.workspaceId && (
-              <button type="button" onClick={() => { openSessionDirect(todo.workspaceId!, todo.sessionId!); onClose() }}
-                className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary active:translate-y-px">
-                {t('detailHasSession')} <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            )}
+            <button type="button" role="tab" id="todo-history-tab" aria-selected={activeTab === 'history'} aria-controls="todo-history-panel"
+              onClick={() => setActiveTab('history')}
+              className={cn(
+                'border-b-2 px-2.5 py-2 text-xs font-medium transition-colors',
+                activeTab === 'history' ? 'border-accent text-text-primary' : 'border-transparent text-text-tertiary hover:text-text-secondary',
+              )}>
+              {t('historyTab', { count: runs.length })}
+            </button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto">
-          <section className="border-b border-border/50 px-4 py-4">
+        {activeTab === 'details' ? (
+          <div id="todo-detail-panel" role="tabpanel" aria-labelledby="todo-detail-tab" className="flex-1 overflow-y-auto">
+            <div className="border-b border-border/50 px-4 py-4">
+              <div className="flex flex-col gap-2">
+                <button onClick={handleSpawn} disabled={!canSpawn || spawning}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent-hover active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50">
+                  {runs.length ? <RotateCcw className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                  {runs.length ? t('runAgain') : t('spawnSession')}
+                </button>
+                {todo.sessionId && todo.workspaceId && (
+                  <button type="button" onClick={() => { openSessionDirect(todo.workspaceId!, todo.sessionId!); onClose() }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary active:translate-y-px">
+                    {t('detailHasSession')} <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <section className="border-b border-border/50 px-4 py-4">
             <SectionTitle icon={<CalendarClock className="h-3.5 w-3.5" />} title={t('detailExecution')} />
             <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
               <Field label={t('detailStatus')}>
@@ -335,44 +373,7 @@ export default function TodoDetail({
             </dl>
           </section>
 
-          <section className="border-b border-border/50 px-4 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <SectionTitle icon={<Clock3 className="h-3.5 w-3.5" />} title={t('executionHistory')} />
-              {runs.length > 0 && <span className="text-[10px] text-text-tertiary">{t('executionHistoryCount', { count: runs.length })}</span>}
-            </div>
-            {runs.length === 0 ? (
-              <div className="mt-3 rounded-md bg-surface-hover/50 px-3 py-3 text-xs leading-5 text-text-tertiary">
-                {t('executionHistoryEmpty')}
-              </div>
-            ) : (
-              <div className="mt-3 ml-1 border-l border-border/70 pl-3">
-                {runs.map((run, index) => {
-                  const canOpenSession = !!run.sessionId && !!todo.workspaceId
-                  return <button key={run.id} type="button" disabled={!canOpenSession}
-                    onClick={() => run.sessionId && todo.workspaceId && openSessionDirect(todo.workspaceId, run.sessionId)}
-                    className={cn(
-                      'group relative -ml-[13px] flex w-[calc(100%+13px)] items-start gap-2.5 rounded-md py-2 pl-3 pr-2 text-left transition-colors',
-                      canOpenSession ? 'hover:bg-surface-hover active:translate-y-px' : 'cursor-default',
-                      index === 0 ? 'pt-0' : '',
-                    )}>
-                    <span className="absolute left-[-7px] top-[13px] flex h-3.5 w-3.5 items-center justify-center rounded-full bg-surface">
-                      <RunStatusIcon status={run.status} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-xs font-medium text-text-primary">{runStatusLabel[run.status]}</span>
-                        <time className="flex-shrink-0 text-[10px] text-text-tertiary">{new Date(run.fireAt).toLocaleString()}</time>
-                      </div>
-                      {run.reason && <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-text-secondary">{run.reason}</p>}
-                    </div>
-                    {canOpenSession && <ChevronRight className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5" />}
-                  </button>
-                })}
-              </div>
-            )}
-          </section>
-
-          <section className="border-b border-border/50 px-4 py-4">
+            <section className="border-b border-border/50 px-4 py-4">
             <SectionTitle icon={<ListTodo className="h-3.5 w-3.5" />} title={t('detailContext')} />
             <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
               <Field label={t('detailWorkspace')} className="col-span-2">
@@ -395,9 +396,9 @@ export default function TodoDetail({
               {todo.repoFullName && <Field label={t('groupRepo')} value={`${todo.repoFullName}#${todo.issueNumber ?? ''}`} />}
               <Field label={t('detailSynced')} value={todo.lastSyncedAt ? t('detailSynced') : t('detailNotSynced')} />
             </dl>
-          </section>
+            </section>
 
-          <section className="px-4 py-4">
+            <section className="px-4 py-4">
             <div className="flex items-center justify-between mb-2">
               <SectionTitle title={t('detailBody')} />
               <div className="flex items-center gap-1 rounded-md bg-surface-hover/50 p-0.5 border border-border/50">
@@ -448,8 +449,55 @@ export default function TodoDetail({
               )}
             </div>
             <ConflictReview todoId={todo.id} onResolved={onResolved} />
+            </section>
+          </div>
+        ) : (
+          <section id="todo-history-panel" role="tabpanel" aria-labelledby="todo-history-tab" className="flex-1 overflow-y-auto px-4 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <SectionTitle icon={<Clock3 className="h-3.5 w-3.5" />} title={t('executionHistory')} />
+              {!runsLoading && !runsError && <span className="text-[10px] text-text-tertiary">{t('executionHistoryCount', { count: runs.length })}</span>}
+            </div>
+            {runsLoading ? (
+              <div className="mt-3 space-y-3" aria-label={t('executionHistoryLoading')}>
+                <div className="h-11 animate-pulse rounded-md bg-surface-hover/70" />
+                <div className="h-11 animate-pulse rounded-md bg-surface-hover/50" />
+              </div>
+            ) : runsError ? (
+              <div className="mt-3 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-3 text-xs leading-5 text-destructive">
+                {t('executionHistoryLoadFailed')}
+              </div>
+            ) : runs.length === 0 ? (
+              <div className="mt-3 rounded-md bg-surface-hover/50 px-3 py-3 text-xs leading-5 text-text-tertiary">
+                {t('executionHistoryEmpty')}
+              </div>
+            ) : (
+              <div className="mt-3 ml-1 border-l border-border/70 pl-3">
+                {runs.map((run, index) => {
+                  const canOpenSession = !!run.sessionId && !!todo.workspaceId
+                  return <button key={run.id} type="button" disabled={!canOpenSession}
+                    onClick={() => run.sessionId && todo.workspaceId && openSessionDirect(todo.workspaceId, run.sessionId)}
+                    className={cn(
+                      'group relative -ml-[13px] flex w-[calc(100%+13px)] items-start gap-2.5 rounded-md py-2 pl-3 pr-2 text-left transition-colors',
+                      canOpenSession ? 'hover:bg-surface-hover active:translate-y-px' : 'cursor-default',
+                      index === 0 ? 'pt-0' : '',
+                    )}>
+                    <span className="absolute left-[-7px] top-[13px] flex h-3.5 w-3.5 items-center justify-center rounded-full bg-surface">
+                      <RunStatusIcon status={run.status} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-medium text-text-primary">{runStatusLabel[run.status]}</span>
+                        <time className="flex-shrink-0 text-[10px] text-text-tertiary">{new Date(run.fireAt).toLocaleString()}</time>
+                      </div>
+                      {run.reason && <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-text-secondary">{run.reason}</p>}
+                    </div>
+                    {canOpenSession && <ChevronRight className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5" />}
+                  </button>
+                })}
+              </div>
+            )}
           </section>
-        </div>
+        )}
       </div>
     </aside>
   )
