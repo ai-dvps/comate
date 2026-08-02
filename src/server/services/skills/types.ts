@@ -47,10 +47,23 @@ export interface Skill {
  * Mirrors upstream `SearchSkill`.
  */
 export interface SearchSkill {
+  /** Stable API identifier used by the client as its result key. */
+  id: string;
   name: string;
+  /**
+   * Legacy skills.sh identifier retained for callers of the existing search
+   * endpoint. GitHub repository results use their owner/repository name.
+   */
   slug: string;
   source: string;
+  /** Source reference passed to the existing resolver and installer. */
+  installSource: string;
+  /** Registry that returned this result. */
+  sourceKind: 'skills.sh' | 'skillshub' | 'xfyun' | 'skillhub-cn';
+  description: string;
   installs: number;
+  /** Optional provider timestamp in milliseconds, used by the newest sort. */
+  updatedAt?: number;
 }
 
 /**
@@ -108,6 +121,75 @@ export type SkillScope = 'project' | 'global';
  */
 export interface InstallResult {
   skillName: string;
+  /** Product classification. Package orchestration is runtime-compatible but not a catalog Skill. */
+  kind?: 'skill' | 'expert-package-orchestrator';
+  status: 'installed' | 'already-installed' | 'error';
+  path?: string;
+  error?: string;
+}
+
+export type InstalledSkillKind = 'skill' | 'expert-package-orchestrator';
+
+export interface ExpertPackageSummary {
+  slug: string;
+  displayName: string;
+  displayNameEn?: string;
+  summary: string;
+  summaryEn?: string;
+  scene: string;
+  subScene?: string;
+  skillCount: number;
+  source: 'skillhub.cn';
+}
+
+export interface ExpertPackageChild {
+  namespace: string;
+  slug: string;
+  displayName: string;
+  summary: string;
+  available: boolean;
+  source: string;
+  securityReports?: ExpertSkillSecurityReport[];
+}
+
+export interface ExpertPackageDetail extends ExpertPackageSummary {
+  content: string;
+  contentEn?: string;
+  children: ExpertPackageChild[];
+  complete: boolean;
+  unavailableReason?: string;
+}
+
+export interface ExpertSkillSecurityReport {
+  provider: string;
+  status: string;
+  statusText: string;
+  reportUrl?: string;
+}
+
+export interface ExpertSkillDetail {
+  namespace: string;
+  slug: string;
+  displayName: string;
+  summary: string;
+  category: string;
+  owner: { handle: string; displayName: string };
+  version: string;
+  stats: { downloads: number; installs: number };
+  securityReports: ExpertSkillSecurityReport[];
+  /** Raw, validated SKILL.md from the same registry coordinate. */
+  documentation?: string;
+  source: string;
+}
+
+export type ExpertPackageInstallItemKind = 'orchestrator' | 'skill';
+
+export interface ExpertPackageInstallResult {
+  /** Stable retry identity owned by the canonical package definition. */
+  id: string;
+  kind: ExpertPackageInstallItemKind;
+  source: string;
+  name: string;
   status: 'installed' | 'already-installed' | 'error';
   path?: string;
   error?: string;

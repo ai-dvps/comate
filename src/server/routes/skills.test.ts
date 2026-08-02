@@ -102,6 +102,11 @@ describe('skills routes', () => {
   let originalRemove: typeof skillsService.remove;
   let originalUpdate: typeof skillsService.update;
   let originalUpdateAll: typeof skillsService.updateAll;
+  let originalListExpertPackages: typeof skillsService.listExpertPackages;
+  let originalGetExpertPackage: typeof skillsService.getExpertPackage;
+  let originalGetExpertSkillDetail: typeof skillsService.getExpertSkillDetail;
+  let originalIsExpertSkillInPackage: typeof skillsService.isExpertSkillInPackage;
+  let originalInstallExpertPackage: typeof skillsService.installExpertPackage;
 
   beforeEach(() => {
     tmpWorkspace = mkdtempSync(join(tmpdir(), 'skills-routes-ws-'));
@@ -113,6 +118,11 @@ describe('skills routes', () => {
     originalRemove = skillsService.remove.bind(skillsService);
     originalUpdate = skillsService.update.bind(skillsService);
     originalUpdateAll = skillsService.updateAll.bind(skillsService);
+    originalListExpertPackages = skillsService.listExpertPackages.bind(skillsService);
+    originalGetExpertPackage = skillsService.getExpertPackage.bind(skillsService);
+    originalGetExpertSkillDetail = skillsService.getExpertSkillDetail.bind(skillsService);
+    originalIsExpertSkillInPackage = skillsService.isExpertSkillInPackage.bind(skillsService);
+    originalInstallExpertPackage = skillsService.installExpertPackage.bind(skillsService);
   });
 
   afterEach(() => {
@@ -124,6 +134,11 @@ describe('skills routes', () => {
     skillsService.remove = originalRemove;
     skillsService.update = originalUpdate;
     skillsService.updateAll = originalUpdateAll;
+    skillsService.listExpertPackages = originalListExpertPackages;
+    skillsService.getExpertPackage = originalGetExpertPackage;
+    skillsService.getExpertSkillDetail = originalGetExpertSkillDetail;
+    skillsService.isExpertSkillInPackage = originalIsExpertSkillInPackage;
+    skillsService.installExpertPackage = originalInstallExpertPackage;
     rmSync(tmpWorkspace, { recursive: true, force: true });
   });
 
@@ -167,25 +182,38 @@ describe('skills routes', () => {
   describe('GET /search', () => {
     it('returns 200 with results, delegating the query to the service', async () => {
       const handlers = await importRouteHandlers();
-      let capturedQuery = '';
+      let capturedQuery: { keyword: string; scene?: string; preferChinese?: boolean; noApiKey?: boolean; sort?: string } | undefined;
       skillsService.search = async (q) => {
         capturedQuery = q;
-        return [{ id: 'demo', name: 'demo', source: 'a/b', installs: 5 }];
+        return [{
+          id: 'demo',
+          name: 'demo',
+          slug: 'demo',
+          source: 'a/b',
+          installSource: 'a/b',
+          sourceKind: 'skills.sh',
+          description: '',
+          installs: 5,
+        }];
       };
 
-      const req = { query: { q: 'design' } };
+      const req = { query: { q: 'design', scene: 'development', preferChinese: 'true', noApiKey: 'true', sort: 'downloads' } };
       const res = createMockRes();
       await handlers['/search'].get(req, res);
 
       assert.strictEqual(res.statusCode, 200);
-      assert.strictEqual(capturedQuery, 'design');
-      const body = res.jsonBody as { skills: Array<{ name: string }> };
+      assert.deepStrictEqual(capturedQuery, {
+        keyword: 'design', scene: 'development', preferChinese: true, noApiKey: true, sort: 'downloads',
+      });
+      const body = res.jsonBody as { skills: Array<{ name: string; slug: string; installSource: string }> };
       assert.strictEqual(body.skills[0]!.name, 'demo');
+      assert.strictEqual(body.skills[0]!.slug, 'demo');
+      assert.strictEqual(body.skills[0]!.installSource, 'a/b');
     });
 
     it('defaults q to empty string when not provided', async () => {
       const handlers = await importRouteHandlers();
-      let capturedQuery = '__unset__';
+      let capturedQuery: { keyword: string } | undefined;
       skillsService.search = async (q) => {
         capturedQuery = q;
         return [];
@@ -196,7 +224,170 @@ describe('skills routes', () => {
       await handlers['/search'].get(req, res);
 
       assert.strictEqual(res.statusCode, 200);
-      assert.strictEqual(capturedQuery, '');
+      assert.deepStrictEqual(capturedQuery, { keyword: '' });
+    });
+
+    it('rejects unknown structured filter values', async () => {
+      const handlers = await importRouteHandlers();
+      const res = createMockRes();
+      await handlers['/search'].get({ query: { q: 'design', scene: 'unknown' } }, res);
+
+      assert.strictEqual(res.statusCode, 400);
+      assert.deepStrictEqual(res.jsonBody, { error: 'Invalid scene' });
+    });
+  });
+
+  describe('Expert Packages', () => {
+    it('forwards combined list filters and pagination', async () => {
+      const handlers = await importRouteHandlers();
+      let captured: unknown;
+      skillsService.listExpertPackages = async (input) => {
+        captured = input;
+        return { packages: [], total: 0 };
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages'].get({
+        query: { keyword: ' test ', scene: 'tech', page: '2', pageSize: '40' },
+      }, res);
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(captured, { keyword: 'test', scene: 'tech', page: 2, pageSize: 40 });
+    });
+
+    it('rejects an unknown package scene before calling the provider', async () => {
+      const handlers = await importRouteHandlers();
+      let called = false;
+      skillsService.listExpertPackages = async () => {
+        called = true;
+        return { packages: [], total: 0 };
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages'].get({ query: { scene: 'unknown' } }, res);
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(called, false);
+    });
+
+    it('returns normalized package detail and rejects malformed slugs', async () => {
+      const handlers = await importRouteHandlers();
+      let requestedSlug = '';
+      skillsService.getExpertPackage = async (slug) => {
+        requestedSlug = slug;
+        return {
+          slug,
+          displayName: 'Test Package',
+          summary: 'A package',
+          scene: 'tech',
+          skillCount: 1,
+          source: 'skillhub.cn',
+          content: '# Workflow',
+          children: [],
+          complete: false,
+        };
+      };
+
+      const valid = createMockRes();
+      await handlers['/expert-packages/:slug'].get({ params: { slug: 'test-package' } }, valid);
+      assert.strictEqual(valid.statusCode, 200);
+      assert.strictEqual(requestedSlug, 'test-package');
+      assert.strictEqual((valid.jsonBody as { package: { slug: string } }).package.slug, 'test-package');
+
+      const invalid = createMockRes();
+      await handlers['/expert-packages/:slug'].get({ params: { slug: 'bad/slug' } }, invalid);
+      assert.strictEqual(invalid.statusCode, 400);
+      assert.strictEqual(requestedSlug, 'test-package');
+    });
+
+    it('loads only Skills that belong to the requested package', async () => {
+      const handlers = await importRouteHandlers();
+      let detailCalls = 0;
+      skillsService.getExpertSkillDetail = async (namespace, slug) => {
+        detailCalls += 1;
+        return {
+          namespace,
+          slug,
+          displayName: 'Child',
+          summary: 'Child summary',
+          category: 'tech',
+          owner: { handle: namespace, displayName: 'Owner' },
+          version: '1.0.0',
+          stats: { downloads: 1, installs: 1 },
+          securityReports: [],
+          source: `skillhub-cn:${namespace}/${slug}`,
+        };
+      };
+      skillsService.isExpertSkillInPackage = async () => false;
+
+      const missing = createMockRes();
+      await handlers['/expert-packages/:packageSlug/skills/:namespace/:slug'].get({
+        params: { packageSlug: 'test-package', namespace: 'owner', slug: 'child' },
+      }, missing);
+      assert.strictEqual(missing.statusCode, 404);
+      assert.strictEqual(detailCalls, 0);
+
+      skillsService.isExpertSkillInPackage = async () => true;
+      const included = createMockRes();
+      await handlers['/expert-packages/:packageSlug/skills/:namespace/:slug'].get({
+        params: { packageSlug: 'test-package', namespace: 'owner', slug: 'child' },
+      }, included);
+      assert.strictEqual(included.statusCode, 200);
+      assert.strictEqual(detailCalls, 1);
+      assert.strictEqual((included.jsonBody as { skill: { slug: string } }).skill.slug, 'child');
+    });
+
+    it('preserves mixed package install results and retry ids', async () => {
+      const handlers = await importRouteHandlers();
+      let capturedItemIds: string[] | undefined;
+      skillsService.installExpertPackage = async (args) => {
+        capturedItemIds = args.itemIds;
+        return [
+          { id: 'skill:a/ok', kind: 'skill', source: 'skillhub-cn:a/ok', name: 'ok', status: 'installed' },
+          { id: 'skill:a/bad', kind: 'skill', source: 'skillhub-cn:a/bad', name: 'bad', status: 'error', error: 'download failed' },
+        ];
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: 'tech-test' },
+        body: { scope: 'global', itemIds: ['skill:a/bad'] },
+      }, res);
+      assert.strictEqual(res.statusCode, 201);
+      assert.deepStrictEqual(capturedItemIds, ['skill:a/bad']);
+      const body = res.jsonBody as { results: unknown[]; summary: { failed: number } };
+      assert.strictEqual(body.results.length, 2);
+      assert.strictEqual(body.summary.failed, 1);
+    });
+
+    it('rejects malformed retry item input without installation', async () => {
+      const handlers = await importRouteHandlers();
+      let called = false;
+      skillsService.installExpertPackage = async () => {
+        called = true;
+        return [];
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: 'tech-test' },
+        body: { scope: 'global', itemIds: [] },
+      }, res);
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(called, false);
+    });
+
+    it('preserves all failed package results in the error response', async () => {
+      const handlers = await importRouteHandlers();
+      skillsService.installExpertPackage = async () => [{
+        id: 'skill:a/bad',
+        kind: 'skill',
+        source: 'skillhub-cn:a/bad',
+        name: 'bad',
+        status: 'error',
+        error: 'download failed',
+      }];
+      const res = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: 'test-package' },
+        body: { scope: 'global' },
+      }, res);
+      assert.strictEqual(res.statusCode, 422);
+      assert.strictEqual((res.jsonBody as { results: unknown[] }).results.length, 1);
     });
   });
 

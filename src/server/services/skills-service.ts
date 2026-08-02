@@ -24,7 +24,7 @@ import { tmpdir } from 'os';
 import { join, relative } from 'path';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import {
-  searchSkillsAPI,
+  searchFederatedSkills,
   parseSource,
   cloneRepository,
   discoverSkills,
@@ -36,13 +36,28 @@ import {
   getSkillsDirForScope,
   buildProjectLockEntry,
   buildGlobalLockEntry,
+  getProjectLockPath,
+  getGlobalLockPath,
+  materializeRegistrySource,
+  parseRegistrySource,
+  registrySourceUrl,
+  installCoordinator,
+  getExpertPackage,
+  getExpertPackageDefinition,
+  getExpertSkill,
+  listExpertPackages,
   type SearchSkill,
   type DiscoveredSkill,
   type Skill,
   type InstallResult,
   type LocalSkillLockEntry,
   type GlobalSkillLockEntry,
+  type ExpertPackageInstallResult,
+  type ExpertSkillDetail,
+  type ExpertPackageDetail,
+  type ExpertPackageSummary,
 } from './skills/index.js';
+import type { SkillSearchQuery } from './skills/index.js';
 import {
   readProjectLock,
   readGlobalLock,
@@ -66,6 +81,9 @@ export function assertSkillScope(scope: string): asserts scope is SkillScope {
 
 export interface InstalledSkill {
   name: string;
+  kind: 'skill' | 'expert-package-orchestrator';
+  /** Description parsed from the installed skill's local SKILL.md, when available. */
+  description?: string;
   /** 'project' or 'global' */
   scope: SkillScope;
   /** Original source identifier (e.g., "owner/repo") */
@@ -99,6 +117,8 @@ export interface InstallArgs {
    * (Reinstall flow per R8).
    */
   force?: boolean;
+  /** Server-owned snapshot used only while expanding an Expert Package install. */
+  packageOrchestrationContent?: string;
 }
 
 export interface UninstallArgs {
@@ -132,13 +152,39 @@ export interface UpdateAllResult {
   error?: string;
 }
 
-class SkillsService {
+export interface InstallExpertPackageArgs {
+  packageSlug: string;
+  scope: SkillScope;
+  workspacePath?: string;
+  /** Stable item ids from a previous failed attempt. Omit to install all items. */
+  itemIds?: string[];
+}
+
+export class SkillsService {
   // -----------------------------------------------------------------------
   // Search
   // -----------------------------------------------------------------------
 
-  async search(query: string): Promise<SearchSkill[]> {
-    return searchSkillsAPI(query);
+  async search(query: SkillSearchQuery): Promise<SearchSkill[]> {
+    return searchFederatedSkills(query);
+  }
+
+  async listExpertPackages(input: {
+    keyword?: string;
+    scene?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ packages: ExpertPackageSummary[]; total: number }> {
+    return listExpertPackages(input);
+  }
+
+  async getExpertPackage(slug: string): Promise<ExpertPackageDetail> {
+    return getExpertPackage(slug);
+  }
+
+  async isExpertSkillInPackage(packageSlug: string, namespace: string, slug: string): Promise<boolean> {
+    const definition = await getExpertPackageDefinition(packageSlug);
+    return definition.coordinates.some((item) => item.namespace === namespace && item.slug === slug);
   }
 
   // -----------------------------------------------------------------------
@@ -154,6 +200,18 @@ class SkillsService {
    * can render a multi-select picker.
    */
   async resolveSource(args: ResolveSourceArgs): Promise<DiscoveredSkill[]> {
+    const registrySource = parseRegistrySource(args.source);
+    if (registrySource) {
+      const tempDir = mkdtempSync(join(tmpdir(), 'comate-skills-resolve-'));
+      try {
+        await materializeRegistrySource(registrySource, tempDir);
+        const skills = await discoverSkills(tempDir);
+        return skills.map((s) => toDiscoveredSkill(s, tempDir));
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+
     const parsed = parseSource(args.source, args.workspacePath);
 
     if (parsed.type === 'local') {
@@ -191,26 +249,39 @@ class SkillsService {
   // -----------------------------------------------------------------------
 
   async install(args: InstallArgs): Promise<InstallResult[]> {
-    const { source, skills: requestedSkills, scope, workspacePath, force } = args;
+    const {
+      source, skills: requestedSkills, scope, workspacePath, force, packageOrchestrationContent,
+    } = args;
     if (requestedSkills.length === 0) {
       return [];
     }
 
-    const parsed = parseSource(source, workspacePath);
     const results: InstallResult[] = [];
 
     // For local source, walk in place; for remote, clone to temp first.
     let sourceRoot: string;
     let tempDir: string | null = null;
 
-    if (parsed.type === 'local') {
-      sourceRoot = parsed.localPath!;
+    const registrySource = parseRegistrySource(source);
+    const parsed = registrySource ? null : parseSource(source, workspacePath);
+
+    if (registrySource) {
+      tempDir = mkdtempSync(join(tmpdir(), 'comate-skills-install-'));
+      try {
+        await materializeRegistrySource(registrySource, tempDir, { packageOrchestrationContent });
+      } catch (error) {
+        rmSync(tempDir, { recursive: true, force: true });
+        throw error;
+      }
+      sourceRoot = tempDir;
+    } else if (parsed!.type === 'local') {
+      sourceRoot = parsed!.localPath!;
       if (!existsSync(sourceRoot)) {
         throw new Error(`Local source path does not exist: ${sourceRoot}`);
       }
     } else {
       tempDir = mkdtempSync(join(tmpdir(), 'comate-skills-install-'));
-      const cloneResult = await cloneRepository(parsed.url, tempDir, { ref: parsed.ref });
+      const cloneResult = await cloneRepository(parsed!.url, tempDir, { ref: parsed!.ref });
       if (!cloneResult.success) {
         try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
         throw new Error(cloneResult.error ?? 'Failed to clone repository');
@@ -220,7 +291,19 @@ class SkillsService {
 
     try {
       // Discover available skills so we can match by name.
-      const allSkills = await discoverSkills(sourceRoot, parsed.subpath);
+      const allSkills = await discoverSkills(sourceRoot, parsed?.subpath);
+      const expectedRegistryName = registrySource?.packageSlug ?? registrySource?.slug;
+      if (
+        expectedRegistryName &&
+        (allSkills.length !== 1 || allSkills[0]?.name !== expectedRegistryName)
+      ) {
+        return requestedSkills.map((skillName) => ({
+          skillName,
+          kind: registrySource?.kind ?? 'skill',
+          status: 'error',
+          error: `Registry source must contain exactly one Skill named "${expectedRegistryName}".`,
+        }));
+      }
       const skillByName = new Map<string, Skill>();
       for (const s of allSkills) {
         skillByName.set(s.name, s);
@@ -231,6 +314,7 @@ class SkillsService {
         if (!skill) {
           results.push({
             skillName: requestedName,
+            kind: registrySource?.kind ?? 'skill',
             status: 'error',
             error: `Skill "${requestedName}" not found in source. Available: ${[...skillByName.keys()].slice(0, 10).join(', ')}${skillByName.size > 10 ? '…' : ''}`,
           });
@@ -238,42 +322,70 @@ class SkillsService {
         }
 
         try {
-          const copyResult = await copySkillToScope(
-            skill.path,
-            { skillName: skill.name, scope, workspacePath },
-            { force }
+          const result = await installCoordinator.run(
+            this.scopeMutationKey(scope, workspacePath),
+            async (): Promise<InstallResult> => {
+              const destPath = join(getSkillsDirForScope(scope, workspacePath), skill.name);
+              const existedBeforeCopy = existsSync(destPath);
+              const copyResult = await copySkillToScope(
+                skill.path,
+                { skillName: skill.name, scope, workspacePath },
+                { force }
+              );
+
+              if (copyResult.status === 'already-installed') {
+                const existingEntry = await this.readLockEntry(scope, workspacePath, skill.name);
+                if (registrySource && existingEntry?.source !== source) {
+                  return {
+                    skillName: skill.name,
+                    kind: registrySource.kind,
+                    status: 'error',
+                    error: `Skill name "${skill.name}" is already used by another source in this scope.`,
+                  };
+                }
+                return {
+                  skillName: skill.name,
+                  kind: registrySource?.kind ?? 'skill',
+                  status: 'already-installed',
+                  path: copyResult.destPath,
+                };
+              }
+
+              try {
+                await this.writeLockEntry({
+                  scope,
+                  workspacePath,
+                  skillName: skill.name,
+                  source,
+                  sourceUrl: registrySource ? registrySourceUrl(registrySource) : parsed!.url,
+                  sourceType: registrySource ? 'registry' : parsed!.type,
+                  ref: parsed?.ref,
+                  skillPath: this.computeSkillPathForLock(sourceRoot, skill.path),
+                  computedHash: copyResult.computedHash,
+                });
+              } catch (error) {
+                // A fresh directory without a lock entry is not a valid install.
+                // Forced overwrites are intentionally not deleted because doing so
+                // would destroy the user's previous installation.
+                if (!existedBeforeCopy) {
+                  rmSync(copyResult.destPath, { recursive: true, force: true });
+                }
+                throw error;
+              }
+
+              return {
+                skillName: skill.name,
+                kind: registrySource?.kind ?? 'skill',
+                status: 'installed',
+                path: copyResult.destPath,
+              };
+            },
           );
-
-          if (copyResult.status === 'already-installed') {
-            results.push({
-              skillName: skill.name,
-              status: 'already-installed',
-              path: copyResult.destPath,
-            });
-            continue;
-          }
-
-          // Write lock entry.
-          await this.writeLockEntry({
-            scope,
-            workspacePath,
-            skillName: skill.name,
-            source,
-            sourceUrl: parsed.url,
-            sourceType: parsed.type,
-            ref: parsed.ref,
-            skillPath: this.computeSkillPathForLock(sourceRoot, skill.path),
-            computedHash: copyResult.computedHash,
-          });
-
-          results.push({
-            skillName: skill.name,
-            status: 'installed',
-            path: copyResult.destPath,
-          });
+          results.push(result);
         } catch (err) {
           results.push({
             skillName: skill.name,
+            kind: registrySource?.kind ?? 'skill',
             status: 'error',
             error: (err as Error).message,
           });
@@ -285,6 +397,92 @@ class SkillsService {
       }
     }
 
+    return results;
+  }
+
+  async getExpertSkillDetail(namespace: string, slug: string): Promise<ExpertSkillDetail> {
+    const detail = await getExpertSkill(namespace, slug);
+    const tempDir = mkdtempSync(join(tmpdir(), 'comate-expert-skill-doc-'));
+    try {
+      const source = parseRegistrySource(detail.source)!;
+      await materializeRegistrySource(source, tempDir);
+      const skills = await discoverSkills(tempDir);
+      if (skills.length !== 1 || skills[0]?.name !== slug || !skills[0].rawContent) {
+        throw new Error(`Registry source must contain exactly one Skill named "${slug}".`);
+      }
+      return { ...detail, documentation: skills[0].rawContent };
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  async installExpertPackage(args: InstallExpertPackageArgs): Promise<ExpertPackageInstallResult[]> {
+    const detail = await getExpertPackage(args.packageSlug);
+    if (!detail.complete) {
+      throw new Error(detail.unavailableReason || 'Expert Package is incomplete');
+    }
+
+    const items: Array<{
+      id: string;
+      kind: 'orchestrator' | 'skill';
+      source: string;
+      name: string;
+      packageOrchestrationContent?: string;
+    }> = [
+      {
+        id: `orchestrator:${detail.slug}`,
+        kind: 'orchestrator',
+        source: `skillhub-package:${detail.slug}`,
+        name: detail.slug,
+        packageOrchestrationContent: detail.content,
+      },
+      ...detail.children.map((child) => ({
+        id: `skill:${child.namespace}/${child.slug}`,
+        kind: 'skill' as const,
+        source: child.source,
+        name: child.slug,
+      })),
+    ];
+    const byId = new Map(items.map((item) => [item.id, item]));
+    const requestedIds = args.itemIds ?? items.map((item) => item.id);
+    if (requestedIds.length === 0 || new Set(requestedIds).size !== requestedIds.length) {
+      throw new Error('Package install itemIds must be a non-empty unique list');
+    }
+    for (const id of requestedIds) {
+      if (!byId.has(id)) throw new Error(`Install item "${id}" does not belong to this Expert Package`);
+    }
+
+    const results: ExpertPackageInstallResult[] = [];
+    for (const id of requestedIds) {
+      const item = byId.get(id)!;
+      try {
+        const [result] = await this.install({
+          source: item.source,
+          skills: [item.name],
+          scope: args.scope,
+          workspacePath: args.workspacePath,
+          packageOrchestrationContent: item.packageOrchestrationContent,
+        });
+        results.push({
+          id: item.id,
+          kind: item.kind,
+          source: item.source,
+          name: item.name,
+          status: result?.status ?? 'error',
+          ...(result?.path ? { path: result.path } : {}),
+          ...(result?.error ? { error: result.error } : {}),
+        });
+      } catch (error) {
+        results.push({
+          id: item.id,
+          kind: item.kind,
+          source: item.source,
+          name: item.name,
+          status: 'error',
+          error: (error as Error).message,
+        });
+      }
+    }
     return results;
   }
 
@@ -335,11 +533,17 @@ class SkillsService {
 
     const base: InstalledSkill = {
       name,
+      kind: entry.source.startsWith('skillhub-package:') ? 'expert-package-orchestrator' : 'skill',
       scope,
       source: entry.source,
       installPath,
       isLegacySymlink,
     };
+
+    const skillMetadata = await parseSkillMd(join(installPath, 'SKILL.md'), { includeInternal: true });
+    if (skillMetadata?.description) {
+      base.description = skillMetadata.description;
+    }
 
     if (scope === 'project') {
       const p = entry as LocalSkillLockEntry;
@@ -361,20 +565,15 @@ class SkillsService {
   async remove(args: UninstallArgs): Promise<UninstallResult> {
     const { skillName, scope, workspacePath } = args;
     try {
-      let removed = true;
-      try {
-        removed = await removeSkillFromScope({ skillName, scope, workspacePath });
-      } catch (err) {
-        // Symlink-refusal error etc. — surface as error result.
-        return {
-          skillName,
-          status: 'error',
-          error: (err as Error).message,
-        };
-      }
-
-      // Always remove the lock entry (lock is source-of-truth for "installed")
-      await this.removeLockEntry({ scope, workspacePath, skillName });
+      const removed = await installCoordinator.run(
+        this.scopeMutationKey(scope, workspacePath),
+        async () => {
+          const didRemove = await removeSkillFromScope({ skillName, scope, workspacePath });
+          // Always remove the lock entry (lock is source-of-truth for "installed")
+          await this.removeLockEntry({ scope, workspacePath, skillName });
+          return didRemove;
+        },
+      );
 
       return {
         skillName,
@@ -422,7 +621,7 @@ class SkillsService {
 
     // Re-install with force=true (overwrites existing copy)
     const installResults = await this.install({
-      source: entry.sourceUrl ?? entry.source,
+      source: entry.sourceType === 'registry' ? entry.source : entry.sourceUrl ?? entry.source,
       skills: [skillName],
       scope,
       workspacePath,
@@ -509,9 +708,11 @@ class SkillsService {
       const lock = await readGlobalLock();
       const existing = lock.skills[skillName];
       const now = new Date().toISOString();
-      // Use owner/repo as the source identifier when available, falling back to URL.
-      const parsed = parseSource(source, workspacePath);
-      const sourceIdentifier = getOwnerRepo(parsed) ?? sourceUrl;
+      // Registry coordinates must stay intact so update can re-download them.
+      // Git sources retain the existing owner/repo-friendly lock representation.
+      const sourceIdentifier = sourceType === 'registry'
+        ? source
+        : getOwnerRepo(parseSource(source, workspacePath)) ?? sourceUrl;
       lock.skills[skillName] = buildGlobalLockEntry({
         source: sourceIdentifier,
         sourceType,
@@ -523,6 +724,14 @@ class SkillsService {
       });
       await writeGlobalLock(lock);
     }
+  }
+
+  private scopeMutationKey(scope: SkillScope, workspacePath?: string): string {
+    if (scope === 'project') {
+      if (!workspacePath) throw new Error('workspacePath is required for project-scope mutations');
+      return getProjectLockPath(workspacePath);
+    }
+    return getGlobalLockPath();
   }
 
   private async removeLockEntry(args: {
@@ -551,16 +760,16 @@ class SkillsService {
     scope: SkillScope,
     workspacePath: string | undefined,
     skillName: string
-  ): Promise<{ source: string; sourceUrl?: string } | null> {
+  ): Promise<{ source: string; sourceUrl?: string; sourceType?: string } | null> {
     if (scope === 'project') {
       if (!workspacePath) return null;
       const lock = await readProjectLock(workspacePath);
       const entry = lock.skills[skillName];
-      return entry ? { source: entry.source } : null;
+      return entry ? { source: entry.source, sourceType: entry.sourceType } : null;
     }
     const lock = await readGlobalLock();
     const entry = lock.skills[skillName];
-    return entry ? { source: entry.source, sourceUrl: entry.sourceUrl } : null;
+    return entry ? { source: entry.source, sourceUrl: entry.sourceUrl, sourceType: entry.sourceType } : null;
   }
 
   /**

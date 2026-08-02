@@ -24,8 +24,30 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { skillsService, assertSkillScope } from '../services/skills-service.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import type { SkillScope } from '../services/skills-service.js';
+import {
+  ExpertPackageProviderError,
+  expertPackageLimits,
+  isExpertPackageScene,
+  isSkillScene,
+  isSkillSort,
+  type SkillSearchQuery,
+} from '../services/skills/index.js';
 
 const router = Router();
+const COORDINATE = /^[A-Za-z0-9._-]+$/;
+
+function sendExpertPackageError(error: unknown, res: Response): void {
+  if (error instanceof ExpertPackageProviderError) {
+    const status = error.code === 'not-found' ? 404
+      : error.code === 'invalid-input' ? 400
+      : error.code === 'unavailable' ? 503
+      : 502;
+    res.status(status).json({ error: error.message, code: error.code });
+    return;
+  }
+  console.error('Expert Package request failed:', error);
+  res.status(500).json({ error: 'Expert Package request failed' });
+}
 
 /**
  * Resolve a workspaceId to its on-disk folderPath.
@@ -76,15 +98,156 @@ router.get('/installed', async (req, res) => {
   }
 });
 
-// GET /api/skills/search?q=
+// GET /api/skills/search?q=&scene=&preferChinese=&noApiKey=&sort=
 router.get('/search', async (req, res) => {
   try {
-    const query = (req.query.q as string | undefined) ?? '';
+    const scene = req.query.scene;
+    const sort = req.query.sort;
+    if (scene !== undefined && !isSkillScene(scene)) {
+      res.status(400).json({ error: 'Invalid scene' });
+      return;
+    }
+    if (sort !== undefined && !isSkillSort(sort)) {
+      res.status(400).json({ error: 'Invalid sort' });
+      return;
+    }
+    const query: SkillSearchQuery = {
+      keyword: typeof req.query.q === 'string' ? req.query.q : '',
+      ...(typeof scene === 'string' ? { scene } : {}),
+      ...(req.query.preferChinese === 'true' ? { preferChinese: true } : {}),
+      ...(req.query.noApiKey === 'true' ? { noApiKey: true } : {}),
+      ...(typeof sort === 'string' ? { sort } : {}),
+    };
     const results = await skillsService.search(query);
     res.json({ skills: results });
   } catch (error) {
     console.error('Failed to search skills:', error);
     res.status(500).json({ error: 'Failed to search skills' });
+  }
+});
+
+// GET /api/skills/expert-packages?keyword=&scene=&page=&pageSize=
+router.get('/expert-packages', async (req, res) => {
+  try {
+    const scene = req.query.scene;
+    if (scene !== undefined && !isExpertPackageScene(scene)) {
+      res.status(400).json({ error: 'Invalid Expert Package scene' });
+      return;
+    }
+    const page = req.query.page === undefined ? 1 : Number(req.query.page);
+    const pageSize = req.query.pageSize === undefined ? 20 : Number(req.query.pageSize);
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) {
+      res.status(400).json({ error: 'page and pageSize are invalid' });
+      return;
+    }
+    const result = await skillsService.listExpertPackages({
+      ...(typeof req.query.keyword === 'string' && req.query.keyword.trim()
+        ? { keyword: req.query.keyword.trim() }
+        : {}),
+      ...(typeof scene === 'string' ? { scene } : {}),
+      page,
+      pageSize,
+    });
+    res.json(result);
+  } catch (error) {
+    sendExpertPackageError(error, res);
+  }
+});
+
+// GET /api/skills/expert-packages/:slug
+router.get('/expert-packages/:slug', async (req, res) => {
+  const slug = req.params.slug;
+  if (!COORDINATE.test(slug)) {
+    res.status(400).json({ error: 'Invalid Expert Package slug' });
+    return;
+  }
+  try {
+    res.json({ package: await skillsService.getExpertPackage(slug) });
+  } catch (error) {
+    sendExpertPackageError(error, res);
+  }
+});
+
+// GET /api/skills/expert-packages/:packageSlug/skills/:namespace/:slug
+router.get('/expert-packages/:packageSlug/skills/:namespace/:slug', async (req, res) => {
+  const { packageSlug, namespace, slug } = req.params;
+  if (![packageSlug, namespace, slug].every((value) => COORDINATE.test(value))) {
+    res.status(400).json({ error: 'Invalid Expert Package Skill coordinate' });
+    return;
+  }
+  try {
+    if (!await skillsService.isExpertSkillInPackage(packageSlug, namespace, slug)) {
+      res.status(404).json({ error: 'Skill is not included in this Expert Package' });
+      return;
+    }
+    res.json({ skill: await skillsService.getExpertSkillDetail(namespace, slug) });
+  } catch (error) {
+    sendExpertPackageError(error, res);
+  }
+});
+
+// POST /api/skills/expert-packages/:slug/install
+router.post('/expert-packages/:slug/install', async (req, res) => {
+  const packageSlug = req.params.slug;
+  if (!COORDINATE.test(packageSlug)) {
+    res.status(400).json({ error: 'Invalid Expert Package slug' });
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const { scope, workspaceId, itemIds } = body as {
+    scope?: string;
+    workspaceId?: string;
+    itemIds?: unknown;
+  };
+  try {
+    assertSkillScope(scope ?? '');
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+    return;
+  }
+  if (itemIds !== undefined && (
+    !Array.isArray(itemIds) ||
+    itemIds.length === 0 ||
+    itemIds.length > expertPackageLimits.maxPackageChildren + 1 ||
+    !itemIds.every((id) => typeof id === 'string')
+  )) {
+    res.status(400).json({
+      error: `itemIds must be a non-empty array of at most ${expertPackageLimits.maxPackageChildren + 1} strings`,
+    });
+    return;
+  }
+  if (workspaceId !== undefined && typeof workspaceId !== 'string') {
+    res.status(400).json({ error: 'workspaceId must be a string' });
+    return;
+  }
+  const workspacePath = await requireWorkspacePath(scope as SkillScope, workspaceId, res);
+  if (workspacePath === undefined && scope !== 'global') return;
+
+  try {
+    const results = await skillsService.installExpertPackage({
+      packageSlug,
+      scope: scope as SkillScope,
+      workspacePath,
+      ...(itemIds ? { itemIds: itemIds as string[] } : {}),
+    });
+    const installedCount = results.filter((result) => result.status === 'installed').length;
+    const alreadyCount = results.filter((result) => result.status === 'already-installed').length;
+    const failedCount = results.filter((result) => result.status === 'error').length;
+    if (failedCount === results.length) {
+      res.status(422).json({ error: 'All Expert Package items failed to install', results });
+      return;
+    }
+    res.status(installedCount > 0 ? 201 : 200).json({
+      results,
+      summary: { installed: installedCount, alreadyInstalled: alreadyCount, failed: failedCount },
+    });
+  } catch (error) {
+    const message = (error as Error).message;
+    if (/does not belong|non-empty unique|incomplete|unavailable/i.test(message)) {
+      res.status(422).json({ error: message });
+      return;
+    }
+    sendExpertPackageError(error, res);
   }
 });
 

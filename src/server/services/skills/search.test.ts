@@ -14,7 +14,12 @@ import '../../test-utils/test-env.js';
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { searchSkillsAPI } from './search.js';
+import {
+  searchFederatedSkills,
+  searchSkillhubCnSkills,
+  searchSkillsAPI,
+  searchSkillsHubSkills,
+} from './search.js';
 
 const originalFetch = global.fetch;
 
@@ -77,7 +82,8 @@ describe('searchSkillsAPI', () => {
     assert.strictEqual(result[1]!.name, 'Skill C');
     assert.strictEqual(result[2]!.name, 'Skill A');
 
-    // Slug mirrors `id`, source mirrors `source`
+    // The stable id and source preserve the upstream identifiers.
+    assert.strictEqual(result[0]!.id, 'skills.sh:skill-b');
     assert.strictEqual(result[0]!.slug, 'skill-b');
     assert.strictEqual(result[0]!.source, 'github.com/owner/repo');
   });
@@ -99,7 +105,7 @@ describe('searchSkillsAPI', () => {
     const result = await searchSkillsAPI('evil');
     assert.strictEqual(result.length, 1);
     // ESC sequences and BEL stripped
-    assert.strictEqual(result[0]!.slug, 'evil');
+    assert.strictEqual(result[0]!.id, 'skills.sh:evil');
     assert.strictEqual(result[0]!.name, 'Red Skill');
     assert.strictEqual(result[0]!.source, 'foobar');
   });
@@ -113,6 +119,22 @@ describe('searchSkillsAPI', () => {
 
     const result = await searchSkillsAPI('x');
     assert.strictEqual(result[0]!.installs, 0);
+  });
+
+  it('drops malformed records that cannot be installed', async () => {
+    mockFetch(
+      makeJsonResponse({
+        skills: [
+          { id: '', name: 'Missing id', source: 'acme/missing-id' },
+          { id: 'missing-source', name: 'Missing source', source: '' },
+          { id: 'valid', name: 'Valid', source: 'acme/valid' },
+        ],
+      })
+    );
+
+    const result = await searchSkillsAPI('valid');
+
+    assert.deepStrictEqual(result.map((skill) => skill.slug), ['valid']);
   });
 
   it('returns [] when fetch throws (network error)', async () => {
@@ -167,5 +189,215 @@ describe('searchSkillsAPI', () => {
     assert.ok(capturedUrl.includes('q=a%20b'));
     assert.ok(capturedUrl.includes('%26') || capturedUrl.includes('&'), 'ampersand should be encoded');
     assert.ok(capturedUrl.includes('%3D') || capturedUrl.includes('='), 'equals should be encoded');
+  });
+});
+
+describe('searchFederatedSkills', () => {
+  beforeEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('queries all registries concurrently, returning source-aware results', async () => {
+    const requestedUrls: string[] = [];
+    global.fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      requestedUrls.push(url);
+      if (url.includes('skills.sh')) {
+        return Promise.resolve(makeJsonResponse({
+          skills: [{ id: 'frontend-design', name: 'Frontend Design', installs: 200, source: 'acme/design' }],
+        }));
+      }
+
+      if (url.includes('skillshub.wtf')) {
+        return Promise.resolve(makeJsonResponse({
+          data: [{
+            skill: {
+              slug: 'security-review',
+              name: 'Security Review',
+              repo: { githubOwner: 'acme', githubRepoName: 'security-skills', starCount: 10 },
+            },
+          }],
+        }));
+      }
+
+      if (url.includes('api.skillhub.cn')) {
+        return Promise.resolve(makeJsonResponse({
+          code: 0,
+          data: {
+            skills: [{
+              slug: 'security-audit',
+              name: '安全审计',
+              description_zh: '面向代码的安全审计流程',
+              downloads: 80,
+              namespace: { handle: 'tencent' },
+            }],
+          },
+        }));
+      }
+
+      return Promise.resolve(makeJsonResponse({ items: [] }));
+    }) as typeof fetch;
+
+    const result = await searchFederatedSkills('security review');
+
+    assert.strictEqual(requestedUrls.length, 4);
+    assert.deepStrictEqual(
+      result.map((skill) => ({ name: skill.name, sourceKind: skill.sourceKind })),
+      [
+        { name: 'Frontend Design', sourceKind: 'skills.sh' },
+        { name: 'Security Review', sourceKind: 'skillshub' },
+        { name: '安全审计', sourceKind: 'skillhub-cn' },
+      ]
+    );
+    assert.strictEqual(result[1]!.description, '');
+  });
+
+  it('keeps results from a healthy source when another source fails', async () => {
+    global.fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('skillshub.wtf')) return Promise.reject(new Error('SkillsHub unavailable'));
+      return Promise.resolve(makeJsonResponse({
+        skills: [{ id: 'review', name: 'Review', installs: 10, source: 'acme/review' }],
+      }));
+    }) as typeof fetch;
+
+    const result = await searchFederatedSkills('review');
+
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0]!.sourceKind, 'skills.sh');
+  });
+
+  it('does not query any source for an empty query', async () => {
+    let calls = 0;
+    global.fetch = (() => {
+      calls += 1;
+      return Promise.resolve(makeJsonResponse({}));
+    }) as typeof fetch;
+
+    assert.deepStrictEqual(await searchFederatedSkills('  '), []);
+    assert.strictEqual(calls, 0);
+  });
+
+  it('sets a deadline on each provider request', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    global.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      return Promise.resolve(makeJsonResponse({ skills: [], items: [] }));
+    }) as typeof fetch;
+
+    await searchFederatedSkills('timeout');
+
+    assert.strictEqual(signals.length, 4);
+    assert.ok(signals.every((signal) => signal instanceof AbortSignal));
+  });
+});
+
+describe('searchSkillsHubSkills', () => {
+  beforeEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('normalizes Skillshub results to a GitHub repository installer source', async () => {
+    mockFetch(makeJsonResponse({
+      data: [{
+        skill: {
+          slug: 'typescript',
+          name: 'TypeScript',
+          description: 'Type-safe coding guidance',
+          repo: {
+            githubOwner: 'acme',
+            githubRepoName: 'agent-skills',
+            starCount: 120,
+          },
+        },
+      }],
+    }));
+
+    const result = await searchSkillsHubSkills('typescript');
+
+    assert.deepStrictEqual(result, [{
+      id: 'skillshub:acme/agent-skills:typescript',
+      name: 'TypeScript',
+      slug: 'typescript',
+      source: 'acme/agent-skills',
+      installSource: 'acme/agent-skills',
+      sourceKind: 'skillshub',
+      description: 'Type-safe coding guidance',
+      installs: 120,
+    }]);
+  });
+
+  it('compiles semantic task text for SkillsHub and native filters for Tencent', async () => {
+    const urls: string[] = [];
+    global.fetch = ((input: string | URL | Request) => {
+      urls.push(typeof input === 'string' ? input : input.toString());
+      return Promise.resolve(makeJsonResponse({ data: [], skills: [], items: [], code: 0 }));
+    }) as typeof fetch;
+
+    await searchFederatedSkills({
+      keyword: 'review',
+      scene: 'ai-agent',
+      preferChinese: true,
+      noApiKey: true,
+      sort: 'newest',
+    });
+
+    const skillsHubUrl = new URL(urls.find((url) => url.includes('skillshub.wtf'))!);
+    assert.strictEqual(skillsHubUrl.pathname, '/api/v1/skills/resolve');
+    assert.match(skillsHubUrl.searchParams.get('task') || '', /AI agent/);
+    assert.match(skillsHubUrl.searchParams.get('task') || '', /API key/);
+
+    const tencentUrl = new URL(urls.find((url) => url.includes('api.skillhub.cn'))!);
+    assert.strictEqual(tencentUrl.searchParams.get('category'), 'ai-agent');
+    assert.strictEqual(tencentUrl.searchParams.get('labels'), 'requires_api_key:false');
+    assert.strictEqual(tencentUrl.searchParams.get('sortBy'), 'newest');
+    assert.strictEqual(tencentUrl.searchParams.get('keyword'), 'review 中文');
+  });
+});
+
+describe('searchSkillhubCnSkills', () => {
+  beforeEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('normalizes Tencent SkillHub results to an installable registry coordinate', async () => {
+    mockFetch(makeJsonResponse({
+      code: 0,
+      data: {
+        skills: [{
+          slug: 'ppt-crate',
+          name: 'PPT生成',
+          description: '',
+          description_zh: '一键生成演示稿',
+          downloads: 12_524,
+          namespace: { handle: 'user_03e5be41' },
+        }],
+      },
+    }));
+
+    const result = await searchSkillhubCnSkills('ppt');
+
+    assert.deepStrictEqual(result, [{
+      id: 'skillhub-cn:user_03e5be41/ppt-crate',
+      name: 'PPT生成',
+      slug: 'ppt-crate',
+      source: 'skillhub.cn',
+      installSource: 'skillhub-cn:user_03e5be41/ppt-crate',
+      sourceKind: 'skillhub-cn',
+      description: '一键生成演示稿',
+      installs: 12_524,
+    }]);
   });
 });

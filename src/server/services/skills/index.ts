@@ -23,7 +23,41 @@ export {
 export { stripTerminalEscapes, sanitizeMetadata } from './sanitize.js';
 
 // skills.sh search
-export { searchSkillsAPI } from './search.js';
+export {
+  searchFederatedSkills,
+  searchSkillsAPI,
+  searchSkillsHubSkills,
+  searchSkillhubCnSkills,
+  searchXfyunSkills,
+} from './search.js';
+export {
+  SKILL_SCENES,
+  SCENE_LABELS,
+  isSkillScene,
+  isSkillSort,
+} from './search-query.js';
+export type { SkillScene, SkillSort, SkillSearchQuery } from './search-query.js';
+
+export {
+  getExpertPackage,
+  getExpertPackageDefinition,
+  getExpertSkill,
+  listExpertPackages,
+  ExpertPackageProviderError,
+  EXPERT_PACKAGE_SCENES,
+  isExpertPackageScene,
+  expertPackageLimits,
+} from './expert-packages.js';
+export type { ExpertPackageDefinition } from './expert-packages.js';
+export {
+  materializeRegistrySource,
+  parseRegistrySource,
+  registryArchiveLimits,
+  registrySourceUrl,
+  validateArchiveEntries,
+} from './registry-source.js';
+export type { RegistrySource, RegistrySourceKind } from './registry-source.js';
+export { InstallCoordinator, installCoordinator } from './install-coordinator.js';
 
 // Source string parsing
 export {
@@ -81,5 +115,13 @@ export type {
   GlobalSkillLockFile,
   SkillScope,
   InstallResult,
+  InstalledSkillKind,
+  ExpertPackageSummary,
+  ExpertPackageChild,
+  ExpertPackageDetail,
+  ExpertSkillSecurityReport,
+  ExpertSkillDetail,
+  ExpertPackageInstallItemKind,
+  ExpertPackageInstallResult,
   DiscoveredSkill,
 } from './types.js';
