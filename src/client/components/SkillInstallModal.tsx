@@ -18,6 +18,8 @@ interface SkillInstallModalProps {
   workspaceId: string
   onClose: () => void
   onInstalled: () => void
+  /** Lock the picker to one registry Skill (Expert Package child flow). */
+  fixedSkillName?: string
 }
 
 type Phase = 'resolving' | 'choosing' | 'installing' | 'result'
@@ -43,6 +45,7 @@ export default function SkillInstallModal({
   workspaceId,
   onClose,
   onInstalled,
+  fixedSkillName,
 }: SkillInstallModalProps) {
   const { t } = useTranslation('settings')
   const {
@@ -75,7 +78,10 @@ export default function SkillInstallModal({
     let cancelled = false
     resolveSource(source, workspaceId).then((ok) => {
       if (cancelled) return
-      if (ok) {
+      const fixedSkillExists = !fixedSkillName
+        || useSkillsStore.getState().discovered.some((skill) => skill.name === fixedSkillName)
+      if (ok && fixedSkillExists) {
+        if (fixedSkillName) setSelectedSkills(new Set([fixedSkillName]))
         setPhase('choosing')
       } else {
         setPhase('result')
@@ -87,7 +93,7 @@ export default function SkillInstallModal({
       clearDiscovered()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source])
+  }, [source, fixedSkillName])
 
   // Auto-close on success after a brief delay
   useEffect(() => {
@@ -199,7 +205,12 @@ export default function SkillInstallModal({
   }, [phase, handleCancel])
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('skills.installTitle')}
+    >
       <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={phase === 'installing' ? undefined : handleCancel} />
       <div className="relative w-full max-w-lg bg-surface border border-border rounded-xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
@@ -259,12 +270,15 @@ export default function SkillInstallModal({
                       {t('skills.selectSkills', { count: discovered.length })}
                     </p>
                     <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
-                      {discovered.map((skill) => {
+                      {discovered
+                        .filter((skill) => !fixedSkillName || skill.name === fixedSkillName)
+                        .map((skill) => {
                         const isSelected = selectedSkills.has(skill.name)
                         return (
                           <button
                             key={skill.name}
-                            onClick={() => toggleSkill(skill.name)}
+                            onClick={() => { if (!fixedSkillName) toggleSkill(skill.name) }}
+                            aria-pressed={isSelected}
                             className={`w-full flex items-start gap-3 p-2.5 rounded-lg border text-left transition-colors ${
                               isSelected
                                 ? 'border-accent bg-accent/5'

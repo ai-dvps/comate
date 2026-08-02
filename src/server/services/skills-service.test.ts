@@ -34,6 +34,7 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { execFileSync } from 'child_process';
 import { skillsService, assertSkillScope } from './skills-service.js';
 import {
   writeProjectLock,
@@ -47,6 +48,7 @@ let tmpRoot: string;
 let tmpHome: string;
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
+const originalFetch = global.fetch;
 
 /**
  * Build a fake source repository INSIDE the workspace so it passes the
@@ -78,6 +80,43 @@ Skill body.
   return repoRoot;
 }
 
+function expertPackageFetch(zipBytes: Uint8Array, options?: { childAvailable?: boolean }): typeof fetch {
+  const childAvailable = options?.childAvailable ?? true;
+  return async (input) => {
+    const url = String(input);
+    if (url.includes('/api/v1/skillsets/test-package')) {
+      return Response.json({
+        slug: 'test-package', displayName: 'Test Package', summary: 'A package', scene: 'tech',
+        content: '---\nname: test-package\ndescription: Test orchestration\n---\n# Workflow\n',
+        skills: [{ namespace: 'owner', slug: 'child-skill' }], skillCount: 1,
+      });
+    }
+    if (url.includes('/api/v1/skills/child-skill')) {
+      if (!childAvailable) return new Response('', { status: 404 });
+      return Response.json({
+        slug: 'child-skill',
+        namespace: { handle: 'owner' }, owner: { handle: 'owner', displayName: 'Owner' },
+        latestVersion: { version: '1.0.0' },
+        skill: { displayName: 'Child Skill', summary: 'Child summary', category: 'tech', stats: {} },
+        securityReports: {},
+      });
+    }
+    if (url.includes('/api/v1/download')) {
+      return new Response(zipBytes, { status: 200, headers: { 'Content-Type': 'application/zip' } });
+    }
+    return new Response('', { status: 404 });
+  };
+}
+
+function buildSkillArchive(root: string, slug: string): Uint8Array {
+  const fixture = join(root, `.test-src/${slug}-zip`);
+  mkdirSync(fixture, { recursive: true });
+  writeFileSync(join(fixture, 'SKILL.md'), `---\nname: ${slug}\ndescription: ${slug}\n---\n# ${slug}\n`);
+  const archivePath = join(root, `${slug}.zip`);
+  execFileSync('zip', ['-q', archivePath, 'SKILL.md'], { cwd: fixture });
+  return new Uint8Array(readFileSync(archivePath));
+}
+
 describe('SkillsService', () => {
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'skills-svc-root-'));
@@ -88,6 +127,7 @@ describe('SkillsService', () => {
   });
 
   afterEach(() => {
+    global.fetch = originalFetch;
     process.env.HOME = originalHome;
     if (originalUserProfile !== undefined) {
       process.env.USERPROFILE = originalUserProfile;
@@ -253,6 +293,24 @@ describe('SkillsService', () => {
       assert.strictEqual(installed[0]!.scope, 'project');
       assert.strictEqual(installed[0]!.source, 'some/repo');
       assert.strictEqual(installed[0]!.computedHash, 'abc123');
+    });
+
+    it('listInstalled includes the local SKILL.md description when it exists', async () => {
+      const sourceRepo = buildSourceRepoInWorkspace(tmpRoot, 'description-list', [
+        { name: 'described-skill', description: 'A concise local skill description.' },
+      ]);
+      await skillsService.install({
+        source: sourceRepo,
+        skills: ['described-skill'],
+        scope: 'project',
+        workspacePath: tmpRoot,
+      });
+
+      const installed = await skillsService.listInstalled(tmpRoot);
+      assert.strictEqual(
+        installed.find((skill) => skill.name === 'described-skill')?.description,
+        'A concise local skill description.'
+      );
     });
 
     it('listInstalled merges project + global entries', async () => {
@@ -509,6 +567,166 @@ describe('SkillsService', () => {
       const globalLock = await readGlobalLock();
       assert.ok(globalLock.skills['global-skill']);
       assert.strictEqual(globalLock.skills['global-skill']!.sourceType, 'local');
+    });
+  });
+
+  describe('Expert Package install', () => {
+    it('installs orchestration and child with durable kinds and excludes the transport archive', async () => {
+      const fixture = join(tmpRoot, '.test-src', 'expert-package-zip');
+      mkdirSync(fixture, { recursive: true });
+      writeFileSync(join(fixture, 'SKILL.md'), '---\nname: child-skill\ndescription: Child skill\n---\n# Child\n');
+      const archivePath = join(tmpRoot, 'child.zip');
+      execFileSync('zip', ['-q', archivePath, 'SKILL.md'], { cwd: fixture });
+      const upstreamFetch = expertPackageFetch(new Uint8Array(readFileSync(archivePath)));
+      let packageDefinitionRequests = 0;
+      global.fetch = (async (input, init) => {
+        if (String(input).includes('/api/v1/skillsets/test-package')) packageDefinitionRequests += 1;
+        return upstreamFetch(input, init);
+      }) as typeof fetch;
+
+      const results = await skillsService.installExpertPackage({
+        packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+      });
+
+      assert.deepStrictEqual(results.map((result) => [result.id, result.status]), [
+        ['orchestrator:test-package', 'installed'],
+        ['skill:owner/child-skill', 'installed'],
+      ]);
+      const installed = await skillsService.listInstalled(tmpRoot);
+      assert.strictEqual(installed.find((item) => item.name === 'test-package')?.kind, 'expert-package-orchestrator');
+      assert.strictEqual(installed.find((item) => item.name === 'child-skill')?.kind, 'skill');
+      assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'child-skill', 'skill.zip')), false);
+      assert.strictEqual(packageDefinitionRequests, 1);
+    });
+
+    it('rejects an incomplete package before any filesystem mutation', async () => {
+      global.fetch = expertPackageFetch(new Uint8Array(), { childAvailable: false });
+      await assert.rejects(
+        () => skillsService.installExpertPackage({
+          packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+        }),
+        /unavailable/i,
+      );
+      assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'test-package')), false);
+    });
+
+    it('rejects retry ids outside the canonical package before installation', async () => {
+      global.fetch = expertPackageFetch(new Uint8Array());
+      await assert.rejects(
+        () => skillsService.installExpertPackage({
+          packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+          itemIds: ['skill:other/not-owned'],
+        }),
+        /does not belong/,
+      );
+      assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'test-package')), false);
+    });
+
+    it('does not treat a same-name Skill from another source as package orchestration', async () => {
+      const existingSource = buildSourceRepoInWorkspace(tmpRoot, 'name-collision', [
+        { name: 'test-package', description: 'Unrelated standard Skill' },
+      ]);
+      await skillsService.install({
+        source: existingSource,
+        skills: ['test-package'],
+        scope: 'project',
+        workspacePath: tmpRoot,
+      });
+
+      const fixture = join(tmpRoot, '.test-src', 'collision-child-zip');
+      mkdirSync(fixture, { recursive: true });
+      writeFileSync(join(fixture, 'SKILL.md'), '---\nname: child-skill\ndescription: Child skill\n---\n');
+      const archivePath = join(tmpRoot, 'collision-child.zip');
+      execFileSync('zip', ['-q', archivePath, 'SKILL.md'], { cwd: fixture });
+      global.fetch = expertPackageFetch(new Uint8Array(readFileSync(archivePath)));
+
+      const results = await skillsService.installExpertPackage({
+        packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+      });
+
+      assert.strictEqual(results[0]?.status, 'error');
+      assert.match(results[0]?.error || '', /another source/);
+      const lock = await readProjectLock(tmpRoot);
+      assert.strictEqual(lock.skills['test-package']?.source, existingSource);
+    });
+
+    it('preserves successful items and retries only the failed child', async () => {
+      const archives = new Map([
+        ['child-one', buildSkillArchive(tmpRoot, 'child-one')],
+        ['child-two', buildSkillArchive(tmpRoot, 'child-two')],
+      ]);
+      const downloadCounts = new Map<string, number>();
+      let failChildTwo = true;
+      global.fetch = (async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.includes('/api/v1/skillsets/test-package')) {
+          return Response.json({
+            slug: 'test-package', displayName: 'Test Package', summary: 'A package', scene: 'tech',
+            content: '---\nname: test-package\ndescription: Test orchestration\n---\n# Workflow\n',
+            skills: [
+              { namespace: 'owner', slug: 'child-one' },
+              { namespace: 'owner', slug: 'child-two' },
+            ],
+            skillCount: 2,
+          });
+        }
+        if (url.pathname.includes('/api/v1/skills/')) {
+          const slug = url.pathname.split('/').at(-1)!;
+          return Response.json({
+            slug,
+            namespace: { handle: 'owner' }, owner: { handle: 'owner', displayName: 'Owner' },
+            latestVersion: { version: '1.0.0' },
+            skill: { displayName: slug, summary: `${slug} summary`, category: 'tech', stats: {} },
+            securityReports: {},
+          });
+        }
+        if (url.pathname.includes('/api/v1/download')) {
+          const slug = url.searchParams.get('slug')!;
+          downloadCounts.set(slug, (downloadCounts.get(slug) ?? 0) + 1);
+          if (slug === 'child-two' && failChildTwo) return new Response('', { status: 503 });
+          return new Response(archives.get(slug), {
+            status: 200,
+            headers: { 'Content-Type': 'application/zip' },
+          });
+        }
+        return new Response('', { status: 404 });
+      }) as typeof fetch;
+
+      const first = await skillsService.installExpertPackage({
+        packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+      });
+      assert.deepStrictEqual(first.map((result) => [result.id, result.status]), [
+        ['orchestrator:test-package', 'installed'],
+        ['skill:owner/child-one', 'installed'],
+        ['skill:owner/child-two', 'error'],
+      ]);
+      assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'child-one', 'SKILL.md')), true);
+
+      failChildTwo = false;
+      const retry = await skillsService.installExpertPackage({
+        packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+        itemIds: ['skill:owner/child-two'],
+      });
+      assert.deepStrictEqual(retry.map((result) => [result.id, result.status]), [
+        ['skill:owner/child-two', 'installed'],
+      ]);
+      assert.strictEqual(downloadCounts.get('child-one'), 1);
+      assert.strictEqual(downloadCounts.get('child-two'), 2);
+    });
+
+    it('writes Expert Package items only to the selected global lock', async () => {
+      global.fetch = expertPackageFetch(buildSkillArchive(tmpRoot, 'child-skill'));
+
+      const results = await skillsService.installExpertPackage({
+        packageSlug: 'test-package', scope: 'global', workspacePath: tmpRoot,
+      });
+
+      assert.deepStrictEqual(results.map((result) => result.status), ['installed', 'installed']);
+      const globalLock = await readGlobalLock();
+      const projectLock = await readProjectLock(tmpRoot);
+      assert.strictEqual(globalLock.skills['test-package']?.source, 'skillhub-package:test-package');
+      assert.strictEqual(globalLock.skills['child-skill']?.source, 'skillhub-cn:owner/child-skill');
+      assert.deepStrictEqual(projectLock.skills, {});
     });
   });
 

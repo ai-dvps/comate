@@ -15,18 +15,37 @@ import i18next from 'i18next'
  *   - `install` returns `InstallResult[]` because partial-success is possible
  *     when installing multiple skills at once (Coherence #3)
  *   - `install` carries a `force` flag for the Reinstall flow (Coherence #2)
- *   - `search` runs against skills.sh via `/api/skills/search` (not a local
- *     marketplace), and is debounced client-side by the caller
+ *   - `search` federates live registry queries via `/api/skills/search`; the
+ *     server keeps no persistent marketplace index, and the caller debounces
+ *     requests client-side
  *   - There is no enable/disable flow (skills are always-on once installed)
  *   - There is no per-plugin updates-check endpoint — `update` re-fetches the
  *     source and overwrites local files in one step
  */
 
 export type SkillScope = 'project' | 'global'
+export type SkillScene =
+  | 'ai-agent'
+  | 'office-efficiency'
+  | 'development'
+  | 'content-creation'
+  | 'knowledge-management'
+  | 'professional'
+  | 'design-media'
+export type SkillSort = 'score' | 'downloads' | 'newest'
+
+export interface SkillSearchFilters {
+  scene?: SkillScene
+  preferChinese?: boolean
+  noApiKey?: boolean
+  sort?: SkillSort
+}
 
 /** Mirrors InstalledSkill from src/server/services/skills-service.ts */
 export interface InstalledSkill {
   name: string
+  kind?: 'skill' | 'expert-package-orchestrator'
+  description?: string
   scope: SkillScope
   source: string
   installPath: string
@@ -40,8 +59,13 @@ export interface InstalledSkill {
 export interface SearchSkill {
   id: string
   name: string
+  slug: string
   source: string
+  installSource: string
+  sourceKind: 'skills.sh' | 'skillshub' | 'xfyun' | 'skillhub-cn'
+  description: string
   installs: number
+  updatedAt?: number
 }
 
 /** Mirrors DiscoveredSkill from src/server/services/skills/types.ts */
@@ -54,6 +78,7 @@ export interface DiscoveredSkill {
 /** Mirrors InstallResult from src/server/services/skills/types.ts */
 export interface InstallResult {
   skillName: string
+  kind?: 'skill' | 'expert-package-orchestrator'
   status: 'installed' | 'overwritten' | 'already-installed' | 'error'
   path?: string
   error?: string
@@ -92,7 +117,7 @@ interface SkillsState {
   recentlyUpdatedSkillName: string | null
 
   fetchInstalled: (workspaceId?: string) => Promise<void>
-  search: (query: string) => Promise<void>
+  search: (query: string, filters?: SkillSearchFilters) => Promise<void>
   resolveSource: (source: string, workspaceId?: string) => Promise<boolean>
   install: (args: {
     source: string
@@ -119,6 +144,8 @@ interface SkillsState {
 }
 
 const API_BASE = '/api/skills'
+let activeSearchController: AbortController | null = null
+let activeSearchId = 0
 
 export const useSkillsStore = create<SkillsState>((set) => ({
   installed: [],
@@ -156,21 +183,34 @@ export const useSkillsStore = create<SkillsState>((set) => ({
     }
   },
 
-  search: async (query) => {
+  search: async (query, filters = {}) => {
+    const requestId = ++activeSearchId
+    activeSearchController?.abort()
+    const controller = new AbortController()
+    activeSearchController = controller
     set({ isSearching: true, error: null })
     try {
-      const url = `${API_BASE}/search?q=${encodeURIComponent(query)}`
-      const res = await fetch(url)
+      const params = new URLSearchParams({ q: query, sort: filters.sort || 'score' })
+      if (filters.scene) params.set('scene', filters.scene)
+      if (filters.preferChinese) params.set('preferChinese', 'true')
+      if (filters.noApiKey) params.set('noApiKey', 'true')
+      const url = `${API_BASE}/search?${params.toString()}`
+      const res = await fetch(url, { signal: controller.signal })
+      if (requestId !== activeSearchId) return
       if (!res.ok) {
         throw new Error(i18next.t('settings:skills.searchFailed', 'Skill search failed'))
       }
       const data = await res.json()
+      if (requestId !== activeSearchId) return
       set({ searchResults: data.skills || [], isSearching: false })
     } catch (err) {
+      if (requestId !== activeSearchId || controller.signal.aborted) return
       set({
         error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'),
         isSearching: false,
       })
+    } finally {
+      if (requestId === activeSearchId) activeSearchController = null
     }
   },
 
