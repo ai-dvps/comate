@@ -61,7 +61,7 @@ describe('Enterprise Zone UI', () => {
       const url = String(input)
       requested.push(url)
       if (url.endsWith('/industries')) return Promise.resolve(Response.json({
-        industries: [{ key: 'technology', displayName: 'Technology', sortOrder: 1 }],
+        industries: [{ key: 'technology', displayName: '科技', displayNameEn: 'Technology', sortOrder: 1 }],
       }))
       const currentPage = Number(new URL(url, 'http://localhost').searchParams.get('page'))
       return Promise.resolve(page('enterprises', [enterprise(1)], currentPage, 881))
@@ -71,6 +71,7 @@ describe('Enterprise Zone UI', () => {
     render(<EnterpriseZoneView active isOpen />)
 
     await screen.findByRole('button', { name: /Enterprise 1/ })
+    expect(screen.getByRole('option', { name: 'Technology' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Next enterprise page' }))
     await waitFor(() => expect(requested.some((url) => url.includes('/enterprises?page=2'))).toBe(true))
     await user.selectOptions(screen.getByLabelText('Filter enterprises by industry'), 'technology')
@@ -233,6 +234,44 @@ describe('Enterprise Zone UI', () => {
     expect(screen.getByRole('button', { name: 'Back to enterprises' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Retry Skills' }))
     await waitFor(() => expect(skillAttempts).toBe(2))
+  })
+
+  it('recovers from enterprise profile and Skill detail failures', async () => {
+    let profileAttempts = 0
+    let detailAttempts = 0
+    global.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/industries')) return Promise.resolve(Response.json({ industries: [] }))
+      if (url.endsWith('/enterprises/org-1')) {
+        profileAttempts += 1
+        if (profileAttempts === 1) return Promise.resolve(Response.json({ error: 'Profile unavailable' }, { status: 502 }))
+        return Promise.resolve(Response.json({ enterprise: { ...enterprise(1), totalStars: 5 } }))
+      }
+      if (url.endsWith('/enterprises/org-1/skills/enterprise/skill-1')) {
+        detailAttempts += 1
+        if (detailAttempts === 1) return Promise.resolve(Response.json({ error: 'Detail unavailable' }, { status: 502 }))
+        return Promise.resolve(Response.json({ skill: {
+          ...skill(1), category: '', owner: { handle: 'owner', displayName: 'Owner' },
+          publisher: { orgId: 'org-1' }, version: '1', stats: { downloads: 1, installs: 1 }, securityReports: [],
+        } }))
+      }
+      if (url.includes('/enterprises/org-1/skills?')) return Promise.resolve(page('skills', [skill(1)], 1, 1))
+      return Promise.resolve(page('enterprises', [enterprise(1)], 1, 1))
+    }) as typeof fetch
+
+    const user = userEvent.setup()
+    render(<EnterpriseZoneView active isOpen />)
+    await user.click(await screen.findByRole('button', { name: /Enterprise 1/ }))
+    expect(await screen.findByText('Enterprise profile could not be loaded.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back to enterprises' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry profile' }))
+    await user.click(await screen.findByRole('button', { name: /Skill 1/ }))
+    expect(await screen.findByText('Enterprise Skill could not be loaded.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back to enterprise Skills' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry Skill' }))
+    expect(await screen.findByRole('heading', { name: 'Skill 1' })).toBeInTheDocument()
+    expect(profileAttempts).toBe(2)
+    expect(detailAttempts).toBe(2)
   })
 
   it('restores enterprise list controls, page, scroll, and selected focus after Back', async () => {

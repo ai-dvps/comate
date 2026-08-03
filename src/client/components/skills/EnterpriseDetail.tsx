@@ -58,8 +58,9 @@ export default function EnterpriseDetail({
   onSkillPageChange,
   onSelectSkill,
 }: EnterpriseDetailProps) {
-  const { t } = useTranslation('settings')
-  const labelsByIndustry = useMemo(() => industryLabels(industries), [industries])
+  const { t, i18n } = useTranslation('settings')
+  const language = i18n.resolvedLanguage ?? i18n.language
+  const labelsByIndustry = useMemo(() => industryLabels(industries, language), [industries, language])
   if (detailLoading && !detail) {
     return (
       <div aria-busy="true" aria-label={t('skills.enterpriseZone.loadingEnterpriseProfile')} className="mx-auto max-w-5xl animate-pulse space-y-4">

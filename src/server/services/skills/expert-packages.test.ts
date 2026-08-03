@@ -146,6 +146,28 @@ describe('expert package provider', () => {
     assert.strictEqual(called, false);
   });
 
+  it('accepts valid package coordinates longer than the Enterprise Zone limit', async () => {
+    const slug = 'a'.repeat(129);
+    let requestedUrl = '';
+    global.fetch = ((input: string | URL | Request) => {
+      requestedUrl = input.toString();
+      return Promise.resolve(json({
+        slug,
+        displayName: 'Legacy long coordinate',
+        summary: 'Compatibility package',
+        scene: 'tech',
+        content: `---\nname: ${slug}\n---\n# Workflow`,
+        skills: [{ namespace: 'owner', slug: 'child' }],
+      }));
+    }) as typeof fetch;
+
+    const result = await getExpertPackageDefinition(slug);
+
+    assert.match(requestedUrl, new RegExp(`/skillsets/${slug}$`));
+    assert.strictEqual(result.summary.slug, slug);
+    assert.strictEqual(result.structurallyComplete, true);
+  });
+
   it('normalizes included Skill metadata and security reports', async () => {
     global.fetch = (() => Promise.resolve(json({
       slug: 'superpowers-tdd',

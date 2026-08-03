@@ -59,6 +59,24 @@ describe('Enterprise Zone provider', () => {
     ]);
   });
 
+  it('rejects malformed and duplicate industry metadata', async () => {
+    const valid = { tagKey: 'finance', displayNameZh: '金融', displayNameEn: 'Finance', sortOrder: 1 };
+    const malformedLists = [
+      [valid, { ...valid }],
+      [{ ...valid, tagKey: 'bad/value' }],
+      [{ ...valid, displayNameZh: '' }],
+      Array.from({ length: 129 }, (_, index) => ({ ...valid, tagKey: `industry_${index}` })),
+    ];
+
+    for (const items of malformedLists) {
+      global.fetch = async () => Response.json({ items });
+      await assert.rejects(
+        () => listEnterpriseIndustries(),
+        (error: unknown) => error instanceof SkillHubProviderError && error.code === 'invalid-response',
+      );
+    }
+  });
+
   it('forwards combined enterprise filters with a fixed page size', async () => {
     let requested = '';
     global.fetch = async (input) => {
