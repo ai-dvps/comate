@@ -240,6 +240,36 @@ fn bot_status_label(state: &str) -> String {
     }
 }
 
+fn tray_status_request(
+    client: &reqwest::Client,
+    port: u16,
+    desktop_token: &str,
+) -> reqwest::RequestBuilder {
+    let url = format!("http://127.0.0.1:{}/api/system/tray-status", port);
+    client.get(url).bearer_auth(desktop_token)
+}
+
+#[cfg(test)]
+mod tray_status_tests {
+    use super::*;
+
+    #[test]
+    fn tray_status_request_carries_the_desktop_bearer_credential() {
+        let client = reqwest::Client::new();
+        let request = tray_status_request(&client, 43123, "desktop-token")
+            .build()
+            .expect("tray status request should be built");
+
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .unwrap(),
+            "Bearer desktop-token"
+        );
+    }
+}
+
 async fn run_tray_status_poller(app_handle: AppHandle) {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
@@ -260,14 +290,15 @@ async fn run_tray_status_poller(app_handle: AppHandle) {
             }
         }
 
-        let port_opt = {
+        let poll_target = {
             let state = app_handle.state::<AppState>();
-            state.api_port.lock().ok().and_then(|guard| *guard)
+            let port = state.api_port.lock().ok().and_then(|guard| *guard);
+            let token = state.api_token.lock().ok().and_then(|guard| guard.clone());
+            port.zip(token)
         };
 
-        if let Some(port) = port_opt {
-            let url = format!("http://127.0.0.1:{}/api/system/tray-status", port);
-            match client.get(&url).send().await {
+        if let Some((port, token)) = poll_target {
+            match tray_status_request(&client, port, &token).send().await {
                 Ok(resp) => match resp.json::<TrayStatusResponse>().await {
                     Ok(body) => {
                         let bot_text = bot_status_label(&body.wecom_bot);
