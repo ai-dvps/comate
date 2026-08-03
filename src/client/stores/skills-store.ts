@@ -160,6 +160,8 @@ interface SkillsState {
 const API_BASE = '/api/skills'
 let activeSearchController: AbortController | null = null
 let activeSearchId = 0
+let activeResolveController: AbortController | null = null
+let activeResolveId = 0
 
 export const useSkillsStore = create<SkillsState>((set) => ({
   installed: [],
@@ -229,6 +231,10 @@ export const useSkillsStore = create<SkillsState>((set) => ({
   },
 
   resolveSource: async (source, workspaceId) => {
+    const requestId = ++activeResolveId
+    activeResolveController?.abort()
+    const controller = new AbortController()
+    activeResolveController = controller
     set({ isResolving: true, error: null, discovered: [] })
     try {
       const body: Record<string, unknown> = { source }
@@ -237,8 +243,11 @@ export const useSkillsStore = create<SkillsState>((set) => ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: controller.signal,
       })
+      if (requestId !== activeResolveId) return false
       const data = await res.json()
+      if (requestId !== activeResolveId) return false
       if (!res.ok) {
         set({
           error: data.error || i18next.t('settings:skills.resolveFailed', 'Failed to resolve source'),
@@ -249,11 +258,14 @@ export const useSkillsStore = create<SkillsState>((set) => ({
       set({ discovered: data.skills || [], isResolving: false })
       return true
     } catch (err) {
+      if (requestId !== activeResolveId || controller.signal.aborted) return false
       set({
         error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'),
         isResolving: false,
       })
       return false
+    } finally {
+      if (requestId === activeResolveId) activeResolveController = null
     }
   },
 
@@ -423,7 +435,12 @@ export const useSkillsStore = create<SkillsState>((set) => ({
     }
   },
 
-  clearDiscovered: () => set({ discovered: [] }),
+  clearDiscovered: () => {
+    activeResolveId += 1
+    activeResolveController?.abort()
+    activeResolveController = null
+    set({ discovered: [], isResolving: false })
+  },
   clearError: () => set({ error: null }),
   clearUpdateError: () => set({ updateError: null, failedUpdateSkillName: null }),
   clearRecentlyUpdated: () => set({ recentlyUpdatedSkillName: null }),

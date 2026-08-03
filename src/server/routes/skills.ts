@@ -23,6 +23,7 @@ import { Router, type Response } from 'express';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { skillsService, assertSkillScope } from '../services/skills-service.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
+import { diagLog } from '../utils/diag-logger.js';
 import type { SkillScope } from '../services/skills-service.js';
 import {
   SkillHubProviderError,
@@ -54,8 +55,8 @@ function sendSkillHubError(
     res.status(status).json({ error: error.message, code: error.code });
     return;
   }
-  if (includeCause) console.error(`${label} request failed:`, error);
-  else console.error(`${label} request failed`);
+  if (includeCause) diagLog(`${label} request failed:`, error);
+  else diagLog(`${label} request failed`);
   res.status(500).json({ error: `${label} request failed` });
 }
 

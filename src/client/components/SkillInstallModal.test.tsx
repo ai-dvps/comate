@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'
@@ -127,5 +127,52 @@ describe('SkillInstallModal fixed selection', () => {
     await user.click(await screen.findByRole('button', { name: 'Reinstall' }))
     await waitFor(() => expect(installBodies).toHaveLength(2))
     expect(installBodies[1]).toMatchObject({ skills: ['child-skill'], force: true })
+  })
+
+  it('ignores a fixed Skill resolution that completes after its modal closes', async () => {
+    let resolveFirst: ((value: Response) => void) | undefined
+    let firstSignal: AbortSignal | undefined
+    let firstRequestStarted = false
+    global.fetch = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { source: string }
+      if (body.source === 'skillhub-cn:owner/skill-a') {
+        firstRequestStarted = true
+        firstSignal = init?.signal ?? undefined
+        return new Promise<Response>((resolve) => {
+          resolveFirst = resolve
+        })
+      }
+      return Promise.resolve(Response.json({ skills: [
+        { name: 'skill-b', description: 'B', skillPath: 'SKILL.md' },
+      ] }))
+    }) as typeof fetch
+
+    const installerA = render(<SkillInstallModal
+      source="skillhub-cn:owner/skill-a"
+      fixedSkillName="skill-a"
+      workspaceId="ws-1"
+      onClose={() => undefined}
+      onInstalled={() => undefined}
+    />)
+    await waitFor(() => expect(firstRequestStarted).toBe(true))
+    installerA.unmount()
+
+    render(<SkillInstallModal
+      source="skillhub-cn:owner/skill-b"
+      fixedSkillName="skill-b"
+      workspaceId="ws-1"
+      onClose={() => undefined}
+      onInstalled={() => undefined}
+    />)
+    expect(await screen.findByRole('button', { name: /skill-b.*B/ })).toBeInTheDocument()
+
+    await act(async () => {
+      resolveFirst?.(Response.json({ skills: [
+        { name: 'skill-a', description: 'A', skillPath: 'SKILL.md' },
+      ] }))
+      await Promise.resolve()
+    })
+    expect(useSkillsStore.getState().discovered.map((skill) => skill.name)).toEqual(['skill-b'])
+    expect(firstSignal?.aborted).toBe(true)
   })
 })

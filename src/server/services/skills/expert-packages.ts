@@ -2,7 +2,6 @@ import { parseFrontmatter } from './frontmatter.js';
 import {
   fetchSkillHubJson,
   getSkillHubSkill,
-  isSkillHubCoordinate,
   skillHubLimits,
   skillHubNumber,
   SkillHubProviderError,
@@ -19,6 +18,7 @@ const MAX_ORCHESTRATION_BYTES = 256 * 1024;
 const MAX_PACKAGE_CHILDREN = 64;
 const MAX_PAGE_SIZE = 200;
 const CHILD_HYDRATION_CONCURRENCY = 6;
+const COORDINATE = /^[A-Za-z0-9._-]+$/;
 export const EXPERT_PACKAGE_SCENES = [
   'academic', 'content-creation', 'design', 'ecommerce', 'education', 'finance',
   'healthcare', 'hr', 'legal', 'lifestyle', 'marketing', 'media', 'mysticism', 'tech',
@@ -29,7 +29,10 @@ export function isExpertPackageScene(value: unknown): value is typeof EXPERT_PAC
 }
 
 export function isExpertPackageCoordinate(value: unknown): value is string {
-  return isSkillHubCoordinate(value);
+  return typeof value === 'string'
+    && COORDINATE.test(value)
+    && value !== '.'
+    && value !== '..';
 }
 
 export interface ExpertPackageDefinition {

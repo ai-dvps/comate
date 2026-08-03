@@ -52,8 +52,9 @@ export default function EnterpriseList({
   onRetry,
   onRetryIndustries,
 }: EnterpriseListProps) {
-  const { t } = useTranslation('settings')
-  const labelsByIndustry = useMemo(() => industryLabels(industries), [industries])
+  const { t, i18n } = useTranslation('settings')
+  const language = i18n.resolvedLanguage ?? i18n.language
+  const labelsByIndustry = useMemo(() => industryLabels(industries, language), [industries, language])
   const enterprises = page?.enterprises.slice(0, 20) ?? []
   const visiblePage = page?.page ?? requestedPage
   const totalPages = page ? Math.max(1, Math.ceil(page.total / page.pageSize)) : 1
@@ -103,7 +104,7 @@ export default function EnterpriseList({
           >
             <option value="">{t('skills.enterpriseZone.allIndustries')}</option>
             {industries.map((item) => (
-              <option key={item.key} value={item.key}>{item.displayName}</option>
+              <option key={item.key} value={item.key}>{labelsByIndustry.get(item.key)}</option>
             ))}
           </select>
         </div>
