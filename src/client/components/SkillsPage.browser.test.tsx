@@ -353,13 +353,15 @@ describe('SkillsPage Expert Packages browser flow', () => {
     )
 
     await userEvent.click(screen.getByRole('tab', { name: 'Search' }))
-    await userEvent.type(screen.getByLabelText('Find skills for the work at hand'), 'todo')
     const searchPanel = screen.getByRole('tabpanel', { name: 'Search' })
+    expect(within(searchPanel).getByRole('button', { name: 'Card view' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(searchPanel).getByRole('button', { name: 'List view' })).toBeVisible()
+
+    await userEvent.type(screen.getByLabelText('Find skills for the work at hand'), 'todo')
     const results = await within(searchPanel).findByRole('list', {
       name: i18n.t('settings:skills.resultsCount', { count: 1 }),
     })
     expect(results).toHaveAttribute('data-view-mode', 'cards')
-    expect(within(searchPanel).getByRole('button', { name: 'Card view' })).toHaveAttribute('aria-pressed', 'true')
 
     await userEvent.click(within(searchPanel).getByRole('button', { name: 'List view' }))
     expect(results).toHaveAttribute('data-view-mode', 'list')
