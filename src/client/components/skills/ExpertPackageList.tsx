@@ -9,7 +9,6 @@ export type ExpertPackageViewMode = 'cards' | 'list'
 
 interface ExpertPackageListProps {
   packages: ExpertPackageSummary[]
-  total: number
   keyword: string
   scene?: ExpertPackageScene
   viewMode: ExpertPackageViewMode
@@ -28,18 +27,14 @@ const scenes: ExpertPackageScene[] = [
 ]
 
 export default function ExpertPackageList({
-  packages, total, keyword, scene, viewMode, loading, error,
+  packages, keyword, scene, viewMode, loading, error,
   onKeywordChange, onSceneChange, onViewModeChange, onSelect, onRetry,
 }: ExpertPackageListProps) {
   const { t } = useTranslation('settings')
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <header className="rounded-2xl border border-border bg-surface px-5 py-5 shadow-sm">
-        <div className="flex justify-end">
-          <p className="text-xs text-text-tertiary">{t('skills.expertPackages.total', { count: total })}</p>
-        </div>
-
-        <div className="mt-3 flex flex-col gap-2 lg:flex-row">
+      <header className="rounded-2xl border border-border bg-surface p-3 shadow-sm">
+        <div className="flex flex-col gap-2 lg:flex-row">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
             <input
