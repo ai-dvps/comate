@@ -76,7 +76,7 @@ export interface SearchSkill {
   slug: string
   source: string
   installSource: string
-  sourceKind: 'skills.sh' | 'skillshub' | 'xfyun' | 'skillhub-cn'
+  sourceKind: 'skills.sh' | 'skillshub' | 'xfyun' | 'skillhub-cn' | 'weskillhub'
   description: string
   installs: number
   updatedAt?: number

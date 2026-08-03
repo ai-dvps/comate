@@ -778,7 +778,7 @@
     "installedViewMode": "Installed skills view mode",
     "cardView": "Card view",
     "listView": "List view",
-    "searchHint": "Search skills.sh, SkillsHub, iFlytek SkillHub, and Tencent SkillHub live, or install from a source URL.",
+    "searchHint": "Search skills.sh, SkillsHub, iFlytek SkillHub, Tencent SkillHub, and WeSkillHub live, or install from a source URL.",
     "openSearch": "Search skill repositories",
     "searchPlaceholder": "Search skill repositories...",
     "searchHeading": "Find skills for the work at hand",
