@@ -191,6 +191,7 @@ let activeResolveId = 0
 let activeProviderCheckId = 0
 let providerRequestGeneration = 0
 const providerGenerations = new Map<SkillSearchProviderId, number>()
+const providerCheckingGenerations = new Map<SkillSearchProviderId, number>()
 
 const PROVIDER_PREFERENCE_KEY = 'comate.skills.search-providers.v1'
 
@@ -386,6 +387,9 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     const providerState = get()
     const requestedProviderIds = providerState.searchProviders.map(({ id }) => id)
     const generation = beginProviderRequest(requestedProviderIds)
+    for (const providerId of requestedProviderIds) {
+      providerCheckingGenerations.set(providerId, generation)
+    }
     set({
       isCheckingSearchProviders: true,
       checkingSearchProviderIds: requestedProviderIds,
@@ -455,15 +459,21 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
           isCheckingSearchProviders: false,
           checkingSearchProviderIds: state.checkingSearchProviderIds.filter(
             (providerId) => !requestedProviderIds.includes(providerId)
-              || !isCurrentProviderRequest(providerId, generation)
+              || providerCheckingGenerations.get(providerId) !== generation
           ),
         }))
+        for (const providerId of requestedProviderIds) {
+          if (providerCheckingGenerations.get(providerId) === generation) {
+            providerCheckingGenerations.delete(providerId)
+          }
+        }
       }
     }
   },
 
   retrySearchProvider: async (providerId) => {
     const generation = beginProviderRequest([providerId])
+    providerCheckingGenerations.set(providerId, generation)
     set((state) => ({
       checkingSearchProviderIds: uniqueProviderIds([...state.checkingSearchProviderIds, providerId]),
     }))
@@ -491,10 +501,11 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
         ),
       }))
     } finally {
-      if (isCurrentProviderRequest(providerId, generation)) {
+      if (providerCheckingGenerations.get(providerId) === generation) {
         set((state) => ({
           checkingSearchProviderIds: state.checkingSearchProviderIds.filter((id) => id !== providerId),
         }))
+        providerCheckingGenerations.delete(providerId)
       }
     }
   },

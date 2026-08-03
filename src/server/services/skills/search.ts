@@ -333,6 +333,10 @@ export const SEARCH_PROVIDER_REGISTRY: readonly SkillSearchProviderDescriptor[] 
   { id: 'weskillhub', label: 'WeSkillHub', search: searchWeSkillHubSkills },
 ];
 
+export function isSkillSearchProviderId(value: string): value is SkillSearchProviderId {
+  return SEARCH_PROVIDER_REGISTRY.some(({ id }) => id === value);
+}
+
 async function runProvider(
   provider: SkillSearchProviderDescriptor,
   query: SkillSearchQuery,

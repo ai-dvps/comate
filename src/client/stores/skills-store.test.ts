@@ -227,4 +227,28 @@ describe('useSkillsStore search', () => {
     expect(useSkillsStore.getState().searchProviders.find(({ id }) => id === 'skills.sh')?.status)
       .toBe('available')
   })
+
+  it('clears checking state when a newer search supersedes an older provider check', async () => {
+    let resolveCheck: ((value: Response) => void) | undefined
+    global.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('/search/providers')) {
+        return new Promise<Response>((resolve) => { resolveCheck = resolve })
+      }
+      return Promise.resolve(response('newer-search-result'))
+    }) as typeof fetch
+
+    const check = useSkillsStore.getState().checkSearchProviders()
+    await useSkillsStore.getState().search('review')
+    resolveCheck?.(providerResponse([
+      { id: 'skills.sh', label: 'skills.sh', status: 'unavailable', reason: 'network' },
+      allProviders[1],
+    ]))
+    await check
+
+    expect(useSkillsStore.getState().searchProviders.find(({ id }) => id === 'skills.sh')?.status)
+      .toBe('available')
+    expect(useSkillsStore.getState().checkingSearchProviderIds).toEqual([])
+    expect(useSkillsStore.getState().isCheckingSearchProviders).toBe(false)
+  })
 })
