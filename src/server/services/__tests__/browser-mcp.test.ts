@@ -16,6 +16,7 @@ import {
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
   BROWSER_TOOL_PREFIX,
   buildBrowserToolDefinitions,
+  disposeBrowserToolContext,
   type BrowserApprovalRequest,
   type BrowserApprovalDecision,
   type BrowserMcpDeps,
@@ -86,6 +87,7 @@ class FakeNetworkTransport implements BrowserNetworkCaptureTransport {
   private readonly eventListeners = new Set<(event: CdpEventEnvelope) => void>();
   private readonly closeListeners = new Set<() => void>();
   readonly bodies = new Map<string, { body: string; base64Encoded: boolean }>();
+  get listenerCount(): number { return this.eventListeners.size + this.closeListeners.size; }
   async start(): Promise<void> {}
   onEvent(listener: (event: CdpEventEnvelope) => void): () => void {
     this.eventListeners.add(listener);
@@ -318,8 +320,8 @@ function makeHarness(options: {
     createProcess: (processOptions) => new FakeSteelHandle(processOptions),
     cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
     now: () => Date.now(),
-    // Fast auto-remember fakes so closeSession does not retry a dead CDP
-    // connect for the full cold-start budget (U1/U2 tests).
+    // Fast site-auth fakes for focused MCP tests. Close never implicitly
+    // remembers state; explicit Remember behavior has service-level tests.
     currentPageUrl: options.currentPageUrl ?? (async () => null),
     exportContext: options.exportContext ?? (async () => ({})),
     // No-op timer: this suite does not test idle behavior, so the spawn-armed
@@ -1017,6 +1019,19 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     transport.emit('Network.responseReceived', {
       requestId: 'api', response: { url: 'https://api.example.com/v1/quota', status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, mimeType: 'application/json' },
     });
+    // Deliberately noisy traffic shares the same temporal window. It remains
+    // available as evidence but must not be described as caused by the action.
+    for (const [requestId, url, type] of [
+      ['telemetry', 'https://api.example.com/v1/telemetry', 'Fetch'],
+      ['poll', 'https://api.example.com/api/notifications/poll', 'EventSource'],
+    ] as const) {
+      transport.emit('Network.requestWillBeSent', {
+        requestId, type, request: { url, method: 'GET', headers: {} },
+      });
+      transport.emit('Network.responseReceived', {
+        requestId, response: { url, status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, mimeType: 'application/json' },
+      });
+    }
     transport.emit('Network.requestWillBeSent', {
       requestId: 'image', type: 'Image', request: { url: 'https://api.example.com/logo.png', method: 'GET', headers: {} },
     });
@@ -1029,17 +1044,42 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
       requestId: 'late', type: 'Fetch', request: { url: 'https://api.example.com/v1/late', method: 'GET', headers: {} },
     });
     transport.emit('Network.loadingFinished', { requestId: 'api' });
+    transport.emit('Network.loadingFinished', { requestId: 'telemetry' });
+    transport.emit('Network.loadingFinished', { requestId: 'poll' });
     transport.emit('Network.loadingFinished', { requestId: 'image' });
     const payload = resultPayload(await stopping);
     const serialized = JSON.stringify(payload);
     assert.doesNotMatch(serialized, new RegExp(secret));
     assert.doesNotMatch(serialized, /Bearer/);
     const candidates = payload.candidates as Array<{ url: string; authBinding?: string; evidence: { confidence: string; action: string } }>;
-    assert.equal(candidates.length, 2, 'post-stop request is not admitted');
+    assert.equal(candidates.length, 4, 'background traffic is retained and post-stop traffic is excluded');
     assert.match(candidates[0].url, /\/v1\/quota/);
     assert.equal(candidates[0].evidence.confidence, 'high');
-    assert.match(candidates[0].evidence.action, /temporal association only/);
+    assert.ok(candidates.every((candidate) => /temporal association only/.test(candidate.evidence.action)));
+    assert.ok(candidates.some((candidate) => candidate.url.includes('/v1/telemetry')));
+    assert.ok(candidates.some((candidate) => candidate.url.includes('/notifications/poll')));
     assert.match(candidates[0].authBinding ?? '', /^authb_[A-Za-z0-9_-]{8,}$/);
+  });
+
+  it('runtime disposal aborts capture drains and removes the task context', async () => {
+    const service = makeService();
+    const transport = new FakeNetworkTransport();
+    const page = new FakePage({ extraction: makeExtraction(), networkTransport: transport });
+    const deps: BrowserMcpDeps = {
+      sessionId: 'dispose-capture-session', workspaceId: 'w', browserService: service,
+      connectPage: async () => page, pageRegistry: new Map(), settleMs: 0,
+      captureOptions: { quietMs: 60_000, hardDeadlineMs: 60_000 },
+    };
+    const definitions = buildBrowserToolDefinitions(deps);
+    await definitions.find((definition) => definition.name === 'startNetworkCapture')!.handler({ action: 'Quota' }, {});
+    assert.ok(transport.listenerCount > 0);
+
+    disposeBrowserToolContext('dispose-capture-session', service);
+
+    assert.equal(transport.listenerCount, 0, 'capture listeners must be detached synchronously');
+    const rebuilt = buildBrowserToolDefinitions(deps);
+    const result = resultPayload(await rebuilt.find((definition) => definition.name === 'stopNetworkCapture')!.handler({}, {}));
+    assert.equal((result.error as { code: string }).code, 'capture_not_active');
   });
 });
 

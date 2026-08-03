@@ -1,0 +1,1 @@
+printf '%s' "$SANITIZED_REQUEST_JSON" | comate api request --stdin --json

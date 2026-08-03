@@ -51,6 +51,11 @@ describe('BrowserAuthBindingVault', () => {
     current = undefined;
     assert.throws(() => vault.resolve('task-1', rebound, 'https://app.example.com/api'),
       (error: unknown) => error instanceof BrowserAuthBindingError && error.code === 'auth_binding_stale');
+
+    current = { entry: remembered, generation: 'gen-1' };
+    vault.closeTask('task-1');
+    assert.throws(() => vault.resolve('task-1', rebound, 'https://app.example.com/api'),
+      (error: unknown) => error instanceof BrowserAuthBindingError && error.code === 'auth_binding_stale');
   });
 
   it('keeps registrable-domain authorization separate from native applicability', () => {

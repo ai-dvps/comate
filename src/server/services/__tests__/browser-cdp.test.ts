@@ -48,7 +48,7 @@ describe('CdpConnection event envelopes', () => {
 });
 
 describe('CdpNetworkCaptureTransport', () => {
-  it('recursively enables Network before resuming paused iframe/worker targets', async () => {
+  it('recursively enables Network for page and iframe targets without freezing workers', async () => {
     const commands: Array<{ method: string; sessionId?: string; params: Record<string, unknown> }> = [];
     const methodListeners = new Map<string, Set<(event: CdpEventEnvelope) => void>>();
     const fakeConnection = {
@@ -62,7 +62,7 @@ describe('CdpNetworkCaptureTransport', () => {
               params: {
                 sessionId: 'frame',
                 targetInfo: { type: 'iframe' },
-                waitingForDebugger: true,
+                waitingForDebugger: false,
               },
             });
           }
@@ -75,7 +75,7 @@ describe('CdpNetworkCaptureTransport', () => {
               params: {
                 sessionId: 'worker',
                 targetInfo: { type: 'worker' },
-                waitingForDebugger: true,
+                waitingForDebugger: false,
               },
             });
           }
@@ -97,15 +97,14 @@ describe('CdpNetworkCaptureTransport', () => {
     );
     await transport.start();
 
-    for (const sessionId of ['page', 'frame', 'worker']) {
+    for (const sessionId of ['page', 'frame']) {
       assert.ok(commands.some((command) => command.method === 'Network.enable' && command.sessionId === sessionId));
       assert.ok(commands.some((command) => command.method === 'Target.setAutoAttach' && command.sessionId === sessionId));
     }
-    for (const sessionId of ['frame', 'worker']) {
-      const enabled = commands.findIndex((command) => command.method === 'Network.enable' && command.sessionId === sessionId);
-      const resumed = commands.findIndex((command) => command.method === 'Runtime.runIfWaitingForDebugger' && command.sessionId === sessionId);
-      assert.ok(enabled >= 0 && resumed > enabled, `${sessionId} must be enabled before resume`);
-    }
+    assert.equal(commands.some((command) => command.sessionId === 'worker'), false);
+    assert.ok(commands
+      .filter((command) => command.method === 'Target.setAutoAttach')
+      .every((command) => (command.params as { waitForDebuggerOnStart?: boolean }).waitForDebuggerOnStart === false));
     assert.deepEqual(
       commands.find((command) => command.method === 'Network.enable' && command.sessionId === 'page')?.params,
       {

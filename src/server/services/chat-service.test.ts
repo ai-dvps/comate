@@ -41,6 +41,8 @@ import {
   WECOM_CONTEXT_FILE_ENV,
   sessionCapabilityService,
 } from './session-capability-service.js';
+import { browserService } from './browser-service.js';
+import { browserApiBrokerService } from './browser-api-broker-service.js';
 
 function createMockWorkspace(id: string): Workspace {
   return {
@@ -415,6 +417,50 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     await service.closeRuntime('s1');
     assert.ok(closeCalled, 'close should be called');
     assert.ok(!timeouts.has('s1'), 'idle timer should be cancelled');
+  });
+
+  it('closeRuntime revokes browser API task state even after the runtime is already gone', async () => {
+    const disposed: string[] = [];
+    const revoked: string[] = [];
+    const originalDispose = browserService.disposeAuthBindings;
+    const originalRevoke = browserApiBrokerService.revokeTask;
+    browserService.disposeAuthBindings = (sessionId) => { disposed.push(sessionId); };
+    browserApiBrokerService.revokeTask = (sessionId) => { revoked.push(sessionId); };
+    try {
+      await service.closeRuntime('orphan-task');
+    } finally {
+      browserService.disposeAuthBindings = originalDispose;
+      browserApiBrokerService.revokeTask = originalRevoke;
+    }
+    assert.deepStrictEqual(disposed, ['orphan-task']);
+    assert.deepStrictEqual(revoked, ['orphan-task']);
+  });
+
+  it('deleteSession validates workspace ownership before revoking browser task state', async () => {
+    workspaceStore.getLocalSession = () => createMockSession('s1');
+    const disposed: string[] = [];
+    const revoked: string[] = [];
+    const originalDispose = browserService.disposeAuthBindings;
+    const originalRevoke = browserApiBrokerService.revokeTask;
+    browserService.disposeAuthBindings = (sessionId) => { disposed.push(sessionId); };
+    browserApiBrokerService.revokeTask = (sessionId) => { revoked.push(sessionId); };
+    try {
+      workspaceStore.get = async () => undefined;
+      await assert.rejects(
+        service.deleteSession('s1', 'missing-workspace'),
+        (error: unknown) => (error as { code?: string }).code === 'WORKSPACE_NOT_FOUND',
+      );
+      workspaceStore.get = async () => createMockWorkspace('other-workspace');
+      await assert.rejects(
+        service.deleteSession('s1', 'other-workspace'),
+        (error: unknown) => (error as { code?: string }).code === 'SESSION_NOT_FOUND',
+      );
+    } finally {
+      browserService.disposeAuthBindings = originalDispose;
+      browserApiBrokerService.revokeTask = originalRevoke;
+    }
+    assert.deepStrictEqual(disposed, []);
+    assert.deepStrictEqual(revoked, []);
   });
 
   it('rapid identical activity callbacks retain one timer', async () => {

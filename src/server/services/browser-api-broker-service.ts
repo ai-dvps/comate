@@ -43,6 +43,11 @@ class BrowserApiBrokerService {
   ): Promise<BrokerResult> {
     return this.broker.execute(context, request);
   }
+
+  /** Runtime/task terminal hook: exact-operation approvals must not survive. */
+  revokeTask(taskId: string): void {
+    this.broker.revokeTask(taskId);
+  }
 }
 
 export const browserApiBrokerService = new BrowserApiBrokerService();

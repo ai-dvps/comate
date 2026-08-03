@@ -214,6 +214,7 @@ function terminalOutcome(result: BrowserDirectHttpResult): 'ok' | 'error' {
 export class BrowserAuthenticatedRequestBroker {
   private readonly http: Pick<BrowserDirectHttpClient, 'request'>;
   private readonly grants = new Map<string, Grant>();
+  private readonly inFlight = new Map<string, Set<AbortController>>();
   private readonly now: () => number;
   private readonly grantTtlMs: number;
 
@@ -224,6 +225,28 @@ export class BrowserAuthenticatedRequestBroker {
   }
 
   async execute(context: BrokerExecutionContext, raw: unknown): Promise<BrokerResult> {
+    const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort();
+    if (context.signal?.aborted) controller.abort();
+    else context.signal?.addEventListener('abort', abortFromCaller, { once: true });
+    let taskRequests = this.inFlight.get(context.taskId);
+    if (!taskRequests) {
+      taskRequests = new Set();
+      this.inFlight.set(context.taskId, taskRequests);
+    }
+    taskRequests.add(controller);
+    try {
+      return await this.executeRequest({ ...context, signal: controller.signal }, raw);
+    } finally {
+      context.signal?.removeEventListener('abort', abortFromCaller);
+      taskRequests.delete(controller);
+      if (taskRequests.size === 0 && this.inFlight.get(context.taskId) === taskRequests) {
+        this.inFlight.delete(context.taskId);
+      }
+    }
+  }
+
+  private async executeRequest(context: BrokerExecutionContext, raw: unknown): Promise<BrokerResult> {
     const parsed = brokerRequestSchema.safeParse(raw);
     if (!parsed.success) return error('invalid_contract', 'The request recipe is invalid.', 'Regenerate the recipe from a capture candidate.');
     let operation: PreparedOperation;
@@ -338,6 +361,11 @@ export class BrowserAuthenticatedRequestBroker {
 
   revokeTask(taskId: string): void {
     for (const [key, grant] of this.grants) if (grant.taskId === taskId) this.grants.delete(key);
+    const requests = this.inFlight.get(taskId);
+    if (requests) {
+      this.inFlight.delete(taskId);
+      for (const controller of requests) controller.abort();
+    }
   }
 
   revokeBinding(taskId: string, bindingId: string): void {

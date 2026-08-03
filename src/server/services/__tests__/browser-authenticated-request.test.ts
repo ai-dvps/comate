@@ -1,6 +1,8 @@
 import '../../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import { sharedContractFixtures, type BrokerRequest } from '@comate/api-contracts';
 import {
@@ -8,7 +10,11 @@ import {
   type BrowserBrokerAuditInput,
 } from '../browser-authenticated-request.js';
 import { BrowserAuthBindingVault } from '../browser-auth-binding.js';
-import { BrowserDirectHttpClient, type DirectHttpTransportRequest } from '../browser-direct-http-client.js';
+import {
+  BrowserDirectHttpClient,
+  BrowserDirectHttpError,
+  type DirectHttpTransportRequest,
+} from '../browser-direct-http-client.js';
 import { BrowserAuditService } from '../browser-audit.js';
 import { SqliteStore } from '../../storage/sqlite-store.js';
 
@@ -138,6 +144,67 @@ describe('BrowserAuthenticatedRequestBroker', () => {
     assert.equal(h.approvalCalls(), 2);
   });
 
+  it('revokeTask cancels an in-flight approval wait before dispatch', async () => {
+    const vault = new BrowserAuthBindingVault();
+    const bindingId = vault.capture('task-1', {
+      siteKey: 'example.com', sourceOrigin: 'https://api.example.com',
+      sessionContext: { cookies: [{ name: 'sid', value: COOKIE_SECRET, domain: '.example.com', secure: true }] },
+    });
+    let dispatches = 0;
+    const broker = new BrowserAuthenticatedRequestBroker({
+      resolveAuth: (taskId, id, url) => vault.resolve(taskId, id, url),
+      approvalRequester: ({ signal }) => new Promise((resolve) => {
+        signal?.addEventListener('abort', () => resolve({ behavior: 'cancel' }), { once: true });
+      }),
+      httpClient: { request: async () => {
+        dispatches += 1;
+        throw new Error('must not dispatch');
+      } },
+      audit: { logBroker: () => true },
+    });
+    const input = request('POST');
+    input.recipe.authBinding = bindingId;
+
+    const pending = broker.execute({ taskId: 'task-1', workspaceId: 'ws-1' }, input);
+    await Promise.resolve();
+    broker.revokeTask('task-1');
+    const result = await pending;
+
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, 'authorization_cancelled');
+    assert.equal(dispatches, 0);
+  });
+
+  it('revokeTask aborts an in-flight direct HTTP execution', async () => {
+    const vault = new BrowserAuthBindingVault();
+    const bindingId = vault.capture('task-1', {
+      siteKey: 'example.com', sourceOrigin: 'https://api.example.com',
+      sessionContext: { cookies: [{ name: 'sid', value: COOKIE_SECRET, domain: '.example.com', secure: true }] },
+    });
+    let requestStarted!: () => void;
+    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+    const broker = new BrowserAuthenticatedRequestBroker({
+      resolveAuth: (taskId, id, url) => vault.resolve(taskId, id, url),
+      httpClient: { request: (input) => new Promise((_, reject) => {
+        requestStarted();
+        input.signal?.addEventListener('abort', () => {
+          reject(new BrowserDirectHttpError('request_aborted', 'task closed'));
+        }, { once: true });
+      }) },
+      audit: { logBroker: () => true },
+    });
+    const input = request();
+    input.recipe.authBinding = bindingId;
+
+    const pending = broker.execute({ taskId: 'task-1', workspaceId: 'ws-1' }, input);
+    await started;
+    broker.revokeTask('task-1');
+    const result = await pending;
+
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, 'authorization_cancelled');
+  });
+
   it('returns typed denial, timeout, and cancellation without dispatch', async () => {
     for (const [decision, expected] of [
       ['deny', 'authorization_denied'],
@@ -258,5 +325,17 @@ describe('BrowserAuthenticatedRequestBroker', () => {
     assert.ok(rows.every((row) => row.category === 'broker' && row.siteKey === 'example.com'));
     assert.equal(JSON.stringify(rows).includes(sentinel), false);
     assert.ok(rows.every((row) => row.detail?.includes('broker_safeCorrelation')));
+  });
+
+  it('keeps generated skill, Python, and CLI fixtures credential-free', () => {
+    const fixtureDir = path.join(import.meta.dirname, 'fixtures', 'browser-api-discovery');
+    const generated = ['generated-skill.md', 'quota.py', 'quota.cli.txt']
+      .map((name) => readFileSync(path.join(fixtureDir, name), 'utf8'))
+      .join('\n');
+    for (const sentinel of [COOKIE_SECRET, BEARER_SECRET, RESPONSE_SECRET, 'ANTHROPIC_AUTH_TOKEN']) {
+      assert.equal(generated.includes(sentinel), false, `${sentinel} leaked into a generated artifact`);
+    }
+    assert.match(generated, /authenticatedRequest/);
+    assert.match(generated, /comate api request --stdin --json/);
   });
 });

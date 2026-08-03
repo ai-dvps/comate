@@ -647,6 +647,16 @@ export class BrowserToolContext {
     this.authenticatedRequestBroker = deps.authenticatedRequestBroker ?? browserApiBrokerService.broker;
   }
 
+  /** Abort task-owned capture state without closing the shared browser page. */
+  disposeTask(reason: 'connection_closed' = 'connection_closed'): void {
+    this.networkCapture?.abort(reason);
+    this.networkCapture = undefined;
+    this.capturePrimarySessionId = undefined;
+    this.refTable.clear();
+    this.lastModel = null;
+    clearSubmitSemanticsRefs(this.deps.sessionId);
+  }
+
   private async ensurePage(): Promise<SteelCdpSession> {
     // Any page-touching tool call (open/snapshot/act/submit/extract) plus
     // requestHandoff counts as browser activity — reset the idle-reclaim
@@ -1575,8 +1585,9 @@ export class BrowserToolContext {
 
   /**
    * Agent-initiated close (U2): asks the human to confirm closing the
-   * browser, then tears it down via closeSession (auto-remember + teardown +
-   * audit). A single approval card — no two-phase takeover/handback and no
+   * browser, then tears it down via closeSession (teardown + audit). Closing
+   * never persists credentials; that requires a separate explicit Remember.
+   * A single approval card — no two-phase takeover/handback and no
    * controlGate: asking to close is always allowed, and the approval card is
    * the human-consent gate (KTD-2). Resolution (allow / deny / timeout /
    * channel-failure) mirrors requestHandoff. A no-live-browser close is an
@@ -1622,20 +1633,13 @@ export class BrowserToolContext {
 
     const result = await this.svc.closeSession(sessionId, 'agent');
     if (result.closed) {
-      this.networkCapture?.abort('connection_closed');
-      this.networkCapture = undefined;
-      this.refTable.clear();
-      this.lastModel = null;
+      this.disposeTask('connection_closed');
       this.deps.contextRegistry?.delete(sessionId);
     }
     return toolJson({
       ok: true,
       closed: result.closed,
-      ...(result.rememberedSite !== undefined && { rememberedSite: result.rememberedSite }),
-      note:
-        result.rememberedSite !== undefined
-          ? `Browser closed; login for ${result.rememberedSite.key} preserved for the next open.`
-          : 'Browser closed.',
+      note: 'Browser closed. Only sites explicitly remembered before closing remain available.',
     });
   }
 
@@ -1738,6 +1742,17 @@ export class BrowserToolContext {
 // ---------------------------------------------------------------------------
 
 export type BrowserToolDefinition = BrowserToolDefinitionShape;
+
+/** Dispose the process-default MCP context owned by one task/runtime. */
+export function disposeBrowserToolContext(
+  sessionId: string,
+  service: BrowserService = browserService,
+): void {
+  const registry = contextRegistryFor(service);
+  const context = registry.get(sessionId);
+  context?.disposeTask('connection_closed');
+  registry.delete(sessionId);
+}
 
 export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDefinition[] {
   const service = deps.browserService ?? browserService;
