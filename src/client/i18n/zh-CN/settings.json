@@ -618,7 +618,6 @@
     "sections": "技能分区",
     "expertPackageOrchestrator": "专家包编排",
     "enterpriseZone": {
-      "enterpriseCount": "{{count}} 家企业",
       "searchEnterprises": "搜索企业",
       "clearEnterpriseSearch": "清除企业搜索",
       "filterByIndustry": "按行业筛选企业",

@@ -97,9 +97,6 @@ export default function EnterpriseList({
               <option key={item.key} value={item.key}>{labelsByIndustry.get(item.key)}</option>
             ))}
           </select>
-          <p className="shrink-0 px-1 text-xs text-text-tertiary">
-            {t('skills.enterpriseZone.enterpriseCount', { count: formatCount(page?.total ?? 0) })}
-          </p>
         </div>
 
         {industriesError ? (

@@ -618,7 +618,6 @@
     "sections": "Skills sections",
     "expertPackageOrchestrator": "Expert Package orchestration",
     "enterpriseZone": {
-      "enterpriseCount": "{{count}} enterprises",
       "searchEnterprises": "Search enterprises",
       "clearEnterpriseSearch": "Clear enterprise search",
       "filterByIndustry": "Filter enterprises by industry",
