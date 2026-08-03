@@ -12,6 +12,14 @@ The bundle is rebuilt from a pinned upstream commit and must pass build-time gat
 ### Production closure
 The set of runtime dependencies vendored alongside the Vendored Steel build product, computed from the pinned upstream lockfile rather than from a full npm install, so dev-only and platform-optional packages never reach the app bundle.
 
+## Browser API automation
+
+### Sanitized API recipe
+A chat-resident description of an HTTP request discovered from one recorded browser action: request shape, variable inputs, authentication placeholders, expected response fields, and bounded response evidence. Credential values and detected secrets are removed before the recipe enters model context, and the recipe is not automatically persisted outside its originating task.
+
+### Authenticated-request broker
+The Comate server capability that performs HTTPS requests with saved browser authentication without returning cookies, bearer tokens, or browser storage to the caller. Agents use it through MCP, local scripts use it through the Comate CLI, and both paths require a running Comate instance.
+
 ## Agent runtime
 
 ### Agent 后端 (agent backend)
