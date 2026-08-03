@@ -618,8 +618,6 @@
     "sections": "技能分区",
     "expertPackageOrchestrator": "专家包编排",
     "enterpriseZone": {
-      "title": "企业专区",
-      "subtitle": "浏览 SkillHub 已认证的企业发布者。",
       "enterpriseCount": "{{count}} 家企业",
       "searchEnterprises": "搜索企业",
       "clearEnterpriseSearch": "清除企业搜索",

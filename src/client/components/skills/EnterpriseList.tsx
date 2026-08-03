@@ -63,18 +63,8 @@ export default function EnterpriseList({
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <header className="rounded-2xl border border-border bg-surface px-4 py-5 shadow-sm md:px-5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-text-primary">{t('skills.enterpriseZone.title')}</h2>
-            <p className="mt-1 text-xs text-text-tertiary">{t('skills.enterpriseZone.subtitle')}</p>
-          </div>
-          <p className="shrink-0 text-xs text-text-tertiary">
-            {t('skills.enterpriseZone.enterpriseCount', { count: formatCount(page?.total ?? 0) })}
-          </p>
-        </div>
-
-        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+      <header className="rounded-2xl border border-border bg-surface px-4 py-4 shadow-sm md:px-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
             <input
@@ -107,6 +97,9 @@ export default function EnterpriseList({
               <option key={item.key} value={item.key}>{labelsByIndustry.get(item.key)}</option>
             ))}
           </select>
+          <p className="shrink-0 px-1 text-xs text-text-tertiary">
+            {t('skills.enterpriseZone.enterpriseCount', { count: formatCount(page?.total ?? 0) })}
+          </p>
         </div>
 
         {industriesError ? (
