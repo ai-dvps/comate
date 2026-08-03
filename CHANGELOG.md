@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Skill search provider filters and health** — Skill Search now lets users include or exclude any connected provider, remembers that choice globally, and identifies unavailable providers with safe failure reasons and per-provider Retry. Searches skip unavailable sources while preserving healthy results and clearly warn when result coverage is incomplete.
+
 - **WeSkillHub federated Skills provider** — WeSkillHub is now the fifth federated provider, with discovery using the generic project/global Skill installation and update lifecycle.
 
 - **Enterprise Zone in Skills** — Skills now includes a top-level Enterprise Zone for searchable, industry-filtered enterprise discovery, per-enterprise Skill search and sorting, Skill details, and individual project/global installation through the standard Skill flow.

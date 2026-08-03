@@ -38,6 +38,7 @@ import SkillInstallModal from './SkillInstallModal'
 import ModalPanel from './ModalPanel'
 import ExpertPackagesView from './skills/ExpertPackagesView'
 import EnterpriseZoneView from './skills/EnterpriseZoneView'
+import SkillProviderFilter from './skills/SkillProviderFilter'
 import { useExpertPackagesStore } from '../stores/expert-packages-store'
 
 interface SkillsPageProps {
@@ -78,6 +79,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
   const [urlInput, setUrlInput] = useState('')
   const [showUrlBox, setShowUrlBox] = useState(false)
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const providerCheckBlockedSearch = useRef(false)
   const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [recentlyUpdatedName, setRecentlyUpdatedName] = useState<string | null>(null)
   const [packageAction, setPackageAction] = useState<{ slug: string; type: 'update' | 'uninstall' } | null>(null)
@@ -95,8 +97,15 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
     updatingSkillName,
     updateError,
     failedUpdateSkillName,
+    searchProviders,
+    selectedSearchProviderIds,
+    searchProviderBlockReason,
+    lastSearchIncompleteProviderIds,
+    isSearchProviderPreferenceInitialized,
     fetchInstalled,
     search,
+    checkSearchProviders,
+    selectAllSearchProviders,
     uninstall,
     update,
     updateAll,
@@ -113,6 +122,10 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
   useEffect(() => {
     if (!isOpen) useExpertPackagesStore.getState().reset()
   }, [isOpen])
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'search') void checkSearchProviders()
+  }, [activeTab, checkSearchProviders, isOpen])
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -134,6 +147,23 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
     [search]
   )
 
+  useEffect(() => {
+    if (searchProviderBlockReason === 'checking' && searchInput) {
+      providerCheckBlockedSearch.current = true
+      return
+    }
+    if (providerCheckBlockedSearch.current && isSearchProviderPreferenceInitialized && searchInput) {
+      providerCheckBlockedSearch.current = false
+      scheduleSearch(searchInput, searchFilters)
+    }
+  }, [
+    isSearchProviderPreferenceInitialized,
+    scheduleSearch,
+    searchFilters,
+    searchInput,
+    searchProviderBlockReason,
+  ])
+
   const handleSearchChange = useCallback(
     (value: string) => {
       setSearchInput(value)
@@ -150,9 +180,12 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
 
   const clearSearchFilters = () => {
     const next: SkillSearchFilters = { sort: 'score' }
+    selectAllSearchProviders()
     setSearchFilters(next)
     scheduleSearch(searchInput, next)
   }
+
+  const handleProviderSelectionChange = () => scheduleSearch(searchInput, searchFilters)
 
   const clearSearch = useCallback(() => {
     setSearchInput('')
@@ -244,7 +277,14 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
   }
 
   const hasActiveSearchFilters = Boolean(
-    searchFilters.scene || searchFilters.preferChinese || searchFilters.noApiKey || searchFilters.sort !== 'score'
+    searchFilters.scene
+    || searchFilters.preferChinese
+    || searchFilters.noApiKey
+    || searchFilters.sort !== 'score'
+    || (searchProviders.length > 0 && selectedSearchProviderIds.length !== searchProviders.length)
+  )
+  const incompleteProviderNames = lastSearchIncompleteProviderIds.map((providerId) =>
+    searchProviders.find(({ id }) => id === providerId)?.label || providerId
   )
 
   const installedPackageGroups = useMemo(() => installed
@@ -607,6 +647,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                   </div>
 
                   <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center">
+                      <SkillProviderFilter onSelectionChange={handleProviderSelectionChange} />
                       <label className="relative min-w-0 flex-1 lg:max-w-56">
                         <span className="sr-only">{t('skills.sceneLabel')}</span>
                         <select
@@ -682,6 +723,30 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                   </div>
                 </section>
 
+                {searchInput && searchProviderBlockReason === 'checking' && (
+                  <div role="status" className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-xs text-text-secondary">
+                    <Loader2 className="h-4 w-4 animate-spin text-accent" />
+                    {t('skills.checkingProvidersBeforeSearch')}
+                  </div>
+                )}
+
+                {searchInput && searchProviderBlockReason === 'no-available' && (
+                  <div role="status" className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5 text-xs text-text-secondary">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                    <div>
+                      <p className="font-medium text-text-primary">{t('skills.noAvailableProviders')}</p>
+                      <p className="mt-0.5 text-text-tertiary">{t('skills.noAvailableProvidersHint')}</p>
+                    </div>
+                  </div>
+                )}
+
+                {searchInput && incompleteProviderNames.length > 0 && searchProviderBlockReason !== 'no-available' && (
+                  <div role="status" className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5 text-xs text-text-secondary">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+                    {t('skills.partialResultsWarning', { providers: incompleteProviderNames.join(', ') })}
+                  </div>
+                )}
+
                 {/* Searching indicator */}
                 {isSearching && (
                   <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2" aria-label={t('skills.searching')}>
@@ -697,7 +762,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                 )}
 
                 {/* Empty states */}
-                {!isSearching && searchResults.length === 0 && (
+                {!isSearching && searchResults.length === 0 && searchProviderBlockReason === null && (
                   <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface/50 py-9 text-center space-y-2">
                     <Search className="w-8 h-8 text-text-tertiary" />
                     <div>
