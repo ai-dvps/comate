@@ -84,7 +84,7 @@ export default function SkillHubSkillDetail({
             <h2 className="text-xl font-semibold text-text-primary">{detail.displayName}</h2>
             {contextLabel ? <p className="mt-1 text-[11px] font-medium text-accent">{contextLabel}</p> : null}
             <p className="mt-1 text-[11px] text-text-tertiary">{detail.owner.displayName} · @{detail.owner.handle}</p>
-            {detail.publisher ? <p className="mt-1 text-[11px] text-text-tertiary">Publisher: {detail.publisher.orgId}</p> : null}
+            {detail.publisher ? <p className="mt-1 text-[11px] text-text-tertiary">{t('skills.skillHubDetail.publisher', { publisher: detail.publisher.orgId })}</p> : null}
             <p className="mt-3 max-w-3xl text-xs leading-5 text-text-secondary">{detail.summary}</p>
             <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-text-tertiary">
               <span className="rounded-md bg-surface-hover px-2 py-1">{detail.category || t('skills.expertPackages.uncategorized')}</span>
@@ -100,7 +100,7 @@ export default function SkillHubSkillDetail({
         </div>
         {error ? (
           <div role="status" className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-            <span>{error}. Showing the last available detail.</span>
+            <span>{t('skills.skillHubDetail.showingLastDetail', { error })}</span>
             <button type="button" onClick={onRetry} className="font-medium underline underline-offset-2">{retryLabel}</button>
           </div>
         ) : null}
