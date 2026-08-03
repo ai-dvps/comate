@@ -42,6 +42,22 @@ export interface BrowserSiteAuthEntry {
   bearerToken?: string;
 }
 
+/** Versioned AES-GCM envelope persisted in SQLite. Replayable values only
+ * exist inside `ciphertext`; metadata remains available for value-free GETs. */
+export interface BrowserSiteAuthEnvelope {
+  kind: 'comate.browser-site-auth';
+  version: 1;
+  ciphertext: string;
+  /** Changes whenever remembered credential material is replaced. */
+  generation: string;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+}
+
+/** Legacy plaintext is accepted only so a server read can migrate it. */
+export type BrowserSiteAuthStoredEntry = BrowserSiteAuthEntry | BrowserSiteAuthEnvelope;
+
 /**
  * The stripped, client-safe view of a remembered site (values-only-in: the
  * sessionContext value never leaves the server — KTD-8).
@@ -93,7 +109,7 @@ export interface WorkspaceSettings {
    * values (server-side field-level merge). Bot sessions never receive
    * injections from this store.
    */
-  browserSiteAuth?: Record<string, BrowserSiteAuthEntry>;
+  browserSiteAuth?: Record<string, BrowserSiteAuthStoredEntry>;
   /**
    * Repositories this workspace associates with the global GitHub account
    * (KTD5). `owner/repo` full names; a todo created here defaults its publish

@@ -1,9 +1,13 @@
 import type {
+  BrowserSiteAuthEnvelope,
   BrowserSessionContext,
   BrowserSiteAuthEntry,
   BrowserSiteAuthMeta,
+  BrowserSiteAuthStoredEntry,
   WorkspaceSettings,
 } from '../models/workspace.js';
+import { randomBytes } from 'crypto';
+import { decryptCredential, encryptCredential } from '../utils/credential-crypto.js';
 import { cookieDomainInScope, storageDomainInScope } from './browser-site-key.js';
 
 /**
@@ -30,7 +34,7 @@ import { cookieDomainInScope, storageDomainInScope } from './browser-site-key.js
 // GET strip — keys + metadata only
 // ---------------------------------------------------------------------------
 
-function toMeta(entry: BrowserSiteAuthEntry): BrowserSiteAuthMeta {
+function toMeta(entry: BrowserSiteAuthStoredEntry): BrowserSiteAuthMeta {
   return {
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
@@ -58,7 +62,7 @@ export function stripSiteAuthValues(settings: WorkspaceSettings): WorkspaceSetti
   // settings as Record<string, unknown>, so the narrower shape is safe.
   return {
     ...settings,
-    browserSiteAuth: stripped as unknown as Record<string, BrowserSiteAuthEntry>,
+    browserSiteAuth: stripped as unknown as Record<string, BrowserSiteAuthStoredEntry>,
   };
 }
 
@@ -89,7 +93,7 @@ export function mergeSiteAuthForUpdate(
     if (stored === undefined) return incoming;
     return { ...incoming, browserSiteAuth: stored };
   }
-  const merged: Record<string, BrowserSiteAuthEntry> = {};
+  const merged: Record<string, BrowserSiteAuthStoredEntry> = {};
   for (const key of Object.keys(incoming.browserSiteAuth)) {
     const storedEntry = stored?.[key];
     if (storedEntry) {
@@ -108,7 +112,96 @@ export function readSiteAuthEntry(
   settings: WorkspaceSettings,
   key: string,
 ): BrowserSiteAuthEntry | undefined {
-  return settings.browserSiteAuth?.[key];
+  const stored = settings.browserSiteAuth?.[key];
+  return stored ? decodeSiteAuthEntry(stored).entry : undefined;
+}
+
+export class BrowserSiteAuthReadError extends Error {
+  readonly code = 'reauthentication_needed' as const;
+
+  constructor() {
+    super('Remembered authentication is unavailable; sign in again.');
+    this.name = 'BrowserSiteAuthReadError';
+  }
+}
+
+export interface DecodedSiteAuthEntry {
+  entry: BrowserSiteAuthEntry;
+  generation: string;
+  legacy: boolean;
+}
+
+export function isEncryptedSiteAuthEntry(
+  value: BrowserSiteAuthStoredEntry | unknown,
+): value is BrowserSiteAuthEnvelope {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<BrowserSiteAuthEnvelope>;
+  return candidate.kind === 'comate.browser-site-auth' && candidate.version === 1 &&
+    typeof candidate.ciphertext === 'string' && typeof candidate.generation === 'string';
+}
+
+function assertRuntimeEntry(value: unknown): BrowserSiteAuthEntry {
+  if (!value || typeof value !== 'object') throw new BrowserSiteAuthReadError();
+  const entry = value as Partial<BrowserSiteAuthEntry>;
+  if (!entry.sessionContext || !Array.isArray(entry.sessionContext.cookies) ||
+      typeof entry.createdAt !== 'string' || typeof entry.updatedAt !== 'string') {
+    throw new BrowserSiteAuthReadError();
+  }
+  return entry as BrowserSiteAuthEntry;
+}
+
+export function encodeSiteAuthEntry(
+  entry: BrowserSiteAuthEntry,
+  generation = randomBytes(24).toString('base64url'),
+): BrowserSiteAuthEnvelope {
+  const valid = assertRuntimeEntry(entry);
+  let ciphertext: string;
+  try {
+    ciphertext = encryptCredential(JSON.stringify(valid));
+  } catch {
+    throw new BrowserSiteAuthReadError();
+  }
+  return {
+    kind: 'comate.browser-site-auth',
+    version: 1,
+    ciphertext,
+    generation,
+    createdAt: valid.createdAt,
+    updatedAt: valid.updatedAt,
+    ...(valid.lastUsedAt !== undefined && { lastUsedAt: valid.lastUsedAt }),
+  };
+}
+
+export function decodeSiteAuthEntry(stored: BrowserSiteAuthStoredEntry): DecodedSiteAuthEntry {
+  if (!isEncryptedSiteAuthEntry(stored)) {
+    return { entry: assertRuntimeEntry(stored), generation: randomBytes(24).toString('base64url'), legacy: true };
+  }
+  try {
+    const entry = assertRuntimeEntry(JSON.parse(decryptCredential(stored.ciphertext)));
+    return { entry, generation: stored.generation, legacy: false };
+  } catch {
+    throw new BrowserSiteAuthReadError();
+  }
+}
+
+/** Decode the global row and opportunistically migrate legacy plaintext. */
+export function readGlobalSiteAuthEntry(
+  store: {
+    getGlobalSiteAuth(siteKey: string): string | null;
+    setGlobalSiteAuth(siteKey: string, entryJson: string, generation?: string): void;
+  },
+  siteKey: string,
+): DecodedSiteAuthEntry | undefined {
+  const json = store.getGlobalSiteAuth(siteKey);
+  if (!json) return undefined;
+  try {
+    const decoded = decodeSiteAuthEntry(JSON.parse(json) as BrowserSiteAuthStoredEntry);
+    if (decoded.legacy) store.setGlobalSiteAuth(siteKey, JSON.stringify(decoded.entry), decoded.generation);
+    return decoded;
+  } catch (error) {
+    if (error instanceof BrowserSiteAuthReadError) throw error;
+    throw new BrowserSiteAuthReadError();
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -716,6 +716,40 @@ describe('remember → store → inject chain (KTD-8)', () => {
     assert.strictEqual(injection, null);
   });
 
+  it('explicit capture → remember rebind survives browser close, then rotation/removal stale it', async () => {
+    await harness.browserService.ensureSession({ sessionId: 'chat-1', workspaceId });
+    const bindingId = harness.browserService.captureAuthBinding('chat-1', {
+      siteKey: 'example.com',
+      sourceOrigin: 'https://app.example.com',
+      sessionContext: {
+        cookies: [{ name: 'sid', value: SECRET_COOKIE_VALUE, domain: '.example.com', secure: true }],
+      },
+      bearerToken: 'opaque-bearer-secret',
+    });
+    await harness.browserService.rememberCurrentSite('chat-1', bindingId);
+    await harness.browserService.closeSession('chat-1', 'human');
+    assert.strictEqual(
+      harness.browserService.resolveAuthBinding(
+        'chat-1', bindingId, 'https://app.example.com/api',
+      ).bearerToken,
+      'opaque-bearer-secret',
+    );
+
+    const stored = harness.store.getWorkspaceSiteAuthEntry(workspaceId, 'example.com')!;
+    harness.store.setWorkspaceSiteAuthEntry(workspaceId, 'example.com', {
+      ...stored.entry,
+      bearerToken: 'rotated-secret',
+      updatedAt: new Date().toISOString(),
+    });
+    assert.throws(() => harness.browserService.resolveAuthBinding(
+      'chat-1', bindingId, 'https://app.example.com/api',
+    ));
+    harness.store.deleteWorkspaceSiteAuthEntry(workspaceId, 'example.com');
+    assert.throws(() => harness.browserService.resolveAuthBinding(
+      'chat-1', bindingId, 'https://app.example.com/api',
+    ));
+  });
+
   it('refuses IP-literal pages and empty contexts with typed errors', async () => {
     harness.currentUrl = 'http://127.0.0.1:3000/admin';
     await harness.browserService.ensureSession({ sessionId: 'chat-1', workspaceId });

@@ -56,7 +56,12 @@ describe('BigModelUsageService', () => {
   });
 
   function seedBearer(token: string): void {
-    sqlite.setGlobalSiteAuth(BIGMODEL_SITE_KEY, JSON.stringify({ bearerToken: token }));
+    sqlite.setGlobalSiteAuth(BIGMODEL_SITE_KEY, JSON.stringify({
+      sessionContext: { cookies: [] },
+      bearerToken: token,
+      createdAt: 't',
+      updatedAt: 't',
+    }));
   }
 
   function trackFetch(responder: (url: string) => Response): void {

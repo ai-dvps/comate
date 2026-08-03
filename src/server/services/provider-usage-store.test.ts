@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 import { SqliteStore } from '../storage/sqlite-store.js';
 import { ProviderUsageStore, type UsageSummary } from './provider-usage-store.js';
+import { readGlobalSiteAuthEntry } from './browser-site-auth.js';
 
 function summary(over: Partial<UsageSummary> = {}): UsageSummary {
   return {
@@ -54,7 +55,8 @@ describe('ProviderUsageStore', () => {
     );
     const got = store.getGlobalSiteAuth('kimi.com');
     assert.ok(got !== null);
-    assert.equal((JSON.parse(got as string) as { bearerToken: string }).bearerToken, 'jwt-value');
+    assert.equal(got!.includes('jwt-value'), false, 'raw SQLite row is an encrypted envelope');
+    assert.equal(readGlobalSiteAuthEntry(store, 'kimi.com')!.entry.bearerToken, 'jwt-value');
     store.clearGlobalSiteAuth('kimi.com');
     assert.equal(store.getGlobalSiteAuth('kimi.com'), null);
   });

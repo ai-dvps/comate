@@ -4,6 +4,7 @@ import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { asRecord, asNum } from './kimi-usage-service.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { BrowserSiteAuthReadError, readGlobalSiteAuthEntry } from './browser-site-auth.js';
 
 export const BIGMODEL_LOGIN_URL = 'https://bigmodel.cn';
 export const BIGMODEL_USAGE_URL = 'https://bigmodel.cn/api/monitor/usage/quota/limit';
@@ -70,12 +71,11 @@ function parseBigModelUsage(body: unknown): UsageSummary | null {
 
 /** Read the captured BigModel bearer from global_site_auth. */
 function readBigModelBearer(sqlite: SqliteStore): string | null {
-  const json = sqlite.getGlobalSiteAuth(BIGMODEL_SITE_KEY);
-  if (!json) return null;
   try {
-    const entry = JSON.parse(json) as { bearerToken?: string };
-    return entry.bearerToken && entry.bearerToken.length > 0 ? entry.bearerToken : null;
-  } catch {
+    const entry = readGlobalSiteAuthEntry(sqlite, BIGMODEL_SITE_KEY)?.entry;
+    return entry?.bearerToken && entry.bearerToken.length > 0 ? entry.bearerToken : null;
+  } catch (error) {
+    if (!(error instanceof BrowserSiteAuthReadError)) throw error;
     return null;
   }
 }

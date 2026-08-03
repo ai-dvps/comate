@@ -56,7 +56,12 @@ describe('KimiUsageService', () => {
   function seedBearer(jwt: string): void {
     sqlite.setGlobalSiteAuth(
       KIMI_SITE_KEY,
-      JSON.stringify({ bearerToken: jwt, createdAt: 't', updatedAt: 't' }),
+      JSON.stringify({
+        sessionContext: { cookies: [] },
+        bearerToken: jwt,
+        createdAt: 't',
+        updatedAt: 't',
+      }),
     );
   }
 

@@ -3,6 +3,7 @@ import { providerUsageStore, type UsageSummary, type UsageStatus } from './provi
 import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { BrowserSiteAuthReadError, readGlobalSiteAuthEntry } from './browser-site-auth.js';
 
 /**
  * Compile-time constants (R13/KTD8). The Kimi login URL and the GetUsages
@@ -30,12 +31,11 @@ export function isKimiCodingPlanProvider(provider?: Provider): boolean {
  * Server-side only; the token is never returned to clients.
  */
 function readKimiBearerToken(sqlite: SqliteStore): string | null {
-  const json = sqlite.getGlobalSiteAuth(KIMI_SITE_KEY);
-  if (!json) return null;
   try {
-    const entry = JSON.parse(json) as { bearerToken?: string };
-    return entry.bearerToken && entry.bearerToken.length > 0 ? entry.bearerToken : null;
-  } catch {
+    const entry = readGlobalSiteAuthEntry(sqlite, KIMI_SITE_KEY)?.entry;
+    return entry?.bearerToken && entry.bearerToken.length > 0 ? entry.bearerToken : null;
+  } catch (error) {
+    if (!(error instanceof BrowserSiteAuthReadError)) throw error;
     return null;
   }
 }
