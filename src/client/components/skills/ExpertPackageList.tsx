@@ -35,20 +35,11 @@ export default function ExpertPackageList({
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <header className="rounded-2xl border border-border bg-surface px-5 py-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent">
-              <Boxes className="h-3.5 w-3.5" /> {t('skills.expertPackages.eyebrow')}
-            </div>
-            <h2 className="text-xl font-semibold tracking-tight text-text-primary">{t('skills.expertPackages.title')}</h2>
-            <p className="mt-1 max-w-2xl text-xs leading-5 text-text-secondary">
-              {t('skills.expertPackages.subtitle')}
-            </p>
-          </div>
+        <div className="flex justify-end">
           <p className="text-xs text-text-tertiary">{t('skills.expertPackages.total', { count: total })}</p>
         </div>
 
-        <div className="mt-5 flex flex-col gap-2 lg:flex-row">
+        <div className="mt-3 flex flex-col gap-2 lg:flex-row">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
             <input

@@ -710,7 +710,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                       return (
                         <div
                           key={skill.id}
-                          className="group flex min-h-32 flex-col rounded-xl border border-border bg-surface p-3.5 shadow-sm transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md motion-reduce:transform-none"
+                          className="group flex min-h-32 flex-col rounded-xl border border-border bg-white p-3.5 shadow-sm transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md motion-reduce:transform-none"
                         >
                           <div className="flex min-w-0 items-start gap-3">
                             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
