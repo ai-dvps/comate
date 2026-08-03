@@ -113,6 +113,9 @@ describe('CdpNetworkCaptureTransport', () => {
         maxPostDataSize: 64 * 1024,
       },
     );
+    transport.stop();
+    assert.equal(methodListeners.get('Target.attachedToTarget')?.size, 0);
+    assert.equal(methodListeners.get('Target.detachedFromTarget')?.size, 0);
   });
 });
 

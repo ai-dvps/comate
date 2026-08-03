@@ -13,6 +13,8 @@ export interface BrowserNetworkCaptureTransport {
   send<T>(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<T>;
   onEvent(listener: (event: CdpEventEnvelope) => void): () => void;
   onClose(listener: () => void): () => void;
+  /** Stop action-scoped target discovery/listeners without closing the page. */
+  stop?(): void;
 }
 
 export type CaptureIncompleteReason =
@@ -20,6 +22,7 @@ export type CaptureIncompleteReason =
   | 'loading_failed'
   | 'target_detached'
   | 'deadline_exceeded'
+  | 'capture_limit_exceeded'
   | 'connection_closed';
 
 export interface CapturedRequest {
@@ -80,6 +83,11 @@ export interface BrowserNetworkCaptureResult {
 export interface BrowserNetworkCaptureOptions {
   quietMs?: number;
   hardDeadlineMs?: number;
+  recordingDeadlineMs?: number;
+  maxChains?: number;
+  maxHopsPerChain?: number;
+  maxPendingBodyReads?: number;
+  maxRetainedBodyBytes?: number;
   now?: () => number;
 }
 
@@ -141,6 +149,8 @@ interface CaptureContext {
   offClose: () => void;
   quietTimer?: NodeJS.Timeout;
   deadlineTimer?: NodeJS.Timeout;
+  recordingTimer?: NodeJS.Timeout;
+  retainedBodyBytes: number;
   resolveResult: (result: BrowserNetworkCaptureResult) => void;
   resultPromise: Promise<BrowserNetworkCaptureResult>;
   settled: boolean;
@@ -148,6 +158,11 @@ interface CaptureContext {
 
 const DEFAULT_QUIET_MS = 250;
 const DEFAULT_HARD_DEADLINE_MS = 10_000;
+const DEFAULT_RECORDING_DEADLINE_MS = 60_000;
+const DEFAULT_MAX_CHAINS = 200;
+const DEFAULT_MAX_HOPS_PER_CHAIN = 20;
+const DEFAULT_MAX_PENDING_BODY_READS = 16;
+const DEFAULT_MAX_RETAINED_BODY_BYTES = 2 * 1024 * 1024;
 
 function identity(sessionId: string, requestId: string): string {
   return `${sessionId}\u0000${requestId}`;
@@ -181,6 +196,11 @@ function currentHop(chain: CapturedNetworkChain): CapturedNetworkHop {
 export class BrowserNetworkCaptureManager {
   private readonly quietMs: number;
   private readonly hardDeadlineMs: number;
+  private readonly recordingDeadlineMs: number;
+  private readonly maxChains: number;
+  private readonly maxHopsPerChain: number;
+  private readonly maxPendingBodyReads: number;
+  private readonly maxRetainedBodyBytes: number;
   private readonly now: () => number;
   private readonly bodyReads = new WeakSet<CapturedNetworkHop>();
   private current?: CaptureContext;
@@ -191,6 +211,11 @@ export class BrowserNetworkCaptureManager {
   ) {
     this.quietMs = options.quietMs ?? DEFAULT_QUIET_MS;
     this.hardDeadlineMs = options.hardDeadlineMs ?? DEFAULT_HARD_DEADLINE_MS;
+    this.recordingDeadlineMs = options.recordingDeadlineMs ?? DEFAULT_RECORDING_DEADLINE_MS;
+    this.maxChains = options.maxChains ?? DEFAULT_MAX_CHAINS;
+    this.maxHopsPerChain = options.maxHopsPerChain ?? DEFAULT_MAX_HOPS_PER_CHAIN;
+    this.maxPendingBodyReads = options.maxPendingBodyReads ?? DEFAULT_MAX_PENDING_BODY_READS;
+    this.maxRetainedBodyBytes = options.maxRetainedBodyBytes ?? DEFAULT_MAX_RETAINED_BODY_BYTES;
     this.now = options.now ?? Date.now;
   }
 
@@ -217,6 +242,7 @@ export class BrowserNetworkCaptureManager {
       pendingRequestExtras: new Map(),
       pendingResponseExtras: new Map(),
       pendingBodies: new Set(),
+      retainedBodyBytes: 0,
       incompleteReasons: new Set(),
       offEvent: () => {},
       offClose: () => {},
@@ -229,6 +255,8 @@ export class BrowserNetworkCaptureManager {
     context.offClose = this.transport.onClose(() => this.abortContext(context, 'connection_closed'));
     try {
       await this.transport.start();
+      context.recordingTimer = setTimeout(() => this.beginDraining(context, true), this.recordingDeadlineMs);
+      context.recordingTimer.unref?.();
     } catch (error) {
       context.offEvent();
       context.offClose();
@@ -244,11 +272,7 @@ export class BrowserNetworkCaptureManager {
       return Promise.reject(new BrowserNetworkCaptureError('capture_not_active', 'No network capture is active'));
     }
     if (context.state === 'recording') {
-      context.state = 'draining';
-      context.admissionOpen = false;
-      context.deadlineTimer = setTimeout(() => this.finishAtDeadline(context), this.hardDeadlineMs);
-      context.deadlineTimer.unref?.();
-      this.maybeScheduleCompletion(context);
+      this.beginDraining(context, false);
     }
     return context.resultPromise;
   }
@@ -297,6 +321,11 @@ export class BrowserNetworkCaptureManager {
     let chain = context.chains.get(key);
     if (!chain) {
       if (!context.admissionOpen) return;
+      if (context.chainOrder.length >= this.maxChains) {
+        context.incompleteReasons.add('capture_limit_exceeded');
+        context.admissionOpen = false;
+        return;
+      }
       chain = { sessionId, requestId: event.requestId, hops: [], incompleteReasons: [] };
       context.chains.set(key, chain);
       context.chainOrder.push(chain);
@@ -305,6 +334,13 @@ export class BrowserNetworkCaptureManager {
       if (!previous.response) previous.response = responseFrom(event.redirectResponse);
       else if (!previous.authoritativeStatus) previous.response.status = event.redirectResponse.status ?? previous.response.status;
       previous.terminal = true;
+    }
+
+    if (chain.hops.length >= this.maxHopsPerChain) {
+      context.incompleteReasons.add('capture_limit_exceeded');
+      const previous = currentHop(chain);
+      addReason(chain, previous, 'capture_limit_exceeded');
+      return;
     }
 
     const hop: CapturedNetworkHop = {
@@ -343,6 +379,10 @@ export class BrowserNetworkCaptureManager {
     const hop = chain?.hops.find((candidate) => candidate.requestExtraHeaders === undefined);
     if (hop) hop.requestExtraHeaders = event.headers ?? {};
     else {
+      if (context.pendingRequestExtras.size >= this.maxChains) {
+        context.incompleteReasons.add('capture_limit_exceeded');
+        return;
+      }
       const pending = context.pendingRequestExtras.get(key) ?? [];
       pending.push(event);
       context.pendingRequestExtras.set(key, pending);
@@ -365,6 +405,10 @@ export class BrowserNetworkCaptureManager {
     const hop = chain?.hops.find((candidate) => !candidate.authoritativeStatus);
     if (hop) this.applyResponseExtra(hop, event);
     else {
+      if (context.pendingResponseExtras.size >= this.maxChains) {
+        context.incompleteReasons.add('capture_limit_exceeded');
+        return;
+      }
       const pending = context.pendingResponseExtras.get(key) ?? [];
       pending.push(event);
       context.pendingResponseExtras.set(key, pending);
@@ -396,10 +440,26 @@ export class BrowserNetworkCaptureManager {
     if (this.bodyReads.has(hop)) return;
     this.bodyReads.add(hop);
     hop.terminal = true;
+    if (context.pendingBodies.size >= this.maxPendingBodyReads) {
+      addReason(chain, hop, 'capture_limit_exceeded');
+      context.incompleteReasons.add('capture_limit_exceeded');
+      this.noteActivity(context);
+      return;
+    }
     const bodyTask = this.transport
       .send<CapturedResponseBody>('Network.getResponseBody', { requestId }, sessionId)
       .then((body) => {
-        if (!context.settled) hop.responseBody = body;
+        if (context.settled) return;
+        const bytes = body.base64Encoded
+          ? Buffer.byteLength(body.body, 'base64')
+          : Buffer.byteLength(body.body);
+        if (context.retainedBodyBytes + bytes > this.maxRetainedBodyBytes) {
+          addReason(chain, hop, 'capture_limit_exceeded');
+          context.incompleteReasons.add('capture_limit_exceeded');
+          return;
+        }
+        context.retainedBodyBytes += bytes;
+        hop.responseBody = body;
       })
       .catch(() => {
         if (!context.settled) addReason(chain, hop, 'body_unavailable');
@@ -446,6 +506,18 @@ export class BrowserNetworkCaptureManager {
     this.maybeScheduleCompletion(context);
   }
 
+  private beginDraining(context: CaptureContext, limitReached: boolean): void {
+    if (context.settled || context.state !== 'recording') return;
+    context.state = 'draining';
+    context.admissionOpen = false;
+    if (context.recordingTimer) clearTimeout(context.recordingTimer);
+    context.recordingTimer = undefined;
+    if (limitReached) context.incompleteReasons.add('capture_limit_exceeded');
+    context.deadlineTimer = setTimeout(() => this.finishAtDeadline(context), this.hardDeadlineMs);
+    context.deadlineTimer.unref?.();
+    this.maybeScheduleCompletion(context);
+  }
+
   private maybeScheduleCompletion(context: CaptureContext): void {
     if (context.state !== 'draining' || context.settled) return;
     const active = context.chainOrder.some((chain) => !currentHop(chain).terminal);
@@ -486,8 +558,10 @@ export class BrowserNetworkCaptureManager {
     context.settled = true;
     if (context.quietTimer) clearTimeout(context.quietTimer);
     if (context.deadlineTimer) clearTimeout(context.deadlineTimer);
+    if (context.recordingTimer) clearTimeout(context.recordingTimer);
     context.offEvent();
     context.offClose();
+    this.transport.stop?.();
     if (this.current === context) this.current = undefined;
     context.resolveResult({
       captureId: context.captureId,

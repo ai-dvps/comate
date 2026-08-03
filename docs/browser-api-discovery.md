@@ -16,6 +16,8 @@ The broker supports bounded HTTP(S) GET, HEAD, and approved mutation requests wi
 
 Not currently supported: WebSocket or SSE replay, streaming uploads, arbitrary binary or multipart bodies, client certificates, OAuth refresh/device flows, authentication held only in arbitrary page JavaScript memory, or bypassing CAPTCHA/MFA. With the bundled Steel version, dedicated/shared/service-worker HTTP is not captured because enabling the Network domain freezes those child sessions; worker target lifecycle is still tracked. Network capture can also miss responses evicted by Chromium, requests outside the explicit window, and opaque browser details; incomplete reasons are reported rather than guessed.
 
+Each action capture admits at most 200 request chains and 20 redirect hops per chain, retains at most 2 MiB of raw response bodies, runs for at most 60 seconds before automatically draining, and returns at most 50 ranked candidates. Limit receipts are returned as `capture_limit_exceeded` rather than silently expanding chat context.
+
 ## Recovery
 
 - `auth_binding_stale`: reopen the site, sign in if needed, capture again, and select a fresh candidate. If persistence is desired, explicitly remember the site before closing.

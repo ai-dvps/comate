@@ -5,6 +5,7 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import {
   BrowserRequestPolicyError,
   authorizeBrowserRequest,
+  containsControlCharacter,
   defaultBrowserDnsResolver,
   resolveSafeDestination,
   type AuthorizedBrowserRequest,
@@ -295,14 +296,6 @@ function validateHookHeaders(headers: Record<string, string>): Record<string, st
     output[name] = value;
   }
   return output;
-}
-
-function containsControlCharacter(value: string): boolean {
-  for (const character of value) {
-    const code = character.charCodeAt(0);
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 export class BrowserDirectHttpClient {

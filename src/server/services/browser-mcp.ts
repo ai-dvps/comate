@@ -93,8 +93,7 @@ import {
 import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
 import { buildStorageInitScript } from './browser-site-auth.js';
 import { originOf } from './browser-origin.js';
-import { BrowserAuthenticatedRequestBroker } from './browser-authenticated-request.js';
-import { browserApiBrokerService } from './browser-api-broker-service.js';
+import { browserApiBrokerService, type BrowserApiBrokerExecutor } from './browser-api-broker-service.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
 // tests) keep working; the canonical home is browser-tool-names.ts (U4) so
@@ -191,7 +190,7 @@ export interface BrowserMcpDeps {
   /** Audit sink (U8); defaults to the process singleton. */
   audit?: Pick<BrowserAuditService, 'logToolAction'>;
   /** Authenticated direct-request broker; tests may inject a deterministic one. */
-  authenticatedRequestBroker?: BrowserAuthenticatedRequestBroker;
+  authenticatedRequestBroker?: BrowserApiBrokerExecutor;
   /**
    * Shared page-connection registry keyed by chat sessionId. Runtime rebuilds
    * mint a fresh MCP server instance (and BrowserToolContext) for the same
@@ -601,6 +600,7 @@ function buildSanitizedCandidates(
     .map((chain, index) => candidateFromChain(result, chain, index, action, exactSecrets, primarySessionId))
     .filter((entry): entry is { candidate: SanitizedCandidate; score: number; bearerToken?: string } => entry !== undefined)
     .sort((left, right) => right.score - left.score)
+    .slice(0, 50)
     .map(({ candidate, bearerToken }) => ({ candidate, ...(bearerToken ? { bearerToken } : {}) }));
 }
 
@@ -632,7 +632,7 @@ export class BrowserToolContext {
   private readonly pageRegistry: Map<string, Promise<SteelCdpSession>>;
   private readonly settleMs: number;
   private readonly audit: Pick<BrowserAuditService, 'logToolAction'>;
-  private readonly authenticatedRequestBroker: BrowserAuthenticatedRequestBroker;
+  private readonly authenticatedRequestBroker: BrowserApiBrokerExecutor;
   private networkCapture?: BrowserNetworkCaptureManager;
   private capturePrimarySessionId?: string;
   private captureAction = 'One explicitly bracketed browser action';
@@ -644,7 +644,7 @@ export class BrowserToolContext {
     this.pageRegistry = deps.pageRegistry ?? defaultPageRegistry;
     this.settleMs = deps.settleMs ?? 300;
     this.audit = deps.audit ?? browserAuditService;
-    this.authenticatedRequestBroker = deps.authenticatedRequestBroker ?? browserApiBrokerService.broker;
+    this.authenticatedRequestBroker = deps.authenticatedRequestBroker ?? browserApiBrokerService;
   }
 
   /** Abort task-owned capture state without closing the shared browser page. */
@@ -849,14 +849,17 @@ export class BrowserToolContext {
         );
       }
       const candidateEntries = buildSanitizedCandidates(result, this.captureAction, this.capturePrimarySessionId);
-      const candidates = await Promise.all(candidateEntries.map(async ({ candidate, bearerToken }) => {
-        const authBinding = await this.svc.captureCandidateAuthBinding(
-          this.deps.sessionId,
-          candidate.url,
-          bearerToken,
-        ).catch(() => undefined);
+      const authBindings = await this.svc.captureCandidateAuthBindings(
+        this.deps.sessionId,
+        candidateEntries.map(({ candidate, bearerToken }) => ({
+          url: candidate.url,
+          ...(bearerToken ? { bearerToken } : {}),
+        })),
+      ).catch(() => candidateEntries.map(() => undefined));
+      const candidates = candidateEntries.map(({ candidate }, index) => {
+        const authBinding = authBindings[index];
         return { ...candidate, ...(authBinding ? { authBinding } : {}) };
-      }));
+      });
       return toolJson({
         ok: true,
         captureId: result.captureId,

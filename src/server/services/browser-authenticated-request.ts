@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'crypto';
+import { randomBytes } from 'crypto';
 import {
   CONTRACT_VERSION,
   brokerRequestSchema,
@@ -16,6 +16,8 @@ import {
 import type { ResolvedAuthMaterial } from './browser-auth-binding.js';
 import type { BrowserBrokerAuditInput } from './browser-audit.js';
 import { siteKeyForUrl } from './browser-site-key.js';
+import { containsControlCharacter } from './browser-request-policy.js';
+import { sha256Hex } from '../utils/sha256.js';
 
 export type { BrowserBrokerAuditInput } from './browser-audit.js';
 
@@ -60,9 +62,7 @@ interface PreparedOperation {
 
 interface Grant {
   taskId: string;
-  grantScope: string;
   bindingId: string;
-  fingerprint: string;
   expiresAt: number;
 }
 
@@ -102,14 +102,6 @@ function scalar(value: string | number | boolean | null): string {
   return value === null ? 'null' : String(value);
 }
 
-function hasControl(value: string): boolean {
-  for (const character of value) {
-    const code = character.charCodeAt(0);
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
-}
-
 function substitute(
   template: string,
   location: 'path' | 'query' | 'header' | 'body',
@@ -119,7 +111,7 @@ function substitute(
   return template.replace(PLACEHOLDER, (_whole, name: string) => {
     if (declared.get(name) !== location || !(name in values)) throw new Error('invalid_contract');
     const raw = scalar(values[name]);
-    if (raw.length > 4096 || hasControl(raw)) throw new Error('invalid_contract');
+    if (raw.length > 4096 || containsControlCharacter(raw)) throw new Error('invalid_contract');
     return location === 'path' ? encodeURIComponent(raw) : raw;
   });
 }
@@ -192,7 +184,7 @@ function prepare(request: BrokerRequest): PreparedOperation {
   if (!keyResult.ok) throw new Error('invalid_contract');
   const siteKey = keyResult.key;
   const canonical = { method, url: url.toString(), headers, body: body ?? null };
-  const fingerprint = `sha256:${createHash('sha256').update(stable(canonical)).digest('hex')}`;
+  const fingerprint = `sha256:${sha256Hex(stable(canonical))}`;
   return { method, url: url.toString(), headers, ...(body !== undefined ? { body } : {}), fingerprint, siteKey };
 }
 
@@ -201,7 +193,7 @@ function cookieHeader(cookies: Array<Record<string, unknown>>): string | undefin
   for (const cookie of cookies) {
     const name = typeof cookie.name === 'string' ? cookie.name : '';
     const value = typeof cookie.value === 'string' ? cookie.value : '';
-    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) || value.includes(';') || hasControl(value)) continue;
+    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) || value.includes(';') || containsControlCharacter(value)) continue;
     pairs.push(`${name}=${value}`);
   }
   return pairs.length > 0 ? pairs.join('; ') : undefined;
@@ -311,7 +303,7 @@ export class BrowserAuthenticatedRequestBroker {
             headers.cookie = cookie;
             for (const item of auth.cookies) if (typeof item.value === 'string') exactSecrets.add(item.value);
           }
-          if (auth.bearerToken && !hasControl(auth.bearerToken)) {
+          if (auth.bearerToken && !containsControlCharacter(auth.bearerToken)) {
             headers.authorization = `Bearer ${auth.bearerToken}`;
             exactSecrets.add(auth.bearerToken);
           }
@@ -340,8 +332,7 @@ export class BrowserAuthenticatedRequestBroker {
       if (!readOnly && approval === 'approved' && result.status < 400 &&
           parsed.data.validateNonMutating === true) {
         this.grants.set(grantKey, {
-          taskId: context.taskId, grantScope: context.grantScope,
-          bindingId, fingerprint: operation.fingerprint,
+          taskId: context.taskId, bindingId,
           expiresAt: this.now() + this.grantTtlMs,
         });
       }
