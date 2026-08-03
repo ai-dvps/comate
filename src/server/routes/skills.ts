@@ -25,7 +25,6 @@ import { skillsService, assertSkillScope } from '../services/skills-service.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import type { SkillScope } from '../services/skills-service.js';
 import {
-  ExpertPackageProviderError,
   SkillHubProviderError,
   enterpriseZoneLimits,
   expertPackageLimits,
@@ -41,20 +40,12 @@ import {
 
 const router = Router();
 
-function sendExpertPackageError(error: unknown, res: Response): void {
-  if (error instanceof ExpertPackageProviderError) {
-    const status = error.code === 'not-found' ? 404
-      : error.code === 'invalid-input' ? 400
-      : error.code === 'unavailable' ? 503
-      : 502;
-    res.status(status).json({ error: error.message, code: error.code });
-    return;
-  }
-  console.error('Expert Package request failed:', error);
-  res.status(500).json({ error: 'Expert Package request failed' });
-}
-
-function sendEnterpriseZoneError(error: unknown, res: Response): void {
+function sendSkillHubError(
+  error: unknown,
+  res: Response,
+  label: 'Expert Package' | 'Enterprise Zone',
+  includeCause = false,
+): void {
   if (error instanceof SkillHubProviderError) {
     const status = error.code === 'not-found' ? 404
       : error.code === 'invalid-input' ? 400
@@ -63,8 +54,17 @@ function sendEnterpriseZoneError(error: unknown, res: Response): void {
     res.status(status).json({ error: error.message, code: error.code });
     return;
   }
-  console.error('Enterprise Zone request failed');
-  res.status(500).json({ error: 'Enterprise Zone request failed' });
+  if (includeCause) console.error(`${label} request failed:`, error);
+  else console.error(`${label} request failed`);
+  res.status(500).json({ error: `${label} request failed` });
+}
+
+function sendExpertPackageError(error: unknown, res: Response): void {
+  sendSkillHubError(error, res, 'Expert Package', true);
+}
+
+function sendEnterpriseZoneError(error: unknown, res: Response): void {
+  sendSkillHubError(error, res, 'Enterprise Zone');
 }
 
 function parseEnterprisePage(value: unknown): number | null {

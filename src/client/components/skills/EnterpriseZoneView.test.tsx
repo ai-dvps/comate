@@ -115,7 +115,6 @@ describe('Enterprise Zone UI', () => {
 
   it('opens an enterprise and combines Skill keyword, sort, and bounded pagination', async () => {
     const requested: string[] = []
-    const onSelectSkill = vi.fn()
     global.fetch = vi.fn((input: string | URL | Request) => {
       const url = String(input)
       requested.push(url)
@@ -131,7 +130,7 @@ describe('Enterprise Zone UI', () => {
     }) as typeof fetch
 
     const user = userEvent.setup()
-    render(<EnterpriseZoneView active isOpen onSelectSkill={onSelectSkill} />)
+    render(<EnterpriseZoneView active isOpen />)
 
     await user.click(await screen.findByRole('button', { name: /Enterprise 1/ }))
     expect(await screen.findByRole('heading', { name: 'Enterprise 1' })).toBeInTheDocument()
@@ -151,7 +150,7 @@ describe('Enterprise Zone UI', () => {
     expect(requested.filter((url) => url.includes('/skills?')).length).toBeLessThanOrEqual(4)
 
     await user.click(screen.getAllByRole('button', { name: /Skill \d+/ })[0])
-    expect(onSelectSkill).toHaveBeenCalledWith('org-1', 'enterprise', expect.stringMatching(/^skill-/))
+    await waitFor(() => expect(requested.some((url) => /\/enterprises\/org-1\/skills\/enterprise\/skill-/.test(url))).toBe(true))
   })
 
   it('distinguishes catalog and filtered empty states at both levels', async () => {

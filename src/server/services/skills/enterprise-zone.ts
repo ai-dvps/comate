@@ -4,7 +4,6 @@ import {
   getSkillHubSkill,
   isSkillHubCoordinate,
   normalizeSkillHubHttpsUrl,
-  skillHubNumber,
   SkillHubProviderError,
   skillHubRecord,
   skillHubSummary,
@@ -190,7 +189,6 @@ function normalizeEnterpriseSkill(value: unknown): EnterpriseSkillSummary {
   if (!item || !isSkillHubCoordinate(namespace) || !isSkillHubCoordinate(slug) || !displayName || downloads === null || stars === null) {
     invalidResponse('SkillHub Enterprise Skill response is malformed');
   }
-  const createdAt = validCount(item.createdAt, Number.MAX_SAFE_INTEGER);
   const iconUrl = normalizeSkillHubHttpsUrl(item.iconUrl);
   return {
     namespace,
@@ -199,9 +197,7 @@ function normalizeEnterpriseSkill(value: unknown): EnterpriseSkillSummary {
     summary: skillHubSummary(item.descriptionZh) || skillHubSummary(item.description),
     downloads,
     stars,
-    ...(createdAt !== null ? { createdAt } : {}),
     ...(iconUrl ? { iconUrl } : {}),
-    source: `skillhub-cn:${namespace}/${slug}`,
   };
 }
 

@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { responseErrorMessage } from '../lib/response-error'
+import type { SkillHubSkillDetail } from '../types/skillhub'
 
 export const EXPERT_PACKAGE_SCENES = [
   'academic', 'content-creation', 'design', 'ecommerce', 'education', 'finance',
@@ -37,24 +39,7 @@ export interface ExpertPackageDetail extends ExpertPackageSummary {
   unavailableReason?: string
 }
 
-export interface ExpertSkillDetail {
-  namespace: string
-  slug: string
-  displayName: string
-  summary: string
-  category: string
-  owner: { handle: string; displayName: string }
-  version: string
-  stats: { downloads: number; installs: number }
-  securityReports: Array<{
-    provider: string
-    status: string
-    statusText: string
-    reportUrl?: string
-  }>
-  documentation?: string
-  source: string
-}
+export type ExpertSkillDetail = SkillHubSkillDetail
 
 export interface ExpertPackageInstallResult {
   id: string
@@ -110,15 +95,6 @@ let detailRequestId = 0
 const packageRequestIds = new Map<string, number>()
 const skillRequestIds = new Map<string, number>()
 
-async function errorMessage(response: Response, fallback: string): Promise<string> {
-  try {
-    const body = await response.json() as { error?: string }
-    return body.error || fallback
-  } catch {
-    return fallback
-  }
-}
-
 function mergeInstallResults(
   previous: ExpertPackageInstallResult[],
   next: ExpertPackageInstallResult[],
@@ -161,7 +137,7 @@ export const useExpertPackagesStore = create<ExpertPackagesState>((set, get) => 
     try {
       const response = await fetch(`${API_BASE}?${params.toString()}`, { signal: controller.signal })
       if (requestId !== listRequestId) return
-      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load Expert Packages'))
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Failed to load Expert Packages'))
       const body = await response.json() as { packages?: ExpertPackageSummary[]; total?: number }
       if (requestId !== listRequestId) return
       set({ packages: body.packages || [], total: body.total || 0, isLoadingList: false })
@@ -180,7 +156,7 @@ export const useExpertPackagesStore = create<ExpertPackagesState>((set, get) => 
     set({ loadingPackageSlug: slug, packageErrors: { ...get().packageErrors, [slug]: '' } })
     try {
       const response = await fetch(`${API_BASE}/${encodeURIComponent(slug)}`)
-      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load Expert Package'))
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Failed to load Expert Package'))
       const body = await response.json() as { package: ExpertPackageDetail }
       if (packageRequestIds.get(slug) !== requestId) return null
       set((state) => ({
@@ -210,7 +186,7 @@ export const useExpertPackagesStore = create<ExpertPackagesState>((set, get) => 
       const response = await fetch(
         `${API_BASE}/${encodeURIComponent(packageSlug)}/skills/${encodeURIComponent(namespace)}/${encodeURIComponent(slug)}`,
       )
-      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load Skill details'))
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Failed to load Skill details'))
       const body = await response.json() as { skill: ExpertSkillDetail }
       if (skillRequestIds.get(key) !== requestId) return null
       set((state) => ({

@@ -224,9 +224,7 @@ export interface EnterpriseSkillSummary {
   summary: string;
   downloads: number;
   stars: number;
-  createdAt?: number;
   iconUrl?: string;
-  source: string;
 }
 
 export interface EnterprisePage {

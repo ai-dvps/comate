@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { responseErrorMessage } from '../lib/response-error'
+import type { SkillHubSkillDetail } from '../types/skillhub'
 
 export const ENTERPRISE_ZONE_PAGE_SIZE = 20
 
@@ -34,9 +36,7 @@ export interface EnterpriseSkillSummary {
   summary: string
   downloads: number
   stars: number
-  createdAt?: number
   iconUrl?: string
-  source: string
 }
 
 export interface EnterprisePage {
@@ -53,25 +53,7 @@ export interface EnterpriseSkillPage {
   total: number
 }
 
-export interface EnterpriseSkillDetail {
-  namespace: string
-  slug: string
-  displayName: string
-  summary: string
-  category: string
-  owner: { handle: string; displayName: string }
-  publisher?: { orgId: string }
-  version: string
-  stats: { downloads: number; installs: number }
-  securityReports: Array<{
-    provider: string
-    status: string
-    statusText: string
-    reportUrl?: string
-  }>
-  documentation?: string
-  source: string
-}
+export type EnterpriseSkillDetail = SkillHubSkillDetail
 
 interface EnterpriseZoneState {
   industries: EnterpriseIndustry[]
@@ -87,7 +69,6 @@ interface EnterpriseZoneState {
   isLoadingEnterprise: boolean
   enterpriseError: string | null
 
-  activeSkillsOrgId: string | null
   skillPage: EnterpriseSkillPage | null
   isLoadingSkills: boolean
   skillsError: string | null
@@ -134,17 +115,6 @@ let skillGeneration = 0
 // These identities protect refresh behavior; navigation and query snapshots remain view-owned.
 let enterprisePageQueryIdentity: string | null = null
 let skillPageQueryIdentity: string | null = null
-let activeEnterpriseRequestIdentity: string | null = null
-let activeSkillsRequestIdentity: string | null = null
-
-async function errorMessage(response: Response, fallback: string): Promise<string> {
-  try {
-    const body = await response.json() as { error?: string }
-    return body.error || fallback
-  } catch {
-    return fallback
-  }
-}
 
 function normalizedKeyword(keyword: string | undefined): string {
   return keyword?.trim() || ''
@@ -173,7 +143,6 @@ function abortEnterpriseChain(): void {
   skillsGeneration += 1
   skillGeneration += 1
   skillPageQueryIdentity = null
-  activeSkillsRequestIdentity = null
 }
 
 export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => {
@@ -185,7 +154,6 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
       enterpriseDetail: null,
       isLoadingEnterprise: false,
       enterpriseError: null,
-      activeSkillsOrgId: orgId,
       skillPage: null,
       isLoadingSkills: false,
       skillsError: null,
@@ -210,7 +178,6 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
     isLoadingEnterprise: false,
     enterpriseError: null,
 
-    activeSkillsOrgId: null,
     skillPage: null,
     isLoadingSkills: false,
     skillsError: null,
@@ -229,7 +196,7 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
       try {
         const response = await fetch(`${API_BASE}/industries`, { signal: controller.signal })
         if (generation !== industriesGeneration) return null
-        if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load Enterprise industries'))
+        if (!response.ok) throw new Error(await responseErrorMessage(response, 'Failed to load Enterprise industries'))
         const body = await response.json() as { industries?: EnterpriseIndustry[] }
         if (generation !== industriesGeneration) return null
         const industries = body.industries || []
@@ -248,9 +215,7 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
       const keyword = normalizedKeyword(input.keyword)
       const page = input.page || 1
       const queryIdentity = enterpriseQueryIdentity(keyword, input.industry)
-      const requestIdentity = `${queryIdentity}:${page}`
       const generation = ++enterprisesGeneration
-      activeEnterpriseRequestIdentity = requestIdentity
       enterprisesController?.abort()
       const controller = new AbortController()
       enterprisesController = controller
@@ -271,10 +236,10 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
         const response = await fetch(`${API_BASE}/enterprises?${params.toString()}`, {
           signal: controller.signal,
         })
-        if (generation !== enterprisesGeneration || activeEnterpriseRequestIdentity !== requestIdentity) return null
-        if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load Enterprises'))
+        if (generation !== enterprisesGeneration) return null
+        if (!response.ok) throw new Error(await responseErrorMessage(response, 'Failed to load Enterprises'))
         const body = await response.json() as EnterprisePage
-        if (generation !== enterprisesGeneration || activeEnterpriseRequestIdentity !== requestIdentity) return null
+        if (generation !== enterprisesGeneration) return null
         enterprisePageQueryIdentity = queryIdentity
         set({ enterprisePage: body, isLoadingEnterprises: false })
         return body
@@ -282,7 +247,6 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
         if (
           controller.signal.aborted
           || generation !== enterprisesGeneration
-          || activeEnterpriseRequestIdentity !== requestIdentity
         ) return null
         set({ enterprisesError: (error as Error).message, isLoadingEnterprises: false })
         return null
@@ -304,7 +268,7 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
           signal: controller.signal,
         })
         if (generation !== enterpriseGeneration || get().activeEnterpriseOrgId !== orgId) return null
-        if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load Enterprise'))
+        if (!response.ok) throw new Error(await responseErrorMessage(response, 'Failed to load Enterprise'))
         const body = await response.json() as { enterprise: EnterpriseDetail }
         if (generation !== enterpriseGeneration || get().activeEnterpriseOrgId !== orgId) return null
         set({ enterpriseDetail: body.enterprise, isLoadingEnterprise: false })
@@ -326,14 +290,11 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
       const sort = input.sort || 'downloads'
       const page = input.page || 1
       const queryIdentity = skillsQueryIdentity(orgId, keyword, sort)
-      const requestIdentity = `${queryIdentity}:${page}`
       const generation = ++skillsGeneration
-      activeSkillsRequestIdentity = requestIdentity
       skillsController?.abort()
       const controller = new AbortController()
       skillsController = controller
       set({
-        activeSkillsOrgId: orgId,
         isLoadingSkills: true,
         skillsError: null,
         ...(skillPageQueryIdentity !== null && skillPageQueryIdentity !== queryIdentity
@@ -353,15 +314,12 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
         )
         if (
           generation !== skillsGeneration
-          || activeSkillsRequestIdentity !== requestIdentity
           || get().activeEnterpriseOrgId !== orgId
-          || get().activeSkillsOrgId !== orgId
         ) return null
-        if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load Enterprise Skills'))
+        if (!response.ok) throw new Error(await responseErrorMessage(response, 'Failed to load Enterprise Skills'))
         const body = await response.json() as EnterpriseSkillPage
         if (
           generation !== skillsGeneration
-          || activeSkillsRequestIdentity !== requestIdentity
           || get().activeEnterpriseOrgId !== orgId
         ) return null
         skillPageQueryIdentity = queryIdentity
@@ -371,7 +329,6 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
         if (
           controller.signal.aborted
           || generation !== skillsGeneration
-          || activeSkillsRequestIdentity !== requestIdentity
           || get().activeEnterpriseOrgId !== orgId
         ) return null
         set({ skillsError: (error as Error).message, isLoadingSkills: false })
@@ -405,7 +362,7 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
           || get().activeEnterpriseOrgId !== orgId
           || get().activeSkillKey !== key
         ) return null
-        if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load Enterprise Skill'))
+        if (!response.ok) throw new Error(await responseErrorMessage(response, 'Failed to load Enterprise Skill'))
         const body = await response.json() as { skill: EnterpriseSkillDetail }
         if (
           generation !== skillGeneration
@@ -437,7 +394,6 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
       industriesGeneration += 1
       enterprisesGeneration += 1
       enterprisePageQueryIdentity = null
-      activeEnterpriseRequestIdentity = null
       set({
         industries: [],
         isLoadingIndustries: false,
@@ -449,7 +405,6 @@ export const useEnterpriseZoneStore = create<EnterpriseZoneState>((set, get) => 
         enterpriseDetail: null,
         isLoadingEnterprise: false,
         enterpriseError: null,
-        activeSkillsOrgId: null,
         skillPage: null,
         isLoadingSkills: false,
         skillsError: null,
