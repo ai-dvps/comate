@@ -56,6 +56,7 @@ function makeApp(): express.Express {
     res.json({ ok: true, route: 'smartsheet-export', auth: getLoopbackAuth(_req) ?? null }),
   );
   app.get('/api/workspaces/:id/sessions', (_req, res) => res.json({ ok: true, route: 'sessions' }));
+  app.get('/api/system/tray-status', (_req, res) => res.json({ ok: true, route: 'tray-status' }));
   app.post('/api/workspaces/:workspaceId/wecom/send', (_req, res) =>
     res.json({ ok: true, route: 'wecom/send', auth: getLoopbackAuth(_req) ?? null }),
   );
@@ -144,6 +145,14 @@ describe('loopback-auth middleware (route matrix)', { concurrency: false }, () =
   it('rejects unauthenticated requests to chat session routes', async () => {
     const res = await request(port, 'GET', '/api/workspaces/ws-1/sessions');
     assert.strictEqual(res.status, 401);
+  });
+
+  it('requires the desktop credential for tray-status', async () => {
+    const tokenless = await request(port, 'GET', '/api/system/tray-status');
+    assert.strictEqual(tokenless.status, 401);
+
+    const desktop = await request(port, 'GET', '/api/system/tray-status', { token: DESKTOP_TOKEN });
+    assert.strictEqual(desktop.status, 200);
   });
 
   it('rejects a malformed Authorization header', async () => {
