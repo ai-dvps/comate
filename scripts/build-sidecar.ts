@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import {
   existsSync,
   mkdirSync,
@@ -100,6 +100,9 @@ async function build() {
     rmSync(sidecarDir, { recursive: true });
   }
   mkdirSync(sidecarDir, { recursive: true });
+
+  console.log('\n--- Building bundled CLIs ---');
+  run('npm run build:cli');
 
   // Remove stale tsbuildinfo so TypeScript re-emits output files
   // (dist/ is gitignored but .tsbuildinfo may be stale on CI)
@@ -276,6 +279,51 @@ async function build() {
     console.log(`Copied to ${wecomCliDest}`);
   } else {
     console.warn(`Warning: WeCom CLI not found at ${wecomCliSource}`);
+  }
+
+  // Copying only the entrypoint is insufficient because this CLI imports the
+  // shared API-contract package. Ship one fully bundled native runtime per
+  // target so installed generated artifacts can invoke `comate` without Node.
+  console.log('\n--- Bundling self-contained Comate CLI ---');
+  const comateCliDir = join(resourcesDir, 'comate-cli');
+  if (existsSync(comateCliDir)) rmSync(comateCliDir, { recursive: true, force: true });
+  mkdirSync(comateCliDir, { recursive: true });
+  const comateBundle = join(comateCliDir, 'bundle.cjs');
+  run(
+    `npx esbuild ${join(rootDir, 'packages', 'comate-cli', 'dist', 'index.js')} ` +
+      `--bundle --platform=node --target=node20 --format=cjs ` +
+      `--banner:js="#!/usr/bin/env node" --outfile=${comateBundle}`,
+  );
+  const cliTriples = process.platform === 'darwin'
+    ? ['aarch64-apple-darwin', 'x86_64-apple-darwin']
+    : [hostTriple];
+  for (const triple of cliTriples) {
+    const commandDir = join(comateCliDir, triple);
+    mkdirSync(commandDir, { recursive: true });
+    const command = join(commandDir, triple.includes('windows') ? 'comate.exe' : 'comate');
+    run(`npx pkg ${comateBundle} --targets ${getPkgTarget(triple)} --output ${command} --no-bytecode --public`);
+    if (!isFile(command)) throw new Error(`native Comate CLI missing after pkg (${command})`);
+  }
+  const comateCommand = join(
+    comateCliDir,
+    hostTriple,
+    platform === 'win32' ? 'comate.exe' : 'comate',
+  );
+  const bundledSource = readFileSync(comateBundle, 'utf8');
+  if (!isFile(comateCommand) || bundledSource.includes("from '@comate/api-contracts'")) {
+    throw new Error(`self-contained Comate CLI resource assertion failed (${comateCommand})`);
+  }
+  try {
+    execFileSync(comateCommand, ['not-a-command'], {
+      env: { PATH: '' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    throw new Error('native Comate CLI smoke command unexpectedly succeeded');
+  } catch (error) {
+    const stderr = String((error as { stderr?: Buffer }).stderr ?? '');
+    if (!stderr.includes('Usage: comate api request')) {
+      throw new Error(`native Comate CLI failed without its own runtime: ${stderr}`);
+    }
   }
 
   // 7. Copy ripgrep binary to src-tauri/resources/

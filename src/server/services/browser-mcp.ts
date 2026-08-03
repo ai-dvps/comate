@@ -94,6 +94,7 @@ import { browserAuditService, type BrowserAuditService } from './browser-audit.j
 import { buildStorageInitScript } from './browser-site-auth.js';
 import { originOf } from './browser-origin.js';
 import { BrowserAuthenticatedRequestBroker } from './browser-authenticated-request.js';
+import { browserApiBrokerService } from './browser-api-broker-service.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
 // tests) keep working; the canonical home is browser-tool-names.ts (U4) so
@@ -643,33 +644,7 @@ export class BrowserToolContext {
     this.pageRegistry = deps.pageRegistry ?? defaultPageRegistry;
     this.settleMs = deps.settleMs ?? 300;
     this.audit = deps.audit ?? browserAuditService;
-    this.authenticatedRequestBroker = deps.authenticatedRequestBroker ?? new BrowserAuthenticatedRequestBroker({
-      resolveAuth: (taskId, bindingId, destination) =>
-        this.svc.resolveAuthBinding(taskId, bindingId, destination),
-      approvalRequester: async ({ method, siteKey, correlationId, validationRequested, signal }) => {
-        const decision = await this.requestApproval({
-          toolName: BROWSER_TOOL_NAMES.authenticatedRequest,
-          title: `Authorize ${method} request to ${siteKey}`,
-          description: validationRequested
-            ? 'This request will be validated as non-mutating; a successful validation grants exact task-local reuse.'
-            : 'This authenticated request can change data on the destination site.',
-          payload: {
-            kind: 'authenticated_request',
-            method,
-            siteKey,
-            correlationId,
-            validationRequested,
-          },
-        }, signal);
-        if ('content' in decision) return { behavior: 'deny' as const };
-        // BrowserApprovalRequester currently exposes allow/deny only; runtime
-        // timeout/cancel are already normalized to deny before this boundary.
-        return decision.behavior === 'allow'
-          ? { behavior: 'allow' as const }
-          : { behavior: 'deny' as const };
-      },
-      audit: browserAuditService,
-    });
+    this.authenticatedRequestBroker = deps.authenticatedRequestBroker ?? browserApiBrokerService.broker;
   }
 
   private async ensurePage(): Promise<SteelCdpSession> {

@@ -245,6 +245,7 @@ describe('loopback-auth middleware (route matrix)', { concurrency: false }, () =
   it('ships a closed session-route template set (regression anchor)', () => {
     assert.deepStrictEqual([...SESSION_ROUTE_TEMPLATES].sort(), [
       'GET /api/workspaces/:workspaceId/sessions/:sessionId/wecom-user',
+      'POST /api/broker/request',
       'POST /api/workspaces/:workspaceId/wecom/doc/:tool',
       'POST /api/workspaces/:workspaceId/wecom/send',
       'POST /api/workspaces/:workspaceId/wecom/send-file',
