@@ -1033,11 +1033,12 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     const serialized = JSON.stringify(payload);
     assert.doesNotMatch(serialized, new RegExp(secret));
     assert.doesNotMatch(serialized, /Bearer/);
-    const candidates = payload.candidates as Array<{ url: string; evidence: { confidence: string; action: string } }>;
+    const candidates = payload.candidates as Array<{ url: string; authBinding?: string; evidence: { confidence: string; action: string } }>;
     assert.equal(candidates.length, 2, 'post-stop request is not admitted');
     assert.match(candidates[0].url, /\/v1\/quota/);
     assert.equal(candidates[0].evidence.confidence, 'high');
     assert.match(candidates[0].evidence.action, /temporal association only/);
+    assert.match(candidates[0].authBinding ?? '', /^authb_[A-Za-z0-9_-]{8,}$/);
   });
 });
 

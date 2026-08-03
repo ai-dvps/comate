@@ -90,6 +90,8 @@ export const sanitizedCandidateSchema = z.object({
   version: contractVersionSchema,
   candidateId: candidateIdSchema,
   captureId: captureIdSchema,
+  /** Opaque server-owned handle; raw credential material never enters this candidate. */
+  authBinding: authBindingSchema.optional(),
   method: z.string().regex(/^[A-Z]+$/).max(16),
   url: z.string().url().startsWith('https://').max(8192),
   headers: z.record(z.string().max(256), z.string().max(4096)),
@@ -146,7 +148,13 @@ export const apiRecipeSchema = z.object({
 export const brokerRequestSchema = z.object({
   version: contractVersionSchema,
   recipe: apiRecipeSchema,
-  variables: z.record(z.string().max(128), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  variables: z.record(z.string().max(128), z.union([z.string().max(4096), z.number(), z.boolean(), z.null()])),
+  /**
+   * Requests that an approved successful non-GET validation establish an
+   * exact, task-local non-mutating grant. The approval UI must surface this;
+   * ordinary mutation calls never become reusable merely because they ran.
+   */
+  validateNonMutating: z.boolean().optional(),
 }).strict();
 
 export const browserApiErrorCodeSchema = z.enum([
@@ -162,6 +170,7 @@ export const browserApiErrorCodeSchema = z.enum([
   'authorization_required',
   'authorization_denied',
   'authorization_expired',
+  'authorization_cancelled',
   'destination_not_allowed',
   'destination_unsafe',
   'request_limit_exceeded',
@@ -178,7 +187,13 @@ export const browserApiErrorSchema = z.object({
   message: z.string().max(1024),
   recovery: z.string().max(1024),
   retryable: z.boolean(),
-}).strict();
+  /** True only when transport ran but the correlated terminal audit could not be appended. */
+  outcomeUnknownAfterDispatch: z.boolean().optional(),
+}).strict().superRefine((error, context) => {
+  if (error.outcomeUnknownAfterDispatch && error.code !== 'audit_unavailable') {
+    context.addIssue({ code: 'custom', message: 'unknown dispatch outcome is only valid for audit_unavailable' });
+  }
+});
 
 export const brokerSuccessSchema = z.object({
   version: contractVersionSchema,

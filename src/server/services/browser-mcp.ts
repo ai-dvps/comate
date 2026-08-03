@@ -517,7 +517,7 @@ function candidateFromChain(
   action: string,
   exactSecrets: string[],
   primarySessionId: string | undefined,
-): { candidate: SanitizedCandidate; score: number } | undefined {
+): { candidate: SanitizedCandidate; score: number; bearerToken?: string } | undefined {
   const hop = chain.hops[chain.hops.length - 1];
   if (!hop?.response || hop.response.status < 100 || hop.response.status > 599) return undefined;
   let url;
@@ -570,20 +570,25 @@ function candidateFromChain(
     },
   };
   const parsed = sanitizedCandidateSchema.safeParse(candidate);
-  return parsed.success ? { candidate: parsed.data, score } : undefined;
+  const authorization = headerValue(hop.requestExtraHeaders, 'authorization')
+    ?? headerValue(hop.request.headers, 'authorization');
+  const bearerToken = /^Bearer\s+(.+)$/i.exec(authorization ?? '')?.[1];
+  return parsed.success
+    ? { candidate: parsed.data, score, ...(bearerToken ? { bearerToken } : {}) }
+    : undefined;
 }
 
 function buildSanitizedCandidates(
   result: BrowserNetworkCaptureResult,
   action: string,
   primarySessionId?: string,
-): SanitizedCandidate[] {
+): Array<{ candidate: SanitizedCandidate; bearerToken?: string }> {
   const exactSecrets = captureSecrets(result);
   return result.chains
     .map((chain, index) => candidateFromChain(result, chain, index, action, exactSecrets, primarySessionId))
-    .filter((entry): entry is { candidate: SanitizedCandidate; score: number } => entry !== undefined)
+    .filter((entry): entry is { candidate: SanitizedCandidate; score: number; bearerToken?: string } => entry !== undefined)
     .sort((left, right) => right.score - left.score)
-    .map((entry) => entry.candidate);
+    .map(({ candidate, bearerToken }) => ({ candidate, ...(bearerToken ? { bearerToken } : {}) }));
 }
 
 // ---------------------------------------------------------------------------
@@ -818,7 +823,15 @@ export class BrowserToolContext {
           'Reopen the browser, start a new capture, repeat one action, and stop it again.',
         );
       }
-      const candidates = buildSanitizedCandidates(result, this.captureAction, this.capturePrimarySessionId);
+      const candidateEntries = buildSanitizedCandidates(result, this.captureAction, this.capturePrimarySessionId);
+      const candidates = await Promise.all(candidateEntries.map(async ({ candidate, bearerToken }) => {
+        const authBinding = await this.svc.captureCandidateAuthBinding(
+          this.deps.sessionId,
+          candidate.url,
+          bearerToken,
+        ).catch(() => undefined);
+        return { ...candidate, ...(authBinding ? { authBinding } : {}) };
+      }));
       return toolJson({
         ok: true,
         captureId: result.captureId,
