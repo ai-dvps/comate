@@ -618,8 +618,6 @@
     "sections": "Skills sections",
     "expertPackageOrchestrator": "Expert Package orchestration",
     "enterpriseZone": {
-      "title": "Enterprise Zone",
-      "subtitle": "Browse verified enterprise publishers on SkillHub.",
       "enterpriseCount": "{{count}} enterprises",
       "searchEnterprises": "Search enterprises",
       "clearEnterpriseSearch": "Clear enterprise search",

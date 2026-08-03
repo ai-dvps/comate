@@ -218,7 +218,7 @@ describe('SkillsPage Expert Packages browser flow', () => {
     expect(enterpriseTab).toHaveAttribute('aria-selected', 'true')
     expect(enterpriseTab).toHaveFocus()
     expect(screen.queryByRole('button', { name: 'Add from URL' })).not.toBeInTheDocument()
-    expect(await screen.findByRole('heading', { name: 'Enterprise Zone' })).toBeInTheDocument()
+    expect(await screen.findByRole('textbox', { name: 'Search enterprises' })).toBeVisible()
   })
 
   it('uses the generic WeSkillHub search-to-install flow with localized five-provider guidance', async () => {
@@ -375,8 +375,7 @@ describe('SkillsPage Expert Packages browser flow', () => {
 
     const enterpriseTab = await screen.findByRole('tab', { name: '企业专区' })
     await userEvent.click(enterpriseTab)
-    expect(await screen.findByRole('heading', { name: '企业专区' })).toBeInTheDocument()
-    expect(screen.getByLabelText('搜索企业')).toBeVisible()
+    expect(await screen.findByLabelText('搜索企业')).toBeVisible()
     expect(screen.getByLabelText('按行业筛选企业')).toBeVisible()
   })
 
