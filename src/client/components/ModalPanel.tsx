@@ -77,7 +77,9 @@ export default function ModalPanel({
   return (
     <div
       className={cn(
-        'fixed inset-0 z-50 flex flex-col transition-opacity',
+        // Keep the desktop title bar uncovered so macOS users can still drag
+        // the window while a panel is open.
+        'fixed top-11 inset-x-0 bottom-0 z-50 flex flex-col transition-opacity',
         durationClass,
         easingClass,
         'motion-reduce:transition-none',

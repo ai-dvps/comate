@@ -7,6 +7,7 @@ interface HeaderToolbarProps {
   onOpenSettings: () => void
   onOpenAnalytics: () => void
   onOpenTodos: () => void
+  popupOpen?: boolean
 }
 
 export default function HeaderToolbar({
@@ -14,6 +15,7 @@ export default function HeaderToolbar({
   onOpenSettings,
   onOpenAnalytics,
   onOpenTodos,
+  popupOpen = false,
 }: HeaderToolbarProps) {
   const { t } = useTranslation('common')
   const { theme, toggleTheme } = useTheme()
@@ -22,7 +24,8 @@ export default function HeaderToolbar({
     <div className="flex items-center gap-1">
       <button
         onClick={onCreateWorkspace}
-        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        disabled={popupOpen}
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors disabled:cursor-not-allowed disabled:opacity-50"
         title={t('header.createWorkspace')}
       >
         <Plus className="w-4 h-4" />
@@ -30,7 +33,8 @@ export default function HeaderToolbar({
 
       <button
         onClick={onOpenTodos}
-        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        disabled={popupOpen}
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors disabled:cursor-not-allowed disabled:opacity-50"
         title={t('header.todos')}
       >
         <CheckSquare className="w-4 h-4" />
@@ -38,7 +42,8 @@ export default function HeaderToolbar({
 
       <button
         onClick={onOpenAnalytics}
-        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        disabled={popupOpen}
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors disabled:cursor-not-allowed disabled:opacity-50"
         title={t('header.analytics')}
       >
         <BarChart3 className="w-4 h-4" />
@@ -54,7 +59,8 @@ export default function HeaderToolbar({
 
       <button
         onClick={onOpenSettings}
-        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+        disabled={popupOpen}
+        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors disabled:cursor-not-allowed disabled:opacity-50"
         title={t('header.settings')}
       >
         <Settings className="w-4 h-4" />

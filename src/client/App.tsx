@@ -259,6 +259,7 @@ function App() {
         <div data-tauri-drag-region className="flex-1 self-stretch select-none" onMouseDown={handleDrag} />
         <div className="flex items-center flex-shrink-0 pl-4 pr-4">
           <HeaderToolbar
+            popupOpen={activePanel !== null || showCreateModal}
             onCreateWorkspace={() => setShowCreateModal(true)}
             onOpenSettings={() => openPanel('settings')}
             onOpenAnalytics={() => openPanel('analytics')}
