@@ -37,8 +37,13 @@ describe('registry source', () => {
     const xfyun = parseRegistrySource('xfyun:code-review')!;
     const skillhub = parseRegistrySource('skillhub-cn:axelhu/superpowers-tdd')!;
     const packageSource = parseRegistrySource('skillhub-package:tech-test-automation')!;
+    const weskillhub = parseRegistrySource('weskillhub:116/weoa-todo')!;
 
     assert.strictEqual(registrySourceUrl(xfyun), 'https://skill.xfyun.cn/api/v1/download/code-review');
+    assert.throws(
+      () => registrySourceUrl(weskillhub),
+      /resolved version transaction/,
+    );
     assert.strictEqual(
       registrySourceUrl(skillhub),
       'https://api.skillhub.cn/api/v1/download?slug=superpowers-tdd&namespace=axelhu',

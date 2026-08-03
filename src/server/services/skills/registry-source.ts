@@ -71,6 +71,9 @@ export function parseRegistrySource(source: string): RegistrySource | null {
 }
 
 export function registrySourceUrl(source: RegistrySource): string {
+  if (source.skillId !== undefined) {
+    throw new Error('WeSkillHub downloads require a resolved version transaction');
+  }
   if (source.packageSlug) {
     return `${SKILLHUB_API_BASE}/api/v1/skillsets/${encodeURIComponent(source.packageSlug)}`;
   }
