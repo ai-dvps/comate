@@ -602,10 +602,35 @@ describe('SkillsService', () => {
         ['skill:owner/child-skill', 'installed'],
       ]);
       const installed = await skillsService.listInstalled(tmpRoot);
-      assert.strictEqual(installed.find((item) => item.name === 'test-package')?.kind, 'expert-package-orchestrator');
+      const installedPackage = installed.find((item) => item.name === 'test-package');
+      assert.strictEqual(installedPackage?.kind, 'expert-package-orchestrator');
+      assert.deepStrictEqual(installedPackage?.packageCatalog, {
+        slug: 'test-package', displayName: 'Test Package', summary: 'A package', scene: 'tech', skillCount: 1, source: 'skillhub.cn',
+      });
       assert.strictEqual(installed.find((item) => item.name === 'child-skill')?.kind, 'skill');
+      assert.strictEqual(installed.find((item) => item.name === 'child-skill')?.packageSlug, 'test-package');
+      const lock = await readProjectLock(tmpRoot);
+      assert.deepStrictEqual(lock.skills['test-package']?.packageCatalog, installedPackage?.packageCatalog);
       assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'child-skill', 'skill.zip')), false);
       assert.strictEqual(packageDefinitionRequests, 1);
+    });
+
+    it('removes the orchestration and every included Skill together', async () => {
+      const archive = buildSkillArchive(tmpRoot, 'child-skill');
+      global.fetch = expertPackageFetch(archive);
+      await skillsService.installExpertPackage({
+        packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+      });
+
+      const results = await skillsService.removeExpertPackage({
+        packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+      });
+
+      assert.deepStrictEqual(results.map((result) => [result.skillName, result.status]), [
+        ['test-package', 'removed'],
+        ['child-skill', 'removed'],
+      ]);
+      assert.deepStrictEqual(await skillsService.listInstalled(tmpRoot), []);
     });
 
     it('installs incomplete package content and reports unresolvable children per item', async () => {

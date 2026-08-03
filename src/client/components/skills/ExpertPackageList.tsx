@@ -116,25 +116,51 @@ export default function ExpertPackageList({
             <button
               key={item.slug}
               onClick={() => onSelect(item.slug)}
-              className={`group w-full rounded-2xl border border-border bg-surface text-left shadow-sm transition hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md motion-reduce:transform-none ${viewMode === 'cards' ? 'p-4' : 'flex items-center gap-4 p-3.5'}`}
+              className={`group w-full rounded-2xl border border-border bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md motion-reduce:transform-none ${viewMode === 'cards' ? 'p-4' : 'p-3.5'}`}
             >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
-                <Boxes className="h-4.5 w-4.5" />
-              </div>
-              <div className={viewMode === 'cards' ? 'mt-3' : 'min-w-0 flex-1'}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="truncate text-sm font-semibold text-text-primary">{item.displayName}</h3>
-                    <p className="mt-0.5 text-[10px] uppercase tracking-wide text-text-tertiary">{t('skills.expertPackages.expert', { scene: item.subScene || item.scene })}</p>
+              {viewMode === 'cards' ? (
+                <>
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                      <Boxes className="h-4.5 w-4.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-sm font-semibold text-text-primary">{item.displayName}</h3>
+                          <p className="mt-0.5 text-[10px] uppercase tracking-wide text-text-tertiary">{t('skills.expertPackages.expert', { scene: item.subScene || item.scene })}</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-accent" />
+                      </div>
+                    </div>
                   </div>
-                  <ArrowRight className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-accent" />
+                  <p className="mt-3 line-clamp-3 min-h-15 text-xs leading-5 text-text-secondary">{item.summary}</p>
+                  <div className="mt-3 flex items-center gap-2 text-[10px] text-text-tertiary">
+                    <span className="rounded-md border border-border/60 bg-white px-2 py-1">{t('skills.expertPackages.skillCount', { count: item.skillCount })}</span>
+                    <span className="inline-flex items-center gap-1"><Globe2 className="h-3 w-3" /> SkillHub</span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                    <Boxes className="h-4.5 w-4.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-semibold text-text-primary">{item.displayName}</h3>
+                      <p className="mt-0.5 text-[10px] uppercase tracking-wide text-text-tertiary">{t('skills.expertPackages.expert', { scene: item.subScene || item.scene })}</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-accent" />
+                  </div>
+                  <p className="mt-2 line-clamp-1 text-xs leading-5 text-text-secondary">{item.summary}</p>
+                  <div className="mt-3 flex items-center gap-2 text-[10px] text-text-tertiary">
+                    <span className="rounded-md border border-border/60 bg-white px-2 py-1">{t('skills.expertPackages.skillCount', { count: item.skillCount })}</span>
+                    <span className="inline-flex items-center gap-1"><Globe2 className="h-3 w-3" /> SkillHub</span>
+                  </div>
+                  </div>
                 </div>
-                <p className={`mt-2 text-xs leading-5 text-text-secondary ${viewMode === 'cards' ? 'line-clamp-3 min-h-15' : 'line-clamp-1'}`}>{item.summary}</p>
-                <div className="mt-3 flex items-center gap-2 text-[10px] text-text-tertiary">
-                  <span className="rounded-md bg-surface-hover px-2 py-1">{t('skills.expertPackages.skillCount', { count: item.skillCount })}</span>
-                  <span className="inline-flex items-center gap-1"><Globe2 className="h-3 w-3" /> SkillHub</span>
-                </div>
-              </div>
+              )}
             </button>
           ))}
         </div>

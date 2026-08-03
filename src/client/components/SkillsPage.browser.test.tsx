@@ -17,10 +17,10 @@ const packageSummary = {
   source: 'skillhub.cn',
 }
 
-function installFetch(): ReturnType<typeof vi.fn> {
+function installFetch(installed: unknown[] = []): ReturnType<typeof vi.fn> {
   return vi.fn((input: string | URL | Request) => {
     const url = String(input)
-    if (url.includes('/api/skills/installed')) return Promise.resolve(Response.json({ skills: [] }))
+    if (url.includes('/api/skills/installed')) return Promise.resolve(Response.json({ skills: installed }))
     if (url.includes('/expert-packages/tech-test-automation/skills/owner/child-skill')) {
       return Promise.resolve(Response.json({ skill: {
         namespace: 'owner',
@@ -111,5 +111,91 @@ describe('SkillsPage Expert Packages browser flow', () => {
     expect(screen.getByRole('button', { name: 'Card view' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'List view' })).toBeVisible()
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth)
+  })
+
+  it('groups installed Expert Package Skills in a package card', async () => {
+    window.fetch = installFetch([
+      {
+        name: 'tech-test-automation',
+        kind: 'expert-package-orchestrator',
+        scope: 'project',
+        source: 'skillhub-package:tech-test-automation',
+        packageCatalog: {
+          slug: 'tech-test-automation',
+          displayName: 'Automation Expert',
+          summary: 'A complete testing workflow',
+          scene: 'tech',
+          skillCount: 1,
+          source: 'skillhub.cn',
+        },
+        installPath: '/skills/tech-test-automation',
+        isLegacySymlink: false,
+        description: 'A complete testing workflow',
+      },
+      {
+        name: 'child-skill',
+        kind: 'skill',
+        scope: 'project',
+        source: 'skillhub-cn:owner/child-skill',
+        packageSlug: 'tech-test-automation',
+        installPath: '/skills/child-skill',
+        isLegacySymlink: false,
+        description: 'Child workflow step',
+      },
+      {
+        name: 'standalone-skill-one',
+        kind: 'skill',
+        scope: 'project',
+        source: 'skillhub-cn:owner/standalone-skill-one',
+        installPath: '/skills/standalone-skill-one',
+        isLegacySymlink: false,
+      },
+      {
+        name: 'standalone-skill-two',
+        kind: 'skill',
+        scope: 'project',
+        source: 'skillhub-cn:owner/standalone-skill-two',
+        installPath: '/skills/standalone-skill-two',
+        isLegacySymlink: false,
+      },
+    ]) as typeof fetch
+
+    render(<I18nextProvider i18n={i18n}><SkillsPage workspaceId="ws-1" isOpen onClose={() => undefined} /></I18nextProvider>)
+
+    expect(await screen.findByText('Automation Expert')).toBeInTheDocument()
+    expect(screen.getByText('A complete testing workflow')).toBeInTheDocument()
+    expect(screen.getByText('Expert Package orchestration')).toBeInTheDocument()
+    expect(screen.getByText('Included Skills (1)')).toBeInTheDocument()
+    expect(screen.getByText('child-skill')).toBeInTheDocument()
+
+    const toggle = screen.getByRole('button', { name: 'Included Skills (1)' })
+    const childGroup = document.getElementById('package-skills-tech-test-automation-project')
+    expect(childGroup).not.toBeNull()
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(childGroup!).not.toBeVisible()
+
+    await userEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(childGroup!).toBeVisible()
+
+    const firstStandaloneCard = screen.getByText('standalone-skill-one').closest('div.overflow-hidden.rounded-xl')
+    const secondStandaloneCard = screen.getByText('standalone-skill-two').closest('div.overflow-hidden.rounded-xl')
+    expect(firstStandaloneCard).not.toBeNull()
+    expect(secondStandaloneCard).not.toBeNull()
+    expect(firstStandaloneCard).not.toBe(secondStandaloneCard)
+
+    const installedSearch = screen.getByLabelText('Search installed skills')
+    await userEvent.type(installedSearch, 'standalone-skill-one')
+    expect(screen.getByText('standalone-skill-one')).toBeInTheDocument()
+    expect(screen.queryByText('standalone-skill-two')).not.toBeInTheDocument()
+
+    await userEvent.clear(installedSearch)
+    const installedViewMode = screen.getByLabelText('Installed skills view mode')
+    const listViewButton = installedViewMode.querySelectorAll('button')[1]!
+    await userEvent.click(listViewButton)
+    expect(listViewButton).toHaveAttribute('aria-pressed', 'true')
+    const firstListCard = screen.getByText('standalone-skill-one').closest('div.overflow-hidden.rounded-xl')
+    const secondListCard = screen.getByText('standalone-skill-two').closest('div.overflow-hidden.rounded-xl')
+    expect(firstListCard).not.toBe(secondListCard)
   })
 })

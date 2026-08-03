@@ -4,6 +4,7 @@ import {
   useExpertPackagesStore,
   type ExpertPackageScene,
 } from '../../stores/expert-packages-store'
+import { useSkillsStore } from '../../stores/skills-store'
 import SkillInstallModal from '../SkillInstallModal'
 import ExpertPackageDetail from './ExpertPackageDetail'
 import ExpertPackageInstallModal from './ExpertPackageInstallModal'
@@ -36,6 +37,7 @@ export default function ExpertPackagesView({ active, isOpen, workspaceId, onInst
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const listScrollTopRef = useRef(0)
+  const installed = useSkillsStore((state) => state.installed)
   const {
     packages, total, isLoadingList, listError,
     packageDetails, loadingPackageSlug, packageErrors,
@@ -120,6 +122,7 @@ export default function ExpertPackagesView({ active, isOpen, workspaceId, onInst
   }
 
   const packageDetail = packageDetails[location.packageSlug]
+  const isPackageInstalled = installed.some((skill) => skill.source === `skillhub-package:${location.packageSlug}`)
 
   return (
     <div ref={rootRef} className="contents">
@@ -128,6 +131,7 @@ export default function ExpertPackagesView({ active, isOpen, workspaceId, onInst
           detail={packageDetail}
           loading={loadingPackageSlug === location.packageSlug}
           error={packageErrors[location.packageSlug]}
+          installed={isPackageInstalled}
           onBack={backToList}
           onRetry={() => void fetchPackage(location.packageSlug, true)}
           onSelectSkill={(namespace, slug) => selectSkill(location.packageSlug, namespace, slug)}
@@ -139,6 +143,7 @@ export default function ExpertPackagesView({ active, isOpen, workspaceId, onInst
           detail={skillDetails[`${location.packageSlug}:${location.namespace}/${location.skillSlug}`]}
           loading={loadingSkillKey === `${location.packageSlug}:${location.namespace}/${location.skillSlug}`}
           error={skillErrors[`${location.packageSlug}:${location.namespace}/${location.skillSlug}`]}
+          installed={installed.some((skill) => skill.source === `skillhub-cn:${location.namespace}/${location.skillSlug}`)}
           onBack={() => setLocation({ view: 'package', packageSlug: location.packageSlug })}
           onBackToList={backToList}
           onRetry={() => void fetchSkill(location.packageSlug, location.namespace, location.skillSlug, true)}

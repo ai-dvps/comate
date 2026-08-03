@@ -194,10 +194,11 @@ router.post('/expert-packages/:slug/install', async (req, res) => {
     return;
   }
   const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const { scope, workspaceId, itemIds } = body as {
+  const { scope, workspaceId, itemIds, force } = body as {
     scope?: string;
     workspaceId?: string;
     itemIds?: unknown;
+    force?: unknown;
   };
   try {
     assertSkillScope(scope ?? '');
@@ -220,6 +221,10 @@ router.post('/expert-packages/:slug/install', async (req, res) => {
     res.status(400).json({ error: 'workspaceId must be a string' });
     return;
   }
+  if (force !== undefined && typeof force !== 'boolean') {
+    res.status(400).json({ error: 'force must be a boolean' });
+    return;
+  }
   const workspacePath = await requireWorkspacePath(scope as SkillScope, workspaceId, res);
   if (workspacePath === undefined && scope !== 'global') return;
 
@@ -229,6 +234,7 @@ router.post('/expert-packages/:slug/install', async (req, res) => {
       scope: scope as SkillScope,
       workspacePath,
       ...(itemIds ? { itemIds: itemIds as string[] } : {}),
+      ...(force === true ? { force: true } : {}),
     });
     const installedCount = results.filter((result) => result.status === 'installed').length;
     const alreadyCount = results.filter((result) => result.status === 'already-installed').length;
@@ -247,6 +253,45 @@ router.post('/expert-packages/:slug/install', async (req, res) => {
       res.status(422).json({ error: message });
       return;
     }
+    sendExpertPackageError(error, res);
+  }
+});
+
+// POST /api/skills/expert-packages/:slug/uninstall
+router.post('/expert-packages/:slug/uninstall', async (req, res) => {
+  const packageSlug = req.params.slug;
+  if (!isExpertPackageCoordinate(packageSlug)) {
+    res.status(400).json({ error: 'Invalid Expert Package slug' });
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const { scope, workspaceId } = body as { scope?: string; workspaceId?: string };
+  try {
+    assertSkillScope(scope ?? '');
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+    return;
+  }
+  if (workspaceId !== undefined && typeof workspaceId !== 'string') {
+    res.status(400).json({ error: 'workspaceId must be a string' });
+    return;
+  }
+  const workspacePath = await requireWorkspacePath(scope as SkillScope, workspaceId, res);
+  if (workspacePath === undefined && scope !== 'global') return;
+
+  try {
+    const results = await skillsService.removeExpertPackage({
+      packageSlug,
+      scope: scope as SkillScope,
+      workspacePath,
+    });
+    const failures = results.filter((result) => result.status === 'error');
+    if (failures.length === results.length) {
+      res.status(422).json({ error: 'Unable to uninstall Expert Package', results });
+      return;
+    }
+    res.json({ results });
+  } catch (error) {
     sendExpertPackageError(error, res);
   }
 });

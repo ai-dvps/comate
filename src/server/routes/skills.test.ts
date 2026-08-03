@@ -107,6 +107,7 @@ describe('skills routes', () => {
   let originalGetExpertSkillDetail: typeof skillsService.getExpertSkillDetail;
   let originalIsExpertSkillInPackage: typeof skillsService.isExpertSkillInPackage;
   let originalInstallExpertPackage: typeof skillsService.installExpertPackage;
+  let originalRemoveExpertPackage: typeof skillsService.removeExpertPackage;
 
   beforeEach(() => {
     tmpWorkspace = mkdtempSync(join(tmpdir(), 'skills-routes-ws-'));
@@ -123,6 +124,7 @@ describe('skills routes', () => {
     originalGetExpertSkillDetail = skillsService.getExpertSkillDetail.bind(skillsService);
     originalIsExpertSkillInPackage = skillsService.isExpertSkillInPackage.bind(skillsService);
     originalInstallExpertPackage = skillsService.installExpertPackage.bind(skillsService);
+    originalRemoveExpertPackage = skillsService.removeExpertPackage.bind(skillsService);
   });
 
   afterEach(() => {
@@ -139,6 +141,7 @@ describe('skills routes', () => {
     skillsService.getExpertSkillDetail = originalGetExpertSkillDetail;
     skillsService.isExpertSkillInPackage = originalIsExpertSkillInPackage;
     skillsService.installExpertPackage = originalInstallExpertPackage;
+    skillsService.removeExpertPackage = originalRemoveExpertPackage;
     rmSync(tmpWorkspace, { recursive: true, force: true });
   });
 
@@ -353,6 +356,33 @@ describe('skills routes', () => {
       const body = res.jsonBody as { results: unknown[]; summary: { failed: number } };
       assert.strictEqual(body.results.length, 2);
       assert.strictEqual(body.summary.failed, 1);
+    });
+
+    it('forwards force updates and uninstalls whole Expert Packages', async () => {
+      const handlers = await importRouteHandlers();
+      let force: boolean | undefined;
+      skillsService.installExpertPackage = async (args) => {
+        force = args.force;
+        return [{ id: 'orchestrator:test-package', kind: 'orchestrator', source: 'skillhub-package:test-package', name: 'test-package', status: 'installed' }];
+      };
+      skillsService.removeExpertPackage = async () => [
+        { skillName: 'test-package', status: 'removed' },
+        { skillName: 'child-skill', status: 'removed' },
+      ];
+
+      const update = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: 'test-package' }, body: { scope: 'global', force: true },
+      }, update);
+      assert.strictEqual(update.statusCode, 201);
+      assert.strictEqual(force, true);
+
+      const uninstall = createMockRes();
+      await handlers['/expert-packages/:slug/uninstall'].post({
+        params: { slug: 'test-package' }, body: { scope: 'global' },
+      }, uninstall);
+      assert.strictEqual(uninstall.statusCode, 200);
+      assert.strictEqual((uninstall.jsonBody as { results: unknown[] }).results.length, 2);
     });
 
     it('rejects malformed retry item input without installation', async () => {

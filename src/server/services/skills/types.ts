@@ -78,6 +78,10 @@ export interface LocalSkillLockEntry {
   skillPath?: string;
   /** SHA-256 hash computed from local files */
   computedHash: string;
+  /** Expert Package that installed this Skill, when applicable. */
+  packageSlug?: string;
+  /** Catalog summary saved with an Expert Package orchestration for offline display. */
+  packageCatalog?: ExpertPackageSummary;
 }
 
 export interface LocalSkillLockFile {
@@ -101,6 +105,10 @@ export interface GlobalSkillLockEntry {
   installedAt: string;
   updatedAt: string;
   pluginName?: string;
+  /** Expert Package that installed this Skill, when applicable. */
+  packageSlug?: string;
+  /** Catalog summary saved with an Expert Package orchestration for offline display. */
+  packageCatalog?: ExpertPackageSummary;
 }
 
 export interface GlobalSkillLockFile {
