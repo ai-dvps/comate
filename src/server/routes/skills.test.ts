@@ -30,6 +30,7 @@ import { join } from 'path';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { skillsService } from '../services/skills-service.js';
 import type { InstallResult } from '../services/skills/types.js';
+import type { SkillProviderAvailability } from '../services/skills/types.js';
 
 /**
  * Mock Express Response. Provides the methods the route handlers call:
@@ -40,17 +41,23 @@ function createMockRes(): {
   jsonBody: unknown;
   status(code: number): ReturnType<typeof createMockRes>;
   json(body: unknown): void;
+  setHeader(name: string, value: string): void;
   send(): void;
+  headers: Record<string, string>;
 } {
   const res = {
     statusCode: 200,
     jsonBody: undefined as unknown,
+    headers: {} as Record<string, string>,
     status(code: number) {
       this.statusCode = code;
       return this;
     },
     json(body: unknown) {
       this.jsonBody = body;
+    },
+    setHeader(name: string, value: string) {
+      this.headers[name.toLowerCase()] = value;
     },
     send() {
       // no-op
@@ -96,6 +103,7 @@ describe('skills routes', () => {
   let tmpWorkspace: string;
   let originalStoreGet: typeof workspaceStore.get;
   let originalSearch: typeof skillsService.search;
+  let originalCheckSearchProviders: typeof skillsService.checkSearchProviders;
   let originalResolveSource: typeof skillsService.resolveSource;
   let originalInstall: typeof skillsService.install;
   let originalListInstalled: typeof skillsService.listInstalled;
@@ -118,6 +126,7 @@ describe('skills routes', () => {
     tmpWorkspace = mkdtempSync(join(tmpdir(), 'skills-routes-ws-'));
     originalStoreGet = workspaceStore.get.bind(workspaceStore);
     originalSearch = skillsService.search.bind(skillsService);
+    originalCheckSearchProviders = skillsService.checkSearchProviders.bind(skillsService);
     originalResolveSource = skillsService.resolveSource.bind(skillsService);
     originalInstall = skillsService.install.bind(skillsService);
     originalListInstalled = skillsService.listInstalled.bind(skillsService);
@@ -140,6 +149,7 @@ describe('skills routes', () => {
   afterEach(() => {
     workspaceStore.get = originalStoreGet;
     skillsService.search = originalSearch;
+    skillsService.checkSearchProviders = originalCheckSearchProviders;
     skillsService.resolveSource = originalResolveSource;
     skillsService.install = originalInstall;
     skillsService.listInstalled = originalListInstalled;
@@ -200,28 +210,31 @@ describe('skills routes', () => {
   describe('GET /search', () => {
     it('returns 200 with results, delegating the query to the service', async () => {
       const handlers = await importRouteHandlers();
-      let capturedQuery: { keyword: string; scene?: string; preferChinese?: boolean; noApiKey?: boolean; sort?: string } | undefined;
+      let capturedQuery: { keyword: string; scene?: string; preferChinese?: boolean; noApiKey?: boolean; sort?: string; providers?: string[] } | undefined;
       skillsService.search = async (q) => {
         capturedQuery = q;
-        return [{
-          id: 'demo',
-          name: 'demo',
-          slug: 'demo',
-          source: 'a/b',
-          installSource: 'a/b',
-          sourceKind: 'skills.sh',
-          description: '',
-          installs: 5,
-        }];
+        return {
+          skills: [{
+            id: 'demo',
+            name: 'demo',
+            slug: 'demo',
+            source: 'a/b',
+            installSource: 'a/b',
+            sourceKind: 'skills.sh',
+            description: '',
+            installs: 5,
+          }],
+          providers: [{ id: 'skills.sh', label: 'skills.sh', status: 'available' }],
+        };
       };
 
-      const req = { query: { q: 'design', scene: 'development', preferChinese: 'true', noApiKey: 'true', sort: 'downloads' } };
+      const req = { query: { q: 'design', scene: 'development', preferChinese: 'true', noApiKey: 'true', sort: 'downloads', providers: 'skills.sh,weskillhub' } };
       const res = createMockRes();
       await handlers['/search'].get(req, res);
 
       assert.strictEqual(res.statusCode, 200);
       assert.deepStrictEqual(capturedQuery, {
-        keyword: 'design', scene: 'development', preferChinese: true, noApiKey: true, sort: 'downloads',
+        keyword: 'design', scene: 'development', preferChinese: true, noApiKey: true, sort: 'downloads', providers: ['skills.sh', 'weskillhub'],
       });
       const body = res.jsonBody as { skills: Array<{ name: string; slug: string; installSource: string }> };
       assert.strictEqual(body.skills[0]!.name, 'demo');
@@ -234,7 +247,7 @@ describe('skills routes', () => {
       let capturedQuery: { keyword: string } | undefined;
       skillsService.search = async (q) => {
         capturedQuery = q;
-        return [];
+        return { skills: [], providers: [] };
       };
 
       const req = { query: {} };
@@ -252,6 +265,82 @@ describe('skills routes', () => {
 
       assert.strictEqual(res.statusCode, 400);
       assert.deepStrictEqual(res.jsonBody, { error: 'Invalid scene' });
+    });
+
+    it('rejects unknown or duplicate provider ids before searching', async () => {
+      const handlers = await importRouteHandlers();
+      let calls = 0;
+      skillsService.search = async () => {
+        calls += 1;
+        return { skills: [], providers: [] };
+      };
+
+      for (const providers of ['unknown', 'skills.sh,skills.sh']) {
+        const res = createMockRes();
+        await handlers['/search'].get({ query: { q: 'design', providers } }, res);
+        assert.strictEqual(res.statusCode, 400);
+        assert.deepStrictEqual(res.jsonBody, { error: 'Invalid providers' });
+      }
+      assert.strictEqual(calls, 0);
+    });
+
+    it('preserves an explicit empty provider list', async () => {
+      const handlers = await importRouteHandlers();
+      let capturedProviders: string[] | undefined;
+      skillsService.search = async (query) => {
+        capturedProviders = query.providers;
+        return { skills: [], providers: [] };
+      };
+
+      const res = createMockRes();
+      await handlers['/search'].get({ query: { q: 'design', providers: '' } }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(capturedProviders, []);
+      assert.deepStrictEqual(res.jsonBody, { skills: [], providers: [] });
+    });
+  });
+
+  describe('GET /search/providers', () => {
+    const available: SkillProviderAvailability = {
+      id: 'skills.sh',
+      label: 'skills.sh',
+      status: 'available',
+    };
+
+    it('checks the full provider catalog without caching', async () => {
+      const handlers = await importRouteHandlers();
+      let capturedIds: string[] | undefined;
+      skillsService.checkSearchProviders = async (ids) => {
+        capturedIds = ids;
+        return [available];
+      };
+
+      const res = createMockRes();
+      await handlers['/search/providers'].get({ query: {} }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(res.headers['cache-control'], 'no-store');
+      assert.strictEqual(capturedIds, undefined);
+      assert.deepStrictEqual(res.jsonBody, { providers: [available] });
+    });
+
+    it('checks one provider for Retry and rejects an unknown provider', async () => {
+      const handlers = await importRouteHandlers();
+      let capturedIds: string[] | undefined;
+      skillsService.checkSearchProviders = async (ids) => {
+        capturedIds = ids;
+        return [available];
+      };
+
+      const retryRes = createMockRes();
+      await handlers['/search/providers'].get({ query: { provider: 'skills.sh' } }, retryRes);
+      assert.deepStrictEqual(capturedIds, ['skills.sh']);
+
+      const invalidRes = createMockRes();
+      await handlers['/search/providers'].get({ query: { provider: 'unknown' } }, invalidRes);
+      assert.strictEqual(invalidRes.statusCode, 400);
+      assert.deepStrictEqual(invalidRes.jsonBody, { error: 'Invalid provider' });
     });
   });
 

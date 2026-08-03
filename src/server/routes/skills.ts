@@ -36,10 +36,22 @@ import {
   isSkillHubCoordinate,
   isSkillScene,
   isSkillSort,
+  SKILL_SEARCH_PROVIDER_IDS,
   type SkillSearchQuery,
+  type SkillSearchProviderId,
 } from '../services/skills/index.js';
 
 const router = Router();
+
+function parseSearchProviderIds(value: unknown): SkillSearchProviderId[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return null;
+  if (value === '') return [];
+  const ids = value.split(',');
+  if (ids.some((id) => !id) || new Set(ids).size !== ids.length) return null;
+  if (ids.some((id) => !(SKILL_SEARCH_PROVIDER_IDS as readonly string[]).includes(id))) return null;
+  return ids as SkillSearchProviderId[];
+}
 
 function sendSkillHubError(
   error: unknown,
@@ -135,11 +147,12 @@ router.get('/installed', async (req, res) => {
   }
 });
 
-// GET /api/skills/search?q=&scene=&preferChinese=&noApiKey=&sort=
+// GET /api/skills/search?q=&scene=&preferChinese=&noApiKey=&sort=&providers=
 router.get('/search', async (req, res) => {
   try {
     const scene = req.query.scene;
     const sort = req.query.sort;
+    const providers = parseSearchProviderIds(req.query.providers);
     if (scene !== undefined && !isSkillScene(scene)) {
       res.status(400).json({ error: 'Invalid scene' });
       return;
@@ -148,18 +161,45 @@ router.get('/search', async (req, res) => {
       res.status(400).json({ error: 'Invalid sort' });
       return;
     }
+    if (providers === null) {
+      res.status(400).json({ error: 'Invalid providers' });
+      return;
+    }
     const query: SkillSearchQuery = {
       keyword: typeof req.query.q === 'string' ? req.query.q : '',
       ...(typeof scene === 'string' ? { scene } : {}),
       ...(req.query.preferChinese === 'true' ? { preferChinese: true } : {}),
       ...(req.query.noApiKey === 'true' ? { noApiKey: true } : {}),
       ...(typeof sort === 'string' ? { sort } : {}),
+      ...(providers !== undefined ? { providers } : {}),
     };
-    const results = await skillsService.search(query);
-    res.json({ skills: results });
+    res.json(await skillsService.search(query));
   } catch (error) {
     console.error('Failed to search skills:', error);
     res.status(500).json({ error: 'Failed to search skills' });
+  }
+});
+
+// GET /api/skills/search/providers?provider=
+router.get('/search/providers', async (req, res) => {
+  const provider = req.query.provider;
+  if (
+    provider !== undefined
+    && (typeof provider !== 'string'
+      || !(SKILL_SEARCH_PROVIDER_IDS as readonly string[]).includes(provider))
+  ) {
+    res.status(400).json({ error: 'Invalid provider' });
+    return;
+  }
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const providers = await skillsService.checkSearchProviders(
+      typeof provider === 'string' ? [provider as SkillSearchProviderId] : undefined,
+    );
+    res.json({ providers });
+  } catch (error) {
+    console.error('Failed to check skill search providers:', error);
+    res.status(500).json({ error: 'Failed to check skill search providers' });
   }
 });
 
