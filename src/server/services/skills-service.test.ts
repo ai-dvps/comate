@@ -137,7 +137,7 @@ function buildWeSkillHubArchive(
     const frontmatter = skill.name === undefined
       ? '# Invalid Skill\n'
       : `---\nname: ${skill.name}\ndescription: ${skill.description ?? skill.name}\n---\n${skill.body ?? `# ${skill.name}\n`}`;
-    zip.addFile(`${skill.path}/SKILL.md`, Buffer.from(frontmatter));
+    zip.addFile(skill.path ? `${skill.path}/SKILL.md` : 'SKILL.md', Buffer.from(frontmatter));
   }
   return zip.toBuffer();
 }
@@ -239,6 +239,7 @@ describe('SkillsService', () => {
       for (const archive of [
         buildWeSkillHubArchive([]),
         buildWeSkillHubArchive([{ path: 'one', name: 'one' }, { path: 'two', name: 'two' }]),
+        buildWeSkillHubArchive([{ path: '', name: 'todo' }, { path: 'nested', name: 'todo' }]),
         buildWeSkillHubArchive([{ path: 'payload', name: 'Todo Skill' }]),
       ]) {
         stubWeSkillHubArchive(() => archive);
@@ -293,6 +294,7 @@ describe('SkillsService', () => {
       for (const [archive, requested] of [
         [buildWeSkillHubArchive([]), 'todo'],
         [buildWeSkillHubArchive([{ path: 'one', name: 'one' }, { path: 'two', name: 'two' }]), 'todo'],
+        [buildWeSkillHubArchive([{ path: '', name: 'todo' }, { path: 'nested', name: 'todo' }]), 'todo'],
         [buildWeSkillHubArchive([{ path: 'payload', name: 'Todo Skill' }]), 'Todo Skill'],
         [buildWeSkillHubArchive([{ path: 'payload', name: 'todo' }]), 'weoa-todo'],
       ] as const) {
