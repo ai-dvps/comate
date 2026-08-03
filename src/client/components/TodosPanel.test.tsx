@@ -151,10 +151,12 @@ describe('TodosPanel — full-screen overlay (U1 regression)', () => {
     useGithubStore.setState({ connection: null });
   });
 
-  it('renders the fixed overlay shell with a dimmed backdrop', () => {
+  it('renders the fixed overlay below the app header with a dimmed backdrop', () => {
     stubFetchEmpty();
     const { container } = renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
-    expect(container.querySelector('.fixed.z-50')).not.toBeNull();
+    const overlay = container.querySelector('.fixed.z-50');
+    expect(overlay).not.toBeNull();
+    expect(overlay).toHaveClass('top-11', 'bottom-0');
     expect(container.querySelector('[class*="bg-overlay"]')).not.toBeNull();
   });
 
