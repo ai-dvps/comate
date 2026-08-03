@@ -113,6 +113,56 @@ function enterpriseInstallFetch(): ReturnType<typeof vi.fn> {
   })
 }
 
+function weskillhubInstallFetch(): ReturnType<typeof vi.fn> {
+  let installed = false
+  return vi.fn((input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input)
+    if (url.includes('/api/skills/installed')) return Promise.resolve(Response.json({ skills: installed ? [{
+      name: 'todo',
+      kind: 'skill',
+      scope: 'project',
+      source: 'weskillhub:116/weoa-todo',
+      installPath: '/skills/todo',
+      isLegacySymlink: false,
+      description: 'Manage WeCom tasks',
+    }] : [] }))
+    if (url.includes('/api/skills/search?')) return Promise.resolve(Response.json({ skills: [{
+      id: 'weskillhub:116/weoa-todo',
+      name: 'todo',
+      slug: 'weoa-todo',
+      source: 'WeSkillHub / weoa-todo',
+      installSource: 'weskillhub:116/weoa-todo',
+      sourceKind: 'weskillhub',
+      description: 'Manage WeCom tasks',
+      installs: 321,
+    }] }))
+    if (url.endsWith('/api/skills/resolve')) {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        source: 'weskillhub:116/weoa-todo',
+        workspaceId: 'ws-1',
+      })
+      return Promise.resolve(Response.json({ skills: [
+        { name: 'todo', description: 'Manage WeCom tasks', skillPath: 'SKILL.md' },
+      ] }))
+    }
+    if (url.endsWith('/api/skills/install')) {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        source: 'weskillhub:116/weoa-todo',
+        skills: ['todo'],
+        scope: 'project',
+        workspaceId: 'ws-1',
+      })
+      installed = true
+      return Promise.resolve(Response.json({ results: [
+        { skillName: 'todo', status: 'installed' },
+      ] }, { status: 201 }))
+    }
+    if (url.includes('/api/skills/expert-packages?')) return Promise.resolve(Response.json({ packages: [], total: 0 }))
+    if (url.endsWith('/enterprise-zone/industries')) return Promise.resolve(Response.json({ industries: [] }))
+    return Promise.resolve(new Response('', { status: 404 }))
+  })
+}
+
 describe('SkillsPage Expert Packages browser flow', () => {
   beforeEach(async () => {
     cleanup()
@@ -139,6 +189,54 @@ describe('SkillsPage Expert Packages browser flow', () => {
     expect(enterpriseTab).toHaveFocus()
     expect(screen.queryByRole('button', { name: 'Add from URL' })).not.toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Enterprise Zone' })).toBeInTheDocument()
+  })
+
+  it('uses the generic WeSkillHub search-to-install flow with localized five-provider guidance', async () => {
+    window.fetch = weskillhubInstallFetch() as typeof fetch
+    render(<I18nextProvider i18n={i18n}><SkillsPage workspaceId="ws-1" isOpen onClose={() => undefined} /></I18nextProvider>)
+
+    const tabList = screen.getByRole('tablist', { name: 'Skills sections' })
+    expect(within(tabList).getByRole('tab', { name: 'Expert Packages' })).toBeVisible()
+    expect(within(tabList).getByRole('tab', { name: 'Enterprise Zone' })).toBeVisible()
+    await userEvent.click(within(tabList).getByRole('tab', { name: 'Search' }))
+    await userEvent.type(screen.getByLabelText('Find skills for the work at hand'), 'todo')
+
+    const resultName = await screen.findByRole('heading', { name: 'todo' })
+    const resultCard = resultName.closest('div.group')
+    expect(resultCard).not.toBeNull()
+    expect(resultCard!).toHaveTextContent('Manage WeCom tasks')
+    expect(resultCard!).toHaveTextContent('WeSkillHub / weoa-todo')
+    expect(resultCard!).toHaveTextContent('from weskillhub')
+    expect(resultCard!).toHaveTextContent('321 installs')
+
+    await userEvent.click(within(resultCard!).getByRole('button', { name: 'Install' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Install skill' })
+    expect(dialog).toHaveTextContent('weskillhub:116/weoa-todo')
+    expect(within(dialog).getByRole('button', { name: /Project.*Shared with collaborators/ })).toBeVisible()
+    expect(within(dialog).getByRole('button', { name: /Global.*Available in all your workspaces/ })).toBeVisible()
+    await userEvent.click(within(dialog).getByRole('button', { name: /todo.*Manage WeCom tasks/ }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /Project.*Shared with collaborators/ }))
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Install' }))
+
+    await waitFor(
+      () => expect(useSkillsStore.getState().installed).toContainEqual(expect.objectContaining({
+        name: 'todo', source: 'weskillhub:116/weoa-todo', scope: 'project',
+      })),
+      { timeout: 2500 },
+    )
+    expect(within(resultCard!).getByRole('button', { name: 'Already installed' })).toBeDisabled()
+
+    await userEvent.click(within(tabList).getByRole('tab', { name: 'Installed' }))
+    expect(await screen.findByText('Manage WeCom tasks')).toBeInTheDocument()
+    const providers = ['skills.sh', 'SkillsHub', 'iFlytek SkillHub', 'Tencent SkillHub', 'WeSkillHub']
+    const englishHint = i18n.t('settings:skills.searchHint')
+    providers.forEach((provider) => expect(englishHint).toContain(provider))
+
+    await i18n.changeLanguage('zh-CN')
+    const chineseHint = i18n.t('settings:skills.searchHint')
+    ;['skills.sh', 'SkillsHub', '讯飞 SkillHub', '腾讯 SkillHub', 'WeSkillHub'].forEach((provider) => {
+      expect(chineseHint).toContain(provider)
+    })
   })
 
   it('preserves the Enterprise journey across tabs, resets on close, and refreshes an ordinary installed Skill', async () => {

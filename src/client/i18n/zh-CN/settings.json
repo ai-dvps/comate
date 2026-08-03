@@ -778,7 +778,7 @@
     "installedViewMode": "已安装技能显示方式",
     "cardView": "卡片视图",
     "listView": "列表视图",
-    "searchHint": "实时搜索 skills.sh、SkillsHub、讯飞 SkillHub 和腾讯 SkillHub，或从来源 URL 安装。",
+    "searchHint": "实时搜索 skills.sh、SkillsHub、讯飞 SkillHub、腾讯 SkillHub 和 WeSkillHub，或从来源 URL 安装。",
     "openSearch": "搜索技能仓库",
     "searchPlaceholder": "搜索技能仓库...",
     "searchHeading": "发现适合当前工作的技能",
