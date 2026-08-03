@@ -108,6 +108,11 @@ describe('skills routes', () => {
   let originalIsExpertSkillInPackage: typeof skillsService.isExpertSkillInPackage;
   let originalInstallExpertPackage: typeof skillsService.installExpertPackage;
   let originalRemoveExpertPackage: typeof skillsService.removeExpertPackage;
+  let originalListEnterpriseIndustries: typeof skillsService.listEnterpriseIndustries;
+  let originalListEnterprises: typeof skillsService.listEnterprises;
+  let originalGetEnterprise: typeof skillsService.getEnterprise;
+  let originalListEnterpriseSkills: typeof skillsService.listEnterpriseSkills;
+  let originalGetEnterpriseSkillDetail: typeof skillsService.getEnterpriseSkillDetail;
 
   beforeEach(() => {
     tmpWorkspace = mkdtempSync(join(tmpdir(), 'skills-routes-ws-'));
@@ -125,6 +130,11 @@ describe('skills routes', () => {
     originalIsExpertSkillInPackage = skillsService.isExpertSkillInPackage.bind(skillsService);
     originalInstallExpertPackage = skillsService.installExpertPackage.bind(skillsService);
     originalRemoveExpertPackage = skillsService.removeExpertPackage.bind(skillsService);
+    originalListEnterpriseIndustries = skillsService.listEnterpriseIndustries.bind(skillsService);
+    originalListEnterprises = skillsService.listEnterprises.bind(skillsService);
+    originalGetEnterprise = skillsService.getEnterprise.bind(skillsService);
+    originalListEnterpriseSkills = skillsService.listEnterpriseSkills.bind(skillsService);
+    originalGetEnterpriseSkillDetail = skillsService.getEnterpriseSkillDetail.bind(skillsService);
   });
 
   afterEach(() => {
@@ -142,6 +152,11 @@ describe('skills routes', () => {
     skillsService.isExpertSkillInPackage = originalIsExpertSkillInPackage;
     skillsService.installExpertPackage = originalInstallExpertPackage;
     skillsService.removeExpertPackage = originalRemoveExpertPackage;
+    skillsService.listEnterpriseIndustries = originalListEnterpriseIndustries;
+    skillsService.listEnterprises = originalListEnterprises;
+    skillsService.getEnterprise = originalGetEnterprise;
+    skillsService.listEnterpriseSkills = originalListEnterpriseSkills;
+    skillsService.getEnterpriseSkillDetail = originalGetEnterpriseSkillDetail;
     rmSync(tmpWorkspace, { recursive: true, force: true });
   });
 
@@ -434,6 +449,121 @@ describe('skills routes', () => {
       }, res);
       assert.strictEqual(res.statusCode, 422);
       assert.strictEqual((res.jsonBody as { results: unknown[] }).results.length, 1);
+    });
+  });
+
+  describe('Enterprise Zone', () => {
+    it('exposes industries and forwards combined enterprise filters at fixed page size', async () => {
+      const handlers = await importRouteHandlers();
+      skillsService.listEnterpriseIndustries = async () => [
+        { key: 'new_sector', displayName: '新行业', sortOrder: 1 },
+      ];
+      const industries = createMockRes();
+      await handlers['/enterprise-zone/industries'].get({ query: {} }, industries);
+      assert.strictEqual(industries.statusCode, 200);
+
+      let captured: unknown;
+      skillsService.listEnterprises = async (input) => {
+        captured = input;
+        return { enterprises: [], page: 2, pageSize: 20, total: 0 };
+      };
+      const list = createMockRes();
+      await handlers['/enterprise-zone/enterprises'].get({
+        query: { keyword: ' cloud ', industry: 'new_sector', page: '2' },
+      }, list);
+      assert.strictEqual(list.statusCode, 200);
+      assert.deepStrictEqual(captured, { keyword: 'cloud', industry: 'new_sector', page: 2 });
+    });
+
+    it('returns enterprise detail and a sorted Skill page', async () => {
+      const handlers = await importRouteHandlers();
+      skillsService.getEnterprise = async (orgId) => ({
+        orgId, name: 'Acme', description: '', industryTags: [], publishedSkillCount: 1,
+        totalDownloads: 1, totalStars: 1,
+      });
+      const detail = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId'].get({ params: { orgId: 'org-acme' } }, detail);
+      assert.strictEqual((detail.jsonBody as { enterprise: { orgId: string } }).enterprise.orgId, 'org-acme');
+
+      let captured: unknown;
+      skillsService.listEnterpriseSkills = async (orgId, input) => {
+        captured = { orgId, ...input };
+        return { skills: [], page: 3, pageSize: 20, total: 41 };
+      };
+      const skills = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId/skills'].get({
+        params: { orgId: 'org-acme' }, query: { keyword: ' deploy ', sort: 'latest', page: '3' },
+      }, skills);
+      assert.strictEqual(skills.statusCode, 200);
+      assert.deepStrictEqual(captured, { orgId: 'org-acme', keyword: 'deploy', sort: 'latest', page: 3 });
+    });
+
+    it('loads only an enterprise-bound Skill detail', async () => {
+      const handlers = await importRouteHandlers();
+      let captured: unknown;
+      skillsService.getEnterpriseSkillDetail = async (orgId, namespace, slug) => {
+        captured = { orgId, namespace, slug };
+        return {
+          namespace, slug, displayName: 'Deploy', summary: '', category: '',
+          owner: { handle: namespace, displayName: 'Acme' }, publisher: { orgId }, version: '',
+          stats: { downloads: 0, installs: 0 }, securityReports: [], source: `skillhub-cn:${namespace}/${slug}`,
+        };
+      };
+      const res = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId/skills/:namespace/:slug'].get({
+        params: { orgId: 'org-acme', namespace: 'acme', slug: 'deploy' },
+      }, res);
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(captured, { orgId: 'org-acme', namespace: 'acme', slug: 'deploy' });
+    });
+
+    it('rejects malformed route input without calling the service', async () => {
+      const handlers = await importRouteHandlers();
+      let calls = 0;
+      skillsService.listEnterprises = async () => { calls += 1; return { enterprises: [], page: 1, pageSize: 20, total: 0 }; };
+      skillsService.listEnterpriseSkills = async () => { calls += 1; return { skills: [], page: 1, pageSize: 20, total: 0 }; };
+      skillsService.getEnterpriseSkillDetail = async () => { calls += 1; throw new Error('not reached'); };
+
+      const badIndustry = createMockRes();
+      await handlers['/enterprise-zone/enterprises'].get({ query: { industry: 'bad/value' } }, badIndustry);
+      assert.strictEqual(badIndustry.statusCode, 400);
+      const badPage = createMockRes();
+      await handlers['/enterprise-zone/enterprises'].get({ query: { page: '0' } }, badPage);
+      assert.strictEqual(badPage.statusCode, 400);
+      const badPageSize = createMockRes();
+      await handlers['/enterprise-zone/enterprises'].get({ query: { pageSize: '200' } }, badPageSize);
+      assert.strictEqual(badPageSize.statusCode, 400);
+      const badSort = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId/skills'].get({
+        params: { orgId: 'org-acme' }, query: { sort: 'popular' },
+      }, badSort);
+      assert.strictEqual(badSort.statusCode, 400);
+      const badCoordinate = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId/skills/:namespace/:slug'].get({
+        params: { orgId: 'org-acme', namespace: '..', slug: 'deploy' },
+      }, badCoordinate);
+      assert.strictEqual(badCoordinate.statusCode, 400);
+      assert.strictEqual(calls, 0);
+    });
+
+    it('maps provider not-found and invalid-response errors consistently', async () => {
+      const { SkillHubProviderError } = await import('../services/skills/index.js');
+      const handlers = await importRouteHandlers();
+      skillsService.getEnterprise = async () => { throw new SkillHubProviderError('SkillHub resource not found', 'not-found'); };
+      const missing = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId'].get({ params: { orgId: 'org-missing' } }, missing);
+      assert.strictEqual(missing.statusCode, 404);
+
+      skillsService.listEnterpriseIndustries = async () => { throw new SkillHubProviderError('SkillHub industry list is malformed', 'invalid-response'); };
+      const malformed = createMockRes();
+      await handlers['/enterprise-zone/industries'].get({ query: {} }, malformed);
+      assert.strictEqual(malformed.statusCode, 502);
+    });
+
+    it('does not register Enterprise Zone mutation or bulk-install routes', async () => {
+      const handlers = await importRouteHandlers();
+      assert.strictEqual(handlers['/enterprise-zone/install'], undefined);
+      assert.strictEqual(handlers['/enterprise-zone/enterprises/:orgId/install'], undefined);
     });
   });
 

@@ -789,6 +789,56 @@ describe('SkillsService', () => {
     });
   });
 
+  describe('Enterprise Zone detail', () => {
+    it('hydrates documentation only after enterprise membership validation', async () => {
+      const archive = buildSkillArchive(tmpRoot, 'deploy-helper');
+      let downloadCalls = 0;
+      global.fetch = (async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.includes('/api/v1/skills/deploy-helper')) {
+          return Response.json({
+            slug: 'deploy-helper', namespace: { handle: 'acme' },
+            owner: { handle: 'acme', displayName: 'Acme' },
+            publisher: { orgId: 'org-acme' }, latestVersion: { version: '1.0.0' },
+            skill: { slug: 'deploy-helper', displayName: 'Deploy Helper', summary: 'Summary', category: 'tech', stats: {} },
+            securityReports: {},
+          });
+        }
+        if (url.pathname.includes('/api/v1/download')) {
+          downloadCalls += 1;
+          return new Response(archive, { status: 200, headers: { 'Content-Type': 'application/zip' } });
+        }
+        return new Response('', { status: 404 });
+      }) as typeof fetch;
+
+      const detail = await skillsService.getEnterpriseSkillDetail('org-acme', 'acme', 'deploy-helper');
+      assert.match(detail.documentation ?? '', /# deploy-helper/);
+      assert.strictEqual(downloadCalls, 1);
+    });
+
+    it('does not download an archive when publisher membership mismatches', async () => {
+      let downloadCalls = 0;
+      global.fetch = (async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.includes('/api/v1/skills/deploy-helper')) {
+          return Response.json({
+            slug: 'deploy-helper', namespace: { handle: 'acme' },
+            publisher: { orgId: 'org-other' },
+            skill: { slug: 'deploy-helper', stats: {} }, securityReports: {},
+          });
+        }
+        downloadCalls += 1;
+        return new Response('', { status: 500 });
+      }) as typeof fetch;
+
+      await assert.rejects(
+        () => skillsService.getEnterpriseSkillDetail('org-acme', 'acme', 'deploy-helper'),
+        /not published by this enterprise/,
+      );
+      assert.strictEqual(downloadCalls, 0);
+    });
+  });
+
   describe('assertSkillScope', () => {
     it('accepts project and global', () => {
       assert.doesNotThrow(() => assertSkillScope('project'));

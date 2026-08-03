@@ -66,6 +66,16 @@ export {
 } from './skillhub.js';
 export type { SkillHubErrorCode, SkillHubRecord } from './skillhub.js';
 export {
+  enterpriseZoneLimits,
+  getEnterprise,
+  getEnterpriseSkill,
+  isEnterpriseIndustry,
+  isEnterpriseSkillSort,
+  listEnterprises,
+  listEnterpriseIndustries,
+  listEnterpriseSkills,
+} from './enterprise-zone.js';
+export {
   materializeRegistrySource,
   parseRegistrySource,
   registryArchiveLimits,
@@ -139,6 +149,13 @@ export type {
   ExpertSkillDetail,
   SkillHubSecurityReport,
   SkillHubSkillDetail,
+  EnterpriseIndustry,
+  EnterpriseSummary,
+  EnterpriseDetail,
+  EnterpriseSkillSort,
+  EnterpriseSkillSummary,
+  EnterprisePage,
+  EnterpriseSkillPage,
   ExpertPackageInstallItemKind,
   ExpertPackageInstallResult,
   DiscoveredSkill,

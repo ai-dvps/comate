@@ -26,9 +26,14 @@ import { sidecarLog } from '../utils/sidecar-logger.js';
 import type { SkillScope } from '../services/skills-service.js';
 import {
   ExpertPackageProviderError,
+  SkillHubProviderError,
+  enterpriseZoneLimits,
   expertPackageLimits,
+  isEnterpriseIndustry,
+  isEnterpriseSkillSort,
   isExpertPackageCoordinate,
   isExpertPackageScene,
+  isSkillHubCoordinate,
   isSkillScene,
   isSkillSort,
   type SkillSearchQuery,
@@ -47,6 +52,37 @@ function sendExpertPackageError(error: unknown, res: Response): void {
   }
   console.error('Expert Package request failed:', error);
   res.status(500).json({ error: 'Expert Package request failed' });
+}
+
+function sendEnterpriseZoneError(error: unknown, res: Response): void {
+  if (error instanceof SkillHubProviderError) {
+    const status = error.code === 'not-found' ? 404
+      : error.code === 'invalid-input' ? 400
+      : error.code === 'unavailable' ? 503
+      : 502;
+    res.status(status).json({ error: error.message, code: error.code });
+    return;
+  }
+  console.error('Enterprise Zone request failed');
+  res.status(500).json({ error: 'Enterprise Zone request failed' });
+}
+
+function parseEnterprisePage(value: unknown): number | null {
+  if (value === undefined) return 1;
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+  const page = Number(value);
+  return Number.isSafeInteger(page) && page >= 1 && page <= enterpriseZoneLimits.maxPage ? page : null;
+}
+
+function parseEnterpriseKeyword(value: unknown): string | null {
+  if (value === undefined) return '';
+  if (typeof value !== 'string') return null;
+  const keyword = value.trim();
+  return keyword.length <= enterpriseZoneLimits.maxQueryLength ? keyword : null;
+}
+
+function hasInvalidEnterprisePageSize(value: unknown): boolean {
+  return value !== undefined && value !== String(enterpriseZoneLimits.pageSize);
 }
 
 /**
@@ -123,6 +159,95 @@ router.get('/search', async (req, res) => {
   } catch (error) {
     console.error('Failed to search skills:', error);
     res.status(500).json({ error: 'Failed to search skills' });
+  }
+});
+
+// GET /api/skills/enterprise-zone/industries
+router.get('/enterprise-zone/industries', async (_req, res) => {
+  try {
+    res.json({ industries: await skillsService.listEnterpriseIndustries() });
+  } catch (error) {
+    sendEnterpriseZoneError(error, res);
+  }
+});
+
+// GET /api/skills/enterprise-zone/enterprises?keyword=&industry=&page=
+router.get('/enterprise-zone/enterprises', async (req, res) => {
+  const keyword = parseEnterpriseKeyword(req.query.keyword);
+  const industry = req.query.industry;
+  const page = parseEnterprisePage(req.query.page);
+  if (
+    keyword === null
+    || page === null
+    || hasInvalidEnterprisePageSize(req.query.pageSize)
+    || (industry !== undefined && !isEnterpriseIndustry(industry))
+  ) {
+    res.status(400).json({ error: 'Invalid Enterprise query' });
+    return;
+  }
+  try {
+    res.json(await skillsService.listEnterprises({
+      ...(keyword ? { keyword } : {}),
+      ...(typeof industry === 'string' ? { industry } : {}),
+      page,
+    }));
+  } catch (error) {
+    sendEnterpriseZoneError(error, res);
+  }
+});
+
+// GET /api/skills/enterprise-zone/enterprises/:orgId
+router.get('/enterprise-zone/enterprises/:orgId', async (req, res) => {
+  const { orgId } = req.params;
+  if (!isSkillHubCoordinate(orgId)) {
+    res.status(400).json({ error: 'Invalid enterprise organization' });
+    return;
+  }
+  try {
+    res.json({ enterprise: await skillsService.getEnterprise(orgId) });
+  } catch (error) {
+    sendEnterpriseZoneError(error, res);
+  }
+});
+
+// GET /api/skills/enterprise-zone/enterprises/:orgId/skills?keyword=&sort=&page=
+router.get('/enterprise-zone/enterprises/:orgId/skills', async (req, res) => {
+  const { orgId } = req.params;
+  const keyword = parseEnterpriseKeyword(req.query.keyword);
+  const sort = req.query.sort ?? 'downloads';
+  const page = parseEnterprisePage(req.query.page);
+  if (
+    !isSkillHubCoordinate(orgId)
+    || keyword === null
+    || page === null
+    || hasInvalidEnterprisePageSize(req.query.pageSize)
+    || !isEnterpriseSkillSort(sort)
+  ) {
+    res.status(400).json({ error: 'Invalid Enterprise Skill query' });
+    return;
+  }
+  try {
+    res.json(await skillsService.listEnterpriseSkills(orgId, {
+      ...(keyword ? { keyword } : {}),
+      sort,
+      page,
+    }));
+  } catch (error) {
+    sendEnterpriseZoneError(error, res);
+  }
+});
+
+// GET /api/skills/enterprise-zone/enterprises/:orgId/skills/:namespace/:slug
+router.get('/enterprise-zone/enterprises/:orgId/skills/:namespace/:slug', async (req, res) => {
+  const { orgId, namespace, slug } = req.params;
+  if (![orgId, namespace, slug].every(isSkillHubCoordinate)) {
+    res.status(400).json({ error: 'Invalid Enterprise Skill coordinate' });
+    return;
+  }
+  try {
+    res.json({ skill: await skillsService.getEnterpriseSkillDetail(orgId, namespace, slug) });
+  } catch (error) {
+    sendEnterpriseZoneError(error, res);
   }
 });
 
