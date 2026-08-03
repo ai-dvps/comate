@@ -69,8 +69,7 @@ export default function ExpertPackageDetail({
             </div>
             <button
               onClick={onInstall}
-              disabled={!detail.complete}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-accent px-4 text-xs font-medium text-accent-foreground hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-accent px-4 text-xs font-medium text-accent-foreground hover:bg-accent-hover"
             >
               <Download className="h-3.5 w-3.5" /> {t('skills.expertPackages.installPackage')}
             </button>
@@ -78,7 +77,7 @@ export default function ExpertPackageDetail({
           {!detail.complete && (
             <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{t('skills.expertPackages.unavailable', { reason: detail.unavailableReason || t('skills.expertPackages.unavailableFallback') })}</span>
+              <span>{t('skills.expertPackages.incompleteWarning', { reason: detail.unavailableReason || t('skills.expertPackages.incompleteWarningFallback') })}</span>
             </div>
           )}
         </div>

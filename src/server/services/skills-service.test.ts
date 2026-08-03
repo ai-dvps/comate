@@ -80,15 +80,24 @@ Skill body.
   return repoRoot;
 }
 
-function expertPackageFetch(zipBytes: Uint8Array, options?: { childAvailable?: boolean }): typeof fetch {
+function expertPackageFetch(
+  zipBytes: Uint8Array,
+  options?: { childAvailable?: boolean; duplicateChild?: boolean; legacyOrchestration?: boolean },
+): typeof fetch {
   const childAvailable = options?.childAvailable ?? true;
   return async (input) => {
     const url = String(input);
     if (url.includes('/api/v1/skillsets/test-package')) {
       return Response.json({
         slug: 'test-package', displayName: 'Test Package', summary: 'A package', scene: 'tech',
-        content: '---\nname: test-package\ndescription: Test orchestration\n---\n# Workflow\n',
-        skills: [{ namespace: 'owner', slug: 'child-skill' }], skillCount: 1,
+        content: options?.legacyOrchestration
+          ? '---\nscene: tech\n---\n# Workflow requiring manual correction\n'
+          : '---\nname: test-package\ndescription: Test orchestration\n---\n# Workflow\n',
+        skills: [
+          { namespace: 'owner', slug: 'child-skill' },
+          ...(options?.duplicateChild ? [{ namespace: 'owner', slug: 'child-skill' }] : []),
+        ],
+        skillCount: options?.duplicateChild ? 2 : 1,
       });
     }
     if (url.includes('/api/v1/skills/child-skill')) {
@@ -599,15 +608,40 @@ describe('SkillsService', () => {
       assert.strictEqual(packageDefinitionRequests, 1);
     });
 
-    it('rejects an incomplete package before any filesystem mutation', async () => {
-      global.fetch = expertPackageFetch(new Uint8Array(), { childAvailable: false });
-      await assert.rejects(
-        () => skillsService.installExpertPackage({
-          packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
-        }),
-        /unavailable/i,
+    it('installs incomplete package content and reports unresolvable children per item', async () => {
+      global.fetch = expertPackageFetch(new Uint8Array(), {
+        childAvailable: false,
+        legacyOrchestration: true,
+      });
+
+      const results = await skillsService.installExpertPackage({
+        packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+      });
+
+      assert.deepStrictEqual(results.map((result) => [result.id, result.status]), [
+        ['orchestrator:test-package', 'installed'],
+        ['skill:owner/child-skill', 'error'],
+      ]);
+      assert.strictEqual(
+        readFileSync(join(tmpRoot, '.claude', 'skills', 'test-package', 'SKILL.md'), 'utf-8'),
+        '---\nscene: tech\n---\n# Workflow requiring manual correction\n',
       );
-      assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'test-package')), false);
+    });
+
+    it('deduplicates repeated child coordinates during an incomplete package install', async () => {
+      global.fetch = expertPackageFetch(new Uint8Array(), {
+        childAvailable: false,
+        duplicateChild: true,
+      });
+
+      const results = await skillsService.installExpertPackage({
+        packageSlug: 'test-package', scope: 'project', workspacePath: tmpRoot,
+      });
+
+      assert.deepStrictEqual(results.map((result) => [result.id, result.status]), [
+        ['orchestrator:test-package', 'installed'],
+        ['skill:owner/child-skill', 'error'],
+      ]);
     });
 
     it('rejects retry ids outside the canonical package before installation', async () => {

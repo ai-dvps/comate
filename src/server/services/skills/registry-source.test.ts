@@ -23,6 +23,8 @@ describe('registry source', () => {
 
   it('rejects malformed coordinates', () => {
     assert.strictEqual(parseRegistrySource('skillhub-package:../escape'), null);
+    assert.strictEqual(parseRegistrySource('skillhub-package:..'), null);
+    assert.strictEqual(parseRegistrySource('skillhub-cn:./child'), null);
     assert.strictEqual(parseRegistrySource('skillhub-cn:missing-namespace'), null);
   });
 

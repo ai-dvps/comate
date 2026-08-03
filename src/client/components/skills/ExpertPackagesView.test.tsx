@@ -68,7 +68,8 @@ describe('Expert Packages UI', () => {
     const scrollContainer = screen.getByTestId('skills-scroll-container')
     scrollContainer.scrollTop = 320
     await user.click(screen.getByRole('button', { name: /自动化测试.*完整自动化测试工作流/ }))
-    expect(await screen.findByRole('button', { name: /Install package|安装专家包/ })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: /Install package|安装专家包/ })).toBeEnabled()
+    expect(screen.getByText(/Installation will still continue|仍可继续安装/)).toBeInTheDocument()
     scrollContainer.scrollTop = 0
     await user.click(screen.getByRole('button', { name: /Expert Packages|专家包/ }))
     expect(screen.getByLabelText(/Search Expert Packages|搜索专家包/)).toHaveValue('test')
@@ -178,7 +179,7 @@ describe('Expert Packages UI', () => {
     const detail: ExpertPackageDetailData = {
       ...summary,
       content: '# Workflow',
-      complete: true,
+      complete: false,
       children: [{
         namespace: 'owner', slug: 'child-skill', displayName: 'Child Skill',
         summary: 'Child', available: true, source: 'skillhub-cn:owner/child-skill',
@@ -189,6 +190,7 @@ describe('Expert Packages UI', () => {
       body = JSON.parse(String(init?.body)) as Record<string, unknown>
       return Promise.resolve(Response.json({ results: [
         { id: 'orchestrator:tech-test-automation', kind: 'orchestrator', source: 'skillhub-package:tech-test-automation', name: 'tech-test-automation', status: 'installed' },
+        { id: 'skill:owner/child-skill', kind: 'skill', source: 'skillhub-cn:owner/child-skill', name: 'child-skill', status: 'error', error: 'download failed' },
       ] }, { status: 201 }))
     }) as typeof fetch
     const completed = vi.fn()
@@ -199,6 +201,7 @@ describe('Expert Packages UI', () => {
     expect(screen.getByText('Child Skill')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Confirm install|确认安装/ }))
     await waitFor(() => expect(completed).toHaveBeenCalled())
+    expect(screen.getByText('download failed')).toBeInTheDocument()
     expect(body).toEqual({ scope: 'project', workspaceId: 'ws-1' })
   })
 })

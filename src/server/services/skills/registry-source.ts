@@ -2,9 +2,8 @@ import { execFile } from 'child_process';
 import { mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { promisify } from 'util';
-import { getExpertPackageDefinition } from './expert-packages.js';
+import { getExpertPackageDefinition, isExpertPackageCoordinate } from './expert-packages.js';
 import { readBoundedResponse } from './bounded-response.js';
-import { parseFrontmatter } from './frontmatter.js';
 
 const execFileAsync = promisify(execFile);
 const XFYUN_API_BASE = process.env.XFYUN_SKILLS_API_URL || 'https://skill.xfyun.cn/api/v1';
@@ -31,11 +30,11 @@ const SEGMENT = '[A-Za-z0-9._-]+';
 
 export function parseRegistrySource(source: string): RegistrySource | null {
   let match = new RegExp(`^xfyun:(${SEGMENT})$`).exec(source);
-  if (match) {
+  if (match && isExpertPackageCoordinate(match[1])) {
     return { source, kind: 'skill', label: 'iFlytek', slug: match[1] };
   }
   match = new RegExp(`^skillhub-cn:(${SEGMENT})/(${SEGMENT})$`).exec(source);
-  if (match) {
+  if (match && isExpertPackageCoordinate(match[1]) && isExpertPackageCoordinate(match[2])) {
     return {
       source,
       kind: 'skill',
@@ -45,7 +44,7 @@ export function parseRegistrySource(source: string): RegistrySource | null {
     };
   }
   match = new RegExp(`^skillhub-package:(${SEGMENT})$`).exec(source);
-  if (match) {
+  if (match && isExpertPackageCoordinate(match[1])) {
     return {
       source,
       kind: 'expert-package-orchestrator',
@@ -127,13 +126,11 @@ function writeExpertPackageOrchestration(
   destination: string,
 ): void {
   const packageSlug = source.packageSlug!;
-  const name = parseFrontmatter(content).data.name;
-  if (
-    typeof name !== 'string'
-    || name.trim() !== packageSlug
-    || new TextEncoder().encode(content).byteLength > MAX_ORCHESTRATION_BYTES
-  ) {
-    throw new Error('Expert Package orchestration is incomplete');
+  if (!isExpertPackageCoordinate(packageSlug)) {
+    throw new Error('Expert Package orchestration has an unsafe package slug');
+  }
+  if (new TextEncoder().encode(content).byteLength > MAX_ORCHESTRATION_BYTES) {
+    throw new Error('Expert Package orchestration exceeds the size limit');
   }
   const skillDir = join(destination, packageSlug);
   mkdirSync(skillDir, { recursive: true });
@@ -151,7 +148,6 @@ export async function materializeRegistrySource(
       return;
     }
     const detail = await getExpertPackageDefinition(source.packageSlug!);
-    if (!detail.structurallyComplete) throw new Error('Expert Package orchestration is incomplete');
     writeExpertPackageOrchestration(source, detail.content, destination);
     return;
   }

@@ -141,7 +141,7 @@ export default function ExpertPackageInstallModal({
               {isInstalling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} {t('skills.expertPackages.retryFailed')}
             </button>
           ) : !hasResults ? (
-            <button onClick={() => void runInstall()} disabled={isInstalling || !scope || !detail.complete} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-foreground disabled:opacity-50">
+            <button onClick={() => void runInstall()} disabled={isInstalling || !scope} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-foreground disabled:opacity-50">
               {isInstalling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Boxes className="h-3.5 w-3.5" />} {t('skills.expertPackages.confirmInstall')}
             </button>
           ) : null}
