@@ -50,10 +50,34 @@ describe('Enterprise Zone UI', () => {
   beforeEach(() => {
     useEnterpriseZoneStore.getState().reset()
     useSkillsStore.setState({ installed: [], discovered: [], isResolving: false, isSaving: false, error: null })
+    localStorage.removeItem('comate.enterprise-zone.view-mode')
     vi.clearAllMocks()
   })
 
   afterEach(() => { global.fetch = originalFetch })
+
+  it('switches between card and list views and remembers the preference', async () => {
+    global.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/industries')) return Promise.resolve(Response.json({ industries: [] }))
+      return Promise.resolve(page('enterprises', [enterprise(1)], 1, 1))
+    }) as typeof fetch
+
+    const user = userEvent.setup()
+    const { unmount } = render(<EnterpriseZoneView active isOpen />)
+
+    await screen.findByRole('button', { name: /Enterprise 1/ })
+    expect(screen.getByRole('button', { name: 'Enterprise card view' })).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(screen.getByRole('button', { name: 'Enterprise list view' }))
+    expect(screen.getByRole('button', { name: 'Enterprise list view' })).toHaveAttribute('aria-pressed', 'true')
+    expect(localStorage.getItem('comate.enterprise-zone.view-mode')).toBe('list')
+
+    unmount()
+    render(<EnterpriseZoneView active isOpen />)
+
+    expect(await screen.findByRole('button', { name: 'Enterprise list view' })).toHaveAttribute('aria-pressed', 'true')
+  })
 
   it('combines keyword and industry, resets to page one, and keeps industry when search clears', async () => {
     const requested: string[] = []
