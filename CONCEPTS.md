@@ -52,6 +52,9 @@ Each Provider can carry a second credential alongside its coding API key (`authT
 
 ## Skills
 
+### Skill search provider
+A remote Skill catalog that contributes normalized results to federated Skill Search. Provider availability means the catalog returned a valid search response; network errors, timeouts, non-success responses, and malformed responses make it temporarily unavailable, while a valid empty result does not.
+
 ### 企业专区 (Enterprise Zone)
 SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企业，再查看该企业发布的 Skills；安装时仍按普通 `skillhub-cn:` Skill 逐个安装，不产生企业级编排项、批量安装语义或独立的 installed kind。
 
