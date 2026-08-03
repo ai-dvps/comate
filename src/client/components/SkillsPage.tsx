@@ -48,7 +48,9 @@ interface SkillsPageProps {
 }
 
 type SkillTab = 'installed' | 'search' | 'expert-packages' | 'enterprise-zone'
-type InstalledViewMode = 'cards' | 'list'
+type SkillViewMode = 'cards' | 'list'
+
+const SEARCH_VIEW_MODE_KEY = 'comate.skills.search-view-mode'
 
 /**
  * Full-screen overlay for the Skills surface. Mirrors PluginSettingsPage:
@@ -85,7 +87,14 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
   const [packageAction, setPackageAction] = useState<{ slug: string; type: 'update' | 'uninstall' } | null>(null)
   const [expandedPackageKeys, setExpandedPackageKeys] = useState<Set<string>>(() => new Set())
   const [installedSearchInput, setInstalledSearchInput] = useState('')
-  const [installedViewMode, setInstalledViewMode] = useState<InstalledViewMode>('cards')
+  const [installedViewMode, setInstalledViewMode] = useState<SkillViewMode>('cards')
+  const [searchViewMode, setSearchViewMode] = useState<SkillViewMode>(() => {
+    try {
+      return localStorage.getItem(SEARCH_VIEW_MODE_KEY) === 'list' ? 'list' : 'cards'
+    } catch {
+      return 'cards'
+    }
+  })
 
   const {
     installed,
@@ -186,6 +195,15 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
   }
 
   const handleProviderSelectionChange = () => scheduleSearch(searchInput, searchFilters)
+
+  const updateSearchViewMode = (mode: SkillViewMode) => {
+    setSearchViewMode(mode)
+    try {
+      localStorage.setItem(SEARCH_VIEW_MODE_KEY, mode)
+    } catch {
+      // Keep the in-memory preference when browser storage is unavailable.
+    }
+  }
 
   const clearSearch = useCallback(() => {
     setSearchInput('')
@@ -787,20 +805,50 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                 {/* Results */}
                 {!isSearching && searchResults.length > 0 && (
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center justify-between gap-3 px-1">
                       <p className="text-xs font-medium text-text-secondary">
                         {t('skills.resultsCount', { count: searchResults.length })}
                       </p>
-                      <p className="text-[11px] text-text-tertiary">{t('skills.resultsHint')}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="hidden text-[11px] text-text-tertiary sm:block">{t('skills.resultsHint')}</p>
+                        <div className="flex h-9 shrink-0 rounded-lg border border-border bg-white p-1" aria-label={t('skills.expertPackages.viewMode')}>
+                          <button
+                            onClick={() => updateSearchViewMode('cards')}
+                            aria-pressed={searchViewMode === 'cards'}
+                            aria-label={t('skills.cardView')}
+                            className={`flex w-7 items-center justify-center rounded ${searchViewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
+                          >
+                            <Grid2X2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => updateSearchViewMode('list')}
+                            aria-pressed={searchViewMode === 'list'}
+                            aria-label={t('skills.listView')}
+                            className={`flex w-7 items-center justify-center rounded ${searchViewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
+                          >
+                            <List className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
-                    {searchResults.map((skill) => {
-                      const isInstalled = isSearchResultInstalled(skill.name)
-                      return (
-                        <div
-                          key={skill.id}
-                          className="group flex min-h-32 flex-col rounded-xl border border-border bg-white p-3.5 shadow-sm transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md motion-reduce:transform-none"
-                        >
+                    <div
+                      role="list"
+                      aria-label={t('skills.resultsCount', { count: searchResults.length })}
+                      data-view-mode={searchViewMode}
+                      className={searchViewMode === 'cards' ? 'grid grid-cols-1 gap-2.5 md:grid-cols-2' : 'space-y-2'}
+                    >
+                      {searchResults.map((skill) => {
+                        const isInstalled = isSearchResultInstalled(skill.name)
+                        return (
+                          <div
+                            key={skill.id}
+                            role="listitem"
+                            className={`group rounded-xl border border-border bg-white p-3.5 shadow-sm transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md motion-reduce:transform-none ${
+                              searchViewMode === 'cards'
+                                ? 'flex min-h-32 flex-col'
+                                : 'grid gap-3 sm:grid-cols-[minmax(12rem,1.1fr)_minmax(12rem,2fr)_auto] sm:items-center'
+                            }`}
+                          >
                           <div className="flex min-w-0 items-start gap-3">
                             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
                               <Sparkles className="h-4 w-4" />
@@ -810,10 +858,10 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                               <p className="mt-1 truncate text-[11px] text-text-tertiary">{skill.source}</p>
                             </div>
                           </div>
-                          <p className="mt-2 line-clamp-2 min-h-7 text-xs leading-4 text-text-secondary">
+                          <p className={`${searchViewMode === 'cards' ? 'mt-2 line-clamp-2 min-h-7' : 'line-clamp-2 sm:line-clamp-1'} text-xs leading-4 text-text-secondary`}>
                             {skill.description || t('skills.noDescription')}
                           </p>
-                          <div className="mt-auto flex items-center justify-between gap-3 pt-3">
+                          <div className={`flex items-center justify-between gap-3 ${searchViewMode === 'cards' ? 'mt-auto pt-3' : 'sm:justify-end'}`}>
                             <div className="min-w-0">
                               <span className="inline-flex rounded-md bg-surface-hover px-2 py-1 text-[10px] font-medium text-text-secondary">
                                 {t('skills.sourceFrom', { source: skill.sourceKind })}
@@ -836,9 +884,9 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                               <span>{isInstalled ? t('skills.alreadyInstalled') : t('skills.install')}</span>
                             </button>
                           </div>
-                        </div>
-                      )
-                    })}
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 )}
