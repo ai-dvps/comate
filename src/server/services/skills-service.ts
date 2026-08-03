@@ -46,6 +46,11 @@ import {
   getExpertPackageDefinition,
   getExpertSkill,
   listExpertPackages,
+  getEnterprise,
+  getEnterpriseSkill,
+  listEnterprises,
+  listEnterpriseIndustries,
+  listEnterpriseSkills,
   type SearchSkill,
   type DiscoveredSkill,
   type Skill,
@@ -56,6 +61,12 @@ import {
   type ExpertSkillDetail,
   type ExpertPackageDetail,
   type ExpertPackageSummary,
+  type EnterpriseDetail,
+  type EnterpriseIndustry,
+  type EnterprisePage,
+  type EnterpriseSkillPage,
+  type EnterpriseSkillSort,
+  type SkillHubSkillDetail,
 } from './skills/index.js';
 import type { SkillSearchQuery } from './skills/index.js';
 import {
@@ -190,6 +201,29 @@ export class SkillsService {
 
   async getExpertPackage(slug: string): Promise<ExpertPackageDetail> {
     return getExpertPackage(slug);
+  }
+
+  async listEnterpriseIndustries(): Promise<EnterpriseIndustry[]> {
+    return listEnterpriseIndustries();
+  }
+
+  async listEnterprises(input: {
+    keyword?: string;
+    industry?: string;
+    page?: number;
+  }): Promise<EnterprisePage> {
+    return listEnterprises(input);
+  }
+
+  async getEnterprise(orgId: string): Promise<EnterpriseDetail> {
+    return getEnterprise(orgId);
+  }
+
+  async listEnterpriseSkills(
+    orgId: string,
+    input: { keyword?: string; sort?: EnterpriseSkillSort; page?: number },
+  ): Promise<EnterpriseSkillPage> {
+    return listEnterpriseSkills(orgId, input);
   }
 
   async isExpertSkillInPackage(packageSlug: string, namespace: string, slug: string): Promise<boolean> {
@@ -420,13 +454,26 @@ export class SkillsService {
 
   async getExpertSkillDetail(namespace: string, slug: string): Promise<ExpertSkillDetail> {
     const detail = await getExpertSkill(namespace, slug);
-    const tempDir = mkdtempSync(join(tmpdir(), 'comate-expert-skill-doc-'));
+    return this.hydrateSkillDocumentation(detail);
+  }
+
+  async getEnterpriseSkillDetail(
+    orgId: string,
+    namespace: string,
+    slug: string,
+  ): Promise<SkillHubSkillDetail> {
+    const detail = await getEnterpriseSkill(orgId, namespace, slug);
+    return this.hydrateSkillDocumentation(detail);
+  }
+
+  private async hydrateSkillDocumentation(detail: SkillHubSkillDetail): Promise<SkillHubSkillDetail> {
+    const tempDir = mkdtempSync(join(tmpdir(), 'comate-skill-doc-'));
     try {
       const source = parseRegistrySource(detail.source)!;
       await materializeRegistrySource(source, tempDir);
       const skills = await discoverSkills(tempDir);
-      if (skills.length !== 1 || skills[0]?.name !== slug || !skills[0].rawContent) {
-        throw new Error(`Registry source must contain exactly one Skill named "${slug}".`);
+      if (skills.length !== 1 || skills[0]?.name !== detail.slug || !skills[0].rawContent) {
+        throw new Error(`Registry source must contain exactly one Skill named "${detail.slug}".`);
       }
       return { ...detail, documentation: skills[0].rawContent };
     } finally {

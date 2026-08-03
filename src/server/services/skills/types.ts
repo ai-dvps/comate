@@ -192,6 +192,57 @@ export interface SkillHubSkillDetail {
   source: string;
 }
 
+export interface EnterpriseIndustry {
+  key: string;
+  displayName: string;
+  displayNameEn?: string;
+  sortOrder: number;
+}
+
+export interface EnterpriseSummary {
+  orgId: string;
+  name: string;
+  fullName?: string;
+  shortName?: string;
+  description: string;
+  industryTags: string[];
+  logoUrl?: string;
+  publishedSkillCount: number;
+  totalDownloads: number;
+}
+
+export interface EnterpriseDetail extends EnterpriseSummary {
+  totalStars: number;
+}
+
+export type EnterpriseSkillSort = 'downloads' | 'stars' | 'latest';
+
+export interface EnterpriseSkillSummary {
+  namespace: string;
+  slug: string;
+  displayName: string;
+  summary: string;
+  downloads: number;
+  stars: number;
+  createdAt?: number;
+  iconUrl?: string;
+  source: string;
+}
+
+export interface EnterprisePage {
+  enterprises: EnterpriseSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface EnterpriseSkillPage {
+  skills: EnterpriseSkillSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 /** Compatibility names retained for the existing Expert Package API. */
 export type ExpertSkillSecurityReport = SkillHubSecurityReport;
 export type ExpertSkillDetail = SkillHubSkillDetail;
