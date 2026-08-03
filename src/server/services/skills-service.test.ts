@@ -35,6 +35,8 @@ import {
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
+import AdmZip from 'adm-zip';
 import { skillsService, assertSkillScope } from './skills-service.js';
 import {
   writeProjectLock,
@@ -126,6 +128,47 @@ function buildSkillArchive(root: string, slug: string): Uint8Array {
   return new Uint8Array(readFileSync(archivePath));
 }
 
+function buildWeSkillHubArchive(
+  skills: Array<{ path: string; name?: string; description?: string; body?: string }>,
+): Uint8Array {
+  const zip = new AdmZip();
+  if (skills.length === 0) zip.addFile('README.md', Buffer.from('# No Skill\n'));
+  for (const skill of skills) {
+    const frontmatter = skill.name === undefined
+      ? '# Invalid Skill\n'
+      : `---\nname: ${skill.name}\ndescription: ${skill.description ?? skill.name}\n---\n${skill.body ?? `# ${skill.name}\n`}`;
+    zip.addFile(`${skill.path}/SKILL.md`, Buffer.from(frontmatter));
+  }
+  return zip.toBuffer();
+}
+
+function stubWeSkillHubArchive(getArchive: () => Uint8Array, getVersion: () => string = () => '1.0.0'): void {
+  global.fetch = (async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/skills/116/versions')) {
+      const archive = getArchive();
+      return Response.json({
+        code: '0',
+        data: {
+          versions: [{
+            version: getVersion(),
+            file_size: archive.byteLength,
+            sha256: createHash('sha256').update(archive).digest('hex'),
+            is_latest: true,
+          }],
+        },
+      });
+    }
+    if (url.pathname.endsWith('/skills/weoa-todo/download')) {
+      return new Response(getArchive(), {
+        status: 200,
+        headers: { 'Content-Type': 'application/zip' },
+      });
+    }
+    return new Response('', { status: 404 });
+  }) as typeof fetch;
+}
+
 describe('SkillsService', () => {
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'skills-svc-root-'));
@@ -182,6 +225,135 @@ describe('SkillsService', () => {
         }),
         /outside the workspace and user home directory/
       );
+    });
+
+    it('uses the one canonical WeSkillHub frontmatter name instead of its catalog slug', async () => {
+      stubWeSkillHubArchive(() => buildWeSkillHubArchive([{ path: 'payload', name: 'todo' }]));
+
+      const discovered = await skillsService.resolveSource({ source: 'weskillhub:116/weoa-todo' });
+
+      assert.deepStrictEqual(discovered.map((skill) => skill.name), ['todo']);
+    });
+
+    it('rejects zero, multiple, and noncanonical WeSkillHub Skill names', async () => {
+      for (const archive of [
+        buildWeSkillHubArchive([]),
+        buildWeSkillHubArchive([{ path: 'one', name: 'one' }, { path: 'two', name: 'two' }]),
+        buildWeSkillHubArchive([{ path: 'payload', name: 'Todo Skill' }]),
+      ]) {
+        stubWeSkillHubArchive(() => archive);
+        await assert.rejects(
+          () => skillsService.resolveSource({ source: 'weskillhub:116/weoa-todo' }),
+          /exactly one.*Skill|canonical/i,
+        );
+      }
+    });
+  });
+
+  describe('WeSkillHub lifecycle', () => {
+    it('installs and discovers a differently named project Skill with its durable coordinate', async () => {
+      const archive = buildWeSkillHubArchive([{ path: 'payload', name: 'todo' }]);
+      stubWeSkillHubArchive(() => archive);
+
+      const [result] = await skillsService.install({
+        source: 'weskillhub:116/weoa-todo', skills: ['todo'], scope: 'project', workspacePath: tmpRoot,
+      });
+
+      assert.strictEqual(result?.status, 'installed');
+      assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'todo', 'SKILL.md')), true);
+      const lock = await readProjectLock(tmpRoot);
+      assert.strictEqual(lock.skills.todo?.source, 'weskillhub:116/weoa-todo');
+      assert.strictEqual(lock.skills.todo?.sourceType, 'registry');
+      const installed = await skillsService.listInstalled(tmpRoot);
+      assert.deepStrictEqual(installed.map(({ name, kind, source }) => ({ name, kind, source })), [{
+        name: 'todo', kind: 'skill', source: 'weskillhub:116/weoa-todo',
+      }]);
+    });
+
+    it('installs and removes an ordinary global Skill while retaining its coordinate', async () => {
+      const archive = buildWeSkillHubArchive([{ path: 'payload', name: 'todo' }]);
+      stubWeSkillHubArchive(() => archive);
+      const [result] = await skillsService.install({
+        source: 'weskillhub:116/weoa-todo', skills: ['todo'], scope: 'global', workspacePath: tmpRoot,
+      });
+
+      assert.strictEqual(result?.status, 'installed');
+      const lock = await readGlobalLock();
+      assert.strictEqual(lock.skills.todo?.source, 'weskillhub:116/weoa-todo');
+      assert.strictEqual(lock.skills.todo?.sourceUrl, 'weskillhub:116/weoa-todo');
+      assert.strictEqual(lock.skills.todo?.sourceType, 'registry');
+      assert.strictEqual((await skillsService.listInstalled(tmpRoot))[0]?.kind, 'skill');
+
+      assert.strictEqual((await skillsService.remove({ skillName: 'todo', scope: 'global' })).status, 'removed');
+      assert.strictEqual(existsSync(join(tmpHome, '.claude', 'skills', 'todo')), false);
+      assert.strictEqual((await readGlobalLock()).skills.todo, undefined);
+    });
+
+    it('rejects invalid or mismatched names before creating a destination or lock', async () => {
+      for (const [archive, requested] of [
+        [buildWeSkillHubArchive([]), 'todo'],
+        [buildWeSkillHubArchive([{ path: 'one', name: 'one' }, { path: 'two', name: 'two' }]), 'todo'],
+        [buildWeSkillHubArchive([{ path: 'payload', name: 'Todo Skill' }]), 'Todo Skill'],
+        [buildWeSkillHubArchive([{ path: 'payload', name: 'todo' }]), 'weoa-todo'],
+      ] as const) {
+        stubWeSkillHubArchive(() => archive);
+        const [result] = await skillsService.install({
+          source: 'weskillhub:116/weoa-todo', skills: [requested], scope: 'project', workspacePath: tmpRoot,
+        });
+        assert.strictEqual(result?.status, 'error');
+        assert.deepStrictEqual((await readProjectLock(tmpRoot)).skills, {});
+        assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'todo')), false);
+        assert.strictEqual(existsSync(join(tmpRoot, '.claude', 'skills', 'todo-skill')), false);
+      }
+    });
+
+    it('does not overwrite another source even when force is requested', async () => {
+      const existingSource = buildSourceRepoInWorkspace(tmpRoot, 'existing-todo', [
+        { name: 'todo', description: 'Existing owner' },
+      ]);
+      await skillsService.install({
+        source: existingSource, skills: ['todo'], scope: 'project', workspacePath: tmpRoot,
+      });
+      const installedPath = join(tmpRoot, '.claude', 'skills', 'todo', 'SKILL.md');
+      const beforeBytes = readFileSync(installedPath);
+      const beforeLock = readFileSync(join(tmpRoot, 'skills-lock.json'));
+      stubWeSkillHubArchive(() => buildWeSkillHubArchive([{ path: 'payload', name: 'todo', body: '# Replacement\n' }]));
+
+      const [result] = await skillsService.install({
+        source: 'weskillhub:116/weoa-todo', skills: ['todo'], scope: 'project', workspacePath: tmpRoot, force: true,
+      });
+
+      assert.strictEqual(result?.status, 'error');
+      assert.match(result?.error ?? '', /another source/);
+      assert.deepStrictEqual(readFileSync(installedPath), beforeBytes);
+      assert.deepStrictEqual(readFileSync(join(tmpRoot, 'skills-lock.json')), beforeLock);
+    });
+
+    it('updates from the stored coordinate and preserves prior state on name failure', async () => {
+      let archive = buildWeSkillHubArchive([{ path: 'payload', name: 'todo', body: '# Version one\n' }]);
+      let version = '1.0.0';
+      stubWeSkillHubArchive(() => archive, () => version);
+      await skillsService.install({
+        source: 'weskillhub:116/weoa-todo', skills: ['todo'], scope: 'project', workspacePath: tmpRoot,
+      });
+      const installedPath = join(tmpRoot, '.claude', 'skills', 'todo', 'SKILL.md');
+
+      version = '1.1.0';
+      archive = buildWeSkillHubArchive([{ path: 'renamed', name: 'renamed', body: '# Wrong name\n' }]);
+      const beforeBytes = readFileSync(installedPath);
+      const beforeLock = readFileSync(join(tmpRoot, 'skills-lock.json'));
+      const failed = await skillsService.update({ skillName: 'todo', scope: 'project', workspacePath: tmpRoot });
+      assert.strictEqual(failed.status, 'error');
+      assert.deepStrictEqual(readFileSync(installedPath), beforeBytes);
+      assert.deepStrictEqual(readFileSync(join(tmpRoot, 'skills-lock.json')), beforeLock);
+
+      archive = buildWeSkillHubArchive([{ path: 'payload', name: 'todo', body: '# Version two\n' }]);
+      const updated = await skillsService.update({ skillName: 'todo', scope: 'project', workspacePath: tmpRoot });
+      assert.strictEqual(updated.status, 'installed');
+      assert.match(readFileSync(installedPath, 'utf-8'), /Version two/);
+      const lock = await readProjectLock(tmpRoot);
+      assert.strictEqual(lock.skills.todo?.source, 'weskillhub:116/weoa-todo');
+      assert.notStrictEqual(lock.skills.todo?.computedHash, JSON.parse(beforeLock.toString()).skills.todo.computedHash);
     });
   });
 
