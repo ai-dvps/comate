@@ -1,6 +1,7 @@
 import type { CallToolResult as CallToolResultType } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { ZodRawShape } from 'zod';
+import { CONTRACT_VERSION, sanitizedCandidateSchema, type SanitizedCandidate } from '@comate/api-contracts';
 
 /**
  * Backend-agnostic browser tool definition (U6): identical in shape to the
@@ -47,16 +48,32 @@ import { connectSteelPage, type SteelCdpSession } from './browser-cdp.js';
 import {
   READ_PROBE_SCRIPT,
   RefTable,
+  buildInspectElementFunction,
+  buildInspectElementScript,
   buildSubmitSnapshotScript,
   diffPageModels,
   diffSubmitSnapshots,
   distillPageModel,
   sanitizeSubmitPayload,
   type PageModel,
+  type InspectedElement,
   type RefBatchKey,
   type RefEntry,
   type SubmitSnapshot,
 } from './browser-page-model.js';
+import {
+  BrowserNetworkCaptureError,
+  BrowserNetworkCaptureManager,
+  type BrowserNetworkCaptureOptions,
+  type BrowserNetworkCaptureResult,
+  type CapturedNetworkChain,
+  type CapturedNetworkHop,
+} from './browser-network-capture.js';
+import {
+  sanitizeBody,
+  sanitizeHeaders,
+  sanitizeUrl,
+} from './browser-api-sanitizer.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import {
   BROWSER_MCP_SERVER_KEY,
@@ -79,7 +96,7 @@ export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
- * browser (KTD-3). Six tools on the `comate-browser` SDK MCP server
+ * browser (KTD-3). Ten tools on the `comate-browser` SDK MCP server
  * (tool names `mcp__comate-browser__*`), injected into GUI chat sessions
  * only (KTD-4 ③: bot sessions never get this server).
  *
@@ -170,6 +187,10 @@ export interface BrowserMcpDeps {
    * module-level map; tests inject a fresh one per harness.
    */
   pageRegistry?: Map<string, Promise<SteelCdpSession>>;
+  /** Session-owned contexts preserve refs/captures across stateless MCP POSTs. */
+  contextRegistry?: Map<string, BrowserToolContext>;
+  /** Injectable drain timing for focused capture tests. */
+  captureOptions?: BrowserNetworkCaptureOptions;
   /** Post-action settle delay before re-distilling (0 in tests). */
   settleMs?: number;
 }
@@ -305,7 +326,8 @@ type ToolStage =
   | 'approval'
   | 'toctou'
   | 'dispatch'
-  | 'extract';
+  | 'extract'
+  | 'capture';
 
 function toolError(
   code: string,
@@ -366,6 +388,204 @@ const HANDOFF_END_DETAILS: Partial<Record<HandoffEndReason, string>> = {
     'The chat session was rebuilt while the handoff was pending. The browser session is unaffected; re-request the handoff if it is still needed.',
 };
 
+const INSPECT_ATTRIBUTE_ALLOWLIST = new Set([
+  'href', 'action', 'method', 'type', 'name', 'role', 'aria-label',
+  'aria-expanded', 'aria-controls', 'placeholder', 'title', 'target',
+]);
+
+function boundedSafeText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  const sanitized = sanitizeBody({ contentType: 'text/plain; charset=utf-8', body: value, limits: { maxStringLength: max } });
+  return sanitized.receipt.disclosed && typeof sanitized.value === 'string'
+    ? sanitized.value.slice(0, max)
+    : undefined;
+}
+
+function sanitizeInspectableUrl(value: string): string | undefined {
+  try {
+    const absolute = /^[a-z][a-z0-9+.-]*:/i.test(value);
+    const sanitized = sanitizeUrl(new URL(value, 'https://comate.invalid').toString()).value;
+    if (absolute) return sanitized.slice(0, 600);
+    const parsed = new URL(sanitized);
+    return `${parsed.pathname}${parsed.search}`.slice(0, 600);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Defensive server-side reconstruction: page-script output never passes through wholesale. */
+function sanitizeInspectedElement(raw: InspectedElement): InspectedElement {
+  const attributes: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw.attributes ?? {})) {
+    if (!INSPECT_ATTRIBUTE_ALLOWLIST.has(key) || typeof value !== 'string') continue;
+    const safe = key === 'href' || key === 'action'
+      ? sanitizeInspectableUrl(value)
+      : boundedSafeText(value, 300);
+    if (safe !== undefined) attributes[key] = safe;
+  }
+  const descendants = (Array.isArray(raw.descendants) ? raw.descendants : []).slice(0, 12).map((child) => ({
+    tag: boundedSafeText(child.tag, 40) ?? 'unknown',
+    ...(boundedSafeText(child.role, 80) ? { role: boundedSafeText(child.role, 80) } : {}),
+    ...(boundedSafeText(child.name, 160) ? { name: boundedSafeText(child.name, 160) } : {}),
+    ...(boundedSafeText(child.text, 180) ? { text: boundedSafeText(child.text, 180) } : {}),
+  }));
+  const form = raw.form ? {
+    ...(boundedSafeText(raw.form.name, 160) ? { name: boundedSafeText(raw.form.name, 160) } : {}),
+    method: boundedSafeText(raw.form.method, 16)?.toLowerCase() ?? 'get',
+    ...(raw.form.action && sanitizeInspectableUrl(raw.form.action)
+      ? { action: sanitizeInspectableUrl(raw.form.action) }
+      : {}),
+    fields: (Array.isArray(raw.form.fields) ? raw.form.fields : []).slice(0, 20).map((field) => ({
+      ...(boundedSafeText(field.name, 160) ? { name: boundedSafeText(field.name, 160) } : {}),
+      ...(boundedSafeText(field.label, 160) ? { label: boundedSafeText(field.label, 160) } : {}),
+      tag: boundedSafeText(field.tag, 40) ?? 'unknown',
+      ...(boundedSafeText(field.type, 40) ? { type: boundedSafeText(field.type, 40) } : {}),
+      required: field.required === true,
+      sensitive: field.sensitive === true,
+      filled: field.filled === true,
+    })),
+    truncated: raw.form.truncated === true || raw.form.fields.length > 20,
+  } : undefined;
+  return {
+    tag: boundedSafeText(raw.tag, 40) ?? 'unknown',
+    ...(boundedSafeText(raw.role, 80) ? { role: boundedSafeText(raw.role, 80) } : {}),
+    ...(boundedSafeText(raw.name, 160) ? { name: boundedSafeText(raw.name, 160) } : {}),
+    attributes,
+    ...(boundedSafeText(raw.nearbyText, 600) ? { nearbyText: boundedSafeText(raw.nearbyText, 600) } : {}),
+    descendants,
+    descendantsTruncated: raw.descendantsTruncated === true || raw.descendants.length > 12,
+    ...(form ? { form } : {}),
+    actions: (Array.isArray(raw.actions) ? raw.actions : [])
+      .filter((action): action is string => ['click', 'fill', 'select', 'check', 'submit'].includes(action))
+      .slice(0, 5),
+  };
+}
+
+function normalizedHeaders(raw: Record<string, unknown> | undefined): Record<string, string> {
+  const output: Record<string, string> = {};
+  for (const [name, value] of Object.entries(raw ?? {})) {
+    if (typeof value === 'string') output[name] = value;
+    else if (Array.isArray(value) && value.every((item) => typeof item === 'string')) output[name] = value.join(', ');
+    else if (typeof value === 'number' || typeof value === 'boolean') output[name] = String(value);
+  }
+  return output;
+}
+
+function headerValue(headers: Record<string, unknown> | undefined, name: string): string | undefined {
+  const entry = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name);
+  return entry && typeof entry[1] === 'string' ? entry[1] : undefined;
+}
+
+function captureSecrets(result: BrowserNetworkCaptureResult): string[] {
+  const secrets = new Set<string>();
+  const sensitive = /authorization|cookie|token|secret|api[-_]?key/i;
+  for (const chain of result.chains) {
+    for (const hop of chain.hops) {
+      for (const headers of [hop.request.headers, hop.requestExtraHeaders, hop.response?.headers, hop.responseExtraHeaders]) {
+        for (const [name, value] of Object.entries(headers ?? {})) {
+          if (!sensitive.test(name) || typeof value !== 'string') continue;
+          secrets.add(value);
+          const credential = /^(?:Bearer|Basic)\s+(.+)$/i.exec(value)?.[1];
+          if (credential) secrets.add(credential);
+          for (const cookie of value.split(';')) {
+            const cookieValue = cookie.slice(cookie.indexOf('=') + 1).trim();
+            if (cookie.includes('=') && cookieValue) secrets.add(cookieValue);
+          }
+        }
+      }
+    }
+  }
+  return [...secrets];
+}
+
+function candidateScore(hop: CapturedNetworkHop): number {
+  let score = 0;
+  const resource = hop.resourceType?.toLowerCase();
+  if (resource === 'fetch' || resource === 'xhr') score += 4;
+  if (resource && ['document', 'image', 'font', 'stylesheet', 'media'].includes(resource)) score -= 3;
+  if (/\/(?:api|graphql|v\d+)(?:\/|$|\?)/i.test(hop.request.url)) score += 2;
+  const contentType = headerValue(hop.response?.headers, 'content-type')?.toLowerCase() ?? '';
+  if (contentType.includes('json') || contentType.includes('graphql')) score += 3;
+  if (hop.responseBody && !hop.incompleteReasons.includes('body_unavailable')) score += 1;
+  return score;
+}
+
+function candidateFromChain(
+  result: BrowserNetworkCaptureResult,
+  chain: CapturedNetworkChain,
+  index: number,
+  action: string,
+  exactSecrets: string[],
+  primarySessionId: string | undefined,
+): { candidate: SanitizedCandidate; score: number } | undefined {
+  const hop = chain.hops[chain.hops.length - 1];
+  if (!hop?.response || hop.response.status < 100 || hop.response.status > 599) return undefined;
+  let url;
+  try {
+    url = sanitizeUrl(hop.request.url, { exactSecrets });
+    if (!url.value.startsWith('https://')) return undefined;
+  } catch {
+    return undefined;
+  }
+  const requestHeaders = sanitizeHeaders(normalizedHeaders(hop.request.headers), { exactSecrets }).value;
+  const responseHeaders = sanitizeHeaders(normalizedHeaders(hop.response.headers), { exactSecrets }).value;
+  const requestType = headerValue(hop.request.headers, 'content-type');
+  const responseType = headerValue(hop.response.headers, 'content-type') ?? hop.response.mimeType;
+  const requestBody = hop.request.postData !== undefined
+    ? sanitizeBody({ contentType: requestType, body: hop.request.postData, exactSecrets })
+    : undefined;
+  let responseRaw: string | Buffer = '';
+  if (hop.responseBody) {
+    responseRaw = hop.responseBody.base64Encoded
+      ? Buffer.from(hop.responseBody.body, 'base64')
+      : hop.responseBody.body;
+  }
+  const responseBody = sanitizeBody({ contentType: responseType, body: responseRaw, exactSecrets });
+  const score = candidateScore(hop);
+  const confidence = score >= 7 ? 'high' : score >= 3 ? 'medium' : 'low';
+  const missing: string[] = [];
+  if (!hop.responseBody) missing.push('response_body');
+  missing.push(...hop.incompleteReasons);
+  const candidate = {
+    version: CONTRACT_VERSION,
+    candidateId: `cand_${result.captureId.slice(4, 20)}_${String(index).padStart(2, '0')}`,
+    captureId: result.captureId,
+    method: hop.request.method.toUpperCase().slice(0, 16),
+    url: url.value,
+    headers: requestHeaders,
+    query: url.query,
+    ...(requestBody ? { requestBody } : {}),
+    response: { status: hop.response.status, headers: responseHeaders, body: responseBody },
+    evidence: {
+      action: `${action.slice(0, 800)} (temporal association only; causality not proven)`,
+      targetType: chain.sessionId === primarySessionId
+        ? 'page'
+        : hop.resourceType?.toLowerCase().includes('worker') ? 'worker' : 'iframe',
+      confidence,
+    },
+    completeness: {
+      requestComplete: hop.terminal && !hop.incompleteReasons.includes('loading_failed'),
+      responseComplete: hop.terminal && missing.length === 0,
+      missing: [...new Set(missing)].slice(0, 32),
+    },
+  };
+  const parsed = sanitizedCandidateSchema.safeParse(candidate);
+  return parsed.success ? { candidate: parsed.data, score } : undefined;
+}
+
+function buildSanitizedCandidates(
+  result: BrowserNetworkCaptureResult,
+  action: string,
+  primarySessionId?: string,
+): SanitizedCandidate[] {
+  const exactSecrets = captureSecrets(result);
+  return result.chains
+    .map((chain, index) => candidateFromChain(result, chain, index, action, exactSecrets, primarySessionId))
+    .filter((entry): entry is { candidate: SanitizedCandidate; score: number } => entry !== undefined)
+    .sort((left, right) => right.score - left.score)
+    .map((entry) => entry.candidate);
+}
+
 // ---------------------------------------------------------------------------
 // Session context — one per SDK MCP server instance (per chat session).
 // Holds the ref table and last model; the CDP page is shared per sessionId
@@ -374,6 +594,16 @@ const HANDOFF_END_DETAILS: Partial<Record<HandoffEndReason, string>> = {
 // ---------------------------------------------------------------------------
 
 const defaultPageRegistry = new Map<string, Promise<SteelCdpSession>>();
+const defaultContextRegistries = new WeakMap<BrowserService, Map<string, BrowserToolContext>>();
+
+function contextRegistryFor(service: BrowserService): Map<string, BrowserToolContext> {
+  let registry = defaultContextRegistries.get(service);
+  if (!registry) {
+    registry = new Map();
+    defaultContextRegistries.set(service, registry);
+  }
+  return registry;
+}
 
 export class BrowserToolContext {
   private readonly refTable = new RefTable();
@@ -384,6 +614,9 @@ export class BrowserToolContext {
   private readonly pageRegistry: Map<string, Promise<SteelCdpSession>>;
   private readonly settleMs: number;
   private readonly audit: Pick<BrowserAuditService, 'logToolAction'>;
+  private networkCapture?: BrowserNetworkCaptureManager;
+  private capturePrimarySessionId?: string;
+  private captureAction = 'One explicitly bracketed browser action';
 
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
@@ -428,6 +661,10 @@ export class BrowserToolContext {
         this.refTable.clear();
         this.lastModel = null;
         clearSubmitSemanticsRefs(key);
+        this.networkCapture?.abort('connection_closed');
+        this.networkCapture = undefined;
+        this.capturePrimarySessionId = undefined;
+        this.deps.contextRegistry?.delete(key);
       });
       return page;
     } catch (err) {
@@ -494,6 +731,108 @@ export class BrowserToolContext {
       );
     }
     return entry;
+  }
+
+  // -- selected element inspection -----------------------------------------
+
+  async handleInspectElement(args: { ref: string }): Promise<CallToolResult> {
+    const gate = this.controlGate('control');
+    if (gate) return gate;
+    try {
+      const page = await this.ensurePage();
+      const resolved = this.resolveCurrentRef(args.ref, await this.readProbe(page));
+      if (!isRefEntry(resolved)) return resolved;
+      let raw: InspectedElement | null;
+      if (resolved.kind === 'action' && typeof resolved.backendNodeId === 'number') {
+        if (!page.inspectBackendNode) {
+          return toolError(
+            'browser_ref_unresolvable',
+            'ref_resolve',
+            `Action ref "${args.ref}" cannot be inspected by this browser runtime.`,
+            'Call snapshot for a fresh model or inspect the owning form/field ref instead.',
+          );
+        }
+        raw = await page.inspectBackendNode(resolved.backendNodeId, buildInspectElementFunction());
+      } else {
+        raw = await page.evaluate<InspectedElement | null>(buildInspectElementScript(resolved));
+      }
+      if (!raw) {
+        return toolError(
+          'browser_ref_unresolvable',
+          'ref_resolve',
+          `Element ref "${args.ref}" could not be resolved in the current document.`,
+          'Call snapshot to refresh the page model and retry with a current ref.',
+        );
+      }
+      return toolJson({ ok: true, ref: args.ref, element: sanitizeInspectedElement(raw) });
+    } catch (err) {
+      return this.toErrorResult(err, 'distill');
+    }
+  }
+
+  // -- action-scoped network capture --------------------------------------
+
+  async handleStartNetworkCapture(args: { action?: string }): Promise<CallToolResult> {
+    const gate = this.controlGate('control');
+    if (gate) return gate;
+    try {
+      const page = await this.ensurePage();
+      const transport = page.createNetworkCaptureTransport?.();
+      if (!transport) {
+        return toolError(
+          'browser_capture_unavailable',
+          'capture',
+          'This browser connection does not expose passive network capture.',
+          'Reopen the controlled browser and retry the capture.',
+        );
+      }
+      this.networkCapture ??= new BrowserNetworkCaptureManager(transport, this.deps.captureOptions);
+      this.capturePrimarySessionId = transport.primarySessionId;
+      this.captureAction = args.action?.trim().slice(0, 500) || 'One explicitly bracketed browser action';
+      const started = await this.networkCapture.start();
+      return toolJson({ ok: true, ...started, note: 'Capture is recording new request chains until stopNetworkCapture closes admission.' });
+    } catch (err) {
+      if (err instanceof BrowserNetworkCaptureError) {
+        return toolError(err.code, 'capture', err.message, 'Stop the active capture before starting another one.');
+      }
+      return this.toErrorResult(err, 'capture');
+    }
+  }
+
+  async handleStopNetworkCapture(): Promise<CallToolResult> {
+    if (!this.networkCapture) {
+      return toolError(
+        'capture_not_active',
+        'capture',
+        'No network capture is active for this browser session.',
+        'Call startNetworkCapture immediately before the page action you want to inspect.',
+      );
+    }
+    try {
+      const result = await this.networkCapture.stop();
+      if (result.state === 'aborted') {
+        return toolError(
+          'capture_aborted',
+          'capture',
+          'The browser connection closed before capture draining completed.',
+          'Reopen the browser, start a new capture, repeat one action, and stop it again.',
+        );
+      }
+      const candidates = buildSanitizedCandidates(result, this.captureAction, this.capturePrimarySessionId);
+      return toolJson({
+        ok: true,
+        captureId: result.captureId,
+        state: result.state,
+        candidates,
+        incompleteReasons: result.incompleteReasons,
+        note: 'Candidates are ranked by API-like evidence and are temporally associated with the bracketed action; this is not proof of causality.',
+      });
+    } catch (err) {
+      if (err instanceof BrowserNetworkCaptureError) {
+        return toolError(err.code, 'capture', err.message, 'Call startNetworkCapture, perform one browser action, then stop it.');
+      }
+      return this.toErrorResult(err, 'capture');
+    }
   }
 
   private async requestApproval(request: Omit<BrowserApprovalRequest, 'signal'>, signal?: AbortSignal): Promise<BrowserApprovalDecision | CallToolResult> {
@@ -1229,6 +1568,13 @@ export class BrowserToolContext {
     }
 
     const result = await this.svc.closeSession(sessionId, 'agent');
+    if (result.closed) {
+      this.networkCapture?.abort('connection_closed');
+      this.networkCapture = undefined;
+      this.refTable.clear();
+      this.lastModel = null;
+      this.deps.contextRegistry?.delete(sessionId);
+    }
     return toolJson({
       ok: true,
       closed: result.closed,
@@ -1341,7 +1687,17 @@ export class BrowserToolContext {
 export type BrowserToolDefinition = BrowserToolDefinitionShape;
 
 export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDefinition[] {
-  const ctx = new BrowserToolContext(deps);
+  const service = deps.browserService ?? browserService;
+  const contextRegistry = deps.contextRegistry ?? contextRegistryFor(service);
+  let ctx = contextRegistry.get(deps.sessionId);
+  if (!ctx) {
+    ctx = new BrowserToolContext({
+      ...deps,
+      browserService: service,
+      contextRegistry,
+    });
+    contextRegistry.set(deps.sessionId, ctx);
+  }
 
   const openDef = tool(
     'open',
@@ -1364,6 +1720,38 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         .describe('Include a JPEG screenshot image block (default false)'),
     },
     async (args) => ctx.handleSnapshot(args),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+
+  const inspectElementDef = tool(
+    'inspectElement',
+    'Inspect one current element ref and return a bounded safe summary: tag, role/name, safe ' +
+      'attributes, nearby text, limited descendants, owning-form structure, and possible actions. ' +
+      'Only refs from the latest page model are accepted; selectors and raw HTML are never returned.',
+    { ref: z.string().describe('Element ref from the latest open/snapshot/act model') },
+    async (args) => ctx.handleInspectElement(args),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+
+  const startNetworkCaptureDef = tool(
+    'startNetworkCapture',
+    'Start passive action-scoped network recording for this browser session. Call immediately ' +
+      'before one browser action, then call stopNetworkCapture. Recording observes traffic but ' +
+      'does not intercept, pause, or modify requests.',
+    {
+      action: z.string().max(500).optional().describe('Short description of the one action being bracketed'),
+    },
+    async (args) => ctx.handleStartNetworkCapture(args),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+
+  const stopNetworkCaptureDef = tool(
+    'stopNetworkCapture',
+    'Close admission for the active action-scoped capture, drain admitted requests, and return ' +
+      'ranked sanitized API candidates. Ranking is evidence-based temporal association, not a ' +
+      'claim that a request was caused by the action.',
+    {},
+    async () => ctx.handleStopNetworkCapture(),
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
@@ -1461,5 +1849,16 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
 
   // The cast reconciles handler-parameter variance: each tool definition is
   // generic over its own zod shape, while BrowserToolDefinition erases it.
-  return [openDef, snapshotDef, actDef, submitDef, extractDef, handoffDef, closeDef] as BrowserToolDefinition[];
+  return [
+    openDef,
+    snapshotDef,
+    inspectElementDef,
+    startNetworkCaptureDef,
+    stopNetworkCaptureDef,
+    actDef,
+    submitDef,
+    extractDef,
+    handoffDef,
+    closeDef,
+  ] as BrowserToolDefinition[];
 }
