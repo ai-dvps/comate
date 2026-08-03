@@ -509,19 +509,19 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                             onChange={(event) => setInstalledSearchInput(event.target.value)}
                             placeholder={t('skills.installedSearchPlaceholder')}
                             aria-label={t('skills.installedSearchLabel')}
-                            className="h-9 w-full rounded-lg border border-border bg-white pl-8 pr-8 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                            className="h-10 w-full rounded-lg border border-border bg-white pl-8 pr-8 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
                           />
                           {installedSearchInput && (
                             <button
                               onClick={() => setInstalledSearchInput('')}
-                              className="absolute right-0 top-0 flex h-9 w-9 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
+                              className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
                               aria-label={t('skills.clearSearch')}
                             >
                               <X className="h-3.5 w-3.5" />
                             </button>
                           )}
                         </div>
-                        <div className="flex h-9 shrink-0 rounded-lg border border-border bg-white p-1" aria-label={t('skills.installedViewMode')}>
+                        <div className="flex h-10 shrink-0 rounded-lg border border-border bg-white p-1" aria-label={t('skills.installedViewMode')}>
                           <button
                             onClick={() => setInstalledViewMode('cards')}
                             aria-pressed={installedViewMode === 'cards'}
@@ -652,19 +652,19 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                         onChange={(e) => handleSearchChange(e.target.value)}
                         placeholder={t('skills.searchPlaceholder')}
                         aria-label={t('skills.searchHeading')}
-                        className="h-11 w-full rounded-xl border border-border bg-bg pl-10 pr-10 text-sm text-text-primary shadow-inner transition-colors placeholder:text-text-tertiary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                        className="h-10 w-full rounded-xl border border-border bg-bg pl-10 pr-10 text-sm text-text-primary shadow-inner transition-colors placeholder:text-text-tertiary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
                       />
                       {searchInput && (
                         <button
                           onClick={clearSearch}
-                          className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
+                          className="absolute right-0 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-xl text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
                           aria-label={t('skills.clearSearch')}
                         >
                           <X className="h-4 w-4" />
                         </button>
                       )}
                     </div>
-                    <div className="flex h-9 shrink-0 rounded-lg border border-border bg-white p-1" aria-label={t('skills.expertPackages.viewMode')}>
+                    <div className="flex h-10 shrink-0 rounded-lg border border-border bg-white p-1" aria-label={t('skills.expertPackages.viewMode')}>
                       <button
                         onClick={() => updateSearchViewMode('cards')}
                         aria-pressed={searchViewMode === 'cards'}

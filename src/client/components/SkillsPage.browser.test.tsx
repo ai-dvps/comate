@@ -344,6 +344,21 @@ describe('SkillsPage Expert Packages browser flow', () => {
       .toEqual(['skillshub'])
   })
 
+  it('uses the same compact height for Installed and Skill Search inputs', async () => {
+    window.fetch = installFetch([{
+      name: 'review', kind: 'skill', scope: 'project', source: 'skills.sh:review',
+      installPath: '/skills/review', isLegacySymlink: false, description: 'Review changes',
+    }]) as typeof fetch
+    render(<I18nextProvider i18n={i18n}><SkillsPage workspaceId="ws-1" isOpen onClose={() => undefined} /></I18nextProvider>)
+
+    const installedSearch = await screen.findByRole('textbox', { name: 'Search installed skills' })
+    await userEvent.click(screen.getByRole('tab', { name: 'Search' }))
+    const skillSearch = screen.getByRole('textbox', { name: 'Find skills for the work at hand' })
+
+    expect(installedSearch).toHaveClass('h-10')
+    expect(skillSearch).toHaveClass('h-10')
+  })
+
   it('switches search results between card and list modes and remembers the choice', async () => {
     window.fetch = weskillhubInstallFetch() as typeof fetch
     const firstRender = render(
@@ -357,7 +372,8 @@ describe('SkillsPage Expert Packages browser flow', () => {
     expect(within(searchPanel).getByRole('button', { name: 'Card view' })).toHaveAttribute('aria-pressed', 'true')
     expect(within(searchPanel).getByRole('button', { name: 'List view' })).toBeVisible()
 
-    await userEvent.type(screen.getByLabelText('Find skills for the work at hand'), 'todo')
+    const skillSearch = screen.getByLabelText('Find skills for the work at hand')
+    await userEvent.type(skillSearch, 'todo')
     const results = await within(searchPanel).findByRole('list', {
       name: i18n.t('settings:skills.resultsCount', { count: 1 }),
     })
