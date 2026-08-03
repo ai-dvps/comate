@@ -1,6 +1,6 @@
 import type { CallToolResult as CallToolResultType } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { ZodRawShape } from 'zod';
+import { z, type ZodRawShape, type ZodType } from 'zod';
 import {
   CONTRACT_VERSION,
   brokerRequestSchema,
@@ -17,7 +17,7 @@ import {
 export interface BrowserToolDefinitionShape {
   name: string;
   description: string;
-  inputSchema: ZodRawShape;
+  inputSchema: ZodRawShape | ZodType;
   annotations?: ToolAnnotations;
   handler: (args: never, extra: unknown) => Promise<CallToolResultType>;
 }
@@ -25,7 +25,7 @@ export interface BrowserToolDefinitionShape {
 function defineBrowserTool(
   name: string,
   description: string,
-  inputSchema: ZodRawShape,
+  inputSchema: ZodRawShape | ZodType,
   handler: BrowserToolDefinitionShape['handler'],
   options?: { annotations?: ToolAnnotations },
 ): BrowserToolDefinitionShape {
@@ -34,7 +34,6 @@ function defineBrowserTool(
 
 const tool = defineBrowserTool;
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
 import {
   BrowserService,
   BrowserUnavailableError,
@@ -866,7 +865,7 @@ export class BrowserToolContext {
         state: result.state,
         candidates,
         incompleteReasons: result.incompleteReasons,
-        note: 'Candidates are ranked by API-like evidence and are temporally associated with the bracketed action; this is not proof of causality.',
+        note: 'Candidates are ranked by API-like evidence and are temporally associated with the bracketed action; this is not proof of causality. Validate the selected candidate with authenticatedRequest before the user chooses Remember this site. Generated shell or Python artifacts can call `comate api request --stdin --json` while this task remains live.',
       });
     } catch (err) {
       if (err instanceof BrowserNetworkCaptureError) {
@@ -1831,7 +1830,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     'Perform a sanitized HTTP request directly with an opaque authentication binding captured ' +
       'from this task. GET/HEAD requests do not ask for approval; other methods are authorized ' +
       'inside this handler before dispatch and can receive an exact task-local validation grant.',
-    brokerRequestSchema.shape,
+    brokerRequestSchema,
     async (args, extra) => ctx.handleAuthenticatedRequest(
       args,
       deps.runtimeGeneration ?? 'unscoped',

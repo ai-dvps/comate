@@ -43,7 +43,7 @@ const DEFAULT_LIMITS: SanitizerLimits = {
   maxDecodedBytes: 64 * 1_024,
 };
 
-const CREDENTIAL_KEY = /(?:^|[_-])(?:access[_-]?token|auth(?:orization)?|bearer|cookie|csrf|xsrf|password|passwd|secret|session|api[_-]?key|client[_-]?secret|refresh[_-]?token|private[_-]?key)(?:$|[_-])/i;
+const CREDENTIAL_KEY = /(?:^|_)(?:access_?token|auth(?:orization)?(?:_?token)?|bearer|cookie|csrf|xsrf|password|passwd|secret|session(?:_?id|_?token)?|api_?key|client_?secret|refresh_?token|private_?key)(?:$|_)/i;
 const TRANSPORT_HEADERS = new Set([
   'connection',
   'content-length',
@@ -64,6 +64,14 @@ const BEARER_PATTERN = new RegExp('\\b(?:Bearer|Basic)\\s+[A-Za-z0-9._~+/-]+=*',
 const LONG_TOKEN_PATTERN = /\b(?=[A-Za-z0-9_-]{32,}\b)(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+\b/g;
 
 class StructureLimitError extends Error {}
+
+function isCredentialKey(key: string): boolean {
+  const normalized = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .toLowerCase();
+  return CREDENTIAL_KEY.test(normalized);
+}
 
 interface WalkState {
   readonly limits: SanitizerLimits;
@@ -138,7 +146,7 @@ function redactValue(value: unknown, path: string, depth: number, state: WalkSta
       const memberPath = `${path}.${key}`;
       state.members += 1;
       if (state.members > state.limits.maxMembers) throw new StructureLimitError('members');
-      if (CREDENTIAL_KEY.test(key)) {
+      if (isCredentialKey(key)) {
         output[key] = '<redacted:secret>';
         state.redactions.push({ path: memberPath, reason: 'credential_field' });
       } else {
@@ -248,7 +256,7 @@ export function sanitizeHeaders(
       redactions.push({ path: `headers.${name}`, reason: 'auth_header' });
       continue;
     }
-    if (CREDENTIAL_KEY.test(name)) {
+    if (isCredentialKey(name)) {
       value[name] = '<redacted:secret>';
       redactions.push({ path: `headers.${name}`, reason: 'credential_field' });
       continue;
@@ -283,7 +291,7 @@ export function sanitizeUrl(rawUrl: string, options: SanitizerOptions = {}): San
   for (const [name, rawValue] of url.searchParams) {
     const path = `query.${name}`;
     let value: string;
-    if (CREDENTIAL_KEY.test(name)) {
+    if (isCredentialKey(name)) {
       value = '<redacted:secret>';
       redactions.push({ path, reason: 'credential_field' });
     } else {
@@ -372,10 +380,10 @@ export function sanitizeBody(input: SanitizeBodyInput): SanitizedDisclosure {
         state.members += 1;
         if (state.members > limits.maxMembers) throw new StructureLimitError('members');
         const path = `$.${key}`;
-        const sanitized = CREDENTIAL_KEY.test(key)
+        const sanitized = isCredentialKey(key)
           ? '<redacted:secret>'
           : redactString(rawValue, path, state).value.slice(0, limits.maxStringLength);
-        if (CREDENTIAL_KEY.test(key)) redactions.push({ path, reason: 'credential_field' });
+        if (isCredentialKey(key)) redactions.push({ path, reason: 'credential_field' });
         const prior = value[key];
         value[key] = prior === undefined ? sanitized : Array.isArray(prior) ? [...prior, sanitized] : [prior, sanitized];
       }

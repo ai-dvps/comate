@@ -14,6 +14,8 @@ export interface ApiBrokerApprovalRequest {
   taskId: string;
   method: string;
   siteKey: string;
+  destination: string;
+  bodySummary?: import('@comate/api-contracts').SanitizedDisclosure;
   correlationId: string;
   validationRequested: boolean;
   signal?: AbortSignal;

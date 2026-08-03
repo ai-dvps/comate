@@ -7,7 +7,7 @@ import {
   type BrokerResult,
   type SanitizedDisclosure,
 } from '@comate/api-contracts';
-import { sanitizeBody, sanitizeHeaders } from './browser-api-sanitizer.js';
+import { sanitizeBody, sanitizeHeaders, sanitizeUrl } from './browser-api-sanitizer.js';
 import {
   BrowserDirectHttpClient,
   BrowserDirectHttpError,
@@ -42,6 +42,8 @@ interface BrokerDeps {
     taskId: string;
     method: string;
     siteKey: string;
+    destination: string;
+    bodySummary?: SanitizedDisclosure;
     correlationId: string;
     validationRequested: boolean;
     signal?: AbortSignal;
@@ -270,6 +272,14 @@ export class BrowserAuthenticatedRequestBroker {
       try {
         decision = await this.deps.approvalRequester({
           taskId: context.taskId, method: operation.method, siteKey: operation.siteKey,
+          destination: sanitizeUrl(operation.url).value,
+          ...(operation.body !== undefined ? {
+            bodySummary: sanitizeBody({
+              body: operation.body,
+              contentType: operation.headers['content-type'],
+              limits: { maxDepth: 6, maxMembers: 64, maxStringLength: 256, maxDecodedBytes: 4_096 },
+            }),
+          } : {}),
           correlationId, validationRequested: parsed.data.validateNonMutating === true,
           signal: context.signal,
         });

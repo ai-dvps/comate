@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Browser API discovery workbench** — Agents can inspect one selected DOM element, bracket one browser action with bounded network capture, and receive ranked credential-redacted API candidates in chat. A task-scoped authenticated-request MCP and new `comate api request` CLI replay selected APIs through Comate-held cookies or bearer credentials without exposing them; GET/HEAD calls remain fluid, mutations show an exact sanitized approval card, and explicit Remember-site consent can preserve the selected authentication for browser-closed reuse.
+
 - **Skill search provider filters, health, and views** — Skill Search now lets users include or exclude any connected provider, remembers that choice globally, and identifies unavailable providers with safe failure reasons and per-provider Retry. Searches skip unavailable sources while preserving healthy results, clearly warn when result coverage is incomplete, and support persistent card and list result layouts.
 
 - **WeSkillHub federated Skills provider** — WeSkillHub is now the fifth federated provider, with discovery using the generic project/global Skill installation and update lifecycle.

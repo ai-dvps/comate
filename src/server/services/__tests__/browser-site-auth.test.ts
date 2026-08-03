@@ -598,6 +598,22 @@ describe('remember → store → inject chain (KTD-8)', () => {
     assert.ok(!JSON.stringify(rows).includes(SECRET_STORAGE_VALUE));
   });
 
+  it('keeps successful candidate bindings when a noisy capture reaches the vault limit', async () => {
+    await harness.browserService.ensureSession({ sessionId: 'chat-1', workspaceId });
+    const bindings = await harness.browserService.captureCandidateAuthBindings(
+      'chat-1',
+      Array.from({ length: 40 }, (_, index) => ({
+        url: `https://app.example.com/api/${index}`,
+      })),
+    );
+    assert.equal(bindings.length, 40);
+    assert.equal(bindings.filter(Boolean).length, 32);
+    assert.equal(bindings.slice(32).every((binding) => binding === undefined), true);
+    assert.equal(harness.browserService.resolveAuthBinding(
+      'chat-1', bindings[0]!, 'https://app.example.com/api/0',
+    ).cookies.length, 1);
+  });
+
   it('injects the remembered context on the first open of a NEW session (cookies before navigate, storage via init script)', async () => {
     // Seed the store as if a previous session remembered the site.
     await harness.browserService.ensureSession({ sessionId: 'chat-1', workspaceId });
@@ -748,6 +764,26 @@ describe('remember → store → inject chain (KTD-8)', () => {
     assert.throws(() => harness.browserService.resolveAuthBinding(
       'chat-1', bindingId, 'https://app.example.com/api',
     ));
+  });
+
+  it('explicit Remember persists the bearer binding selected by broker use', async () => {
+    harness.exportPayload = { cookies: [] };
+    await harness.browserService.ensureSession({ sessionId: 'chat-1', workspaceId });
+    const bindingId = harness.browserService.captureAuthBinding('chat-1', {
+      siteKey: 'example.com',
+      sourceOrigin: 'https://app.example.com',
+      sessionContext: { cookies: [] },
+      bearerToken: 'bearer-only-secret',
+    });
+    assert.equal(harness.browserService.resolveAuthBinding(
+      'chat-1', bindingId, 'https://app.example.com/api',
+    ).bearerToken, 'bearer-only-secret');
+
+    await harness.browserService.rememberCurrentSite('chat-1');
+    await harness.browserService.closeSession('chat-1', 'human');
+    assert.equal(harness.browserService.resolveAuthBinding(
+      'chat-1', bindingId, 'https://app.example.com/api',
+    ).bearerToken, 'bearer-only-secret');
   });
 
   it('refuses IP-literal pages and empty contexts with typed errors', async () => {

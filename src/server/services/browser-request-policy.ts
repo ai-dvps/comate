@@ -1,6 +1,6 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { getDomain } from 'tldts';
+import { registrableDomain } from './browser-site-key.js';
 
 export type BrowserRequestPolicyErrorCode =
   | 'invalid_request'
@@ -82,7 +82,6 @@ const FORBIDDEN_HEADERS = new Set([
 
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const METHOD = /^[A-Z][A-Z0-9!#$%&'*+\-.^_`|~]{0,15}$/;
-const PRIVATE_PSL = { allowPrivateDomains: true };
 
 function limitsFor(input?: Partial<BrowserRequestPolicyLimits>): BrowserRequestPolicyLimits {
   const limits = { ...DEFAULT_LIMITS, ...input };
@@ -119,7 +118,7 @@ function normalizeAuthorizedDomain(domain: string): string {
 }
 
 function boundaryForHostname(hostname: string): string {
-  return getDomain(hostname, PRIVATE_PSL) ?? hostname;
+  return registrableDomain(new URL(`https://${hostname}/`));
 }
 
 export function siteBoundaryForUrl(rawUrl: string): string {

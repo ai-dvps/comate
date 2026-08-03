@@ -42,6 +42,7 @@ function harness(
 ) {
   const sent: DirectHttpTransportRequest[] = [];
   const audit: BrowserBrokerAuditInput[] = [];
+  const approvals: Array<{ destination: string; bodySummary?: unknown }> = [];
   let approvalCalls = 0;
   const vault = new BrowserAuthBindingVault();
   const bindingId = vault.capture('task-1', {
@@ -67,13 +68,14 @@ function harness(
   const broker = new BrowserAuthenticatedRequestBroker({
     httpClient: http,
     resolveAuth: (taskId, id, url) => vault.resolve(taskId, id, url),
-    approvalRequester: async () => {
+    approvalRequester: async (approval) => {
       approvalCalls += 1;
+      approvals.push(approval);
       return { behavior: decisions.shift() ?? 'allow' };
     },
     audit: { logBroker: (row) => { audit.push(row); return options.auditResults?.shift() ?? true; } },
   });
-  return { broker, bindingId, sent, audit, approvalCalls: () => approvalCalls };
+  return { broker, bindingId, sent, audit, approvals, approvalCalls: () => approvalCalls };
 }
 
 describe('BrowserAuthenticatedRequestBroker', () => {
@@ -115,6 +117,29 @@ describe('BrowserAuthenticatedRequestBroker', () => {
     h.broker.revokeBinding('task-1', h.bindingId);
     await h.broker.execute({ taskId: 'task-1', workspaceId: 'ws-1' }, input);
     assert.equal(h.approvalCalls(), 3);
+  });
+
+  it('shows a bounded sanitized exact operation during mutation approval', async () => {
+    const h = harness(['deny']);
+    const input = request('POST');
+    input.recipe.authBinding = h.bindingId;
+    input.recipe.url = 'https://api.example.com/v1/update';
+    input.recipe.query = [
+      { name: 'authToken', value: 'short' },
+      { name: 'view', value: 'quota' },
+    ];
+    input.recipe.headers['content-type'] = 'application/json';
+    input.recipe.body = {
+      ...structuredClone(sharedContractFixtures.brokerSuccess.body),
+      value: { csrfToken: 'short', view: 'quota' },
+    };
+    await h.broker.execute({
+      taskId: 'task-1', workspaceId: 'ws-1', grantScope: 'runtime-generation',
+    }, input);
+    assert.equal(h.approvals[0]?.destination.includes('short'), false);
+    assert.match(h.approvals[0]?.destination ?? '', /view=quota/);
+    assert.doesNotMatch(JSON.stringify(h.approvals[0]?.bodySummary), /short/);
+    assert.match(JSON.stringify(h.approvals[0]?.bodySummary), /quota/);
   });
 
   it('does not reuse an exact-operation grant after runtime generation rotation', async () => {

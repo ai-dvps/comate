@@ -40,6 +40,13 @@ export async function postJson(
   const payload = JSON.stringify(body);
   const proxy = proxyFromEnv(options.env ?? process.env);
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = <T>(callback: (value: T) => void, value: T): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      callback(value);
+    };
     const request = http.request({
       hostname: proxy?.hostname ?? target.hostname,
       port: proxy?.port ?? Number(target.port || 80),
@@ -60,20 +67,23 @@ export async function postJson(
       response.on('data', (chunk: Buffer) => {
         size += chunk.length;
         if (size > MAX_RESPONSE_BYTES) {
-          request.destroy(new Error('Comate returned an oversized response.'));
+          response.destroy(new Error('Comate returned an oversized response.'));
           return;
         }
         chunks.push(chunk);
       });
-      response.on('end', () => resolve({
+      response.once('error', (error) => finish(reject, error));
+      response.once('aborted', () => finish(reject, new Error('Comate response ended before completion.')));
+      response.on('end', () => finish(resolve, {
         status: response.statusCode ?? 0,
         body: Buffer.concat(chunks).toString('utf8'),
       }));
     });
-    request.setTimeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS, () => {
+    request.once('error', (error) => finish(reject, error));
+    const deadline = setTimeout(() => {
       request.destroy(new Error('Timed out waiting for Comate approval or response.'));
-    });
-    request.once('error', reject);
+    }, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    deadline.unref?.();
     request.end(payload);
   });
 }

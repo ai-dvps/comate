@@ -84,6 +84,23 @@ describe('browser API fail-closed sanitizer', () => {
     assert.match(serialized, /visible/);
   });
 
+  it('redacts short camelCase credential fields in every structured surface', () => {
+    const body = sanitizeBody({
+      contentType: 'application/json',
+      body: JSON.stringify({ authToken: 'short', authorizationToken: 'also-short', sessionId: 'abc', csrfToken: 'tiny', ordinary: 'visible' }),
+    });
+    assert.doesNotMatch(JSON.stringify(body), /short|also-short|abc|tiny/);
+    assert.match(JSON.stringify(body), /visible/);
+
+    const url = sanitizeUrl('https://example.com/api?authToken=short&ordinary=visible');
+    assert.doesNotMatch(JSON.stringify(url), /short/);
+    const form = sanitizeBody({
+      contentType: 'application/x-www-form-urlencoded',
+      body: 'sessionToken=short&ordinary=visible',
+    });
+    assert.doesNotMatch(JSON.stringify(form), /short/);
+  });
+
   it('sanitizes form fields and withholds ambiguous free text containing a token', () => {
     const form = sanitizeBody({
       contentType: 'application/x-www-form-urlencoded',

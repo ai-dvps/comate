@@ -29,6 +29,7 @@ import {
 } from './browser-steel-process.js';
 import { getBrowserAllowInsecureCerts } from './browser-app-settings.js';
 import {
+  BrowserAuthBindingError,
   BrowserAuthBindingVault,
   type CapturedAuthMaterial,
   type ResolvedAuthMaterial,
@@ -380,6 +381,8 @@ export class BrowserService {
   private readonly portsInUse = new Set<number>();
   /** Kept across browser close so rebound handles can locate remembered state. */
   private readonly authWorkspaceByTask = new Map<string, string>();
+  /** Last binding the broker actually used; explicit Remember may persist it. */
+  private readonly preferredAuthBindingByTask = new Map<string, string>();
   private initPromise: Promise<void> | null = null;
   private spawnQueue: Promise<void> = Promise.resolve();
 
@@ -662,6 +665,7 @@ export class BrowserService {
     sessionId: string,
     options?: { preserveRememberedAuthBindings?: boolean },
   ): Promise<void> {
+    this.preferredAuthBindingByTask.delete(sessionId);
     const entry = this.registry.get(sessionId);
     if (!entry) return;
     this.registry.delete(sessionId);
@@ -912,8 +916,9 @@ export class BrowserService {
       (raw ?? {}) as { cookies?: unknown; localStorage?: unknown; sessionStorage?: unknown },
       keyResult.key,
     );
-    const bound = bindingId
-      ? this.deps.authBindings.materialForRemember(sessionId, bindingId)
+    const selectedBindingId = bindingId ?? this.preferredAuthBindingByTask.get(sessionId);
+    const bound = selectedBindingId
+      ? this.deps.authBindings.materialForRemember(sessionId, selectedBindingId)
       : undefined;
     if (bound && bound.siteKey !== keyResult.key) {
       throw new BrowserSiteAuthError('invalid_url', 'The selected authentication belongs to another site.');
@@ -921,7 +926,7 @@ export class BrowserService {
     const storageDomainCount =
       Object.keys(scoped.localStorage ?? {}).length +
       Object.keys(scoped.sessionStorage ?? {}).length;
-    if (scoped.cookies.length === 0 && storageDomainCount === 0) {
+    if (scoped.cookies.length === 0 && storageDomainCount === 0 && !bound?.bearerToken) {
       throw new BrowserSiteAuthError(
         'empty_context',
         `No login state for ${keyResult.key} was found in the browser — log in first, then remember the site.`,
@@ -964,14 +969,15 @@ export class BrowserService {
         'The workspace no longer exists — the site could not be remembered.',
       );
     }
-    if (bindingId) {
+    if (selectedBindingId) {
       const stored = updated.settings.browserSiteAuth?.[keyResult.key];
       if (!stored) throw new BrowserSiteAuthError('export_failed', 'Remembered authentication could not be rebound.');
-      this.deps.authBindings.rebindRemembered(sessionId, bindingId, {
+      this.deps.authBindings.rebindRemembered(sessionId, selectedBindingId, {
         siteKey: keyResult.key,
         generation: decodeSiteAuthEntry(stored).generation,
       });
     }
+    this.preferredAuthBindingByTask.delete(sessionId);
     // Audit the FACT of the write with counts only — never the values.
     this.deps.audit.logSiteAuth({
       workspaceId: entry.workspaceId,
@@ -1017,9 +1023,13 @@ export class BrowserService {
     if (!entry?.handle) return candidates.map(() => undefined);
     const raw = await this.deps.exportContext(entry.handle.baseUrl).catch(() => null);
     const contexts = new Map<string, ReturnType<typeof filterContextToScope>>();
-    return candidates.map(({ url, bearerToken }) => {
+    const bindings: Array<string | undefined> = [];
+    for (const { url, bearerToken } of candidates) {
       const keyResult = siteKeyForUrl(url);
-      if (!keyResult.ok) return undefined;
+      if (!keyResult.ok) {
+        bindings.push(undefined);
+        continue;
+      }
       let scoped = contexts.get(keyResult.key);
       if (!scoped) {
         scoped = raw
@@ -1030,31 +1040,47 @@ export class BrowserService {
           : { cookies: [] };
         contexts.set(keyResult.key, scoped);
       }
-      if (scoped.cookies.length === 0 && !bearerToken) return undefined;
-      const bindingId = this.deps.authBindings.capture(sessionId, {
-        siteKey: keyResult.key,
-        sourceOrigin: keyResult.origin,
-        sessionContext: scoped,
-        ...(bearerToken ? { bearerToken } : {}),
-      });
-      const applicable = this.deps.authBindings.resolve(sessionId, bindingId, url);
-      if (applicable.cookies.length === 0 && !applicable.bearerToken) {
-        this.deps.authBindings.discard(sessionId, bindingId);
-        return undefined;
+      if (scoped.cookies.length === 0 && !bearerToken) {
+        bindings.push(undefined);
+        continue;
       }
-      return bindingId;
-    });
+      try {
+        const bindingId = this.deps.authBindings.capture(sessionId, {
+          siteKey: keyResult.key,
+          sourceOrigin: keyResult.origin,
+          sessionContext: scoped,
+          ...(bearerToken ? { bearerToken } : {}),
+        });
+        const applicable = this.deps.authBindings.resolve(sessionId, bindingId, url);
+        if (applicable.cookies.length === 0 && !applicable.bearerToken) {
+          this.deps.authBindings.discard(sessionId, bindingId);
+          bindings.push(undefined);
+        } else {
+          bindings.push(bindingId);
+        }
+      } catch (error) {
+        if (error instanceof BrowserAuthBindingError && error.code === 'auth_binding_limit_reached') {
+          bindings.push(...Array.from({ length: candidates.length - bindings.length }, () => undefined));
+          break;
+        }
+        throw error;
+      }
+    }
+    return bindings;
   }
 
   /** Resolve only native-applicable material; later broker work consumes this. */
   resolveAuthBinding(sessionId: string, bindingId: string, destination: string): ResolvedAuthMaterial {
-    return this.deps.authBindings.resolve(sessionId, bindingId, destination);
+    const resolved = this.deps.authBindings.resolve(sessionId, bindingId, destination);
+    this.preferredAuthBindingByTask.set(sessionId, bindingId);
+    return resolved;
   }
 
   /** Task/runtime terminal hook: unlike browser close, remembered handles die too. */
   disposeAuthBindings(sessionId: string): void {
     this.deps.authBindings.closeTask(sessionId);
     this.authWorkspaceByTask.delete(sessionId);
+    this.preferredAuthBindingByTask.delete(sessionId);
   }
 
   /**

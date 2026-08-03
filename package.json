@@ -23,12 +23,13 @@
     "test:client:watch": "vitest --project jsdom",
     "test:browser": "vitest run --project browser",
     "test:browser-cdp": "tsx scripts/test-browser-cdp.ts",
+    "test:browser-cdp:required": "tsx scripts/test-browser-cdp.ts --required",
     "test:server": "npm run build:contracts && tsx --test-isolation=process --test-concurrency=1 -r ./src/server/test-utils/test-env.ts --test --test-force-exit $(find src/server -name '*.test.ts' -not -path '*/vendor/*')",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "release": "npm run build:sidecar && npm run tauri:build"
+    "release": "npm run build:sidecar && npm run test:browser-cdp:required && npm run tauri:build"
   },
   "dependencies": {
     "@comate/api-contracts": "workspace:*",

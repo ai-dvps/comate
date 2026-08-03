@@ -6,6 +6,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Options, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
+import { sharedContractFixtures } from '@comate/api-contracts';
 import { BrowserService } from '../browser-service.js';
 import { BrowserControlService } from '../browser-control.js';
 import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
@@ -405,6 +406,11 @@ describe('browser-mcp tool surface (KTD-3)', () => {
       ['open', 'snapshot', 'inspectElement', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.strictEqual(BROWSER_TOOL_PREFIX, 'mcp__comate-browser__');
+    const authenticated = defs.find((definition) => definition.name === 'authenticatedRequest');
+    assert.ok(authenticated?.inputSchema && 'safeParse' in authenticated.inputSchema);
+    const schema = authenticated.inputSchema as { safeParse(value: unknown): { success: boolean } };
+    assert.equal(schema.safeParse(sharedContractFixtures.brokerRequest).success, true);
+    assert.equal(schema.safeParse({ ...sharedContractFixtures.brokerRequest, unexpected: true }).success, false);
   });
 });
 
@@ -1225,6 +1231,7 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
     const guiEnv = options.env as Record<string, string>;
     assert.ok(guiEnv.COMATE_CLI_PATH, 'GUI backend gets the packaged/dev Comate CLI path');
     assert.match(guiEnv.COMATE_SERVER_URL, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.equal(guiEnv.COMATE_WORKSPACE_ROOT, folderPath);
     assert.ok(guiEnv.PATH.includes(path.dirname(guiEnv.COMATE_CLI_PATH)));
   });
 
@@ -1250,5 +1257,6 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
     assert.ok(env.COMATE_CLI_PATH);
     assert.ok(env.PATH.includes(path.dirname(env.COMATE_CLI_PATH)));
     assert.match(env.COMATE_SERVER_URL, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.equal(env.COMATE_WORKSPACE_ROOT, folderPath);
   });
 });

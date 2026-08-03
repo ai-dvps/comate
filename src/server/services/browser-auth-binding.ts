@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import type { BrowserSessionContext, BrowserSiteAuthEntry } from '../models/workspace.js';
-import { siteKeyForUrl } from './browser-site-key.js';
+import { registrableDomain, siteKeyForUrl } from './browser-site-key.js';
 
 export type BrowserAuthBindingErrorCode =
   | 'auth_binding_not_found'
@@ -86,9 +86,35 @@ export function cookieAppliesToUrl(
 
   if (cookie.partitionKey !== undefined && cookie.partitionKey !== options?.partitionKey) return false;
   const sameSite = typeof cookie.sameSite === 'string' ? cookie.sameSite.toLowerCase() : '';
-  if ((sameSite === 'strict' || sameSite === 'lax') && options?.sourceOrigin &&
-      normalizeOrigin(options.sourceOrigin) !== url.origin) return false;
+  if ((sameSite === 'strict' || sameSite === 'lax') && options?.sourceOrigin) {
+    const source = new URL(normalizeOrigin(options.sourceOrigin));
+    if (source.protocol !== url.protocol || registrableDomain(source) !== registrableDomain(url)) return false;
+  }
   return true;
+}
+
+function cloneStorage(
+  storage: Record<string, Record<string, string>> | undefined,
+): Record<string, Record<string, string>> | undefined {
+  if (!storage) return undefined;
+  return Object.fromEntries(Object.entries(storage).map(([origin, values]) => [origin, { ...values }]));
+}
+
+function cloneMaterial(material: CapturedAuthMaterial, sourceOrigin: string): CapturedAuthMaterial {
+  return {
+    siteKey: material.siteKey,
+    sourceOrigin,
+    sessionContext: {
+      cookies: material.sessionContext.cookies.map((cookie) => ({ ...cookie })),
+      ...(material.sessionContext.localStorage
+        ? { localStorage: cloneStorage(material.sessionContext.localStorage) }
+        : {}),
+      ...(material.sessionContext.sessionStorage
+        ? { sessionStorage: cloneStorage(material.sessionContext.sessionStorage) }
+        : {}),
+    },
+    ...(material.bearerToken !== undefined ? { bearerToken: material.bearerToken } : {}),
+  };
 }
 
 function zeroizeMaterial(material: CapturedAuthMaterial): void {
@@ -138,7 +164,7 @@ export class BrowserAuthBindingVault {
     const sourceKey = siteKeyForUrl(sourceOrigin);
     if (!sourceKey.ok || sourceKey.key !== material.siteKey) throw new BrowserAuthBindingError('domain_not_authorized');
     const id = `authb_${randomBytes(24).toString('base64url')}`;
-    bindings.set(id, { mode: 'ephemeral', material: { ...material, sourceOrigin } });
+    bindings.set(id, { mode: 'ephemeral', material: cloneMaterial(material, sourceOrigin) });
     return id;
   }
 

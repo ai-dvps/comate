@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { browserApiBrokerService } from '../services/browser-api-broker-service.js';
 import { requireSessionAuth } from '../services/security/loopback-auth.js';
+import { diagWarn } from '../utils/diag-logger.js';
 
 export const API_BROKER_REQUEST_PATH = '/api/broker/request';
 
@@ -29,6 +30,15 @@ router.post('/', async (req, res) => {
       signal: abort.signal,
     }, req.body);
     res.json(result);
+  } catch (error) {
+    // Unexpected broker errors may carry request-derived text. Log only the
+    // error class so credentials can never escape through diagnostics.
+    diagWarn('[api-broker] request failed:', error instanceof Error ? error.name : 'non_error_rejection');
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'broker_failed', message: 'Broker request failed.' });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
   } finally {
     req.off('aborted', onAborted);
     res.off('close', onClosed);
