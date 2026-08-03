@@ -18,9 +18,22 @@ const packageSummary = {
   source: 'skillhub.cn',
 }
 
+const healthyProviders = [
+  { id: 'skills.sh', label: 'skills.sh', status: 'available' },
+  { id: 'skillshub', label: 'SkillsHub', status: 'available' },
+  { id: 'xfyun', label: 'iFlytek SkillHub', status: 'available' },
+  { id: 'skillhub-cn', label: 'Tencent SkillHub', status: 'available' },
+  { id: 'weskillhub', label: 'WeSkillHub', status: 'available' },
+]
+
+function isProviderHealthUrl(url: string): boolean {
+  return url.includes('/api/skills/search/providers')
+}
+
 function installFetch(installed: unknown[] = []): ReturnType<typeof vi.fn> {
   return vi.fn((input: string | URL | Request) => {
     const url = String(input)
+    if (isProviderHealthUrl(url)) return Promise.resolve(Response.json({ providers: healthyProviders }))
     if (url.includes('/api/skills/installed')) return Promise.resolve(Response.json({ skills: installed }))
     if (url.includes('/expert-packages/tech-test-automation/skills/owner/child-skill')) {
       return Promise.resolve(Response.json({ skill: {
@@ -74,6 +87,7 @@ function enterpriseInstallFetch(): ReturnType<typeof vi.fn> {
   let enterpriseSkillInstalled = false
   return vi.fn((input: string | URL | Request) => {
     const url = String(input)
+    if (isProviderHealthUrl(url)) return Promise.resolve(Response.json({ providers: healthyProviders }))
     if (url.includes('/api/skills/installed')) return Promise.resolve(Response.json({ skills: enterpriseSkillInstalled ? [{
       name: 'enterprise-skill',
       kind: 'skill',
@@ -117,6 +131,7 @@ function weskillhubInstallFetch(): ReturnType<typeof vi.fn> {
   let installed = false
   return vi.fn((input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
+    if (isProviderHealthUrl(url)) return Promise.resolve(Response.json({ providers: healthyProviders }))
     if (url.includes('/api/skills/installed')) return Promise.resolve(Response.json({ skills: installed ? [{
       name: 'todo',
       kind: 'skill',
@@ -135,7 +150,7 @@ function weskillhubInstallFetch(): ReturnType<typeof vi.fn> {
       sourceKind: 'weskillhub',
       description: 'Manage WeCom tasks',
       installs: 321,
-    }] }))
+    }], providers: healthyProviders }))
     if (url.endsWith('/api/skills/resolve')) {
       expect(JSON.parse(String(init?.body))).toMatchObject({
         source: 'weskillhub:116/weoa-todo',
@@ -170,7 +185,22 @@ describe('SkillsPage Expert Packages browser flow', () => {
     await i18n.changeLanguage('en')
     useExpertPackagesStore.getState().reset()
     useEnterpriseZoneStore.getState().reset()
-    useSkillsStore.setState({ installed: [], discovered: [], isFetchingInstalled: false, error: null })
+    useSkillsStore.setState({
+      installed: [],
+      discovered: [],
+      isFetchingInstalled: false,
+      error: null,
+      searchProviders: [],
+      selectedSearchProviderIds: [],
+      knownSearchProviderIds: [],
+      newSearchProviderIds: [],
+      checkingSearchProviderIds: [],
+      isCheckingSearchProviders: false,
+      isSearchProviderPreferenceInitialized: false,
+      searchProviderBlockReason: 'checking',
+      lastSearchIncompleteProviderIds: [],
+    })
+    localStorage.removeItem('comate.skills.search-providers.v1')
     localStorage.removeItem('comate.expert-packages.view-mode')
     window.fetch = installFetch() as typeof fetch
   })
@@ -237,6 +267,54 @@ describe('SkillsPage Expert Packages browser flow', () => {
     ;['skills.sh', 'SkillsHub', '讯飞 SkillHub', '腾讯 SkillHub', 'WeSkillHub'].forEach((provider) => {
       expect(chineseHint).toContain(provider)
     })
+  })
+
+  it('filters providers, explains partial results, and retries an unavailable provider', async () => {
+    let retryHealthy = false
+    window.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('/api/skills/installed')) return Promise.resolve(Response.json({ skills: [] }))
+      if (url.includes('/api/skills/search/providers?provider=skillshub')) {
+        retryHealthy = true
+        return Promise.resolve(Response.json({ providers: [
+          { id: 'skillshub', label: 'SkillsHub', status: 'available' },
+        ] }))
+      }
+      if (isProviderHealthUrl(url)) return Promise.resolve(Response.json({ providers: [
+        { id: 'skills.sh', label: 'skills.sh', status: 'available' },
+        { id: 'skillshub', label: 'SkillsHub', status: 'unavailable', reason: 'timeout' },
+      ] }))
+      if (url.includes('/api/skills/search?')) return Promise.resolve(Response.json({
+        skills: [{
+          id: 'skills.sh:review', name: 'review', slug: 'review', source: 'acme/review',
+          installSource: 'acme/review', sourceKind: 'skills.sh', description: 'Review changes', installs: 5,
+        }],
+        providers: [{ id: 'skills.sh', label: 'skills.sh', status: 'available' }],
+      }))
+      return Promise.resolve(new Response('', { status: 404 }))
+    }) as typeof fetch
+
+    render(<I18nextProvider i18n={i18n}><SkillsPage workspaceId="ws-1" isOpen onClose={() => undefined} /></I18nextProvider>)
+    await userEvent.click(screen.getByRole('tab', { name: 'Search' }))
+    expect(await screen.findByRole('button', { name: 'Providers, 2 of 2 selected' })).toBeVisible()
+
+    await userEvent.type(screen.getByLabelText('Find skills for the work at hand'), 'review')
+    expect(await screen.findByRole('heading', { name: 'review' })).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent('Results may be incomplete because SkillsHub is unavailable.')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Providers, 2 of 2 selected' }))
+    const providerFilter = screen.getByRole('group', { name: 'Search providers' })
+    expect(within(providerFilter).getByRole('checkbox', { name: /SkillsHub/ })).toBeChecked()
+    expect(providerFilter).toHaveTextContent('Timed out')
+    await userEvent.click(within(providerFilter).getByRole('button', { name: 'Retry SkillsHub' }))
+    await waitFor(() => expect(retryHealthy).toBe(true))
+    const skillsHubRow = within(providerFilter).getByRole('checkbox', { name: 'SkillsHub' }).closest('div')
+    expect(skillsHubRow).not.toBeNull()
+    expect(within(skillsHubRow!).getByText('Available')).toBeVisible()
+
+    await userEvent.click(within(providerFilter).getByRole('checkbox', { name: /skills.sh/ }))
+    expect(JSON.parse(localStorage.getItem('comate.skills.search-providers.v1') || '{}').selectedProviderIds)
+      .toEqual(['skillshub'])
   })
 
   it('preserves the Enterprise journey across tabs, resets on close, and refreshes an ordinary installed Skill', async () => {

@@ -450,7 +450,13 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
       }))
     } finally {
       if (checkId === activeProviderCheckId) {
-        set({ isCheckingSearchProviders: false, checkingSearchProviderIds: [] })
+        set((state) => ({
+          isCheckingSearchProviders: false,
+          checkingSearchProviderIds: state.checkingSearchProviderIds.filter(
+            (providerId) => !requestedProviderIds.includes(providerId)
+              || !isCurrentProviderRequest(providerId, generation)
+          ),
+        }))
       }
     }
   },
