@@ -48,6 +48,20 @@ export interface InstalledSkill {
   description?: string
   scope: SkillScope
   source: string
+  /** Expert Package that installed this Skill, if it belongs to one. */
+  packageSlug?: string
+  /** Catalog summary cached at Expert Package installation time for offline display. */
+  packageCatalog?: {
+    slug: string
+    displayName: string
+    displayNameEn?: string
+    summary: string
+    summaryEn?: string
+    scene: string
+    subScene?: string
+    skillCount: number
+    source: 'skillhub.cn'
+  }
   installPath: string
   isLegacySymlink: boolean
   computedHash?: string

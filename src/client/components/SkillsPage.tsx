@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   X,
@@ -21,6 +21,9 @@ import {
   ArrowDownUp,
   RotateCcw,
   Boxes,
+  ChevronDown,
+  Grid2X2,
+  List,
 } from 'lucide-react'
 import {
   useSkillsStore,
@@ -42,6 +45,7 @@ interface SkillsPageProps {
 }
 
 type SkillTab = 'installed' | 'search' | 'expert-packages'
+type InstalledViewMode = 'cards' | 'list'
 
 /**
  * Full-screen overlay for the Skills surface. Mirrors PluginSettingsPage:
@@ -74,6 +78,10 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [recentlyUpdatedName, setRecentlyUpdatedName] = useState<string | null>(null)
+  const [packageAction, setPackageAction] = useState<{ slug: string; type: 'update' | 'uninstall' } | null>(null)
+  const [expandedPackageKeys, setExpandedPackageKeys] = useState<Set<string>>(() => new Set())
+  const [installedSearchInput, setInstalledSearchInput] = useState('')
+  const [installedViewMode, setInstalledViewMode] = useState<InstalledViewMode>('cards')
 
   const {
     installed,
@@ -175,6 +183,34 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
     // On failure, updateError/failedUpdateSkillName flow through the store.
   }
 
+  const runPackageAction = async (skill: InstalledSkill, type: 'update' | 'uninstall') => {
+    const packageSlug = skill.source.slice('skillhub-package:'.length)
+    if (!packageSlug) return
+    setPackageAction({ slug: packageSlug, type })
+    try {
+      const response = await fetch(`/api/skills/expert-packages/${encodeURIComponent(packageSlug)}/${type === 'update' ? 'install' : 'uninstall'}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: skill.scope, workspaceId, ...(type === 'update' ? { force: true } : {}) }),
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error || `Unable to ${type} Expert Package`)
+      }
+      if (type === 'update') {
+        setRecentlyUpdatedName(skill.name)
+        successTimeoutRef.current = setTimeout(() => setRecentlyUpdatedName(null), 2000)
+      } else {
+        setConfirmUninstall(null)
+      }
+      await fetchInstalled(workspaceId)
+    } catch (actionError) {
+      useSkillsStore.setState({ error: actionError instanceof Error ? actionError.message : `Unable to ${type} Expert Package` })
+    } finally {
+      setPackageAction(null)
+    }
+  }
+
   const handleUpdateAll = async () => {
     await updateAll(workspaceId)
   }
@@ -208,6 +244,45 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
   const hasActiveSearchFilters = Boolean(
     searchFilters.scene || searchFilters.preferChinese || searchFilters.noApiKey || searchFilters.sort !== 'score'
   )
+
+  const installedPackageGroups = useMemo(() => installed
+    .filter((skill) => skill.kind === 'expert-package-orchestrator')
+    .map((packageSkill) => {
+      const packageSlug = packageSkill.source.slice('skillhub-package:'.length)
+      return {
+        packageSkill,
+        children: installed.filter((skill) => skill.scope === packageSkill.scope && skill.packageSlug === packageSlug),
+      }
+    }), [installed])
+  const standaloneInstalledSkills = useMemo(() => installed.filter(
+    (skill) => skill.kind !== 'expert-package-orchestrator' && !skill.packageSlug,
+  ), [installed])
+  const normalizedInstalledSearch = installedSearchInput.trim().toLowerCase()
+  const installedSkillMatchesSearch = useCallback((skill: InstalledSkill) => {
+    if (!normalizedInstalledSearch) return true
+    return [
+      skill.name,
+      skill.description,
+      skill.source,
+      skill.scope,
+      skill.kind,
+      skill.packageCatalog?.displayName,
+      skill.packageCatalog?.summary,
+      skill.packageCatalog?.scene,
+      skill.packageCatalog?.subScene,
+    ]
+      .some((value) => value?.toLowerCase().includes(normalizedInstalledSearch))
+  }, [normalizedInstalledSearch])
+  const filteredInstalledPackageGroups = useMemo(() => installedPackageGroups.flatMap(({ packageSkill, children }) => {
+    const packageMatches = installedSkillMatchesSearch(packageSkill)
+    const matchingChildren = packageMatches ? children : children.filter(installedSkillMatchesSearch)
+    return packageMatches || matchingChildren.length > 0 ? [{ packageSkill, children: matchingChildren }] : []
+  }), [installedPackageGroups, installedSkillMatchesSearch])
+  const filteredStandaloneInstalledSkills = useMemo(
+    () => standaloneInstalledSkills.filter(installedSkillMatchesSearch),
+    [standaloneInstalledSkills, installedSkillMatchesSearch],
+  )
+  const hasInstalledSearchResults = filteredInstalledPackageGroups.length > 0 || filteredStandaloneInstalledSkills.length > 0
 
   const tabs: { id: SkillTab; label: string; icon: typeof BookOpen }[] = [
     { id: 'installed', label: t('skills.installedTab'), icon: BookOpen },
@@ -337,35 +412,147 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                   </div>
                 ) : (
                   <>
-                    <div className="flex items-end justify-between px-1">
+                    <div className="flex flex-col gap-3 px-1 sm:flex-row sm:items-end sm:justify-between">
                       <div>
                         <h3 className="text-sm font-semibold text-text-primary">
                           {t('skills.installedCount', { count: installed.length })}
                         </h3>
                         <p className="mt-0.5 text-[11px] text-text-tertiary">{t('skills.installedDescription')}</p>
                       </div>
+                      <div className="flex items-center gap-2">
+                        <div className="relative min-w-0 flex-1 sm:w-60 sm:flex-none">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" />
+                          <input
+                            value={installedSearchInput}
+                            onChange={(event) => setInstalledSearchInput(event.target.value)}
+                            placeholder={t('skills.installedSearchPlaceholder')}
+                            aria-label={t('skills.installedSearchLabel')}
+                            className="h-9 w-full rounded-lg border border-border bg-white pl-8 pr-8 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                          />
+                          {installedSearchInput && (
+                            <button
+                              onClick={() => setInstalledSearchInput('')}
+                              className="absolute right-0 top-0 flex h-9 w-9 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
+                              aria-label={t('skills.clearSearch')}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex h-9 shrink-0 rounded-lg border border-border bg-white p-1" aria-label={t('skills.installedViewMode')}>
+                          <button
+                            onClick={() => setInstalledViewMode('cards')}
+                            aria-pressed={installedViewMode === 'cards'}
+                            aria-label={t('skills.cardView')}
+                            className={`flex w-7 items-center justify-center rounded ${installedViewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
+                          >
+                            <Grid2X2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setInstalledViewMode('list')}
+                            aria-pressed={installedViewMode === 'list'}
+                            aria-label={t('skills.listView')}
+                            className={`flex w-7 items-center justify-center rounded ${installedViewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
+                          >
+                            <List className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
-                      {installed.map((skill, index) => (
-                        <InstalledSkillCard
-                          key={`${skill.name}-${skill.scope}`}
-                          skill={skill}
-                          isSaving={isSaving}
-                          updating={updatingSkillName === skill.name}
-                          recentlyUpdated={recentlyUpdatedName === skill.name}
-                          showUpdateError={failedUpdateSkillName === skill.name && !!updateError}
-                          updateError={updateError}
-                          confirmUninstall={confirmUninstall === `${skill.name}-${skill.scope}`}
-                          isLast={index === installed.length - 1}
-                          onConfirmUninstall={() => setConfirmUninstall(`${skill.name}-${skill.scope}`)}
-                          onCancelUninstall={() => setConfirmUninstall(null)}
-                          onUninstall={() => handleUninstall(skill)}
-                          onUpdate={() => handleUpdate(skill)}
-                          onClearUpdateError={clearUpdateError}
-                          t={t}
-                        />
-                      ))}
+                    {!hasInstalledSearchResults ? (
+                      <div className="rounded-xl border border-dashed border-border bg-white px-4 py-10 text-center text-sm text-text-secondary">
+                        {t('skills.installedNoMatches')}
+                      </div>
+                    ) : (
+                    <div className="space-y-3">
+                      <div className={installedViewMode === 'cards' ? 'grid grid-cols-1 items-start gap-3 md:grid-cols-2' : 'space-y-2'}>
+                      {filteredInstalledPackageGroups.map(({ packageSkill, children }) => {
+                        const packageKey = `${packageSkill.name}-${packageSkill.scope}`
+                        const childrenId = `package-skills-${packageKey}`
+                        const childrenExpanded = Boolean(normalizedInstalledSearch) || expandedPackageKeys.has(packageKey)
+                        return <section key={packageKey} className="overflow-hidden rounded-xl border border-border bg-white shadow-sm">
+                          <InstalledSkillCard
+                            skill={packageSkill}
+                            isSaving={isSaving || packageAction !== null}
+                            updating={updatingSkillName === packageSkill.name || packageAction?.slug === packageSkill.name}
+                            recentlyUpdated={recentlyUpdatedName === packageSkill.name}
+                            showUpdateError={failedUpdateSkillName === packageSkill.name && !!updateError}
+                            updateError={updateError}
+                            confirmUninstall={confirmUninstall === `${packageSkill.name}-${packageSkill.scope}`}
+                            isLast={children.length === 0 || !childrenExpanded}
+                            rowClassName={`bg-accent/5 ${installedViewMode === 'cards' ? 'min-h-20' : ''}`}
+                            childCount={children.length}
+                            childrenExpanded={childrenExpanded}
+                            childrenId={childrenId}
+                            onToggleChildren={() => setExpandedPackageKeys((current) => {
+                              const next = new Set(current)
+                              if (next.has(packageKey)) next.delete(packageKey)
+                              else next.add(packageKey)
+                              return next
+                            })}
+                            onConfirmUninstall={() => setConfirmUninstall(`${packageSkill.name}-${packageSkill.scope}`)}
+                            onCancelUninstall={() => setConfirmUninstall(null)}
+                            onUninstall={() => void runPackageAction(packageSkill, 'uninstall')}
+                            onUpdate={() => void runPackageAction(packageSkill, 'update')}
+                            onClearUpdateError={clearUpdateError}
+                            t={t}
+                          />
+                          {children.length > 0 && (
+                    <div id={childrenId} hidden={!childrenExpanded} className="bg-white">
+                              <div className="border-b border-border/70 px-3.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                                {t('skills.expertPackages.includedSkills', { count: children.length })}
+                              </div>
+                              {children.map((skill, index) => (
+                                <InstalledSkillCard
+                                  key={`${skill.name}-${skill.scope}`}
+                                  skill={skill}
+                                  isSaving={isSaving || packageAction !== null}
+                                  updating={updatingSkillName === skill.name}
+                                  recentlyUpdated={recentlyUpdatedName === skill.name}
+                                  showUpdateError={failedUpdateSkillName === skill.name && !!updateError}
+                                  updateError={updateError}
+                                  confirmUninstall={confirmUninstall === `${skill.name}-${skill.scope}`}
+                                  isLast={index === children.length - 1}
+                                  onConfirmUninstall={() => setConfirmUninstall(`${skill.name}-${skill.scope}`)}
+                                  onCancelUninstall={() => setConfirmUninstall(null)}
+                                  onUninstall={() => void handleUninstall(skill)}
+                                  onUpdate={() => void handleUpdate(skill)}
+                                  onClearUpdateError={clearUpdateError}
+                                  t={t}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </section>
+                      })}
+                      {filteredStandaloneInstalledSkills.length > 0 && (
+                          filteredStandaloneInstalledSkills.map((skill) => (
+                            <div
+                              key={`${skill.name}-${skill.scope}`}
+                              className="overflow-hidden rounded-xl border border-border bg-white shadow-sm"
+                            >
+                            <InstalledSkillCard
+                              skill={skill}
+                              isSaving={isSaving || packageAction !== null}
+                              updating={updatingSkillName === skill.name}
+                              recentlyUpdated={recentlyUpdatedName === skill.name}
+                              showUpdateError={failedUpdateSkillName === skill.name && !!updateError}
+                              updateError={updateError}
+                              confirmUninstall={confirmUninstall === `${skill.name}-${skill.scope}`}
+                              isLast
+                              rowClassName={installedViewMode === 'cards' ? 'min-h-20' : undefined}
+                              onConfirmUninstall={() => setConfirmUninstall(`${skill.name}-${skill.scope}`)}
+                              onCancelUninstall={() => setConfirmUninstall(null)}
+                              onUninstall={() => void handleUninstall(skill)}
+                              onUpdate={() => void handleUpdate(skill)}
+                              onClearUpdateError={clearUpdateError}
+                              t={t}
+                            />
+                            </div>
+                          )))}
+                      </div>
                     </div>
+                    )}
                   </>
                 )}
               </div>
@@ -612,6 +799,11 @@ interface InstalledSkillCardProps {
   onUpdate: () => void
   onClearUpdateError: () => void
   t: ReturnType<typeof useTranslation>['t']
+  rowClassName?: string
+  childCount?: number
+  childrenExpanded?: boolean
+  childrenId?: string
+  onToggleChildren?: () => void
 }
 
 function InstalledSkillCard({
@@ -629,6 +821,11 @@ function InstalledSkillCard({
   onUpdate,
   onClearUpdateError,
   t,
+  rowClassName,
+  childCount,
+  childrenExpanded,
+  childrenId,
+  onToggleChildren,
 }: InstalledSkillCardProps) {
   const scopeConfig: Record<SkillScope, { icon: typeof Globe; color: string; label: string }> = {
     global: {
@@ -644,16 +841,20 @@ function InstalledSkillCard({
   }
   const scope = scopeConfig[skill.scope]
   const ScopeIcon = scope.icon
+  const isExpertPackage = skill.kind === 'expert-package-orchestrator'
+  const ItemIcon = isExpertPackage ? Boxes : Sparkles
+  const displayName = isExpertPackage ? skill.packageCatalog?.displayName ?? skill.name : skill.name
+  const description = isExpertPackage ? skill.packageCatalog?.summary ?? skill.description : skill.description
 
   return (
     <div className={!isLast ? 'border-b border-border/70' : undefined}>
-      <div className="flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-surface-hover/40">
+      <div className={`flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-surface-hover/40 ${rowClassName || ''}`}>
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-          <Sparkles className="h-3.5 w-3.5" />
+          <ItemIcon className="h-3.5 w-3.5" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-sm font-medium text-text-primary truncate">{skill.name}</span>
+            <span className="text-sm font-medium text-text-primary truncate">{displayName}</span>
             <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium ${scope.color}`}>
               <ScopeIcon className="w-2.5 h-2.5" />
               {scope.label}
@@ -663,14 +864,14 @@ function InstalledSkillCard({
                 {t('skills.legacySymlink')}
               </span>
             )}
-            {skill.kind === 'expert-package-orchestrator' && (
+            {isExpertPackage && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400">
                 {t('skills.expertPackageOrchestrator')}
               </span>
             )}
           </div>
-          {skill.description && (
-            <p className="mt-0.5 truncate text-[11px] text-text-secondary">{skill.description}</p>
+          {description && (
+            <p className="mt-0.5 truncate text-[11px] text-text-secondary">{description}</p>
           )}
           <p className="mt-0.5 truncate text-[10px] text-text-tertiary">
             {t('skills.sourceLabel')}: {skill.source}
@@ -679,6 +880,17 @@ function InstalledSkillCard({
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0">
+          {isExpertPackage && childCount !== undefined && onToggleChildren && (
+            <button
+              onClick={onToggleChildren}
+              aria-expanded={childrenExpanded}
+              aria-controls={childrenId}
+              aria-label={t('skills.expertPackages.includedSkills', { count: childCount })}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary"
+            >
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${childrenExpanded ? '' : '-rotate-90'}`} />
+            </button>
+          )}
           {/* Update button / status */}
           {updating ? (
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-accent/5">

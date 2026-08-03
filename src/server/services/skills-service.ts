@@ -88,6 +88,10 @@ export interface InstalledSkill {
   scope: SkillScope;
   /** Original source identifier (e.g., "owner/repo") */
   source: string;
+  /** Expert Package that installed this Skill, if it belongs to one. */
+  packageSlug?: string;
+  /** Catalog summary cached at package installation time for offline display. */
+  packageCatalog?: ExpertPackageSummary;
   /** Where the skill is installed on disk */
   installPath: string;
   /** True if installPath is a symlink (legacy CLI install) */
@@ -119,6 +123,10 @@ export interface InstallArgs {
   force?: boolean;
   /** Server-owned snapshot used only while expanding an Expert Package install. */
   packageOrchestrationContent?: string;
+  /** Expert Package that owns the installed Skill. */
+  packageSlug?: string;
+  /** Catalog summary saved only for an Expert Package orchestration. */
+  packageCatalog?: ExpertPackageSummary;
 }
 
 export interface UninstallArgs {
@@ -158,6 +166,8 @@ export interface InstallExpertPackageArgs {
   workspacePath?: string;
   /** Stable item ids from a previous failed attempt. Omit to install all items. */
   itemIds?: string[];
+  /** Overwrite installed package files when refreshing the package. */
+  force?: boolean;
 }
 
 export class SkillsService {
@@ -250,7 +260,7 @@ export class SkillsService {
 
   async install(args: InstallArgs): Promise<InstallResult[]> {
     const {
-      source, skills: requestedSkills, scope, workspacePath, force, packageOrchestrationContent,
+      source, skills: requestedSkills, scope, workspacePath, force, packageOrchestrationContent, packageSlug, packageCatalog,
     } = args;
     if (requestedSkills.length === 0) {
       return [];
@@ -368,6 +378,8 @@ export class SkillsService {
                   ref: parsed?.ref,
                   skillPath: this.computeSkillPathForLock(sourceRoot, skill.path),
                   computedHash: copyResult.computedHash,
+                  packageSlug,
+                  packageCatalog,
                 });
               } catch (error) {
                 // A fresh directory without a lock entry is not a valid install.
@@ -431,6 +443,7 @@ export class SkillsService {
       source: string;
       name: string;
       packageOrchestrationContent?: string;
+      packageCatalog?: ExpertPackageSummary;
     }> = [
       {
         id: `orchestrator:${definition.summary.slug}`,
@@ -438,6 +451,7 @@ export class SkillsService {
         source: `skillhub-package:${definition.summary.slug}`,
         name: definition.summary.slug,
         packageOrchestrationContent: definition.content,
+        packageCatalog: definition.summary,
       },
       ...definition.coordinates.map((coordinate) => ({
         id: `skill:${coordinate.namespace}/${coordinate.slug}`,
@@ -464,7 +478,10 @@ export class SkillsService {
           skills: [item.name],
           scope: args.scope,
           workspacePath: args.workspacePath,
+          force: args.force,
           packageOrchestrationContent: item.packageOrchestrationContent,
+          packageSlug: definition.summary.slug,
+          packageCatalog: item.packageCatalog,
         });
         results.push({
           id: item.id,
@@ -486,6 +503,27 @@ export class SkillsService {
         });
       }
     }
+    return results;
+  }
+
+  async removeExpertPackage(args: {
+    packageSlug: string;
+    scope: SkillScope;
+    workspacePath?: string;
+  }): Promise<UninstallResult[]> {
+    const definition = await getExpertPackageDefinition(args.packageSlug);
+    const names = [definition.summary.slug, ...definition.coordinates.map((coordinate) => coordinate.slug)];
+    const uniqueNames = [...new Set(names)];
+    const results: UninstallResult[] = [];
+
+    for (const skillName of uniqueNames) {
+      results.push(await this.remove({
+        skillName,
+        scope: args.scope,
+        workspacePath: args.workspacePath,
+      }));
+    }
+
     return results;
   }
 
@@ -512,7 +550,32 @@ export class SkillsService {
       installed.push(await this.toInstalledSkill(name, entry, 'global'));
     }
 
+    await this.associateLegacyExpertPackageSkills(installed);
     return installed;
+  }
+
+  private async associateLegacyExpertPackageSkills(installed: InstalledSkill[]): Promise<void> {
+    const packages = installed.filter((skill) => skill.kind === 'expert-package-orchestrator');
+    await Promise.all(packages.map(async (packageSkill) => {
+      const hasUnlinkedSkills = installed.some((skill) => (
+        skill.scope === packageSkill.scope && skill.kind === 'skill' && !skill.packageSlug
+      ));
+      if (!hasUnlinkedSkills) return;
+      const packageSlug = packageSkill.source.slice('skillhub-package:'.length);
+      try {
+        const definition = await getExpertPackageDefinition(packageSlug);
+        const childSources = new Set(definition.coordinates.map(
+          (coordinate) => `skillhub-cn:${coordinate.namespace}/${coordinate.slug}`,
+        ));
+        for (const skill of installed) {
+          if (skill.scope === packageSkill.scope && skill.kind === 'skill' && childSources.has(skill.source)) {
+            skill.packageSlug ??= packageSlug;
+          }
+        }
+      } catch {
+        // Keep legacy package children as standalone entries when SkillHub is unavailable.
+      }
+    }));
   }
 
   private async toInstalledSkill(
@@ -539,6 +602,8 @@ export class SkillsService {
       kind: entry.source.startsWith('skillhub-package:') ? 'expert-package-orchestrator' : 'skill',
       scope,
       source: entry.source,
+      ...(entry.packageSlug ? { packageSlug: entry.packageSlug } : {}),
+      ...(entry.packageCatalog ? { packageCatalog: entry.packageCatalog } : {}),
       installPath,
       isLegacySymlink,
     };
@@ -643,6 +708,33 @@ export class SkillsService {
     const results: UpdateAllResult[] = [];
 
     for (const skill of installed) {
+      if (skill.kind === 'expert-package-orchestrator') {
+        try {
+          const packageSlug = skill.source.slice('skillhub-package:'.length);
+          const packageResults = await this.installExpertPackage({
+            packageSlug,
+            scope: skill.scope,
+            workspacePath: args.workspacePath,
+            force: true,
+          });
+          const failures = packageResults.filter((result) => result.status === 'error');
+          results.push({
+            skillName: skill.name,
+            scope: skill.scope,
+            status: failures.length === 0 ? 'updated' : 'error',
+            ...(failures.length > 0 ? { error: failures.map((result) => result.error).filter(Boolean).join('; ') } : {}),
+          });
+        } catch (err) {
+          results.push({
+            skillName: skill.name,
+            scope: skill.scope,
+            status: 'error',
+            error: (err as Error).message,
+          });
+        }
+        continue;
+      }
+
       if (skill.isLegacySymlink) {
         results.push({
           skillName: skill.name,
@@ -692,10 +784,12 @@ export class SkillsService {
     ref?: string;
     skillPath?: string;
     computedHash: string;
+    packageSlug?: string;
+    packageCatalog?: ExpertPackageSummary;
   }): Promise<void> {
     const {
       scope, workspacePath, skillName,
-      source, sourceUrl, sourceType, ref, skillPath, computedHash,
+      source, sourceUrl, sourceType, ref, skillPath, computedHash, packageSlug, packageCatalog,
     } = args;
 
     if (scope === 'project') {
@@ -704,7 +798,7 @@ export class SkillsService {
       }
       const lock = await readProjectLock(workspacePath);
       lock.skills[skillName] = buildProjectLockEntry({
-        source, sourceType, computedHash, ref, skillPath,
+        source, sourceType, computedHash, ref, skillPath, packageSlug, packageCatalog,
       });
       await writeProjectLock(workspacePath, lock);
     } else {
@@ -723,7 +817,7 @@ export class SkillsService {
         skillFolderHash: computedHash,
         installedAt: existing?.installedAt ?? now,
         updatedAt: now,
-        ref, skillPath,
+        ref, skillPath, packageSlug, packageCatalog,
       });
       await writeGlobalLock(lock);
     }

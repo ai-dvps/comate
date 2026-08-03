@@ -1,4 +1,4 @@
-import { ArrowLeft, Download, ExternalLink, ShieldCheck, UserRound } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Download, ExternalLink, ShieldCheck, UserRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ExpertSkillDetail } from '../../stores/expert-packages-store'
 import { openUrlInBrowser } from '../../lib/open-url'
@@ -10,6 +10,7 @@ interface ExpertPackageSkillDetailProps {
   detail?: ExpertSkillDetail
   loading: boolean
   error?: string
+  installed?: boolean
   onBack: () => void
   onBackToList: () => void
   onRetry: () => void
@@ -17,10 +18,33 @@ interface ExpertPackageSkillDetailProps {
 }
 
 export default function ExpertPackageSkillDetail({
-  packageName, detail, loading, error, onBack, onBackToList, onRetry, onInstall,
+  packageName, detail, loading, error, installed = false, onBack, onBackToList, onRetry, onInstall,
 }: ExpertPackageSkillDetailProps) {
   const { t } = useTranslation('settings')
-  if (loading && !detail) return <div className="mx-auto h-80 max-w-5xl animate-pulse rounded-2xl border border-border bg-surface" />
+  if (loading) return (
+    <div aria-busy="true" className="mx-auto max-w-5xl animate-pulse space-y-4">
+      <div className="h-3 w-56 rounded bg-surface-hover" />
+      <section className="rounded-2xl border border-border bg-surface p-5 md:p-6">
+        <div className="h-3 w-32 rounded bg-surface-hover" />
+        <div className="mt-5 flex gap-5">
+          <div className="h-12 w-12 shrink-0 rounded-xl bg-surface-hover" />
+          <div className="min-w-0 flex-1 space-y-3 pt-1">
+            <div className="h-5 w-2/5 rounded bg-surface-hover" />
+            <div className="h-3 w-1/4 rounded bg-surface-hover" />
+            <div className="h-3 w-full max-w-3xl rounded bg-surface-hover" />
+          </div>
+        </div>
+      </section>
+      <section className="rounded-2xl border border-border bg-white p-5">
+        <div className="h-3 w-32 rounded bg-surface-hover" />
+        <div className="mt-5 space-y-3">
+          <div className="h-3 w-full rounded bg-surface-hover" />
+          <div className="h-3 w-4/5 rounded bg-surface-hover" />
+          <div className="h-3 w-3/5 rounded bg-surface-hover" />
+        </div>
+      </section>
+    </div>
+  )
   if (error && !detail) return (
     <div className="mx-auto max-w-5xl rounded-2xl border border-destructive/30 bg-surface p-8 text-center">
       <p className="text-sm font-medium text-text-primary">{t('skills.expertPackages.skillDetailFailed')}</p>
@@ -52,12 +76,15 @@ export default function ExpertPackageSkillDetail({
               <span className="rounded-md bg-surface-hover px-2 py-1">{t('skills.expertPackages.installs', { count: detail.stats.installs.toLocaleString() })}</span>
             </div>
           </div>
-          <button onClick={onInstall} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-accent px-4 text-xs font-medium text-accent-foreground hover:bg-accent-hover"><Download className="h-3.5 w-3.5" /> {t('skills.expertPackages.installSkill')}</button>
+          <button onClick={onInstall} disabled={installed} className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-medium disabled:cursor-not-allowed ${installed ? 'bg-surface-hover text-text-secondary' : 'bg-accent text-accent-foreground hover:bg-accent-hover'}`}>
+            {installed ? <CheckCircle2 className="h-3 w-3" /> : <Download className="h-3 w-3" />}
+            {t(installed ? 'skills.expertPackages.installed' : 'skills.expertPackages.installSkill')}
+          </button>
         </div>
       </section>
 
       {detail.securityReports.length > 0 && (
-        <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+        <section className="rounded-2xl border border-border bg-white p-4 shadow-sm">
           <h3 className="flex items-center gap-1.5 text-xs font-semibold text-text-primary"><ShieldCheck className="h-4 w-4 text-emerald-500" /> {t('skills.expertPackages.securityReports')}</h3>
           <div className="mt-3 grid gap-2 md:grid-cols-2">
             {detail.securityReports.map((report) => (
@@ -65,7 +92,7 @@ export default function ExpertPackageSkillDetail({
                 key={report.provider}
                 onClick={() => { if (report.reportUrl) void openUrlInBrowser(report.reportUrl) }}
                 disabled={!report.reportUrl}
-                className="flex items-center justify-between rounded-xl border border-border bg-bg p-3 text-left disabled:cursor-default"
+                className="flex items-center justify-between rounded-xl border border-border bg-white p-3 text-left disabled:cursor-default"
               >
                 <span><span className="block text-xs font-medium text-text-primary">{report.provider}</span><span className="mt-0.5 block text-[10px] text-text-tertiary">{report.statusText || report.status}</span></span>
                 {report.reportUrl && <ExternalLink className="h-3.5 w-3.5 text-text-tertiary" />}
@@ -75,7 +102,7 @@ export default function ExpertPackageSkillDetail({
         </section>
       )}
 
-      <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
         <div className="border-b border-border px-5 py-3 text-xs font-semibold text-text-primary">{t('skills.expertPackages.documentation')}</div>
         {detail.documentation
           ? <MarkdownPreview content={stripSkillFrontmatter(detail.documentation)} className="px-5 py-4 text-xs" />

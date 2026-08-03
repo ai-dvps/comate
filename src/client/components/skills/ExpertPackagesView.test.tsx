@@ -107,6 +107,29 @@ describe('Expert Packages UI', () => {
     expect(screen.getByRole('button', { name: /List view|列表视图/ })).toHaveAttribute('aria-pressed', 'true')
   })
 
+  it('shows skeletons while package and Skill details are fetched', () => {
+    const { container } = render(<>
+      <ExpertPackageDetail
+        loading
+        onBack={() => undefined}
+        onRetry={() => undefined}
+        onSelectSkill={() => undefined}
+        onInstall={() => undefined}
+      />
+      <ExpertPackageSkillDetail
+        packageName="Package"
+        loading
+        onBack={() => undefined}
+        onBackToList={() => undefined}
+        onRetry={() => undefined}
+        onInstall={() => undefined}
+      />
+    </>)
+
+    expect(container.querySelectorAll('[aria-busy="true"]')).toHaveLength(2)
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
   it('renders package breadcrumbs, security coverage, and included Skill navigation', async () => {
     const user = userEvent.setup()
     const onSelectSkill = vi.fn()
@@ -126,6 +149,7 @@ describe('Expert Packages UI', () => {
         }],
       }}
       loading={false}
+      installed
       onBack={() => undefined}
       onRetry={() => undefined}
       onSelectSkill={onSelectSkill}
@@ -133,6 +157,7 @@ describe('Expert Packages UI', () => {
     />)
 
     expect(screen.getByRole('navigation', { name: /Expert Package breadcrumb|专家包面包屑/ })).toHaveTextContent('自动化测试')
+    expect(screen.getByRole('button', { name: /Installed|已安装/ })).toBeDisabled()
     expect(screen.getByText(/Security reports: 1\/1 Skills|安全报告：1\/1 个 Skill/)).toBeInTheDocument()
     await user.click(screen.getByRole('tab', { name: /Included Skills|包含的 Skill/ }))
     expect(screen.getByText(/1 reports|1 份报告/)).toBeInTheDocument()
@@ -163,6 +188,7 @@ describe('Expert Packages UI', () => {
         source: 'skillhub-cn:owner/child-skill',
       }}
       loading={false}
+      installed
       onBack={() => undefined}
       onBackToList={() => undefined}
       onRetry={() => undefined}
@@ -170,6 +196,7 @@ describe('Expert Packages UI', () => {
     />)
 
     expect(screen.getByText('Owner · @owner')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Installed|已安装/ })).toBeDisabled()
     expect(screen.getByText('Child docs')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Keen.*Safe/ }))
     expect(openUrlInBrowser).toHaveBeenCalledWith('https://example.com/report')
