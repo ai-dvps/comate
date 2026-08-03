@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { botService } from '../services/bot-service.js';
+import { requireSessionAuth } from '../services/security/loopback-auth.js';
 import type { BotUser } from '../models/bot-user.js';
 
 const router = Router({ mergeParams: true });
@@ -9,15 +10,21 @@ const router = Router({ mergeParams: true });
 // POST /api/workspaces/:workspaceId/wecom/send-file
 router.post('/', async (req, res) => {
   try {
+    // U12 (KTD-28): identity and admin derivation are bound to the session
+    // capability token, never to a self-asserted sessionId.
+    const auth = requireSessionAuth(req, res);
+    if (!auth) return;
+    const sessionId = auth.sessionId;
+
     const workspaceId = (req.params as { workspaceId: string }).workspaceId;
-    const { sessionId, toUser, filePath } = req.body as {
+    const { sessionId: assertedSessionId, toUser, filePath } = req.body as {
       sessionId?: string;
       toUser?: string;
       filePath?: string;
     };
 
-    if (!sessionId || typeof sessionId !== 'string' || sessionId.trim().length === 0) {
-      res.status(400).json({ error: 'sessionId is required' });
+    if (assertedSessionId !== undefined && assertedSessionId !== sessionId) {
+      res.status(403).json({ error: 'session_mismatch', message: 'sessionId does not match the authenticated session.' });
       return;
     }
     if (!toUser || typeof toUser !== 'string' || toUser.trim().length === 0) {

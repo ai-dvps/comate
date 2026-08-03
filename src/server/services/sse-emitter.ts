@@ -343,6 +343,7 @@ export class SseEmitter {
     suggestions?: PermissionSuggestion[],
     expiresAt?: number,
     denialReason?: string,
+    audience?: 'self' | 'admins',
   ): void {
     const inputSummary = this.summarizeInput(input);
     this.send({
@@ -357,6 +358,7 @@ export class SseEmitter {
       suggestions,
       ...(expiresAt !== undefined && { expiresAt }),
       ...(denialReason !== undefined && { denialReason }),
+      ...(audience !== undefined && { audience }),
     });
   }
 

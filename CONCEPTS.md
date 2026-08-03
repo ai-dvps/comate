@@ -49,3 +49,14 @@ todo 同步行为按字段类别分区，而非单一全局策略：评论双向
 
 ### Provider 用量令牌 (provider usage token)
 Each Provider can carry a second credential alongside its coding API key (`authToken`): a usage token, a web-login session JWT obtained by logging into the provider's website through the embedded browser. It is stored encrypted at rest, used only to query the provider's billing/usage endpoint, and never leaves the server. The coding API key drives model calls; the usage token drives quota/billing reads. Kimi is the first provider to carry one, and this two-credential split is the pattern other providers' usage will follow.
+
+## Skills
+
+### Skill search provider
+A remote Skill catalog that contributes normalized results to federated Skill Search. Provider availability means the catalog returned a valid search response; network errors, timeouts, non-success responses, and malformed responses make it temporarily unavailable, while a valid empty result does not.
+
+### 企业专区 (Enterprise Zone)
+SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企业，再查看该企业发布的 Skills；安装时仍按普通 `skillhub-cn:` Skill 逐个安装，不产生企业级编排项、批量安装语义或独立的 installed kind。
+
+### 专家包 (Expert Package)
+由一个专家包专用编排项和多个标准子 Skills 组成的完整工作流能力。编排项不是业界标准 Skill，但会以运行时可加载的 `SKILL.md` 写入共享作用域，并通过 `skillhub-package:` 来源识别为 `expert-package-orchestrator`，在 Installed 中专门标记。安装专家包会在同一作用域安装编排项与全部子 Skills；从包内 Skill 详情安装时只安装当前 Skill。

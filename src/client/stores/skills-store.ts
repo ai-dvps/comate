@@ -15,20 +15,53 @@ import i18next from 'i18next'
  *   - `install` returns `InstallResult[]` because partial-success is possible
  *     when installing multiple skills at once (Coherence #3)
  *   - `install` carries a `force` flag for the Reinstall flow (Coherence #2)
- *   - `search` runs against skills.sh via `/api/skills/search` (not a local
- *     marketplace), and is debounced client-side by the caller
+ *   - `search` federates live registry queries via `/api/skills/search`; the
+ *     server keeps no persistent marketplace index, and the caller debounces
+ *     requests client-side
  *   - There is no enable/disable flow (skills are always-on once installed)
  *   - There is no per-plugin updates-check endpoint — `update` re-fetches the
  *     source and overwrites local files in one step
  */
 
 export type SkillScope = 'project' | 'global'
+export type SkillScene =
+  | 'ai-agent'
+  | 'office-efficiency'
+  | 'development'
+  | 'content-creation'
+  | 'knowledge-management'
+  | 'professional'
+  | 'design-media'
+export type SkillSort = 'score' | 'downloads' | 'newest'
+
+export interface SkillSearchFilters {
+  scene?: SkillScene
+  preferChinese?: boolean
+  noApiKey?: boolean
+  sort?: SkillSort
+}
 
 /** Mirrors InstalledSkill from src/server/services/skills-service.ts */
 export interface InstalledSkill {
   name: string
+  kind?: 'skill' | 'expert-package-orchestrator'
+  description?: string
   scope: SkillScope
   source: string
+  /** Expert Package that installed this Skill, if it belongs to one. */
+  packageSlug?: string
+  /** Catalog summary cached at Expert Package installation time for offline display. */
+  packageCatalog?: {
+    slug: string
+    displayName: string
+    displayNameEn?: string
+    summary: string
+    summaryEn?: string
+    scene: string
+    subScene?: string
+    skillCount: number
+    source: 'skillhub.cn'
+  }
   installPath: string
   isLegacySymlink: boolean
   computedHash?: string
@@ -40,9 +73,26 @@ export interface InstalledSkill {
 export interface SearchSkill {
   id: string
   name: string
+  slug: string
   source: string
+  installSource: string
+  sourceKind: 'skills.sh' | 'skillshub' | 'xfyun' | 'skillhub-cn' | 'weskillhub'
+  description: string
   installs: number
+  updatedAt?: number
 }
+
+export type SkillSearchProviderId = SearchSkill['sourceKind']
+export type SkillProviderFailureReason = 'network' | 'timeout' | 'http' | 'invalid-response'
+
+export interface SkillSearchProvider {
+  id: SkillSearchProviderId
+  label: string
+  status: 'available' | 'unavailable'
+  reason?: SkillProviderFailureReason
+}
+
+export type SearchProviderBlockReason = 'checking' | 'no-available' | null
 
 /** Mirrors DiscoveredSkill from src/server/services/skills/types.ts */
 export interface DiscoveredSkill {
@@ -54,6 +104,7 @@ export interface DiscoveredSkill {
 /** Mirrors InstallResult from src/server/services/skills/types.ts */
 export interface InstallResult {
   skillName: string
+  kind?: 'skill' | 'expert-package-orchestrator'
   status: 'installed' | 'overwritten' | 'already-installed' | 'error'
   path?: string
   error?: string
@@ -90,9 +141,23 @@ interface SkillsState {
   updatingSkillName: string | null
   /** Skill name that just updated successfully (transient highlight) */
   recentlyUpdatedSkillName: string | null
+  searchProviders: SkillSearchProvider[]
+  selectedSearchProviderIds: SkillSearchProviderId[]
+  knownSearchProviderIds: SkillSearchProviderId[]
+  newSearchProviderIds: SkillSearchProviderId[]
+  checkingSearchProviderIds: SkillSearchProviderId[]
+  isCheckingSearchProviders: boolean
+  isSearchProviderPreferenceInitialized: boolean
+  searchProviderBlockReason: SearchProviderBlockReason
+  /** Providers omitted from the latest accepted result set. */
+  lastSearchIncompleteProviderIds: SkillSearchProviderId[]
 
   fetchInstalled: (workspaceId?: string) => Promise<void>
-  search: (query: string) => Promise<void>
+  search: (query: string, filters?: SkillSearchFilters) => Promise<void>
+  checkSearchProviders: () => Promise<void>
+  retrySearchProvider: (providerId: SkillSearchProviderId) => Promise<void>
+  setSearchProviderSelected: (providerId: SkillSearchProviderId, selected: boolean) => void
+  selectAllSearchProviders: () => void
   resolveSource: (source: string, workspaceId?: string) => Promise<boolean>
   install: (args: {
     source: string
@@ -119,8 +184,71 @@ interface SkillsState {
 }
 
 const API_BASE = '/api/skills'
+let activeSearchController: AbortController | null = null
+let activeSearchId = 0
+let activeResolveController: AbortController | null = null
+let activeResolveId = 0
+let activeProviderCheckId = 0
+let providerRequestGeneration = 0
+const providerGenerations = new Map<SkillSearchProviderId, number>()
+const providerCheckingGenerations = new Map<SkillSearchProviderId, number>()
 
-export const useSkillsStore = create<SkillsState>((set) => ({
+const PROVIDER_PREFERENCE_KEY = 'comate.skills.search-providers.v1'
+
+interface PersistedProviderPreference {
+  version: 1
+  selectedProviderIds: SkillSearchProviderId[]
+  knownProviderIds: SkillSearchProviderId[]
+}
+
+function readProviderPreference(): PersistedProviderPreference | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(PROVIDER_PREFERENCE_KEY) || 'null') as unknown
+    if (!value || typeof value !== 'object') return null
+    const candidate = value as Record<string, unknown>
+    if (
+      candidate.version !== 1
+      || !Array.isArray(candidate.selectedProviderIds)
+      || !candidate.selectedProviderIds.every((id) => typeof id === 'string')
+      || !Array.isArray(candidate.knownProviderIds)
+      || !candidate.knownProviderIds.every((id) => typeof id === 'string')
+    ) return null
+    return candidate as unknown as PersistedProviderPreference
+  } catch {
+    return null
+  }
+}
+
+function persistProviderPreference(
+  selectedProviderIds: SkillSearchProviderId[],
+  knownProviderIds: SkillSearchProviderId[]
+): void {
+  try {
+    localStorage.setItem(PROVIDER_PREFERENCE_KEY, JSON.stringify({
+      version: 1,
+      selectedProviderIds,
+      knownProviderIds,
+    }))
+  } catch {
+    // Storage can be unavailable (for example, in privacy-restricted contexts).
+  }
+}
+
+function beginProviderRequest(providerIds: SkillSearchProviderId[]): number {
+  const generation = ++providerRequestGeneration
+  for (const providerId of providerIds) providerGenerations.set(providerId, generation)
+  return generation
+}
+
+function isCurrentProviderRequest(providerId: SkillSearchProviderId, generation: number): boolean {
+  return providerGenerations.get(providerId) === generation
+}
+
+function uniqueProviderIds(providerIds: SkillSearchProviderId[]): SkillSearchProviderId[] {
+  return [...new Set(providerIds)]
+}
+
+export const useSkillsStore = create<SkillsState>((set, get) => ({
   installed: [],
   searchResults: [],
   discovered: [],
@@ -133,6 +261,15 @@ export const useSkillsStore = create<SkillsState>((set) => ({
   failedUpdateSkillName: null,
   updatingSkillName: null,
   recentlyUpdatedSkillName: null,
+  searchProviders: [],
+  selectedSearchProviderIds: [],
+  knownSearchProviderIds: [],
+  newSearchProviderIds: [],
+  checkingSearchProviderIds: [],
+  isCheckingSearchProviders: false,
+  isSearchProviderPreferenceInitialized: false,
+  searchProviderBlockReason: 'checking',
+  lastSearchIncompleteProviderIds: [],
 
   fetchInstalled: async (workspaceId) => {
     set({ isFetchingInstalled: true, error: null })
@@ -156,25 +293,246 @@ export const useSkillsStore = create<SkillsState>((set) => ({
     }
   },
 
-  search: async (query) => {
-    set({ isSearching: true, error: null })
+  search: async (query, filters = {}) => {
+    if (!query.trim()) {
+      activeSearchId += 1
+      activeSearchController?.abort()
+      activeSearchController = null
+      set({
+        searchResults: [],
+        isSearching: false,
+        error: null,
+        searchProviderBlockReason: null,
+        lastSearchIncompleteProviderIds: [],
+      })
+      return
+    }
+
+    const providerState = get()
+    if (!providerState.isSearchProviderPreferenceInitialized) {
+      set({ isSearching: false, searchProviderBlockReason: 'checking' })
+      return
+    }
+    const selectedProviders = providerState.searchProviders.filter(({ id }) =>
+      providerState.selectedSearchProviderIds.includes(id)
+    )
+    const availableProviderIds = selectedProviders
+      .filter(({ status }) => status === 'available')
+      .map(({ id }) => id)
+    const unavailableProviderIds = selectedProviders
+      .filter(({ status }) => status === 'unavailable')
+      .map(({ id }) => id)
+    if (availableProviderIds.length === 0) {
+      set({
+        searchResults: [],
+        isSearching: false,
+        error: null,
+        searchProviderBlockReason: 'no-available',
+        lastSearchIncompleteProviderIds: unavailableProviderIds,
+      })
+      return
+    }
+
+    const requestId = ++activeSearchId
+    const providerGeneration = beginProviderRequest(availableProviderIds)
+    activeSearchController?.abort()
+    const controller = new AbortController()
+    activeSearchController = controller
+    set({ isSearching: true, error: null, searchProviderBlockReason: null })
     try {
-      const url = `${API_BASE}/search?q=${encodeURIComponent(query)}`
-      const res = await fetch(url)
+      const params = new URLSearchParams({ q: query, sort: filters.sort || 'score' })
+      if (filters.scene) params.set('scene', filters.scene)
+      if (filters.preferChinese) params.set('preferChinese', 'true')
+      if (filters.noApiKey) params.set('noApiKey', 'true')
+      params.set('providers', availableProviderIds.join(','))
+      const url = `${API_BASE}/search?${params.toString()}`
+      const res = await fetch(url, { signal: controller.signal })
+      if (requestId !== activeSearchId) return
       if (!res.ok) {
         throw new Error(i18next.t('settings:skills.searchFailed', 'Skill search failed'))
       }
       const data = await res.json()
-      set({ searchResults: data.skills || [], isSearching: false })
+      if (requestId !== activeSearchId) return
+      const outcomes = Array.isArray(data.providers) ? data.providers as SkillSearchProvider[] : []
+      const outcomeById = new Map(outcomes.map((provider) => [provider.id, provider]))
+      set((state) => ({
+        searchResults: data.skills || [],
+        isSearching: false,
+        searchProviders: state.searchProviders.map((provider) => {
+          const outcome = outcomeById.get(provider.id)
+          return outcome && isCurrentProviderRequest(provider.id, providerGeneration)
+            ? outcome
+            : provider
+        }),
+        lastSearchIncompleteProviderIds: uniqueProviderIds([
+          ...unavailableProviderIds,
+          ...outcomes
+            .filter(({ status }) => status === 'unavailable')
+            .map(({ id }) => id),
+        ]),
+      }))
     } catch (err) {
+      if (requestId !== activeSearchId || controller.signal.aborted) return
       set({
         error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'),
         isSearching: false,
       })
+    } finally {
+      if (requestId === activeSearchId) activeSearchController = null
     }
   },
 
+  checkSearchProviders: async () => {
+    const checkId = ++activeProviderCheckId
+    const providerState = get()
+    const requestedProviderIds = providerState.searchProviders.map(({ id }) => id)
+    const generation = beginProviderRequest(requestedProviderIds)
+    for (const providerId of requestedProviderIds) {
+      providerCheckingGenerations.set(providerId, generation)
+    }
+    set({
+      isCheckingSearchProviders: true,
+      checkingSearchProviderIds: requestedProviderIds,
+      searchProviderBlockReason: providerState.isSearchProviderPreferenceInitialized ? null : 'checking',
+    })
+    try {
+      const res = await fetch(`${API_BASE}/search/providers`)
+      if (!res.ok) throw new Error('provider health check failed')
+      const data = await res.json()
+      const providers = Array.isArray(data.providers) ? data.providers as SkillSearchProvider[] : []
+      set((state) => {
+        const previousById = new Map(state.searchProviders.map((provider) => [provider.id, provider]))
+        const mergedProviders = providers.map((provider) => {
+          if (!requestedProviderIds.includes(provider.id) || isCurrentProviderRequest(provider.id, generation)) {
+            return provider
+          }
+          return previousById.get(provider.id) || provider
+        })
+
+        let selectedProviderIds = state.selectedSearchProviderIds
+        let knownProviderIds = state.knownSearchProviderIds
+        let newSearchProviderIds = state.newSearchProviderIds
+        if (!state.isSearchProviderPreferenceInitialized) {
+          const persisted = readProviderPreference()
+          const liveIds = providers.map(({ id }) => id)
+          if (persisted) {
+            const addedIds = liveIds.filter((id) => !persisted.knownProviderIds.includes(id))
+            selectedProviderIds = uniqueProviderIds([
+              ...persisted.selectedProviderIds.filter((id) => liveIds.includes(id)),
+              ...addedIds,
+            ])
+            newSearchProviderIds = addedIds
+          } else {
+            selectedProviderIds = liveIds
+            newSearchProviderIds = []
+          }
+          knownProviderIds = liveIds
+        } else {
+          const liveIds = providers.map(({ id }) => id)
+          const addedIds = liveIds.filter((id) => !state.knownSearchProviderIds.includes(id))
+          selectedProviderIds = uniqueProviderIds([...selectedProviderIds, ...addedIds])
+          knownProviderIds = uniqueProviderIds([...knownProviderIds, ...liveIds])
+          newSearchProviderIds = uniqueProviderIds([...newSearchProviderIds, ...addedIds])
+        }
+        persistProviderPreference(selectedProviderIds, knownProviderIds)
+
+        return {
+          searchProviders: mergedProviders,
+          selectedSearchProviderIds: selectedProviderIds,
+          knownSearchProviderIds: knownProviderIds,
+          newSearchProviderIds,
+          isSearchProviderPreferenceInitialized: true,
+          searchProviderBlockReason: null,
+        }
+      })
+    } catch {
+      set((state) => ({
+        searchProviders: state.searchProviders.map((provider) =>
+          isCurrentProviderRequest(provider.id, generation)
+            ? { ...provider, status: 'unavailable' as const, reason: 'network' as const }
+            : provider
+        ),
+      }))
+    } finally {
+      if (checkId === activeProviderCheckId) {
+        set((state) => ({
+          isCheckingSearchProviders: false,
+          checkingSearchProviderIds: state.checkingSearchProviderIds.filter(
+            (providerId) => !requestedProviderIds.includes(providerId)
+              || providerCheckingGenerations.get(providerId) !== generation
+          ),
+        }))
+        for (const providerId of requestedProviderIds) {
+          if (providerCheckingGenerations.get(providerId) === generation) {
+            providerCheckingGenerations.delete(providerId)
+          }
+        }
+      }
+    }
+  },
+
+  retrySearchProvider: async (providerId) => {
+    const generation = beginProviderRequest([providerId])
+    providerCheckingGenerations.set(providerId, generation)
+    set((state) => ({
+      checkingSearchProviderIds: uniqueProviderIds([...state.checkingSearchProviderIds, providerId]),
+    }))
+    try {
+      const params = new URLSearchParams({ provider: providerId })
+      const res = await fetch(`${API_BASE}/search/providers?${params.toString()}`)
+      if (!res.ok) throw new Error('provider health check failed')
+      const data = await res.json()
+      const outcome = Array.isArray(data.providers)
+        ? data.providers.find((provider: SkillSearchProvider) => provider.id === providerId)
+        : undefined
+      if (!outcome || !isCurrentProviderRequest(providerId, generation)) return
+      set((state) => ({
+        searchProviders: state.searchProviders.map((provider) =>
+          provider.id === providerId ? outcome : provider
+        ),
+      }))
+    } catch {
+      if (!isCurrentProviderRequest(providerId, generation)) return
+      set((state) => ({
+        searchProviders: state.searchProviders.map((provider) =>
+          provider.id === providerId
+            ? { ...provider, status: 'unavailable' as const, reason: 'network' as const }
+            : provider
+        ),
+      }))
+    } finally {
+      if (providerCheckingGenerations.get(providerId) === generation) {
+        set((state) => ({
+          checkingSearchProviderIds: state.checkingSearchProviderIds.filter((id) => id !== providerId),
+        }))
+        providerCheckingGenerations.delete(providerId)
+      }
+    }
+  },
+
+  setSearchProviderSelected: (providerId, selected) => {
+    set((state) => {
+      const selectedProviderIds = selected
+        ? uniqueProviderIds([...state.selectedSearchProviderIds, providerId])
+        : state.selectedSearchProviderIds.filter((id) => id !== providerId)
+      persistProviderPreference(selectedProviderIds, state.knownSearchProviderIds)
+      return { selectedSearchProviderIds: selectedProviderIds }
+    })
+  },
+
+  selectAllSearchProviders: () => {
+    set((state) => {
+      const selectedProviderIds = state.searchProviders.map(({ id }) => id)
+      persistProviderPreference(selectedProviderIds, state.knownSearchProviderIds)
+      return { selectedSearchProviderIds: selectedProviderIds }
+    })
+  },
+
   resolveSource: async (source, workspaceId) => {
+    const requestId = ++activeResolveId
+    activeResolveController?.abort()
+    const controller = new AbortController()
+    activeResolveController = controller
     set({ isResolving: true, error: null, discovered: [] })
     try {
       const body: Record<string, unknown> = { source }
@@ -183,8 +541,11 @@ export const useSkillsStore = create<SkillsState>((set) => ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: controller.signal,
       })
+      if (requestId !== activeResolveId) return false
       const data = await res.json()
+      if (requestId !== activeResolveId) return false
       if (!res.ok) {
         set({
           error: data.error || i18next.t('settings:skills.resolveFailed', 'Failed to resolve source'),
@@ -195,11 +556,14 @@ export const useSkillsStore = create<SkillsState>((set) => ({
       set({ discovered: data.skills || [], isResolving: false })
       return true
     } catch (err) {
+      if (requestId !== activeResolveId || controller.signal.aborted) return false
       set({
         error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'),
         isResolving: false,
       })
       return false
+    } finally {
+      if (requestId === activeResolveId) activeResolveController = null
     }
   },
 
@@ -369,7 +733,12 @@ export const useSkillsStore = create<SkillsState>((set) => ({
     }
   },
 
-  clearDiscovered: () => set({ discovered: [] }),
+  clearDiscovered: () => {
+    activeResolveId += 1
+    activeResolveController?.abort()
+    activeResolveController = null
+    set({ discovered: [], isResolving: false })
+  },
   clearError: () => set({ error: null }),
   clearUpdateError: () => set({ updateError: null, failedUpdateSkillName: null }),
   clearRecentlyUpdated: () => set({ recentlyUpdatedSkillName: null }),

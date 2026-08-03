@@ -6,6 +6,7 @@ import { botService } from '../services/bot-service.js';
 import { browserService } from '../services/browser-service.js';
 import { clearBrowserGateSession } from '../services/browser-gate-state.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { getLoopbackAuth } from '../services/security/loopback-auth.js';
 import type { BotUser } from '../models/bot-user.js';
 import { loadWorkflowState, listWorkflowRunIds } from '../services/workflow-loader.js';
 
@@ -158,6 +159,14 @@ router.get('/sessions/:sessionId/wecom-user', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
+    // U12 (KTD-28): the middleware already enforces token↔session binding for
+    // session capability tokens; this is the in-handler backstop. Desktop
+    // credential callers (ChatPanel) may query any session.
+    const auth = getLoopbackAuth(req);
+    if (auth?.kind === 'session' && auth.sessionId !== sessionId) {
+      res.status(403).json({ error: 'session_mismatch', message: 'Token is not valid for this session.' });
+      return;
+    }
     const user = findChannelUserForSession(workspaceId, 'wecom', sessionId);
     if (!user) {
       res.status(404).json({ error: 'Session not found' });
@@ -221,7 +230,6 @@ function findChannelUserForSession(
 router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
   const sessionId = req.params.sessionId;
   const requestId = req.params.requestId;
-  const workspaceId = (req.params as unknown as { id: string }).id;
   const { behavior, updatedPermissions, answers } = req.body;
 
   if (!behavior || (behavior !== 'allow' && behavior !== 'deny')) {
@@ -230,7 +238,17 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
   }
 
   try {
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
+    // U8 (KTD-15): never spawn a runtime to resolve an approval — a pending
+    // approval cannot exist without a live runtime, so a missing runtime
+    // means the approval is already gone (timeout/stop/close). The desktop
+    // funnel shares the gate's provenance writer with the card flow: the
+    // resolution carries its source and the gate writes the same-shaped
+    // audit row either way.
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    if (!runtime) {
+      res.status(404).json({ error: 'No active approval for this session', code: 'APPROVAL_NOT_FOUND' });
+      return;
+    }
 
     let result: PermissionResult;
     if (behavior === 'allow') {
@@ -250,8 +268,8 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
       };
     }
 
-    diagLog(`[Route] resolveApproval ${requestId} behavior=${behavior}`);
-    runtime.resolveApproval(requestId, result);
+    diagLog(`[Route] resolveApproval ${requestId} behavior=${behavior} source=desktop`);
+    runtime.resolveApproval(requestId, result, { source: 'desktop', approver: { type: 'user' } });
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to resolve approval:', error);

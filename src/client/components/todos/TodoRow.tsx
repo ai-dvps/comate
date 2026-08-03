@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Github, X, Check } from 'lucide-react'
-import { MAX_TODO_TEXT_LENGTH, type Todo } from '../../stores/todo-store'
+import { CalendarClock, Check, CirclePlay, Github, Moon, Repeat2, SkipForward, X, XCircle } from 'lucide-react'
+import { MAX_TODO_TEXT_LENGTH, type Todo, type TodoExecutionType, type TodoLatestRun } from '../../stores/todo-store'
 import { cn } from '../ui/utils'
 import { Badge } from '../ui/badge'
 
@@ -15,10 +15,53 @@ interface TodoRowProps {
   onRename: (text: string) => void
 }
 
+function ExecutionTypeIcon({ type }: { type: TodoExecutionType }) {
+  const className = 'w-3.5 h-3.5'
+  switch (type) {
+    case 'once':
+      return <CalendarClock className={className} aria-hidden="true" />
+    case 'recurring':
+      return <Repeat2 className={className} aria-hidden="true" />
+    case 'idle':
+      return <Moon className={className} aria-hidden="true" />
+    default:
+      return <CirclePlay className={className} aria-hidden="true" />
+  }
+}
+
+function RunStatusIcon({ status }: { status: TodoLatestRun['status'] }) {
+  const className = 'w-3 h-3'
+  switch (status) {
+    case 'succeeded':
+      return <Check className={className} aria-hidden="true" />
+    case 'failed':
+      return <XCircle className={className} aria-hidden="true" />
+    case 'missed':
+    case 'skipped':
+      return <SkipForward className={className} aria-hidden="true" />
+    default:
+      return <CirclePlay className={className} aria-hidden="true" />
+  }
+}
+
 export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete, onRename }: TodoRowProps) {
   const { t } = useTranslation('todos')
   const done = todo.status === 'done'
   const labelOverflow = todo.labels.length > 2 ? todo.labels.length - 2 : 0
+  const executionType = todo.executionType ?? 'manual'
+  const executionTypeLabels: Record<TodoExecutionType, string> = {
+    manual: t('executionManual'),
+    once: t('executionOnce'),
+    recurring: t('executionRecurring'),
+    idle: t('executionIdle'),
+  }
+  const runStatusLabels: Record<TodoLatestRun['status'], string> = {
+    running: t('runStatusRunning'),
+    succeeded: t('runStatusSucceeded'),
+    failed: t('runStatusFailed'),
+    missed: t('runStatusMissed'),
+    skipped: t('runStatusSkipped'),
+  }
 
   const [isEditing, setIsEditing] = useState(false)
   const [draft, setDraft] = useState(todo.text)
@@ -97,37 +140,66 @@ export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete, 
       </button>
 
       <div className="flex-1 min-w-0 flex flex-col gap-1">
-        {isEditing ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={draft}
-            maxLength={MAX_TODO_TEXT_LENGTH}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onBlur={commit}
-            onClick={(e) => e.stopPropagation()}
-            onDoubleClick={(e) => e.stopPropagation()}
-            aria-label={t('editTitle')}
-            className={cn(
-              'w-full bg-bg text-sm leading-tight rounded-md border border-accent px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-accent',
-              done ? 'text-text-tertiary line-through' : 'text-text-primary',
-            )}
-          />
-        ) : (
-          <span
-            onDoubleClick={startEditing}
-            className={cn(
-              'text-sm leading-tight',
-              done ? 'line-through text-text-tertiary' : 'text-text-primary',
-            )}
-            title={t('doubleClickToEdit')}
-          >
-            {todo.text}
-          </span>
-        )}
+        <div className="flex items-start gap-1.5 min-w-0">
+          {executionType !== 'manual' ? (
+            <span
+              className="mt-0.5 text-text-tertiary flex-shrink-0"
+              aria-label={executionTypeLabels[executionType]}
+              title={executionTypeLabels[executionType]}
+            >
+              <ExecutionTypeIcon type={executionType} />
+            </span>
+          ) : null}
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={draft}
+              maxLength={MAX_TODO_TEXT_LENGTH}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onBlur={commit}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              aria-label={t('editTitle')}
+              className={cn(
+                'w-full bg-bg text-sm leading-tight rounded-md border border-accent px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-accent',
+                done ? 'text-text-tertiary line-through' : 'text-text-primary',
+              )}
+            />
+          ) : (
+            <span
+              onDoubleClick={startEditing}
+              className={cn(
+                'text-sm leading-tight min-w-0',
+                done ? 'line-through text-text-tertiary' : 'text-text-primary',
+              )}
+              title={t('doubleClickToEdit')}
+            >
+              {todo.text}
+            </span>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {todo.latestRun && (
+            <Badge
+              variant="outline"
+              className={cn(
+                'font-normal text-[10px] px-1.5 py-0 gap-1',
+                todo.latestRun.status === 'succeeded' && 'text-success border-success/30',
+                todo.latestRun.status === 'failed' && 'text-destructive border-destructive/30',
+                todo.latestRun.status === 'running' && 'text-warning border-warning/30',
+              )}
+              title={t('latestRunStatus', {
+                status: runStatusLabels[todo.latestRun.status],
+                time: new Date(todo.latestRun.fireAt).toLocaleString(),
+              })}
+            >
+              <RunStatusIcon status={todo.latestRun.status} />
+              {runStatusLabels[todo.latestRun.status]}
+            </Badge>
+          )}
           {todo.dueDate && (
             <Badge variant="secondary" className="font-normal text-[10px] px-1.5 py-0">
               {todo.dueDate.slice(0, 10)}

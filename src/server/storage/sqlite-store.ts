@@ -24,7 +24,9 @@ import type {
   UpdateBotUserInput,
 } from '../models/bot-user.js';
 import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-channel-crypto.js';
-import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin, TodoComment, TodoConflict } from '../models/todo.js';
+import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin, TodoComment, TodoConflict, TodoExecutionStatus } from '../models/todo.js';
+import type { TodoRun, CreateTodoRunInput, UpdateTodoRunInput, TodoRunStatus } from '../models/todo-run.js';
+import { sanitizeBotRolePolicy, createDefaultBotRolePolicy } from '../services/bot-access-policy.js';
 import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
 import { providerSupportsFastMode } from '../utils/provider-capability.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
@@ -263,6 +265,33 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_browser_audit_workspace_created
         ON browser_audit (workspace_id, created_at DESC)
     `);
+    // bot_escalation_ledger (U8 phase-2, KTD-16): persistent approval ledger
+    // for out-of-sandbox escalation requests. One row per pending approval
+    // (id = the approval requestId); the row is the durable record a boot
+    // recovery pass can expire (fail-closed) when the process died with
+    // approvals still pending.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_escalation_ledger (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        audience TEXT NOT NULL,
+        requester_channel TEXT NOT NULL,
+        requester_channel_user_id TEXT NOT NULL,
+        requester_role TEXT,
+        recipients_json TEXT NOT NULL DEFAULT '[]',
+        rule_payload_json TEXT NOT NULL DEFAULT '{}',
+        state TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        resolution_json TEXT
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_bot_escalation_ledger_state
+        ON bot_escalation_ledger (state, bot_id)
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -366,7 +395,20 @@ export class SqliteStore {
         last_synced_at TEXT,
         assignee TEXT,
         labels_json TEXT NOT NULL DEFAULT '[]',
-        origin_deleted INTEGER NOT NULL DEFAULT 0
+        origin_deleted INTEGER NOT NULL DEFAULT 0,
+        execution_type TEXT NOT NULL DEFAULT 'manual',
+        instruction TEXT,
+        schedule_time TEXT,
+        cron_expr TEXT,
+        execution_status TEXT NOT NULL DEFAULT 'active',
+        next_fire_at TEXT,
+        notify_desktop INTEGER NOT NULL DEFAULT 1,
+        notify_in_app INTEGER NOT NULL DEFAULT 1,
+        notify_wecom INTEGER NOT NULL DEFAULT 0,
+        wecom_recipient TEXT,
+        confirmed_snapshot TEXT,
+        deleted_at TEXT,
+        legacy_scheduled_task_id TEXT UNIQUE
       )
     `);
     // KTD4: additive `content` column (nullable markdown body). Idempotent on
@@ -493,6 +535,26 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_task_runs_task_created
         ON task_runs (task_id, created_at DESC)
     `);
+    // Loopback capability tokens (U12, KTD-28): per-session Bearer tokens for
+    // the sandbox-reachable API surface. Only the SHA-256 hash of the token is
+    // stored — a database dump never leaks a usable credential. Tokens are
+    // boot-invalidated by the session-capability service, so rows here are
+    // per-boot runtime artifacts, not durable state.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS session_capability_tokens (
+        token_hash TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        bot_id TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_capability_tokens_session
+        ON session_capability_tokens (session_id, revoked_at)
+    `);
 
     ensureAnalyticsCacheSchema(this.db);
 
@@ -510,6 +572,126 @@ export class SqliteStore {
     this.migrateBrowserAuditSchema();
     this.migrateTodosGlobalSchema();
     this.migrateTodoContentColumn();
+    this.migrateTodoExecutionSchema();
+    this.migrateBotEscalationLedgerSchema();
+  }
+
+  private migrateTodoExecutionSchema(): void {
+    const columns = this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>;
+    const add = (name: string, sql: string): void => {
+      if (!columns.some((column) => column.name === name)) this.db.exec(sql);
+    };
+    add('execution_type', "ALTER TABLE todos ADD COLUMN execution_type TEXT NOT NULL DEFAULT 'manual'");
+    add('instruction', 'ALTER TABLE todos ADD COLUMN instruction TEXT');
+    add('schedule_time', 'ALTER TABLE todos ADD COLUMN schedule_time TEXT');
+    add('cron_expr', 'ALTER TABLE todos ADD COLUMN cron_expr TEXT');
+    add('execution_status', "ALTER TABLE todos ADD COLUMN execution_status TEXT NOT NULL DEFAULT 'active'");
+    add('next_fire_at', 'ALTER TABLE todos ADD COLUMN next_fire_at TEXT');
+    add('notify_desktop', 'ALTER TABLE todos ADD COLUMN notify_desktop INTEGER NOT NULL DEFAULT 1');
+    add('notify_in_app', 'ALTER TABLE todos ADD COLUMN notify_in_app INTEGER NOT NULL DEFAULT 1');
+    add('notify_wecom', 'ALTER TABLE todos ADD COLUMN notify_wecom INTEGER NOT NULL DEFAULT 0');
+    add('wecom_recipient', 'ALTER TABLE todos ADD COLUMN wecom_recipient TEXT');
+    add('confirmed_snapshot', 'ALTER TABLE todos ADD COLUMN confirmed_snapshot TEXT');
+    add('deleted_at', 'ALTER TABLE todos ADD COLUMN deleted_at TEXT');
+    add('legacy_scheduled_task_id', 'ALTER TABLE todos ADD COLUMN legacy_scheduled_task_id TEXT');
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_legacy_scheduled_task ON todos (legacy_scheduled_task_id) WHERE legacy_scheduled_task_id IS NOT NULL');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS todo_runs (
+      id TEXT PRIMARY KEY, todo_id TEXT NOT NULL, session_id TEXT, status TEXT NOT NULL,
+      fire_at TEXT NOT NULL, started_at TEXT, ended_at TEXT, reason TEXT,
+      instruction_snapshot TEXT NOT NULL, created_at TEXT NOT NULL,
+      legacy_source_key TEXT UNIQUE
+    )`);
+    const runColumns = this.db.prepare('PRAGMA table_info(todo_runs)').all() as Array<{ name: string }>;
+    if (!runColumns.some((column) => column.name === 'legacy_source_key')) {
+      this.db.exec('ALTER TABLE todo_runs ADD COLUMN legacy_source_key TEXT');
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_todo_runs_legacy_source ON todo_runs (legacy_source_key) WHERE legacy_source_key IS NOT NULL');
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_todo_runs_todo_created ON todo_runs (todo_id, created_at DESC)');
+    this.db.transaction(() => this.copyLegacyScheduledTasksToTodos())();
+    const previous = this.getMigrationState().snapshot;
+    this.setMigrationState(Math.max(this.getMigrationVersion() ?? 0, 9), new Date().toISOString(), {
+      ...previous,
+      todo_execution_schema: true,
+    });
+  }
+
+  /**
+   * Copy-only compatibility migration. `scheduled_tasks` and `task_runs` stay
+   * intact so a pre-unification database can always be inspected or recovered.
+   * The source-key columns make a repeated app start a no-op.
+   */
+  private copyLegacyScheduledTasksToTodos(): void {
+    this.db.prepare("UPDATE todos SET status = 'pending' WHERE status = 'did-but-need-verify'").run();
+    const scheduledRows = this.db.prepare('SELECT * FROM scheduled_tasks').all() as RawScheduledTaskRow[];
+    const findTodo = this.db.prepare('SELECT id FROM todos WHERE legacy_scheduled_task_id = ?');
+    const idExists = this.db.prepare('SELECT 1 FROM todos WHERE id = ?');
+    const insertTodo = this.db.prepare(`
+      INSERT INTO todos (
+        id, workspace_id, text, content, status, session_id, created_at, updated_at,
+        origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
+        remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted,
+        execution_type, instruction, schedule_time, cron_expr, execution_status,
+        next_fire_at, notify_desktop, notify_in_app, notify_wecom, wecom_recipient,
+        confirmed_snapshot, deleted_at, legacy_scheduled_task_id
+      ) VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const task of scheduledRows) {
+      if (findTodo.get(task.id)) continue;
+      // Preserve source IDs whenever possible. In the practically impossible
+      // collision case, retain the legacy ID in `legacy_scheduled_task_id` and
+      // use a fresh Todo ID rather than overwriting an unrelated Todo.
+      const todoId = idExists.get(task.id) ? uuidv4() : task.id;
+      insertTodo.run(
+        todoId, task.workspace_id, task.name,
+        task.deleted_at ? 'discard' : 'pending', task.created_at, task.updated_at,
+        task.schedule_type, task.instruction, task.schedule_time, task.cron_expr,
+        task.status, task.next_fire_at, task.notify_desktop, task.notify_in_app,
+        task.notify_wecom, task.wecom_recipient, task.confirmed_snapshot,
+        task.deleted_at, task.id,
+      );
+    }
+
+    const taskTodoId = this.db.prepare('SELECT id FROM todos WHERE legacy_scheduled_task_id = ?');
+    const legacyRuns = this.db.prepare('SELECT * FROM task_runs').all() as RawTaskRunRow[];
+    const existingRun = this.db.prepare('SELECT 1 FROM todo_runs WHERE legacy_source_key = ?');
+    const runIdExists = this.db.prepare('SELECT 1 FROM todo_runs WHERE id = ?');
+    const insertRun = this.db.prepare(`
+      INSERT INTO todo_runs (
+        id, todo_id, session_id, status, fire_at, started_at, ended_at, reason,
+        instruction_snapshot, created_at, legacy_source_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const run of legacyRuns) {
+      const sourceKey = `scheduled-run:${run.id}`;
+      if (existingRun.get(sourceKey)) continue;
+      const parent = taskTodoId.get(run.task_id) as { id: string } | undefined;
+      if (!parent) throw new Error(`Cannot migrate task run ${run.id}: scheduled task ${run.task_id} has no mapped Todo`);
+      insertRun.run(
+        runIdExists.get(run.id) ? uuidv4() : run.id, parent.id, run.session_id, run.status,
+        run.fire_at, run.started_at, run.ended_at, run.reason, run.instruction_snapshot,
+        run.created_at, sourceKey,
+      );
+    }
+
+    const legacyTodoSessions = this.db.prepare('SELECT * FROM todos WHERE session_id IS NOT NULL').all() as RawTodoRow[];
+    for (const todo of legacyTodoSessions) {
+      const sourceKey = `todo-session:${todo.id}:${todo.session_id}`;
+      if (existingRun.get(sourceKey)) continue;
+      insertRun.run(
+        uuidv4(), todo.id, todo.session_id, 'succeeded', todo.updated_at,
+        todo.created_at, todo.updated_at, null,
+        todo.instruction ?? todo.content ?? todo.text, todo.updated_at, sourceKey,
+      );
+    }
+
+    const copiedTaskCount = (this.db.prepare('SELECT COUNT(*) AS count FROM todos WHERE legacy_scheduled_task_id IS NOT NULL').get() as { count: number }).count;
+    if (copiedTaskCount !== scheduledRows.length) {
+      throw new Error(`Scheduled task migration validation failed: expected ${scheduledRows.length} Todos, found ${copiedTaskCount}`);
+    }
+    const copiedRunCount = (this.db.prepare("SELECT COUNT(*) AS count FROM todo_runs WHERE legacy_source_key LIKE 'scheduled-run:%'").get() as { count: number }).count;
+    if (copiedRunCount !== legacyRuns.length) {
+      throw new Error(`Task run migration validation failed: expected ${legacyRuns.length} Runs, found ${copiedRunCount}`);
+    }
   }
 
   /**
@@ -681,6 +863,24 @@ export class SqliteStore {
       console.error('[SqliteStore] Failed to add todos.content column:', err);
       throw err;
     }
+  }
+
+  /**
+   * Schema version 10 (U8 phase-2, KTD-16): the bot_escalation_ledger table.
+   * The CREATE TABLE above is idempotent and covers both fresh and existing
+   * databases; this step only records the version bump so the schema lineage
+   * is inspectable (mirrors migrateBrowserAuditSchema).
+   */
+  private migrateBotEscalationLedgerSchema(): void {
+    const version = this.getMigrationVersion();
+    if (version !== null && version >= 10) {
+      return;
+    }
+    const previous = this.getMigrationState().snapshot;
+    this.setMigrationState(10, new Date().toISOString(), {
+      ...previous,
+      bot_escalation_ledger_schema: true,
+    });
   }
 
   getAnalyticsCache(): AnalyticsCache {
@@ -1198,43 +1398,15 @@ export class SqliteStore {
       }
 
       for (const bot of oldBots) {
-        const policy = safeJsonParse(bot.role_policy_json, {
-          normalToolPolicy: {
-            posture: 'safe',
-            categoryDefaults: {
-              fileRead: 'allow',
-              fileWrite: 'deny',
-              shell: 'deny',
-              network: 'deny',
-              subagents: 'deny',
-              reply: 'allow',
-              browser: 'deny',
-            },
-          },
-          skillAllowlist: [],
-          bashWhitelist: [],
-        } as BotRolePolicy);
+        const policy = sanitizeBotRolePolicy(
+          safeJsonParse(bot.role_policy_json, createDefaultBotRolePolicy('normal')),
+        );
         const rolePersonas = safeJsonParse(bot.role_personas_json ?? '{}', {} as Partial<Record<BotRoleKey, BotPersona>>);
         for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
           const roleId = uuidv4();
           const permissions: BotRolePolicy = roleKey === 'normal'
             ? policy
-            : {
-                normalToolPolicy: {
-                  posture: 'allow-all',
-                  categoryDefaults: {
-                    fileRead: 'allow',
-                    fileWrite: 'allow',
-                    shell: 'allow',
-                    network: 'allow',
-                    subagents: 'allow',
-                    reply: 'allow',
-                    browser: 'deny',
-                  },
-                },
-                skillAllowlist: [],
-                bashWhitelist: [],
-              };
+            : createDefaultBotRolePolicy(roleKey);
           const persona = rolePersonas[roleKey];
           this.db.prepare(`
             INSERT OR IGNORE INTO bot_roles (id, bot_id, role_key, permissions_json, persona_json, created_at, updated_at)
@@ -1360,39 +1532,7 @@ export class SqliteStore {
           `).run(feishuChannelId, feishuBotId, 'feishu', 'Feishu', '{}', now, now);
           for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
             const roleId = uuidv4();
-            const permissions: BotRolePolicy = roleKey === 'normal'
-              ? {
-                  normalToolPolicy: {
-                    posture: 'safe',
-                    categoryDefaults: {
-                      fileRead: 'allow',
-                      fileWrite: 'deny',
-                      shell: 'deny',
-                      network: 'deny',
-                      subagents: 'deny',
-                      reply: 'allow',
-                      browser: 'deny',
-                    },
-                  },
-                  skillAllowlist: [],
-                  bashWhitelist: [],
-                }
-              : {
-                  normalToolPolicy: {
-                    posture: 'allow-all',
-                    categoryDefaults: {
-                      fileRead: 'allow',
-                      fileWrite: 'allow',
-                      shell: 'allow',
-                      network: 'allow',
-                      subagents: 'allow',
-                      reply: 'allow',
-                      browser: 'deny',
-                    },
-                  },
-                  skillAllowlist: [],
-                  bashWhitelist: [],
-                };
+            const permissions: BotRolePolicy = createDefaultBotRolePolicy(roleKey);
             this.db.prepare(`
               INSERT INTO bot_roles (id, bot_id, role_key, permissions_json, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?)
@@ -2196,6 +2336,18 @@ export class SqliteStore {
       text: input.text.trim(),
       content: input.content ?? null,
       status: 'pending',
+      executionType: input.executionType ?? 'manual',
+      instruction: input.instruction ?? null,
+      scheduleTime: input.scheduleTime ?? null,
+      cronExpr: input.cronExpr ?? null,
+      executionStatus: input.executionStatus ?? 'active',
+      nextFireAt: input.nextFireAt ?? null,
+      notifyDesktop: input.notifyDesktop ?? true,
+      notifyInApp: input.notifyInApp ?? true,
+      notifyWecom: input.notifyWecom ?? false,
+      wecomRecipient: input.wecomRecipient ?? null,
+      confirmedSnapshot: input.confirmedSnapshot ?? null,
+      deletedAt: null,
       sessionId: null,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -2215,11 +2367,15 @@ export class SqliteStore {
         `INSERT INTO todos (
           id, workspace_id, text, content, status, session_id, created_at, updated_at,
           origin, due_date, repo_full_name, issue_number, remote_snapshot_json,
-          remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted
+          remote_updated_at, last_synced_at, assignee, labels_json, origin_deleted,
+          execution_type, instruction, schedule_time, cron_expr, execution_status, next_fire_at,
+          notify_desktop, notify_in_app, notify_wecom, wecom_recipient, confirmed_snapshot, deleted_at
         ) VALUES (
           @id, @workspace_id, @text, @content, @status, @session_id, @created_at, @updated_at,
           @origin, @due_date, @repo_full_name, @issue_number, @remote_snapshot_json,
-          @remote_updated_at, @last_synced_at, @assignee, @labels_json, @origin_deleted
+          @remote_updated_at, @last_synced_at, @assignee, @labels_json, @origin_deleted,
+          @execution_type, @instruction, @schedule_time, @cron_expr, @execution_status, @next_fire_at,
+          @notify_desktop, @notify_in_app, @notify_wecom, @wecom_recipient, @confirmed_snapshot, @deleted_at
         )`,
       )
       .run({
@@ -2241,6 +2397,18 @@ export class SqliteStore {
         assignee: todo.assignee,
         labels_json: JSON.stringify(todo.labels),
         origin_deleted: todo.originDeleted ? 1 : 0,
+        execution_type: todo.executionType,
+        instruction: todo.instruction,
+        schedule_time: todo.scheduleTime,
+        cron_expr: todo.cronExpr,
+        execution_status: todo.executionStatus,
+        next_fire_at: todo.nextFireAt,
+        notify_desktop: todo.notifyDesktop ? 1 : 0,
+        notify_in_app: todo.notifyInApp ? 1 : 0,
+        notify_wecom: todo.notifyWecom ? 1 : 0,
+        wecom_recipient: todo.wecomRecipient,
+        confirmed_snapshot: todo.confirmedSnapshot === null ? null : JSON.stringify(todo.confirmedSnapshot),
+        deleted_at: todo.deletedAt,
       });
     return todo;
   }
@@ -2455,6 +2623,17 @@ export class SqliteStore {
     }
     if (input.workspaceId !== undefined) { sets.push('workspace_id = ?'); values.push(input.workspaceId); }
     if (input.dueDate !== undefined) { sets.push('due_date = ?'); values.push(input.dueDate); }
+    if (input.executionType !== undefined) { sets.push('execution_type = ?'); values.push(input.executionType); }
+    if (input.instruction !== undefined) { sets.push('instruction = ?'); values.push(input.instruction); }
+    if (input.scheduleTime !== undefined) { sets.push('schedule_time = ?'); values.push(input.scheduleTime); }
+    if (input.cronExpr !== undefined) { sets.push('cron_expr = ?'); values.push(input.cronExpr); }
+    if (input.executionStatus !== undefined) { sets.push('execution_status = ?'); values.push(input.executionStatus); }
+    if (input.nextFireAt !== undefined) { sets.push('next_fire_at = ?'); values.push(input.nextFireAt); }
+    if (input.notifyDesktop !== undefined) { sets.push('notify_desktop = ?'); values.push(input.notifyDesktop ? 1 : 0); }
+    if (input.notifyInApp !== undefined) { sets.push('notify_in_app = ?'); values.push(input.notifyInApp ? 1 : 0); }
+    if (input.notifyWecom !== undefined) { sets.push('notify_wecom = ?'); values.push(input.notifyWecom ? 1 : 0); }
+    if (input.wecomRecipient !== undefined) { sets.push('wecom_recipient = ?'); values.push(input.wecomRecipient); }
+    if (input.confirmedSnapshot !== undefined) { sets.push('confirmed_snapshot = ?'); values.push(input.confirmedSnapshot === null ? null : JSON.stringify(input.confirmedSnapshot)); }
     if (input.origin !== undefined) { sets.push('origin = ?'); values.push(input.origin); }
     if (input.repoFullName !== undefined) { sets.push('repo_full_name = ?'); values.push(input.repoFullName); }
     if (input.issueNumber !== undefined) { sets.push('issue_number = ?'); values.push(input.issueNumber); }
@@ -2475,6 +2654,7 @@ export class SqliteStore {
   deleteTodo(id: string): boolean {
     const result = this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
     if (result.changes > 0) {
+      this.db.prepare('DELETE FROM todo_runs WHERE todo_id = ?').run(id);
       this.db.prepare('DELETE FROM todo_comments WHERE todo_id = ?').run(id);
       this.db.prepare('DELETE FROM todo_conflicts WHERE todo_id = ?').run(id);
     }
@@ -2744,6 +2924,85 @@ export class SqliteStore {
     return this.getScheduledTask(id);
   }
 
+  createTodoRun(input: CreateTodoRunInput): TodoRun {
+    const run: TodoRun = {
+      id: uuidv4(),
+      todoId: input.todoId,
+      sessionId: input.sessionId ?? null,
+      status: input.status,
+      fireAt: input.fireAt,
+      startedAt: input.startedAt ?? null,
+      endedAt: input.endedAt ?? null,
+      reason: input.reason ?? null,
+      instructionSnapshot: input.instructionSnapshot,
+      createdAt: new Date().toISOString(),
+    };
+    this.db.prepare(`
+      INSERT INTO todo_runs (
+        id, todo_id, session_id, status, fire_at, started_at, ended_at, reason, instruction_snapshot, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      run.id, run.todoId, run.sessionId, run.status, run.fireAt, run.startedAt,
+      run.endedAt, run.reason, run.instructionSnapshot, run.createdAt,
+    );
+    return run;
+  }
+
+  getTodoRun(id: string): TodoRun | null {
+    const row = this.db.prepare('SELECT * FROM todo_runs WHERE id = ?').get(id) as RawTodoRunRow | undefined;
+    return row ? parseTodoRunRow(row) : null;
+  }
+
+  updateTodoRun(id: string, input: UpdateTodoRunInput): TodoRun | null {
+    const existing = this.getTodoRun(id);
+    if (!existing) return null;
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (input.sessionId !== undefined) { sets.push('session_id = ?'); values.push(input.sessionId); }
+    if (input.status !== undefined) { sets.push('status = ?'); values.push(input.status); }
+    if (input.startedAt !== undefined) { sets.push('started_at = ?'); values.push(input.startedAt); }
+    if (input.endedAt !== undefined) { sets.push('ended_at = ?'); values.push(input.endedAt); }
+    if (input.reason !== undefined) { sets.push('reason = ?'); values.push(input.reason); }
+    if (sets.length === 0) return existing;
+    values.push(id);
+    this.db.prepare(`UPDATE todo_runs SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return this.getTodoRun(id);
+  }
+
+  listTodoRuns(todoId: string): TodoRun[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM todo_runs WHERE todo_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 200',
+    ).all(todoId) as RawTodoRunRow[];
+    return rows.map(parseTodoRunRow);
+  }
+
+  getLatestTodoRun(todoId: string): TodoRun | null {
+    const row = this.db.prepare(
+      'SELECT * FROM todo_runs WHERE todo_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+    ).get(todoId) as RawTodoRunRow | undefined;
+    return row ? parseTodoRunRow(row) : null;
+  }
+
+  listStaleRunningTodoRuns(cutoffIso: string): TodoRun[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM todo_runs WHERE status = 'running' AND started_at < ?",
+    ).all(cutoffIso) as RawTodoRunRow[];
+    return rows.map(parseTodoRunRow);
+  }
+
+  latestRunsPerTodo(): TodoRun[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM todo_runs
+      WHERE rowid IN (SELECT MAX(rowid) FROM todo_runs GROUP BY todo_id)
+      ORDER BY created_at DESC
+    `).all() as RawTodoRunRow[];
+    return rows.map(parseTodoRunRow);
+  }
+
+  pruneTodoRunsOlderThan(cutoffIso: string): number {
+    return this.db.prepare('DELETE FROM todo_runs WHERE created_at < ?').run(cutoffIso).changes;
+  }
+
   createTaskRun(input: CreateTaskRunInput): TaskRun {
     const run: TaskRun = {
       id: uuidv4(),
@@ -2964,39 +3223,10 @@ export class SqliteStore {
     }
     for (const roleKey of ['owner', 'admin', 'normal'] as BotRoleKey[]) {
       const roleId = uuidv4();
-      const permissions: BotRolePolicy = roleKey === 'normal'
-        ? {
-            normalToolPolicy: {
-              posture: 'safe',
-              categoryDefaults: {
-                fileRead: 'allow',
-                fileWrite: 'deny',
-                shell: 'deny',
-                network: 'deny',
-                subagents: 'deny',
-                reply: 'allow',
-                browser: 'deny',
-              },
-            },
-            skillAllowlist: [],
-            bashWhitelist: [],
-          }
-        : {
-            normalToolPolicy: {
-              posture: 'allow-all',
-              categoryDefaults: {
-                fileRead: 'allow',
-                fileWrite: 'allow',
-                shell: 'allow',
-                network: 'allow',
-                subagents: 'allow',
-                reply: 'allow',
-                browser: 'deny',
-              },
-            },
-            skillAllowlist: [],
-            bashWhitelist: [],
-          };
+      // New bots default to the new permission model (R14): sandboxed normal
+      // posture, empty passlist, empty domain list (derivation merges the
+      // WeCom/loopback defaults).
+      const permissions: BotRolePolicy = createDefaultBotRolePolicy(roleKey);
       this.db.prepare(`
         INSERT INTO bot_roles (id, bot_id, role_key, permissions_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -3278,6 +3508,90 @@ export class SqliteStore {
     return rows.map(parseAuditLogRow);
   }
 
+  /**
+   * Bot-audit retention (U6, KTD-22): physically remove rows older than the
+   * retention cutoff (default 90 days). Age-based only — unlike browser_audit
+   * there is no row cap: decision-audit volume is bounded by gate activity,
+   * not browser automation. Called from server-main's periodic cleanup timer,
+   * mirroring the pruneBrowserAudit precedent.
+   */
+  pruneBotAuditLogs(options: { retentionDays?: number } = {}): number {
+    const retentionDays = options.retentionDays ?? 90;
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    return this.db.prepare('DELETE FROM bot_audit_logs WHERE created_at < ?').run(cutoff).changes;
+  }
+
+  // -------------------------------------------------------------------------
+  // session_capability_tokens (U12, KTD-28) — per-session loopback tokens.
+  // -------------------------------------------------------------------------
+
+  insertCapabilityToken(row: {
+    tokenHash: string;
+    sessionId: string;
+    workspaceId: string;
+    botId: string | null;
+    createdAt: string;
+    expiresAt: string;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO session_capability_tokens
+        (token_hash, session_id, workspace_id, bot_id, created_at, expires_at, revoked_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL)
+    `).run(row.tokenHash, row.sessionId, row.workspaceId, row.botId, row.createdAt, row.expiresAt);
+  }
+
+  getCapabilityToken(tokenHash: string): {
+    tokenHash: string;
+    sessionId: string;
+    workspaceId: string;
+    botId: string | null;
+    createdAt: string;
+    expiresAt: string;
+    revokedAt: string | null;
+  } | null {
+    const row = this.db.prepare(`
+      SELECT token_hash, session_id, workspace_id, bot_id, created_at, expires_at, revoked_at
+      FROM session_capability_tokens WHERE token_hash = ?
+    `).get(tokenHash) as
+      | {
+          token_hash: string;
+          session_id: string;
+          workspace_id: string;
+          bot_id: string | null;
+          created_at: string;
+          expires_at: string;
+          revoked_at: string | null;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      tokenHash: row.token_hash,
+      sessionId: row.session_id,
+      workspaceId: row.workspace_id,
+      botId: row.bot_id,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      revokedAt: row.revoked_at,
+    };
+  }
+
+  /** Revoke every live token for a session (rotation and session teardown). */
+  revokeCapabilityTokensForSession(sessionId: string, revokedAt: string): number {
+    const result = this.db.prepare(`
+      UPDATE session_capability_tokens SET revoked_at = ?
+      WHERE session_id = ? AND revoked_at IS NULL
+    `).run(revokedAt, sessionId);
+    return result.changes;
+  }
+
+  /** Boot invalidation: every token from a prior process lifetime dies. */
+  revokeAllCapabilityTokens(revokedAt: string): number {
+    const result = this.db.prepare(`
+      UPDATE session_capability_tokens SET revoked_at = ? WHERE revoked_at IS NULL
+    `).run(revokedAt);
+    return result.changes;
+  }
+
   // -------------------------------------------------------------------------
   // browser_audit (U8, KTD-9) — positive-shape action audit. There is no
   // values/images column BY DESIGN: field values and screenshots never reach
@@ -3364,6 +3678,146 @@ export class SqliteStore {
         .run(excess).changes;
     }
     return deleted;
+  }
+
+  // -------------------------------------------------------------------------
+  // bot_escalation_ledger (U8 phase-2, KTD-16): durable approval ledger for
+  // out-of-sandbox escalations. Rows are created when the gate registers a
+  // pending approval and transition exactly once (pending → approved/denied/
+  // expired); transitions are atomic first-writer-wins so a late or duplicate
+  // resolution can never flip a settled row.
+  // -------------------------------------------------------------------------
+
+  createBotEscalation(input: CreateBotEscalationInput): BotEscalationEntry {
+    const entry: BotEscalationEntry = {
+      id: input.id,
+      botId: input.botId,
+      sessionId: input.sessionId,
+      audience: input.audience,
+      requester: input.requester,
+      recipients: input.recipients ?? [],
+      rulePayload: input.rulePayload,
+      state: 'pending',
+      createdAt: input.createdAt,
+      expiresAt: input.expiresAt,
+      resolvedAt: null,
+      resolution: null,
+    };
+    this.db.prepare(`
+      INSERT INTO bot_escalation_ledger
+        (id, bot_id, session_id, audience, requester_channel, requester_channel_user_id,
+         requester_role, recipients_json, rule_payload_json, state, created_at, expires_at,
+         resolved_at, resolution_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+    `).run(
+      entry.id,
+      entry.botId,
+      entry.sessionId,
+      entry.audience,
+      entry.requester.channel,
+      entry.requester.channelUserId,
+      entry.requester.role,
+      JSON.stringify(entry.recipients),
+      JSON.stringify(entry.rulePayload),
+      entry.state,
+      entry.createdAt,
+      entry.expiresAt,
+    );
+    return entry;
+  }
+
+  getBotEscalation(id: string): BotEscalationEntry | null {
+    const row = this.db
+      .prepare('SELECT * FROM bot_escalation_ledger WHERE id = ?')
+      .get(id) as RawBotEscalationRow | undefined;
+    return row ? parseBotEscalationRow(row) : null;
+  }
+
+  /**
+   * Atomic pending → terminal-state transition (first writer wins). Returns
+   * the settled row, or null when the row was already settled (late/duplicate
+   * click, double expiry) or does not exist — callers must treat null as
+   * "someone else resolved it" and skip their side effects.
+   */
+  transitionBotEscalation(
+    id: string,
+    toState: BotEscalationTerminalState,
+    resolution: BotEscalationResolution,
+    resolvedAt: string,
+  ): BotEscalationEntry | null {
+    const result = this.db.prepare(`
+      UPDATE bot_escalation_ledger
+      SET state = ?, resolved_at = ?, resolution_json = ?
+      WHERE id = ? AND state = 'pending'
+    `).run(toState, resolvedAt, JSON.stringify(resolution), id);
+    if (result.changes === 0) return null;
+    return this.getBotEscalation(id);
+  }
+
+  listBotEscalations(
+    options: { botId?: string; state?: BotEscalationState; limit?: number; since?: string } = {},
+  ): BotEscalationEntry[] {
+    const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (options.botId) {
+      clauses.push('bot_id = ?');
+      params.push(options.botId);
+    }
+    if (options.state) {
+      clauses.push('state = ?');
+      params.push(options.state);
+    }
+    if (options.since) {
+      clauses.push('created_at >= ?');
+      params.push(options.since);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.db
+      .prepare(`SELECT * FROM bot_escalation_ledger ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(...params, limit) as RawBotEscalationRow[];
+    return rows.map(parseBotEscalationRow);
+  }
+
+  /**
+   * Boot recovery (KTD-16): every still-pending row belongs to a promise that
+   * died with the previous process — expire them all (fail-closed, never
+   * auto-allow) in one transaction and return the settled entries so the
+   * caller can queue requester notifications.
+   */
+  expireAllPendingBotEscalations(
+    resolution: BotEscalationResolution,
+    resolvedAt: string,
+  ): BotEscalationEntry[] {
+    const expire = this.db.transaction(() => {
+      const rows = this.db
+        .prepare("SELECT * FROM bot_escalation_ledger WHERE state = 'pending'")
+        .all() as RawBotEscalationRow[];
+      this.db.prepare(`
+        UPDATE bot_escalation_ledger
+        SET state = 'expired', resolved_at = ?, resolution_json = ?
+        WHERE state = 'pending'
+      `).run(resolvedAt, JSON.stringify(resolution));
+      return rows.map(parseBotEscalationRow).map((entry) => ({
+        ...entry,
+        state: 'expired' as const,
+        resolvedAt,
+        resolution,
+      }));
+    });
+    return expire();
+  }
+
+  /**
+   * Age-based retention for settled rows (mirrors bot_audit's 90-day default);
+   * pending rows are never pruned (boot recovery owns their lifecycle).
+   */
+  pruneBotEscalationLedger(options: { retentionDays?: number } = {}): number {
+    const retentionDays = options.retentionDays ?? 90;
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    return this.db
+      .prepare("DELETE FROM bot_escalation_ledger WHERE state != 'pending' AND created_at < ?")
+      .run(cutoff).changes;
   }
 
   getMigrationVersion(): number | null {
@@ -3640,26 +4094,15 @@ interface RawBotRoleRow {
 }
 
 function parseBotRoleRow(row: RawBotRoleRow): BotRole {
+  // Field-level fail-closed sanitizer on the read path (U2): old-shape blobs
+  // get the new fields backfilled to safe defaults; a corrupt blob collapses
+  // to the full default. Never returns an unsanitized shape.
+  const parsed = safeJsonParse(row.permissions_json, {});
   return {
     id: row.id,
     botId: row.bot_id,
     roleKey: row.role_key as BotRoleKey,
-    permissions: safeJsonParse(row.permissions_json, {
-      normalToolPolicy: {
-        posture: 'safe',
-        categoryDefaults: {
-          fileRead: 'allow',
-          fileWrite: 'deny',
-          shell: 'deny',
-          network: 'deny',
-          subagents: 'deny',
-          reply: 'allow',
-          browser: 'deny',
-        },
-      },
-      skillAllowlist: [],
-      bashWhitelist: [],
-    } as BotRolePolicy),
+    permissions: sanitizeBotRolePolicy(parsed),
     persona: row.persona_json ? safeJsonParse(row.persona_json, undefined as unknown as BotPersona) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -3792,6 +4235,131 @@ function parseBrowserAuditRow(row: RawBrowserAuditRow): BrowserAuditEntry {
   };
 }
 
+// ---------------------------------------------------------------------------
+// bot_escalation_ledger row types (U8 phase-2, KTD-15/KTD-16). Positive-shape
+// parser: unknown audience/state values fail safe (audience → 'admins', and
+// terminal states round-trip only from the closed set).
+// ---------------------------------------------------------------------------
+
+export type BotEscalationAudience = 'self' | 'admins';
+export type BotEscalationTerminalState = 'approved' | 'denied' | 'expired';
+export type BotEscalationState = 'pending' | BotEscalationTerminalState;
+export type BotEscalationDecision = 'allow' | 'deny' | 'expired';
+
+/** A notified recipient of the escalation (U11: one per owner/admin card). */
+export interface BotEscalationRecipient {
+  userId: string;
+  taskId: string;
+}
+
+/** The channel user whose tool call triggered the escalation. */
+export interface BotEscalationRequester {
+  channel: string;
+  channelUserId: string;
+  role: string | null;
+}
+
+/**
+ * Who/how the escalation was settled. `approver` is the actor (system for
+ * TTL/boot expiries); `source` is the resolution channel (`self-approval`,
+ * `desktop`, `timeout`, `boot-recovery`; U11 adds remote-card sources).
+ */
+export interface BotEscalationResolution {
+  approver: { type: string; channelKey?: string; channelUserId?: string };
+  decision: BotEscalationDecision;
+  source: string;
+}
+
+/**
+ * The rule payload the approver was shown (and that "always allow" would
+ * persist, U11): tool + the exact command/input summary + routing context.
+ */
+export interface BotEscalationRulePayload {
+  toolName: string;
+  command?: string;
+  decisionReasonType?: string;
+  /**
+   * U11 (KTD-19): generalized dedupe signature (parameter variants collapse
+   * into one pending). Computed at creation; absent on U8 rows.
+   */
+  dedupeSignature?: string;
+  /**
+   * U11 (KTD-18): the exact-match rules "always allow" would persist. Empty
+   * or absent ⇒ the always-allow button is suppressed on the approval card.
+   */
+  alwaysAllowRules?: string[];
+}
+
+export interface CreateBotEscalationInput {
+  /** The approval requestId — also the pending-approval correlation key. */
+  id: string;
+  botId: string;
+  sessionId: string;
+  audience: BotEscalationAudience;
+  requester: BotEscalationRequester;
+  recipients?: BotEscalationRecipient[];
+  rulePayload: BotEscalationRulePayload;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface BotEscalationEntry {
+  id: string;
+  botId: string;
+  sessionId: string;
+  audience: BotEscalationAudience;
+  requester: BotEscalationRequester;
+  recipients: BotEscalationRecipient[];
+  rulePayload: BotEscalationRulePayload;
+  state: BotEscalationState;
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt: string | null;
+  resolution: BotEscalationResolution | null;
+}
+
+interface RawBotEscalationRow {
+  id: string;
+  bot_id: string;
+  session_id: string;
+  audience: string;
+  requester_channel: string;
+  requester_channel_user_id: string;
+  requester_role: string | null;
+  recipients_json: string;
+  rule_payload_json: string;
+  state: string;
+  created_at: string;
+  expires_at: string;
+  resolved_at: string | null;
+  resolution_json: string | null;
+}
+
+function parseBotEscalationRow(row: RawBotEscalationRow): BotEscalationEntry {
+  return {
+    id: row.id,
+    botId: row.bot_id,
+    sessionId: row.session_id,
+    // Fail-safe (KTD-15): an unreadable audience never becomes 'self'.
+    audience: row.audience === 'self' ? 'self' : 'admins',
+    requester: {
+      channel: row.requester_channel,
+      channelUserId: row.requester_channel_user_id,
+      role: row.requester_role,
+    },
+    recipients: safeJsonParse(row.recipients_json, []),
+    rulePayload: safeJsonParse(row.rule_payload_json, { toolName: 'unknown' }),
+    state: (['pending', 'approved', 'denied', 'expired'].includes(row.state)
+      ? row.state
+      : 'expired') as BotEscalationState,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    resolvedAt: row.resolved_at,
+    resolution: row.resolution_json ? safeJsonParse(row.resolution_json, null) : null,
+  };
+}
+
+
 interface RawTodoRow {
   id: string;
   workspace_id: string | null;
@@ -3811,6 +4379,19 @@ interface RawTodoRow {
   assignee: string | null;
   labels_json: string;
   origin_deleted: number;
+  execution_type: string;
+  instruction: string | null;
+  schedule_time: string | null;
+  cron_expr: string | null;
+  execution_status: string;
+  next_fire_at: string | null;
+  notify_desktop: number;
+  notify_in_app: number;
+  notify_wecom: number;
+  wecom_recipient: string | null;
+  confirmed_snapshot: string | null;
+  deleted_at: string | null;
+  legacy_scheduled_task_id: string | null;
 }
 
 function parseTodoRow(row: RawTodoRow): Todo {
@@ -3820,6 +4401,18 @@ function parseTodoRow(row: RawTodoRow): Todo {
     text: row.text,
     content: row.content ?? null,
     status: row.status as TodoStatus,
+    executionType: (row.execution_type as Todo['executionType'] | undefined) ?? 'manual',
+    instruction: row.instruction ?? null,
+    scheduleTime: row.schedule_time ?? null,
+    cronExpr: row.cron_expr ?? null,
+    executionStatus: (row.execution_status as TodoExecutionStatus | undefined) ?? 'active',
+    nextFireAt: row.next_fire_at ?? null,
+    notifyDesktop: row.notify_desktop !== 0,
+    notifyInApp: row.notify_in_app !== 0,
+    notifyWecom: row.notify_wecom === 1,
+    wecomRecipient: row.wecom_recipient ?? null,
+    confirmedSnapshot: row.confirmed_snapshot ? JSON.parse(row.confirmed_snapshot) : null,
+    deletedAt: row.deleted_at ?? null,
     sessionId: row.session_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -3980,6 +4573,34 @@ interface RawTaskRunRow {
   reason: string | null;
   instruction_snapshot: string;
   created_at: string;
+}
+
+interface RawTodoRunRow {
+  id: string;
+  todo_id: string;
+  session_id: string | null;
+  status: string;
+  fire_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+  reason: string | null;
+  instruction_snapshot: string;
+  created_at: string;
+}
+
+function parseTodoRunRow(row: RawTodoRunRow): TodoRun {
+  return {
+    id: row.id,
+    todoId: row.todo_id,
+    sessionId: row.session_id ?? null,
+    status: row.status as TodoRunStatus,
+    fireAt: row.fire_at,
+    startedAt: row.started_at ?? null,
+    endedAt: row.ended_at ?? null,
+    reason: row.reason ?? null,
+    instructionSnapshot: row.instruction_snapshot,
+    createdAt: row.created_at,
+  };
 }
 
 function parseTaskRunRow(row: RawTaskRunRow): TaskRun {

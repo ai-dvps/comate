@@ -103,6 +103,152 @@ describe('chat route Feishu user info', { concurrency: false }, () => {
   });
 });
 
+describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () => {
+  beforeEach(() => {
+    workspaceStore.resetData();
+  });
+
+  async function importApprovalsHandler() {
+    const mod = await import('./chat.js');
+    const router = mod.default;
+    const layers = (router as unknown as { stack: Array<{ route?: { methods: Record<string, boolean>; path: string; stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }> } }> }).stack;
+    for (const layer of layers) {
+      if (layer.route?.path === '/sessions/:sessionId/approvals/:requestId' && layer.route.methods.post) {
+        return layer.route.stack[layer.route.stack.length - 1].handle;
+      }
+    }
+    throw new Error('POST /sessions/:sessionId/approvals/:requestId handler not found');
+  }
+
+  // Shadow chatService methods with own properties for the duration of one
+  // test; deleting them on restore un-shadows the prototype methods.
+  function stubChatService(overrides: Record<string, unknown>): { restore: () => void } {
+    const target = chatService as unknown as Record<string, unknown>;
+    const keys = Object.keys(overrides);
+    for (const key of keys) {
+      target[key] = overrides[key];
+    }
+    return {
+      restore: () => {
+        for (const key of keys) {
+          delete target[key];
+        }
+      },
+    };
+  }
+
+  it('never spawns a runtime to resolve an approval — 404 when none exists', async () => {
+    let createCalls = 0;
+    const stub = stubChatService({
+      getRuntimeIfExists: () => undefined,
+      getOrCreateRuntime: () => {
+        createCalls++;
+        return Promise.reject(new Error('must not be called'));
+      },
+    });
+    try {
+      const handler = await importApprovalsHandler();
+      const res = createMockRes();
+      await handler(
+        { params: { id: 'ws-1', sessionId: 'sess-gone', requestId: 'req-1' }, body: { behavior: 'allow' } },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 404);
+      assert.deepStrictEqual(res.jsonBody, { error: 'No active approval for this session', code: 'APPROVAL_NOT_FOUND' });
+      assert.strictEqual(createCalls, 0, 'getOrCreateRuntime must not be called');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('resolves through the existing runtime with desktop provenance', async () => {
+    const resolveCalls: Array<{ requestId: string; result: unknown; provenance: unknown }> = [];
+    const fakeRuntime = {
+      resolveApproval: (requestId: string, result: unknown, provenance?: unknown) => {
+        resolveCalls.push({ requestId, result, provenance });
+      },
+    };
+    const stub = stubChatService({
+      getRuntimeIfExists: () => fakeRuntime,
+    });
+    try {
+      const handler = await importApprovalsHandler();
+      const res = createMockRes();
+      await handler(
+        { params: { id: 'ws-1', sessionId: 'sess-1', requestId: 'req-9' }, body: { behavior: 'allow' } },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(res.jsonBody, { ok: true });
+      assert.strictEqual(resolveCalls.length, 1);
+      assert.strictEqual(resolveCalls[0].requestId, 'req-9');
+      assert.deepStrictEqual(resolveCalls[0].provenance, {
+        source: 'desktop',
+        approver: { type: 'user' },
+      });
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('deny resolutions carry the same desktop provenance', async () => {
+    const resolveCalls: Array<{ result: unknown; provenance: unknown }> = [];
+    const fakeRuntime = {
+      resolveApproval: (_requestId: string, result: unknown, provenance?: unknown) => {
+        resolveCalls.push({ result, provenance });
+      },
+    };
+    const stub = stubChatService({
+      getRuntimeIfExists: () => fakeRuntime,
+    });
+    try {
+      const handler = await importApprovalsHandler();
+      const res = createMockRes();
+      await handler(
+        { params: { id: 'ws-1', sessionId: 'sess-1', requestId: 'req-10' }, body: { behavior: 'deny' } },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(resolveCalls[0].result, {
+        behavior: 'deny',
+        message: 'User denied this tool call.',
+      });
+      assert.deepStrictEqual(resolveCalls[0].provenance, {
+        source: 'desktop',
+        approver: { type: 'user' },
+      });
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('rejects an invalid behavior before touching any runtime', async () => {
+    let lookupCalls = 0;
+    const stub = stubChatService({
+      getRuntimeIfExists: () => {
+        lookupCalls++;
+        return undefined;
+      },
+    });
+    try {
+      const handler = await importApprovalsHandler();
+      const res = createMockRes();
+      await handler(
+        { params: { id: 'ws-1', sessionId: 'sess-1', requestId: 'req-1' }, body: { behavior: 'maybe' } },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(lookupCalls, 0);
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
 describe('chat route interrupt (clear-all)', { concurrency: false }, () => {
   beforeEach(() => {
     workspaceStore.resetData();

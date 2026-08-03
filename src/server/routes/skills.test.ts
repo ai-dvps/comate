@@ -30,6 +30,7 @@ import { join } from 'path';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { skillsService } from '../services/skills-service.js';
 import type { InstallResult } from '../services/skills/types.js';
+import type { SkillProviderAvailability } from '../services/skills/types.js';
 
 /**
  * Mock Express Response. Provides the methods the route handlers call:
@@ -40,17 +41,23 @@ function createMockRes(): {
   jsonBody: unknown;
   status(code: number): ReturnType<typeof createMockRes>;
   json(body: unknown): void;
+  setHeader(name: string, value: string): void;
   send(): void;
+  headers: Record<string, string>;
 } {
   const res = {
     statusCode: 200,
     jsonBody: undefined as unknown,
+    headers: {} as Record<string, string>,
     status(code: number) {
       this.statusCode = code;
       return this;
     },
     json(body: unknown) {
       this.jsonBody = body;
+    },
+    setHeader(name: string, value: string) {
+      this.headers[name.toLowerCase()] = value;
     },
     send() {
       // no-op
@@ -96,34 +103,70 @@ describe('skills routes', () => {
   let tmpWorkspace: string;
   let originalStoreGet: typeof workspaceStore.get;
   let originalSearch: typeof skillsService.search;
+  let originalCheckSearchProviders: typeof skillsService.checkSearchProviders;
   let originalResolveSource: typeof skillsService.resolveSource;
   let originalInstall: typeof skillsService.install;
   let originalListInstalled: typeof skillsService.listInstalled;
   let originalRemove: typeof skillsService.remove;
   let originalUpdate: typeof skillsService.update;
   let originalUpdateAll: typeof skillsService.updateAll;
+  let originalListExpertPackages: typeof skillsService.listExpertPackages;
+  let originalGetExpertPackage: typeof skillsService.getExpertPackage;
+  let originalGetExpertSkillDetail: typeof skillsService.getExpertSkillDetail;
+  let originalIsExpertSkillInPackage: typeof skillsService.isExpertSkillInPackage;
+  let originalInstallExpertPackage: typeof skillsService.installExpertPackage;
+  let originalRemoveExpertPackage: typeof skillsService.removeExpertPackage;
+  let originalListEnterpriseIndustries: typeof skillsService.listEnterpriseIndustries;
+  let originalListEnterprises: typeof skillsService.listEnterprises;
+  let originalGetEnterprise: typeof skillsService.getEnterprise;
+  let originalListEnterpriseSkills: typeof skillsService.listEnterpriseSkills;
+  let originalGetEnterpriseSkillDetail: typeof skillsService.getEnterpriseSkillDetail;
 
   beforeEach(() => {
     tmpWorkspace = mkdtempSync(join(tmpdir(), 'skills-routes-ws-'));
     originalStoreGet = workspaceStore.get.bind(workspaceStore);
     originalSearch = skillsService.search.bind(skillsService);
+    originalCheckSearchProviders = skillsService.checkSearchProviders.bind(skillsService);
     originalResolveSource = skillsService.resolveSource.bind(skillsService);
     originalInstall = skillsService.install.bind(skillsService);
     originalListInstalled = skillsService.listInstalled.bind(skillsService);
     originalRemove = skillsService.remove.bind(skillsService);
     originalUpdate = skillsService.update.bind(skillsService);
     originalUpdateAll = skillsService.updateAll.bind(skillsService);
+    originalListExpertPackages = skillsService.listExpertPackages.bind(skillsService);
+    originalGetExpertPackage = skillsService.getExpertPackage.bind(skillsService);
+    originalGetExpertSkillDetail = skillsService.getExpertSkillDetail.bind(skillsService);
+    originalIsExpertSkillInPackage = skillsService.isExpertSkillInPackage.bind(skillsService);
+    originalInstallExpertPackage = skillsService.installExpertPackage.bind(skillsService);
+    originalRemoveExpertPackage = skillsService.removeExpertPackage.bind(skillsService);
+    originalListEnterpriseIndustries = skillsService.listEnterpriseIndustries.bind(skillsService);
+    originalListEnterprises = skillsService.listEnterprises.bind(skillsService);
+    originalGetEnterprise = skillsService.getEnterprise.bind(skillsService);
+    originalListEnterpriseSkills = skillsService.listEnterpriseSkills.bind(skillsService);
+    originalGetEnterpriseSkillDetail = skillsService.getEnterpriseSkillDetail.bind(skillsService);
   });
 
   afterEach(() => {
     workspaceStore.get = originalStoreGet;
     skillsService.search = originalSearch;
+    skillsService.checkSearchProviders = originalCheckSearchProviders;
     skillsService.resolveSource = originalResolveSource;
     skillsService.install = originalInstall;
     skillsService.listInstalled = originalListInstalled;
     skillsService.remove = originalRemove;
     skillsService.update = originalUpdate;
     skillsService.updateAll = originalUpdateAll;
+    skillsService.listExpertPackages = originalListExpertPackages;
+    skillsService.getExpertPackage = originalGetExpertPackage;
+    skillsService.getExpertSkillDetail = originalGetExpertSkillDetail;
+    skillsService.isExpertSkillInPackage = originalIsExpertSkillInPackage;
+    skillsService.installExpertPackage = originalInstallExpertPackage;
+    skillsService.removeExpertPackage = originalRemoveExpertPackage;
+    skillsService.listEnterpriseIndustries = originalListEnterpriseIndustries;
+    skillsService.listEnterprises = originalListEnterprises;
+    skillsService.getEnterprise = originalGetEnterprise;
+    skillsService.listEnterpriseSkills = originalListEnterpriseSkills;
+    skillsService.getEnterpriseSkillDetail = originalGetEnterpriseSkillDetail;
     rmSync(tmpWorkspace, { recursive: true, force: true });
   });
 
@@ -167,28 +210,44 @@ describe('skills routes', () => {
   describe('GET /search', () => {
     it('returns 200 with results, delegating the query to the service', async () => {
       const handlers = await importRouteHandlers();
-      let capturedQuery = '';
+      let capturedQuery: { keyword: string; scene?: string; preferChinese?: boolean; noApiKey?: boolean; sort?: string; providers?: string[] } | undefined;
       skillsService.search = async (q) => {
         capturedQuery = q;
-        return [{ id: 'demo', name: 'demo', source: 'a/b', installs: 5 }];
+        return {
+          skills: [{
+            id: 'demo',
+            name: 'demo',
+            slug: 'demo',
+            source: 'a/b',
+            installSource: 'a/b',
+            sourceKind: 'skills.sh',
+            description: '',
+            installs: 5,
+          }],
+          providers: [{ id: 'skills.sh', label: 'skills.sh', status: 'available' }],
+        };
       };
 
-      const req = { query: { q: 'design' } };
+      const req = { query: { q: 'design', scene: 'development', preferChinese: 'true', noApiKey: 'true', sort: 'downloads', providers: 'skills.sh,weskillhub' } };
       const res = createMockRes();
       await handlers['/search'].get(req, res);
 
       assert.strictEqual(res.statusCode, 200);
-      assert.strictEqual(capturedQuery, 'design');
-      const body = res.jsonBody as { skills: Array<{ name: string }> };
+      assert.deepStrictEqual(capturedQuery, {
+        keyword: 'design', scene: 'development', preferChinese: true, noApiKey: true, sort: 'downloads', providers: ['skills.sh', 'weskillhub'],
+      });
+      const body = res.jsonBody as { skills: Array<{ name: string; slug: string; installSource: string }> };
       assert.strictEqual(body.skills[0]!.name, 'demo');
+      assert.strictEqual(body.skills[0]!.slug, 'demo');
+      assert.strictEqual(body.skills[0]!.installSource, 'a/b');
     });
 
     it('defaults q to empty string when not provided', async () => {
       const handlers = await importRouteHandlers();
-      let capturedQuery = '__unset__';
+      let capturedQuery: { keyword: string } | undefined;
       skillsService.search = async (q) => {
         capturedQuery = q;
-        return [];
+        return { skills: [], providers: [] };
       };
 
       const req = { query: {} };
@@ -196,7 +255,404 @@ describe('skills routes', () => {
       await handlers['/search'].get(req, res);
 
       assert.strictEqual(res.statusCode, 200);
-      assert.strictEqual(capturedQuery, '');
+      assert.deepStrictEqual(capturedQuery, { keyword: '' });
+    });
+
+    it('rejects unknown structured filter values', async () => {
+      const handlers = await importRouteHandlers();
+      const res = createMockRes();
+      await handlers['/search'].get({ query: { q: 'design', scene: 'unknown' } }, res);
+
+      assert.strictEqual(res.statusCode, 400);
+      assert.deepStrictEqual(res.jsonBody, { error: 'Invalid scene' });
+    });
+
+    it('rejects unknown or duplicate provider ids before searching', async () => {
+      const handlers = await importRouteHandlers();
+      let calls = 0;
+      skillsService.search = async () => {
+        calls += 1;
+        return { skills: [], providers: [] };
+      };
+
+      for (const providers of ['unknown', 'skills.sh,skills.sh']) {
+        const res = createMockRes();
+        await handlers['/search'].get({ query: { q: 'design', providers } }, res);
+        assert.strictEqual(res.statusCode, 400);
+        assert.deepStrictEqual(res.jsonBody, { error: 'Invalid providers' });
+      }
+      assert.strictEqual(calls, 0);
+    });
+
+    it('preserves an explicit empty provider list', async () => {
+      const handlers = await importRouteHandlers();
+      let capturedProviders: string[] | undefined;
+      skillsService.search = async (query) => {
+        capturedProviders = query.providers;
+        return { skills: [], providers: [] };
+      };
+
+      const res = createMockRes();
+      await handlers['/search'].get({ query: { q: 'design', providers: '' } }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(capturedProviders, []);
+      assert.deepStrictEqual(res.jsonBody, { skills: [], providers: [] });
+    });
+  });
+
+  describe('GET /search/providers', () => {
+    const available: SkillProviderAvailability = {
+      id: 'skills.sh',
+      label: 'skills.sh',
+      status: 'available',
+    };
+
+    it('checks the full provider catalog without caching', async () => {
+      const handlers = await importRouteHandlers();
+      let capturedIds: string[] | undefined;
+      skillsService.checkSearchProviders = async (ids) => {
+        capturedIds = ids;
+        return [available];
+      };
+
+      const res = createMockRes();
+      await handlers['/search/providers'].get({ query: {} }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(res.headers['cache-control'], 'no-store');
+      assert.strictEqual(capturedIds, undefined);
+      assert.deepStrictEqual(res.jsonBody, { providers: [available] });
+    });
+
+    it('checks one provider for Retry and rejects an unknown provider', async () => {
+      const handlers = await importRouteHandlers();
+      let capturedIds: string[] | undefined;
+      skillsService.checkSearchProviders = async (ids) => {
+        capturedIds = ids;
+        return [available];
+      };
+
+      const retryRes = createMockRes();
+      await handlers['/search/providers'].get({ query: { provider: 'skills.sh' } }, retryRes);
+      assert.deepStrictEqual(capturedIds, ['skills.sh']);
+
+      const invalidRes = createMockRes();
+      await handlers['/search/providers'].get({ query: { provider: 'unknown' } }, invalidRes);
+      assert.strictEqual(invalidRes.statusCode, 400);
+      assert.deepStrictEqual(invalidRes.jsonBody, { error: 'Invalid provider' });
+    });
+  });
+
+  describe('Expert Packages', () => {
+    it('forwards combined list filters and pagination', async () => {
+      const handlers = await importRouteHandlers();
+      let captured: unknown;
+      skillsService.listExpertPackages = async (input) => {
+        captured = input;
+        return { packages: [], total: 0 };
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages'].get({
+        query: { keyword: ' test ', scene: 'tech', page: '2', pageSize: '40' },
+      }, res);
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(captured, { keyword: 'test', scene: 'tech', page: 2, pageSize: 40 });
+    });
+
+    it('rejects an unknown package scene before calling the provider', async () => {
+      const handlers = await importRouteHandlers();
+      let called = false;
+      skillsService.listExpertPackages = async () => {
+        called = true;
+        return { packages: [], total: 0 };
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages'].get({ query: { scene: 'unknown' } }, res);
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(called, false);
+    });
+
+    it('returns normalized package detail and rejects malformed slugs', async () => {
+      const handlers = await importRouteHandlers();
+      let requestedSlug = '';
+      skillsService.getExpertPackage = async (slug) => {
+        requestedSlug = slug;
+        return {
+          slug,
+          displayName: 'Test Package',
+          summary: 'A package',
+          scene: 'tech',
+          skillCount: 1,
+          source: 'skillhub.cn',
+          content: '# Workflow',
+          children: [],
+          complete: false,
+        };
+      };
+
+      const valid = createMockRes();
+      await handlers['/expert-packages/:slug'].get({ params: { slug: 'test-package' } }, valid);
+      assert.strictEqual(valid.statusCode, 200);
+      assert.strictEqual(requestedSlug, 'test-package');
+      assert.strictEqual((valid.jsonBody as { package: { slug: string } }).package.slug, 'test-package');
+
+      const invalid = createMockRes();
+      await handlers['/expert-packages/:slug'].get({ params: { slug: 'bad/slug' } }, invalid);
+      assert.strictEqual(invalid.statusCode, 400);
+      assert.strictEqual(requestedSlug, 'test-package');
+    });
+
+    it('loads only Skills that belong to the requested package', async () => {
+      const handlers = await importRouteHandlers();
+      let detailCalls = 0;
+      skillsService.getExpertSkillDetail = async (namespace, slug) => {
+        detailCalls += 1;
+        return {
+          namespace,
+          slug,
+          displayName: 'Child',
+          summary: 'Child summary',
+          category: 'tech',
+          owner: { handle: namespace, displayName: 'Owner' },
+          version: '1.0.0',
+          stats: { downloads: 1, installs: 1 },
+          securityReports: [],
+          source: `skillhub-cn:${namespace}/${slug}`,
+        };
+      };
+      skillsService.isExpertSkillInPackage = async () => false;
+
+      const missing = createMockRes();
+      await handlers['/expert-packages/:packageSlug/skills/:namespace/:slug'].get({
+        params: { packageSlug: 'test-package', namespace: 'owner', slug: 'child' },
+      }, missing);
+      assert.strictEqual(missing.statusCode, 404);
+      assert.strictEqual(detailCalls, 0);
+
+      skillsService.isExpertSkillInPackage = async () => true;
+      const included = createMockRes();
+      await handlers['/expert-packages/:packageSlug/skills/:namespace/:slug'].get({
+        params: { packageSlug: 'test-package', namespace: 'owner', slug: 'child' },
+      }, included);
+      assert.strictEqual(included.statusCode, 200);
+      assert.strictEqual(detailCalls, 1);
+      assert.strictEqual((included.jsonBody as { skill: { slug: string } }).skill.slug, 'child');
+    });
+
+    it('preserves mixed package install results and retry ids', async () => {
+      const handlers = await importRouteHandlers();
+      let capturedItemIds: string[] | undefined;
+      skillsService.installExpertPackage = async (args) => {
+        capturedItemIds = args.itemIds;
+        return [
+          { id: 'skill:a/ok', kind: 'skill', source: 'skillhub-cn:a/ok', name: 'ok', status: 'installed' },
+          { id: 'skill:a/bad', kind: 'skill', source: 'skillhub-cn:a/bad', name: 'bad', status: 'error', error: 'download failed' },
+        ];
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: 'tech-test' },
+        body: { scope: 'global', itemIds: ['skill:a/bad'] },
+      }, res);
+      assert.strictEqual(res.statusCode, 201);
+      assert.deepStrictEqual(capturedItemIds, ['skill:a/bad']);
+      const body = res.jsonBody as { results: unknown[]; summary: { failed: number } };
+      assert.strictEqual(body.results.length, 2);
+      assert.strictEqual(body.summary.failed, 1);
+    });
+
+    it('forwards force updates and uninstalls whole Expert Packages', async () => {
+      const handlers = await importRouteHandlers();
+      let force: boolean | undefined;
+      skillsService.installExpertPackage = async (args) => {
+        force = args.force;
+        return [{ id: 'orchestrator:test-package', kind: 'orchestrator', source: 'skillhub-package:test-package', name: 'test-package', status: 'installed' }];
+      };
+      skillsService.removeExpertPackage = async () => [
+        { skillName: 'test-package', status: 'removed' },
+        { skillName: 'child-skill', status: 'removed' },
+      ];
+
+      const update = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: 'test-package' }, body: { scope: 'global', force: true },
+      }, update);
+      assert.strictEqual(update.statusCode, 201);
+      assert.strictEqual(force, true);
+
+      const uninstall = createMockRes();
+      await handlers['/expert-packages/:slug/uninstall'].post({
+        params: { slug: 'test-package' }, body: { scope: 'global' },
+      }, uninstall);
+      assert.strictEqual(uninstall.statusCode, 200);
+      assert.strictEqual((uninstall.jsonBody as { results: unknown[] }).results.length, 2);
+    });
+
+    it('rejects malformed retry item input without installation', async () => {
+      const handlers = await importRouteHandlers();
+      let called = false;
+      skillsService.installExpertPackage = async () => {
+        called = true;
+        return [];
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: 'tech-test' },
+        body: { scope: 'global', itemIds: [] },
+      }, res);
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(called, false);
+    });
+
+    it('rejects dot-only package slugs without installation', async () => {
+      const handlers = await importRouteHandlers();
+      let called = false;
+      skillsService.installExpertPackage = async () => {
+        called = true;
+        return [];
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: '..' },
+        body: { scope: 'global' },
+      }, res);
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(called, false);
+    });
+
+    it('preserves all failed package results in the error response', async () => {
+      const handlers = await importRouteHandlers();
+      skillsService.installExpertPackage = async () => [{
+        id: 'skill:a/bad',
+        kind: 'skill',
+        source: 'skillhub-cn:a/bad',
+        name: 'bad',
+        status: 'error',
+        error: 'download failed',
+      }];
+      const res = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: 'test-package' },
+        body: { scope: 'global' },
+      }, res);
+      assert.strictEqual(res.statusCode, 422);
+      assert.strictEqual((res.jsonBody as { results: unknown[] }).results.length, 1);
+    });
+  });
+
+  describe('Enterprise Zone', () => {
+    it('exposes industries and forwards combined enterprise filters at fixed page size', async () => {
+      const handlers = await importRouteHandlers();
+      skillsService.listEnterpriseIndustries = async () => [
+        { key: 'new_sector', displayName: '新行业', sortOrder: 1 },
+      ];
+      const industries = createMockRes();
+      await handlers['/enterprise-zone/industries'].get({ query: {} }, industries);
+      assert.strictEqual(industries.statusCode, 200);
+
+      let captured: unknown;
+      skillsService.listEnterprises = async (input) => {
+        captured = input;
+        return { enterprises: [], page: 2, pageSize: 20, total: 0 };
+      };
+      const list = createMockRes();
+      await handlers['/enterprise-zone/enterprises'].get({
+        query: { keyword: ' cloud ', industry: 'new_sector', page: '2' },
+      }, list);
+      assert.strictEqual(list.statusCode, 200);
+      assert.deepStrictEqual(captured, { keyword: 'cloud', industry: 'new_sector', page: 2 });
+    });
+
+    it('returns enterprise detail and a sorted Skill page', async () => {
+      const handlers = await importRouteHandlers();
+      skillsService.getEnterprise = async (orgId) => ({
+        orgId, name: 'Acme', description: '', industryTags: [], publishedSkillCount: 1,
+        totalDownloads: 1, totalStars: 1,
+      });
+      const detail = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId'].get({ params: { orgId: 'org-acme' } }, detail);
+      assert.strictEqual((detail.jsonBody as { enterprise: { orgId: string } }).enterprise.orgId, 'org-acme');
+
+      let captured: unknown;
+      skillsService.listEnterpriseSkills = async (orgId, input) => {
+        captured = { orgId, ...input };
+        return { skills: [], page: 3, pageSize: 20, total: 41 };
+      };
+      const skills = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId/skills'].get({
+        params: { orgId: 'org-acme' }, query: { keyword: ' deploy ', sort: 'latest', page: '3' },
+      }, skills);
+      assert.strictEqual(skills.statusCode, 200);
+      assert.deepStrictEqual(captured, { orgId: 'org-acme', keyword: 'deploy', sort: 'latest', page: 3 });
+    });
+
+    it('loads only an enterprise-bound Skill detail', async () => {
+      const handlers = await importRouteHandlers();
+      let captured: unknown;
+      skillsService.getEnterpriseSkillDetail = async (orgId, namespace, slug) => {
+        captured = { orgId, namespace, slug };
+        return {
+          namespace, slug, displayName: 'Deploy', summary: '', category: '',
+          owner: { handle: namespace, displayName: 'Acme' }, publisher: { orgId }, version: '',
+          stats: { downloads: 0, installs: 0 }, securityReports: [], source: `skillhub-cn:${namespace}/${slug}`,
+        };
+      };
+      const res = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId/skills/:namespace/:slug'].get({
+        params: { orgId: 'org-acme', namespace: 'acme', slug: 'deploy' },
+      }, res);
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(captured, { orgId: 'org-acme', namespace: 'acme', slug: 'deploy' });
+    });
+
+    it('rejects malformed route input without calling the service', async () => {
+      const handlers = await importRouteHandlers();
+      let calls = 0;
+      skillsService.listEnterprises = async () => { calls += 1; return { enterprises: [], page: 1, pageSize: 20, total: 0 }; };
+      skillsService.listEnterpriseSkills = async () => { calls += 1; return { skills: [], page: 1, pageSize: 20, total: 0 }; };
+      skillsService.getEnterpriseSkillDetail = async () => { calls += 1; throw new Error('not reached'); };
+
+      const badIndustry = createMockRes();
+      await handlers['/enterprise-zone/enterprises'].get({ query: { industry: 'bad/value' } }, badIndustry);
+      assert.strictEqual(badIndustry.statusCode, 400);
+      const badPage = createMockRes();
+      await handlers['/enterprise-zone/enterprises'].get({ query: { page: '0' } }, badPage);
+      assert.strictEqual(badPage.statusCode, 400);
+      const badPageSize = createMockRes();
+      await handlers['/enterprise-zone/enterprises'].get({ query: { pageSize: '200' } }, badPageSize);
+      assert.strictEqual(badPageSize.statusCode, 400);
+      const badSort = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId/skills'].get({
+        params: { orgId: 'org-acme' }, query: { sort: 'popular' },
+      }, badSort);
+      assert.strictEqual(badSort.statusCode, 400);
+      const badCoordinate = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId/skills/:namespace/:slug'].get({
+        params: { orgId: 'org-acme', namespace: '..', slug: 'deploy' },
+      }, badCoordinate);
+      assert.strictEqual(badCoordinate.statusCode, 400);
+      assert.strictEqual(calls, 0);
+    });
+
+    it('maps provider not-found and invalid-response errors consistently', async () => {
+      const { SkillHubProviderError } = await import('../services/skills/index.js');
+      const handlers = await importRouteHandlers();
+      skillsService.getEnterprise = async () => { throw new SkillHubProviderError('SkillHub resource not found', 'not-found'); };
+      const missing = createMockRes();
+      await handlers['/enterprise-zone/enterprises/:orgId'].get({ params: { orgId: 'org-missing' } }, missing);
+      assert.strictEqual(missing.statusCode, 404);
+
+      skillsService.listEnterpriseIndustries = async () => { throw new SkillHubProviderError('SkillHub industry list is malformed', 'invalid-response'); };
+      const malformed = createMockRes();
+      await handlers['/enterprise-zone/industries'].get({ query: {} }, malformed);
+      assert.strictEqual(malformed.statusCode, 502);
+    });
+
+    it('does not register Enterprise Zone mutation or bulk-install routes', async () => {
+      const handlers = await importRouteHandlers();
+      assert.strictEqual(handlers['/enterprise-zone/install'], undefined);
+      assert.strictEqual(handlers['/enterprise-zone/enterprises/:orgId/install'], undefined);
     });
   });
 

@@ -225,6 +225,24 @@ describe('git-changes service', { concurrency: false }, () => {
     assert.strictEqual(event.data.type, 'watcher_unavailable');
   });
 
+  it('does not create a recursive watcher for a non-Git workspace', async () => {
+    const fakeStore = createFakeStore(tempDir);
+    service = new GitChangesService(fakeStore, async () => []);
+    const socket = createMockSocket();
+
+    await service.subscribe('ws-1', socket as unknown as WebSocket);
+
+    assert.strictEqual(socket.messages.length, 1);
+    const event = socket.messages[0] as {
+      eventType: string;
+      data: { type: string; reason: string };
+    };
+    assert.strictEqual(event.eventType, 'watcher_unavailable');
+    assert.strictEqual(event.data.type, 'watcher_unavailable');
+    assert.strictEqual(event.data.reason, 'Workspace is not a Git repository');
+    assert.strictEqual((service as unknown as { watchers: Map<string, unknown> }).watchers.size, 0);
+  });
+
   it('dispose closes watchers and releases resources', async () => {
     await initGitRepo(tempDir);
     const fakeStore = createFakeStore(tempDir);

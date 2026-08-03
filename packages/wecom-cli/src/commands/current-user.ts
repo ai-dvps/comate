@@ -34,7 +34,7 @@ export default class CurrentUser extends BaseCommand {
 
     const endpointUrl = `${context.serverUrl}/api/workspaces/${context.workspaceId}/sessions/${sessionId}/wecom-user`;
 
-    const response = await getJson(endpointUrl);
+    const response = await getJson(endpointUrl, this.authHeaders());
 
     if (response.status === 200) {
       let parsed: { userId?: string };

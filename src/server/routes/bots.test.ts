@@ -757,8 +757,31 @@ describe('bots routes', { concurrency: false }, () => {
     await handlers['/:id'].put({ params: { id: bot.id }, body: { rolePolicy } }, res);
     assert.strictEqual(res.statusCode, 200);
     const body = res.jsonBody as { bot: { rolePolicy: unknown } };
-    assert.deepStrictEqual(body.bot.rolePolicy, rolePolicy);
-    assert.deepStrictEqual(botService.getRolePolicy(bot.id), rolePolicy);
+    // The read path sanitizes (U2): an invalid posture collapses to 'custom',
+    // missing categories backfill fail-closed from SAFE_PRESET, and the new
+    // fields backfill to safe defaults.
+    const sanitized = {
+      normalToolPolicy: {
+        posture: 'custom',
+        categoryDefaults: {
+          fileRead: 'deny',
+          fileWrite: 'deny',
+          shell: 'deny',
+          network: 'deny',
+          subagents: 'deny',
+          reply: 'allow',
+          browser: 'deny',
+        },
+        overrides: undefined,
+      },
+      skillAllowlist: ['skill-a'],
+      bashWhitelist: ['ls'],
+      disabledSkills: [],
+      passlistRules: [],
+      networkAllowlist: [],
+    };
+    assert.deepStrictEqual(body.bot.rolePolicy, sanitized);
+    assert.deepStrictEqual(botService.getRolePolicy(bot.id), sanitized);
   });
 
   it('GET / returns bots with rolePolicy unredacted', async () => {
@@ -772,11 +795,22 @@ describe('bots routes', { concurrency: false }, () => {
     const res = createMockRes();
     await handlers['/'].get({}, res);
     assert.strictEqual(res.statusCode, 200);
-    const body = res.jsonBody as { bots: Array<{ rolePolicy: unknown }> };
+    const body = res.jsonBody as { bots: Array<{ rolePolicy: { normalToolPolicy: unknown; skillAllowlist: string[] } }> };
     assert.strictEqual(body.bots.length, 1);
+    // Sanitized on read (U2): categories missing from the stored blob
+    // backfill fail-closed from SAFE_PRESET.
     assert.deepStrictEqual(body.bots[0].rolePolicy.normalToolPolicy, {
       posture: 'allow-all',
-      categoryDefaults: { fileRead: 'allow' },
+      categoryDefaults: {
+        fileRead: 'allow',
+        fileWrite: 'deny',
+        shell: 'deny',
+        network: 'deny',
+        subagents: 'deny',
+        reply: 'allow',
+        browser: 'deny',
+      },
+      overrides: undefined,
     });
     assert.deepStrictEqual(body.bots[0].rolePolicy.skillAllowlist, ['skill-b']);
   });

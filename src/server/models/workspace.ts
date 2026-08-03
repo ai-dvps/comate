@@ -68,6 +68,13 @@ export interface WorkspaceSettings {
   promptHistoryRetentionDays?: number;
   /** Configurable glob list of sensitive files that Normal bot users cannot read. Owner/Admin are not constrained. */
   sensitiveFileDenylist?: string[];
+  /**
+   * Runtime kill switch for the bot permission sandbox model (U3, rollout
+   * canary): when true, bot sessions in this workspace fall back to the prior
+   * permission behavior (no SDK sandbox, no settingSources pin, legacy
+   * whitelist/skill gates). Absent/false = the new model is active.
+   */
+  botPermissionSandboxDisabled?: boolean;
   /** Feishu (Lark) bot app credentials and admin list. */
   feishuAppId?: string;
   feishuAppSecret?: string;

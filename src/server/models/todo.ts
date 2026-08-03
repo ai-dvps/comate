@@ -1,4 +1,8 @@
 export type TodoStatus = 'pending' | 'done' | 'discard' | 'did-but-need-verify';
+export type TodoExecutionType = 'manual' | 'once' | 'recurring' | 'idle';
+/** Whether automatic dispatch is allowed. This is intentionally independent
+ * from the human lifecycle (`status`). */
+export type TodoExecutionStatus = 'active' | 'paused' | 'disabled';
 
 /**
  * Where a todo originated. `local` todos are authoritative in Comate and may be
@@ -19,6 +23,22 @@ export interface Todo {
    */
   content: string | null;
   status: TodoStatus;
+  /** Execution policy is local metadata and never changes GitHub issue state. */
+  executionType: TodoExecutionType;
+  /** Self-contained instruction used for an automated Run. */
+  instruction: string | null;
+  scheduleTime: string | null;
+  cronExpr: string | null;
+  executionStatus: TodoExecutionStatus;
+  nextFireAt: string | null;
+  notifyDesktop: boolean;
+  notifyInApp: boolean;
+  notifyWecom: boolean;
+  wecomRecipient: string | null;
+  /** Opaque workspace/capability snapshot captured for automated execution. */
+  confirmedSnapshot: unknown | null;
+  /** Retained only for the legacy scheduled-task compatibility window. */
+  deletedAt: string | null;
   sessionId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -43,6 +63,17 @@ export interface CreateTodoInput {
   content?: string | null;
   workspaceId?: string | null;
   dueDate?: string | null;
+  executionType?: TodoExecutionType;
+  instruction?: string | null;
+  scheduleTime?: string | null;
+  cronExpr?: string | null;
+  executionStatus?: TodoExecutionStatus;
+  nextFireAt?: string | null;
+  notifyDesktop?: boolean;
+  notifyInApp?: boolean;
+  notifyWecom?: boolean;
+  wecomRecipient?: string | null;
+  confirmedSnapshot?: unknown | null;
 }
 
 export interface UpdateTodoInput {
@@ -52,6 +83,17 @@ export interface UpdateTodoInput {
   sessionId?: string | null;
   workspaceId?: string | null;
   dueDate?: string | null;
+  executionType?: TodoExecutionType;
+  instruction?: string | null;
+  scheduleTime?: string | null;
+  cronExpr?: string | null;
+  executionStatus?: TodoExecutionStatus;
+  nextFireAt?: string | null;
+  notifyDesktop?: boolean;
+  notifyInApp?: boolean;
+  notifyWecom?: boolean;
+  wecomRecipient?: string | null;
+  confirmedSnapshot?: unknown | null;
   origin?: TodoOrigin;
   repoFullName?: string | null;
   issueNumber?: number | null;

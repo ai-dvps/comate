@@ -331,6 +331,8 @@ export type SseEvent =
       suggestions?: PermissionSuggestion[]
       expiresAt?: number
       denialReason?: 'safetyCheck' | 'asyncAgent' | string
+      /** U11 (KTD-15): escalation audience; undefined = legacy self flow. */
+      audience?: 'self' | 'admins'
     }
   | { type: 'pending_question'; requestId: string; questions: QuestionPayload[]; expiresAt?: number }
   | { type: 'approval_resolved'; requestId: string }

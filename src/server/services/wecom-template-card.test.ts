@@ -7,7 +7,11 @@ import {
   buildToolApprovalCard,
   buildQuestionCard,
   buildWecomSessionListCard,
+  buildEscalationApprovalCard,
+  buildEscalationNoticeCard,
+  buildEscalationResultCard,
   buildTerminalCard,
+  isEscalationAction,
   parseTemplateCardEvent,
   verifySessionOwner,
   formatQuestionFold,
@@ -586,6 +590,91 @@ describe('wecom-template-card', () => {
     it('falls back to "unknown" for an empty tool name', () => {
       assert.strictEqual(formatPermissionFold('', 'allow'), '🔐 unknown → 已允许');
       assert.strictEqual(formatPermissionFold('   ', 'deny'), '🔐 unknown → 已拒绝');
+    });
+  });
+
+  describe('escalation cards (U11, KTD-15/KTD-18)', () => {
+    const baseOptions = {
+      requestId: 'req-esc-1',
+      sessionId: 'sess-1',
+      toolName: 'Bash',
+      commandSummary: 'curl https://a.com/x',
+      requesterLabel: 'user-1',
+      requesterRoleLabel: '普通成员',
+      alwaysAllowRules: ['Bash(curl https://a.com/x)'],
+      ttlMinutes: 30,
+      taskId: 'req-esc-1',
+    };
+
+    it('buildEscalationApprovalCard shows the exact rule + match semantics and all three escalate actions', () => {
+      const card = buildEscalationApprovalCard(baseOptions);
+      assert.strictEqual(card.card_type, 'button_interaction');
+      assert.match(card.main_title.title, /出沙箱审批/);
+      // KTD-18: the card content IS the rule that would persist + its prose.
+      assert.match(card.main_title.desc, /Bash\(curl https:\/\/a\.com\/x\)/);
+      assert.match(card.main_title.desc, /仅精确匹配此命令/);
+      assert.match(card.main_title.desc, /30 分钟/);
+      assert.match(card.main_title.desc, /user-1/);
+
+      const buttons = (card as { button_list: Array<{ text: string; key: string }> }).button_list;
+      assert.strictEqual(buttons.length, 3);
+      const actions = buttons.map((b) => decodeButtonKey(b.key)?.action);
+      assert.deepStrictEqual(actions, ['escalate_approve', 'escalate_always_allow', 'escalate_deny']);
+      // Keys decode back to this request/session for the click handler.
+      assert.ok(buttons.every((b) => decodeButtonKey(b.key)?.requestId === 'req-esc-1'));
+      assert.ok(buttons.every((b) => decodeButtonKey(b.key)?.sessionId === 'sess-1'));
+    });
+
+    it('buildEscalationApprovalCard hides the always-allow button when there is nothing persistable', () => {
+      const card = buildEscalationApprovalCard({ ...baseOptions, alwaysAllowRules: [] });
+      const buttons = (card as { button_list: Array<{ text: string; key: string }> }).button_list;
+      assert.strictEqual(buttons.length, 2);
+      const actions = buttons.map((b) => decodeButtonKey(b.key)?.action);
+      assert.deepStrictEqual(actions, ['escalate_approve', 'escalate_deny']);
+      assert.doesNotMatch(card.main_title.desc, /始终允许将写入直通名单/);
+    });
+
+    it('buildEscalationNoticeCard is read-only (no buttons) with pinned content', () => {
+      const card = buildEscalationNoticeCard({
+        commandSummary: 'curl https://a.com/x',
+        toolName: 'Bash',
+        audienceLabel: '渠道 owner 或 admin',
+        ttlMinutes: 30,
+        taskId: 'req-esc-1',
+      });
+      assert.strictEqual(card.card_type, 'text_notice');
+      assert.strictEqual((card as { button_list?: unknown }).button_list, undefined);
+      assert.match(card.main_title.desc, /curl https:\/\/a\.com\/x/);
+      assert.match(card.main_title.desc, /渠道 owner 或 admin/);
+      assert.match(card.main_title.desc, /30 分钟/);
+    });
+
+    it('buildEscalationResultCard carries the outcome title and detail', () => {
+      const card = buildEscalationResultCard({
+        title: '出沙箱审批已批准',
+        desc: '命令:curl https://a.com/x\n处理人:owner-1',
+        taskId: 'req-esc-1',
+      });
+      assert.strictEqual(card.card_type, 'text_notice');
+      assert.strictEqual(card.main_title.title, '出沙箱审批已批准');
+      assert.match(card.main_title.desc, /owner-1/);
+      assert.strictEqual(card.task_id, 'req-esc-1');
+    });
+
+    it('isEscalationAction classifies the escalate family only', () => {
+      assert.ok(isEscalationAction('escalate_approve'));
+      assert.ok(isEscalationAction('escalate_always_allow'));
+      assert.ok(isEscalationAction('escalate_deny'));
+      assert.ok(!isEscalationAction('allow'));
+      assert.ok(!isEscalationAction('deny'));
+      assert.ok(!isEscalationAction('select_workspace'));
+    });
+
+    it('escalate actions round-trip through encode/decode (replayed clicks stay decodable)', () => {
+      for (const action of ['escalate_approve', 'escalate_always_allow', 'escalate_deny'] as const) {
+        const key = encodeButtonKey('req-1', action, 'sess-1');
+        assert.strictEqual(decodeButtonKey(key)?.action, action);
+      }
     });
   });
 });

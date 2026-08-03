@@ -21,6 +21,7 @@ import type {
   GlobalSkillLockEntry,
   LocalSkillLockFile,
   LocalSkillLockEntry,
+  ExpertPackageSummary,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -162,6 +163,8 @@ export function buildProjectLockEntry(args: {
   computedHash: string;
   ref?: string;
   skillPath?: string;
+  packageSlug?: string;
+  packageCatalog?: ExpertPackageSummary;
 }): LocalSkillLockEntry {
   return {
     source: args.source,
@@ -169,6 +172,8 @@ export function buildProjectLockEntry(args: {
     computedHash: args.computedHash,
     ...(args.ref ? { ref: args.ref } : {}),
     ...(args.skillPath ? { skillPath: args.skillPath } : {}),
+    ...(args.packageSlug ? { packageSlug: args.packageSlug } : {}),
+    ...(args.packageCatalog ? { packageCatalog: args.packageCatalog } : {}),
   };
 }
 
@@ -186,6 +191,8 @@ export function buildGlobalLockEntry(args: {
   ref?: string;
   skillPath?: string;
   pluginName?: string;
+  packageSlug?: string;
+  packageCatalog?: ExpertPackageSummary;
 }): GlobalSkillLockEntry {
   return {
     source: args.source,
@@ -197,5 +204,7 @@ export function buildGlobalLockEntry(args: {
     ...(args.ref ? { ref: args.ref } : {}),
     ...(args.skillPath ? { skillPath: args.skillPath } : {}),
     ...(args.pluginName ? { pluginName: args.pluginName } : {}),
+    ...(args.packageSlug ? { packageSlug: args.packageSlug } : {}),
+    ...(args.packageCatalog ? { packageCatalog: args.packageCatalog } : {}),
   };
 }

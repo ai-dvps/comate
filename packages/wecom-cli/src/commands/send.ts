@@ -52,7 +52,7 @@ export default class Send extends BaseCommand {
       toUser: flags['to-user'],
       message: flags.message,
       msgType: flags['msg-type'],
-    });
+    }, this.authHeaders());
 
     if (response.status === 200) {
       try {

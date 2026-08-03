@@ -1,7 +1,17 @@
 import fs from 'node:fs';
-import path from 'node:path';
 
-export const CONTEXT_FILE_NAME = '.claude/wecom-context.json';
+/**
+ * U12 (KTD-28): the CLI context is passed EXPLICITLY via the
+ * COMATE_WECOM_CONTEXT_FILE environment variable (an absolute path to the
+ * per-session context file in `data/<userDir>/.runtime/`). The legacy
+ * upward-walk discovery for `.claude/wecom-context.json` is removed: a
+ * context file planted in a user-writable directory can no longer redirect
+ * the CLI at another workspace or server.
+ */
+export const CONTEXT_FILE_ENV = 'COMATE_WECOM_CONTEXT_FILE';
+
+/** Env var carrying the per-session loopback capability token (Bearer). */
+export const SESSION_TOKEN_ENV = 'COMATE_SESSION_TOKEN';
 
 export interface ContextFile {
   workspaceId?: string;
@@ -9,21 +19,23 @@ export interface ContextFile {
   serverUrl: string;
 }
 
-export function findContextFile(startDir: string): string | null {
-  let current = path.resolve(startDir);
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const filePath = path.join(current, CONTEXT_FILE_NAME);
-    if (fs.existsSync(filePath)) {
-      return filePath;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      break;
-    }
-    current = parent;
-  }
-  return null;
+/**
+ * Resolve the context file path from the environment. Returns null when the
+ * variable is unset or empty (the CLI is being run outside a Comate bot
+ * session).
+ */
+export function resolveContextFilePath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const value = env[CONTEXT_FILE_ENV];
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+/**
+ * Resolve the session capability token from the environment. Returns null
+ * when unset/empty.
+ */
+export function resolveSessionToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  const value = env[SESSION_TOKEN_ENV];
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
 export function readContextFile(filePath: string): ContextFile {

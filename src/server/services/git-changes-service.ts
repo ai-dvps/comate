@@ -112,6 +112,20 @@ async function resolveGitPaths(root: string): Promise<{ gitDir: string; indexPat
   }
 }
 
+/** Avoid recursively watching arbitrary folders when Git has no worktree there. */
+async function isGitWorktree(root: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-C', root, 'rev-parse', '--is-inside-work-tree'],
+      { encoding: 'utf-8', timeout: 5000 },
+    );
+    return stdout.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
 interface WsEventEnvelope {
   type: 'event';
   eventType: string;
@@ -259,6 +273,15 @@ export class GitChangesService {
         type: 'watcher_unavailable',
         workspaceId,
         reason: 'Workspace path unavailable',
+      });
+      return;
+    }
+
+    if (!(await isGitWorktree(root))) {
+      this.broadcast(workspaceId, {
+        type: 'watcher_unavailable',
+        workspaceId,
+        reason: 'Workspace is not a Git repository',
       });
       return;
     }
