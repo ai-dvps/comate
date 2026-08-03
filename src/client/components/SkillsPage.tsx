@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   X,
@@ -21,6 +21,7 @@ import {
   ArrowDownUp,
   RotateCcw,
   Boxes,
+  Building2,
   ChevronDown,
   Grid2X2,
   List,
@@ -36,6 +37,7 @@ import {
 import SkillInstallModal from './SkillInstallModal'
 import ModalPanel from './ModalPanel'
 import ExpertPackagesView from './skills/ExpertPackagesView'
+import EnterpriseZoneView from './skills/EnterpriseZoneView'
 import { useExpertPackagesStore } from '../stores/expert-packages-store'
 
 interface SkillsPageProps {
@@ -44,14 +46,14 @@ interface SkillsPageProps {
   onClose: () => void
 }
 
-type SkillTab = 'installed' | 'search' | 'expert-packages'
+type SkillTab = 'installed' | 'search' | 'expert-packages' | 'enterprise-zone'
 type InstalledViewMode = 'cards' | 'list'
 
 /**
  * Full-screen overlay for the Skills surface. Mirrors PluginSettingsPage:
  *   - `fixed top-11 inset-x-0 bottom-0 z-50` overlay with backdrop blur
  *   - Inner rounded card with header / tab strip / scrollable content
- *   - Two tabs: `installed` (default) and `search`
+ *   - Four peer tabs: `installed` (default), `search`, Expert Packages, and Enterprise Zone
  *
  * Differences from PluginSettingsPage (Design #1, #2, #4, #6):
  *   - No enable/disable toggle (skills are always-on)
@@ -288,7 +290,23 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
     { id: 'installed', label: t('skills.installedTab'), icon: BookOpen },
     { id: 'search', label: t('skills.searchTab'), icon: Search },
     { id: 'expert-packages', label: t('skills.expertPackagesTab'), icon: Boxes },
+    { id: 'enterprise-zone', label: t('skills.enterpriseZoneTab'), icon: Building2 },
   ]
+  const canAddFromUrl = activeTab === 'installed' || activeTab === 'search'
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length
+    if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length
+    if (event.key === 'Home') nextIndex = 0
+    if (event.key === 'End') nextIndex = tabs.length - 1
+    if (nextIndex === null) return
+    event.preventDefault()
+    const nextTab = tabs[nextIndex]
+    setActiveTab(nextTab.id)
+    const tabButtons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    tabButtons?.[nextIndex]?.focus()
+  }
 
   return (
     <>
@@ -311,13 +329,19 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
 
           {/* Tabs + actions */}
           <div className="flex items-center justify-between border-b border-border/50 flex-shrink-0 px-6 py-2 bg-surface">
-            <div className="flex gap-1">
-              {tabs.map((tab) => {
+            <div className="flex gap-1" role="tablist" aria-label={t('skills.sections')}>
+              {tabs.map((tab, index) => {
                 const Icon = tab.icon
                 return (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
+                    onKeyDown={(event) => handleTabKeyDown(event, index)}
+                    role="tab"
+                    id={`skills-tab-${tab.id}`}
+                    aria-controls={`skills-panel-${tab.id}`}
+                    aria-selected={activeTab === tab.id}
+                    tabIndex={activeTab === tab.id ? 0 : -1}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
                       activeTab === tab.id
                         ? 'bg-accent/10 text-accent'
@@ -342,7 +366,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                   {t('skills.updateAll')}
                 </button>
               )}
-              {activeTab !== 'expert-packages' && <button
+              {canAddFromUrl && <button
                 onClick={() => setShowUrlBox((v) => !v)}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
                 title={t('skills.addFromUrl')}
@@ -354,7 +378,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
           </div>
 
           {/* URL install box (toggled) */}
-          {showUrlBox && (
+          {showUrlBox && canAddFromUrl && (
             <div className="flex gap-2 px-6 py-2 bg-bg border-b border-border/50">
               <input
                 value={urlInput}
@@ -391,7 +415,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
           <div className="flex-1 overflow-y-auto bg-bg p-4 md:p-5">
             {/* Installed tab */}
             {activeTab === 'installed' && (
-              <div className="space-y-3">
+              <div id="skills-panel-installed" role="tabpanel" aria-labelledby="skills-tab-installed" className="space-y-3">
                 {isFetchingInstalled && installed.length === 0 ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="w-6 h-6 text-text-tertiary animate-spin" />
@@ -560,7 +584,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
 
             {/* Search tab */}
             {activeTab === 'search' && (
-              <div className="space-y-3">
+              <div id="skills-panel-search" role="tabpanel" aria-labelledby="skills-tab-search" className="space-y-3">
                 <section className="rounded-xl border border-border bg-surface p-3 shadow-sm">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
@@ -756,9 +780,17 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
               </div>
             )}
 
-            <div className={activeTab === 'expert-packages' ? 'block' : 'hidden'}>
+            <div id="skills-panel-expert-packages" role="tabpanel" aria-labelledby="skills-tab-expert-packages" className={activeTab === 'expert-packages' ? 'block' : 'hidden'}>
               <ExpertPackagesView
                 active={isOpen && activeTab === 'expert-packages'}
+                isOpen={isOpen}
+                workspaceId={workspaceId}
+                onInstalled={() => void fetchInstalled(workspaceId)}
+              />
+            </div>
+            <div id="skills-panel-enterprise-zone" role="tabpanel" aria-labelledby="skills-tab-enterprise-zone" className={activeTab === 'enterprise-zone' ? 'block' : 'hidden'}>
+              <EnterpriseZoneView
+                active={isOpen && activeTab === 'enterprise-zone'}
                 isOpen={isOpen}
                 workspaceId={workspaceId}
                 onInstalled={() => void fetchInstalled(workspaceId)}

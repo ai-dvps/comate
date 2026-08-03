@@ -7,6 +7,7 @@ import {
   Search,
   X,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type {
   EnterpriseIndustry,
   EnterprisePage,
@@ -57,6 +58,7 @@ export default function EnterpriseList({
   onRetry,
   onRetryIndustries,
 }: EnterpriseListProps) {
+  const { t } = useTranslation('settings')
   const enterprises = page?.enterprises.slice(0, 20) ?? []
   const visiblePage = page?.page ?? requestedPage
   const totalPages = page ? Math.max(1, Math.ceil(page.total / page.pageSize)) : 1
@@ -68,11 +70,11 @@ export default function EnterpriseList({
       <header className="rounded-2xl border border-border bg-surface px-4 py-5 shadow-sm md:px-5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-text-primary">Enterprise Zone</h2>
-            <p className="mt-1 text-xs text-text-tertiary">Browse verified enterprise publishers on SkillHub.</p>
+            <h2 className="text-base font-semibold text-text-primary">{t('skills.enterpriseZone.title')}</h2>
+            <p className="mt-1 text-xs text-text-tertiary">{t('skills.enterpriseZone.subtitle')}</p>
           </div>
           <p className="shrink-0 text-xs text-text-tertiary">
-            {formatCount(page?.total ?? 0)} enterprises
+            {t('skills.enterpriseZone.enterpriseCount', { count: formatCount(page?.total ?? 0) })}
           </p>
         </div>
 
@@ -82,15 +84,15 @@ export default function EnterpriseList({
             <input
               value={keyword}
               onChange={(event) => onKeywordChange(event.target.value)}
-              placeholder="Search enterprises"
-              aria-label="Search enterprises"
+              placeholder={t('skills.enterpriseZone.searchEnterprises')}
+              aria-label={t('skills.enterpriseZone.searchEnterprises')}
               className="h-10 w-full rounded-xl border border-border bg-bg pl-9 pr-9 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
             />
             {keyword ? (
               <button
                 type="button"
                 onClick={() => onKeywordChange('')}
-                aria-label="Clear enterprise search"
+                aria-label={t('skills.enterpriseZone.clearEnterpriseSearch')}
                 className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center text-text-tertiary hover:text-text-primary"
               >
                 <X className="h-3.5 w-3.5" />
@@ -100,11 +102,11 @@ export default function EnterpriseList({
           <select
             value={industry ?? ''}
             onChange={(event) => onIndustryChange(event.target.value || undefined)}
-            aria-label="Filter enterprises by industry"
+            aria-label={t('skills.enterpriseZone.filterByIndustry')}
             disabled={industriesLoading}
             className="h-10 min-w-52 rounded-xl border border-border bg-bg px-3 text-xs text-text-secondary outline-none focus:border-accent disabled:opacity-60"
           >
-            <option value="">All industries</option>
+            <option value="">{t('skills.enterpriseZone.allIndustries')}</option>
             {industries.map((item) => (
               <option key={item.key} value={item.key}>{item.displayName}</option>
             ))}
@@ -114,41 +116,41 @@ export default function EnterpriseList({
         {industriesError ? (
           <div
             role="status"
-            aria-label="Industry filters unavailable"
+            aria-label={t('skills.enterpriseZone.industryFiltersUnavailable')}
             className="mt-3 flex flex-col gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 sm:flex-row sm:items-center sm:justify-between dark:text-amber-300"
           >
-            <span>{industriesError}. You can still browse all industries.</span>
-            <button type="button" onClick={onRetryIndustries} aria-label="Retry industry filters" className="font-medium underline underline-offset-2">
-              Retry filters
+            <span>{t('skills.enterpriseZone.industryErrorHint', { error: industriesError })}</span>
+            <button type="button" onClick={onRetryIndustries} aria-label={t('skills.enterpriseZone.retryIndustryFilters')} className="font-medium underline underline-offset-2">
+              {t('skills.enterpriseZone.retryFilters')}
             </button>
           </div>
         ) : null}
       </header>
 
       {initialLoading ? (
-        <div aria-busy="true" aria-label="Loading enterprises" className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div aria-busy="true" aria-label={t('skills.enterpriseZone.loadingEnterprises')} className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {Array.from({ length: 4 }, (_, index) => (
             <div key={index} className="h-40 animate-pulse rounded-2xl border border-border bg-surface" />
           ))}
         </div>
       ) : error && !page ? (
         <section className="rounded-2xl border border-destructive/30 bg-destructive/5 p-8 text-center">
-          <p className="text-sm font-medium text-text-primary">Enterprise catalog could not be loaded.</p>
+          <p className="text-sm font-medium text-text-primary">{t('skills.enterpriseZone.catalogLoadFailed')}</p>
           <p className="mt-1 text-xs text-text-secondary">{error}</p>
-          <button type="button" onClick={onRetry} className="mt-4 rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-foreground">Retry enterprises</button>
+          <button type="button" onClick={onRetry} className="mt-4 rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-foreground">{t('skills.enterpriseZone.retryEnterprises')}</button>
         </section>
       ) : enterprises.length === 0 ? (
         <section className="rounded-2xl border border-dashed border-border bg-surface/50 p-10 text-center">
           <Building2 className="mx-auto h-8 w-8 text-text-tertiary" />
           <p className="mt-3 text-sm font-medium text-text-secondary">
-            {filtered ? 'No enterprises match your filters.' : 'No enterprises are available yet.'}
+            {t(filtered ? 'skills.enterpriseZone.noEnterpriseMatches' : 'skills.enterpriseZone.noEnterprises')}
           </p>
           <p className="mt-1 text-xs text-text-tertiary">
-            {filtered ? 'Try another keyword or industry.' : 'Check back when enterprise publishers are available.'}
+            {t(filtered ? 'skills.enterpriseZone.adjustEnterpriseFilters' : 'skills.enterpriseZone.enterpriseComeBack')}
           </p>
           {filtered ? (
-            <button type="button" onClick={onClearFilters} aria-label="Clear enterprise filters" className="mt-4 rounded-lg border border-border px-3 py-2 text-xs text-text-secondary hover:border-accent/40">
-              Clear filters
+            <button type="button" onClick={onClearFilters} aria-label={t('skills.enterpriseZone.clearEnterpriseFilters')} className="mt-4 rounded-lg border border-border px-3 py-2 text-xs text-text-secondary hover:border-accent/40">
+              {t('skills.enterpriseZone.clearFilters')}
             </button>
           ) : null}
         </section>
@@ -156,11 +158,11 @@ export default function EnterpriseList({
         <>
           {error ? (
             <div role="status" className="flex flex-col gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 sm:flex-row sm:items-center sm:justify-between dark:text-amber-300">
-              <span>{error}. Showing the last available page.</span>
-              <button type="button" onClick={onRetry} className="font-medium underline underline-offset-2">Retry page</button>
+              <span>{t('skills.enterpriseZone.showingLastPage', { error })}</span>
+              <button type="button" onClick={onRetry} className="font-medium underline underline-offset-2">{t('skills.enterpriseZone.retryPage')}</button>
             </div>
           ) : null}
-          {loading ? <p role="status" className="text-xs text-text-tertiary">Refreshing enterprises…</p> : null}
+          {loading ? <p role="status" className="text-xs text-text-tertiary">{t('skills.enterpriseZone.refreshingEnterprises')}</p> : null}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2" aria-busy={loading}>
             {enterprises.map((item) => (
               <button
@@ -177,7 +179,7 @@ export default function EnterpriseList({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <h3 className="truncate text-sm font-semibold text-text-primary">{item.name}</h3>
-                      <CheckCircle2 aria-label="Verified enterprise" className="h-3.5 w-3.5 shrink-0 text-accent" />
+                      <CheckCircle2 aria-label={t('skills.enterpriseZone.verifiedEnterprise')} className="h-3.5 w-3.5 shrink-0 text-accent" />
                     </div>
                     {item.fullName && item.fullName !== item.name ? <p className="mt-0.5 truncate text-[10px] text-text-tertiary">{item.fullName}</p> : null}
                   </div>
@@ -188,28 +190,28 @@ export default function EnterpriseList({
                   {item.industryTags.map((tag) => <span key={tag} className="rounded-md bg-surface-hover px-2 py-1 text-[10px] text-text-tertiary">{industryLabel(industries, tag)}</span>)}
                 </div>
                 <div className="mt-3 flex items-center gap-3 text-[10px] text-text-tertiary">
-                  <span>{formatCount(item.publishedSkillCount)} Skills</span>
+                  <span>{t('skills.enterpriseZone.skillCount', { count: formatCount(item.publishedSkillCount) })}</span>
                   <span className="inline-flex items-center gap-1"><Download className="h-3 w-3" /> {formatCount(item.totalDownloads)}</span>
                 </div>
               </button>
             ))}
           </div>
-          <nav className="flex items-center justify-center gap-3 pt-1" aria-label="Enterprise pagination">
+          <nav className="flex items-center justify-center gap-3 pt-1" aria-label={t('skills.enterpriseZone.enterprisePagination')}>
             <button
               type="button"
               onClick={() => onPageChange(Math.max(1, visiblePage - 1))}
               disabled={visiblePage <= 1 || loading}
-              aria-label="Previous enterprise page"
+              aria-label={t('skills.enterpriseZone.previousEnterprisePage')}
               className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-xs text-text-secondary disabled:opacity-50"
-            ><ChevronLeft className="h-3.5 w-3.5" /> Previous</button>
-            <span className="min-w-24 text-center text-xs text-text-tertiary">Page {visiblePage} of {totalPages}</span>
+            ><ChevronLeft className="h-3.5 w-3.5" /> {t('skills.enterpriseZone.previous')}</button>
+            <span className="min-w-24 text-center text-xs text-text-tertiary">{t('skills.enterpriseZone.pageOf', { page: visiblePage, totalPages })}</span>
             <button
               type="button"
               onClick={() => onPageChange(Math.min(totalPages, visiblePage + 1))}
               disabled={visiblePage >= totalPages || loading}
-              aria-label="Next enterprise page"
+              aria-label={t('skills.enterpriseZone.nextEnterprisePage')}
               className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-xs text-text-secondary disabled:opacity-50"
-            >Next <ChevronRight className="h-3.5 w-3.5" /></button>
+            >{t('skills.enterpriseZone.next')} <ChevronRight className="h-3.5 w-3.5" /></button>
           </nav>
         </>
       )}

@@ -9,6 +9,7 @@ import {
   Star,
   X,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type {
   EnterpriseDetail as EnterpriseDetailData,
   EnterpriseIndustry,
@@ -63,9 +64,10 @@ export default function EnterpriseDetail({
   onSkillPageChange,
   onSelectSkill,
 }: EnterpriseDetailProps) {
+  const { t } = useTranslation('settings')
   if (detailLoading && !detail) {
     return (
-      <div aria-busy="true" aria-label="Loading enterprise profile" className="mx-auto max-w-5xl animate-pulse space-y-4">
+      <div aria-busy="true" aria-label={t('skills.enterpriseZone.loadingEnterpriseProfile')} className="mx-auto max-w-5xl animate-pulse space-y-4">
         <div className="h-3 w-40 rounded bg-surface-hover" />
         <div className="h-40 rounded-2xl border border-border bg-surface" />
         <div className="h-72 rounded-2xl border border-border bg-surface" />
@@ -76,11 +78,11 @@ export default function EnterpriseDetail({
   if (detailError && !detail) {
     return (
       <section className="mx-auto max-w-5xl rounded-2xl border border-destructive/30 bg-destructive/5 p-8 text-center">
-        <p className="text-sm font-medium text-text-primary">Enterprise profile could not be loaded.</p>
+        <p className="text-sm font-medium text-text-primary">{t('skills.enterpriseZone.profileLoadFailed')}</p>
         <p className="mt-1 text-xs text-text-secondary">{detailError}</p>
         <div className="mt-4 flex justify-center gap-2">
-          <button type="button" onClick={onBack} aria-label="Back to enterprises" className="rounded-lg border border-border px-3 py-2 text-xs text-text-secondary">Back</button>
-          <button type="button" onClick={onRetryDetail} className="rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground">Retry profile</button>
+          <button type="button" onClick={onBack} aria-label={t('skills.enterpriseZone.backToEnterprises')} className="rounded-lg border border-border px-3 py-2 text-xs text-text-secondary">{t('skills.enterpriseZone.back')}</button>
+          <button type="button" onClick={onRetryDetail} className="rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground">{t('skills.enterpriseZone.retryProfile')}</button>
         </div>
       </section>
     )
@@ -96,9 +98,9 @@ export default function EnterpriseDetail({
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
-      <nav className="flex items-center gap-1.5 text-xs text-text-tertiary" aria-label="Enterprise breadcrumb">
-        <button type="button" onClick={onBack} aria-label="Back to enterprises" className="inline-flex items-center gap-1 hover:text-text-primary">
-          <ArrowLeft className="h-3.5 w-3.5" /> Enterprises
+      <nav className="flex items-center gap-1.5 text-xs text-text-tertiary" aria-label={t('skills.enterpriseZone.enterpriseBreadcrumb')}>
+        <button type="button" onClick={onBack} aria-label={t('skills.enterpriseZone.backToEnterprises')} className="inline-flex items-center gap-1 hover:text-text-primary">
+          <ArrowLeft className="h-3.5 w-3.5" /> {t('skills.enterpriseZone.enterprises')}
         </button>
         <span>/</span>
         <span className="truncate text-text-secondary">{detail.name}</span>
@@ -112,7 +114,7 @@ export default function EnterpriseDetail({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-semibold text-text-primary">{detail.name}</h2>
-              <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-1 text-[10px] font-medium text-accent"><CheckCircle2 className="h-3 w-3" /> Verified enterprise</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-1 text-[10px] font-medium text-accent"><CheckCircle2 className="h-3 w-3" /> {t('skills.enterpriseZone.verifiedEnterprise')}</span>
             </div>
             {detail.fullName && detail.fullName !== detail.name ? <p className="mt-1 text-xs text-text-tertiary">{detail.fullName}</p> : null}
             <p className="mt-2 max-w-3xl text-xs leading-5 text-text-secondary">{detail.description}</p>
@@ -120,16 +122,16 @@ export default function EnterpriseDetail({
               {detail.industryTags.map((tag) => <span key={tag} className="rounded-md bg-surface-hover px-2 py-1 text-[10px] text-text-tertiary">{industryLabel(industries, tag)}</span>)}
             </div>
             <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-text-tertiary">
-              <span>{formatCount(detail.publishedSkillCount)} published Skills</span>
-              <span className="inline-flex items-center gap-1"><Download className="h-3 w-3" /> {formatCount(detail.totalDownloads)} downloads</span>
-              <span className="inline-flex items-center gap-1"><Star className="h-3 w-3" /> {formatCount(detail.totalStars)} stars</span>
+              <span>{t('skills.enterpriseZone.publishedSkillCount', { count: formatCount(detail.publishedSkillCount) })}</span>
+              <span className="inline-flex items-center gap-1"><Download className="h-3 w-3" /> {t('skills.enterpriseZone.downloadCount', { count: formatCount(detail.totalDownloads) })}</span>
+              <span className="inline-flex items-center gap-1"><Star className="h-3 w-3" /> {t('skills.enterpriseZone.starCount', { count: formatCount(detail.totalStars) })}</span>
             </div>
           </div>
         </div>
         {detailError ? (
           <div role="status" className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-            <span>{detailError}. Showing the last available profile.</span>
-            <button type="button" onClick={onRetryDetail} className="font-medium underline underline-offset-2">Retry profile</button>
+            <span>{t('skills.enterpriseZone.showingLastProfile', { error: detailError })}</span>
+            <button type="button" onClick={onRetryDetail} className="font-medium underline underline-offset-2">{t('skills.enterpriseZone.retryProfile')}</button>
           </div>
         ) : null}
       </section>
@@ -142,12 +144,12 @@ export default function EnterpriseDetail({
               <input
                 value={skillKeyword}
                 onChange={(event) => onSkillKeywordChange(event.target.value)}
-                placeholder="Search Enterprise Skills"
-                aria-label="Search Enterprise Skills"
+                placeholder={t('skills.enterpriseZone.searchSkills')}
+                aria-label={t('skills.enterpriseZone.searchSkills')}
                 className="h-10 w-full rounded-xl border border-border bg-bg pl-9 pr-9 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
               />
               {skillKeyword ? (
-                <button type="button" onClick={() => onSkillKeywordChange('')} aria-label="Clear Skill search" className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center text-text-tertiary hover:text-text-primary">
+                <button type="button" onClick={() => onSkillKeywordChange('')} aria-label={t('skills.enterpriseZone.clearSkillSearch')} className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center text-text-tertiary hover:text-text-primary">
                   <X className="h-3.5 w-3.5" />
                 </button>
               ) : null}
@@ -155,49 +157,49 @@ export default function EnterpriseDetail({
             <select
               value={skillSort}
               onChange={(event) => onSkillSortChange(event.target.value as EnterpriseSkillSort)}
-              aria-label="Sort Enterprise Skills"
+              aria-label={t('skills.enterpriseZone.sortSkills')}
               className="h-10 min-w-48 rounded-xl border border-border bg-bg px-3 text-xs text-text-secondary outline-none focus:border-accent"
             >
-              <option value="downloads">Most downloaded</option>
-              <option value="stars">Most starred</option>
-              <option value="latest">Latest</option>
+              <option value="downloads">{t('skills.enterpriseZone.mostDownloaded')}</option>
+              <option value="stars">{t('skills.enterpriseZone.mostStarred')}</option>
+              <option value="latest">{t('skills.enterpriseZone.latest')}</option>
             </select>
           </div>
         </div>
 
         {initialSkillsLoading ? (
-          <div aria-busy="true" aria-label="Loading Enterprise Skills" className="space-y-2">
+          <div aria-busy="true" aria-label={t('skills.enterpriseZone.loadingSkills')} className="space-y-2">
             {Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl border border-border bg-surface" />)}
           </div>
         ) : skillsError && !skillPage ? (
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-8 text-center">
-            <p className="text-sm font-medium text-text-primary">Enterprise Skills could not be loaded.</p>
+            <p className="text-sm font-medium text-text-primary">{t('skills.enterpriseZone.skillsLoadFailed')}</p>
             <p className="mt-1 text-xs text-text-secondary">{skillsError}</p>
             <div className="mt-4 flex justify-center">
-              <button type="button" onClick={onRetrySkills} className="rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground">Retry Skills</button>
+              <button type="button" onClick={onRetrySkills} className="rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground">{t('skills.enterpriseZone.retrySkills')}</button>
             </div>
           </div>
         ) : skills.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border bg-surface/50 p-10 text-center">
             <p className="text-sm font-medium text-text-secondary">
-              {filtered ? 'No Skills match your search.' : 'This enterprise has not published any Skills yet.'}
+              {t(filtered ? 'skills.enterpriseZone.noSkillMatches' : 'skills.enterpriseZone.noSkills')}
             </p>
             <p className="mt-1 text-xs text-text-tertiary">
-              {filtered ? 'Try another keyword.' : 'Check back when the enterprise publishes Skills.'}
+              {t(filtered ? 'skills.enterpriseZone.adjustSkillSearch' : 'skills.enterpriseZone.skillsComeBack')}
             </p>
             {filtered ? (
-              <button type="button" onClick={() => onSkillKeywordChange('')} aria-label="Clear Skill filters" className="mt-4 rounded-lg border border-border px-3 py-2 text-xs text-text-secondary">Clear search</button>
+              <button type="button" onClick={() => onSkillKeywordChange('')} aria-label={t('skills.enterpriseZone.clearSkillFilters')} className="mt-4 rounded-lg border border-border px-3 py-2 text-xs text-text-secondary">{t('skills.enterpriseZone.clearSearch')}</button>
             ) : null}
           </div>
         ) : (
           <>
             {skillsError ? (
               <div role="status" className="flex flex-col gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 sm:flex-row sm:items-center sm:justify-between dark:text-amber-300">
-                <span>{skillsError}. Showing the last available page.</span>
-                <button type="button" onClick={onRetrySkills} className="font-medium underline underline-offset-2">Retry page</button>
+                <span>{t('skills.enterpriseZone.showingLastPage', { error: skillsError })}</span>
+                <button type="button" onClick={onRetrySkills} className="font-medium underline underline-offset-2">{t('skills.enterpriseZone.retryPage')}</button>
               </div>
             ) : null}
-            {skillsLoading ? <p role="status" className="text-xs text-text-tertiary">Refreshing Enterprise Skills…</p> : null}
+            {skillsLoading ? <p role="status" className="text-xs text-text-tertiary">{t('skills.enterpriseZone.refreshingSkills')}</p> : null}
             <div className="space-y-2" aria-busy={skillsLoading}>
               {skills.map((item) => (
                 <button
@@ -223,22 +225,22 @@ export default function EnterpriseDetail({
                 </button>
               ))}
             </div>
-            <nav className="flex items-center justify-center gap-3 pt-1" aria-label="Enterprise Skill pagination">
+            <nav className="flex items-center justify-center gap-3 pt-1" aria-label={t('skills.enterpriseZone.skillPagination')}>
               <button
                 type="button"
                 onClick={() => onSkillPageChange(Math.max(1, visiblePage - 1))}
                 disabled={visiblePage <= 1 || skillsLoading}
-                aria-label="Previous Skill page"
+                aria-label={t('skills.enterpriseZone.previousSkillPage')}
                 className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-xs text-text-secondary disabled:opacity-50"
-              ><ChevronLeft className="h-3.5 w-3.5" /> Previous</button>
-              <span className="min-w-24 text-center text-xs text-text-tertiary">Page {visiblePage} of {totalPages}</span>
+              ><ChevronLeft className="h-3.5 w-3.5" /> {t('skills.enterpriseZone.previous')}</button>
+              <span className="min-w-24 text-center text-xs text-text-tertiary">{t('skills.enterpriseZone.pageOf', { page: visiblePage, totalPages })}</span>
               <button
                 type="button"
                 onClick={() => onSkillPageChange(Math.min(totalPages, visiblePage + 1))}
                 disabled={visiblePage >= totalPages || skillsLoading}
-                aria-label="Next Skill page"
+                aria-label={t('skills.enterpriseZone.nextSkillPage')}
                 className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-xs text-text-secondary disabled:opacity-50"
-              >Next <ChevronRight className="h-3.5 w-3.5" /></button>
+              >{t('skills.enterpriseZone.next')} <ChevronRight className="h-3.5 w-3.5" /></button>
             </nav>
           </>
         )}
