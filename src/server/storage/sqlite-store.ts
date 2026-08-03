@@ -2,7 +2,8 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, copyFil
 import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import type { Workspace, WorkspaceSettings, CreateWorkspaceInput, UpdateWorkspaceInput, BrowserSiteAuthEntry } from '../models/workspace.js';
+import type { Workspace, WorkspaceSettings, CreateWorkspaceInput, UpdateWorkspaceInput, BrowserSiteAuthEntry, BrowserSiteAuthStoredEntry } from '../models/workspace.js';
+import { BrowserSiteAuthReadError, decodeSiteAuthEntry, encodeSiteAuthEntry, isEncryptedSiteAuthEntry } from '../services/browser-site-auth.js';
 import type { ChatSession, ApprovalMode } from '../models/session.js';
 import type {
   Bot,
@@ -1772,12 +1773,33 @@ export class SqliteStore {
 
   async list(): Promise<Workspace[]> {
     const rows = this.db.prepare('SELECT * FROM workspaces ORDER BY createdAt').all() as RawWorkspaceRow[];
-    return rows.map(parseRow);
+    return rows.map((row) => this.migrateLegacyWorkspaceSiteAuth(parseRow(row)));
   }
 
   async get(id: string): Promise<Workspace | null> {
     const row = this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as RawWorkspaceRow | undefined;
-    return row ? parseRow(row) : null;
+    return row ? this.migrateLegacyWorkspaceSiteAuth(parseRow(row)) : null;
+  }
+
+  private migrateLegacyWorkspaceSiteAuth(workspace: Workspace): Workspace {
+    let current = workspace;
+    for (const [key, stored] of Object.entries(workspace.settings.browserSiteAuth ?? {})) {
+      if (isEncryptedSiteAuthEntry(stored)) continue;
+      const decoded = decodeSiteAuthEntry(stored);
+      current = this.setWorkspaceSiteAuthEntry(workspace.id, key, decoded.entry, decoded.generation) ?? current;
+    }
+    return current;
+  }
+
+  private encryptWorkspaceSiteAuth(settings: WorkspaceSettings): WorkspaceSettings {
+    if (!settings.browserSiteAuth) return settings;
+    const encrypted: Record<string, BrowserSiteAuthStoredEntry> = {};
+    for (const [key, stored] of Object.entries(settings.browserSiteAuth)) {
+      encrypted[key] = isEncryptedSiteAuthEntry(stored)
+        ? stored
+        : encodeSiteAuthEntry(stored as BrowserSiteAuthEntry);
+    }
+    return { ...settings, browserSiteAuth: encrypted };
   }
 
   async create(input: CreateWorkspaceInput): Promise<Workspace> {
@@ -1787,7 +1809,7 @@ export class SqliteStore {
       name: input.name,
       description: input.description || '',
       folderPath: input.folderPath,
-      settings: input.settings || {},
+      settings: this.encryptWorkspaceSiteAuth(input.settings || {}),
       skills: input.skills || [],
       mcpServers: input.mcpServers || [],
       hooks: input.hooks || [],
@@ -1822,7 +1844,7 @@ export class SqliteStore {
       ...(input.name !== undefined && { name: input.name }),
       ...(input.description !== undefined && { description: input.description }),
       ...(input.folderPath !== undefined && { folderPath: input.folderPath }),
-      ...(input.settings !== undefined && { settings: input.settings }),
+      ...(input.settings !== undefined && { settings: this.encryptWorkspaceSiteAuth(input.settings) }),
       ...(input.skills !== undefined && { skills: input.skills }),
       ...(input.mcpServers !== undefined && { mcpServers: input.mcpServers }),
       ...(input.hooks !== undefined && { hooks: input.hooks }),
@@ -1871,11 +1893,28 @@ export class SqliteStore {
     id: string,
     key: string,
     entry: BrowserSiteAuthEntry,
+    generation?: string,
   ): Workspace | null {
     return this.mutateWorkspaceSiteAuth(id, (siteAuth) => {
-      siteAuth[key] = entry;
+      siteAuth[key] = encodeSiteAuthEntry(entry, generation);
       return siteAuth;
     });
+  }
+
+  /** Synchronous server-only credential lookup used by opaque auth bindings. */
+  getWorkspaceSiteAuthEntry(
+    id: string,
+    key: string,
+  ): { entry: BrowserSiteAuthEntry; generation: string } | undefined {
+    const row = this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as
+      | RawWorkspaceRow
+      | undefined;
+    if (!row) return undefined;
+    const workspace = this.migrateLegacyWorkspaceSiteAuth(parseRow(row));
+    const stored = workspace.settings.browserSiteAuth?.[key];
+    if (!stored) return undefined;
+    const decoded = decodeSiteAuthEntry(stored);
+    return { entry: decoded.entry, generation: decoded.generation };
   }
 
   /**
@@ -1903,7 +1942,7 @@ export class SqliteStore {
    */
   private mutateWorkspaceSiteAuth(
     id: string,
-    mutate: (siteAuth: Record<string, BrowserSiteAuthEntry>) => Record<string, BrowserSiteAuthEntry>,
+    mutate: (siteAuth: Record<string, BrowserSiteAuthStoredEntry>) => Record<string, BrowserSiteAuthStoredEntry>,
   ): Workspace | null {
     const row = this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as
       | RawWorkspaceRow
@@ -1911,7 +1950,7 @@ export class SqliteStore {
     if (!row) return null;
     const workspace = parseRow(row);
     const settings = { ...workspace.settings };
-    const current = (settings.browserSiteAuth ?? {}) as Record<string, BrowserSiteAuthEntry>;
+    const current = (settings.browserSiteAuth ?? {}) as Record<string, BrowserSiteAuthStoredEntry>;
     settings.browserSiteAuth = mutate({ ...current });
     const updatedAt = new Date().toISOString();
     this.db.prepare('UPDATE workspaces SET settings = ?, updatedAt = ? WHERE id = ?').run(
@@ -3898,7 +3937,20 @@ export class SqliteStore {
   }
 
   /** Upsert the serialized site-auth entry JSON for a site. */
-  setGlobalSiteAuth(siteKey: string, entryJson: string): void {
+  setGlobalSiteAuth(siteKey: string, entryJson: string, generation?: string): void {
+    let storedJson: string;
+    try {
+      const parsed = JSON.parse(entryJson) as BrowserSiteAuthStoredEntry;
+      storedJson = JSON.stringify(
+        isEncryptedSiteAuthEntry(parsed)
+          ? parsed
+          : encodeSiteAuthEntry(parsed as BrowserSiteAuthEntry, generation),
+      );
+    } catch (error) {
+      if (error instanceof BrowserSiteAuthReadError) throw error;
+      // Never persist an undecodable plaintext credential row.
+      throw new Error('Invalid remembered authentication entry');
+    }
     const now = new Date().toISOString();
     this.db
       .prepare(`
@@ -3908,7 +3960,7 @@ export class SqliteStore {
           entry_json = excluded.entry_json,
           updated_at = excluded.updated_at
       `)
-      .run(siteKey, entryJson, now);
+      .run(siteKey, storedJson, now);
   }
 
   /** Remove the stored site-auth entry for a site. */

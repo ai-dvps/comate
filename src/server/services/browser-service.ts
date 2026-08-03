@@ -9,7 +9,12 @@ import type { BrowserSessionContext, BrowserSiteAuthEntry } from '../models/work
 import { connectSteelPage } from './browser-cdp.js';
 import { siteKeyForUrl } from './browser-site-key.js';
 import { clearBrowserGateSession } from './browser-gate-state.js';
-import { filterContextToScope, readSiteAuthEntry } from './browser-site-auth.js';
+import {
+  decodeSiteAuthEntry,
+  filterContextToScope,
+  readGlobalSiteAuthEntry,
+  readSiteAuthEntry,
+} from './browser-site-auth.js';
 import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
 import {
   allocateLoopbackPort,
@@ -22,6 +27,11 @@ import {
   type StaleCleanupReport,
 } from './browser-steel-process.js';
 import { getBrowserAllowInsecureCerts } from './browser-app-settings.js';
+import {
+  BrowserAuthBindingVault,
+  type CapturedAuthMaterial,
+  type ResolvedAuthMaterial,
+} from './browser-auth-binding.js';
 
 /**
  * browser-service — Steel process orchestration and session lifecycle (KTD-1,
@@ -284,6 +294,8 @@ export interface BrowserServiceDeps {
    * reading browser-app-settings (default ON); tests inject a stub.
    */
   resolveIgnoreCertErrors?: () => Promise<boolean>;
+  /** Per-task opaque credential handles. Injectable for deterministic tests. */
+  authBindings?: BrowserAuthBindingVault;
 }
 
 /** Constructor-resolved deps: the U8 + U3 additions have defaults, so internally
@@ -298,6 +310,7 @@ type ResolvedBrowserServiceDeps = Omit<
   | 'idlePromptMs'
   | 'idleCloseMs'
   | 'resolveIgnoreCertErrors'
+  | 'authBindings'
 > &
   Required<
     Pick<
@@ -310,6 +323,7 @@ type ResolvedBrowserServiceDeps = Omit<
       | 'idlePromptMs'
       | 'idleCloseMs'
       | 'resolveIgnoreCertErrors'
+      | 'authBindings'
     >
   >;
 
@@ -367,6 +381,8 @@ export class BrowserService {
   private readonly releasers = new Set<PendingCardReleaser>();
   /** Ports reserved by live, starting, or not-yet-reaped processes. */
   private readonly portsInUse = new Set<number>();
+  /** Kept across browser close so rebound handles can locate remembered state. */
+  private readonly authWorkspaceByTask = new Map<string, string>();
   private initPromise: Promise<void> | null = null;
   private spawnQueue: Promise<void> = Promise.resolve();
 
@@ -392,6 +408,14 @@ export class BrowserService {
       idlePromptMs: deps?.idlePromptMs ?? DEFAULT_IDLE_PROMPT_MS,
       idleCloseMs: deps?.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS,
       resolveIgnoreCertErrors: deps?.resolveIgnoreCertErrors ?? (() => getBrowserAllowInsecureCerts()),
+      authBindings: deps?.authBindings ?? new BrowserAuthBindingVault({
+        readRemembered: (taskId, siteKey) => {
+          const workspaceId = this.authWorkspaceByTask.get(taskId);
+          return workspaceId
+            ? (deps?.store ?? defaultStore).getWorkspaceSiteAuthEntry(workspaceId, siteKey)
+            : undefined;
+        },
+      }),
     };
   }
 
@@ -581,6 +605,7 @@ export class BrowserService {
   }): Promise<BrowserSessionInfo> {
     await this.initialize();
     const { sessionId, workspaceId, transient = false } = input;
+    this.authWorkspaceByTask.set(sessionId, workspaceId);
 
     const existing = this.registry.get(sessionId);
     if (existing) {
@@ -636,7 +661,10 @@ export class BrowserService {
   }
 
   /** Teardown path 1 (KTD-1): chat session deleted. Idempotent. */
-  async teardownSession(sessionId: string): Promise<void> {
+  async teardownSession(
+    sessionId: string,
+    options?: { preserveRememberedAuthBindings?: boolean },
+  ): Promise<void> {
     const entry = this.registry.get(sessionId);
     if (!entry) return;
     this.registry.delete(sessionId);
@@ -648,6 +676,14 @@ export class BrowserService {
     this.clearIdleTimers(entry);
     entry.expectingExit = true;
     await this.stopEntry(entry, { wipeProfile: true });
+    if (options?.preserveRememberedAuthBindings) {
+      // Browser-only closure destroys raw ephemeral material. Explicitly
+      // rebound handles remain valid and are generation-checked on use.
+      this.deps.authBindings.browserClosed(sessionId);
+    } else {
+      // Task/runtime teardown is terminal for every handle.
+      this.disposeAuthBindings(sessionId);
+    }
     this.emit({
       type: 'browser_closed',
       sessionId,
@@ -704,7 +740,7 @@ export class BrowserService {
         diagWarn(`[browser] auto-remember on close failed for session ${sessionId}:`, err);
       }
     }
-    await this.teardownSession(sessionId);
+    await this.teardownSession(sessionId, { preserveRememberedAuthBindings: true });
     this.deps.audit.logControl({
       workspaceId,
       sessionId,
@@ -874,7 +910,7 @@ export class BrowserService {
    * exclusively in IndexedDB or in a closed tab's storage are NOT replayable
    * — documented limitation, not a silent promise.
    */
-  async rememberCurrentSite(sessionId: string): Promise<RememberSiteResult> {
+  async rememberCurrentSite(sessionId: string, bindingId?: string): Promise<RememberSiteResult> {
     const entry = this.registry.get(sessionId);
     if (!entry || !entry.handle) {
       throw new BrowserSiteAuthError(
@@ -913,6 +949,12 @@ export class BrowserService {
       (raw ?? {}) as { cookies?: unknown; localStorage?: unknown; sessionStorage?: unknown },
       keyResult.key,
     );
+    const bound = bindingId
+      ? this.deps.authBindings.materialForRemember(sessionId, bindingId)
+      : undefined;
+    if (bound && (bound.siteKey !== keyResult.key || bound.sourceOrigin !== keyResult.origin)) {
+      throw new BrowserSiteAuthError('invalid_url', 'The selected authentication belongs to another origin.');
+    }
     const storageDomainCount =
       Object.keys(scoped.localStorage ?? {}).length +
       Object.keys(scoped.sessionStorage ?? {}).length;
@@ -926,16 +968,46 @@ export class BrowserService {
     const now = new Date().toISOString();
     const workspace = await this.deps.store.get(entry.workspaceId);
     const existing = workspace ? readSiteAuthEntry(workspace.settings ?? {}, keyResult.key) : undefined;
-    const updated = this.deps.store.setWorkspaceSiteAuthEntry(entry.workspaceId, keyResult.key, {
+    const existingStored = workspace?.settings.browserSiteAuth?.[keyResult.key];
+    const rememberedEntry: BrowserSiteAuthEntry = {
       sessionContext: scoped,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      ...((bound?.bearerToken ?? existing?.bearerToken)
+        ? { bearerToken: bound?.bearerToken ?? existing?.bearerToken }
+        : {}),
+    };
+    // Bookkeeping-only refreshes retain the generation; credential changes
+    // rotate it and immediately stale every older rebound handle.
+    const unchanged = existing !== undefined && JSON.stringify({
+      sessionContext: existing.sessionContext,
+      bearerToken: existing.bearerToken,
+    }) === JSON.stringify({
+      sessionContext: rememberedEntry.sessionContext,
+      bearerToken: rememberedEntry.bearerToken,
     });
+    const preservedGeneration = unchanged && existingStored
+      ? decodeSiteAuthEntry(existingStored).generation
+      : undefined;
+    const updated = this.deps.store.setWorkspaceSiteAuthEntry(
+      entry.workspaceId,
+      keyResult.key,
+      rememberedEntry,
+      preservedGeneration,
+    );
     if (!updated) {
       throw new BrowserSiteAuthError(
         'export_failed',
         'The workspace no longer exists — the site could not be remembered.',
       );
+    }
+    if (bindingId) {
+      const stored = updated.settings.browserSiteAuth?.[keyResult.key];
+      if (!stored) throw new BrowserSiteAuthError('export_failed', 'Remembered authentication could not be rebound.');
+      this.deps.authBindings.rebindRemembered(sessionId, bindingId, {
+        siteKey: keyResult.key,
+        generation: decodeSiteAuthEntry(stored).generation,
+      });
     }
     // Audit the FACT of the write with counts only — never the values.
     this.deps.audit.logSiteAuth({
@@ -951,6 +1023,25 @@ export class BrowserService {
         `(cookies=${scoped.cookies.length} storageDomains=${storageDomainCount})`,
     );
     return { key: keyResult.key, origin: keyResult.origin, cookieCount: scoped.cookies.length, storageDomainCount };
+  }
+
+  /** Create an opaque task-owned handle for selected inspection evidence. */
+  captureAuthBinding(sessionId: string, material: CapturedAuthMaterial): string {
+    if (!this.registry.has(sessionId)) {
+      throw new BrowserSiteAuthError('browser_no_session', 'This chat session has no live browser.');
+    }
+    return this.deps.authBindings.capture(sessionId, material);
+  }
+
+  /** Resolve only native-applicable material; later broker work consumes this. */
+  resolveAuthBinding(sessionId: string, bindingId: string, destination: string): ResolvedAuthMaterial {
+    return this.deps.authBindings.resolve(sessionId, bindingId, destination);
+  }
+
+  /** Task/runtime terminal hook: unlike browser close, remembered handles die too. */
+  disposeAuthBindings(sessionId: string): void {
+    this.deps.authBindings.closeTask(sessionId);
+    this.authWorkspaceByTask.delete(sessionId);
   }
 
   /**
@@ -991,15 +1082,9 @@ export class BrowserService {
     }
 
     const now = new Date().toISOString();
-    const existingJson = this.deps.store.getGlobalSiteAuth(siteKey);
     let createdAt = now;
-    if (existingJson) {
-      try {
-        createdAt = (JSON.parse(existingJson) as { createdAt?: string }).createdAt ?? now;
-      } catch {
-        /* ignore malformed prior entry */
-      }
-    }
+    const existing = readGlobalSiteAuthEntry(this.deps.store, siteKey);
+    if (existing) createdAt = existing.entry.createdAt;
     const authEntry: BrowserSiteAuthEntry = {
       sessionContext: scoped,
       createdAt,
@@ -1035,18 +1120,18 @@ export class BrowserService {
     let siteAuthEntry = workspace
       ? readSiteAuthEntry(workspace.settings ?? {}, keyResult.key)
       : undefined;
+    let generation = workspace?.settings.browserSiteAuth?.[keyResult.key]
+      ? decodeSiteAuthEntry(workspace.settings.browserSiteAuth[keyResult.key]).generation
+      : undefined;
     let fromGlobal = false;
     if (!siteAuthEntry) {
       // Global fallback: a login captured for another feature (e.g. Kimi usage)
       // is reusable by the chat browser in any workspace.
-      const globalJson = this.deps.store.getGlobalSiteAuth(keyResult.key);
-      if (globalJson) {
-        try {
-          siteAuthEntry = JSON.parse(globalJson) as BrowserSiteAuthEntry;
-          fromGlobal = true;
-        } catch {
-          siteAuthEntry = undefined;
-        }
+      const global = readGlobalSiteAuthEntry(this.deps.store, keyResult.key);
+      if (global) {
+        siteAuthEntry = global.entry;
+        generation = global.generation;
+        fromGlobal = true;
       }
     }
     if (!siteAuthEntry) return null;
@@ -1055,12 +1140,13 @@ export class BrowserService {
       this.deps.store.setGlobalSiteAuth(
         keyResult.key,
         JSON.stringify({ ...siteAuthEntry, lastUsedAt: now }),
+        generation,
       );
     } else {
       this.deps.store.setWorkspaceSiteAuthEntry(entry.workspaceId, keyResult.key, {
         ...siteAuthEntry,
         lastUsedAt: now,
-      });
+      }, generation);
     }
     this.deps.audit.logSiteAuth({
       workspaceId: entry.workspaceId,
@@ -1277,6 +1363,7 @@ export class BrowserService {
     }
     entry.handle = null;
     entry.state = 'session_lost';
+    this.deps.authBindings.browserClosed(sessionId);
     this.clearIdleTimers(entry);
     this.portsInUse.delete(handle.port);
     const reason = `Steel process exited unexpectedly (code=${info.code}, signal=${info.signal})`;

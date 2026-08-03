@@ -3,6 +3,7 @@ import { KIMI_LOGIN_URL, KIMI_SITE_KEY } from './kimi-usage-service.js';
 import { BIGMODEL_LOGIN_URL, BIGMODEL_SITE_KEY, BIGMODEL_TOKEN_COOKIE } from './bigmodel-usage-service.js';
 import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
+import { readGlobalSiteAuthEntry } from './browser-site-auth.js';
 import type { Provider } from '../models/provider.js';
 import { diagLog } from '../utils/diag-logger.js';
 
@@ -121,13 +122,10 @@ export class ProviderUsageLoginService {
           .rememberGlobalSiteAuth(sessionId, profile.siteKey, { bearerCookieName: profile.extract.cookieName })
           .catch((err) => diagLog('Global site-auth capture failed', { error: err instanceof Error ? err.message : String(err) }));
         // Read back the extracted bearer.
-        const json = this.sqlite.getGlobalSiteAuth(profile.siteKey);
-        if (json) {
-          try {
-            bearer = (JSON.parse(json) as { bearerToken?: string }).bearerToken ?? null;
-          } catch {
-            /* ignore */
-          }
+        try {
+          bearer = readGlobalSiteAuthEntry(this.sqlite, profile.siteKey)?.entry.bearerToken ?? null;
+        } catch {
+          bearer = null;
         }
         if (!bearer) {
           return { status: 'relogin', reason: 'no-token-found' };
