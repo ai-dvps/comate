@@ -382,26 +382,16 @@ export async function searchFederatedSkills(input: SkillSearchInput): Promise<Fe
   if (!isUsableQuery(query.keyword)) return { skills: [], providers: [] };
 
   const providers = selectedProviders(query.providers);
-  const providerResults = await Promise.allSettled(
+  const providerResults = await Promise.all(
     providers.map((provider) => runProvider(provider, query)),
   );
   const seen = new Set<string>();
   const results: SearchSkill[] = [];
   const availability: SkillProviderAvailability[] = [];
 
-  for (const [index, providerResult] of providerResults.entries()) {
-    if (providerResult.status !== 'fulfilled') {
-      const provider = providers[index]!;
-      availability.push({
-        id: provider.id,
-        label: provider.label,
-        status: 'unavailable',
-        reason: toSafeFailureReason(providerResult.reason),
-      });
-      continue;
-    }
-    availability.push(providerResult.value.availability);
-    for (const result of providerResult.value.skills) {
+  for (const providerResult of providerResults) {
+    availability.push(providerResult.availability);
+    for (const result of providerResult.skills) {
       const key = `${result.sourceKind}:${result.installSource}:${result.name}`.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);

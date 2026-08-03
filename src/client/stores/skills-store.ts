@@ -383,12 +383,13 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
 
   checkSearchProviders: async () => {
     const checkId = ++activeProviderCheckId
-    const requestedProviderIds = get().searchProviders.map(({ id }) => id)
+    const providerState = get()
+    const requestedProviderIds = providerState.searchProviders.map(({ id }) => id)
     const generation = beginProviderRequest(requestedProviderIds)
     set({
       isCheckingSearchProviders: true,
       checkingSearchProviderIds: requestedProviderIds,
-      searchProviderBlockReason: get().isSearchProviderPreferenceInitialized ? null : 'checking',
+      searchProviderBlockReason: providerState.isSearchProviderPreferenceInitialized ? null : 'checking',
     })
     try {
       const res = await fetch(`${API_BASE}/search/providers`)

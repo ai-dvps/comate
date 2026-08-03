@@ -34,6 +34,8 @@ export default function SkillProviderFilter({ onSelectionChange }: SkillProvider
     selected: selectedSearchProviderIds.length,
     total: searchProviders.length,
   })
+  const isInitialCheck = isCheckingSearchProviders && searchProviders.length === 0
+  const TriggerIcon = isInitialCheck ? Loader2 : unavailableSelected ? AlertTriangle : Server
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -48,11 +50,7 @@ export default function SkillProviderFilter({ onSelectionChange }: SkillProvider
               : 'border-border text-text-secondary hover:border-text-tertiary'
           }`}
         >
-          {isCheckingSearchProviders && searchProviders.length === 0
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : unavailableSelected
-              ? <AlertTriangle className="h-3.5 w-3.5" />
-              : <Server className="h-3.5 w-3.5" />}
+          <TriggerIcon className={`h-3.5 w-3.5 ${isInitialCheck ? 'animate-spin' : ''}`} />
           <span>{searchProviders.length === 0 ? t('skills.checkingProviders') : triggerLabel}</span>
           <ChevronDown className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
@@ -72,6 +70,9 @@ export default function SkillProviderFilter({ onSelectionChange }: SkillProvider
             const selected = selectedSearchProviderIds.includes(provider.id)
             const checking = checkingSearchProviderIds.includes(provider.id)
             const unavailable = provider.status === 'unavailable'
+            let statusText = t('skills.providerAvailable')
+            if (checking) statusText = t('skills.providerChecking')
+            else if (unavailable) statusText = t(reasonKeys[provider.reason || 'network'])
             return (
               <div key={provider.id} className="flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-surface-hover">
                 <input
@@ -94,11 +95,7 @@ export default function SkillProviderFilter({ onSelectionChange }: SkillProvider
                     )}
                   </div>
                   <p className={`mt-0.5 text-[10px] ${unavailable ? 'text-warning' : 'text-success'}`} aria-live="polite">
-                    {checking
-                      ? t('skills.providerChecking')
-                      : unavailable
-                        ? t(reasonKeys[provider.reason || 'network'])
-                        : t('skills.providerAvailable')}
+                    {statusText}
                   </p>
                 </div>
                 {unavailable && (
