@@ -105,6 +105,23 @@ describe('Enterprise Zone provider', () => {
     }
   });
 
+  it('omits upstream Skill rows that cannot form an installable coordinate', async () => {
+    global.fetch = async () => Response.json({
+      items: [skill({ namespace: null, slug: 'unaddressable' }), skill()],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+    });
+
+    const result = await listEnterpriseSkills('org-acme', { sort: 'latest' });
+
+    assert.deepStrictEqual(
+      result.skills.map(({ namespace, slug }) => `${namespace}/${slug}`),
+      ['acme/deploy-helper'],
+    );
+    assert.strictEqual(result.total, 2);
+  });
+
   it('validates canonical coordinate and publisher membership on detail', async () => {
     global.fetch = async () => Response.json({
       slug: 'deploy-helper',
