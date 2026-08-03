@@ -1,6 +1,7 @@
 import path from 'path';
 import { randomBytes } from 'crypto';
 import { rm } from 'fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { getStorageDir } from '../storage/data-dir.js';
 import { resolveChromium } from '../utils/resolve-chromium.js';
@@ -941,10 +942,10 @@ export class BrowserService {
     };
     // Bookkeeping-only refreshes retain the generation; credential changes
     // rotate it and immediately stale every older rebound handle.
-    const unchanged = existing !== undefined && JSON.stringify({
+    const unchanged = existing !== undefined && isDeepStrictEqual({
       sessionContext: existing.sessionContext,
       bearerToken: existing.bearerToken,
-    }) === JSON.stringify({
+    }, {
       sessionContext: rememberedEntry.sessionContext,
       bearerToken: rememberedEntry.bearerToken,
     });
@@ -1001,30 +1002,48 @@ export class BrowserService {
     candidateUrl: string,
     bearerToken?: string,
   ): Promise<string | undefined> {
+    return (await this.captureCandidateAuthBindings(
+      sessionId,
+      [{ url: candidateUrl, ...(bearerToken ? { bearerToken } : {}) }],
+    ))[0];
+  }
+
+  /** Export browser auth once, then mint candidate-specific opaque handles. */
+  async captureCandidateAuthBindings(
+    sessionId: string,
+    candidates: Array<{ url: string; bearerToken?: string }>,
+  ): Promise<Array<string | undefined>> {
     const entry = this.registry.get(sessionId);
-    if (!entry?.handle) return undefined;
-    const keyResult = siteKeyForUrl(candidateUrl);
-    if (!keyResult.ok) return undefined;
+    if (!entry?.handle) return candidates.map(() => undefined);
     const raw = await this.deps.exportContext(entry.handle.baseUrl).catch(() => null);
-    const scoped = raw
-      ? filterContextToScope(
-          raw as { cookies?: unknown; localStorage?: unknown; sessionStorage?: unknown },
-          keyResult.key,
-        )
-      : { cookies: [] };
-    if (scoped.cookies.length === 0 && !bearerToken) return undefined;
-    const bindingId = this.deps.authBindings.capture(sessionId, {
-      siteKey: keyResult.key,
-      sourceOrigin: keyResult.origin,
-      sessionContext: scoped,
-      ...(bearerToken ? { bearerToken } : {}),
+    const contexts = new Map<string, ReturnType<typeof filterContextToScope>>();
+    return candidates.map(({ url, bearerToken }) => {
+      const keyResult = siteKeyForUrl(url);
+      if (!keyResult.ok) return undefined;
+      let scoped = contexts.get(keyResult.key);
+      if (!scoped) {
+        scoped = raw
+          ? filterContextToScope(
+              raw as { cookies?: unknown; localStorage?: unknown; sessionStorage?: unknown },
+              keyResult.key,
+            )
+          : { cookies: [] };
+        contexts.set(keyResult.key, scoped);
+      }
+      if (scoped.cookies.length === 0 && !bearerToken) return undefined;
+      const bindingId = this.deps.authBindings.capture(sessionId, {
+        siteKey: keyResult.key,
+        sourceOrigin: keyResult.origin,
+        sessionContext: scoped,
+        ...(bearerToken ? { bearerToken } : {}),
+      });
+      const applicable = this.deps.authBindings.resolve(sessionId, bindingId, url);
+      if (applicable.cookies.length === 0 && !applicable.bearerToken) {
+        this.deps.authBindings.discard(sessionId, bindingId);
+        return undefined;
+      }
+      return bindingId;
     });
-    const applicable = this.deps.authBindings.resolve(sessionId, bindingId, candidateUrl);
-    if (applicable.cookies.length === 0 && !applicable.bearerToken) {
-      this.deps.authBindings.discard(sessionId, bindingId);
-      return undefined;
-    }
-    return bindingId;
   }
 
   /** Resolve only native-applicable material; later broker work consumes this. */

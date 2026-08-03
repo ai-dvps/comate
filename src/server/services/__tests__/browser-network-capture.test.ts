@@ -16,8 +16,10 @@ class FakeTransport implements BrowserNetworkCaptureTransport {
   private readonly closeListeners = new Set<() => void>();
   bodyByKey = new Map<string, { body: string; base64Encoded: boolean } | Error>();
   starts = 0;
+  stops = 0;
 
   async start(): Promise<void> { this.starts += 1; }
+  stop(): void { this.stops += 1; }
   onEvent(listener: (event: CdpEventEnvelope) => void): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
@@ -174,5 +176,38 @@ describe('BrowserNetworkCaptureManager', () => {
     const result = await stopping;
     assert.equal(result.state, 'aborted');
     assert.ok(result.incompleteReasons.includes('connection_closed'));
+    assert.equal(transport.stops, 1);
+  });
+
+  it('bounds forgotten noisy captures and retained response bodies', async () => {
+    const transport = new FakeTransport();
+    transport.bodyByKey.set('page:first', { body: '12345', base64Encoded: false });
+    transport.bodyByKey.set('page:second', { body: '67890', base64Encoded: false });
+    const capture = manager(transport, {
+      recordingDeadlineMs: 10,
+      maxChains: 3,
+      maxHopsPerChain: 1,
+      maxRetainedBodyBytes: 5,
+    });
+    await capture.start();
+    for (const id of ['first', 'second']) {
+      transport.emit('Network.requestWillBeSent', request(id, `https://example.com/${id}`));
+      transport.emit('Network.responseReceived', response(id));
+      transport.emit('Network.loadingFinished', { requestId: id });
+    }
+    transport.emit('Network.requestWillBeSent', request('long', 'https://example.com/long'));
+    transport.emit('Network.requestWillBeSent', request('overflow', 'https://example.com/overflow'));
+    const result = await new Promise<Awaited<ReturnType<typeof capture.stop>>>((resolve) => {
+      const poll = setInterval(() => {
+        if (capture.state === 'draining') {
+          clearInterval(poll);
+          void capture.stop().then(resolve);
+        }
+      }, 1);
+    });
+    assert.equal(result.chains.length, 3);
+    assert.equal(result.chains.filter((chain) => chain.hops[0].responseBody).length, 1);
+    assert.ok(result.incompleteReasons.includes('capture_limit_exceeded'));
+    assert.equal(transport.stops, 1);
   });
 });

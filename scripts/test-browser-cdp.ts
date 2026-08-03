@@ -70,18 +70,6 @@ const server = createServer((request, response) => {
     response.end(JSON.stringify({ worker: true }));
     return;
   }
-  if (request.url === '/worker.js') {
-    response.writeHead(200, { 'content-type': 'application/javascript' });
-    const fixtureOrigin = `http://${request.headers.host}`;
-    response.end(`setTimeout(() => fetch(${JSON.stringify(`${fixtureOrigin}/worker-quota`)}).then(r => r.json()).then(v => { postMessage(v); close(); }), 200)`);
-    return;
-  }
-  if (request.url === '/detached-worker.js') {
-    response.writeHead(200, { 'content-type': 'application/javascript' });
-    const fixtureOrigin = `http://${request.headers.host}`;
-    response.end(`setTimeout(() => { postMessage("ready"); fetch(${JSON.stringify(`${fixtureOrigin}/hang`)}) }, 200)`);
-    return;
-  }
   if (request.url === '/hang') {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.flushHeaders();

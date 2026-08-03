@@ -171,7 +171,7 @@ function normalizeHeaders(
   return output;
 }
 
-function containsControlCharacter(value: string): boolean {
+export function containsControlCharacter(value: string): boolean {
   for (const character of value) {
     const code = character.charCodeAt(0);
     if (code <= 31 || code === 127) return true;

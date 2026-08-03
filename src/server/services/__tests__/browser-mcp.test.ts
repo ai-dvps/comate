@@ -896,7 +896,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     rmSync(storageDir, { recursive: true, force: true });
   });
 
-  function makeService(): BrowserService {
+  function makeService(options: { exportContext?: (baseUrl: string) => Promise<unknown> } = {}): BrowserService {
     storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-registry-'));
     let port = 9400;
     return new BrowserService({
@@ -907,6 +907,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
       createProcess: (processOptions) => new FakeSteelHandle(processOptions),
       cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
       now: () => Date.now(),
+      exportContext: options.exportContext,
     });
   }
 
@@ -999,7 +1000,11 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
   });
 
   it('preserves capture across stateless builds, ranks APIs, and removes credential sentinels', async () => {
-    const service = makeService();
+    let contextExports = 0;
+    const service = makeService({ exportContext: async () => {
+      contextExports += 1;
+      return {};
+    } });
     const transport = new FakeNetworkTransport();
     const secret = 'credential-sentinel-1234567890-abcdef';
     transport.bodies.set('api', { body: JSON.stringify({ remaining: 42, unfamiliar: secret }), base64Encoded: false });
@@ -1059,6 +1064,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     assert.ok(candidates.some((candidate) => candidate.url.includes('/v1/telemetry')));
     assert.ok(candidates.some((candidate) => candidate.url.includes('/notifications/poll')));
     assert.match(candidates[0].authBinding ?? '', /^authb_[A-Za-z0-9_-]{8,}$/);
+    assert.equal(contextExports, 1, 'all candidates share one browser-context export');
   });
 
   it('runtime disposal aborts capture drains and removes the task context', async () => {

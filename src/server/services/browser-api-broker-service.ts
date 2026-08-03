@@ -1,7 +1,14 @@
 import type { BrokerResult } from '@comate/api-contracts';
-import { BrowserAuthenticatedRequestBroker } from './browser-authenticated-request.js';
+import {
+  BrowserAuthenticatedRequestBroker,
+  type BrokerExecutionContext,
+} from './browser-authenticated-request.js';
 import { browserAuditService } from './browser-audit.js';
 import { browserService } from './browser-service.js';
+
+export interface BrowserApiBrokerExecutor {
+  execute(context: BrokerExecutionContext, request: unknown): Promise<BrokerResult>;
+}
 
 export interface ApiBrokerApprovalRequest {
   taskId: string;
@@ -23,7 +30,7 @@ export type ApiBrokerApprovalRequester = (
  */
 class BrowserApiBrokerService {
   private approvalRequester?: ApiBrokerApprovalRequester;
-  readonly broker = new BrowserAuthenticatedRequestBroker({
+  private readonly broker = new BrowserAuthenticatedRequestBroker({
     resolveAuth: (taskId, bindingId, destination) =>
       browserService.resolveAuthBinding(taskId, bindingId, destination),
     approvalRequester: async (input) => {
@@ -38,7 +45,7 @@ class BrowserApiBrokerService {
   }
 
   execute(
-    context: { taskId: string; workspaceId: string; grantScope: string; signal?: AbortSignal },
+    context: BrokerExecutionContext,
     request: unknown,
   ): Promise<BrokerResult> {
     return this.broker.execute(context, request);

@@ -450,6 +450,9 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
   private started = false;
   private readonly configuredSessions = new Set<string>();
   private readonly setupTasks = new Set<Promise<void>>();
+  private offTargetAttached?: () => void;
+  private offTargetDetached?: () => void;
+  private generation = 0;
 
   constructor(
     private readonly connection: CdpConnection,
@@ -459,7 +462,8 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    this.connection.on('Target.attachedToTarget', (event) => {
+    const generation = ++this.generation;
+    this.offTargetAttached = this.connection.on('Target.attachedToTarget', (event) => {
       const params = event.params as {
         sessionId?: string;
         targetInfo?: { type?: string };
@@ -471,11 +475,16 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
       const task = this.setupAttachedSession(
         params.sessionId,
         params.targetInfo?.type,
+        generation,
       ).catch(() => undefined);
       this.setupTasks.add(task);
       void task.finally(() => this.setupTasks.delete(task));
     });
-    await this.setupSession(this.primarySessionId);
+    this.offTargetDetached = this.connection.on('Target.detachedFromTarget', (event) => {
+      const sessionId = (event.params as { sessionId?: string }).sessionId;
+      if (sessionId) this.configuredSessions.delete(sessionId);
+    });
+    await this.setupSession(this.primarySessionId, generation);
     await this.drainSetupTasks();
   }
 
@@ -491,20 +500,36 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
     return this.connection.onClose(listener);
   }
 
+  stop(): void {
+    this.offTargetAttached?.();
+    this.offTargetDetached?.();
+    this.offTargetAttached = undefined;
+    this.offTargetDetached = undefined;
+    this.configuredSessions.clear();
+    this.setupTasks.clear();
+    this.started = false;
+    this.generation += 1;
+  }
+
   private async setupAttachedSession(
     sessionId: string,
     targetType: string | undefined,
+    generation: number,
   ): Promise<void> {
-    if (targetType && NETWORK_TARGET_TYPES.has(targetType)) {
-      await this.setupSession(sessionId);
+    if (generation === this.generation && targetType && NETWORK_TARGET_TYPES.has(targetType)) {
+      await this.setupSession(sessionId, generation);
     }
   }
 
-  private async setupSession(sessionId: string): Promise<void> {
+  private async setupSession(sessionId: string, generation: number): Promise<void> {
     if (this.configuredSessions.has(sessionId)) return;
     this.configuredSessions.add(sessionId);
     try {
       await this.connection.send('Network.enable', NETWORK_ENABLE_OPTIONS, sessionId);
+      if (generation !== this.generation) {
+        this.configuredSessions.delete(sessionId);
+        return;
+      }
       await this.connection.send('Target.setAutoAttach', {
         autoAttach: true,
         waitForDebuggerOnStart: false,
