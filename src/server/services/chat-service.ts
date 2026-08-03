@@ -76,10 +76,12 @@ import type { Provider } from '../models/provider.js';
 import {
   BROWSER_MCP_SERVER_KEY,
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
+  disposeBrowserToolContext,
   type BrowserApprovalRequester,
 } from './browser-mcp.js';
 import { BROWSER_TOOL_NAMES, isBrowserToolName } from './browser-tool-names.js';
 import { browserApiBrokerService } from './browser-api-broker-service.js';
+import { browserService } from './browser-service.js';
 
 import { browserControlService } from './browser-control.js';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
@@ -869,13 +871,19 @@ export class ChatService {
 
   async deleteSession(id: string, workspaceId: string): Promise<boolean> {
     const localSession = workspaceStore.getLocalSession(id);
-    if (localSession && localSession.isDraft) {
-      return workspaceStore.deleteLocalSession(id);
-    }
-
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
       throw new ChatError('Workspace not found', 'WORKSPACE_NOT_FOUND', 404);
+    }
+    if (localSession && localSession.workspaceId !== workspaceId) {
+      throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
+    }
+    // Deletion is terminal even when the runtime still exists. closeRuntime
+    // deterministically drains runtime-owned browser API state first.
+    await this.closeRuntime(id);
+    if (localSession && localSession.isDraft) {
+      sessionCapabilityService.revokeForSession(id);
+      return workspaceStore.deleteLocalSession(id);
     }
 
     try {
@@ -1580,6 +1588,9 @@ export class ChatService {
 
   async closeRuntime(sessionId: string): Promise<void> {
     const runtime = this.runtimes.get(sessionId);
+    // Runtime replacement is terminal for capture drains, opaque auth handles,
+    // and exact-operation approvals. The browser process/page may stay alive.
+    this.disposeBrowserTaskState(sessionId);
     if (!runtime) return;
     this.clearPendingRebuild(sessionId);
     this.runtimeContexts.delete(sessionId);
@@ -1617,6 +1628,12 @@ export class ChatService {
     }
     await runtime.close();
     this.onRuntimeClose?.(sessionId);
+  }
+
+  private disposeBrowserTaskState(sessionId: string): void {
+    disposeBrowserToolContext(sessionId);
+    browserService.disposeAuthBindings(sessionId);
+    browserApiBrokerService.revokeTask(sessionId);
   }
 
   getRuntimeIfExists(sessionId: string): SessionRuntime | undefined {

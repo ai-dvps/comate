@@ -16,12 +16,10 @@ import {
 import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
 
 /**
- * U1 — closeSession: the explicit-close sink. Covers the load-bearing
- * ordering contract (auto-remember BEFORE teardown nulls the handle), the
- * swallow-errors discipline, source-tagged audit, and idempotency. The
- * registry runs against an injected fake Steel handle; auto-remember is
- * driven by injected currentPageUrl/exportContext fakes plus an isolated
- * store.
+ * U1 — closeSession: the explicit-close sink. Covers the explicit-remember
+ * contract, source-tagged audit, and idempotency. The registry runs against
+ * an injected fake Steel handle; persistence is driven only by a separate
+ * Remember action against an isolated store.
  */
 
 class FakeSteelHandle implements SteelProcessHandle {
@@ -146,29 +144,27 @@ describe('BrowserService.closeSession (U1)', () => {
     rmSync(h.storageDir, { recursive: true, force: true });
   });
 
-  it('auto-remembers the current site before teardown, then audits with the source (ordering contract)', async () => {
+  it('preserves a site only when Remember was explicitly requested before close', async () => {
     await h.service.ensureSession({ sessionId: 'sess-1', workspaceId: h.workspaceId });
     const liveBaseUrl = h.handles[0].baseUrl;
+    const remembered = await h.service.rememberCurrentSite('sess-1');
 
     const result: CloseSessionResult = await h.service.closeSession('sess-1', 'agent');
 
-    // Auto-remember ran against the LIVE handle's baseUrl — proving it ran
-    // before teardown stopped the handle. rememberedSite being defined at all
-    // proves rememberCurrentSite saw a live entry (teardown had not deleted it).
     assert.strictEqual(result.closed, true);
-    assert.ok(result.rememberedSite, 'expected a remembered site on the happy path');
-    assert.strictEqual(result.rememberedSite.key, 'example.com');
-    assert.strictEqual(result.rememberedSite.cookieCount, 1);
+    assert.strictEqual(remembered.key, 'example.com');
+    assert.strictEqual(remembered.cookieCount, 1);
     assert.deepStrictEqual(h.exportedBaseUrls, [liveBaseUrl]);
 
     // Teardown ran: handle stopped, browser_closed emitted.
     assert.strictEqual(h.handles[0].stopped, true);
     assert.ok(h.events.some((e) => e.type === 'browser_closed' && e.sessionId === 'sess-1'));
 
-    // Site-auth remember row + source-tagged close control row.
+    // The explicit action, not close, produced exactly one remember row.
     const remember = h.auditCalls.find((c) => c.method === 'logSiteAuth');
     assert.ok(remember, 'expected a logSiteAuth remember row');
     assert.strictEqual(remember.input.action, 'remember');
+    assert.strictEqual(h.auditCalls.filter((c) => c.method === 'logSiteAuth').length, 1);
     const closeAudit = h.auditCalls.find(
       (c) => c.method === 'logControl' && String(c.input.verb) === 'browser_closed_agent',
     );
@@ -178,34 +174,30 @@ describe('BrowserService.closeSession (U1)', () => {
     assert.ok(!JSON.stringify(h.auditCalls).includes('SECRET'), 'cookie value leaked into audit');
   });
 
-  it('swallows empty_context (no login state) and still tears down', async () => {
-    h.context = { cookies: [], localStorage: {}, sessionStorage: {} };
+  it('does not inspect or persist login state during close', async () => {
     await h.service.ensureSession({ sessionId: 'sess-1', workspaceId: h.workspaceId });
 
     const result = await h.service.closeSession('sess-1', 'human');
 
     assert.strictEqual(result.closed, true);
-    assert.strictEqual(result.rememberError, 'empty_context');
-    assert.strictEqual(result.rememberedSite, undefined);
+    assert.deepStrictEqual(h.exportedBaseUrls, []);
+    assert.strictEqual(h.auditCalls.filter((c) => c.method === 'logSiteAuth').length, 0);
     assert.strictEqual(h.handles[0].stopped, true);
     const closeAudit = h.auditCalls.find(
       (c) => c.method === 'logControl' && String(c.input.verb) === 'browser_closed_human',
     );
     assert.ok(closeAudit, 'human close still audited');
-    assert.ok(
-      String(closeAudit.input.detail).includes('no-remember:empty_context'),
-      'audit detail should explain the skipped remember',
-    );
+    assert.strictEqual(closeAudit.input.detail, undefined);
   });
 
-  it('swallows browser_no_page (about:blank) and still tears down', async () => {
+  it('closes an about:blank browser without attempting Remember', async () => {
     h.pageUrl = null;
     await h.service.ensureSession({ sessionId: 'sess-1', workspaceId: h.workspaceId });
 
     const result = await h.service.closeSession('sess-1', 'idle');
 
     assert.strictEqual(result.closed, true);
-    assert.strictEqual(result.rememberError, 'browser_no_page');
+    assert.deepStrictEqual(h.exportedBaseUrls, []);
     assert.strictEqual(h.handles[0].stopped, true);
   });
 

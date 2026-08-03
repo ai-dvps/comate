@@ -268,12 +268,12 @@ if (session.source === 'scheduled' && backend === 'claude') {
         但 Open Code 的 serve config 只显式注入了浏览器 MCP：
       </p>
       <pre><code>// src/server/services/opencode-adapter.ts:100-109
-function buildSessionMcpConfig(comateSessionId: string): Record&lt;string, unknown&gt; {
+function buildSessionMcpConfig(comateSessionId: string, taskToken: string): Record&lt;string, unknown&gt; {
   return {
     [BROWSER_MCP_SERVER_KEY]: {
       type: 'remote',
       url: `${getSidecarBaseUrl()}/mcp/browser/${comateSessionId}`,
-      headers: { Authorization: `Bearer ${getBrowserMcpToken()}` },
+      headers: { Authorization: `Bearer ${taskToken}` },
       oauth: false,
     },
   };

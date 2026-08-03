@@ -435,11 +435,16 @@ const NETWORK_ENABLE_OPTIONS = {
   maxPostDataSize: 64 * 1024,
 };
 
-const NETWORK_TARGET_TYPES = new Set(['iframe', 'worker', 'shared_worker', 'service_worker']);
+// Steel 0.3.5 freezes dedicated workers when Network.enable is sent to their
+// flattened child session. Keep the page usable and retain worker target
+// lifecycle events; worker-originated HTTP remains an explicit v1 limitation.
+const NETWORK_TARGET_TYPES = new Set(['iframe']);
 
 /**
- * Passive capture adapter. Child targets start paused, receive listeners and
- * Network.enable recursively, and are resumed only after setup is complete.
+ * Passive capture adapter. Related targets are attached without pausing page
+ * execution, then receive Network listeners recursively. The pinned browser
+ * does not answer Network.enable reliably for a paused worker, so worker
+ * traffic that starts before child setup completes remains best-effort.
  */
 export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTransport {
   private started = false;
@@ -458,7 +463,6 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
       const params = event.params as {
         sessionId?: string;
         targetInfo?: { type?: string };
-        waitingForDebugger?: boolean;
       };
       if (!params.sessionId) return;
       // Child setup is best-effort and the target is always resumed in
@@ -467,7 +471,6 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
       const task = this.setupAttachedSession(
         params.sessionId,
         params.targetInfo?.type,
-        params.waitingForDebugger === true,
       ).catch(() => undefined);
       this.setupTasks.add(task);
       void task.finally(() => this.setupTasks.delete(task));
@@ -491,16 +494,9 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
   private async setupAttachedSession(
     sessionId: string,
     targetType: string | undefined,
-    waitingForDebugger: boolean,
   ): Promise<void> {
-    try {
-      if (targetType && NETWORK_TARGET_TYPES.has(targetType)) {
-        await this.setupSession(sessionId);
-      }
-    } finally {
-      if (waitingForDebugger) {
-        await this.connection.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => undefined);
-      }
+    if (targetType && NETWORK_TARGET_TYPES.has(targetType)) {
+      await this.setupSession(sessionId);
     }
   }
 
@@ -511,7 +507,7 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
       await this.connection.send('Network.enable', NETWORK_ENABLE_OPTIONS, sessionId);
       await this.connection.send('Target.setAutoAttach', {
         autoAttach: true,
-        waitForDebuggerOnStart: true,
+        waitForDebuggerOnStart: false,
         flatten: true,
       }, sessionId);
     } catch (error) {

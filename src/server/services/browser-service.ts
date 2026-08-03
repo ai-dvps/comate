@@ -186,13 +186,9 @@ export interface BrowserServiceTimer {
 /** Trigger source for an explicit close (U1) — recorded in the audit verb. */
 export type BrowserCloseSource = 'agent' | 'human' | 'idle' | 'timeout';
 
-/** Result of closeSession: whether teardown ran and what login was preserved. */
+/** Result of closeSession: whether teardown ran. */
 export interface CloseSessionResult {
   closed: boolean;
-  /** Present when a site was auto-remembered on close (login survives). */
-  rememberedSite?: { key: string; cookieCount: number };
-  /** Present when auto-remember was attempted but skipped (code/reason). */
-  rememberError?: string;
 }
 
 interface RegistryEntry {
@@ -702,18 +698,10 @@ export class BrowserService {
   /**
    * Explicit-close sink (U1): the single entry point for the three close
    * paths — agent-confirmed (U2), human button (U4), and idle/timeout (U3).
-   * Auto-remembers the current site's login BEFORE teardown nulls the handle
-   * (KTD-5 — login survives the close and re-injects on the next open), then
-   * reuses teardownSession and audits the close with its trigger source.
-   * Session/workspace/shutdown teardown call teardownSession directly — only
-   * close *intent* preserves login.
-   *
-   * Ordering is load-bearing: rememberCurrentSite reads entry.handle.baseUrl
-   * to export context, and teardownSession -> stopEntry nulls the handle and
-   * deletes the registry entry, so auto-remember must complete first. Typed
-   * remember errors (no page open, no login state, IP-literal URL) are
-   * swallowed — a close without a rememberable login still tears down. A
-   * no-live-session close is an idempotent no-op.
+   * Closing never promotes ephemeral credentials to persisted credentials.
+   * Only a prior, explicit Remember action may leave a remembered binding
+   * alive; teardown drops all ephemeral bindings. A no-live-session close is
+   * an idempotent no-op.
    */
   async closeSession(
     sessionId: string,
@@ -724,40 +712,14 @@ export class BrowserService {
       return { closed: false };
     }
     const workspaceId = entry.workspaceId;
-    let remembered: { key: string; cookieCount: number } | undefined;
-    let rememberError: string | undefined;
-    try {
-      const result = await this.rememberCurrentSite(sessionId);
-      remembered = { key: result.key, cookieCount: result.cookieCount };
-    } catch (err) {
-      // Typed errors carry a closed-enum code (empty_context / browser_no_page
-      // / ip_literal / ...). Collapse anything else to a generic marker so an
-      // unexpected throw's .message can never reach the audit detail — the
-      // only residual value-leak surface. The full error still goes to diagLog
-      // (the server log file), never to the auditable table.
-      rememberError = err instanceof BrowserSiteAuthError ? err.code : 'unknown';
-      if (!(err instanceof BrowserSiteAuthError)) {
-        diagWarn(`[browser] auto-remember on close failed for session ${sessionId}:`, err);
-      }
-    }
     await this.teardownSession(sessionId, { preserveRememberedAuthBindings: true });
     this.deps.audit.logControl({
       workspaceId,
       sessionId,
       verb: `browser_closed_${source}`,
       outcome: 'ok',
-      detail:
-        remembered !== undefined
-          ? `auto-remembered ${remembered.key} cookies=${remembered.cookieCount}`
-          : rememberError !== undefined
-            ? `no-remember:${rememberError}`
-            : undefined,
     });
-    return {
-      closed: true,
-      ...(remembered !== undefined && { rememberedSite: remembered }),
-      ...(rememberError !== undefined && { rememberError }),
-    };
+    return { closed: true };
   }
 
   // -------------------------------------------------------------------------
