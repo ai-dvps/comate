@@ -1,3 +1,5 @@
+import type { SkillSearchProviderId } from './types.js';
+
 /**
  * Provider-neutral query model for the federated skill search.
  *
@@ -23,6 +25,7 @@ export interface SkillSearchQuery {
   preferChinese?: boolean;
   noApiKey?: boolean;
   sort?: SkillSort;
+  providers?: SkillSearchProviderId[];
 }
 
 export type SkillSearchInput = string | SkillSearchQuery;
@@ -54,6 +57,7 @@ export function normalizeSkillSearchQuery(input: SkillSearchInput): SkillSearchQ
     ...(input.preferChinese ? { preferChinese: true } : {}),
     ...(input.noApiKey ? { noApiKey: true } : {}),
     sort: input.sort || 'score',
+    ...(input.providers ? { providers: [...input.providers] } : {}),
   };
 }
 

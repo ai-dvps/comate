@@ -15,12 +15,15 @@ import '../../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
+  SEARCH_PROVIDER_REGISTRY,
+  SkillSearchProviderError,
   searchFederatedSkills,
   searchSkillhubCnSkills,
   searchSkillsAPI,
   searchSkillsHubSkills,
   searchWeSkillHubSkills,
 } from './search.js';
+import { WeSkillHubError } from './weskillhub.js';
 
 const originalFetch = global.fetch;
 
@@ -138,21 +141,25 @@ describe('searchSkillsAPI', () => {
     assert.deepStrictEqual(result.map((skill) => skill.slug), ['valid']);
   });
 
-  it('returns [] when fetch throws (network error)', async () => {
+  it('classifies a fetch failure as a network error', async () => {
     mockFetch(new Error('ENOTFOUND'));
 
-    const result = await searchSkillsAPI('broken');
-    assert.deepStrictEqual(result, []);
+    await assert.rejects(
+      searchSkillsAPI('broken'),
+      (error) => error instanceof SkillSearchProviderError && error.reason === 'network',
+    );
   });
 
-  it('returns [] when response is not ok', async () => {
+  it('classifies a non-success response as an HTTP error', async () => {
     mockFetch(makeJsonResponse({ error: 'rate limited' }, 429));
 
-    const result = await searchSkillsAPI('ratelimited');
-    assert.deepStrictEqual(result, []);
+    await assert.rejects(
+      searchSkillsAPI('ratelimited'),
+      (error) => error instanceof SkillSearchProviderError && error.reason === 'http',
+    );
   });
 
-  it('returns [] when body is malformed JSON', async () => {
+  it('classifies malformed JSON as an invalid response', async () => {
     mockFetch(
       new Response('not-json', {
         status: 200,
@@ -160,22 +167,28 @@ describe('searchSkillsAPI', () => {
       })
     );
 
-    const result = await searchSkillsAPI('garbage');
-    assert.deepStrictEqual(result, []);
+    await assert.rejects(
+      searchSkillsAPI('garbage'),
+      (error) => error instanceof SkillSearchProviderError && error.reason === 'invalid-response',
+    );
   });
 
-  it('returns [] when body is valid JSON but missing skills array', async () => {
+  it('classifies a missing skills array as an invalid response', async () => {
     mockFetch(makeJsonResponse({ message: 'no skills here' }));
 
-    const result = await searchSkillsAPI('nothing');
-    assert.deepStrictEqual(result, []);
+    await assert.rejects(
+      searchSkillsAPI('nothing'),
+      (error) => error instanceof SkillSearchProviderError && error.reason === 'invalid-response',
+    );
   });
 
-  it('returns [] when skills is not an array', async () => {
+  it('classifies a non-array skills field as an invalid response', async () => {
     mockFetch(makeJsonResponse({ skills: 'not-an-array' }));
 
-    const result = await searchSkillsAPI('weird');
-    assert.deepStrictEqual(result, []);
+    await assert.rejects(
+      searchSkillsAPI('weird'),
+      (error) => error instanceof SkillSearchProviderError && error.reason === 'invalid-response',
+    );
   });
 
   it('encodes the query in the URL', async () => {
@@ -200,6 +213,15 @@ describe('searchFederatedSkills', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+  });
+
+  it('exposes a unique stable registry entry for every provider', () => {
+    assert.deepStrictEqual(
+      SEARCH_PROVIDER_REGISTRY.map(({ id }) => id),
+      ['skills.sh', 'skillshub', 'xfyun', 'skillhub-cn', 'weskillhub'],
+    );
+    assert.strictEqual(new Set(SEARCH_PROVIDER_REGISTRY.map(({ id }) => id)).size, 5);
+    assert.ok(SEARCH_PROVIDER_REGISTRY.every(({ label }) => label.length > 0));
   });
 
   it('queries all registries concurrently, returning source-aware results', async () => {
@@ -263,7 +285,7 @@ describe('searchFederatedSkills', () => {
 
     assert.strictEqual(requestedUrls.length, 5);
     assert.deepStrictEqual(
-      result.map((skill) => ({ name: skill.name, sourceKind: skill.sourceKind })),
+      result.skills.map((skill) => ({ name: skill.name, sourceKind: skill.sourceKind })),
       [
         { name: 'Frontend Design', sourceKind: 'skills.sh' },
         { name: 'Security Review', sourceKind: 'skillshub' },
@@ -271,7 +293,8 @@ describe('searchFederatedSkills', () => {
         { name: 'todo', sourceKind: 'weskillhub' },
       ]
     );
-    assert.strictEqual(result[1]!.description, '');
+    assert.strictEqual(result.skills[1]!.description, '');
+    assert.ok(result.providers.every(({ status }) => status === 'available'));
   });
 
   it('keeps results from a healthy source when another source fails', async () => {
@@ -285,8 +308,12 @@ describe('searchFederatedSkills', () => {
 
     const result = await searchFederatedSkills('review');
 
-    assert.strictEqual(result.length, 1);
-    assert.strictEqual(result[0]!.sourceKind, 'skills.sh');
+    assert.strictEqual(result.skills.length, 1);
+    assert.strictEqual(result.skills[0]!.sourceKind, 'skills.sh');
+    assert.deepStrictEqual(
+      result.providers.find(({ id }) => id === 'weskillhub'),
+      { id: 'weskillhub', label: 'WeSkillHub', status: 'unavailable', reason: 'network' },
+    );
   });
 
   it('applies shared downloads and newest sorting to WeSkillHub and peer results', async () => {
@@ -315,8 +342,38 @@ describe('searchFederatedSkills', () => {
     const byDownloads = await searchFederatedSkills({ keyword: 'x', sort: 'downloads' });
     const byNewest = await searchFederatedSkills({ keyword: 'x', sort: 'newest' });
 
-    assert.deepStrictEqual(byDownloads.map((skill) => skill.name), ['Popular', 'Recent']);
-    assert.deepStrictEqual(byNewest.map((skill) => skill.name), ['Recent', 'Popular']);
+    assert.deepStrictEqual(byDownloads.skills.map((skill) => skill.name), ['Popular', 'Recent']);
+    assert.deepStrictEqual(byNewest.skills.map((skill) => skill.name), ['Recent', 'Popular']);
+  });
+
+  it('queries only the requested provider subset', async () => {
+    const urls: string[] = [];
+    global.fetch = ((input: string | URL | Request) => {
+      urls.push(String(input));
+      return Promise.resolve(makeJsonResponse({ skills: [] }));
+    }) as typeof fetch;
+
+    const result = await searchFederatedSkills({ keyword: 'review', providers: ['skills.sh'] });
+
+    assert.strictEqual(urls.length, 1);
+    assert.deepStrictEqual(result.skills, []);
+    assert.deepStrictEqual(result.providers, [
+      { id: 'skills.sh', label: 'skills.sh', status: 'available' },
+    ]);
+  });
+
+  it('does not query providers when the subset is explicitly empty', async () => {
+    let calls = 0;
+    global.fetch = (() => {
+      calls += 1;
+      return Promise.resolve(makeJsonResponse({ skills: [] }));
+    }) as typeof fetch;
+
+    assert.deepStrictEqual(
+      await searchFederatedSkills({ keyword: 'review', providers: [] }),
+      { skills: [], providers: [] },
+    );
+    assert.strictEqual(calls, 0);
   });
 
   it('does not query any source for an empty query', async () => {
@@ -326,7 +383,7 @@ describe('searchFederatedSkills', () => {
       return Promise.resolve(makeJsonResponse({}));
     }) as typeof fetch;
 
-    assert.deepStrictEqual(await searchFederatedSkills('  '), []);
+    assert.deepStrictEqual(await searchFederatedSkills('  '), { skills: [], providers: [] });
     assert.strictEqual(calls, 0);
   });
 
@@ -457,7 +514,7 @@ describe('searchWeSkillHubSkills', () => {
     }]);
   });
 
-  it('does not request empty queries and contains provider-local failures', async () => {
+  it('does not request empty queries and exposes provider-local failures', async () => {
     let calls = 0;
     global.fetch = (async () => {
       calls += 1;
@@ -466,7 +523,10 @@ describe('searchWeSkillHubSkills', () => {
 
     assert.deepStrictEqual(await searchWeSkillHubSkills('  '), []);
     assert.strictEqual(calls, 0);
-    assert.deepStrictEqual(await searchWeSkillHubSkills('todo'), []);
+    await assert.rejects(
+      searchWeSkillHubSkills('todo'),
+      (error) => error instanceof WeSkillHubError && error.category === 'network',
+    );
     assert.strictEqual(calls, 1);
   });
 
