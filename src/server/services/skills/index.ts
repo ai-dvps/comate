@@ -45,6 +45,7 @@ export {
   listExpertPackages,
   ExpertPackageProviderError,
   EXPERT_PACKAGE_SCENES,
+  isExpertPackageCoordinate,
   isExpertPackageScene,
   expertPackageLimits,
 } from './expert-packages.js';

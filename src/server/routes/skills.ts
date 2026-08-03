@@ -27,6 +27,7 @@ import type { SkillScope } from '../services/skills-service.js';
 import {
   ExpertPackageProviderError,
   expertPackageLimits,
+  isExpertPackageCoordinate,
   isExpertPackageScene,
   isSkillScene,
   isSkillSort,
@@ -34,7 +35,6 @@ import {
 } from '../services/skills/index.js';
 
 const router = Router();
-const COORDINATE = /^[A-Za-z0-9._-]+$/;
 
 function sendExpertPackageError(error: unknown, res: Response): void {
   if (error instanceof ExpertPackageProviderError) {
@@ -157,7 +157,7 @@ router.get('/expert-packages', async (req, res) => {
 // GET /api/skills/expert-packages/:slug
 router.get('/expert-packages/:slug', async (req, res) => {
   const slug = req.params.slug;
-  if (!COORDINATE.test(slug)) {
+  if (!isExpertPackageCoordinate(slug)) {
     res.status(400).json({ error: 'Invalid Expert Package slug' });
     return;
   }
@@ -171,7 +171,7 @@ router.get('/expert-packages/:slug', async (req, res) => {
 // GET /api/skills/expert-packages/:packageSlug/skills/:namespace/:slug
 router.get('/expert-packages/:packageSlug/skills/:namespace/:slug', async (req, res) => {
   const { packageSlug, namespace, slug } = req.params;
-  if (![packageSlug, namespace, slug].every((value) => COORDINATE.test(value))) {
+  if (![packageSlug, namespace, slug].every(isExpertPackageCoordinate)) {
     res.status(400).json({ error: 'Invalid Expert Package Skill coordinate' });
     return;
   }
@@ -189,7 +189,7 @@ router.get('/expert-packages/:packageSlug/skills/:namespace/:slug', async (req, 
 // POST /api/skills/expert-packages/:slug/install
 router.post('/expert-packages/:slug/install', async (req, res) => {
   const packageSlug = req.params.slug;
-  if (!COORDINATE.test(packageSlug)) {
+  if (!isExpertPackageCoordinate(packageSlug)) {
     res.status(400).json({ error: 'Invalid Expert Package slug' });
     return;
   }

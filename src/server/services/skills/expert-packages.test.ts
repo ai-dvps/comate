@@ -135,6 +135,17 @@ describe('expert package provider', () => {
     assert.strictEqual(result.structurallyComplete, false);
   });
 
+  it('rejects dot-only package coordinates before calling SkillHub', async () => {
+    let called = false;
+    global.fetch = (() => {
+      called = true;
+      return Promise.resolve(json({}));
+    }) as typeof fetch;
+
+    await assert.rejects(() => getExpertPackageDefinition('..'), /Invalid package slug/);
+    assert.strictEqual(called, false);
+  });
+
   it('normalizes included Skill metadata and security reports', async () => {
     global.fetch = (() => Promise.resolve(json({
       slug: 'superpowers-tdd',

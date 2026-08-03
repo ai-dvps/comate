@@ -26,6 +26,13 @@ export function isExpertPackageScene(value: unknown): value is typeof EXPERT_PAC
   return typeof value === 'string' && (EXPERT_PACKAGE_SCENES as readonly string[]).includes(value);
 }
 
+export function isExpertPackageCoordinate(value: unknown): value is string {
+  return typeof value === 'string'
+    && COORDINATE.test(value)
+    && value !== '.'
+    && value !== '..';
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 export interface ExpertPackageDefinition {
@@ -72,7 +79,7 @@ function summary(value: unknown): string {
 }
 
 function assertCoordinate(value: string, label: string): void {
-  if (!COORDINATE.test(value)) {
+  if (!isExpertPackageCoordinate(value)) {
     throw new ExpertPackageProviderError(`Invalid ${label}: ${value}`, 'invalid-input');
   }
 }
@@ -123,7 +130,7 @@ function normalizeSummary(value: unknown): ExpertPackageSummary | null {
   const item = record(value);
   if (!item) return null;
   const slug = text(item.slug);
-  if (!COORDINATE.test(slug)) return null;
+  if (!isExpertPackageCoordinate(slug)) return null;
   const skills = Array.isArray(item.skills) ? item.skills : [];
   return {
     slug,
@@ -266,7 +273,7 @@ export async function getExpertPackageDefinition(slug: string): Promise<ExpertPa
     const child = record(raw);
     const namespace = text(child?.namespace);
     const childSlug = text(child?.slug);
-    return COORDINATE.test(namespace) && COORDINATE.test(childSlug)
+    return isExpertPackageCoordinate(namespace) && isExpertPackageCoordinate(childSlug)
       ? [{ namespace, slug: childSlug }]
       : [];
   });
@@ -301,7 +308,7 @@ export async function getExpertPackage(slug: string): Promise<ExpertPackageDetai
     ...(definition.contentEn ? { contentEn: definition.contentEn } : {}),
     children,
     complete,
-    ...(!complete ? { unavailableReason: 'Package orchestration or included Skills are unavailable.' } : {}),
+    ...(!complete ? { unavailableReason: 'Package orchestration or included Skills did not pass validation.' } : {}),
   };
 }
 

@@ -290,9 +290,15 @@ export class SkillsService {
     }
 
     try {
-      // Discover available skills so we can match by name.
-      const allSkills = await discoverSkills(sourceRoot, parsed?.subpath);
+      // Package orchestration is copied verbatim, even when its frontmatter is incomplete.
+      // Other sources still require normal Skill discovery and metadata validation.
       const expectedRegistryName = registrySource?.packageSlug ?? registrySource?.slug;
+      const allSkills: Array<Pick<Skill, 'name' | 'path'>> = registrySource?.kind === 'expert-package-orchestrator'
+        ? [{
+            name: registrySource.packageSlug!,
+            path: join(sourceRoot, registrySource.packageSlug!),
+          }]
+        : await discoverSkills(sourceRoot, parsed?.subpath);
       if (
         expectedRegistryName &&
         (allSkills.length !== 1 || allSkills[0]?.name !== expectedRegistryName)
@@ -304,7 +310,7 @@ export class SkillsService {
           error: `Registry source must contain exactly one Skill named "${expectedRegistryName}".`,
         }));
       }
-      const skillByName = new Map<string, Skill>();
+      const skillByName = new Map<string, Pick<Skill, 'name' | 'path'>>();
       for (const s of allSkills) {
         skillByName.set(s.name, s);
       }
@@ -417,10 +423,7 @@ export class SkillsService {
   }
 
   async installExpertPackage(args: InstallExpertPackageArgs): Promise<ExpertPackageInstallResult[]> {
-    const detail = await getExpertPackage(args.packageSlug);
-    if (!detail.complete) {
-      throw new Error(detail.unavailableReason || 'Expert Package is incomplete');
-    }
+    const definition = await getExpertPackageDefinition(args.packageSlug);
 
     const items: Array<{
       id: string;
@@ -430,21 +433,21 @@ export class SkillsService {
       packageOrchestrationContent?: string;
     }> = [
       {
-        id: `orchestrator:${detail.slug}`,
+        id: `orchestrator:${definition.summary.slug}`,
         kind: 'orchestrator',
-        source: `skillhub-package:${detail.slug}`,
-        name: detail.slug,
-        packageOrchestrationContent: detail.content,
+        source: `skillhub-package:${definition.summary.slug}`,
+        name: definition.summary.slug,
+        packageOrchestrationContent: definition.content,
       },
-      ...detail.children.map((child) => ({
-        id: `skill:${child.namespace}/${child.slug}`,
+      ...definition.coordinates.map((coordinate) => ({
+        id: `skill:${coordinate.namespace}/${coordinate.slug}`,
         kind: 'skill' as const,
-        source: child.source,
-        name: child.slug,
+        source: `skillhub-cn:${coordinate.namespace}/${coordinate.slug}`,
+        name: coordinate.slug,
       })),
     ];
     const byId = new Map(items.map((item) => [item.id, item]));
-    const requestedIds = args.itemIds ?? items.map((item) => item.id);
+    const requestedIds = args.itemIds ?? [...byId.keys()];
     if (requestedIds.length === 0 || new Set(requestedIds).size !== requestedIds.length) {
       throw new Error('Package install itemIds must be a non-empty unique list');
     }

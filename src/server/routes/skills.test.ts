@@ -371,6 +371,22 @@ describe('skills routes', () => {
       assert.strictEqual(called, false);
     });
 
+    it('rejects dot-only package slugs without installation', async () => {
+      const handlers = await importRouteHandlers();
+      let called = false;
+      skillsService.installExpertPackage = async () => {
+        called = true;
+        return [];
+      };
+      const res = createMockRes();
+      await handlers['/expert-packages/:slug/install'].post({
+        params: { slug: '..' },
+        body: { scope: 'global' },
+      }, res);
+      assert.strictEqual(res.statusCode, 400);
+      assert.strictEqual(called, false);
+    });
+
     it('preserves all failed package results in the error response', async () => {
       const handlers = await importRouteHandlers();
       skillsService.installExpertPackage = async () => [{
