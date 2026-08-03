@@ -344,7 +344,7 @@ describe('SkillsPage Expert Packages browser flow', () => {
       .toEqual(['skillshub'])
   })
 
-  it('uses the same compact height for Installed and Skill Search inputs', async () => {
+  it('uses the same compact styling for Installed and Skill Search inputs', async () => {
     window.fetch = installFetch([{
       name: 'review', kind: 'skill', scope: 'project', source: 'skills.sh:review',
       installPath: '/skills/review', isLegacySymlink: false, description: 'Review changes',
@@ -357,6 +357,8 @@ describe('SkillsPage Expert Packages browser flow', () => {
 
     expect(installedSearch).toHaveClass('h-10')
     expect(skillSearch).toHaveClass('h-10')
+    expect(installedSearch).toHaveClass('pl-9', 'pr-9', 'text-xs')
+    expect(skillSearch).toHaveClass('pl-9', 'pr-9', 'text-xs')
   })
 
   it('switches search results between card and list modes and remembers the choice', async () => {

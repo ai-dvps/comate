@@ -503,13 +503,13 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="relative min-w-0 flex-1 sm:w-60 sm:flex-none">
-                          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" />
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
                           <input
                             value={installedSearchInput}
                             onChange={(event) => setInstalledSearchInput(event.target.value)}
                             placeholder={t('skills.installedSearchPlaceholder')}
                             aria-label={t('skills.installedSearchLabel')}
-                            className="h-10 w-full rounded-lg border border-border bg-white pl-8 pr-8 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                            className="h-10 w-full rounded-xl border border-border bg-bg pl-9 pr-9 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
                           />
                           {installedSearchInput && (
                             <button
@@ -646,13 +646,13 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                 <section className="rounded-xl border border-border bg-surface p-3 shadow-sm">
                   <div className="flex items-center gap-2">
                     <div className="relative min-w-0 flex-1">
-                      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
                       <input
                         value={searchInput}
                         onChange={(e) => handleSearchChange(e.target.value)}
                         placeholder={t('skills.searchPlaceholder')}
                         aria-label={t('skills.searchHeading')}
-                        className="h-10 w-full rounded-xl border border-border bg-bg pl-10 pr-10 text-sm text-text-primary shadow-inner transition-colors placeholder:text-text-tertiary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                        className="h-10 w-full rounded-xl border border-border bg-bg pl-9 pr-9 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
                       />
                       {searchInput && (
                         <button
