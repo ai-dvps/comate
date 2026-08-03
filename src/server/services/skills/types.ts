@@ -168,27 +168,33 @@ export interface ExpertPackageDetail extends ExpertPackageSummary {
   unavailableReason?: string;
 }
 
-export interface ExpertSkillSecurityReport {
+export interface SkillHubSecurityReport {
   provider: string;
   status: string;
   statusText: string;
   reportUrl?: string;
 }
 
-export interface ExpertSkillDetail {
+export interface SkillHubSkillDetail {
   namespace: string;
   slug: string;
   displayName: string;
   summary: string;
   category: string;
   owner: { handle: string; displayName: string };
+  /** Stable enterprise publisher identity used for server-side membership checks. */
+  publisher?: { orgId: string };
   version: string;
   stats: { downloads: number; installs: number };
-  securityReports: ExpertSkillSecurityReport[];
+  securityReports: SkillHubSecurityReport[];
   /** Raw, validated SKILL.md from the same registry coordinate. */
   documentation?: string;
   source: string;
 }
+
+/** Compatibility names retained for the existing Expert Package API. */
+export type ExpertSkillSecurityReport = SkillHubSecurityReport;
+export type ExpertSkillDetail = SkillHubSkillDetail;
 
 export type ExpertPackageInstallItemKind = 'orchestrator' | 'skill';
 

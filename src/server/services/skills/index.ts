@@ -51,6 +51,21 @@ export {
 } from './expert-packages.js';
 export type { ExpertPackageDefinition } from './expert-packages.js';
 export {
+  assertSkillHubCoordinate,
+  fetchSkillHubJson,
+  getSkillHubSkill,
+  isSkillHubCoordinate,
+  normalizeSkillHubHttpsUrl,
+  normalizeSkillHubSecurityReports,
+  skillHubLimits,
+  skillHubNumber,
+  SkillHubProviderError,
+  skillHubRecord,
+  skillHubSummary,
+  skillHubText,
+} from './skillhub.js';
+export type { SkillHubErrorCode, SkillHubRecord } from './skillhub.js';
+export {
   materializeRegistrySource,
   parseRegistrySource,
   registryArchiveLimits,
@@ -122,6 +137,8 @@ export type {
   ExpertPackageDetail,
   ExpertSkillSecurityReport,
   ExpertSkillDetail,
+  SkillHubSecurityReport,
+  SkillHubSkillDetail,
   ExpertPackageInstallItemKind,
   ExpertPackageInstallResult,
   DiscoveredSkill,
