@@ -179,14 +179,17 @@ export async function getEnterprise(orgId: string): Promise<EnterpriseDetail> {
   return { ...enterprise, totalStars };
 }
 
-function normalizeEnterpriseSkill(value: unknown): EnterpriseSkillSummary {
+function normalizeEnterpriseSkill(value: unknown): EnterpriseSkillSummary | null {
   const item = skillHubRecord(value);
   const namespace = skillHubText(skillHubRecord(item?.namespace)?.handle, { maxLength: 128, label: 'namespace' });
   const slug = skillHubText(item?.slug, { maxLength: 128, label: 'Skill slug' });
+  if (!item || !isSkillHubCoordinate(namespace) || !isSkillHubCoordinate(slug)) {
+    return null;
+  }
   const displayName = skillHubText(item?.displayName, { maxLength: 512, label: 'Skill display name' });
   const downloads = validCount(item?.downloads, MAX_USAGE_COUNT);
   const stars = validCount(item?.stars, MAX_USAGE_COUNT);
-  if (!item || !isSkillHubCoordinate(namespace) || !isSkillHubCoordinate(slug) || !displayName || downloads === null || stars === null) {
+  if (!displayName || downloads === null || stars === null) {
     invalidResponse('SkillHub Enterprise Skill response is malformed');
   }
   const iconUrl = normalizeSkillHubHttpsUrl(item.iconUrl);
@@ -220,7 +223,10 @@ export async function listEnterpriseSkills(
   if (!body || !Array.isArray(body.items) || body.items.length > PAGE_SIZE) {
     invalidResponse('SkillHub Enterprise Skill list is malformed');
   }
-  const skills = body.items.map(normalizeEnterpriseSkill);
+  const skills = body.items.flatMap((value) => {
+    const skill = normalizeEnterpriseSkill(value);
+    return skill ? [skill] : [];
+  });
   if (new Set(skills.map(({ namespace, slug }) => `${namespace}/${slug}`)).size !== skills.length) {
     invalidResponse('SkillHub Enterprise Skill list is malformed');
   }
