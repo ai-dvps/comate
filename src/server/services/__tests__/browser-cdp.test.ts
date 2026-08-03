@@ -1,7 +1,121 @@
 import '../../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { retryDuringColdStart } from '../browser-cdp.js';
+import { WebSocketServer } from 'ws';
+import {
+  CdpConnection,
+  CdpNetworkCaptureTransport,
+  retryDuringColdStart,
+} from '../browser-cdp.js';
+import type { CdpEventEnvelope } from '../browser-network-capture.js';
+
+describe('CdpConnection event envelopes', () => {
+  it('preserves flattened sessionId and listener teardown', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const peerPromise = new Promise<import('ws').WebSocket>((resolve) => server.once('connection', resolve));
+    const connection = await CdpConnection.connect(`ws://127.0.0.1:${address.port}`);
+    const peer = await peerPromise;
+
+    const event = new Promise<{ method: string; sessionId?: string; params: unknown }>((resolve) => {
+      const off = connection.onEvent((envelope) => {
+        off();
+        resolve(envelope);
+      });
+    });
+    peer.send(JSON.stringify({
+      method: 'Network.requestWillBeSent',
+      sessionId: 'child-session',
+      params: { requestId: 'same-id' },
+    }));
+    assert.deepEqual(await event, {
+      method: 'Network.requestWillBeSent',
+      sessionId: 'child-session',
+      params: { requestId: 'same-id' },
+    });
+
+    let calls = 0;
+    const off = connection.onEvent(() => { calls += 1; });
+    off();
+    peer.send(JSON.stringify({ method: 'Network.loadingFinished', params: {} }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(calls, 0);
+    connection.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});
+
+describe('CdpNetworkCaptureTransport', () => {
+  it('recursively enables Network before resuming paused iframe/worker targets', async () => {
+    const commands: Array<{ method: string; sessionId?: string; params: Record<string, unknown> }> = [];
+    const methodListeners = new Map<string, Set<(event: CdpEventEnvelope) => void>>();
+    const fakeConnection = {
+      send: async <T>(method: string, params: Record<string, unknown>, sessionId?: string): Promise<T> => {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.setAutoAttach' && sessionId === 'page') {
+          for (const listener of methodListeners.get('Target.attachedToTarget') ?? []) {
+            listener({
+              method: 'Target.attachedToTarget',
+              sessionId: 'page',
+              params: {
+                sessionId: 'frame',
+                targetInfo: { type: 'iframe' },
+                waitingForDebugger: true,
+              },
+            });
+          }
+        }
+        if (method === 'Target.setAutoAttach' && sessionId === 'frame') {
+          for (const listener of methodListeners.get('Target.attachedToTarget') ?? []) {
+            listener({
+              method: 'Target.attachedToTarget',
+              sessionId: 'frame',
+              params: {
+                sessionId: 'worker',
+                targetInfo: { type: 'worker' },
+                waitingForDebugger: true,
+              },
+            });
+          }
+        }
+        return {} as T;
+      },
+      on: (method: string, listener: (event: CdpEventEnvelope) => void) => {
+        const listeners = methodListeners.get(method) ?? new Set();
+        listeners.add(listener);
+        methodListeners.set(method, listeners);
+        return () => listeners.delete(listener);
+      },
+      onEvent: () => () => {},
+      onClose: () => () => {},
+    };
+    const transport = new CdpNetworkCaptureTransport(
+      fakeConnection as unknown as CdpConnection,
+      'page',
+    );
+    await transport.start();
+
+    for (const sessionId of ['page', 'frame', 'worker']) {
+      assert.ok(commands.some((command) => command.method === 'Network.enable' && command.sessionId === sessionId));
+      assert.ok(commands.some((command) => command.method === 'Target.setAutoAttach' && command.sessionId === sessionId));
+    }
+    for (const sessionId of ['frame', 'worker']) {
+      const enabled = commands.findIndex((command) => command.method === 'Network.enable' && command.sessionId === sessionId);
+      const resumed = commands.findIndex((command) => command.method === 'Runtime.runIfWaitingForDebugger' && command.sessionId === sessionId);
+      assert.ok(enabled >= 0 && resumed > enabled, `${sessionId} must be enabled before resume`);
+    }
+    assert.deepEqual(
+      commands.find((command) => command.method === 'Network.enable' && command.sessionId === 'page')?.params,
+      {
+        maxTotalBufferSize: 5 * 1024 * 1024,
+        maxResourceBufferSize: 1024 * 1024,
+        maxPostDataSize: 64 * 1024,
+      },
+    );
+  });
+});
 
 describe('retryDuringColdStart', () => {
   // A fake clock: `now()` returns the current virtual time; `sleep` advances it

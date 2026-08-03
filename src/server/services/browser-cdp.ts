@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import type { RawAxNode } from './browser-page-model.js';
+import type { BrowserNetworkCaptureTransport, CdpEventEnvelope } from './browser-network-capture.js';
 
 /**
  * browser-cdp — minimal Chrome DevTools Protocol client over a WebSocket
@@ -34,7 +35,7 @@ interface PendingCommand {
   timer: NodeJS.Timeout;
 }
 
-type CdpEventListener = (params: unknown) => void;
+type CdpEventListener = (event: CdpEventEnvelope) => void;
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const NAVIGATE_TIMEOUT_MS = 45_000;
@@ -61,6 +62,7 @@ export class CdpConnection {
   private nextId = 1;
   private readonly pending = new Map<number, PendingCommand>();
   private readonly eventListeners = new Map<string, Set<CdpEventListener>>();
+  private readonly anyEventListeners = new Set<CdpEventListener>();
   private readonly closeListeners = new Set<() => void>();
   private closedFlag = false;
 
@@ -131,6 +133,14 @@ export class CdpConnection {
     };
   }
 
+  /** Subscribe to every event with its flattened target session identity intact. */
+  onEvent(listener: CdpEventListener): () => void {
+    this.anyEventListeners.add(listener);
+    return () => {
+      this.anyEventListeners.delete(listener);
+    };
+  }
+
   onClose(listener: () => void): () => void {
     if (this.closedFlag) {
       listener();
@@ -179,11 +189,15 @@ export class CdpConnection {
       return;
     }
     if (typeof message.method === 'string') {
+      const envelope: CdpEventEnvelope = {
+        method: message.method,
+        params: message.params,
+        ...(typeof message.sessionId === 'string' ? { sessionId: message.sessionId } : {}),
+      };
       const listeners = this.eventListeners.get(message.method);
-      if (!listeners) return;
-      for (const listener of [...listeners]) {
+      for (const listener of [...(listeners ?? []), ...this.anyEventListeners]) {
         try {
-          listener(message.params);
+          listener(envelope);
         } catch {
           // Event listeners must not break the transport.
         }
@@ -206,6 +220,9 @@ export class CdpConnection {
         // Close listeners must not break teardown.
       }
     }
+    this.eventListeners.clear();
+    this.anyEventListeners.clear();
+    this.closeListeners.clear();
   }
 }
 
@@ -235,6 +252,8 @@ export interface SteelCdpSession {
    * lands before any page JavaScript can read localStorage.
    */
   evaluateOnNewDocument(expression: string): Promise<void>;
+  /** Optional so existing page fakes need not emulate raw CDP network traffic. */
+  createNetworkCaptureTransport?(): BrowserNetworkCaptureTransport;
   onClose(listener: () => void): void;
   close(): void;
 }
@@ -306,7 +325,8 @@ class SteelCdpSessionImpl implements SteelCdpSession {
 
   async navigate(url: string): Promise<void> {
     const loadFired = new Promise<void>((resolve) => {
-      const off = this.connection.on('Page.loadEventFired', () => {
+      const off = this.connection.on('Page.loadEventFired', (event) => {
+        if (event.sessionId !== this.sessionId) return;
         off();
         resolve();
       });
@@ -377,6 +397,108 @@ class SteelCdpSessionImpl implements SteelCdpSession {
       { source: expression },
       this.sessionId,
     );
+  }
+
+  createNetworkCaptureTransport(): BrowserNetworkCaptureTransport {
+    return new CdpNetworkCaptureTransport(this.connection, this.sessionId);
+  }
+}
+
+const NETWORK_ENABLE_OPTIONS = {
+  maxTotalBufferSize: 5 * 1024 * 1024,
+  maxResourceBufferSize: 1024 * 1024,
+  maxPostDataSize: 64 * 1024,
+};
+
+const NETWORK_TARGET_TYPES = new Set(['iframe', 'worker', 'shared_worker', 'service_worker']);
+
+/**
+ * Passive capture adapter. Child targets start paused, receive listeners and
+ * Network.enable recursively, and are resumed only after setup is complete.
+ */
+export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTransport {
+  private started = false;
+  private readonly configuredSessions = new Set<string>();
+  private readonly setupTasks = new Set<Promise<void>>();
+
+  constructor(
+    private readonly connection: CdpConnection,
+    readonly primarySessionId: string,
+  ) {}
+
+  async start(): Promise<void> {
+    if (this.started) return;
+    this.started = true;
+    this.connection.on('Target.attachedToTarget', (event) => {
+      const params = event.params as {
+        sessionId?: string;
+        targetInfo?: { type?: string };
+        waitingForDebugger?: boolean;
+      };
+      if (!params.sessionId) return;
+      // Child setup is best-effort and the target is always resumed in
+      // setupAttachedSession's finally block. Consume rejection here so a
+      // detached/racing child never becomes an unhandled process rejection.
+      const task = this.setupAttachedSession(
+        params.sessionId,
+        params.targetInfo?.type,
+        params.waitingForDebugger === true,
+      ).catch(() => undefined);
+      this.setupTasks.add(task);
+      void task.finally(() => this.setupTasks.delete(task));
+    });
+    await this.setupSession(this.primarySessionId);
+    await this.drainSetupTasks();
+  }
+
+  send<T>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
+    return this.connection.send<T>(method, params, sessionId);
+  }
+
+  onEvent(listener: (event: CdpEventEnvelope) => void): () => void {
+    return this.connection.onEvent(listener);
+  }
+
+  onClose(listener: () => void): () => void {
+    return this.connection.onClose(listener);
+  }
+
+  private async setupAttachedSession(
+    sessionId: string,
+    targetType: string | undefined,
+    waitingForDebugger: boolean,
+  ): Promise<void> {
+    try {
+      if (targetType && NETWORK_TARGET_TYPES.has(targetType)) {
+        await this.setupSession(sessionId);
+      }
+    } finally {
+      if (waitingForDebugger) {
+        await this.connection.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => undefined);
+      }
+    }
+  }
+
+  private async setupSession(sessionId: string): Promise<void> {
+    if (this.configuredSessions.has(sessionId)) return;
+    this.configuredSessions.add(sessionId);
+    try {
+      await this.connection.send('Network.enable', NETWORK_ENABLE_OPTIONS, sessionId);
+      await this.connection.send('Target.setAutoAttach', {
+        autoAttach: true,
+        waitForDebuggerOnStart: true,
+        flatten: true,
+      }, sessionId);
+    } catch (error) {
+      this.configuredSessions.delete(sessionId);
+      throw error;
+    }
+  }
+
+  private async drainSetupTasks(): Promise<void> {
+    while (this.setupTasks.size > 0) {
+      await Promise.all([...this.setupTasks]);
+    }
   }
 }
 
