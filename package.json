@@ -8,10 +8,11 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:server": "tsx watch src/server/index.ts",
+    "dev:server": "npm run build:contracts && tsx watch src/server/index.ts",
     "dev:client": "vite",
-    "build": "tsc -b && vite build && npm run build:cli",
-    "build:server": "tsc -p tsconfig.server.json",
+    "build": "npm run build:contracts && tsc -b && vite build && npm run build:cli",
+    "build:contracts": "npm run build -w packages/comate-api-contracts",
+    "build:server": "npm run build:contracts && tsc -p tsconfig.server.json",
     "build:cli": "npm run build -w packages/wecom-cli",
     "build:sidecar": "tsx scripts/build-sidecar.ts",
     "build:steel": "tsx scripts/build-steel-bundle.ts",
@@ -19,7 +20,7 @@
     "test:client": "vitest run --project jsdom",
     "test:client:watch": "vitest --project jsdom",
     "test:browser": "vitest run --project browser",
-    "test:server": "tsx --test-isolation=process --test-concurrency=1 -r ./src/server/test-utils/test-env.ts --test --test-force-exit $(find src/server -name '*.test.ts' -not -path '*/vendor/*')",
+    "test:server": "npm run build:contracts && tsx --test-isolation=process --test-concurrency=1 -r ./src/server/test-utils/test-env.ts --test --test-force-exit $(find src/server -name '*.test.ts' -not -path '*/vendor/*')",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -27,6 +28,7 @@
     "release": "npm run build:sidecar && npm run tauri:build"
   },
   "dependencies": {
+    "@comate/api-contracts": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
     "@chat-adapter/state-memory": "^4.31.0",
     "@codemirror/commands": "^6.6.2",
