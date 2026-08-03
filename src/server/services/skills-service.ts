@@ -25,6 +25,7 @@ import { join, relative } from 'path';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import {
   searchFederatedSkills,
+  checkSkillSearchProviders,
   parseSource,
   cloneRepository,
   discoverSkills,
@@ -52,7 +53,9 @@ import {
   listEnterprises,
   listEnterpriseIndustries,
   listEnterpriseSkills,
-  type SearchSkill,
+  type FederatedSkillSearchResult,
+  type SkillProviderAvailability,
+  type SkillSearchProviderId,
   type DiscoveredSkill,
   type Skill,
   type InstallResult,
@@ -187,8 +190,14 @@ export class SkillsService {
   // Search
   // -----------------------------------------------------------------------
 
-  async search(query: SkillSearchQuery): Promise<SearchSkill[]> {
+  async search(query: SkillSearchQuery): Promise<FederatedSkillSearchResult> {
     return searchFederatedSkills(query);
+  }
+
+  async checkSearchProviders(
+    providerIds?: SkillSearchProviderId[],
+  ): Promise<SkillProviderAvailability[]> {
+    return checkSkillSearchProviders(providerIds);
   }
 
   async listExpertPackages(input: {
