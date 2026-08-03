@@ -201,6 +201,7 @@ describe('SkillsPage Expert Packages browser flow', () => {
       lastSearchIncompleteProviderIds: [],
     })
     localStorage.removeItem('comate.skills.search-providers.v1')
+    localStorage.removeItem('comate.skills.search-view-mode')
     localStorage.removeItem('comate.expert-packages.view-mode')
     window.fetch = installFetch() as typeof fetch
   })
@@ -315,6 +316,39 @@ describe('SkillsPage Expert Packages browser flow', () => {
     await userEvent.click(within(providerFilter).getByRole('checkbox', { name: /skills.sh/ }))
     expect(JSON.parse(localStorage.getItem('comate.skills.search-providers.v1') || '{}').selectedProviderIds)
       .toEqual(['skillshub'])
+  })
+
+  it('switches search results between card and list modes and remembers the choice', async () => {
+    window.fetch = weskillhubInstallFetch() as typeof fetch
+    const firstRender = render(
+      <I18nextProvider i18n={i18n}>
+        <SkillsPage workspaceId="ws-1" isOpen onClose={() => undefined} />
+      </I18nextProvider>,
+    )
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Search' }))
+    await userEvent.type(screen.getByLabelText('Find skills for the work at hand'), 'todo')
+    const searchPanel = screen.getByRole('tabpanel', { name: 'Search' })
+    const results = await within(searchPanel).findByRole('list', {
+      name: i18n.t('settings:skills.resultsCount', { count: 1 }),
+    })
+    expect(results).toHaveAttribute('data-view-mode', 'cards')
+    expect(within(searchPanel).getByRole('button', { name: 'Card view' })).toHaveAttribute('aria-pressed', 'true')
+
+    await userEvent.click(within(searchPanel).getByRole('button', { name: 'List view' }))
+    expect(results).toHaveAttribute('data-view-mode', 'list')
+    expect(localStorage.getItem('comate.skills.search-view-mode')).toBe('list')
+
+    firstRender.unmount()
+    render(
+      <I18nextProvider i18n={i18n}>
+        <SkillsPage workspaceId="ws-1" isOpen onClose={() => undefined} />
+      </I18nextProvider>,
+    )
+    await userEvent.click(screen.getByRole('tab', { name: 'Search' }))
+    const restoredSearchPanel = screen.getByRole('tabpanel', { name: 'Search' })
+    expect(await within(restoredSearchPanel).findByRole('button', { name: 'List view' }))
+      .toHaveAttribute('aria-pressed', 'true')
   })
 
   it('preserves the Enterprise journey across tabs, resets on close, and refreshes an ordinary installed Skill', async () => {
