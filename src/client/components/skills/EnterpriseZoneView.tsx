@@ -4,24 +4,33 @@ import {
   useEnterpriseZoneStore,
   type EnterpriseSkillSort,
 } from '../../stores/enterprise-zone-store'
+import { useSkillsStore } from '../../stores/skills-store'
+import SkillInstallModal from '../SkillInstallModal'
 import EnterpriseDetail from './EnterpriseDetail'
 import EnterpriseList from './EnterpriseList'
+import EnterpriseSkillDetail from './EnterpriseSkillDetail'
 
 interface EnterpriseZoneViewProps {
   active: boolean
   isOpen: boolean
+  workspaceId?: string
+  onInstalled?: () => void
   onSelectSkill?: (orgId: string, namespace: string, slug: string) => void
 }
 
 type EnterpriseLocation =
   | { view: 'list' }
   | { view: 'enterprise'; orgId: string }
+  | { view: 'skill'; orgId: string; namespace: string; slug: string }
 
 const EMPTY_SELECT_SKILL = () => undefined
+const EMPTY_INSTALLED = () => undefined
 
 export default function EnterpriseZoneView({
   active,
   isOpen,
+  workspaceId = '',
+  onInstalled = EMPTY_INSTALLED,
   onSelectSkill = EMPTY_SELECT_SKILL,
 }: EnterpriseZoneViewProps) {
   const [location, setLocation] = useState<EnterpriseLocation>({ view: 'list' })
@@ -31,10 +40,12 @@ export default function EnterpriseZoneView({
   const [skillKeyword, setSkillKeyword] = useState('')
   const [skillSort, setSkillSort] = useState<EnterpriseSkillSort>('downloads')
   const [skillPageNumber, setSkillPageNumber] = useState(1)
+  const [installSkill, setInstallSkill] = useState<{ source: string; name: string } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const enterpriseScrollTopRef = useRef(0)
   const skillScrollTopRef = useRef(0)
   const selectedEnterpriseRef = useRef<string | null>(null)
+  const selectedSkillRef = useRef<string | null>(null)
   const industriesRequestedRef = useRef(false)
   const enterpriseDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const skillDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -52,10 +63,15 @@ export default function EnterpriseZoneView({
     skillPage,
     isLoadingSkills,
     skillsError,
+    skillDetail,
+    activeSkillKey,
+    isLoadingSkill,
+    skillError,
     fetchIndustries,
     fetchEnterprises,
     fetchEnterprise,
     fetchEnterpriseSkills,
+    fetchEnterpriseSkill,
     reset,
   } = useEnterpriseZoneStore(useShallow((state) => ({
     industries: state.industries,
@@ -70,15 +86,20 @@ export default function EnterpriseZoneView({
     skillPage: state.skillPage,
     isLoadingSkills: state.isLoadingSkills,
     skillsError: state.skillsError,
+    skillDetail: state.skillDetail,
+    activeSkillKey: state.activeSkillKey,
+    isLoadingSkill: state.isLoadingSkill,
+    skillError: state.skillError,
     fetchIndustries: state.fetchIndustries,
     fetchEnterprises: state.fetchEnterprises,
     fetchEnterprise: state.fetchEnterprise,
     fetchEnterpriseSkills: state.fetchEnterpriseSkills,
+    fetchEnterpriseSkill: state.fetchEnterpriseSkill,
     reset: state.reset,
   })))
 
   const isListView = location.view === 'list'
-  const activeOrgId = location.view === 'enterprise' ? location.orgId : null
+  const installed = useSkillsStore((state) => state.installed)
   const hasIndustries = industries.length > 0
 
   useEffect(() => {
@@ -111,15 +132,15 @@ export default function EnterpriseZoneView({
   ])
 
   useEffect(() => {
-    if (!isOpen || !active || !activeOrgId) return
-    void fetchEnterprise(activeOrgId)
-  }, [isOpen, active, activeOrgId, fetchEnterprise])
+    if (!isOpen || !active || location.view !== 'enterprise') return
+    void fetchEnterprise(location.orgId)
+  }, [isOpen, active, location, fetchEnterprise])
 
   useEffect(() => {
-    if (!isOpen || !active || !activeOrgId) return
+    if (!isOpen || !active || location.view !== 'enterprise') return
     if (skillDebounceRef.current) clearTimeout(skillDebounceRef.current)
     skillDebounceRef.current = setTimeout(() => {
-      void fetchEnterpriseSkills(activeOrgId, {
+      void fetchEnterpriseSkills(location.orgId, {
         keyword: skillKeyword,
         sort: skillSort,
         page: skillPageNumber,
@@ -128,7 +149,12 @@ export default function EnterpriseZoneView({
     return () => {
       if (skillDebounceRef.current) clearTimeout(skillDebounceRef.current)
     }
-  }, [isOpen, active, activeOrgId, skillKeyword, skillSort, skillPageNumber, fetchEnterpriseSkills])
+  }, [isOpen, active, location, skillKeyword, skillSort, skillPageNumber, fetchEnterpriseSkills])
+
+  useEffect(() => {
+    if (!isOpen || !active || location.view !== 'skill') return
+    void fetchEnterpriseSkill(location.orgId, location.namespace, location.slug)
+  }, [isOpen, active, location, fetchEnterpriseSkill])
 
   useEffect(() => {
     if (isOpen) return
@@ -139,9 +165,11 @@ export default function EnterpriseZoneView({
     setSkillKeyword('')
     setSkillSort('downloads')
     setSkillPageNumber(1)
+    setInstallSkill(null)
     enterpriseScrollTopRef.current = 0
     skillScrollTopRef.current = 0
     selectedEnterpriseRef.current = null
+    selectedSkillRef.current = null
     industriesRequestedRef.current = false
     reset()
   }, [isOpen, reset])
@@ -169,7 +197,22 @@ export default function EnterpriseZoneView({
 
   const selectSkill = (orgId: string, namespace: string, slug: string) => {
     skillScrollTopRef.current = rootRef.current?.parentElement?.scrollTop ?? 0
+    selectedSkillRef.current = `${namespace}/${slug}`
+    setLocation({ view: 'skill', orgId, namespace, slug })
     onSelectSkill(orgId, namespace, slug)
+  }
+
+  const backToEnterprise = (orgId: string) => {
+    setInstallSkill(null)
+    setLocation({ view: 'enterprise', orgId })
+    setTimeout(() => {
+      const scrollContainer = rootRef.current?.parentElement
+      if (scrollContainer) scrollContainer.scrollTop = skillScrollTopRef.current
+      const selectedSkill = selectedSkillRef.current
+      if (!selectedSkill || !rootRef.current) return
+      const buttons = rootRef.current.querySelectorAll<HTMLButtonElement>('[data-enterprise-skill]')
+      Array.from(buttons).find((button) => button.dataset.enterpriseSkill === selectedSkill)?.focus()
+    }, 0)
   }
 
   const changeEnterpriseKeyword = (value: string) => {
@@ -226,6 +269,48 @@ export default function EnterpriseZoneView({
             void fetchIndustries()
           }}
         />
+      </div>
+    )
+  }
+
+  if (location.view === 'skill') {
+    const currentSkillKey = `${location.orgId}:${location.namespace}/${location.slug}`
+    const currentDetail = activeSkillKey === currentSkillKey
+      ? skillDetail
+      : null
+    const exactSourceInstalled = currentDetail
+      ? installed.some((skill) => skill.source === currentDetail.source)
+      : false
+
+    return (
+      <div ref={rootRef} className="contents">
+        <EnterpriseSkillDetail
+          enterprise={enterpriseDetail?.orgId === location.orgId ? enterpriseDetail : null}
+          detail={currentDetail}
+          skillSlug={location.slug}
+          loading={isLoadingSkill}
+          error={skillError}
+          installed={exactSourceInstalled}
+          onBack={() => backToEnterprise(location.orgId)}
+          onBackToList={backToEnterprises}
+          onRetry={() => void fetchEnterpriseSkill(location.orgId, location.namespace, location.slug, true)}
+          onInstall={() => {
+            if (!currentDetail) return
+            setInstallSkill({ source: currentDetail.source, name: currentDetail.slug })
+          }}
+        />
+        {installSkill ? (
+          <SkillInstallModal
+            source={installSkill.source}
+            fixedSkillName={installSkill.name}
+            workspaceId={workspaceId}
+            onClose={() => setInstallSkill(null)}
+            onInstalled={() => {
+              setInstallSkill(null)
+              onInstalled()
+            }}
+          />
+        ) : null}
       </div>
     )
   }

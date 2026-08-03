@@ -61,11 +61,12 @@ export default function SkillInstallModal({
   const [phase, setPhase] = useState<Phase>('resolving')
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set())
   const [selectedScope, setSelectedScope] = useState<SkillScope | null>(null)
+  const [resolveAttempt, setResolveAttempt] = useState(0)
   const [outcome, setOutcome] = useState<
     | null
     | { kind: 'success' }
     | { kind: 'already-installed'; message: string }
-    | { kind: 'error'; message: string }
+    | { kind: 'error'; message: string; retry: 'resolve' | 'install' }
   >(null)
 
   // Reset state when source changes / modal opens
@@ -78,14 +79,15 @@ export default function SkillInstallModal({
     let cancelled = false
     resolveSource(source, workspaceId).then((ok) => {
       if (cancelled) return
-      const fixedSkillExists = !fixedSkillName
-        || useSkillsStore.getState().discovered.some((skill) => skill.name === fixedSkillName)
-      if (ok && fixedSkillExists) {
+      const resolved = useSkillsStore.getState().discovered
+      const fixedSelectionIsExact = !fixedSkillName
+        || (resolved.length === 1 && resolved[0].name === fixedSkillName)
+      if (ok && fixedSelectionIsExact) {
         if (fixedSkillName) setSelectedSkills(new Set([fixedSkillName]))
         setPhase('choosing')
       } else {
         setPhase('result')
-        setOutcome({ kind: 'error', message: t('skills.resolveFailed') })
+        setOutcome({ kind: 'error', message: t('skills.resolveFailed'), retry: 'resolve' })
       }
     })
     return () => {
@@ -93,7 +95,7 @@ export default function SkillInstallModal({
       clearDiscovered()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, fixedSkillName])
+  }, [source, fixedSkillName, resolveAttempt])
 
   // Auto-close on success after a brief delay
   useEffect(() => {
@@ -136,7 +138,7 @@ export default function SkillInstallModal({
       setOutcome({ kind: 'already-installed', message: result.message })
       setPhase('result')
     } else {
-      setOutcome({ kind: 'error', message: result.message })
+      setOutcome({ kind: 'error', message: result.message, retry: 'install' })
       setPhase('result')
     }
   }, [selectedSkills, selectedScope, source, workspaceId, install])
@@ -156,16 +158,20 @@ export default function SkillInstallModal({
       setOutcome({ kind: 'success' })
       setPhase('result')
     } else {
-      setOutcome({ kind: 'error', message: result.message })
+      setOutcome({ kind: 'error', message: result.message, retry: 'install' })
       setPhase('result')
     }
   }, [selectedSkills, selectedScope, source, workspaceId, install])
 
   const handleRetry = useCallback(() => {
+    if (outcome?.kind === 'error' && outcome.retry === 'resolve') {
+      setResolveAttempt((attempt) => attempt + 1)
+      return
+    }
     setPhase('choosing')
     setOutcome(null)
     clearError()
-  }, [clearError])
+  }, [clearError, outcome])
 
   const handleCancel = useCallback(() => {
     onClose()

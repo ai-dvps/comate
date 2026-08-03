@@ -30,7 +30,6 @@ describe('SkillInstallModal fixed selection', () => {
       if (url.endsWith('/resolve')) {
         return Promise.resolve(Response.json({ skills: [
           { name: 'child-skill', description: 'Child', skillPath: 'SKILL.md' },
-          { name: 'sibling', description: 'Sibling', skillPath: 'other/SKILL.md' },
         ] }))
       }
       installBody = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -48,7 +47,6 @@ describe('SkillInstallModal fixed selection', () => {
     />)
 
     expect(await screen.findByRole('button', { name: /child-skill.*Child/ })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.queryByText('sibling')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Global.*Available in all/ }))
     await user.click(screen.getByRole('button', { name: 'Install' }))
     await waitFor(() => expect(installBody).toEqual({
@@ -57,6 +55,45 @@ describe('SkillInstallModal fixed selection', () => {
       scope: 'global',
       workspaceId: 'ws-1',
     }))
+  })
+
+  it.each([
+    ['zero Skills', []],
+    ['multiple Skills', [
+      { name: 'child-skill', description: 'Child', skillPath: 'SKILL.md' },
+      { name: 'sibling', description: 'Sibling', skillPath: 'other/SKILL.md' },
+    ]],
+    ['a differently named Skill', [
+      { name: 'renamed-skill', description: 'Renamed', skillPath: 'SKILL.md' },
+    ]],
+  ])('rejects fixed selection when resolution returns %s', async (_label, skills) => {
+    let resolveAttempts = 0
+    const installRequest = vi.fn()
+    global.fetch = vi.fn((input: string | URL | Request) => {
+      if (String(input).endsWith('/resolve')) {
+        resolveAttempts += 1
+        return Promise.resolve(Response.json({ skills }))
+      }
+      installRequest()
+      return Promise.resolve(Response.json({ results: [] }, { status: 201 }))
+    }) as typeof fetch
+    const user = userEvent.setup()
+    render(<SkillInstallModal
+      source="skillhub-cn:owner/child-skill"
+      fixedSkillName="child-skill"
+      workspaceId="ws-1"
+      onClose={() => undefined}
+      onInstalled={() => undefined}
+    />)
+
+    expect(await screen.findByText('Install failed')).toBeInTheDocument()
+    expect(screen.queryByText('Select installation scope')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument()
+    expect(installRequest).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(resolveAttempts).toBe(2))
+    expect(installRequest).not.toHaveBeenCalled()
   })
 
   it('retains the existing reinstall path for a fixed Skill', async () => {

@@ -5,6 +5,7 @@ import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'
 import enSettings from '../../i18n/en/settings.json'
 import { useEnterpriseZoneStore } from '../../stores/enterprise-zone-store'
+import { useSkillsStore } from '../../stores/skills-store'
 import EnterpriseZoneView from './EnterpriseZoneView'
 
 const originalFetch = global.fetch
@@ -48,6 +49,7 @@ function page<T>(key: 'enterprises' | 'skills', items: T[], currentPage: number,
 describe('Enterprise Zone UI', () => {
   beforeEach(() => {
     useEnterpriseZoneStore.getState().reset()
+    useSkillsStore.setState({ installed: [], discovered: [], isResolving: false, isSaving: false, error: null })
     vi.clearAllMocks()
   })
 
@@ -284,5 +286,105 @@ describe('Enterprise Zone UI', () => {
     rerender(<EnterpriseZoneView active={false} isOpen={false} />)
     await waitFor(() => expect(screen.getByLabelText('Search enterprises')).toHaveValue(''))
     expect(useEnterpriseZoneStore.getState().enterprisePage).toBeNull()
+  })
+
+  it('shows a validated enterprise Skill, restores its list context, and installs only that Skill', async () => {
+    const installBodies: Array<Record<string, unknown>> = []
+    const installed = vi.fn()
+    global.fetch = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/industries')) return Promise.resolve(Response.json({ industries: [] }))
+      if (url.endsWith('/enterprises/org-1')) return Promise.resolve(Response.json({
+        enterprise: { ...enterprise(1), totalStars: 5 },
+      }))
+      if (url.endsWith('/enterprises/org-1/skills/enterprise/skill-1')) return Promise.resolve(Response.json({ skill: {
+        ...skill(1),
+        category: 'productivity',
+        owner: { handle: 'owner', displayName: 'Skill Owner' },
+        publisher: { orgId: 'org-1' },
+        version: '2.1.0',
+        stats: { downloads: 101, installs: 44 },
+        securityReports: [{ provider: 'Keen', status: 'benign', statusText: 'No issues', reportUrl: 'https://example.com/report' }],
+        documentation: '---\ntitle: Hidden\n---\n# Trusted Docs\n<script>alert(1)</script>',
+        source: 'skillhub-cn:enterprise/skill-1',
+      } }))
+      if (url.includes('/enterprises/org-1/skills?')) {
+        const currentPage = Number(new URL(url, 'http://localhost').searchParams.get('page'))
+        return Promise.resolve(page('skills', [skill(1)], currentPage, 41))
+      }
+      if (url.endsWith('/api/skills/resolve')) return Promise.resolve(Response.json({ skills: [
+        { name: 'skill-1', description: 'Validated Skill', skillPath: 'SKILL.md' },
+      ] }))
+      if (url.endsWith('/api/skills/install')) {
+        installBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return Promise.resolve(Response.json({ results: [{ skillName: 'skill-1', status: 'installed' }] }, { status: 201 }))
+      }
+      return Promise.resolve(page('enterprises', [enterprise(1)], 1, 1))
+    }) as typeof fetch
+
+    const user = userEvent.setup()
+    render(<div data-testid="scroll-container"><EnterpriseZoneView active isOpen workspaceId="ws-1" onInstalled={installed} /></div>)
+    await user.click(await screen.findByRole('button', { name: /Enterprise 1/ }))
+    await user.type(await screen.findByLabelText('Search Enterprise Skills'), 'deploy')
+    await user.selectOptions(screen.getByLabelText('Sort Enterprise Skills'), 'stars')
+    await user.click(screen.getByRole('button', { name: 'Next Skill page' }))
+    const scrollContainer = screen.getByTestId('scroll-container')
+    scrollContainer.scrollTop = 360
+    await user.click(await screen.findByRole('button', { name: /Skill 1/ }))
+
+    expect(await screen.findByRole('navigation', { name: 'Enterprise Skill breadcrumb' })).toHaveTextContent('Enterprise 1')
+    expect(screen.getByText('Published by Enterprise 1')).toBeInTheDocument()
+    expect(screen.getByText('Skill Owner · @owner')).toBeInTheDocument()
+    expect(screen.getByText('Publisher: org-1')).toBeInTheDocument()
+    expect(screen.getByText('v2.1.0')).toBeInTheDocument()
+    expect(screen.getByText('Trusted Docs')).toBeInTheDocument()
+    expect(screen.queryByText('Hidden')).not.toBeInTheDocument()
+    expect(document.querySelector('script')).toBeNull()
+    expect(screen.getByRole('button', { name: /Keen.*No issues/ })).toBeInTheDocument()
+    expect(screen.queryByText(/bulk|package orchestration/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Install.*Skill/i }))
+    await screen.findByText('skill-1')
+    await user.click(screen.getByRole('button', { name: /Project.*Shared with collaborators/ }))
+    await user.click(screen.getByRole('button', { name: 'Install' }))
+    await waitFor(() => expect(installBodies).toEqual([{
+      source: 'skillhub-cn:enterprise/skill-1',
+      skills: ['skill-1'],
+      scope: 'project',
+      workspaceId: 'ws-1',
+    }]))
+    await waitFor(() => expect(installed).toHaveBeenCalled(), { timeout: 2000 })
+    expect(screen.getByRole('heading', { name: 'Skill 1' })).toBeInTheDocument()
+
+    scrollContainer.scrollTop = 0
+    await user.click(screen.getByRole('button', { name: 'Back to enterprise Skills' }))
+    expect(screen.getByLabelText('Search Enterprise Skills')).toHaveValue('deploy')
+    expect(screen.getByLabelText('Sort Enterprise Skills')).toHaveValue('stars')
+    expect(await screen.findByText('Page 2 of 3')).toBeInTheDocument()
+    await waitFor(() => expect(scrollContainer.scrollTop).toBe(360))
+  })
+
+  it('disables install only for an exact installed source match', async () => {
+    useSkillsStore.setState({ installed: [{
+      name: 'skill-1', scope: 'global', source: 'skillhub-cn:enterprise/skill-1',
+      installPath: '/skills/skill-1', isLegacySymlink: false,
+    }] })
+    global.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/industries')) return Promise.resolve(Response.json({ industries: [] }))
+      if (url.endsWith('/enterprises/org-1')) return Promise.resolve(Response.json({ enterprise: { ...enterprise(1), totalStars: 5 } }))
+      if (url.endsWith('/enterprises/org-1/skills/enterprise/skill-1')) return Promise.resolve(Response.json({ skill: {
+        ...skill(1), category: '', owner: { handle: 'owner', displayName: 'Owner' }, publisher: { orgId: 'org-1' },
+        version: '1', stats: { downloads: 1, installs: 1 }, securityReports: [], source: 'skillhub-cn:enterprise/skill-1',
+      } }))
+      if (url.includes('/enterprises/org-1/skills?')) return Promise.resolve(page('skills', [skill(1)], 1, 1))
+      return Promise.resolve(page('enterprises', [enterprise(1)], 1, 1))
+    }) as typeof fetch
+
+    const user = userEvent.setup()
+    render(<EnterpriseZoneView active isOpen />)
+    await user.click(await screen.findByRole('button', { name: /Enterprise 1/ }))
+    await user.click(await screen.findByRole('button', { name: /Skill 1/ }))
+    expect(await screen.findByRole('button', { name: 'Installed' })).toBeDisabled()
   })
 })
