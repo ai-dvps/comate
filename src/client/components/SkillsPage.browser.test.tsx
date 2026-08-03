@@ -112,8 +112,11 @@ function enterpriseInstallFetch(): ReturnType<typeof vi.fn> {
       stats: { downloads: 20, installs: 3 }, securityReports: [], documentation: '# Enterprise documentation', source: 'skillhub-cn:enterprise/enterprise-skill',
     } }))
     if (url.includes('/enterprise-zone/enterprises?')) return Promise.resolve(Response.json({
-      enterprises: [{ orgId: 'org-1', name: 'Acme Enterprise', description: 'Acme description', industryTags: [], publishedSkillCount: 1, totalDownloads: 20 }],
-      page: 1, pageSize: 20, total: 1,
+      enterprises: [
+        { orgId: 'org-1', name: 'Acme Enterprise', description: 'Acme description', industryTags: [], publishedSkillCount: 1, totalDownloads: 20 },
+        { orgId: 'org-2', name: 'Beacon Enterprise', description: 'Beacon description', industryTags: [], publishedSkillCount: 2, totalDownloads: 40 },
+      ],
+      page: 1, pageSize: 20, total: 2,
     }))
     if (url.endsWith('/api/skills/resolve')) return Promise.resolve(Response.json({ skills: [
       { name: 'enterprise-skill', description: 'Enterprise Skill summary', skillPath: 'SKILL.md' },
@@ -203,6 +206,7 @@ describe('SkillsPage Expert Packages browser flow', () => {
     localStorage.removeItem('comate.skills.search-providers.v1')
     localStorage.removeItem('comate.skills.search-view-mode')
     localStorage.removeItem('comate.expert-packages.view-mode')
+    localStorage.removeItem('comate.enterprise-zone.view-mode')
     window.fetch = installFetch() as typeof fetch
   })
 
@@ -220,6 +224,28 @@ describe('SkillsPage Expert Packages browser flow', () => {
     expect(enterpriseTab).toHaveFocus()
     expect(screen.queryByRole('button', { name: 'Add from URL' })).not.toBeInTheDocument()
     expect(await screen.findByRole('textbox', { name: 'Search enterprises' })).toBeVisible()
+  })
+
+  it('switches the Enterprise catalog between card and list layouts', async () => {
+    window.fetch = enterpriseInstallFetch() as typeof fetch
+    render(<I18nextProvider i18n={i18n}><SkillsPage workspaceId="ws-1" isOpen onClose={() => undefined} /></I18nextProvider>)
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Enterprise Zone' }))
+    const acme = await screen.findByRole('button', { name: /Acme Enterprise/ })
+    const beacon = await screen.findByRole('button', { name: /Beacon Enterprise/ })
+    expect(Math.round(acme.getBoundingClientRect().top)).toBe(Math.round(beacon.getBoundingClientRect().top))
+    expect(Math.round(acme.getBoundingClientRect().left)).not.toBe(Math.round(beacon.getBoundingClientRect().left))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Enterprise list view' }))
+    await waitFor(() => {
+      const listAcme = screen.getByRole('button', { name: /Acme Enterprise/ })
+      const listBeacon = screen.getByRole('button', { name: /Beacon Enterprise/ })
+      expect(screen.getByRole('button', { name: 'Enterprise list view' })).toHaveAttribute('aria-pressed', 'true')
+      expect(listAcme.parentElement).toBe(listBeacon.parentElement)
+      expect(listAcme.parentElement).toHaveClass('grid-cols-1')
+      expect(listAcme.parentElement).not.toHaveClass('md:grid-cols-2')
+    })
+    expect(localStorage.getItem('comate.enterprise-zone.view-mode')).toBe('list')
   })
 
   it('uses the generic WeSkillHub search-to-install flow with localized five-provider guidance', async () => {

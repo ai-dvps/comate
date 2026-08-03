@@ -7,7 +7,7 @@ import {
 import { useSkillsStore } from '../../stores/skills-store'
 import SkillInstallModal from '../SkillInstallModal'
 import EnterpriseDetail from './EnterpriseDetail'
-import EnterpriseList from './EnterpriseList'
+import EnterpriseList, { type EnterpriseViewMode } from './EnterpriseList'
 import EnterpriseSkillDetail from './EnterpriseSkillDetail'
 
 interface EnterpriseZoneViewProps {
@@ -23,6 +23,7 @@ type EnterpriseLocation =
   | { view: 'skill'; orgId: string; namespace: string; slug: string }
 
 const EMPTY_INSTALLED = () => undefined
+const VIEW_MODE_KEY = 'comate.enterprise-zone.view-mode'
 
 export default function EnterpriseZoneView({
   active,
@@ -34,6 +35,9 @@ export default function EnterpriseZoneView({
   const [enterpriseKeyword, setEnterpriseKeyword] = useState('')
   const [enterpriseIndustry, setEnterpriseIndustry] = useState<string | undefined>()
   const [enterprisePageNumber, setEnterprisePageNumber] = useState(1)
+  const [enterpriseViewMode, setEnterpriseViewMode] = useState<EnterpriseViewMode>(() => {
+    try { return localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'cards' } catch { return 'cards' }
+  })
   const [skillKeyword, setSkillKeyword] = useState('')
   const [skillSort, setSkillSort] = useState<EnterpriseSkillSort>('downloads')
   const [skillPageNumber, setSkillPageNumber] = useState(1)
@@ -251,6 +255,7 @@ export default function EnterpriseZoneView({
           industries={industries}
           keyword={enterpriseKeyword}
           industry={enterpriseIndustry}
+          viewMode={enterpriseViewMode}
           requestedPage={enterprisePageNumber}
           loading={isLoadingEnterprises}
           error={enterprisesError}
@@ -258,6 +263,11 @@ export default function EnterpriseZoneView({
           industriesError={industriesError}
           onKeywordChange={changeEnterpriseKeyword}
           onIndustryChange={changeEnterpriseIndustry}
+          onViewModeChange={(mode) => {
+            if (mode === enterpriseViewMode) return
+            setEnterpriseViewMode(mode)
+            try { localStorage.setItem(VIEW_MODE_KEY, mode) } catch { /* storage unavailable */ }
+          }}
           onPageChange={setEnterprisePageNumber}
           onClearFilters={clearEnterpriseFilters}
           onSelect={selectEnterprise}

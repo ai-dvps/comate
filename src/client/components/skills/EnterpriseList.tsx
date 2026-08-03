@@ -4,6 +4,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Grid2X2,
+  List,
   Search,
   X,
 } from 'lucide-react'
@@ -15,11 +17,14 @@ import type {
 } from '../../stores/enterprise-zone-store'
 import { formatCount, industryLabels } from './enterprise-zone-utils'
 
+export type EnterpriseViewMode = 'cards' | 'list'
+
 interface EnterpriseListProps {
   page: EnterprisePage | null
   industries: EnterpriseIndustry[]
   keyword: string
   industry?: string
+  viewMode: EnterpriseViewMode
   requestedPage: number
   loading: boolean
   error: string | null
@@ -27,6 +32,7 @@ interface EnterpriseListProps {
   industriesError: string | null
   onKeywordChange: (value: string) => void
   onIndustryChange: (value?: string) => void
+  onViewModeChange: (value: EnterpriseViewMode) => void
   onPageChange: (page: number) => void
   onClearFilters: () => void
   onSelect: (orgId: string) => void
@@ -39,6 +45,7 @@ export default function EnterpriseList({
   industries,
   keyword,
   industry,
+  viewMode,
   requestedPage,
   loading,
   error,
@@ -46,6 +53,7 @@ export default function EnterpriseList({
   industriesError,
   onKeywordChange,
   onIndustryChange,
+  onViewModeChange,
   onPageChange,
   onClearFilters,
   onSelect,
@@ -63,8 +71,8 @@ export default function EnterpriseList({
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <header className="rounded-2xl border border-border bg-surface px-4 py-4 shadow-sm md:px-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <header className="rounded-2xl border border-border bg-surface p-3 shadow-sm">
+        <div className="flex flex-col gap-2 lg:flex-row">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
             <input
@@ -97,6 +105,22 @@ export default function EnterpriseList({
               <option key={item.key} value={item.key}>{labelsByIndustry.get(item.key)}</option>
             ))}
           </select>
+          <div className="flex h-10 rounded-xl border border-border bg-bg p-1" aria-label={t('skills.enterpriseZone.viewMode')}>
+            <button
+              type="button"
+              onClick={() => onViewModeChange('cards')}
+              aria-pressed={viewMode === 'cards'}
+              aria-label={t('skills.enterpriseZone.cardView')}
+              className={`flex w-9 items-center justify-center rounded-lg ${viewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary'}`}
+            ><Grid2X2 className="h-3.5 w-3.5" /></button>
+            <button
+              type="button"
+              onClick={() => onViewModeChange('list')}
+              aria-pressed={viewMode === 'list'}
+              aria-label={t('skills.enterpriseZone.listView')}
+              className={`flex w-9 items-center justify-center rounded-lg ${viewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary'}`}
+            ><List className="h-3.5 w-3.5" /></button>
+          </div>
         </div>
 
         {industriesError ? (
@@ -114,9 +138,13 @@ export default function EnterpriseList({
       </header>
 
       {initialLoading ? (
-        <div aria-busy="true" aria-label={t('skills.enterpriseZone.loadingEnterprises')} className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div
+          aria-busy="true"
+          aria-label={t('skills.enterpriseZone.loadingEnterprises')}
+          className={viewMode === 'cards' ? 'grid grid-cols-1 gap-3 md:grid-cols-2' : 'space-y-2'}
+        >
           {Array.from({ length: 4 }, (_, index) => (
-            <div key={index} className="h-40 animate-pulse rounded-2xl border border-border bg-surface" />
+            <div key={index} className={`${viewMode === 'cards' ? 'h-40' : 'h-24'} animate-pulse rounded-2xl border border-border bg-surface`} />
           ))}
         </div>
       ) : error && !page ? (
@@ -149,14 +177,17 @@ export default function EnterpriseList({
             </div>
           ) : null}
           {loading ? <p role="status" className="text-xs text-text-tertiary">{t('skills.enterpriseZone.refreshingEnterprises')}</p> : null}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2" aria-busy={loading}>
+          <div
+            className={viewMode === 'cards' ? 'grid grid-cols-1 gap-3 md:grid-cols-2' : 'grid grid-cols-1 gap-2'}
+            aria-busy={loading}
+          >
             {enterprises.map((item) => (
               <button
                 key={item.orgId}
                 type="button"
                 data-enterprise-org={item.orgId}
                 onClick={() => onSelect(item.orgId)}
-                className="group w-full rounded-2xl border border-border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md motion-reduce:transform-none"
+                className={`group w-full rounded-2xl border border-border bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md motion-reduce:transform-none ${viewMode === 'cards' ? 'p-4' : 'p-3.5'}`}
               >
                 <div className="flex items-start gap-3">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-accent/10 text-accent">
@@ -168,16 +199,17 @@ export default function EnterpriseList({
                       <CheckCircle2 aria-label={t('skills.enterpriseZone.verifiedEnterprise')} className="h-3.5 w-3.5 shrink-0 text-accent" />
                     </div>
                     {item.fullName && item.fullName !== item.name ? <p className="mt-0.5 truncate text-[10px] text-text-tertiary">{item.fullName}</p> : null}
+                    {viewMode === 'list' ? <p className="mt-1 line-clamp-1 text-xs leading-5 text-text-secondary">{item.description}</p> : null}
                   </div>
                   <ChevronRight className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-accent" />
                 </div>
-                <p className="mt-3 line-clamp-2 min-h-10 text-xs leading-5 text-text-secondary">{item.description}</p>
-                <div className="mt-3 flex flex-wrap gap-1.5">
+                {viewMode === 'cards' ? <p className="mt-3 line-clamp-2 min-h-10 text-xs leading-5 text-text-secondary">{item.description}</p> : null}
+                <div className={`${viewMode === 'cards' ? 'mt-3' : 'mt-2'} flex flex-wrap items-center gap-1.5`}>
                     {item.industryTags.map((tag) => <span key={tag} className="rounded-md bg-surface-hover px-2 py-1 text-[10px] text-text-tertiary">{labelsByIndustry.get(tag) ?? tag}</span>)}
-                </div>
-                <div className="mt-3 flex items-center gap-3 text-[10px] text-text-tertiary">
-                  <span>{t('skills.enterpriseZone.skillCount', { count: formatCount(item.publishedSkillCount) })}</span>
-                  <span className="inline-flex items-center gap-1"><Download className="h-3 w-3" /> {formatCount(item.totalDownloads)}</span>
+                  <span className={`${viewMode === 'cards' ? 'basis-full' : 'ml-auto'} inline-flex items-center gap-3 text-[10px] text-text-tertiary`}>
+                    <span>{t('skills.enterpriseZone.skillCount', { count: formatCount(item.publishedSkillCount) })}</span>
+                    <span className="inline-flex items-center gap-1"><Download className="h-3 w-3" /> {formatCount(item.totalDownloads)}</span>
+                  </span>
                 </div>
               </button>
             ))}
