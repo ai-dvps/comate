@@ -23,7 +23,69 @@ export {
 export { stripTerminalEscapes, sanitizeMetadata } from './sanitize.js';
 
 // skills.sh search
-export { searchSkillsAPI } from './search.js';
+export {
+  SEARCH_PROVIDER_REGISTRY,
+  SkillSearchProviderError,
+  checkSkillSearchProviders,
+  isSkillSearchProviderId,
+  searchFederatedSkills,
+  searchSkillsAPI,
+  searchSkillsHubSkills,
+  searchSkillhubCnSkills,
+  searchXfyunSkills,
+} from './search.js';
+export {
+  SKILL_SCENES,
+  SCENE_LABELS,
+  isSkillScene,
+  isSkillSort,
+} from './search-query.js';
+export type { SkillScene, SkillSort, SkillSearchQuery } from './search-query.js';
+export {
+  SKILL_SEARCH_PROVIDER_IDS,
+} from './types.js';
+export type {
+  FederatedSkillSearchResult,
+  SkillProviderAvailability,
+  SkillProviderFailureReason,
+  SkillSearchProviderId,
+} from './types.js';
+
+export {
+  getExpertPackage,
+  getExpertPackageDefinition,
+  getExpertSkill,
+  listExpertPackages,
+  ExpertPackageProviderError,
+  EXPERT_PACKAGE_SCENES,
+  isExpertPackageCoordinate,
+  isExpertPackageScene,
+  expertPackageLimits,
+} from './expert-packages.js';
+export type { ExpertPackageDefinition } from './expert-packages.js';
+export {
+  isSkillHubCoordinate,
+  SkillHubProviderError,
+} from './skillhub.js';
+export {
+  enterpriseZoneLimits,
+  getEnterprise,
+  getEnterpriseSkill,
+  isEnterpriseIndustry,
+  isEnterpriseSkillSort,
+  listEnterprises,
+  listEnterpriseIndustries,
+  listEnterpriseSkills,
+} from './enterprise-zone.js';
+export {
+  materializeRegistrySource,
+  parseRegistrySource,
+  registryArchiveLimits,
+  registrySourceUrl,
+  validateArchiveEntries,
+} from './registry-source.js';
+export type { RegistrySource, RegistrySourceKind } from './registry-source.js';
+export { InstallCoordinator, installCoordinator } from './install-coordinator.js';
 
 // Source string parsing
 export {
@@ -81,5 +143,22 @@ export type {
   GlobalSkillLockFile,
   SkillScope,
   InstallResult,
+  InstalledSkillKind,
+  ExpertPackageSummary,
+  ExpertPackageChild,
+  ExpertPackageDetail,
+  ExpertSkillSecurityReport,
+  ExpertSkillDetail,
+  SkillHubSecurityReport,
+  SkillHubSkillDetail,
+  EnterpriseIndustry,
+  EnterpriseSummary,
+  EnterpriseDetail,
+  EnterpriseSkillSort,
+  EnterpriseSkillSummary,
+  EnterprisePage,
+  EnterpriseSkillPage,
+  ExpertPackageInstallItemKind,
+  ExpertPackageInstallResult,
   DiscoveredSkill,
 } from './types.js';

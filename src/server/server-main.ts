@@ -34,13 +34,14 @@ import skillRoutes from './routes/skills.js';
 import analyticsRoutes from './routes/analytics.js';
 import botRoutes from './routes/bots.js';
 import healthBrowserRoutes from './routes/health-browser.js';
+import healthSandboxRoutes from './routes/health-sandbox.js';
 import browserRoutes from './routes/browser.js';
 import settingsRoutes from './routes/settings.js';
 import { browserViewerProxy } from './routes/browser-proxy.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
-import { schedulerService } from './services/scheduler-service.js';
+import { todoSchedulerService } from './services/todo-scheduler-service.js';
 import { runNotifier } from './services/run-notifier.js';
 import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
@@ -57,6 +58,10 @@ import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketpla
 import { addExtraKnownMarketplace } from './utils/claude-settings.js';
 import { ComateWebSocketServer } from './websocket/server.js';
 import { teardownServices } from './service-teardown.js';
+import { sessionCapabilityService } from './services/session-capability-service.js';
+import { botEscalationLedger } from './services/bot-escalation-ledger.js';
+import { createLoopbackAuthMiddleware } from './services/security/loopback-auth.js';
+import { botAuditLogger, LOOPBACK_AUDIT_BOT_ID } from './services/bot-audit-logger.js';
 import {
   createCorsOriginCallback,
   hostHeaderGuard,
@@ -90,6 +95,30 @@ function pruneBrowserAudit(): void {
   }
 }
 
+/** bot_audit retention (U6, KTD-22): 90-day default, mirrors pruneBrowserAudit. */
+function pruneBotAuditLogs(): void {
+  try {
+    const deleted = workspaceStore.pruneBotAuditLogs();
+    if (deleted > 0) {
+      diagLog(`[bot-audit] pruned ${deleted} expired audit rows`);
+    }
+  } catch (err) {
+    diagLog(`[bot-audit] prune failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Escalation-ledger retention (U8): settled rows older than 90 days. */
+function pruneBotEscalationLedger(): void {
+  try {
+    const deleted = workspaceStore.pruneBotEscalationLedger();
+    if (deleted > 0) {
+      diagLog(`[escalation-ledger] pruned ${deleted} settled rows`);
+    }
+  } catch (err) {
+    diagLog(`[escalation-ledger] prune failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 function ensureComateBuiltInMarketplace(): void {
   const marketplacePath = resolveBuiltInMarketplacePath();
   if (!marketplacePath) {
@@ -113,6 +142,12 @@ function ensureComateBuiltInMarketplace(): void {
 
 ensureComateBuiltInMarketplace();
 
+// U12 (KTD-28): mint the per-boot desktop GUI credential before any request
+// can arrive. Delivered to the local client out-of-band: the sidecar ready
+// message (Tauri shell) and a 0600 file in the data dir (dev Vite proxy).
+// Never injected into any session environment.
+const desktopToken = sessionCapabilityService.mintDesktopToken();
+
 // Remote-surface hardening (plan U9): Host whitelist (anti-DNS-rebinding) →
 // CORS app-origin matrix → state-changing source check. Header-only checks,
 // so they run before body parsing and change no functional semantics.
@@ -132,6 +167,33 @@ app.use('/mcp/scheduled-tasks', createScheduledTasksMcpHttpRouter((sessionId) =>
 app.use(cors({ origin: createCorsOriginCallback({ getSelfPort }) }));
 app.use(stateChangingRequestGuard({ getSelfPort }));
 app.use(express.json());
+
+// U12 (KTD-28): default-deny authentication for the entire /api surface at
+// the registration layer. Every present AND future /api route requires a
+// Bearer credential — the desktop GUI credential (full surface) or a
+// per-session capability token (closed enrolled route set, enforced inside
+// the middleware). Exemptions are the explicit list in loopback-auth.ts.
+app.use(
+  createLoopbackAuthMiddleware({
+    resolveSessionToken: (token) => sessionCapabilityService.resolve(token),
+    getDesktopToken: () => sessionCapabilityService.getDesktopToken(),
+    // U6 (KTD-22): promote auth rejections from diagLog to the bot audit
+    // trail. Attributable rejections (resolved token, 403 class) file under
+    // the token's bot; unattributable ones under the sentinel bucket.
+    onAuthRejected: (rejection) => {
+      botAuditLogger.logLoopbackAuthRejected(
+        rejection.botId ?? LOOPBACK_AUDIT_BOT_ID,
+        { type: 'system' },
+        {
+          method: rejection.method,
+          path: rejection.path,
+          reason: rejection.reason,
+          ...(rejection.sessionId ? { sessionId: rejection.sessionId } : {}),
+        },
+      );
+    },
+  }),
+);
 
 // API routes
 app.use('/api/workspaces', workspaceRoutes);
@@ -159,6 +221,7 @@ app.use('/api/skills', skillRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/bots', botRoutes);
 app.use('/api/health/browser', healthBrowserRoutes);
+app.use('/api/health/sandbox', healthSandboxRoutes);
 app.use('/api/browser', browserRoutes);
 app.use('/api/settings', settingsRoutes);
 
@@ -263,9 +326,12 @@ const server = app.listen(PORT, () => {
   // Attach WebSocket server to the same HTTP listener.
   new ComateWebSocketServer().attach(server, { getSelfPort });
 
-  // Emit ready message for Tauri sidecar discovery when PORT=0
+  // Emit ready message for Tauri sidecar discovery when PORT=0. The
+  // desktopToken field hands the GUI credential to the Tauri shell, which
+  // injects it into the webview's request layer (U12); the shell must not
+  // log this line.
   if (process.env.COMATE_SIDECAR === '1') {
-    console.log(JSON.stringify({ type: 'ready', port: actualPort }));
+    console.log(JSON.stringify({ type: 'ready', port: actualPort, desktopToken }));
   }
 
   // Run bot migration before initializing channel connections so legacy
@@ -283,6 +349,22 @@ const server = app.listen(PORT, () => {
       }
     } catch (err) {
       console.error('[BotMigration] unexpected error:', err);
+    }
+
+    // U8 (KTD-16): escalation ledger boot recovery. Every still-pending
+    // approval belongs to a Promise that died with the previous process —
+    // expire them all (fail-closed, never auto-allow) with an audit row per
+    // entry, and queue requester notifications per bot. The queue flushes
+    // when each bot's WeCom connection reports ready (this sequence must NOT
+    // await connections), so this runs BEFORE wecomBotService.initialize().
+    try {
+      const expiredEscalations = botEscalationLedger.expireAllPendingForBoot();
+      if (expiredEscalations.length > 0) {
+        diagLog(`[Startup] boot recovery expired ${expiredEscalations.length} pending bot escalation(s)`);
+        wecomBotService.enqueueEscalationExpiryNotifications(expiredEscalations);
+      }
+    } catch (err) {
+      console.error('[Startup] escalation ledger boot recovery failed:', err);
     }
 
     // Backfill the built-in wecom plugin for any existing WeCom-enabled bots.
@@ -303,8 +385,9 @@ const server = app.listen(PORT, () => {
       console.error('[Startup] unexpected error during wecom plugin backfill:', err);
     }
 
-    // Initialize WeCom bot connections for enabled bots/workspaces
-    wecomBotService.setServerUrl(serverUrl);
+    // Initialize WeCom bot connections for enabled bots/workspaces.
+    // (U12: setServerUrl is gone — per-session CLI context files derive the
+    // loopback URL from the bound port via self-port at session creation.)
     wecomBotService.initialize().catch((err) => {
       console.error('Failed to initialize WeCom bot service:', err);
     });
@@ -326,8 +409,8 @@ const server = app.listen(PORT, () => {
   // Initialize WeCom proactive message queue worker
   wecomQueueWorker.initialize();
 
-  // Initialize the scheduled-task scheduler (tick + startup reconciliation)
-  schedulerService.initialize();
+  // Initialize the unified Todo scheduler (tick + startup reconciliation).
+  todoSchedulerService.initialize();
 
   // Fan out run results (WeCom summary push; WS relay lives in the ws server)
   runNotifier.initialize();
@@ -338,12 +421,17 @@ const server = app.listen(PORT, () => {
   });
 
   // Initialize log cleanup — run once at startup, then periodically. The same
-  // timer bounds the append-only browser_audit table (age + row cap).
+  // timer bounds the append-only browser_audit table (age + row cap) and the
+  // bot_audit table (U6: 90-day age retention).
   runLogCleanup();
   pruneBrowserAudit();
+  pruneBotAuditLogs();
+  pruneBotEscalationLedger();
   logCleanupTimer = setInterval(() => {
     runLogCleanup();
     pruneBrowserAudit();
+    pruneBotAuditLogs();
+    pruneBotEscalationLedger();
   }, 6 * 60 * 60 * 1000); // 6 hours
   logCleanupTimer.unref();
 

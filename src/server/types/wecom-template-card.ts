@@ -7,9 +7,20 @@ import type { TemplateCard } from '@wecom/aibot-node-sdk';
 /**
  * Actions encoded into a button key for interactive cards. `'resume'` is used
  * by the `/resume` session-switch card and is branched on in
- * `handleTemplateCardEvent` before the runtime lookup.
+ * `handleTemplateCardEvent` before the runtime lookup. The `escalate_*`
+ * family (U11, KTD-15) is used by admins-audience escalation cards sent to
+ * owner/admin recipients; those clicks authorize against the escalation
+ * ledger + a fresh role check, never the session-ownership check.
  */
-export type ToolApprovalAction = 'allow' | 'always_allow' | 'deny' | 'resume' | 'select_workspace';
+export type ToolApprovalAction =
+  | 'allow'
+  | 'always_allow'
+  | 'deny'
+  | 'resume'
+  | 'select_workspace'
+  | 'escalate_approve'
+  | 'escalate_always_allow'
+  | 'escalate_deny';
 
 /** The decoded payload embedded in a button key. */
 export interface DecodedKeyPayload {
@@ -87,6 +98,48 @@ export interface SessionListCardOptions {
   desc?: string;
   /** Selectable sessions. The option `id` carries the target sessionId (stateless). */
   options: Array<{ sessionId: string; label: string; isActive?: boolean }>;
+}
+
+/**
+ * Options for building an admins-audience escalation approval card (U11,
+ * KTD-18): the card shows the EXACT rule that "始终允许" would persist plus
+ * its match-semantics prose, so the approver sees precisely what accumulates.
+ */
+export interface EscalationApprovalCardOptions {
+  requestId: string;
+  sessionId: string;
+  toolName: string;
+  /** Pre-truncated command/input summary. */
+  commandSummary: string;
+  /** Human label for the requester (channel user id). */
+  requesterLabel: string;
+  /** Requester role label (e.g. '普通成员' / '管理员'). */
+  requesterRoleLabel: string;
+  /** Exact-match rules that always-allow would persist; empty hides the button. */
+  alwaysAllowRules: string[];
+  /** Whole minutes the approval stays open. */
+  ttlMinutes: number;
+  /** A stable task_id so later updateTemplateCard can target the card. */
+  taskId?: string;
+}
+
+/** Options for the requester's read-only escalation notice card (U11, KTD-15). */
+export interface EscalationNoticeCardOptions {
+  /** Pre-truncated command/input summary. */
+  commandSummary: string;
+  toolName: string;
+  /** Approver audience label (e.g. '渠道 owner 或 admin'). */
+  audienceLabel: string;
+  /** Whole minutes the approval stays open. */
+  ttlMinutes: number;
+  taskId?: string;
+}
+
+/** Options for a terminal/result notification card (U11): approve/deny/expiry notices. */
+export interface EscalationResultCardOptions {
+  title: string;
+  desc: string;
+  taskId?: string;
 }
 
 /** Union of all card payloads produced by this module. */

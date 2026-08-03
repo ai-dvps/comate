@@ -7,6 +7,24 @@ export const MAX_TODO_CONTENT_LENGTH = 50000;
 
 export type TodoStatus = 'pending' | 'done' | 'discard' | 'did-but-need-verify';
 export type TodoOrigin = 'local' | 'github';
+export type TodoExecutionType = 'manual' | 'once' | 'recurring' | 'idle';
+export type TodoExecutionStatus = 'active' | 'paused' | 'disabled';
+
+export interface TodoRun {
+  id: string;
+  todoId: string;
+  sessionId: string | null;
+  status: 'running' | 'succeeded' | 'failed' | 'missed' | 'skipped';
+  fireAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  reason: string | null;
+  instructionSnapshot: string;
+  createdAt: string;
+}
+
+/** Small run summary included with Todo list responses for status visibility. */
+export type TodoLatestRun = Pick<TodoRun, 'status' | 'fireAt'>;
 
 export interface Todo {
   id: string;
@@ -15,6 +33,19 @@ export interface Todo {
   /** Optional markdown detail body; mirrors the GitHub issue body (KTD1). */
   content: string | null;
   status: TodoStatus;
+  executionType?: TodoExecutionType;
+  instruction?: string | null;
+  scheduleTime?: string | null;
+  cronExpr?: string | null;
+  executionStatus?: TodoExecutionStatus;
+  nextFireAt?: string | null;
+  latestRun?: TodoLatestRun | null;
+  notifyDesktop?: boolean;
+  notifyInApp?: boolean;
+  notifyWecom?: boolean;
+  wecomRecipient?: string | null;
+  confirmedSnapshot?: unknown | null;
+  deletedAt?: string | null;
   sessionId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -33,6 +64,10 @@ export interface Todo {
 export interface CreateTodoOptions {
   workspaceId?: string | null;
   dueDate?: string | null;
+  executionType?: TodoExecutionType;
+  instruction?: string | null;
+  scheduleTime?: string | null;
+  cronExpr?: string | null;
 }
 
 interface TodoState {
@@ -128,6 +163,18 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       text: trimmedText,
       content: null,
       status: 'pending',
+      executionType: options?.executionType ?? 'manual',
+      instruction: options?.instruction ?? null,
+      scheduleTime: options?.scheduleTime ?? null,
+      cronExpr: options?.cronExpr ?? null,
+      executionStatus: 'active',
+      nextFireAt: null,
+      notifyDesktop: true,
+      notifyInApp: true,
+      notifyWecom: false,
+      wecomRecipient: null,
+      confirmedSnapshot: null,
+      deletedAt: null,
       sessionId: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -153,6 +200,10 @@ export const useTodoStore = create<TodoState>((set, get) => ({
           text: trimmedText,
           workspaceId: options?.workspaceId ?? null,
           dueDate: options?.dueDate ?? null,
+          executionType: options?.executionType ?? 'manual',
+          instruction: options?.instruction ?? null,
+          scheduleTime: options?.scheduleTime ?? null,
+          cronExpr: options?.cronExpr ?? null,
         }),
       });
       if (!res.ok) {

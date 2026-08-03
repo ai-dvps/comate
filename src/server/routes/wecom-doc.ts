@@ -1,19 +1,20 @@
 import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { wecomDocService } from '../services/wecom-doc-service.js';
+import { requireSessionAuth } from '../services/security/loopback-auth.js';
 
 const router = Router({ mergeParams: true });
 
 // POST /api/workspaces/:workspaceId/wecom/doc/:tool
 router.post('/', async (req, res) => {
   try {
-    const workspaceId = (req.params as { workspaceId: string }).workspaceId;
-    const tool = (req.params as { tool: string }).tool;
+    // U12 (KTD-28): a session capability token is required; the middleware
+    // has already bound it to this workspace.
+    const auth = requireSessionAuth(req, res);
+    if (!auth) return;
 
-    if (!workspaceId || typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
-      res.status(400).json({ error: 'workspaceId is required' });
-      return;
-    }
+    const workspaceId = auth.workspaceId;
+    const tool = (req.params as { tool: string }).tool;
 
     const workspace = await store.get(workspaceId);
     if (!workspace) {

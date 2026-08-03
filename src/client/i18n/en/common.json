@@ -108,6 +108,12 @@
     "title": "Schema upgrade complete",
     "message": "Historical bot audit logs ({{count}} entries) were removed during the latest schema migration. New audit events will continue to be recorded."
   },
+  "sandboxDegraded": {
+    "title": "Bot sandbox unavailable",
+    "message": "This host failed the bot sandbox probe ({{reason}}). Bot sessions run with reduced isolation — regular members cannot run shell commands until the probe passes.",
+    "recheck": "Re-check",
+    "checking": "Checking…"
+  },
   "provider": {
     "noProviderConfigured": "No LLM provider configured. Go to Settings → Providers to add one.",
     "configure": "Configure Provider"

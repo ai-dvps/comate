@@ -120,6 +120,21 @@ export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
     return byView.filter((todo) => todo.text.toLowerCase().includes(query))
   }, [todos, view, query])
 
+  // Start every panel visit with the first item in the active view selected.
+  // If a filter or view removes the current selection, keep the detail pane in
+  // sync with the first visible Todo instead of leaving a stale selection.
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedId(null)
+      return
+    }
+    const firstVisibleId = visibleTodos[0]?.id ?? null
+    setSelectedId((currentId) => {
+      if (currentId && visibleTodos.some((todo) => todo.id === currentId)) return currentId
+      return firstVisibleId
+    })
+  }, [isOpen, visibleTodos])
+
   const viewCounts = useMemo(() => {
     const counts: Record<SmartView, number> = { inbox: 0, today: 0, upcoming: 0, all: 0 }
     for (const v of VIEWS) {
@@ -321,9 +336,9 @@ export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
           {/* Body */}
           <div className="flex flex-1 overflow-hidden bg-bg">
             {/* List */}
-            <div className="flex-1 overflow-y-auto min-w-0">
-              {/* Quick add */}
-              <div className="px-4 sm:px-6 py-3 border-b border-border/50">
+            <div className="flex min-w-0 flex-1 flex-col">
+              {/* Quick add stays fixed while the Todo list scrolls. */}
+              <div className="flex-shrink-0 border-b border-border/50 px-4 py-3 sm:px-6">
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleAdd}
@@ -345,7 +360,7 @@ export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
               </div>
 
               {/* List content */}
-              <div className="px-2 sm:px-4 py-2">
+              <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 sm:px-4" role="region" aria-label={t('title')}>
                 {isLoading && todos.length === 0 ? (
                   <div className="flex items-center justify-center h-40 text-text-tertiary">
                     <Loader2 className="w-5 h-5 animate-spin" />

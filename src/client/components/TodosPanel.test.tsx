@@ -14,6 +14,10 @@ function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>);
 }
 
+function todoList() {
+  return screen.getByRole('region', { name: 'Todos' });
+}
+
 function makeTodo(overrides: Partial<Todo> & { text: string }): Todo {
   return {
     id: overrides.id ?? `todo-${overrides.text}`,
@@ -21,6 +25,8 @@ function makeTodo(overrides: Partial<Todo> & { text: string }): Todo {
     text: overrides.text,
     content: null,
     status: overrides.status ?? 'pending',
+    executionType: overrides.executionType ?? 'manual',
+    latestRun: overrides.latestRun ?? null,
     sessionId: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -145,10 +151,12 @@ describe('TodosPanel — full-screen overlay (U1 regression)', () => {
     useGithubStore.setState({ connection: null });
   });
 
-  it('renders the fixed overlay shell with a dimmed backdrop', () => {
+  it('renders the fixed overlay below the app header with a dimmed backdrop', () => {
     stubFetchEmpty();
     const { container } = renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
-    expect(container.querySelector('.fixed.z-50')).not.toBeNull();
+    const overlay = container.querySelector('.fixed.z-50');
+    expect(overlay).not.toBeNull();
+    expect(overlay).toHaveClass('top-11', 'bottom-0');
     expect(container.querySelector('[class*="bg-overlay"]')).not.toBeNull();
   });
 
@@ -188,15 +196,15 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
   it('renders four view segments with counts and switching updates the list', async () => {
     const todos = [
       makeTodo({ id: 'a', text: 'Alpha' }),
-      makeTodo({ id: 'b', text: 'Beta', dueDate: '2026-07-31T00:00:00Z' }),
-      makeTodo({ id: 'c', text: 'Gamma', dueDate: '2026-07-30T00:00:00Z' }),
+      makeTodo({ id: 'b', text: 'Beta', dueDate: new Date(Date.now() + 86400000).toISOString() }),
+      makeTodo({ id: 'c', text: 'Gamma', dueDate: new Date().toISOString() }),
     ];
     stubFetchWithTodos(todos);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Alpha')).toBeInTheDocument());
 
-    const tabs = screen.getAllByRole('tab');
+    const tabs = within(screen.getByRole('tablist', { name: 'Views' })).getAllByRole('tab');
     expect(tabs).toHaveLength(4);
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
     expect(tabs[0]).toHaveTextContent('Inbox');
@@ -209,7 +217,30 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
     expect(tabs[3]).toHaveTextContent('3');
 
     fireEvent.click(tabs[3]!);
-    await waitFor(() => expect(screen.getAllByText(/Alpha|Beta|Gamma/)).toHaveLength(3));
+    await waitFor(() => expect(within(todoList()).getAllByText(/Alpha|Beta|Gamma/)).toHaveLength(3));
+  });
+
+  it('selects the first Todo in the active view when the panel opens', async () => {
+    const todos = [
+      makeTodo({ id: 'first', text: 'First Todo' }),
+      makeTodo({ id: 'second', text: 'Second Todo' }),
+    ];
+    stubFetchWithTodos(todos);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      const detail = screen.getByRole('complementary');
+      expect(within(detail).getByRole('heading', { name: 'First Todo' })).toBeInTheDocument();
+    });
+  });
+
+  it('keeps quick add outside the scrolling Todo list', async () => {
+    stubFetchWithTodos([makeTodo({ id: 'first', text: 'First Todo' })]);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
+
+    await waitFor(() => expect(within(todoList()).getByText('First Todo')).toBeInTheDocument());
+    expect(todoList()).not.toContainElement(screen.getByPlaceholderText('Add a todo…'));
+    expect(todoList()).toHaveClass('overflow-y-auto');
   });
 
   it('shows Today and Upcoming counts of 0 when no todos have due dates (AE2)', async () => {
@@ -217,9 +248,9 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
     stubFetchWithTodos(todos);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Alpha')).toBeInTheDocument());
 
-    const tabs = screen.getAllByRole('tab');
+    const tabs = within(screen.getByRole('tablist', { name: 'Views' })).getAllByRole('tab');
     expect(tabs[1]).toHaveTextContent('0');
     expect(tabs[2]).toHaveTextContent('0');
     fireEvent.click(tabs[1]!);
@@ -242,11 +273,11 @@ describe('TodosPanel — header restructure and rail removal (U1)', () => {
     stubFetchWithTodos(todos);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Alpha')).toBeInTheDocument());
 
     const groupTrigger = screen.getByLabelText('Group by');
     await userEvent.click(groupTrigger);
-    const originOption = await screen.findByText('Origin');
+    const originOption = await screen.findByRole('option', { name: 'Origin' });
     await userEvent.click(originOption);
 
     await waitFor(() => {
@@ -269,14 +300,14 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
     stubFetchWithTodos(todos);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Fix bug')).toBeInTheDocument());
 
     const searchInput = screen.getByPlaceholderText('Search todos…');
     await userEvent.type(searchInput, 'bug');
 
     await waitFor(() => {
-      expect(screen.getByText('Fix bug')).toBeInTheDocument();
-      expect(screen.queryByText('Write docs')).not.toBeInTheDocument();
+      expect(within(todoList()).getByText('Fix bug')).toBeInTheDocument();
+      expect(within(todoList()).queryByText('Write docs')).not.toBeInTheDocument();
     });
   });
 
@@ -284,7 +315,7 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
     stubFetchWithTodos([makeTodo({ id: 'a', text: 'Fix bug' })]);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Fix bug')).toBeInTheDocument());
 
     const searchInput = screen.getByPlaceholderText('Search todos…');
     await userEvent.type(searchInput, 'bug');
@@ -303,7 +334,7 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
     const onClose = vi.fn();
     renderWithI18n(<TodosPanel isOpen onClose={onClose} />);
 
-    await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Fix bug')).toBeInTheDocument());
 
     const searchInput = screen.getByPlaceholderText('Search todos…');
     await userEvent.type(searchInput, 'bug');
@@ -332,11 +363,11 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
     stubFetchWithTodos([makeTodo({ id: 'a', text: 'Fix bug' })]);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Fix bug')).toBeInTheDocument());
 
     const searchInput = screen.getByPlaceholderText('Search todos…');
     await userEvent.type(searchInput, 'xyz');
-    await waitFor(() => expect(screen.queryByText('Fix bug')).not.toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).queryByText('Fix bug')).not.toBeInTheDocument());
 
     const quickAdd = screen.getByPlaceholderText('Add a todo…');
     await userEvent.type(quickAdd, 'New task');
@@ -345,7 +376,7 @@ describe('TodosPanel — search behavior and lifecycle (U2)', () => {
 
     await waitFor(() => {
       expect(searchInput).toHaveValue('');
-      expect(screen.getByText('New task')).toBeInTheDocument();
+      expect(within(todoList()).getByText('New task')).toBeInTheDocument();
     });
   });
 });
@@ -373,9 +404,9 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
     const allTab = screen.getByRole('tab', { name: /All/ });
     fireEvent.click(allTab);
 
-    await waitFor(() => expect(screen.getByText('Issue title')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Issue title')).toBeInTheDocument());
 
-    const row = screen.getByText('Issue title').closest('li') as HTMLElement;
+    const row = within(todoList()).getByText('Issue title').closest('li') as HTMLElement;
     const rowScope = within(row);
     expect(rowScope.getByText('2026-07-31')).toBeInTheDocument();
     expect(rowScope.getByText('bug')).toBeInTheDocument();
@@ -387,12 +418,32 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
     stubFetchWithTodos([makeTodo({ id: 'local', text: 'Simple task' })]);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Simple task')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Simple task')).toBeInTheDocument());
 
-    const row = screen.getByText('Simple task').closest('li') as HTMLElement;
+    const row = within(todoList()).getByText('Simple task').closest('li') as HTMLElement;
     const rowScope = within(row);
     expect(rowScope.queryByText(/\d{4}-/)).not.toBeInTheDocument();
     expect(rowScope.queryByText('GitHub')).not.toBeInTheDocument();
+    expect(rowScope.queryByLabelText('Manual')).not.toBeInTheDocument();
+  });
+
+  it('shows the execution type and latest execution status (AE1)', async () => {
+    const todo = makeTodo({
+      id: 'recurring-failed',
+      text: 'Refresh reports',
+      executionType: 'recurring',
+      latestRun: { status: 'failed', fireAt: '2026-08-01T01:30:00.000Z' },
+    });
+    stubFetchWithTodos([todo]);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
+
+    await waitFor(() => expect(within(todoList()).getByText('Refresh reports')).toBeInTheDocument());
+
+    const row = within(todoList()).getByText('Refresh reports').closest('li') as HTMLElement;
+    const rowScope = within(row);
+    expect(rowScope.getByLabelText('Recurring')).toBeInTheDocument();
+    expect(rowScope.getByText('Failed')).toBeInTheDocument();
+    expect(rowScope.getByTitle(/^Latest run: Failed at /)).toBeInTheDocument();
   });
 
   it('caps labels at two chips and shows +n overflow', async () => {
@@ -400,9 +451,9 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
     stubFetchWithTodos([todo]);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Labelled')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Labelled')).toBeInTheDocument());
 
-    expect(screen.getByText('+2')).toBeInTheDocument();
+    expect(within(todoList()).getByText('+2')).toBeInTheDocument();
   });
 
   it('strikes through done titles and toggles status', async () => {
@@ -410,7 +461,7 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
     stubFetchWithTodos([todo]);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Toggle me')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Toggle me')).toBeInTheDocument());
 
     const toggleButton = screen.getByRole('button', { name: 'Toggle complete' });
     expect(toggleButton).toHaveClass('rounded-full');
@@ -438,7 +489,7 @@ describe('TodosPanel — states, chrome, and i18n (U4)', () => {
     stubFetchWithTodos([makeTodo({ id: 'a', text: 'Fix bug' })]);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Fix bug')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Fix bug')).toBeInTheDocument());
 
     const searchInput = screen.getByPlaceholderText('Search todos…');
     await userEvent.type(searchInput, 'xyz');
@@ -461,9 +512,9 @@ describe('TodosPanel — states, chrome, and i18n (U4)', () => {
     stubFetchWithTodos([existing]);
     renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Existing')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Existing')).toBeInTheDocument());
     useTodoStore.setState({ isLoading: true });
-    await waitFor(() => expect(screen.getByText('Existing')).toBeInTheDocument());
+    await waitFor(() => expect(within(todoList()).getByText('Existing')).toBeInTheDocument());
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 

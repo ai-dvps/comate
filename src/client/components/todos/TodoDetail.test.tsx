@@ -90,6 +90,7 @@ describe('TodoDetail', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('renders the no-selection placeholder', () => {
@@ -122,6 +123,37 @@ describe('TodoDetail', () => {
     const aside = screen.getByRole('complementary');
     expect(aside).toHaveStyle({ width: '384px' });
     expect(aside.querySelector('[class*="cursor-col-resize"]')).toBeInTheDocument();
+  });
+
+  it('updates the selected Todo without a transient hidden detail state', () => {
+    const { rerender } = renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({ text: 'First Todo' })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TodoDetail
+          todo={makeTodo({ text: 'Second Todo' })}
+          width={384}
+          onWidthChange={onWidthChange}
+          onResolved={onResolved}
+          onClose={onClose}
+          onUpdateTodo={onUpdateTodo}
+          onChangeStatus={onChangeStatus}
+        />
+      </I18nextProvider>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Second Todo' })).toBeVisible();
+    expect(screen.getByRole('complementary').querySelector('[class*="opacity-0"]')).toBeNull();
   });
 
   it('shows the workspace name instead of the raw id', () => {
@@ -232,5 +264,45 @@ describe('TodoDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Linked to a session' }));
     expect(openSessionDirect).toHaveBeenCalledWith('ws-1', 'session-1');
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('presents run history as a session timeline', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        runs: [{
+          id: 'run-1',
+          todoId: 'todo-Task',
+          sessionId: 'session-2',
+          status: 'succeeded',
+          fireAt: '2026-08-01T09:00:00.000Z',
+          startedAt: '2026-08-01T09:00:01.000Z',
+          endedAt: '2026-08-01T09:05:00.000Z',
+          reason: null,
+          instructionSnapshot: 'Do the task',
+          createdAt: '2026-08-01T09:00:00.000Z',
+        }],
+      }),
+    }));
+
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({ text: 'Task', workspaceId: 'ws-1' })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    const historyTab = await screen.findByRole('tab', { name: /Run history/ });
+    expect(historyTab).toHaveAttribute('aria-selected', 'false');
+    await user.click(historyTab);
+    expect(historyTab).toHaveAttribute('aria-selected', 'true');
+    await user.click(screen.getByRole('button', { name: /Succeeded/ }));
+    expect(openSessionDirect).toHaveBeenCalledWith('ws-1', 'session-2');
   });
 });

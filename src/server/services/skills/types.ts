@@ -47,10 +47,46 @@ export interface Skill {
  * Mirrors upstream `SearchSkill`.
  */
 export interface SearchSkill {
+  /** Stable API identifier used by the client as its result key. */
+  id: string;
   name: string;
+  /**
+   * Legacy skills.sh identifier retained for callers of the existing search
+   * endpoint. GitHub repository results use their owner/repository name.
+   */
   slug: string;
   source: string;
+  /** Source reference passed to the existing resolver and installer. */
+  installSource: string;
+  /** Registry that returned this result. */
+  sourceKind: SkillSearchProviderId;
+  description: string;
   installs: number;
+  /** Optional provider timestamp in milliseconds, used by the newest sort. */
+  updatedAt?: number;
+}
+
+export const SKILL_SEARCH_PROVIDER_IDS = [
+  'skills.sh',
+  'skillshub',
+  'xfyun',
+  'skillhub-cn',
+  'weskillhub',
+] as const;
+
+export type SkillSearchProviderId = (typeof SKILL_SEARCH_PROVIDER_IDS)[number];
+export type SkillProviderFailureReason = 'network' | 'timeout' | 'http' | 'invalid-response';
+
+export interface SkillProviderAvailability {
+  id: SkillSearchProviderId;
+  label: string;
+  status: 'available' | 'unavailable';
+  reason?: SkillProviderFailureReason;
+}
+
+export interface FederatedSkillSearchResult {
+  skills: SearchSkill[];
+  providers: SkillProviderAvailability[];
 }
 
 /**
@@ -65,6 +101,10 @@ export interface LocalSkillLockEntry {
   skillPath?: string;
   /** SHA-256 hash computed from local files */
   computedHash: string;
+  /** Expert Package that installed this Skill, when applicable. */
+  packageSlug?: string;
+  /** Catalog summary saved with an Expert Package orchestration for offline display. */
+  packageCatalog?: ExpertPackageSummary;
 }
 
 export interface LocalSkillLockFile {
@@ -88,6 +128,10 @@ export interface GlobalSkillLockEntry {
   installedAt: string;
   updatedAt: string;
   pluginName?: string;
+  /** Expert Package that installed this Skill, when applicable. */
+  packageSlug?: string;
+  /** Catalog summary saved with an Expert Package orchestration for offline display. */
+  packageCatalog?: ExpertPackageSummary;
 }
 
 export interface GlobalSkillLockFile {
@@ -108,6 +152,130 @@ export type SkillScope = 'project' | 'global';
  */
 export interface InstallResult {
   skillName: string;
+  /** Product classification. Package orchestration is runtime-compatible but not a catalog Skill. */
+  kind?: 'skill' | 'expert-package-orchestrator';
+  status: 'installed' | 'already-installed' | 'error';
+  path?: string;
+  error?: string;
+}
+
+export type InstalledSkillKind = 'skill' | 'expert-package-orchestrator';
+
+export interface ExpertPackageSummary {
+  slug: string;
+  displayName: string;
+  displayNameEn?: string;
+  summary: string;
+  summaryEn?: string;
+  scene: string;
+  subScene?: string;
+  skillCount: number;
+  source: 'skillhub.cn';
+}
+
+export interface ExpertPackageChild {
+  namespace: string;
+  slug: string;
+  displayName: string;
+  summary: string;
+  available: boolean;
+  source: string;
+  securityReports?: ExpertSkillSecurityReport[];
+}
+
+export interface ExpertPackageDetail extends ExpertPackageSummary {
+  content: string;
+  contentEn?: string;
+  children: ExpertPackageChild[];
+  complete: boolean;
+  unavailableReason?: string;
+}
+
+export interface SkillHubSecurityReport {
+  provider: string;
+  status: string;
+  statusText: string;
+  reportUrl?: string;
+}
+
+export interface SkillHubSkillDetail {
+  namespace: string;
+  slug: string;
+  displayName: string;
+  summary: string;
+  category: string;
+  owner: { handle: string; displayName: string };
+  /** Stable enterprise publisher identity used for server-side membership checks. */
+  publisher?: { orgId: string };
+  version: string;
+  stats: { downloads: number; installs: number };
+  securityReports: SkillHubSecurityReport[];
+  /** Raw, validated SKILL.md from the same registry coordinate. */
+  documentation?: string;
+  source: string;
+}
+
+export interface EnterpriseIndustry {
+  key: string;
+  displayName: string;
+  displayNameEn?: string;
+  sortOrder: number;
+}
+
+export interface EnterpriseSummary {
+  orgId: string;
+  name: string;
+  fullName?: string;
+  shortName?: string;
+  description: string;
+  industryTags: string[];
+  logoUrl?: string;
+  publishedSkillCount: number;
+  totalDownloads: number;
+}
+
+export interface EnterpriseDetail extends EnterpriseSummary {
+  totalStars: number;
+}
+
+export type EnterpriseSkillSort = 'downloads' | 'stars' | 'latest';
+
+export interface EnterpriseSkillSummary {
+  namespace: string;
+  slug: string;
+  displayName: string;
+  summary: string;
+  downloads: number;
+  stars: number;
+  iconUrl?: string;
+}
+
+export interface EnterprisePage {
+  enterprises: EnterpriseSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface EnterpriseSkillPage {
+  skills: EnterpriseSkillSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+/** Compatibility names retained for the existing Expert Package API. */
+export type ExpertSkillSecurityReport = SkillHubSecurityReport;
+export type ExpertSkillDetail = SkillHubSkillDetail;
+
+export type ExpertPackageInstallItemKind = 'orchestrator' | 'skill';
+
+export interface ExpertPackageInstallResult {
+  /** Stable retry identity owned by the canonical package definition. */
+  id: string;
+  kind: ExpertPackageInstallItemKind;
+  source: string;
+  name: string;
   status: 'installed' | 'already-installed' | 'error';
   path?: string;
   error?: string;

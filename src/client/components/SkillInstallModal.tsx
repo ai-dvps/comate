@@ -18,6 +18,8 @@ interface SkillInstallModalProps {
   workspaceId: string
   onClose: () => void
   onInstalled: () => void
+  /** Lock the picker to one registry Skill (Expert Package child flow). */
+  fixedSkillName?: string
 }
 
 type Phase = 'resolving' | 'choosing' | 'installing' | 'result'
@@ -43,6 +45,7 @@ export default function SkillInstallModal({
   workspaceId,
   onClose,
   onInstalled,
+  fixedSkillName,
 }: SkillInstallModalProps) {
   const { t } = useTranslation('settings')
   const {
@@ -58,11 +61,12 @@ export default function SkillInstallModal({
   const [phase, setPhase] = useState<Phase>('resolving')
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set())
   const [selectedScope, setSelectedScope] = useState<SkillScope | null>(null)
+  const [resolveAttempt, setResolveAttempt] = useState(0)
   const [outcome, setOutcome] = useState<
     | null
     | { kind: 'success' }
     | { kind: 'already-installed'; message: string }
-    | { kind: 'error'; message: string }
+    | { kind: 'error'; message: string; retry: 'resolve' | 'install' }
   >(null)
 
   // Reset state when source changes / modal opens
@@ -75,11 +79,15 @@ export default function SkillInstallModal({
     let cancelled = false
     resolveSource(source, workspaceId).then((ok) => {
       if (cancelled) return
-      if (ok) {
+      const resolved = useSkillsStore.getState().discovered
+      const fixedSelectionIsExact = !fixedSkillName
+        || (resolved.length === 1 && resolved[0].name === fixedSkillName)
+      if (ok && fixedSelectionIsExact) {
+        if (fixedSkillName) setSelectedSkills(new Set([fixedSkillName]))
         setPhase('choosing')
       } else {
         setPhase('result')
-        setOutcome({ kind: 'error', message: t('skills.resolveFailed') })
+        setOutcome({ kind: 'error', message: t('skills.resolveFailed'), retry: 'resolve' })
       }
     })
     return () => {
@@ -87,7 +95,7 @@ export default function SkillInstallModal({
       clearDiscovered()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source])
+  }, [source, fixedSkillName, resolveAttempt])
 
   // Auto-close on success after a brief delay
   useEffect(() => {
@@ -130,7 +138,7 @@ export default function SkillInstallModal({
       setOutcome({ kind: 'already-installed', message: result.message })
       setPhase('result')
     } else {
-      setOutcome({ kind: 'error', message: result.message })
+      setOutcome({ kind: 'error', message: result.message, retry: 'install' })
       setPhase('result')
     }
   }, [selectedSkills, selectedScope, source, workspaceId, install])
@@ -150,16 +158,20 @@ export default function SkillInstallModal({
       setOutcome({ kind: 'success' })
       setPhase('result')
     } else {
-      setOutcome({ kind: 'error', message: result.message })
+      setOutcome({ kind: 'error', message: result.message, retry: 'install' })
       setPhase('result')
     }
   }, [selectedSkills, selectedScope, source, workspaceId, install])
 
   const handleRetry = useCallback(() => {
+    if (outcome?.kind === 'error' && outcome.retry === 'resolve') {
+      setResolveAttempt((attempt) => attempt + 1)
+      return
+    }
     setPhase('choosing')
     setOutcome(null)
     clearError()
-  }, [clearError])
+  }, [clearError, outcome])
 
   const handleCancel = useCallback(() => {
     onClose()
@@ -199,7 +211,12 @@ export default function SkillInstallModal({
   }, [phase, handleCancel])
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('skills.installTitle')}
+    >
       <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={phase === 'installing' ? undefined : handleCancel} />
       <div className="relative w-full max-w-lg bg-surface border border-border rounded-xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
@@ -259,12 +276,15 @@ export default function SkillInstallModal({
                       {t('skills.selectSkills', { count: discovered.length })}
                     </p>
                     <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
-                      {discovered.map((skill) => {
+                      {discovered
+                        .filter((skill) => !fixedSkillName || skill.name === fixedSkillName)
+                        .map((skill) => {
                         const isSelected = selectedSkills.has(skill.name)
                         return (
                           <button
                             key={skill.name}
-                            onClick={() => toggleSkill(skill.name)}
+                            onClick={() => { if (!fixedSkillName) toggleSkill(skill.name) }}
+                            aria-pressed={isSelected}
                             className={`w-full flex items-start gap-3 p-2.5 rounded-lg border text-left transition-colors ${
                               isSelected
                                 ? 'border-accent bg-accent/5'

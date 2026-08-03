@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { store } from '../storage/sqlite-store.js';
 import { wecomDocService } from '../services/wecom-doc-service.js';
+import { requireSessionAuth } from '../services/security/loopback-auth.js';
 
 const router = Router({ mergeParams: true });
 
@@ -10,12 +11,12 @@ const XLSX_CONTENT_TYPE =
 // POST /api/workspaces/:workspaceId/wecom/smartsheet-export
 router.post('/', async (req, res) => {
   try {
-    const workspaceId = (req.params as { workspaceId: string }).workspaceId;
+    // U12 (KTD-28): a session capability token is required; the middleware
+    // has already bound it to this workspace.
+    const auth = requireSessionAuth(req, res);
+    if (!auth) return;
 
-    if (!workspaceId || typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
-      res.status(400).json({ error: 'workspaceId is required' });
-      return;
-    }
+    const workspaceId = auth.workspaceId;
 
     const docid = (req.body as { docid?: unknown } | undefined)?.docid;
     if (typeof docid !== 'string' || docid.trim().length === 0) {

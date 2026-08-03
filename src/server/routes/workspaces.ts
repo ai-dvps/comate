@@ -138,6 +138,14 @@ router.put('/:id', async (req, res) => {
       chatService.scheduleRebuildsForWorkspaceLegacyPolicy(req.params.id);
     }
 
+    // U3 runtime kill switch: toggling the permission sandbox model changes
+    // the gate, sandbox, and settings pin for every bot session — rebuild all
+    // of this workspace's live bot runtimes so none keeps the old model's
+    // frozen configuration.
+    if (input.settings?.botPermissionSandboxDisabled !== undefined) {
+      chatService.scheduleRebuildsForWorkspaceBotSessions(req.params.id);
+    }
+
     res.json({ workspace: stripWorkspaceForResponse(workspace) });
   } catch (error) {
     console.error('Failed to update workspace:', error);

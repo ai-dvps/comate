@@ -10,11 +10,23 @@ const CLI = new URL('../dist/index.js', import.meta.url).pathname;
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 
+const TEST_TOKEN = 'test-session-token-0123456789abcdef';
+
 function run(args, cwd, env) {
   const result = spawnSync(process.execPath, [CLI, ...args], {
     cwd,
     encoding: 'utf-8',
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      // Hermetic: ambient proxy env would reroute the CLI's transport (U12).
+      http_proxy: undefined,
+      https_proxy: undefined,
+      HTTP_PROXY: undefined,
+      HTTPS_PROXY: undefined,
+      ALL_PROXY: undefined,
+      all_proxy: undefined,
+      ...env,
+    },
   });
   return result;
 }
@@ -24,10 +36,22 @@ import { createServer } from 'node:http';
 const status = parseInt(process.env.MOCK_STATUS || '200', 10);
 const body = process.env.MOCK_BODY || '{}';
 const expectedUrl = process.env.MOCK_EXPECTED_URL || '';
+const expectedAuth = process.env.MOCK_EXPECTED_AUTH || '';
+const expectedProxyAuth = process.env.MOCK_EXPECTED_PROXY_AUTH || '';
 const server = createServer((req, res) => {
   if (expectedUrl && req.url !== expectedUrl) {
     res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end('unexpected url: ' + req.url);
+    return;
+  }
+  if (expectedAuth && req.headers.authorization !== expectedAuth) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'unauthorized', got: req.headers.authorization ?? null }));
+    return;
+  }
+  if (expectedProxyAuth && req.headers['proxy-authorization'] !== expectedProxyAuth) {
+    res.writeHead(407, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'proxy_auth_required', got: req.headers['proxy-authorization'] ?? null }));
     return;
   }
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -90,11 +114,33 @@ function startMockServer(env) {
   });
 }
 
+/**
+ * U12: the CLI context is passed explicitly via COMATE_WECOM_CONTEXT_FILE
+ * (the legacy .claude/wecom-context.json upward-walk is gone). This helper
+ * writes the per-session context into a `.runtime/` dir and returns the env
+ * the session would inject.
+ */
 function writeContext(cwd, serverUrl, workspaceId = 'w') {
-  mkdirSync(join(cwd, '.claude'));
+  const runtimeDir = join(cwd, 'data', 'me', '.runtime');
+  mkdirSync(runtimeDir, { recursive: true });
+  const contextPath = join(runtimeDir, 'wecom-context.json');
+  writeFileSync(contextPath, JSON.stringify({ botId: 'b', serverUrl, workspaceId }));
+  return { COMATE_WECOM_CONTEXT_FILE: contextPath, COMATE_SESSION_TOKEN: TEST_TOKEN };
+}
+
+/** Write ONLY the context file (no token) — for missing-token tests. */
+function writeContextWithoutToken(cwd, serverUrl, workspaceId = 'w') {
+  const env = writeContext(cwd, serverUrl, workspaceId);
+  delete env.COMATE_SESSION_TOKEN;
+  return env;
+}
+
+/** Plant a legacy-style context file; the new CLI must never read it. */
+function plantLegacyContext(cwd, serverUrl = 'http://127.0.0.1:1', workspaceId = 'planted') {
+  mkdirSync(join(cwd, '.claude'), { recursive: true });
   writeFileSync(
     join(cwd, '.claude/wecom-context.json'),
-    JSON.stringify({ botId: 'b', serverUrl, workspaceId })
+    JSON.stringify({ botId: 'planted-bot', serverUrl, workspaceId })
   );
 }
 
@@ -146,63 +192,145 @@ describe('wecom cli', () => {
     });
   });
 
-  describe('missing context file', () => {
-    it('exits 2 for send', () => {
+  describe('missing context (U12: env-var-only discovery)', () => {
+    it('exits 2 for send when COMATE_WECOM_CONTEXT_FILE is unset', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
       const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir);
       assert.strictEqual(result.status, 2);
-      assert(result.stderr.includes('No WeCom bot context file found'));
+      assert(result.stderr.includes('COMATE_WECOM_CONTEXT_FILE'));
     });
 
-    it('exits 2 for current-user', () => {
+    it('exits 2 for current-user when COMATE_WECOM_CONTEXT_FILE is unset', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
       const result = run(['current-user', '--session-id', 's'], tmpDir);
       assert.strictEqual(result.status, 2);
-      assert(result.stderr.includes('No WeCom bot context file found'));
+      assert(result.stderr.includes('COMATE_WECOM_CONTEXT_FILE'));
+    });
+
+    it('a planted .claude/wecom-context.json does NOT serve as context (upward walk removed)', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      plantLegacyContext(tmpDir);
+      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir);
+      assert.strictEqual(result.status, 2);
+      assert(result.stderr.includes('COMATE_WECOM_CONTEXT_FILE'));
+    });
+
+    it('a planted context in a PARENT dir does NOT serve as context either', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      plantLegacyContext(tmpDir);
+      const nested = join(tmpDir, 'data', 'me');
+      mkdirSync(nested, { recursive: true });
+      const result = run(['current-user', '--session-id', 's'], nested);
+      assert.strictEqual(result.status, 2);
+      assert(result.stderr.includes('COMATE_WECOM_CONTEXT_FILE'));
+    });
+
+    it('the env-var context wins over a planted legacy file', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: JSON.stringify({ userId: 'env-user', lastSeenAt: null }),
+        MOCK_EXPECTED_URL: '/api/workspaces/w/sessions/s/wecom-user',
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      plantLegacyContext(tmpDir); // would point at a dead server if it won
+      const env = writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir, env);
+      try {
+        assert.strictEqual(result.status, 0);
+        assert.strictEqual(result.stdout.trim(), 'env-user');
+      } finally {
+        await server.close();
+      }
     });
   });
 
   describe('invalid context file', () => {
     it('exits 1 for send with malformed context', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      mkdirSync(join(tmpDir, '.claude'));
-      writeFileSync(join(tmpDir, '.claude/wecom-context.json'), '{}');
-      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir);
+      const runtimeDir = join(tmpDir, '.runtime');
+      mkdirSync(runtimeDir, { recursive: true });
+      const contextPath = join(runtimeDir, 'wecom-context.json');
+      writeFileSync(contextPath, '{}');
+      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir, {
+        COMATE_WECOM_CONTEXT_FILE: contextPath,
+      });
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Invalid context file format'));
     });
 
     it('exits 1 for current-user with malformed context', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      mkdirSync(join(tmpDir, '.claude'));
-      writeFileSync(join(tmpDir, '.claude/wecom-context.json'), '{}');
-      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      const runtimeDir = join(tmpDir, '.runtime');
+      mkdirSync(runtimeDir, { recursive: true });
+      const contextPath = join(runtimeDir, 'wecom-context.json');
+      writeFileSync(contextPath, '{}');
+      const result = run(['current-user', '--session-id', 's'], tmpDir, {
+        COMATE_WECOM_CONTEXT_FILE: contextPath,
+      });
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Invalid context file format'));
+    });
+
+    it('exits 1 when the env-var path does not exist', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      const result = run(['current-user', '--session-id', 's'], tmpDir, {
+        COMATE_WECOM_CONTEXT_FILE: join(tmpDir, 'does-not-exist.json'),
+      });
+      assert.strictEqual(result.status, 1);
+      assert(result.stderr.includes('Failed to read context file'));
+    });
+  });
+
+  describe('missing capability token (U12)', () => {
+    it('exits 2 for send when COMATE_SESSION_TOKEN is unset', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      const env = writeContextWithoutToken(tmpDir, 'http://127.0.0.1:1');
+      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir, env);
+      assert.strictEqual(result.status, 2);
+      assert(result.stderr.includes('COMATE_SESSION_TOKEN'));
+    });
+
+    it('exits 2 for current-user when COMATE_SESSION_TOKEN is unset', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      const env = writeContextWithoutToken(tmpDir, 'http://127.0.0.1:1');
+      const result = run(['current-user', '--session-id', 's'], tmpDir, env);
+      assert.strictEqual(result.status, 2);
+      assert(result.stderr.includes('COMATE_SESSION_TOKEN'));
+    });
+
+    it('exits 2 for a doc subcommand when COMATE_SESSION_TOKEN is unset', () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      const env = writeContextWithoutToken(tmpDir, 'http://127.0.0.1:1');
+      const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir, env);
+      assert.strictEqual(result.status, 2);
+      assert(result.stderr.includes('COMATE_SESSION_TOKEN'));
     });
   });
 
   describe('missing workspaceId', () => {
     it('exits 1 for send', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      mkdirSync(join(tmpDir, '.claude'));
-      writeFileSync(
-        join(tmpDir, '.claude/wecom-context.json'),
-        JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' })
-      );
-      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir);
+      const runtimeDir = join(tmpDir, '.runtime');
+      mkdirSync(runtimeDir, { recursive: true });
+      const contextPath = join(runtimeDir, 'wecom-context.json');
+      writeFileSync(contextPath, JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' }));
+      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir, {
+        COMATE_WECOM_CONTEXT_FILE: contextPath,
+      });
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('missing workspaceId'));
     });
 
     it('exits 1 for current-user', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      mkdirSync(join(tmpDir, '.claude'));
-      writeFileSync(
-        join(tmpDir, '.claude/wecom-context.json'),
-        JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' })
-      );
-      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      const runtimeDir = join(tmpDir, '.runtime');
+      mkdirSync(runtimeDir, { recursive: true });
+      const contextPath = join(runtimeDir, 'wecom-context.json');
+      writeFileSync(contextPath, JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' }));
+      const result = run(['current-user', '--session-id', 's'], tmpDir, {
+        COMATE_WECOM_CONTEXT_FILE: contextPath,
+      });
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('missing workspaceId'));
     });
@@ -211,44 +339,32 @@ describe('wecom cli', () => {
   describe('missing required flags', () => {
     it('exits 1 for send without --to-user', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      mkdirSync(join(tmpDir, '.claude'));
-      writeFileSync(
-        join(tmpDir, '.claude/wecom-context.json'),
-        JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
-      );
-      const result = run(['send', '--message', 'm', '--session-id', 's'], tmpDir);
+      const env = writeContext(tmpDir, 'http://localhost');
+      const result = run(['send', '--message', 'm', '--session-id', 's'], tmpDir, env);
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Missing required flag to-user'));
     });
 
     it('exits 1 for send without --message', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      mkdirSync(join(tmpDir, '.claude'));
-      writeFileSync(
-        join(tmpDir, '.claude/wecom-context.json'),
-        JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
-      );
-      const result = run(['send', '--to-user', 'u', '--session-id', 's'], tmpDir);
+      const env = writeContext(tmpDir, 'http://localhost');
+      const result = run(['send', '--to-user', 'u', '--session-id', 's'], tmpDir, env);
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Missing required flag message'));
     });
 
     it('exits 1 for send without --session-id and no env var', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      mkdirSync(join(tmpDir, '.claude'));
-      writeFileSync(
-        join(tmpDir, '.claude/wecom-context.json'),
-        JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
-      );
-      const result = run(['send', '--to-user', 'u', '--message', 'm'], tmpDir);
+      const env = writeContext(tmpDir, 'http://localhost');
+      const result = run(['send', '--to-user', 'u', '--message', 'm'], tmpDir, env);
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Missing session ID'));
     });
 
     it('exits 1 for current-user without --session-id and no env var', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      writeContext(tmpDir, 'http://localhost');
-      const result = run(['current-user'], tmpDir);
+      const env = writeContext(tmpDir, 'http://localhost');
+      const result = run(['current-user'], tmpDir, env);
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Missing session ID'));
     });
@@ -257,27 +373,24 @@ describe('wecom cli', () => {
   describe('invalid --msg-type', () => {
     it('exits 1 for send with bad msg-type', () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      mkdirSync(join(tmpDir, '.claude'));
-      writeFileSync(
-        join(tmpDir, '.claude/wecom-context.json'),
-        JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
-      );
-      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's', '--msg-type', 'bad'], tmpDir);
+      const env = writeContext(tmpDir, 'http://localhost');
+      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's', '--msg-type', 'bad'], tmpDir, env);
       assert.strictEqual(result.status, 1);
       assert(result.stderr.includes('Expected --msg-type='));
     });
   });
 
   describe('current-user', () => {
-    it('prints the user ID when the server returns 200', async () => {
+    it('prints the user ID when the server returns 200 (and sends the Bearer token)', async () => {
       const server = await startMockServer({
         MOCK_STATUS: '200',
         MOCK_BODY: JSON.stringify({ userId: 'user1', lastSeenAt: null }),
         MOCK_EXPECTED_URL: '/api/workspaces/w/sessions/s/wecom-user',
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
       });
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      writeContext(tmpDir, server.url);
-      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      const env = writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir, env);
       try {
         assert.strictEqual(result.status, 0);
         assert.strictEqual(result.stdout.trim(), 'user1');
@@ -291,10 +404,11 @@ describe('wecom cli', () => {
         MOCK_STATUS: '200',
         MOCK_BODY: JSON.stringify({ userId: 'user2', lastSeenAt: null }),
         MOCK_EXPECTED_URL: '/api/workspaces/w/sessions/env-session/wecom-user',
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
       });
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      writeContext(tmpDir, server.url);
-      const result = run(['current-user'], tmpDir, { CLAUDE_SESSION_ID: 'env-session' });
+      const env = { ...writeContext(tmpDir, server.url), CLAUDE_SESSION_ID: 'env-session' };
+      const result = run(['current-user'], tmpDir, env);
       try {
         assert.strictEqual(result.status, 0);
         assert.strictEqual(result.stdout.trim(), 'user2');
@@ -307,10 +421,11 @@ describe('wecom cli', () => {
       const server = await startMockServer({
         MOCK_STATUS: '404',
         MOCK_BODY: JSON.stringify({ error: 'unknown_session', message: 'Session not found' }),
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
       });
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      writeContext(tmpDir, server.url);
-      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      const env = writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir, env);
       try {
         assert.strictEqual(result.status, 2);
         assert(result.stderr.includes('Session not found'));
@@ -323,10 +438,11 @@ describe('wecom cli', () => {
       const server = await startMockServer({
         MOCK_STATUS: '500',
         MOCK_BODY: JSON.stringify({ error: 'internal_error' }),
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
       });
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      writeContext(tmpDir, server.url);
-      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      const env = writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir, env);
       try {
         assert.strictEqual(result.status, 3);
         assert(result.stderr.includes('internal_error'));
@@ -339,10 +455,11 @@ describe('wecom cli', () => {
       const server = await startMockServer({
         MOCK_STATUS: '200',
         MOCK_BODY: 'not-json',
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
       });
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      writeContext(tmpDir, server.url);
-      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      const env = writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir, env);
       try {
         assert.strictEqual(result.status, 1);
       } finally {
@@ -354,12 +471,78 @@ describe('wecom cli', () => {
       const server = await startMockServer({
         MOCK_STATUS: '200',
         MOCK_BODY: JSON.stringify({ lastSeenAt: null }),
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
       });
       const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-      writeContext(tmpDir, server.url);
-      const result = run(['current-user', '--session-id', 's'], tmpDir);
+      const env = writeContext(tmpDir, server.url);
+      const result = run(['current-user', '--session-id', 's'], tmpDir, env);
       try {
         assert.strictEqual(result.status, 1);
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
+  describe('send (U12 auth)', () => {
+    it('sends the Bearer token and the sessionId body', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: JSON.stringify({ method: 'direct', sent: true }),
+        MOCK_EXPECTED_URL: '/api/workspaces/w/wecom/send',
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      const env = writeContext(tmpDir, server.url);
+      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir, env);
+      try {
+        assert.strictEqual(result.status, 0);
+        assert(result.stdout.includes('Message sent'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('surfaces the server 401 when the token is rejected', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: '{}',
+        MOCK_EXPECTED_URL: '/api/workspaces/w/wecom/send',
+        MOCK_EXPECTED_AUTH: 'Bearer some-other-token',
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      const env = writeContext(tmpDir, server.url);
+      const result = run(['send', '--to-user', 'u', '--message', 'm', '--session-id', 's'], tmpDir, env);
+      try {
+        assert.strictEqual(result.status, 3);
+        assert(result.stderr.includes('unauthorized'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('routes through the sandbox HTTP proxy when http_proxy is set (V10)', async () => {
+      // The mock server plays the sandbox proxy: it must see the ABSOLUTE-URI
+      // request form, the Proxy-Authorization from the proxy URL userinfo,
+      // and the session Bearer token — the sidecar URL itself is never
+      // dialed directly inside a sandbox.
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: JSON.stringify({ userId: 'via-proxy' }),
+        MOCK_EXPECTED_URL: 'http://127.0.0.1:59999/api/workspaces/w/sessions/s/wecom-user',
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
+        MOCK_EXPECTED_PROXY_AUTH: 'Basic c3J0OnNlc3Npb24tcHJveHktc2VjcmV0',
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      // The context points at a dead port; only the proxy path can succeed.
+      const env = {
+        ...writeContext(tmpDir, 'http://127.0.0.1:59999'),
+        HTTP_PROXY: `http://srt:session-proxy-secret@${new URL(server.url).host}`,
+      };
+      const result = run(['current-user', '--session-id', 's'], tmpDir, env);
+      try {
+        assert.strictEqual(result.status, 0);
+        assert.strictEqual(result.stdout.trim(), 'via-proxy');
       } finally {
         await server.close();
       }
@@ -393,21 +576,25 @@ describe('wecom cli', () => {
       });
     });
 
-    describe('missing context file', () => {
-      it('exits 2 for doc subcommand', () => {
+    describe('missing context', () => {
+      it('exits 2 for doc subcommand when the env var is unset', () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
         const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir);
         assert.strictEqual(result.status, 2);
-        assert(result.stderr.includes('No WeCom bot context file found'));
+        assert(result.stderr.includes('COMATE_WECOM_CONTEXT_FILE'));
       });
     });
 
     describe('invalid context file', () => {
       it('exits 1 for doc subcommand with malformed context', () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        mkdirSync(join(tmpDir, '.claude'));
-        writeFileSync(join(tmpDir, '.claude/wecom-context.json'), '{}');
-        const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir);
+        const runtimeDir = join(tmpDir, '.runtime');
+        mkdirSync(runtimeDir, { recursive: true });
+        const contextPath = join(runtimeDir, 'wecom-context.json');
+        writeFileSync(contextPath, '{}');
+        const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir, {
+          COMATE_WECOM_CONTEXT_FILE: contextPath,
+        });
         assert.strictEqual(result.status, 1);
         assert(result.stderr.includes('Invalid context file format'));
       });
@@ -416,12 +603,13 @@ describe('wecom cli', () => {
     describe('missing workspaceId', () => {
       it('exits 1 for doc subcommand', () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        mkdirSync(join(tmpDir, '.claude'));
-        writeFileSync(
-          join(tmpDir, '.claude/wecom-context.json'),
-          JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' })
-        );
-        const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir);
+        const runtimeDir = join(tmpDir, '.runtime');
+        mkdirSync(runtimeDir, { recursive: true });
+        const contextPath = join(runtimeDir, 'wecom-context.json');
+        writeFileSync(contextPath, JSON.stringify({ botId: 'b', serverUrl: 'http://localhost' }));
+        const result = run(['doc:get-doc-content', '--docid', 'DOCID'], tmpDir, {
+          COMATE_WECOM_CONTEXT_FILE: contextPath,
+        });
         assert.strictEqual(result.status, 1);
         assert(result.stderr.includes('missing workspaceId'));
       });
@@ -430,28 +618,20 @@ describe('wecom cli', () => {
     describe('missing required flags', () => {
       it('exits 1 for smartsheet-get-sheet without --docid', () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        mkdirSync(join(tmpDir, '.claude'));
-        writeFileSync(
-          join(tmpDir, '.claude/wecom-context.json'),
-          JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
-        );
-        const result = run(['doc:smartsheet-get-sheet'], tmpDir);
+        const env = writeContext(tmpDir, 'http://localhost');
+        const result = run(['doc:smartsheet-get-sheet'], tmpDir, env);
         assert.strictEqual(result.status, 1);
         assert(result.stderr.includes('Missing required flag docid'));
       });
 
       it('exits 1 for auto-file helper without --data', () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        mkdirSync(join(tmpDir, '.claude'));
-        writeFileSync(
-          join(tmpDir, '.claude/wecom-context.json'),
-          JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
-        );
+        const env = writeContext(tmpDir, 'http://localhost');
         const result = run([
           'doc:smartsheet-add-records-auto-file',
           '--docid', 'DOCID',
           '--sheet-id', 'SHEET',
-        ], tmpDir);
+        ], tmpDir, env);
         assert.strictEqual(result.status, 1);
         assert(result.stderr.includes('Missing required flag data'));
       });
@@ -468,17 +648,19 @@ describe('wecom cli', () => {
         assert(result.stdout.includes('--force'));
       });
 
-      it('writes the workbook bytes and prints the absolute path', async () => {
+      it('writes the workbook bytes and prints the absolute path (with Bearer auth)', async () => {
         const server = await startMockServer({
           MOCK_STATUS: '200',
           MOCK_BODY: 'XLSX-BYTES',
           MOCK_EXPECTED_URL: EXPORT_URL,
+          MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
         });
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        writeContext(tmpDir, server.url);
+        const env = writeContext(tmpDir, server.url);
         const result = run(
           ['doc:smartsheet-export-excel', '--docid', 'DOC1', '--output', 'out.xlsx'],
-          tmpDir
+          tmpDir,
+          env
         );
         try {
           assert.strictEqual(result.status, 0);
@@ -493,13 +675,14 @@ describe('wecom cli', () => {
 
       it('exits 1 and leaves the file untouched when it exists and --force is not given', async () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        writeContext(tmpDir, 'http://127.0.0.1:1');
+        const env = writeContext(tmpDir, 'http://127.0.0.1:1');
         const outPath = join(tmpDir, 'out.xlsx');
         writeFileSync(outPath, 'ORIGINAL');
         // Non-TTY (spawnSync pipes), so the prompt branch is skipped and it errors out.
         const result = run(
           ['doc:smartsheet-export-excel', '--docid', 'DOC1', '--output', 'out.xlsx'],
-          tmpDir
+          tmpDir,
+          env
         );
         assert.strictEqual(result.status, 1);
         assert(result.stderr.includes('already exists'));
@@ -511,14 +694,16 @@ describe('wecom cli', () => {
           MOCK_STATUS: '200',
           MOCK_BODY: 'NEW-BYTES',
           MOCK_EXPECTED_URL: EXPORT_URL,
+          MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
         });
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        writeContext(tmpDir, server.url);
+        const env = writeContext(tmpDir, server.url);
         const outPath = join(tmpDir, 'out.xlsx');
         writeFileSync(outPath, 'ORIGINAL');
         const result = run(
           ['doc:smartsheet-export-excel', '--docid', 'DOC1', '--output', 'out.xlsx', '--force'],
-          tmpDir
+          tmpDir,
+          env
         );
         try {
           assert.strictEqual(result.status, 0);
@@ -533,12 +718,14 @@ describe('wecom cli', () => {
           MOCK_STATUS: '500',
           MOCK_BODY: JSON.stringify({ error: 'smartsheet_export_failed', message: 'mcp boom' }),
           MOCK_EXPECTED_URL: EXPORT_URL,
+          MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
         });
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        writeContext(tmpDir, server.url);
+        const env = writeContext(tmpDir, server.url);
         const result = run(
           ['doc:smartsheet-export-excel', '--docid', 'DOC1', '--output', 'out.xlsx'],
-          tmpDir
+          tmpDir,
+          env
         );
         try {
           assert.strictEqual(result.status, 3);
@@ -551,10 +738,11 @@ describe('wecom cli', () => {
 
       it('exits 1 when --docid is missing', () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        writeContext(tmpDir, 'http://localhost');
+        const env = writeContext(tmpDir, 'http://localhost');
         const result = run(
           ['doc:smartsheet-export-excel', '--output', 'out.xlsx'],
-          tmpDir
+          tmpDir,
+          env
         );
         assert.strictEqual(result.status, 1);
         assert(result.stderr.includes('Missing required flag docid'));
@@ -562,10 +750,11 @@ describe('wecom cli', () => {
 
       it('exits 1 when --output is missing', () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        writeContext(tmpDir, 'http://localhost');
+        const env = writeContext(tmpDir, 'http://localhost');
         const result = run(
           ['doc:smartsheet-export-excel', '--docid', 'DOC1'],
-          tmpDir
+          tmpDir,
+          env
         );
         assert.strictEqual(result.status, 1);
         assert(result.stderr.includes('Missing required flag output'));
@@ -575,17 +764,13 @@ describe('wecom cli', () => {
     describe('--json override', () => {
       it('--json is accepted without required typed flags', () => {
         const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
-        mkdirSync(join(tmpDir, '.claude'));
-        writeFileSync(
-          join(tmpDir, '.claude/wecom-context.json'),
-          JSON.stringify({ botId: 'b', serverUrl: 'http://localhost', workspaceId: 'w' })
-        );
+        const env = writeContext(tmpDir, 'http://localhost');
         // --json provides the full body, so --docid is not required
         // This will hit the server (which isn't running) and exit 4 (network failure)
         const result = run([
           'doc:get-doc-content',
           '--json', '{"docid":"DOCID","type":2}',
-        ], tmpDir);
+        ], tmpDir, env);
         // Network failure → exit 4 since no server is listening
         assert.strictEqual(result.status, 4);
         assert(result.stderr.includes('Network error'));

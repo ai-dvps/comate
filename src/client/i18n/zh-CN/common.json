@@ -108,6 +108,12 @@
     "title": "Schema 升级完成",
     "message": "在最新的统一 Schema 迁移中，历史机器人审计日志（{{count}} 条）已被清理。新的审计事件仍会继续记录。"
   },
+  "sandboxDegraded": {
+    "title": "Bot 沙箱不可用",
+    "message": "本机未通过 bot 沙箱探针（{{reason}}）。bot 会话正以降级隔离运行——探针恢复前，普通成员无法执行 shell 命令。",
+    "recheck": "重新检测",
+    "checking": "检测中…"
+  },
   "provider": {
     "noProviderConfigured": "未配置 LLM 服务商。请前往设置 → 服务商添加。",
     "configure": "配置服务商"

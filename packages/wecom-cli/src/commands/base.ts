@@ -1,12 +1,20 @@
 import { Command } from '@oclif/core';
-import { findContextFile, readContextFile, type ContextFile } from '../lib/context.js';
+import {
+  CONTEXT_FILE_ENV,
+  SESSION_TOKEN_ENV,
+  readContextFile,
+  resolveContextFilePath,
+  resolveSessionToken,
+  type ContextFile,
+} from '../lib/context.js';
 
 export abstract class BaseCommand extends Command {
   protected loadContext(): ContextFile {
-    const contextFilePath = findContextFile(process.cwd());
+    const contextFilePath = resolveContextFilePath();
     if (!contextFilePath) {
       this.error(
-        `No WeCom bot context file found. Searched upward from ${process.cwd()} for .claude/wecom-context.json.\nMake sure a WeCom bot is enabled for this workspace.`,
+        `No WeCom bot context available: the ${CONTEXT_FILE_ENV} environment variable is not set.\n` +
+          'The wecom CLI must run inside a Comate bot session (the session injects the context path).',
         { exit: 2 }
       );
     }
@@ -19,10 +27,27 @@ export abstract class BaseCommand extends Command {
     }
   }
 
+  /**
+   * U12 (KTD-28): the session capability token, sent as a Bearer credential
+   * on every loopback API call. Identity is derived server-side from the
+   * token — never from a self-asserted sessionId.
+   */
+  protected authHeaders(): Record<string, string> {
+    const token = resolveSessionToken();
+    if (!token) {
+      this.error(
+        `Missing session capability token: the ${SESSION_TOKEN_ENV} environment variable is not set.\n` +
+          'The wecom CLI must run inside a Comate bot session (the session injects the token).',
+        { exit: 2 }
+      );
+    }
+    return { Authorization: `Bearer ${token}` };
+  }
+
   protected override async catch(err: Error & { exitCode?: number; oclif?: { exit?: number } }): Promise<unknown> {
     // Remap oclif validation errors (default exit 2) to exit 1
-    // to avoid colliding with our "no context file" exit code 2
-    if (err.oclif?.exit === 2 && !err.message?.includes('context file')) {
+    // to avoid colliding with our "missing context/capability" exit code 2
+    if (err.oclif?.exit === 2 && !err.message?.includes('context') && !err.message?.includes('capability token')) {
       err.oclif.exit = 1;
       if (err.exitCode === 2) {
         err.exitCode = 1;

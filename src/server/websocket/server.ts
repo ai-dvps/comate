@@ -2,7 +2,7 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import type { Server } from 'http';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
-import { schedulerEvents, type SchedulerRunEvent } from '../services/scheduler-service.js';
+import { todoRunEvents, type TodoRunEvent } from '../services/todo-execution-service.js';
 import { gitChangesService } from '../services/git-changes-service.js';
 import { browserControlService } from '../services/browser-control.js';
 import { browserService } from '../services/browser-service.js';
@@ -61,22 +61,24 @@ export class ComateWebSocketServer {
   }
 
   /**
-   * Relay scheduled-task lifecycle events to every connected client
-   * (R13/R15): the client's task store turns these into list refreshes,
-   * unread badges, and desktop notifications.
+   * Relay unified Todo Run events. The compatibility event name is retained
+   * for one client release while consumers move to Todo vocabulary.
    */
   private relaySchedulerEvents(): void {
-    const relay = (kind: string) => (payload: SchedulerRunEvent | { taskId: string; taskName: string; workspaceId: string }) => {
+    const relay = (kind: string) => (payload: TodoRunEvent) => {
       this.broadcastEvent({
         type: 'event',
         eventType: 'scheduled_task_event',
         workspaceId: payload.workspaceId,
-        data: { kind, ...payload },
+        data: {
+          kind, taskId: payload.todoId, taskName: payload.todoText, workspaceId: payload.workspaceId,
+          runId: payload.run.id, sessionId: payload.run.sessionId, status: payload.run.status,
+          reason: payload.run.reason,
+        },
       });
     };
-    schedulerEvents.on('run-started', relay('run-started'));
-    schedulerEvents.on('run-finished', relay('run-finished'));
-    schedulerEvents.on('task-created', relay('task-created'));
+    todoRunEvents.on('run-started', relay('run-started'));
+    todoRunEvents.on('run-finished', relay('run-finished'));
   }
 
   private broadcastEvent(msg: WsEventMessage): void {

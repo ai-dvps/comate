@@ -265,7 +265,7 @@ export function resolveEffectivePolicy(workspace: Workspace): ResolvedPolicy {
  * default to allow. This is a contract, not a behavior coincidence — pinned
  * by tool-permission-policy.test.ts.
  */
-function sanitizePolicy(policy: ToolPermissionPolicy): ToolPermissionPolicy {
+export function sanitizePolicy(policy: ToolPermissionPolicy): ToolPermissionPolicy {
   const categoryDefaults = { ...SAFE_PRESET.categoryDefaults };
   for (const key of Object.keys(categoryDefaults) as ToolCategory[]) {
     const value = policy.categoryDefaults?.[key];

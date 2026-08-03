@@ -12,7 +12,6 @@ import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
 import AnalyticsPanel from './components/AnalyticsPanel'
-import ScheduledTasksPanel from './components/ScheduledTasksPanel'
 import TodosPanel from './components/TodosPanel'
 import PluginSettingsPage from './components/PluginSettingsPage'
 import SkillsPage from './components/SkillsPage'
@@ -39,10 +38,11 @@ import { cn } from './components/ui/utils'
 import { startPeriodicUpdateChecks, stopPeriodicUpdateChecks } from './lib/updater-api'
 import UpdateNotification from './components/UpdateNotification'
 import UpdateRestartDialog from './components/UpdateRestartDialog'
+import SandboxDegradedBanner from './components/SandboxDegradedBanner'
 import { ToolRendererProvider } from './components/tool-renderers/ToolRendererContext'
 import { useMigrationNotice } from './hooks/use-migration-notice'
 
-type AppPanel = 'settings' | 'analytics' | 'scheduledTasks' | 'todos' | 'plugins' | 'skills'
+type AppPanel = 'settings' | 'analytics' | 'todos' | 'plugins' | 'skills'
 
 function App() {
   const { t } = useTranslation('common')
@@ -259,10 +259,10 @@ function App() {
         <div data-tauri-drag-region className="flex-1 self-stretch select-none" onMouseDown={handleDrag} />
         <div className="flex items-center flex-shrink-0 pl-4 pr-4">
           <HeaderToolbar
+            popupOpen={activePanel !== null || showCreateModal}
             onCreateWorkspace={() => setShowCreateModal(true)}
             onOpenSettings={() => openPanel('settings')}
             onOpenAnalytics={() => openPanel('analytics')}
-            onOpenScheduledTasks={() => openPanel('scheduledTasks')}
             onOpenTodos={() => openPanel('todos')}
           />
         </div>
@@ -292,6 +292,10 @@ function App() {
         )}
 
         <UpdateNotification />
+
+        {/* U3/KTD-24: persistent banner while the host sandbox probe fails —
+            no manual dismissal; clears only when a probe passes. */}
+        <SandboxDegradedBanner />
 
         {migrationNoticeVisible && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 bg-surface border border-border rounded-lg shadow-lg px-3 py-2 flex items-center gap-2 max-w-md">
@@ -365,8 +369,6 @@ function App() {
       <SettingsPanel isOpen={activePanel === 'settings'} onClose={closePanel} />
 
       <AnalyticsPanel isOpen={activePanel === 'analytics'} onClose={closePanel} />
-
-      <ScheduledTasksPanel isOpen={activePanel === 'scheduledTasks'} onClose={closePanel} />
 
       <TodosPanel isOpen={activePanel === 'todos'} onClose={closePanel} />
 
