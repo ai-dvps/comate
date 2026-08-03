@@ -12,8 +12,9 @@
  *     token. New routes are protected by default; exemption requires editing
  *     the explicit EXEMPT_PATHS list in this file.
  *  2. Session capability tokens only reach a CLOSED, explicitly enrolled set
- *     of route templates (the wecom CLI surface). A session token presented
- *     anywhere else — including routes that do not exist yet — gets 403.
+ *     of route templates. WeCom routes resolve the `wecom-cli` audience; the
+ *     single broker route resolves `api-broker`. A token presented anywhere
+ *     else — including routes that do not exist yet — gets 403.
  *  3. Identity flows from the token: enrolled templates capture
  *     `:workspaceId` (and `:sessionId` where present) and the middleware
  *     rejects any mismatch against the token's binding, so a stolen token
@@ -38,12 +39,19 @@ import { diagLog } from '../../utils/diag-logger.js';
 
 export type LoopbackAuthContext =
   | { kind: 'desktop' }
-  | { kind: 'session'; sessionId: string; workspaceId: string; botId: string | null };
+  | {
+      kind: 'session';
+      sessionId: string;
+      workspaceId: string;
+      botId: string | null;
+      runtimeGeneration?: string;
+    };
 
 export interface SessionTokenResolution {
   sessionId: string;
   workspaceId: string;
   botId: string | null;
+  runtimeGeneration?: string;
 }
 
 /**
@@ -69,6 +77,8 @@ export interface LoopbackAuthRejection {
 export interface LoopbackAuthDeps {
   /** Resolve a presented session capability token; null when invalid/expired/revoked. */
   resolveSessionToken: (token: string) => SessionTokenResolution | null;
+  /** Resolve the separately scoped task capability for the broker route. */
+  resolveApiBrokerToken?: (token: string) => SessionTokenResolution | null;
   /** The current desktop GUI credential (null before boot minting completes). */
   getDesktopToken: () => string | null;
   /** Unauthenticated paths (exact match, method-agnostic). Defaults to EXEMPT_PATHS. */
@@ -88,6 +98,7 @@ export const EXEMPT_PATHS: readonly string[] = ['/api/health'];
  * token — mismatches are rejected with 403.
  */
 export const SESSION_ROUTE_TEMPLATES: readonly string[] = [
+  'POST /api/broker/request',
   'POST /api/workspaces/:workspaceId/wecom/send',
   'POST /api/workspaces/:workspaceId/wecom/send-file',
   'POST /api/workspaces/:workspaceId/wecom/doc/:tool',
@@ -113,7 +124,12 @@ export function getLoopbackAuth(req: Request): LoopbackAuthContext | undefined {
 export function requireSessionAuth(
   req: Request,
   res: Response,
-): { sessionId: string; workspaceId: string; botId: string | null } | null {
+): {
+  sessionId: string;
+  workspaceId: string;
+  botId: string | null;
+  runtimeGeneration?: string;
+} | null {
   const auth = getLoopbackAuth(req);
   if (!auth || auth.kind !== 'session') {
     res.status(403).json({ error: 'forbidden', message: 'This route requires a session capability token.' });
@@ -246,14 +262,21 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
       return;
     }
 
+    const apiBrokerRoute = req.method.toUpperCase() === 'POST' && path === '/api/broker/request';
     const desktopToken = deps.getDesktopToken();
     if (desktopToken && safeTokenEqual(token, desktopToken)) {
+      if (apiBrokerRoute) {
+        forbidden(res, 'This route requires a task capability token.');
+        return;
+      }
       (req as AuthedRequest)[AUTH_CONTEXT_KEY] = { kind: 'desktop' };
       next();
       return;
     }
 
-    const session = deps.resolveSessionToken(token);
+    const session = apiBrokerRoute
+      ? deps.resolveApiBrokerToken?.(token) ?? null
+      : deps.resolveSessionToken(token);
     if (!session) {
       diagLog(`[loopback-auth] 401 ${req.method} ${path}: invalid, expired, or revoked session token`);
       reportRejection({ botId: null, method: req.method, path, reason: 'invalid-token' });
@@ -310,6 +333,7 @@ export function createLoopbackAuthMiddleware(deps: LoopbackAuthDeps): RequestHan
       sessionId: session.sessionId,
       workspaceId: session.workspaceId,
       botId: session.botId,
+      ...(session.runtimeGeneration ? { runtimeGeneration: session.runtimeGeneration } : {}),
     };
     next();
   };

@@ -37,6 +37,7 @@ import { resolveTranscriptDir } from './analytics-transcript-path.js';
 import { listWorkflowAgentIds, listWorkflowRunIds, loadWorkflowState } from './workflow-loader.js';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
+import { resolveComateCliPath } from '../utils/resolve-comate-cli.js';
 import { sidecarLog } from '../utils/sidecar-logger.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
@@ -77,7 +78,8 @@ import {
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
   type BrowserApprovalRequester,
 } from './browser-mcp.js';
-import { isBrowserToolName } from './browser-tool-names.js';
+import { BROWSER_TOOL_NAMES, isBrowserToolName } from './browser-tool-names.js';
+import { browserApiBrokerService } from './browser-api-broker-service.js';
 
 import { browserControlService } from './browser-control.js';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
@@ -419,6 +421,31 @@ export class ChatService {
 
   constructor(sdkClient?: SdkClient) {
     this.sdkClient = sdkClient ?? new SdkClient();
+    browserApiBrokerService.configureApprovalRequester(async ({
+      taskId,
+      method,
+      siteKey,
+      correlationId,
+      validationRequested,
+      signal,
+    }) => {
+      const decision = await this.browserApprovalRequester(taskId, {
+        toolName: BROWSER_TOOL_NAMES.authenticatedRequest,
+        title: `Authorize ${method} request to ${siteKey}`,
+        description: validationRequested
+          ? 'This request will be validated as non-mutating; a successful validation grants exact task-local reuse.'
+          : 'This authenticated request can change data on the destination site.',
+        payload: {
+          kind: 'authenticated_request',
+          method,
+          siteKey,
+          correlationId,
+          validationRequested,
+        },
+        signal,
+      });
+      return { behavior: decision.behavior };
+    });
     // Wire the browser handoff controller's runtime channel (U5, KTD-6): the
     // controller resolves/timeouts the session's live browser card through
     // whatever runtime currently owns the session (lazy lookup — the runtime
@@ -2232,6 +2259,16 @@ export class ChatService {
       env.WECOM_CLI_PATH = wecomCliPath;
       sidecarLog(`[ChatService.buildSdkOptions] injected wecom CLI dir into PATH: ${cliDir}`);
       sidecarLog(`[ChatService.buildSdkOptions] set WECOM_CLI_PATH=${wecomCliPath}`);
+    }
+
+    if (!isBotSession) {
+      const comateCliPath = resolveComateCliPath();
+      if (comateCliPath) {
+        prependEnvPath(env, path.dirname(comateCliPath));
+        env.COMATE_CLI_PATH = comateCliPath;
+        env.COMATE_SERVER_URL = getSidecarBaseUrl();
+        sidecarLog(`[ChatService.buildSdkOptions] set COMATE_CLI_PATH=${comateCliPath}`);
+      }
     }
 
     const pathKey = getPathEnvKey(env);

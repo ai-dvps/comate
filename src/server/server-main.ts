@@ -37,6 +37,7 @@ import healthBrowserRoutes from './routes/health-browser.js';
 import healthSandboxRoutes from './routes/health-sandbox.js';
 import browserRoutes from './routes/browser.js';
 import settingsRoutes from './routes/settings.js';
+import apiBrokerRoutes from './routes/api-broker.js';
 import { browserViewerProxy } from './routes/browser-proxy.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
@@ -178,6 +179,7 @@ app.use(
     // The generic loopback route set is the WeCom CLI audience. GUI task
     // capabilities are deliberately limited to browser MCP + API broker.
     resolveSessionToken: (token) => sessionCapabilityService.resolveForAudience(token, 'wecom-cli'),
+    resolveApiBrokerToken: (token) => sessionCapabilityService.resolveForAudience(token, 'api-broker'),
     getDesktopToken: () => sessionCapabilityService.getDesktopToken(),
     // U6 (KTD-22): promote auth rejections from diagLog to the bot audit
     // trail. Attributable rejections (resolved token, 403 class) file under
@@ -226,6 +228,7 @@ app.use('/api/health/browser', healthBrowserRoutes);
 app.use('/api/health/sandbox', healthSandboxRoutes);
 app.use('/api/browser', browserRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/broker/request', apiBrokerRoutes);
 
 // Health checks
 app.get('/api/health', (_req, res) => {

@@ -1116,7 +1116,7 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
     rmSync(folderPath, { recursive: true, force: true });
   });
 
-  async function captureOptions(isBotSession: boolean): Promise<Options> {
+  async function captureOptions(isBotSession: boolean, backend?: 'claude' | 'opencode'): Promise<Options> {
     const workspace = await workspaceStore.create({
       name: 'Browser Workspace',
       folderPath,
@@ -1136,6 +1136,7 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
       provider.id,
       isBotSession ? 'wecom' : 'gui',
     );
+    if (backend) workspaceStore.updateSessionBackend(session.id, backend);
     let captured: Options | undefined;
     SessionRuntime.open = (...args: unknown[]) => {
       captured = args[3] as Options;
@@ -1175,6 +1176,10 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
       BROWSER_STREAM_CLOSE_TIMEOUT_MS,
       'per-session stream close timeout covers approval round-trips',
     );
+    const guiEnv = options.env as Record<string, string>;
+    assert.ok(guiEnv.COMATE_CLI_PATH, 'GUI backend gets the packaged/dev Comate CLI path');
+    assert.match(guiEnv.COMATE_SERVER_URL, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.ok(guiEnv.PATH.includes(path.dirname(guiEnv.COMATE_CLI_PATH)));
   });
 
   it('bot sessions never get the browser server or the browser stream timeout', async () => {
@@ -1190,5 +1195,14 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
       (options.env as Record<string, string | undefined>).CLAUDE_CODE_STREAM_CLOSE_TIMEOUT,
       undefined,
     );
+    assert.strictEqual((options.env as Record<string, string | undefined>).COMATE_CLI_PATH, undefined);
+  });
+
+  it('OpenCode GUI sessions receive the same Comate CLI environment', async () => {
+    const options = await captureOptions(false, 'opencode');
+    const env = options.env as Record<string, string>;
+    assert.ok(env.COMATE_CLI_PATH);
+    assert.ok(env.PATH.includes(path.dirname(env.COMATE_CLI_PATH)));
+    assert.match(env.COMATE_SERVER_URL, /^http:\/\/127\.0\.0\.1:\d+$/);
   });
 });

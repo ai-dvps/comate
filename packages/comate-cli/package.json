@@ -1,0 +1,21 @@
+{
+  "name": "@comate/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "comate": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/**/*.test.js"
+  },
+  "dependencies": {
+    "@comate/api-contracts": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

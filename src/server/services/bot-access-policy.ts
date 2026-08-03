@@ -139,6 +139,8 @@ const BENIGN_ENV_VARS: ReadonlySet<string> = new Set([
   'VISUAL',
   'NODE_ENV',
   'WECOM_CLI_PATH',
+  'COMATE_CLI_PATH',
+  'COMATE_SERVER_URL',
   'CLAUDE_CODE_DISABLE_CRON',
   // U12 (KTD-28): the session's OWN capability token and wecom context path
   // must stay visible to its own sandboxed commands — the wecom CLI reads
