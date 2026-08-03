@@ -3623,6 +3623,13 @@ export class SqliteStore {
     return result.changes;
   }
 
+  revokeCapabilityToken(tokenHash: string, revokedAt: string): number {
+    return this.db.prepare(`
+      UPDATE session_capability_tokens SET revoked_at = ?
+      WHERE token_hash = ? AND revoked_at IS NULL
+    `).run(revokedAt, tokenHash).changes;
+  }
+
   /** Boot invalidation: every token from a prior process lifetime dies. */
   revokeAllCapabilityTokens(revokedAt: string): number {
     const result = this.db.prepare(`

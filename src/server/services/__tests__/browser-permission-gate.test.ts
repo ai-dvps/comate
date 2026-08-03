@@ -325,6 +325,18 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     assert.strictEqual(result?.behavior, 'allow');
   });
 
+  it('lets authenticatedRequest use only its handler-owned approval gate', async () => {
+    openRuntime();
+    runtime!.setApprovalMode('manual');
+    const result = await callTool(
+      BROWSER_TOOL_NAMES.authenticatedRequest,
+      { recipe: { method: 'POST' } },
+      'r-broker',
+    );
+    assert.strictEqual(result?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0, 'generic gate must not emit a duplicate card');
+  });
+
   it('first gate redacts submit field values in the pending card input (KTD-8)', async () => {
     openRuntime();
     runtime!.setApprovalMode('auto');

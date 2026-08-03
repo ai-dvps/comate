@@ -82,7 +82,6 @@ import { isBrowserToolName } from './browser-tool-names.js';
 import { browserControlService } from './browser-control.js';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
-import { getBrowserMcpToken } from './browser-mcp-http.js';
 import { SCHEDULED_TASKS_MCP_KEY, getScheduledTasksMcpToken } from './scheduled-tasks-mcp.js';
 import { makeScheduledRunStopHook } from './goal-stop-hook.js';
 import {
@@ -493,10 +492,11 @@ export class ChatService {
   async resolveBrowserMcpDeps(sessionId: string): Promise<{
     workspaceId: string;
     approvalRequester: BrowserApprovalRequester;
-  }> {
+  } | null> {
     const workspace = await this.findWorkspaceForSession(sessionId);
+    if (!workspace) return null;
     return {
-      workspaceId: workspace?.id ?? '',
+      workspaceId: workspace.id,
       approvalRequester: this.browserApprovalRequester,
     };
   }
@@ -2151,6 +2151,23 @@ export class ChatService {
     // https://code.claude.com/docs/en/scheduled-tasks#disable-scheduled-tasks
     env.CLAUDE_CODE_DISABLE_CRON = '1';
 
+    // Per-runtime task capability shared identically by Claude/OpenCode via
+    // subprocess env and the browser MCP header. Rebuilds rotate this kind
+    // without revoking a simultaneous bot/WeCom capability.
+    let taskCapabilityToken: string | undefined;
+    if (!isBotSession) {
+      const capability = sessionCapabilityService.mintForSession({
+        sessionId: session.id,
+        workspaceId: workspace.id,
+        botId: null,
+        kind: 'task',
+        audiences: ['browser-mcp', 'api-broker'],
+        runtimeGeneration: randomUUID(),
+      });
+      taskCapabilityToken = capability.token;
+      env[SESSION_TOKEN_ENV] = capability.token;
+    }
+
     // Resolve active provider: session -> default, when not already provided.
     const resolvedProvider = provider ?? (session.providerId
       ? workspaceStore.getProvider(session.providerId)
@@ -2253,7 +2270,7 @@ export class ChatService {
       mcpServers[BROWSER_MCP_SERVER_KEY] = {
         type: 'http',
         url: `${getSidecarBaseUrl()}/mcp/browser/${session.id}`,
-        headers: { Authorization: `Bearer ${getBrowserMcpToken()}` },
+        headers: { Authorization: `Bearer ${taskCapabilityToken}` },
       } as import('@anthropic-ai/claude-agent-sdk').McpServerConfig;
       // Submit/handoff handler approval round-trips can wait on a human far
       // past the 60s SDK default — per-session env, never process-global.
@@ -2371,6 +2388,9 @@ export class ChatService {
               sessionId: session.id,
               workspaceId: workspace.id,
               botId: bot.id,
+              kind: 'wecom',
+              audiences: ['wecom-cli'],
+              runtimeGeneration: randomUUID(),
             });
             env[SESSION_TOKEN_ENV] = capability.token;
             // U6 (KTD-22, U12 notes): token lifecycle audit. The token value

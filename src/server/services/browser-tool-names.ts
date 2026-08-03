@@ -20,6 +20,7 @@ export const BROWSER_TOOL_NAMES = {
   inspectElement: `${BROWSER_TOOL_PREFIX}inspectElement`,
   startNetworkCapture: `${BROWSER_TOOL_PREFIX}startNetworkCapture`,
   stopNetworkCapture: `${BROWSER_TOOL_PREFIX}stopNetworkCapture`,
+  authenticatedRequest: `${BROWSER_TOOL_PREFIX}authenticatedRequest`,
   act: `${BROWSER_TOOL_PREFIX}act`,
   submit: `${BROWSER_TOOL_PREFIX}submit`,
   extract: `${BROWSER_TOOL_PREFIX}extract`,

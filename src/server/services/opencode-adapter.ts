@@ -26,7 +26,7 @@ import type {
 import type { Provider } from '../models/provider.js';
 import type { BackendDriver } from './backend-driver.js';
 import { BROWSER_MCP_SERVER_KEY } from './browser-mcp.js';
-import { getBrowserMcpToken } from './browser-mcp-http.js';
+import { SESSION_TOKEN_ENV } from './session-capability-service.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
 import {
   opencodeFetch,
@@ -97,12 +97,12 @@ export function buildServeConfig(provider: Provider, modelID: string): Record<st
 
 /** Per-session serve additions that depend on the Comate session id (the
  * browser MCP binds to the session's embedded browser via its URL, KTD-6). */
-function buildSessionMcpConfig(comateSessionId: string): Record<string, unknown> {
+function buildSessionMcpConfig(comateSessionId: string, taskToken: string): Record<string, unknown> {
   return {
     [BROWSER_MCP_SERVER_KEY]: {
       type: 'remote',
       url: `${getSidecarBaseUrl()}/mcp/browser/${comateSessionId}`,
-      headers: { Authorization: `Bearer ${getBrowserMcpToken()}` },
+      headers: { Authorization: `Bearer ${taskToken}` },
       oauth: false,
     },
   };
@@ -126,7 +126,7 @@ function extractPromptText(message: SDKUserMessage): string {
 }
 
 /** Unit-test surface for the adapter's pure translation helpers. */
-export const __testables = { buildServeConfig, toAnthropicBaseUrl, extractPromptText };
+export const __testables = { buildServeConfig, buildSessionMcpConfig, toAnthropicBaseUrl, extractPromptText };
 
 export class OpencodeBackendDriver implements BackendDriver {
   readonly backendId = 'opencode' as const;
@@ -222,13 +222,20 @@ export class OpencodeBackendDriver implements BackendDriver {
   }
 
   private async init(options: Options): Promise<void> {
+    const browserEnabled = Boolean(options.mcpServers?.[BROWSER_MCP_SERVER_KEY]);
+    const taskToken = browserEnabled ? this.deps.env[SESSION_TOKEN_ENV] : undefined;
+    if (browserEnabled && !taskToken) {
+      throw new Error(`OpenCode runtime is missing ${SESSION_TOKEN_ENV}`);
+    }
     this.instance = await opencodeServerManager.ensureServer(
       this.deps.comateSessionId,
       this.deps.directory,
       {
         config: {
           ...buildServeConfig(this.deps.provider, this.modelID),
-          mcp: buildSessionMcpConfig(this.deps.comateSessionId),
+          mcp: browserEnabled
+            ? buildSessionMcpConfig(this.deps.comateSessionId, taskToken!)
+            : {},
         },
         env: this.deps.env,
       },

@@ -26,6 +26,16 @@ function makeProvider(overrides: Partial<Provider> = {}): Provider {
 }
 
 describe('toAnthropicBaseUrl (via buildServeConfig)', () => {
+  it('uses the same task capability in the browser MCP Authorization header', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    const config = __testables.buildSessionMcpConfig('s1', 'same-task-token') as Record<
+      string,
+      { headers: { Authorization: string }; url: string }
+    >;
+    assert.equal(config['comate-browser'].headers.Authorization, 'Bearer same-task-token');
+    assert.match(config['comate-browser'].url, /\/mcp\/browser\/s1$/);
+  });
+
   it('appends /v1 to a bare anthropic-compatible base URL', async () => {
     const { __testables } = await import('./opencode-adapter.js');
     const config = __testables.buildServeConfig(makeProvider({ baseUrl: 'https://api.kimi.com/coding/' }), 'm');

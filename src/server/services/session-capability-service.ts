@@ -3,15 +3,15 @@
  * authority. Two credential kinds close the "unauthenticated routes are an
  * open set" problem:
  *
- *  1. Per-session capability tokens: minted when a bot session's runtime is
- *     created, injected into the sandboxed environment, and presented by the
- *     bundled wecom CLI as a Bearer token. They bind the loopback caller to a
- *     concrete session + workspace, so routes derive identity from the token
- *     instead of a self-asserted sessionId. Lifecycle:
+ *  1. Per-session capability tokens: task runtimes receive browser/API
+ *     audiences, while bots receive an independent WeCom-CLI audience. Both
+ *     are injected into their owning subprocess environment and bind callers
+ *     to a concrete session + workspace. Lifecycle:
  *       - TTL: 24h backstop (runtimes idle-close after 10 minutes, so a live
  *         token never approaches this in practice).
- *       - Rotation: every runtime (re)creation revokes the session's prior
- *         token and mints a fresh one — rebuilds and demotion rebuilds rotate.
+ *       - Rotation: runtime (re)creation revokes only the matching capability
+ *         kind, so a task and WeCom capability can coexist without widening
+ *         either token's audience.
  *       - Revocation: closeRuntime/deleteSession revoke; boot invalidates ALL
  *         tokens (the constructor revokes every live row — tokens are per-boot
  *         runtime artifacts, never durable).
@@ -62,7 +62,18 @@ export interface MintedCapability {
   workspaceId: string;
   botId: string | null;
   expiresAt: string;
+  kind: SessionCapabilityKind;
+  audiences: SessionCapabilityAudience[];
+  runtimeGeneration: string;
 }
+
+export type SessionCapabilityKind = 'task' | 'wecom';
+export type SessionCapabilityAudience = 'browser-mcp' | 'api-broker' | 'wecom-cli';
+
+const ALLOWED_AUDIENCES: Record<SessionCapabilityKind, ReadonlySet<SessionCapabilityAudience>> = {
+  task: new Set(['browser-mcp', 'api-broker']),
+  wecom: new Set(['wecom-cli']),
+};
 
 export interface ResolvedSessionToken {
   sessionId: string;
@@ -70,9 +81,21 @@ export interface ResolvedSessionToken {
   botId: string | null;
 }
 
+export interface ResolvedAudienceToken extends ResolvedSessionToken {
+  kind: SessionCapabilityKind;
+  audience: SessionCapabilityAudience;
+  runtimeGeneration: string;
+}
+
 export class SessionCapabilityService {
   private readonly store: SqliteStore;
   private desktopToken: string | null = null;
+  private readonly metadata = new Map<string, {
+    kind: SessionCapabilityKind;
+    audiences: ReadonlySet<SessionCapabilityAudience>;
+    runtimeGeneration: string;
+  }>();
+  private readonly liveBySession = new Map<string, Map<SessionCapabilityKind, string>>();
 
   constructor(store?: SqliteStore, options?: { skipBootInvalidation?: boolean }) {
     this.store = store ?? defaultStore;
@@ -86,31 +109,52 @@ export class SessionCapabilityService {
   }
 
   /**
-   * Mint a fresh capability token for a session. Any prior live token for the
-   * same session is revoked first (rotation-on-rebuild). The plaintext token
+   * Mint a fresh capability token for a session. Any prior live token of the
+   * same kind is revoked first (rotation-on-rebuild). The plaintext token
    * exists only in the return value and the session's injected env.
    */
   mintForSession(input: {
     sessionId: string;
     workspaceId: string;
     botId: string | null;
+    kind?: SessionCapabilityKind;
+    audiences?: SessionCapabilityAudience[];
+    runtimeGeneration?: string;
     ttlMs?: number;
     now?: Date;
   }): MintedCapability {
     const now = input.now ?? new Date();
-    // Rotation: one live token per session.
-    this.store.revokeCapabilityTokensForSession(input.sessionId, now.toISOString());
+    const kind = input.kind ?? 'wecom';
+    const audiences = input.audiences ?? ['wecom-cli'];
+    const runtimeGeneration = input.runtimeGeneration ?? 'legacy';
+    if (audiences.length === 0 || new Set(audiences).size !== audiences.length ||
+        audiences.some((audience) => !ALLOWED_AUDIENCES[kind].has(audience))) {
+      throw new Error(`invalid audiences for ${kind} capability`);
+    }
+    const priorHash = this.liveBySession.get(input.sessionId)?.get(kind);
+    if (priorHash) {
+      this.store.revokeCapabilityToken(priorHash, now.toISOString());
+      this.metadata.delete(priorHash);
+    }
     const token = randomBytes(24).toString('hex');
     const expiresAt = new Date(now.getTime() + (input.ttlMs ?? CAPABILITY_TOKEN_TTL_MS)).toISOString();
+    const tokenHash = sha256Hex(token);
     this.store.insertCapabilityToken({
-      tokenHash: sha256Hex(token),
+      tokenHash,
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
       botId: input.botId,
       createdAt: now.toISOString(),
       expiresAt,
     });
-    return { token, sessionId: input.sessionId, workspaceId: input.workspaceId, botId: input.botId, expiresAt };
+    this.metadata.set(tokenHash, { kind, audiences: new Set(audiences), runtimeGeneration });
+    const kinds = this.liveBySession.get(input.sessionId) ?? new Map();
+    kinds.set(kind, tokenHash);
+    this.liveBySession.set(input.sessionId, kinds);
+    return {
+      token, sessionId: input.sessionId, workspaceId: input.workspaceId, botId: input.botId,
+      expiresAt, kind, audiences: [...audiences], runtimeGeneration,
+    };
   }
 
   /**
@@ -128,8 +172,39 @@ export class SessionCapabilityService {
     return { sessionId: row.sessionId, workspaceId: row.workspaceId, botId: row.botId };
   }
 
+  resolveForAudience(
+    token: string,
+    audience: SessionCapabilityAudience,
+    expected?: { sessionId?: string; workspaceId?: string; runtimeGeneration?: string },
+    now?: Date,
+  ): ResolvedAudienceToken | null {
+    if (typeof token !== 'string' || token.length === 0 || token.length > 256) return null;
+    const tokenHash = sha256Hex(token);
+    const metadata = this.metadata.get(tokenHash);
+    if (!metadata?.audiences.has(audience)) return null;
+    const resolved = this.resolve(token, now);
+    if (!resolved) return null;
+    if (expected?.sessionId !== undefined && resolved.sessionId !== expected.sessionId) return null;
+    if (expected?.workspaceId !== undefined && resolved.workspaceId !== expected.workspaceId) return null;
+    if (expected?.runtimeGeneration !== undefined && metadata.runtimeGeneration !== expected.runtimeGeneration) return null;
+    return { ...resolved, kind: metadata.kind, audience, runtimeGeneration: metadata.runtimeGeneration };
+  }
+
+  revokeKind(sessionId: string, kind: SessionCapabilityKind): number {
+    const kinds = this.liveBySession.get(sessionId);
+    const tokenHash = kinds?.get(kind);
+    if (!tokenHash) return 0;
+    kinds!.delete(kind);
+    if (kinds!.size === 0) this.liveBySession.delete(sessionId);
+    this.metadata.delete(tokenHash);
+    return this.store.revokeCapabilityToken(tokenHash, new Date().toISOString());
+  }
+
   /** Revoke all live tokens for a session (close/demote/delete). */
   revokeForSession(sessionId: string): number {
+    const kinds = this.liveBySession.get(sessionId);
+    for (const tokenHash of kinds?.values() ?? []) this.metadata.delete(tokenHash);
+    this.liveBySession.delete(sessionId);
     return this.store.revokeCapabilityTokensForSession(sessionId, new Date().toISOString());
   }
 

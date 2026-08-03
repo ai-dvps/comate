@@ -26,6 +26,7 @@ import { ChatService } from '../chat-service.js';
 import { SessionRuntime } from '../session-runtime.js';
 import { SdkClient } from '../sdk-client.js';
 import { store as workspaceStore } from '../../storage/sqlite-store.js';
+import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 
 /**
  * browser-mcp tests — the first-class tool surface (KTD-3), the handler-level
@@ -370,11 +371,11 @@ function resultPayload(result: CallToolResult): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 describe('browser-mcp tool surface (KTD-3)', () => {
-  it('registers the ten first-class tools with the comate-browser server key', () => {
+  it('registers the first-class tools with the comate-browser server key', () => {
     const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'close', 'extract', 'inspectElement', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
+      ['act', 'authenticatedRequest', 'close', 'extract', 'inspectElement', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -399,7 +400,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'snapshot', 'inspectElement', 'startNetworkCapture', 'stopNetworkCapture', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'snapshot', 'inspectElement', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.strictEqual(BROWSER_TOOL_PREFIX, 'mcp__comate-browser__');
   });
@@ -1164,6 +1165,11 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
       `per-session MCP URL, got ${browser.url}`,
     );
     assert.strictEqual(browser.headers?.Authorization?.startsWith('Bearer '), true);
+    assert.strictEqual(
+      browser.headers?.Authorization,
+      `Bearer ${(options.env as Record<string, string>)[SESSION_TOKEN_ENV]}`,
+      'Claude MCP and subprocess env must share the same task capability',
+    );
     assert.strictEqual(
       (options.env as Record<string, string>).CLAUDE_CODE_STREAM_CLOSE_TIMEOUT,
       BROWSER_STREAM_CLOSE_TIMEOUT_MS,
