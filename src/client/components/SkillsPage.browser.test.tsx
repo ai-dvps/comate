@@ -202,7 +202,7 @@ describe('SkillsPage Expert Packages browser flow', () => {
     await userEvent.type(screen.getByLabelText('Find skills for the work at hand'), 'todo')
 
     const resultName = await screen.findByRole('heading', { name: 'todo' })
-    const resultCard = resultName.closest('div.group')
+    const resultCard = resultName.closest<HTMLElement>('div.group')
     expect(resultCard).not.toBeNull()
     expect(resultCard!).toHaveTextContent('Manage WeCom tasks')
     expect(resultCard!).toHaveTextContent('WeSkillHub / weoa-todo')
