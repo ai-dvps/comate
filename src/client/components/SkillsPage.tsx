@@ -644,24 +644,44 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
             {activeTab === 'search' && (
               <div id="skills-panel-search" role="tabpanel" aria-labelledby="skills-tab-search" className="space-y-3">
                 <section className="rounded-xl border border-border bg-surface p-3 shadow-sm">
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
-                    <input
-                      value={searchInput}
-                      onChange={(e) => handleSearchChange(e.target.value)}
-                      placeholder={t('skills.searchPlaceholder')}
-                      aria-label={t('skills.searchHeading')}
-                      className="h-11 w-full rounded-xl border border-border bg-bg pl-10 pr-10 text-sm text-text-primary shadow-inner transition-colors placeholder:text-text-tertiary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-                    />
-                    {searchInput && (
+                  <div className="flex items-center gap-2">
+                    <div className="relative min-w-0 flex-1">
+                      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
+                      <input
+                        value={searchInput}
+                        onChange={(e) => handleSearchChange(e.target.value)}
+                        placeholder={t('skills.searchPlaceholder')}
+                        aria-label={t('skills.searchHeading')}
+                        className="h-11 w-full rounded-xl border border-border bg-bg pl-10 pr-10 text-sm text-text-primary shadow-inner transition-colors placeholder:text-text-tertiary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                      />
+                      {searchInput && (
+                        <button
+                          onClick={clearSearch}
+                          className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
+                          aria-label={t('skills.clearSearch')}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex h-9 shrink-0 rounded-lg border border-border bg-white p-1" aria-label={t('skills.expertPackages.viewMode')}>
                       <button
-                        onClick={clearSearch}
-                        className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
-                        aria-label={t('skills.clearSearch')}
+                        onClick={() => updateSearchViewMode('cards')}
+                        aria-pressed={searchViewMode === 'cards'}
+                        aria-label={t('skills.cardView')}
+                        className={`flex w-7 items-center justify-center rounded ${searchViewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
                       >
-                        <X className="h-4 w-4" />
+                        <Grid2X2 className="h-3.5 w-3.5" />
                       </button>
-                    )}
+                      <button
+                        onClick={() => updateSearchViewMode('list')}
+                        aria-pressed={searchViewMode === 'list'}
+                        aria-label={t('skills.listView')}
+                        className={`flex w-7 items-center justify-center rounded ${searchViewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
+                      >
+                        <List className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center">
@@ -809,27 +829,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
                       <p className="text-xs font-medium text-text-secondary">
                         {t('skills.resultsCount', { count: searchResults.length })}
                       </p>
-                      <div className="flex items-center gap-2">
-                        <p className="hidden text-[11px] text-text-tertiary sm:block">{t('skills.resultsHint')}</p>
-                        <div className="flex h-9 shrink-0 rounded-lg border border-border bg-white p-1" aria-label={t('skills.expertPackages.viewMode')}>
-                          <button
-                            onClick={() => updateSearchViewMode('cards')}
-                            aria-pressed={searchViewMode === 'cards'}
-                            aria-label={t('skills.cardView')}
-                            className={`flex w-7 items-center justify-center rounded ${searchViewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
-                          >
-                            <Grid2X2 className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => updateSearchViewMode('list')}
-                            aria-pressed={searchViewMode === 'list'}
-                            aria-label={t('skills.listView')}
-                            className={`flex w-7 items-center justify-center rounded ${searchViewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
-                          >
-                            <List className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
+                      <p className="hidden text-[11px] text-text-tertiary sm:block">{t('skills.resultsHint')}</p>
                     </div>
                     <div
                       role="list"
